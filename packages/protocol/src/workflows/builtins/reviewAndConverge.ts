@@ -1,131 +1,129 @@
-import type { WorkflowDefinitionV1, WorkflowActionLeafV1, WorkflowBlock } from '../workflowV1.js';
-import type { WorkflowValueReference } from '../workflowReferenceV1.js';
-import { REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1,
-  REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1 } from '../../reviews/reviewFindingsApplyInputV1.js';
-import { agent, input, literal, result } from './definitionParts.js';
+import type { WorkflowDefinitionV1, WorkflowActionLeafV1, WorkflowActionFieldBindingV1, WorkflowBlock } from '../workflowV1.js';
+import { StrictJsonValueSchema, type JsonValue } from '../../json/strictJsonValue.js';
+import type { ScmComparison } from '../../scm/comparison.js';
+import type { ScmComparisonCaptureInput } from '../../scm/diffSummary.js';
+import type { ReviewRoundBindingV1 } from '../../reviews/reviewArtifactV1.js';
+import { reviewReviewerIdForSelectionV1, type ReviewStartInput } from '../../reviews/reviewStart.js';
+import { ReviewStartNativeTerminalValueV1Schema } from '../../actions/specs/executionRunCompletion.js';
+import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
+import { PluginJsonSchemaV2Schema } from '../../plugins/contributions/jsonSchema.js';
+import { MENTION_KIND_V1, buildMentionRefForKindV1 } from '../../runtime/input/mentionRefV1.js';
+import { formatInlineReferenceTokenV1 } from '../../runtime/input/inlineReferenceTokenV1.js';
+import { REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1 } from '../../reviews/reviewFindingsApplyInputV1.js';
+import { document, input, literal, result } from './definitionParts.js';
 
-const item = (name: string): WorkflowValueReference => ({ kind: 'item', field: 'value', path: [name] });
-
-function panelComments(id: string, name: string): Extract<WorkflowBlock, { kind: 'loop' }> {
-  const commentIds: WorkflowValueReference = { kind: 'item', field: 'value', path: ['results', 'review', 'commentIds'] };
-  return { kind: 'loop', id, name,
-    repetition: { kind: 'items', items: result('panel'), execution: 'sequential', failurePolicy: 'collect_outcomes' },
-    body: [{ kind: 'loop', id: `${id}-findings`, name: 'Read the reviewer’s findings',
-      onlyWhen: { kind: 'exists', value: commentIds },
-      repetition: { kind: 'items', items: commentIds, execution: 'parallel', failurePolicy: 'collect_outcomes' },
-      body: [{ kind: 'action', id: `${id}-get`, name: 'Read the finding', actionId: 'reviews.comments.get',
-        input: { commentId: { kind: 'item', field: 'value' } } }],
-    }],
+/** One admitted pass; the Review record and aggregate owners decide coverage and attention. */
+export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, reviewRound: ReviewRoundBindingV1,
+  comparison?: ScmComparison, comparisonCapture?: ScmComparisonCaptureInput): Readonly<{ definition: WorkflowDefinitionV1; inputs: Record<string, JsonValue> }> {
+  const inputs: Record<string, JsonValue> = {
+    reviewInput: StrictJsonValueSchema.parse(reviewInput), reviewRound,
+    previousRoundContext: null,
+    ...(comparison ? { comparison: StrictJsonValueSchema.parse(comparison) } : {}),
+    ...(comparisonCapture ? { comparisonCapture: StrictJsonValueSchema.parse(comparisonCapture) } : {}),
   };
+  const declarations: WorkflowDefinitionV1['inputs'][number][] = [
+    { name: 'reviewInput', valueType: 'json', required: true },
+    { name: 'reviewRound', valueType: 'json', required: true },
+    { name: 'previousRoundContext', valueType: 'json', required: false, default: null },
+    ...(comparison ? [{ name: 'comparison', valueType: 'json' as const, required: true }] : []),
+    ...(comparisonCapture ? [{ name: 'comparisonCapture', valueType: 'json' as const, required: true }] : []),
+  ];
+  const blocks: WorkflowBlock[] = [{ kind: 'action', id: 'prepare', name: 'Prepare the Review round', actionId: 'review.prepare_round', input: {
+    reviewInput: input('reviewInput'), reviewRound: input('reviewRound'), previousRoundContext: input('previousRoundContext'),
+    ...(comparison ? { comparison: input('comparison') } : {}),
+    ...(comparisonCapture ? { comparisonCapture: input('comparisonCapture') } : {}),
+  } }];
+  const stages = reviewInput.steps ?? [{ kind: 'review' as const, reviewers: reviewInput.reviewers, instructions: reviewInput.instructions }];
+  const stageIds: string[] = [];
+  const { reviewers: _reviewers, steps: _steps, then: _then, reviewRound: _round,
+    reviewReviewerId: _reviewerId, reviewRoundSettlement: _settlement, ...leafInput } = reviewInput;
+  const terminalSchema = PluginJsonSchemaV2Schema.parse(zodSchemaToJsonSchemaObject(ReviewStartNativeTerminalValueV1Schema, { target: 'draft-7' }));
+  stages.forEach((stage, stepIndex) => {
+    const stageId = `step-${stepIndex + 1}`;
+    const prepared = result('prepare', [], { kind: 'outer', levels: 1 });
+    const round = result('prepare', ['reviewRound'], { kind: 'outer', levels: 1 });
+    const previous = stepIndex > 0 ? [result(`step-${stepIndex}-result`, [], { kind: 'outer', levels: 1 })] : [];
+    const instructions = stage.kind === 'verify'
+      ? `${REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1}\nRead this Review's canonical finding pages with reviews.comments.list and follow the cursor when more findings are needed.\n${stage.instructions}`
+      : `${stage.instructions}\nReview read-only. Return structured findings, including a complete empty result when no defects are found.`;
+    const branches = stage.reviewers.flatMap<Extract<WorkflowBlock, { kind: 'parallel' }>['branches'][number]>((reviewer, reviewerIndex) => {
+        if (reviewer.kind === 'person') return [];
+        const reviewerId = reviewReviewerIdForSelectionV1(reviewerIndex, stepIndex);
+        if (reviewer.kind === 'engine') {
+          const references = [prepared, ...previous].map((_, index) => {
+            const ref = buildMentionRefForKindV1(MENTION_KIND_V1.workflowInput, String(index));
+            const label = index === 0 ? 'Prepared Review' : 'Previous step';
+            return { kind: MENTION_KIND_V1.workflowInput, ref, label, token: formatInlineReferenceTokenV1({ ref, label }) };
+          });
+          const bindings: Record<string, WorkflowActionFieldBindingV1> = Object.fromEntries(Object.entries(leafInput)
+            .filter(([, value]) => value !== undefined).map(([key, value]) => [key, literal(StrictJsonValueSchema.parse(value))]));
+          return [{ id: `branch-${reviewerId}`, blocks: [{ kind: 'action' as const, id: reviewerId, name: 'Run the selected reviewer', actionId: 'review.start',
+            input: { ...bindings, reviewers: literal([StrictJsonValueSchema.parse(reviewer)]),
+              instructions: { kind: 'text' as const,
+                document: { text: `${instructions}\n\n${references.map(reference => reference.token).join('\n\n')}`, references },
+                input: [prepared, ...previous] },
+              permissionMode: literal('read_only'),
+              reviewRound: round, reviewReviewerId: literal(reviewerId), reviewRoundSettlement: literal('workflow'),
+              ...(comparison || reviewInput.comparisonId
+                ? { comparisonId: result('prepare', ['comparisonId'], { kind: 'outer', levels: 1 }) } : {}),
+            } }] }];
+        }
+        const participantName = `reviewer_${stepIndex + 1}_${reviewerIndex + 1}`;
+        inputs[participantName] = StrictJsonValueSchema.parse(reviewer.kind === 'model'
+          ? { ...reviewer, launch: { ...reviewer.launch, permissionMode: 'read-only' } } : reviewer);
+        declarations.push({ name: participantName, valueType: 'json', required: true, inputType: { hostType: 'agentParticipant' } });
+        return [{ id: `branch-${reviewerId}`, blocks: [{ kind: 'step' as const, id: reviewerId, name: 'Review with the selected participant',
+          document: document(instructions), execution: { participant: { kind: 'input' as const, name: participantName }, permissionMode: 'read-only' as const },
+          input: [prepared, literal({ kind: 'review_session.v1', reviewerId }), ...previous], result: { kind: 'json' as const, schema: terminalSchema },
+        }] }];
+      });
+    if (branches.length > 0) {
+      stageIds.push(stageId);
+      blocks.push({ kind: 'parallel', id: stageId, name: stage.kind === 'verify' ? 'Double-check the findings' : 'Review the code',
+        failurePolicy: 'collect_outcomes', branches });
+    }
+    if (stepIndex < stages.length - 1) blocks.push({ kind: 'action', id: `${stageId}-result`, name: 'Read the persisted Review result',
+      actionId: 'review.get', input: { reviewId: result('prepare', ['reviewRound', 'reviewId']) } });
+  });
+  blocks.push({ kind: 'action', id: 'settle', name: 'Settle the Review coverage', actionId: 'review.settle_round', input: {
+    reviewRound: result('prepare', ['reviewRound']), reviewerResults: { kind: 'list', items: stageIds.map(id => result(id)) },
+  } });
+  if (reviewInput.then === 'fix') blocks.push({ kind: 'action', id: 'fix', name: 'Fix accepted findings once', actionId: 'review.apply', input: {
+    reviewId: result('prepare', ['reviewRound', 'reviewId']),
+    sessionId: reviewInput.sessionId ? literal(reviewInput.sessionId) : { kind: 'origin_session_id' },
+  } });
+  blocks.push({ kind: 'action', id: 'review-result', name: 'Read the persisted Review result', actionId: 'review.get',
+    input: { reviewId: result('prepare', ['reviewRound', 'reviewId']) } });
+  return { definition: { version: 1, defaults: {}, inputs: declarations, blocks, finalOutput: result('review-result') }, inputs };
 }
 
-// The Judge copies these fields from the canonical comment read. The Action
-// owner validates scope and CAS; a transient verdict never resolves a comment.
-function verdictAction(id: string, dismiss: boolean, project: boolean, evidence = false): WorkflowActionLeafV1 {
-  return { kind: 'action', id, name: dismiss ? 'Dismiss the finding' : 'Uphold the finding',
-    actionId: dismiss ? 'reviews.comments.transition' : 'reviews.comments.setDisposition',
-    input: {
-      commentId: item('commentId'), expectedServerRevision: item('expectedServerRevision'),
-      clientMutationId: item('clientMutationId'),
-      ...(project ? { projectId: item('projectId') } : { workspace: item('workspace') }),
-      ...(dismiss ? { toState: literal('dismissed'), expectedState: item('expectedState'), reason: item('reason') }
-        : { disposition: literal('blocking') }),
-      ...(evidence ? { evidence: item('evidence') } : {}),
-    },
-  };
+const starterReferences = ['Reviewers', 'Review instructions'].map((label, index) => {
+  const ref = buildMentionRefForKindV1(MENTION_KIND_V1.workflowInput, String(index));
+  return { kind: MENTION_KIND_V1.workflowInput, ref, label, token: formatInlineReferenceTokenV1({ ref, label }) };
+});
+
+function startReview(withSteps: boolean): WorkflowActionLeafV1 {
+  return { kind: 'action', id: withSteps ? 'review-steps' : 'review', name: 'Review the changes', actionId: 'review.start', input: {
+    sessionId: { kind: 'input', name: 'reviewSession', path: ['sessionId'] },
+    reviewers: input('reviewers'), instructions: input('focus'), then: input('then'),
+    steps: withSteps ? input('steps') : { kind: 'text', document: {
+      text: `[{"kind":"review","reviewers":${starterReferences[0]!.token},"instructions":${starterReferences[1]!.token}}]`,
+      references: starterReferences,
+    }, input: [input('reviewers'), input('focus')] },
+  } };
 }
 
+/** New starts run the selected steps once; saved historical graphs retain their own loop. */
 export const REVIEW_AND_CONVERGE_WORKFLOW_V1: WorkflowDefinitionV1 = {
   version: 1, defaults: {},
   inputs: [
     { name: 'reviewSession', valueType: 'json', required: true, inputType: { hostType: 'session' }, defaultFrom: 'origin_session' },
-    { name: 'engines', valueType: 'json', required: true, optionsSourceId: 'review.engines.available' },
-    { name: 'maxRounds', valueType: 'number', required: false, default: 3 },
-    { name: 'apply', valueType: 'string', required: false, default: 'fix', enum: ['fix', 'report'] },
-    { name: 'useJudge', valueType: 'boolean', required: false, default: false },
+    { name: 'reviewers', valueType: 'json', required: true },
+    { name: 'steps', valueType: 'json', required: false },
+    { name: 'then', valueType: 'string', required: false, default: 'report', enum: ['report', 'fix'] },
     { name: 'focus', valueType: 'string', required: false, default: 'Review the changes made in this session.' },
-    { name: 'diffFingerprint', valueType: 'string', required: false },
   ],
-  blocks: [
-    { kind: 'loop', id: 'rounds', name: 'Review until it converges',
-      repetition: { kind: 'until', maxIterations: { kind: 'input', name: 'maxRounds' },
-        stopWhen: { kind: 'any', conditions: [
-          { kind: 'compare', operator: 'eq', left: result('check', ['verdict']), right: literal('converged') },
-          { kind: 'compare', operator: 'eq', left: input('apply'), right: literal('report') },
-        ] } },
-      body: [
-        { kind: 'step', id: 'verify', name: 'Verify and fix the findings', document: { text: REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, references: [], attachments: [] },
-          execution: { conversation: { kind: 'input', name: 'reviewSession' } },
-          onlyWhen: { kind: 'compare', operator: 'gt', left: { kind: 'iteration', field: 'index' }, right: literal(0) },
-          input: [result('panel', [], { kind: 'previous_iteration', loopBlockId: 'rounds' }),
-            { ...result('judge', [], { kind: 'previous_iteration', loopBlockId: 'rounds' }), optional: true }], result: { kind: 'text' } },
-        { kind: 'loop', id: 'panel', name: 'Review with a panel', repetition: { kind: 'items', items: input('engines'),
-          execution: 'parallel', failurePolicy: 'collect_outcomes' },
-          body: [{ kind: 'action', id: 'review', name: 'Review the changes', actionId: 'review.start', input: {
-            sessionId: { kind: 'input', name: 'reviewSession', path: ['sessionId'] }, engineIds: { kind: 'list', items: [{ kind: 'item', field: 'value' }] },
-            instructions: input('focus'), reviewCommentAuthorIntent: literal('open'),
-          } }],
-        },
-        { ...panelComments('disputes', 'Read the disputed findings'),
-          onlyWhen: { kind: 'compare', operator: 'eq', left: input('useJudge'), right: literal(true) } },
-        { ...agent('judge', 'Resolve the disputes', 'judge',
-          'Rule only on disputed ReviewComments whose commentIds appear in this panel. Return uphold or dismiss with reason and optional canonical ReviewComment evidence array. Copy each comment\'s serverRevision as expectedServerRevision, state as expectedState, and its projectId or workspace unchanged. Set clientMutationId uniquely for this comment revision and verdict. Never invent a comment, scope, or revision. Missing comments or failed reads supply no verdict.',
-          [result('panel'), result('disputes')], true),
-          onlyWhen: { kind: 'compare', operator: 'eq', left: input('useJudge'), right: literal(true) },
-          execution: { roleId: 'judge', executionTarget: { kind: 'detached_run' }, conversation: { kind: 'fresh' }, permissionMode: 'read-only' },
-          result: { kind: 'json', schema: { type: 'object', required: ['verdicts'], additionalProperties: false,
-            properties: { verdicts: { type: 'array', items: { type: 'object', additionalProperties: false,
-              required: ['commentId', 'verdict', 'reason', 'expectedServerRevision', 'expectedState', 'clientMutationId'],
-              properties: {
-                commentId: { type: 'string' }, verdict: { type: 'string', enum: ['uphold', 'dismiss'] }, reason: { type: 'string' },
-                evidence: { type: 'array', items: { type: 'object' } }, expectedServerRevision: { type: 'integer', minimum: 1 },
-                expectedState: { type: 'string', enum: ['proposed', 'open', 'delegated', 'pending_review', 'resolved', 'dismissed'] },
-                clientMutationId: { type: 'string' }, projectId: { type: 'string' },
-                workspace: { type: 'object', required: ['machineId', 'path'], additionalProperties: false,
-                  properties: { machineId: { type: 'string' }, path: { type: 'string' } } },
-              },
-            } } } } },
-        },
-        { kind: 'loop', id: 'apply-verdicts', name: 'Apply each verdict',
-          onlyWhen: { kind: 'compare', operator: 'eq', left: input('useJudge'), right: literal(true) },
-          repetition: { kind: 'items', items: result('judge', ['verdicts']), execution: 'sequential', failurePolicy: 'collect_outcomes' },
-          body: [{ kind: 'if', id: 'dismiss-or-uphold', name: 'Dismiss or uphold the finding',
-            when: { kind: 'compare', operator: 'eq', left: item('verdict'), right: literal('dismiss') },
-            then: [{ kind: 'if', id: 'dismiss-scope', name: 'Dismiss in the finding’s scope', when: { kind: 'exists', value: item('projectId') },
-              then: [{ kind: 'if', id: 'dismiss-project-evidence', name: 'Include project evidence when available', when: { kind: 'exists', value: item('evidence') },
-                then: [verdictAction('dismiss-project-with-evidence', true, true, true)],
-                otherwise: [verdictAction('dismiss-project', true, true)] }],
-              otherwise: [{ kind: 'if', id: 'dismiss-workspace-evidence', name: 'Include workspace evidence when available', when: { kind: 'exists', value: item('evidence') },
-                then: [verdictAction('dismiss-workspace-with-evidence', true, false, true)],
-                otherwise: [verdictAction('dismiss-workspace', true, false)] }],
-            }],
-            otherwise: [{ kind: 'if', id: 'uphold-scope', name: 'Uphold in the finding’s scope', when: { kind: 'exists', value: item('projectId') },
-              then: [verdictAction('uphold-project', false, true)], otherwise: [verdictAction('uphold-workspace', false, false)] }],
-          }],
-        },
-        panelComments('comments', 'Read the current findings'),
-        { ...agent('check', 'Check convergence', 'judge',
-          'Check convergence against the supplied engines input, which is the complete requested panel for this round, using only this panel\'s commentIds and the persisted ReviewComments supplied here. Return converged only if every requested engine completed and materialized its findings, every referenced comment is present, and none remains unresolved at or above the review threshold. Complete coverage with empty commentIds is converged, including a panel with one engine. Disputed comments need a canonical transition. Transient Judge verdicts are not resolutions. Failed, missing, or incomplete coverage means continue, never converged.',
-          [input('engines'), result('panel'), result('comments')], true),
-          execution: { roleId: 'judge', executionTarget: { kind: 'detached_run' }, conversation: { kind: 'fresh' }, permissionMode: 'read-only' },
-          result: { kind: 'json', schema: { type: 'object', required: ['verdict'], additionalProperties: false,
-            properties: { verdict: { type: 'string', enum: ['continue', 'converged'] }, reason: { type: 'string' } } } },
-        },
-        { kind: 'step', id: 'report', name: 'Verify and report the findings', document: { text: REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1, references: [], attachments: [] },
-          execution: { conversation: { kind: 'input', name: 'reviewSession' } },
-          onlyWhen: { kind: 'all', conditions: [
-            { kind: 'compare', operator: 'eq', left: input('apply'), right: literal('report') },
-            { kind: 'compare', operator: 'eq', left: result('check', ['verdict']), right: literal('continue') },
-          ] },
-          input: [result('panel'), { ...result('judge'), optional: true }], result: { kind: 'text' } },
-      ],
-    },
-    { kind: 'if', id: 'not-converged', name: 'If the review did not converge',
-      when: { kind: 'compare', operator: 'eq', left: result('rounds', ['outcome', 'kind']), right: literal('exhausted') },
-      then: [{ kind: 'action', id: 'notify', name: 'Tell me about it', actionId: 'notifications.notify_me', input: {
-        title: literal("Review didn't converge"), message: literal('The last round still has open findings. Open the run to see them.'),
-      } }], otherwise: [],
-    },
-  ],
-  finalOutput: result('rounds', ['outcome']),
+  blocks: [{ kind: 'if', id: 'review-composition', name: 'Run the selected Review steps',
+    when: { kind: 'exists', value: input('steps') }, then: [startReview(true)], otherwise: [startReview(false)] }],
+  finalOutput: result('review-composition'),
 };

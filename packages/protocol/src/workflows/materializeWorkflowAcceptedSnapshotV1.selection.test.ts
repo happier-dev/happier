@@ -402,7 +402,7 @@ describe('accepted Workflow selection bindings', () => {
   });
   it('refuses Review & converge without an explicit or context-bound reviewSession at its input path', async () => {
     const result = await materialize({ definition: REVIEW_AND_CONVERGE_WORKFLOW_V1,
-      context: { ...context, inputs: { engines: ['external.review/engine'] } } });
+      context: { ...context, inputs: { reviewers: [{ kind: 'engine', engineId: 'external.review/engine' }] } } });
     expect(result).toMatchObject({ ok: false, error: { code: 'invalid_input', issues: [
       { code: 'missing_reference', path: '/inputs/reviewSession' },
     ] } });

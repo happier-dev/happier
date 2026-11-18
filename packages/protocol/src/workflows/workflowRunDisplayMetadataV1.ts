@@ -16,7 +16,7 @@ export function readWorkflowRunSourceSavedByV1(context: Readonly<{
 /** Portable names for built-ins started without host-authored display metadata. */
 export const BUILTIN_WORKFLOW_TITLES_V1 = Object.freeze({
   'builtin:keep-going': 'Keep going until done',
-  'builtin:review-and-converge': 'Review & converge',
+  'builtin:review-and-converge': 'Review changes',
   'builtin:plan-with-a-panel': 'Panel',
   'builtin:open-a-pull-request': 'Open a pull request',
   'builtin:fresh-opinions': 'Fresh opinions',

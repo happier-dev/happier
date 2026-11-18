@@ -7,7 +7,6 @@ import {
 
   ReviewCommentV1Schema, type ReviewCommentV1,
   ResolvedRoleV1Schema,
-  REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1,
 } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
@@ -15,11 +14,14 @@ import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol';
 import {
   getWorkflowStarterExamplesV1, materializeWorkflowAcceptedSnapshotV1,
   resolveBuiltinWorkflowDefinitionV1, type WorkflowDefinitionV1, type WorkflowAcceptedAuthorizationV1, type WorkflowStep,
+  WorkflowDefinitionV1Schema,
   captureWorkflowDiscussionV1,
 } from '@happier-dev/protocol/workflows';
 import { workflowInvocationKey, type WorkflowStepExecutor } from './coordinator';
 import { bindAutomationWorkflowInputs, WorkflowInputResolutionError, type WorkflowJsonValue } from './input';
-import { createWorkflowSessionStepExecutor } from './sessionStepExecutor';
+import { createWorkflowSessionStepExecutor, createProductionWorkflowConversationOwner } from './sessionStepExecutor';
+import { materializeWorkflowSessionReview } from './reviewSessionStep';
+import { buildWorkflowActionContext } from './workflowActionContext';
 import { createWorkflowDetachedExecutionRunStepExecutor, createWorkflowStepExecutorDispatcher } from './executionRunStepExecutor';
 import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
 import { createCoordinatorWorkspaceResolver, verifyWorkflowWorkspaceCurrentness } from './resolveWorkflowWorkspace';
@@ -34,11 +36,18 @@ import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/e
 import type { AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
 import { AutomationTriggerDetailSchema } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import { createWorkflowAccountRunActionOwner } from '@happier-dev/protocol/actions/executor/workflowRunActions';
-import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1,
+  openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import type { SessionMessageReplyOutcomeV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { DiscussionOpenedMessageV1Schema, DiscussionReadResultV1Schema } from '@happier-dev/protocol/discussions/actions';
+import historicalReviewAndConvergeV1 from '../../../../../packages/protocol/src/workflows/fixtures/historicalReviewAndConvergeV1.json';
+import { createReviewRecordPortV1, ReviewMetadataV1Schema, type ReviewArtifactTransportV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { projectReviewNeedsYouV1, type ReviewRequestedReviewerV1, type ReviewVerdictV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import { reviewReviewerIdsForStartV1, reviewReviewerIdForSelectionV1, type ReviewStartInput } from '@happier-dev/protocol/reviews/reviewStart';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import * as reviewComposition from '@happier-dev/protocol/workflows/builtins/reviewAndConverge';
 
 const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
 const engine = buildBackendTargetKeyV2(agentTarget);
@@ -56,6 +65,10 @@ function builtin(id: string): WorkflowDefinitionV1 {
   const resolved = resolveBuiltinWorkflowDefinitionV1(id);
   if (!resolved) throw new Error(`Missing built-in ${id}`);
   return resolved.definition;
+}
+
+function historicalReview(): WorkflowDefinitionV1 {
+  return WorkflowDefinitionV1Schema.parse(historicalReviewAndConvergeV1);
 }
 
 async function accepted(definition: WorkflowDefinitionV1, evidence: Record<string, WorkflowJsonValue> = {}, origin = true, discussion = false) {
@@ -87,6 +100,9 @@ async function accepted(definition: WorkflowDefinitionV1, evidence: Record<strin
 
 type NativeRun = { localInputId: string; value: JsonValue; intent: string; failed?: boolean };
 type Fixtures = {
+  reviewCounts?: { total: number; needsDecision: number } | (() => { total: number; needsDecision: number });
+  reviewRequests?: readonly ReviewRequestedReviewerV1[];
+  reviewVerdicts?: readonly ReviewVerdictV1[];
   serverId?: string;
   happierGoal?: boolean;
   checks?: readonly JsonValue[];
@@ -94,10 +110,11 @@ type Fixtures = {
   agentResult?: JsonValue;
   opinion?: 'agree' | 'disagree' | 'uncertain';
   usage?: number; budget?: number;
-  session?: (id: string, input: Parameters<WorkflowStepExecutor>[0]['input']) => JsonValue;
+  session?: (id: string, input: Parameters<WorkflowStepExecutor>[0]['input']) => JsonValue | Promise<JsonValue>;
   reply?: (sessionId: string, stepId: string) => SessionMessageReplyOutcomeV1;
   discussionRead?: NonNullable<ActionExecutorDeps['discussionAction']>;
   reviewFailed?: boolean;
+  reviewPartial?: boolean;
   reviewLaunchFailure?: boolean;
   comments?: () => readonly ReviewCommentV1[];
   panelCommentIds?: readonly string[];
@@ -106,12 +123,36 @@ type Fixtures = {
   actionsSettings?: ActionsSettingsV1;
   workflowAction?: ActionExecutorDeps['workflowAction'];
   reviewSessionAccess?: (observation: number) => boolean;
+  freshSessionId?: string;
 };
 
 /** Only native execution/session transports and persistent network reads are faked.
  * Admission, role selection, reference binding, both leaf adapters, Action
  * preparation/completion, loop bookkeeping and result decoding remain real. */
 function harness(fixtures: Fixtures = {}) {
+  // Artifact storage and the admitted Home aggregate read are boundaries. The
+  // real Review record port owns start, coverage projection and settlement.
+  const reviewRows = new Map<string, NonNullable<Awaited<ReturnType<ReviewArtifactTransportV1['read']>>>>();
+  const reviewMetadata = new Map<string, ReturnType<typeof ReviewMetadataV1Schema.parse>>();
+  const reviewRecords = createReviewRecordPortV1({
+    read: async reviewId => reviewRows.get(reviewId) ?? null,
+    create: async value => {
+      const row = { artifactId: value.artifactId, header: value.header, body: value.body,
+        revision: { headerVersion: 1, bodyVersion: 1 } };
+      reviewRows.set(value.artifactId, row);
+      reviewMetadata.set(value.artifactId, ReviewMetadataV1Schema.parse(value.reviewMetadata));
+      return row;
+    },
+    update: async value => {
+      const row = reviewRows.get(value.artifactId);
+      if (!row || row.revision.bodyVersion !== value.expectedRevision.bodyVersion) return { ok: false, errorCode: 'version_mismatch' };
+      const revision = { headerVersion: row.revision.headerVersion + 1, bodyVersion: row.revision.bodyVersion + 1 };
+      reviewRows.set(value.artifactId, { artifactId: value.artifactId, header: value.header, body: value.body, revision });
+      reviewMetadata.set(value.artifactId, ReviewMetadataV1Schema.parse({ ...reviewMetadata.get(value.artifactId), ...value.reviewMetadata }));
+      return { ok: true, revision };
+    },
+  });
+  const aggregateReads: string[] = [];
   let store = createInMemoryWorkflowCoordinatorStore();
   const snapshots = new Map<string, string>();
   const retainSnapshot = (runId: string, snapshot: Awaited<ReturnType<typeof accepted>>) => snapshots.set(runId,
@@ -120,12 +161,37 @@ function harness(fixtures: Fixtures = {}) {
   const keyCensus = (runId: string) => WorkflowRunRecipientCensusResponseV1Schema.parse({ runId, ownerAccountId: 'account', visibleTeamId: null,
     encryptionMode: 'plain', access: 'owner', ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null },
     dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [] });
+  const runSummary = (runId: string) => WorkflowRunSummaryV1Schema.parse({ id: runId, sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
+    attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
+    origin: { kind: 'direct' }, state: 'running', revision: 1, machineId: workspace.machineId,
+    workflowCustodyState: 'pending', originDeliveryAckRevision: null,
+    availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
+    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
   const runOwner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => 'account',
     resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
     normalizeAbsolutePath: path => path.startsWith('/') ? path : null,
+    prepareWorkspace: async ({ projectTarget }) => ({ ok: true, workspaceTarget: { project: { ...projectTarget, checkoutRootPath: projectTarget.directory } } }),
     randomBytes: () => { throw new Error('plain_account_needs_no_keys'); },
     definitions: { get: async () => { throw new Error('unexpected_definition_read'); } },
+    resolveRunReportPolicy: async () => ({ preset: 'important' }),
+    resolveMaterializationContext: async () => ({
+      roleSelection: { defaultEngine: { agentTargetKey: engine }, availableAgentTargetKeys: [engine, otherEngine] },
+      effects: {
+        resolveTargetAvailability: async () => true,
+        resolveSessionTarget: async value => value && typeof value === 'object' && !Array.isArray(value)
+          && value.serverId === 'home' && typeof value.sessionId === 'string'
+          ? { address: { serverId: value.serverId, sessionId: value.sessionId }, machineId: workspace.machineId } : null,
+        readActionContract: async id => {
+          const parsed = ActionIdSchema.safeParse(id);
+          return parsed.success ? freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(parsed.data))) : null;
+        },
+      },
+    }),
     storage: { execute: async operation => {
+      if (operation.operation === 'admit') {
+        snapshots.set(String(operation.runId), String(operation.acceptedEnvelope));
+        return { kind: 'created', run: runSummary(String(operation.runId)) };
+      }
       if (operation.operation === 'invocations.list') {
         const rows = await Promise.all(store.list().filter(row => row.runId === operation.runId)
           .map(row => store.readInvocationBindingRow(row.recordId)));
@@ -155,14 +221,13 @@ function harness(fixtures: Fixtures = {}) {
               memberOrdinal: row.index.memberOrdinal, attempt: row.index.attempt }, progress: row.progress })) } };
       }
       const retained = snapshots.get(String(operation.runId));
+      if (operation.operation === 'get' && !retained && operation.prepareAdmission) {
+        return { run: null, keyCensus: keyCensus(String(operation.runId)) };
+      }
+      if (operation.operation === 'get' && !retained) throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
       if (operation.operation !== 'get' || !retained) throw new Error('unexpected_run_read');
       const runId = String(operation.runId);
-      return { run: WorkflowRunSummaryV1Schema.parse({ id: runId, sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
-        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
-        origin: { kind: 'direct' }, state: 'running', revision: 1, machineId: workspace.machineId,
-        workflowCustodyState: 'pending', originDeliveryAckRevision: null,
-        availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
-        createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }),
+      return { run: runSummary(runId),
         acceptedEnvelope: retained,
         checkpointEnvelope: null, resultEnvelope: null,
         keyCensus: keyCensus(runId) };
@@ -170,7 +235,8 @@ function harness(fixtures: Fixtures = {}) {
   });
   const events: string[] = [];
   const nativeRuns = new Map<string, NativeRun>();
-  const launches: { sessionId: string | null | undefined; request: Record<string, unknown> }[] = [];
+  const launches: { sessionId: string | null | undefined; request: Record<string, unknown>;
+    options?: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2] }[] = [];
   const notifications: unknown[] = [];
   const goals: unknown[] = [];
   let goalMetadata: Record<string, unknown> = { machineId: 'machine', path: '/repo',
@@ -194,16 +260,37 @@ function harness(fixtures: Fixtures = {}) {
   let sessionStep: Parameters<WorkflowStepExecutor>[0] | undefined;
   const sessionSteps = new Map<string, Parameters<WorkflowStepExecutor>[0]>();
   const sessionInputs: { sessionId: string; stepId: string; text: string }[] = [];
+  const sentMessages: { sessionId: string; message: string }[] = [];
   let enqueueIndex = 0;
   let reviewLaunchRejected = false;
   let sessionAccessObservations = 0;
   const nativeDeps: Partial<ActionExecutorDeps> = {
+    reviewRecords: () => reviewRecords,
+    ...(fixtures.reviewCounts ? {
+      homeDomainAction: async ({ actionId, input }: Parameters<NonNullable<ActionExecutorDeps['homeDomainAction']>>[0]) => {
+        if (actionId !== 'review.get') throw new Error('Unexpected Home aggregate Action');
+        const reviewId = String((input as { reviewId: string }).reviewId);
+        const metadata = reviewMetadata.get(reviewId);
+        if (!metadata) throw new Error('Review not admitted');
+        const counts = typeof fixtures.reviewCounts === 'function' ? fixtures.reviewCounts() : fixtures.reviewCounts!;
+        aggregateReads.push(reviewId);
+        return { review: { ...metadata, reviewId, createdAt: 1, updatedAt: 2, counts },
+          human: { reviewId, roundOrdinal: metadata.currentRoundOrdinal, requests: fixtures.reviewRequests ?? [], verdicts: fixtures.reviewVerdicts ?? [],
+            needsYou: projectReviewNeedsYouV1({ reviewId, roundOrdinal: metadata.currentRoundOrdinal,
+              actorAccountId: 'account', canRead: true, canDecide: true,
+              pendingDecisionCount: counts.needsDecision,
+              // This transport fixture resolves the Account principal as the human service does.
+              requests: (fixtures.reviewRequests ?? []).map(request => ({ roundOrdinal: request.roundOrdinal,
+                eligibleAccountIds: request.principal.kind === 'account' ? [request.principal.accountId] : [] })),
+              verdicts: fixtures.reviewVerdicts ?? [] }) } };
+      },
+    } : {}),
     ...(fixtures.discussionRead ? { discussionAction: fixtures.discussionRead } : {}),
     resolveSessionReference: async ({ sessionId }) => sessionId && (fixtures.reviewSessionAccess?.(++sessionAccessObservations) ?? true)
       ? { kind: 'unique', address: { serverId: 'home', sessionId } } : { kind: 'none' },
     readActionsSettings: () => fixtures.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }),
     executionRunCheckProtocolV2: async () => ({ ok: true }),
-    executionRunStart: async (sessionId, request) => {
+    executionRunStart: async (sessionId, request, options) => {
       if (request.intent === 'review' && fixtures.reviewLaunchFailure && !reviewLaunchRejected) {
         reviewLaunchRejected = true;
         // The native start boundary returns a typed pre-creation refusal;
@@ -212,7 +299,7 @@ function harness(fixtures: Fixtures = {}) {
           details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };
       }
       const runId = `native-${nativeRuns.size}`;
-      launches.push({ sessionId, request });
+      launches.push({ sessionId, request, ...(options ? { options } : {}) });
       let value: JsonValue = 'native result';
       const instructions = typeof request.instructions === 'string' ? request.instructions : '';
       if (request.intent === 'agent') {
@@ -278,6 +365,10 @@ function harness(fixtures: Fixtures = {}) {
       events.push('comments'); return { items, cursor: offset + limit < comments.length ? String(offset + limit) : null };
     },
     notificationsNotifyMe: async (input) => { notifications.push(input); return { attemptedChannels: 1, deliveredChannels: 1 }; },
+    sessionSendMessage: async ({ sessionId, message }) => {
+      sentMessages.push({ sessionId, message });
+      return { status: 'accepted', localId: `fix-${sentMessages.length}` };
+    },
     sessionGoalSet: async (input) => {
       goals.push({ sessionId: input.sessionId, status: input.status });
       if (fixtures.happierGoal) {
@@ -289,7 +380,7 @@ function harness(fixtures: Fixtures = {}) {
       return { ok: true };
     },
     workflowAction: async args => {
-      if (args.actionId === 'workflow.run.get' || args.actionId === 'workflow.run.invocations.get'
+      if (args.actionId === 'workflow.run.start' || args.actionId === 'workflow.run.get' || args.actionId === 'workflow.run.invocations.get'
         || args.actionId === 'workflow.run.invocations.list') {
         return runOwner.execute(args);
       }
@@ -308,9 +399,10 @@ function harness(fixtures: Fixtures = {}) {
   // This intentionally partial native-transport fixture fails loudly if a
   // built-in reaches a boundary not included in its recipe.
   const executor = createActionExecutor(nativeDeps as ActionExecutorDeps);
-  const context = (params: { runId: string; authorization: WorkflowAcceptedAuthorizationV1; originSessionId?: string; workDepth?: number; role?: unknown }): ActionExecutorContext => {
+  const context = (params: Parameters<typeof buildWorkflowActionContext>[0] & { originSessionId?: string; role?: unknown }): ActionExecutorContext => {
     const role = ResolvedRoleV1Schema.safeParse(params.role);
     return {
+    ...buildWorkflowActionContext(params),
     surface: 'agent', serverId: fixtures.serverId ?? 'home', authority: 'account_automation', callerPermissionMode: params.authorization.admittedPermissionCeiling,
     actionCaller: { kind: 'workflowRun', runId: params.runId, authorization: params.authorization },
     ...(fixtures.actionsSettings ? { actionsSettings: fixtures.actionsSettings } : {}),
@@ -324,9 +416,24 @@ function harness(fixtures: Fixtures = {}) {
     executionRunTargetMachineId: workspace.machineId,
     externalActionTarget: { kind: 'machine', machineId: workspace.machineId, project: { machineId: workspace.machineId, directory: workspace.directory } },
   }; };
+  const freshConversations = createProductionWorkflowConversationOwner({ machineId: workspace.machineId,
+    createFreshConversation: async ({ selection, launch }) => {
+      expect(launch).toMatchObject({ agentTarget, permissionMode: 'read-only', executionTarget: { serverId: 'home', machineId: 'machine' } });
+      expect(selection.permissionMode).toBe('read-only');
+      return { sessionId: fixtures.freshSessionId!, ...workspace };
+    },
+    resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
+    resolveExistingSessionConversation: async () => { throw new Error('Unexpected existing model Session'); },
+  });
   const session = createWorkflowSessionStepExecutor({ credentials,
+    materializeReview: input => materializeWorkflowSessionReview({ ...input,
+      context: context({ runId: input.params.runId, authorization: input.params.authorization }),
+      comments: nativeDeps.reviewCommentAction!, workspace: { machineId: workspace.machineId, path: workspace.directory },
+      agentId: 'session-agent',
+    }),
     prepareConversation: async (params) => {
       sessionStep = params;
+      if (fixtures.freshSessionId) return freshConversations.prepare(params);
       const sessionId = params.execution.conversation?.kind === 'existing_session' ? params.execution.conversation.sessionId : 'origin';
       sessionTargets.push(sessionId);
       sessionSteps.set(sessionId, params);
@@ -334,7 +441,11 @@ function harness(fixtures: Fixtures = {}) {
         ...(params.execution.conversation?.kind === 'origin_session' ? { inputPath: 'origin_session' as const } : {}) };
     },
 
-    materializeConversation: async (params) => ({ sessionId: params.existing?.sessionId ?? 'origin', machineAdmissionTransport: async () => ({ status: 'accepted', localId: 'native-input' }) }),
+    materializeConversation: async (prepared, params) => {
+      const sessionId = fixtures.freshSessionId ? (await freshConversations.materialize(prepared, params)).sessionId : prepared.existing?.sessionId ?? 'origin';
+      if (fixtures.freshSessionId) { sessionTargets.push(sessionId); sessionSteps.set(sessionId, params); }
+      return { sessionId, machineAdmissionTransport: async () => ({ status: 'accepted', localId: 'native-input' }) };
+    },
     sessionInput: { enqueue: async () => ({ status: 'accepted', localId: `pending-${enqueueIndex++}` }),
       observe: async (request) => {
         const currentStep = sessionSteps.get(request.sessionId) ?? sessionStep;
@@ -343,7 +454,7 @@ function harness(fixtures: Fixtures = {}) {
         const step = currentStep;
         sessionInputs.push({ sessionId: request.sessionId, stepId: step.step.id, text: step.input.text });
         events.push(step.step.id);
-        const value = fixtures.session?.(step.step.id, step.input) ?? 'session finished';
+        const value = await fixtures.session?.(step.step.id, step.input) ?? 'session finished';
         const replyOutcome = fixtures.reply?.(request.sessionId, step.step.id);
         return { ok: true, sessionId: request.sessionId, localId: request.localId,
           ...(replyOutcome ? { replyOutcome } : {}),
@@ -373,14 +484,33 @@ function harness(fixtures: Fixtures = {}) {
         return value;
       },
     }, action: { executor, buildContext: async (params) => context(params),
+      // The remote daemon boundary consumes the exact snapshot admitted by the real Run owner.
+      observeWorkflow: async target => {
+        const retained = snapshots.get(target.runId);
+        if (!retained) throw new Error('Missing admitted child Workflow');
+        const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+          binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account', runId: target.runId },
+          envelope: parseWorkflowStoredContentEnvelopeV1(retained) });
+        if (opened.kind !== 'available') throw new Error('Admitted child Workflow unavailable');
+        const snapshot = opened.content;
+        const run = await coordinator().run({ ...snapshot, runId: target.runId,
+          ...(snapshot.origin?.kind === 'direct' && snapshot.origin.originSessionId
+            ? { originSessionId: snapshot.origin.originSessionId } : {}) });
+        return { observation: 'terminal', matchedCondition: 'terminal',
+          run: { ...runSummary(target.runId), state: run.state }, result: run.finalOutput };
+      },
       observeRun: async (run) => fixtures.reviewFailed && nativeRuns.get(run.runId)?.intent === 'review'
         ? { kind: 'failed', code: 'native_review_failed' }
         : { kind: 'completed', result: {}, commentIds: [...(fixtures.panelCommentIds ?? fixtures.comments?.().map((comment) => comment.id) ?? [])],
-          reviewedFingerprint: 'panel-fingerprint', materialization: { kind: 'complete' } },
+          reviewedFingerprint: 'panel-fingerprint', materialization: fixtures.reviewPartial
+            ? { kind: 'partial', errorCode: 'review_materialization_partial' } : { kind: 'complete' } },
     },
   });
   let goalInitialized = false;
-  return { get store() { return store; }, events, launches, notifications, goals, removedTriggers, scmRequests, reviewReads, commentReads, sessionTargets, sessionInputs, readGoal: () => goalControl('get'),
+  return { get store() { return store; }, events, launches, notifications, goals, removedTriggers, scmRequests, reviewReads, commentReads, sessionTargets, sessionInputs, sentMessages, aggregateReads,
+    executeAction: executor.execute.bind(executor), readGoal: () => goalControl('get'),
+    admitReview: (reviewInput: ReviewStartInput) => reviewRecords.start({ reviewId: 'review', title: 'Review',
+      subjectKind: 'repository', sourceKind: 'workflow', reviewerIds: reviewReviewerIdsForStartV1(reviewInput), startedAt: 1 }),
     runAccepted: async (snapshot: Awaited<ReturnType<typeof accepted>>, origin = true, runId = 'builtin-run') => {
       retainSnapshot(runId, snapshot);
       return coordinator().run({ ...snapshot, runId, ...(origin ? { originSessionId: 'origin' } : {}) });
@@ -705,15 +835,230 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     await expect(h.run(builtin(id), { engines: [engine] }, false)).rejects.toThrow('invalid_input');
     expect(h.launches).toEqual([]); expect(h.goals).toEqual([]);
   });
-  it('uses the admitted reviewSession for real review Actions and verify input instead of the origin', async () => {
+  // REVIEWS-1117 plan 03 U2: new authored starts are one pass. Accepted
+  // historical definitions retain their original loop, rather than supplying
+  // that loop as the current starter's execution policy.
+  it('preserves historical accepted graphs when a starter executes a newly authored review once', async () => {
     const h = harness({ checks: [{ verdict: 'continue' }, { verdict: 'converged' }], session: (id) => {
       expect(id).toBe('verify'); return 'verified';
     } });
-    expect(await h.run(builtin('review-and-converge'), {
+    // Captured from the stored-definition producer at 6e06be20d9a. Execute the
+    // accepted graph itself: resolving the current built-in would not test
+    // compatibility once the new starter changes.
+    const snapshot = await accepted(WorkflowDefinitionV1Schema.parse(historicalReviewAndConvergeV1), { engines: [engine] });
+    await expect(h.runAccepted(snapshot)).resolves.toMatchObject({ state: 'succeeded',
+      finalOutput: { kind: 'stop_condition', arm: 0 } });
+    expect(h.events).toEqual(['review', 'check', 'verify', 'review', 'check']);
+    expect(h.launches.filter(({ request }) => request.intent === 'review')).toHaveLength(2);
+    expect(h.sessionTargets).toEqual(['origin']);
+  });
+  it('executes a newly authored review once without an automatic fix or model completion check', async () => {
+    const h = harness({ reviewCounts: { total: 0, needsDecision: 0 } });
+    const run = await h.run(builtin('review-and-converge'), { reviewers: [{ kind: 'engine', engineId: engine }] });
+    expect(run, JSON.stringify(h.store.list())).toMatchObject({ state: 'succeeded' });
+    expect(h.launches.filter(({ request }) => request.intent === 'review')).toHaveLength(1);
+    expect(h.events).not.toContain('check');
+    expect(h.events).not.toContain('verify');
+    expect(h.commentReads).toEqual([]);
+  });
+  it('finishes one authored Review pass with canonical counts even when unresolved findings exceed one page', async () => {
+    const h = harness({ reviewCounts: { total: 51, needsDecision: 1 } });
+    const reviewInput = ReviewStartInputSchema.parse({ reviewers: [{ kind: 'engine', engineId: engine }], instructions: 'Review once' });
+    const binding = await h.admitReview(reviewInput);
+    const composed = reviewComposition.buildReviewStepsWorkflowV1(reviewInput, binding);
+    await expect(h.run(composed.definition, composed.inputs)).resolves.toMatchObject({ state: 'succeeded',
+      finalOutput: { review: { reviewId: 'review', state: 'completed', counts: { total: 51, needsDecision: 1 } } } });
+    expect(h.launches.filter(({ request }) => request.intent === 'review')).toHaveLength(1);
+    expect(h.events).toEqual(['review']);
+    expect(h.launches[0]?.request.instructions).toContain('"reviewId":"review"');
+    expect(h.aggregateReads).toEqual(['review']);
+    expect(h.commentReads).toEqual([]);
+  });
+  it.each([
+    { state: 'completed', fixtures: {} },
+    { state: 'failed', fixtures: { reviewFailed: true } },
+    { state: 'partial', fixtures: { reviewPartial: true } },
+    { state: 'failed', fixtures: { reviewLaunchFailure: true } },
+  ])('keeps empty authored Review findings distinct from $state execution coverage ($fixtures)', async ({ state, fixtures }) => {
+    const h = harness({ ...fixtures, reviewCounts: { total: 0, needsDecision: 0 } });
+    const reviewInput = ReviewStartInputSchema.parse({ reviewers: [{ kind: 'engine', engineId: engine }], instructions: 'Review once' });
+    const binding = await h.admitReview(reviewInput);
+    const composed = reviewComposition.buildReviewStepsWorkflowV1(reviewInput, binding);
+    await expect(h.run(composed.definition, composed.inputs)).resolves.toMatchObject({ state: 'succeeded',
+      finalOutput: { review: { state, counts: { total: 0, needsDecision: 0 } } } });
+    expect(h.aggregateReads).toEqual(['review']);
+    expect(h.commentReads).toEqual([]);
+    expect(h.events).not.toContain('check');
+    expect(h.events).not.toContain('verify');
+  });
+  it('keeps authored Review and verification engines read-only despite a broader launch preference', async () => {
+    const h = harness({ reviewCounts: { total: 0, needsDecision: 0 } });
+    const reviewers = [{ kind: 'engine' as const, engineId: engine }];
+    const reviewInput = ReviewStartInputSchema.parse({ reviewers, instructions: 'Review once', permissionMode: 'full_access',
+      steps: [{ kind: 'review', reviewers, instructions: 'Find defects' },
+        { kind: 'verify', reviewers, instructions: 'Verify persisted findings' }] });
+    const binding = await h.admitReview(reviewInput);
+    const composed = reviewComposition.buildReviewStepsWorkflowV1(reviewInput, binding);
+    const outcome = await h.run(composed.definition, composed.inputs).catch((error: unknown) => error);
+    expect(h.launches[0]?.request.permissionMode).toBe('read_only');
+    expect(outcome).toMatchObject({ state: 'succeeded', finalOutput: { review: { state: 'completed' } } });
+    expect(h.launches.filter(({ request }) => request.intent === 'review').map(({ request }) => request.permissionMode))
+      .toEqual(['read_only', 'read_only']);
+    expect(h.aggregateReads).toEqual(['review', 'review']);
+    expect(h.commentReads).toEqual([]);
+  });
+  it('verifies an authored pass in the selected Session and returns its persisted decision without another panel', async () => {
+    let comment = ReviewCommentV1Schema.parse({ v: 1, id: 'finding', accountId: 'account', reviewId: 'review',
+      findingIdentity: 'a'.repeat(64),
+      workspace: { machineId: 'machine', path: '/repo' }, sessionId: 'origin',
+      anchor: { kind: 'line', filePath: 'a.ts', line: 1 }, snapshot: { kind: 'none', capturedAt: 1 },
+      body: 'Potential defect', bodyVersion: 1, edits: [], author: { kind: 'workflow', runId: 'builtin-run' },
+      state: 'open', flags: {}, dispositions: {}, threadId: 'finding', transitions: [],
+      createdAt: 1, updatedAt: 1, serverRevision: 1 });
+    const writes: unknown[] = [];
+    const h = harness({ actionsSettings: allowedCommentActions, comments: () => [comment],
+      reviewCounts: () => ({ total: 1, needsDecision: comment.state === 'dismissed' ? 0 : 1 }),
+      commentWrite: async (actionId, input) => {
+        expect(actionId).toBe('reviews.comments.transition');
+        writes.push(input);
+        comment = { ...comment, state: 'dismissed', serverRevision: 2 };
+        return { comment };
+      },
+      session: async (id) => {
+        expect(id).toBe('step-2-reviewer-1');
+        const actor: ActionExecutorContext = { surface: 'agent', serverId: 'home', defaultSessionId: 'origin',
+          reviewCommentPrincipal: { actor: { kind: 'agent', agentId: 'session-agent', sessionId: 'origin' } } };
+        const page = await h.executeAction('reviews.comments.list', { reviewId: 'review' }, actor);
+        expect(page).toMatchObject({ ok: true, result: { items: [{ id: 'finding', state: 'open' }] } });
+        expect(await h.executeAction('reviews.comments.transition', { reviewId: 'review', commentId: 'finding',
+          expectedServerRevision: 1, expectedState: 'open', toState: 'dismissed', reason: 'Current code handles this case',
+          evidence: [{ kind: 'reasoning', message: 'The guard returns before the dereference' }],
+          clientMutationId: 'verify-finding-r1' }, actor)).toMatchObject({ ok: true });
+        return { reviewOutcome: 'complete', summary: 'Verified', overviewMarkdown: 'Verified the persisted finding.',
+          findings: [], questions: [], assumptions: [] };
+      },
+    });
+    const reviewers = [{ kind: 'engine' as const, engineId: engine }];
+    const reviewInput = ReviewStartInputSchema.parse({ reviewers, instructions: 'Review once', steps: [
+      { kind: 'review', reviewers, instructions: 'Find defects' },
+      { kind: 'verify', reviewers: [{ kind: 'session', session: { serverId: 'home', sessionId: 'origin' } }],
+        instructions: 'Verify the persisted findings' },
+    ] });
+    const binding = await h.admitReview(reviewInput);
+    const composed = reviewComposition.buildReviewStepsWorkflowV1(reviewInput, binding);
+    const run = await h.run(composed.definition, composed.inputs);
+    expect(run, JSON.stringify(h.store.list())).toMatchObject({ state: 'succeeded',
+      finalOutput: { review: { state: 'completed', counts: { total: 1, needsDecision: 0 } } } });
+    expect(writes).toEqual([expect.objectContaining({ reviewId: 'review', commentId: 'finding', expectedServerRevision: 1,
+      evidence: [{ kind: 'reasoning', message: 'The guard returns before the dereference' }] })]);
+    expect(h.launches.filter(({ request }) => request.intent === 'review')).toHaveLength(1);
+    expect(h.sessionTargets).toEqual(['origin']);
+    expect(h.aggregateReads).toEqual(['review', 'review']);
+    expect(h.commentReads).toEqual([{ actionId: 'reviews.comments.list' }]);
+    expect(h.events).not.toContain('check');
+  });
+  it('finishes executable coverage while a required human verdict remains visible without a Workflow hold', async () => {
+    const principal = { kind: 'account' as const, accountId: 'account' };
+    const h = harness({ reviewCounts: { total: 0, needsDecision: 0 }, reviewRequests: [
+      { id: 'request', roundOrdinal: 1, principal, required: true, needsAccess: false },
+    ] });
+    const reviewInput = ReviewStartInputSchema.parse({ reviewers: [{ kind: 'person', principal, required: true }],
+      instructions: 'Please review these changes' });
+    const binding = await h.admitReview(reviewInput);
+    const composed = reviewComposition.buildReviewStepsWorkflowV1(reviewInput, binding);
+    await expect(h.run(composed.definition, composed.inputs)).resolves.toMatchObject({ state: 'succeeded', finalOutput: {
+      review: { state: 'completed' }, human: { requests: [{ required: true }],
+        needsYou: { needsYou: true, requestedVerdict: true } },
+    } });
+    expect(h.launches).toEqual([]);
+    expect(h.sessionTargets).toEqual([]);
+    expect(h.store.list().some(row => row.lifecycle === 'waiting_for_review')).toBe(false);
+    expect(h.aggregateReads).toEqual(['review']);
+  });
+  it('materializes a selected model reviewer finding before reporting completed coverage', async () => {
+    const writes: unknown[] = [];
+    const comment = ReviewCommentV1Schema.parse({ v: 1, id: 'model-finding', accountId: 'account', reviewId: 'review',
+      findingIdentity: 'b'.repeat(64), workspace: { machineId: 'machine', path: '/repo' }, sessionId: 'model-session',
+      body: 'Unchecked input', bodyVersion: 1, edits: [], flags: {}, dispositions: {}, threadId: 'model-finding', transitions: [],
+      anchor: { kind: 'line', filePath: 'a.ts', line: 1 }, snapshot: { kind: 'none', capturedAt: 1 },
+      author: { kind: 'workflow', runId: 'builtin-run' }, state: 'proposed', serverRevision: 1, createdAt: 1, updatedAt: 1 });
+    const h = harness({ freshSessionId: 'model-session', reviewCounts: () => ({ total: writes.length, needsDecision: writes.length }),
+      session: () => ({ reviewOutcome: 'complete', summary: 'One defect', overviewMarkdown: 'One defect.',
+        findings: [{ id: 'input', title: 'Unchecked input', summary: 'Validate before reading.', severity: 'high',
+          category: 'correctness', filePath: 'a.ts', startLine: 1 }], questions: [], assumptions: [] }),
+      commentWrite: async (actionId, input) => {
+        expect(actionId).toBe('reviews.comments.create');
+        writes.push(input);
+        return { comment };
+      },
+    });
+    const reviewInput = ReviewStartInputSchema.parse({ instructions: 'Review without changing code', reviewers: [{ kind: 'model',
+      launch: { executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/repo' }, agentTarget, permissionMode: 'yolo' } }] });
+    const composed = reviewComposition.buildReviewStepsWorkflowV1(reviewInput, await h.admitReview(reviewInput));
+    const run = await h.run(composed.definition, composed.inputs);
+    expect(run, JSON.stringify(h.store.list())).toMatchObject({ state: 'succeeded', finalOutput: {
+      review: { state: 'completed', counts: { total: 1, needsDecision: 1 } },
+    } });
+    expect(writes).toEqual([expect.objectContaining({ reviewId: 'review', sessionId: 'model-session',
+      appearance: expect.objectContaining({ roundOrdinal: 1, reviewerId: 'step-1-reviewer-1', machineId: 'machine' }) })]);
+    expect(h.launches).toEqual([]);
+    expect(h.sessionTargets).toEqual(['model-session']);
+    expect(h.aggregateReads).toEqual(['review']);
+  });
+  it('returns the current human verdict from the canonical aggregate without another review pass', async () => {
+    const principal = { kind: 'account' as const, accountId: 'account' };
+    const h = harness({ reviewCounts: { total: 0, needsDecision: 0 }, reviewRequests: [
+      { id: 'request', roundOrdinal: 1, principal, required: true, needsAccess: false },
+    ], reviewVerdicts: [{ accountId: 'account', roundOrdinal: 1, verdict: 'request_changes', submittedAt: 2, revision: 1 }] });
+    const reviewInput = ReviewStartInputSchema.parse({ reviewers: [{ kind: 'person', principal, required: true }],
+      instructions: 'Please review these changes' });
+    const composed = reviewComposition.buildReviewStepsWorkflowV1(reviewInput, await h.admitReview(reviewInput));
+    await expect(h.run(composed.definition, composed.inputs)).resolves.toMatchObject({ state: 'succeeded', finalOutput: {
+      review: { state: 'completed' }, human: { verdicts: [{ verdict: 'request_changes', revision: 1 }],
+        needsYou: { needsYou: false, requestedVerdict: false } },
+    } });
+    expect(h.launches).toEqual([]);
+    expect(h.aggregateReads).toEqual(['review']);
+    expect(h.events).not.toContain('check');
+  });
+  it('sends one explicit Fix request from persisted acceptance without restarting the Review', async () => {
+    const comment = ReviewCommentV1Schema.parse({ v: 1, id: 'accepted', accountId: 'account', reviewId: 'review',
+      findingIdentity: 'a'.repeat(64),
+      workspace: { machineId: 'machine', path: '/repo' }, body: 'Accepted defect', bodyVersion: 1,
+      edits: [], flags: {}, dispositions: {}, threadId: 'accepted', transitions: [],
+      anchor: { kind: 'file', filePath: 'a.ts' }, snapshot: { kind: 'none', capturedAt: 1 },
+      author: { kind: 'workflow', runId: 'builtin-run' }, state: 'open', reviewTriageStatus: 'accept',
+      serverRevision: 3, createdAt: 1, updatedAt: 1 });
+    const h = harness({ reviewCounts: { total: 1, needsDecision: 0 }, comments: () => [comment],
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'review.apply': ['agent'], 'session.message.send': ['agent'] } }) });
+    const reviewInput = ReviewStartInputSchema.parse({ reviewers: [{ kind: 'engine', engineId: engine }],
+      sessionId: 'origin', instructions: 'Review once', then: 'fix' });
+    const binding = await h.admitReview(reviewInput);
+    const composed = reviewComposition.buildReviewStepsWorkflowV1(reviewInput, binding);
+    const run = await h.run(composed.definition, composed.inputs);
+    expect(run, JSON.stringify(h.store.list())).toMatchObject({ state: 'succeeded',
+      finalOutput: { review: { state: 'completed', counts: { total: 1, needsDecision: 0 } } } });
+    expect(h.sentMessages).toEqual([{ sessionId: 'origin', message: expect.stringContaining('Accepted defect') }]);
+    expect(h.launches.filter(({ request }) => request.intent === 'review')).toHaveLength(1);
+    expect(h.commentReads).toEqual([{ actionId: 'reviews.comments.list' }]);
+    expect(h.aggregateReads).toEqual(['review']);
+    expect(h.events).not.toContain('check');
+  });
+  it('runs admitted Review on its Machine and verifies in the selected reviewSession', async () => {
+    const h = harness({ checks: [{ verdict: 'continue' }, { verdict: 'converged' }], session: (id) => {
+      expect(id).toBe('verify'); return 'verified';
+    } });
+    expect(await h.run(historicalReview(), {
       engines: [engine], reviewSession: { serverId: 'home', sessionId: 'review-target' },
     })).toMatchObject({ state: 'succeeded', finalOutput: { kind: 'stop_condition', arm: 0 } });
-    expect(h.launches.filter(({ request }) => request.intent === 'review').map(({ sessionId }) => sessionId))
-      .toEqual(['review-target', 'review-target']);
+    // c3fdd1c57c1 keeps Workflow Review on the admitted Machine while the
+    // accepted Session binding remains its scope and verification destination.
+    const reviews = h.launches.filter(({ request }) => request.intent === 'review');
+    expect(reviews).toHaveLength(2);
+    for (const review of reviews) expect(review).toMatchObject({ sessionId: null,
+      options: { targetMachineId: 'machine', workflowScope: { sessions: [{ serverId: 'home', sessionId: 'review-target' }] } },
+    });
     expect(h.reviewReads).toEqual([]);
     expect(h.sessionTargets).toEqual(['review-target']);
   });
@@ -784,11 +1129,11 @@ describe('built-ins through accepted materialization and native leaf adapters', 
       body: 'A material finding', bodyVersion: 1, edits: [], author: { kind: 'workflow', runId: 'builtin-run' },
       state: 'open', flags: {}, dispositions: {}, threadId: 'finding-1', transitions: [], createdAt: 1, updatedAt: 1, serverRevision: 1 })];
     const h = harness({ comments: () => comments, checks: [{ verdict: 'continue' }, { verdict: 'converged' }], session: (id, input) => {
-      expect(id).toBe('verify'); expect(input.text).toContain(REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1);
+      expect(id).toBe('verify');
       expect(input.values).toHaveLength(1); expect(JSON.stringify(input.values)).toContain('finding-1');
       comments = []; return 'verified and fixed';
     } });
-    expect(await h.run(builtin('review-and-converge'), { engines: [engine, otherEngine] })).toMatchObject({ state: 'succeeded', finalOutput: { kind: 'stop_condition', arm: 0 } });
+    expect(await h.run(historicalReview(), { engines: [engine, otherEngine] })).toMatchObject({ state: 'succeeded', finalOutput: { kind: 'stop_condition', arm: 0 } });
     expect(h.events).not.toContain('judge');
     expect(h.events.indexOf('verify')).toBeGreaterThan(h.events.indexOf('check'));
     expect(h.events.slice(h.events.indexOf('verify') + 1).filter((event) => event === 'review')).toHaveLength(2);
@@ -798,40 +1143,40 @@ describe('built-ins through accepted materialization and native leaf adapters', 
   });
   it.each([{ engines: ['codex'] }, { engines: [engine, otherEngine] }])('supplies the complete requested engine set to Check for a zero-finding panel: $engines', async ({ engines }) => {
     const h = harness();
-    await h.run(builtin('review-and-converge'), { engines, maxRounds: 1 });
+    await h.run(historicalReview(), { engines, maxRounds: 1 });
     const check = h.store.list().find(row => row.blockId === 'check');
     // READY227 supplied completed/materialized outcomes and no commentIds,
     // but omitted the requested engines, so Check could not establish coverage.
     expect(check?.input?.input).toContainEqual(engines);
-    expect(check?.input?.input).toContainEqual(expect.arrayContaining(engines.map(key => expect.objectContaining({
+    expect(check?.input?.input).toContainEqual(expect.arrayContaining(engines.map(() => expect.objectContaining({
       status: 'completed', results: { review: expect.objectContaining({ commentIds: [],
-        perEngineOutcome: [expect.objectContaining({ key, outcome: 'completed', materialization: { kind: 'complete' } })],
+        perEngineOutcome: [expect.objectContaining({ key: reviewReviewerIdForSelectionV1(0), outcome: 'completed', materialization: { kind: 'complete' } })],
       }) },
     }))));
   });
   it('reports once without fixing or another panel, with Judge off', async () => {
     const h = harness({ checks: [{ verdict: 'continue' }], session: (id, input) => {
-      expect(id).toBe('report'); expect(input.text).toContain(REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1);
+      expect(id).toBe('report');
       expect(input.values).toHaveLength(1); return 'verified only';
     } });
-    expect(await h.run(builtin('review-and-converge'), { engines: [engine, otherEngine], apply: 'report' })).toMatchObject({ state: 'succeeded', finalOutput: { kind: 'stop_condition', arm: 1 } });
+    expect(await h.run(historicalReview(), { engines: [engine, otherEngine], apply: 'report' })).toMatchObject({ state: 'succeeded', finalOutput: { kind: 'stop_condition', arm: 1 } });
     expect(h.events.filter((event) => event === 'review')).toHaveLength(2); expect(h.events).not.toContain('verify');
   });
   it('notifies after non-convergence without parking or leaving the next run blocked', async () => {
     const h = harness({ checks: [{ verdict: 'continue' }] });
-    expect(await h.run(builtin('review-and-converge'), { engines: [engine, otherEngine], maxRounds: 1 })).toMatchObject({ state: 'succeeded', finalOutput: { kind: 'exhausted', rounds: 1 } });
+    expect(await h.run(historicalReview(), { engines: [engine, otherEngine], maxRounds: 1 })).toMatchObject({ state: 'succeeded', finalOutput: { kind: 'exhausted', rounds: 1 } });
     expect(h.notifications).toHaveLength(1); expect(h.store.list().some((row) => row.lifecycle === 'waiting_for_review')).toBe(false);
   });
   it('retains a failed reviewer as check evidence rather than losing the round', async () => {
     const h = harness({ checks: [{ verdict: 'continue' }], reviewFailed: true });
-    expect(await h.run(builtin('review-and-converge'), { engines: [engine, otherEngine], maxRounds: 1 }))
+    expect(await h.run(historicalReview(), { engines: [engine, otherEngine], maxRounds: 1 }))
       .toMatchObject({ state: 'succeeded', finalOutput: { kind: 'exhausted', rounds: 1 } });
     expect(String(h.launches.find(({ request }) => request.intent === 'agent')?.request.instructions)).toContain('native_review_failed');
     expect(h.notifications).toHaveLength(1);
   });
   it('collects a reviewer that provably launched no run while preserving its successful sibling', async () => {
     const h = harness({ checks: [{ verdict: 'continue' }], reviewLaunchFailure: true });
-    expect(await h.run(builtin('review-and-converge'), { engines: [engine, otherEngine], maxRounds: 1 }))
+    expect(await h.run(historicalReview(), { engines: [engine, otherEngine], maxRounds: 1 }))
       .toMatchObject({ state: 'succeeded', finalOutput: { kind: 'exhausted', rounds: 1 } });
     expect(h.store.list().map(({ blockKind, lifecycle, reason }) => ({ blockKind, lifecycle, reason })))
       .toContainEqual({ blockKind: 'action', lifecycle: 'failed', reason: 'execution_run_target_unavailable' });
@@ -862,7 +1207,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
         return { comment };
       },
     });
-    expect(await h.run(builtin('review-and-converge'), { engines: [engine], useJudge: true, maxRounds: 1 })).toMatchObject({ state: 'succeeded' });
+    expect(await h.run(historicalReview(), { engines: [engine], useJudge: true, maxRounds: 1 })).toMatchObject({ state: 'succeeded' });
     expect(writes).toEqual([expect.objectContaining({ ...scope, commentId: 'finding-1', expectedServerRevision: 2,
       clientMutationId: 'judge-finding-1-r2', ...(verdict === 'dismiss' ? { expectedState: 'open', toState: 'dismissed', reason: 'Concrete evidence',
         ...(project ? { evidence: [{ kind: 'reasoning', message: 'Proof' }] } : {}) }
@@ -881,7 +1226,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
       comments: () => [comment], checks: [{ verdict: 'continue' }],
       commentWrite: async () => ({ ok: false, errorCode: 'review_comment_conflict', error: 'review_comment_conflict' }),
     });
-    await expect(h.run(builtin('review-and-converge'), { engines: [engine], useJudge: true, maxRounds: 1 }))
+    await expect(h.run(historicalReview(), { engines: [engine], useJudge: true, maxRounds: 1 }))
       .resolves.toMatchObject({ state: 'succeeded', completedWithFailures: true, finalOutput: { kind: 'exhausted', rounds: 1 } });
     expect(h.events).toContain('check');
     const check = h.launches.find(({ request }) => typeof request.instructions === 'string' && request.instructions.includes('Check convergence'));
@@ -901,7 +1246,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     const current = comments.slice(-3);
     const unrelated = comments.slice(0, -3);
     const h = harness({ comments: () => comments, panelCommentIds: current.map((comment) => comment.id) });
-    await expect(h.run(builtin('review-and-converge'), { engines: [engine], maxRounds: 1, useJudge }))
+    await expect(h.run(historicalReview(), { engines: [engine], maxRounds: 1, useJudge }))
       .resolves.toMatchObject({ state: 'succeeded', finalOutput: { kind: 'stop_condition', arm: 0 } });
     const check = h.launches.find(({ request }) => typeof request.instructions === 'string' && request.instructions.includes('Check convergence'));
     for (const comment of current) expect(String(check?.request.instructions)).toContain(comment.body);
@@ -916,7 +1261,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
   });
   it('keeps a missing panel comment as persisted convergence failure evidence', async () => {
     const h = harness({ panelCommentIds: ['missing-finding'], checks: [{ verdict: 'continue' }] });
-    await expect(h.run(builtin('review-and-converge'), { engines: [engine], maxRounds: 1 }))
+    await expect(h.run(historicalReview(), { engines: [engine], maxRounds: 1 }))
       .resolves.toMatchObject({ state: 'succeeded', completedWithFailures: true, finalOutput: { kind: 'exhausted', rounds: 1 } });
     const check = h.launches.find(({ request }) => typeof request.instructions === 'string' && request.instructions.includes('Check convergence'));
     expect(String(check?.request.instructions)).toContain('review_comment_not_found');
@@ -924,7 +1269,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
   });
   it('refuses an undeclared apply mode before launching any reviewer or verification turn', async () => {
     const h = harness();
-    await expect(h.run(builtin('review-and-converge'), { engines: [engine], apply: 'anything' })).rejects.toThrow('invalid_input');
+    await expect(h.run(historicalReview(), { engines: [engine], apply: 'anything' })).rejects.toThrow('invalid_input');
     expect(h.launches).toEqual([]);
     expect(h.events).toEqual([]);
   });
@@ -934,7 +1279,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
       checks: [{ verdict: 'continue' }],
       commentWrite: async () => { throw new Error('Unapproved comment mutation'); },
     });
-    await expect(h.run(builtin('review-and-converge'), { engines: [engine], useJudge: true, maxRounds: 1 }))
+    await expect(h.run(historicalReview(), { engines: [engine], useJudge: true, maxRounds: 1 }))
       .resolves.toMatchObject({ state: 'succeeded', completedWithFailures: true, finalOutput: { kind: 'exhausted', rounds: 1 } });
     expect(h.events).not.toContain(verdict === 'uphold' ? 'reviews.comments.setDisposition' : 'reviews.comments.transition');
     expect(h.events).toContain('check');
