@@ -472,6 +472,8 @@ import { listServersForVoiceTool } from '@/voice/tools/actionImpl/serversList';
 import { listReviewEnginesForVoiceTool } from '@/voice/tools/actionImpl/reviewEnginesList';
 import { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } from '@/voice/tools/actionImpl/agentCatalogList';
 import { createReviewCommentsHttpActionExecutor } from '@/sync/domains/reviews/comments/api';
+import { createReviewHumanHttpActionExecutor } from '@/sync/domains/reviews/humanApi';
+import { isReviewHumanActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { REVIEW_COMMENT_RESOURCE_COMMITMENT_DOMAIN_V1 } from '@happier-dev/protocol/reviews/comments/content';
 import { createPluginPermissionGrantHttpActionExecutor } from '@/sync/domains/plugins/permissions/api';
 import { createPluginWebhookEndpointHttpActionExecutor } from '@/sync/api/plugins/webhooks/endpointActions';
@@ -1430,8 +1432,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     ...(opts?.usageQueryRead ? { query: opts.usageQueryRead } : {}) } : undefined;
   const scmActionExecute = opts?.scmActionExecute ?? createUiScmAction(accountContext, { onDispatched: opts?.onScmDispatched });
   const publicProfileHome = opts?.homeDomainAction ?? capturedFamilyPorts?.homeDomainAction;
+  const reviewHumanAction = accountContext ? createReviewHumanHttpActionExecutor(accountContext) : undefined;
   const homeDomainAction = opts?.homeDomainAction ?? capturedFamilyPorts?.homeDomainAction
     ? ((args: Parameters<NonNullable<ActionExecutorDeps['homeDomainAction']>>[0]) => {
+      if (reviewHumanAction && isReviewHumanActionIdV1(args.actionId)) {
+        return reviewHumanAction({ ...args, actionId: args.actionId });
+      }
       // Section intents need the opened Account organization owner even when a mounted
       // surface supplies the ordinary Home HTTP transport for the other families.
       const owner = isSessionOrganizationResourceAction(args.actionId)
