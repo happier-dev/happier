@@ -26,13 +26,13 @@ function isJsonScalar(value: unknown): value is AutomationJsonScalarV1 {
         || (typeof value === 'number' && Number.isFinite(value));
 }
 
-function parseJson(value: string): unknown | null {
+function parseJson(value: string): unknown {
     const normalized = value.trim();
-    if (!normalized) return null;
+    if (!normalized) return undefined;
     try {
         return JSON.parse(normalized) as unknown;
     } catch {
-        return null;
+        return undefined;
     }
 }
 

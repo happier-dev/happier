@@ -81,6 +81,7 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
     const triggers = useWorkflowTriggerEditing({ definitionId: saved?.definitionId ?? null,
         sourceKey: source.store.get().draftId, projectTarget: project,
         ...(source.intent.lifetimeSession === undefined ? {} : { lifetimeSession: source.intent.lifetimeSession }),
+        ...(source.intent.startContext?.session === undefined ? {} : { sessionIntake: source.intent.startContext.session }),
         accountLifetime: source.lifetime, ...(source.incomplete === undefined ? {} : { initialIncomplete: source.incomplete }) });
     React.useEffect(() => {
         if (source.intent.trigger === undefined) return;
@@ -173,8 +174,10 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
         } }, history: history.controls, save, saving, failed, saved,
         openInEditor: () => {
             if (source.lifetime === null) return null;
-            const { step: _step, definition: _definition, trigger: _trigger, eventSeed: _eventSeed, nativeEvent: _nativeEvent, payloadSchema: _payloadSchema, ...seed } = source.intent;
+            const { step: _step, definition: _definition, trigger: _trigger, eventSeed: _eventSeed, nativeEvent: _nativeEvent, payloadSchema: _payloadSchema,
+                lifetimeSession: _lifetimeSession, ...seed } = source.intent;
             return prepareWorkflowSentenceEditorEntry({ ...seed, ...(projectRef.current === null ? {} : { project: projectRef.current }),
+                ...(triggers.lifetimeSession === undefined ? {} : { lifetimeSession: triggers.lifetimeSession }),
                 name: source.store.get().name }, source.lifetime, { draft: source.store.get(),
                 triggers: triggers.captureSnapshot(), incompleteTriggers: triggers.incomplete });
         } };

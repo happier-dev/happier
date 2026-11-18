@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { AUTOMATION_SESSION_LIFECYCLE_FILTER_PAYLOAD_SCHEMA_V1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 
 import { buildPluginEventAutomationPayloadBrowser } from './pluginEventAutomationPayloadBrowser';
 
 describe('Plugin Event Automation payload browser', () => {
+    it('offers the canonical nullable Session habit facts to the shared filter controls', () => {
+        const browser = buildPluginEventAutomationPayloadBrowser(AUTOMATION_SESSION_LIFECYCLE_FILTER_PAYLOAD_SCHEMA_V1);
+        expect(browser.fields).toEqual([
+            { pointer: '/launchProfileId', scalarKind: 'string', sampleValue: '' },
+            { pointer: '/changedFiles', scalarKind: 'boolean', sampleValue: true },
+        ]);
+    });
     it('exposes only declared scalar leaves of a strict payload object and renders a bounded sample', () => {
         const browser = buildPluginEventAutomationPayloadBrowser({
             type: 'object',

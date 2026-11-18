@@ -7,6 +7,16 @@ import {
 } from './pluginEventAutomationFilterBuilder';
 
 describe('Plugin Event Automation filter builder', () => {
+    it('rejects unfinished JSON instead of saving it as a null comparison', () => {
+        for (const valueText of ['', '{', 'tru']) {
+            expect(readPluginEventAutomationFilterDraft([
+                { id: 'changes', field: '/changedFiles', op: 'eq', valueText },
+            ])).toEqual({ valid: false, filter: null });
+        }
+        expect(readPluginEventAutomationFilterDraft([
+            { id: 'profile', field: '/launchProfileId', op: 'eq', valueText: 'null' },
+        ])).toEqual({ valid: true, filter: { v: 1, all: [{ op: 'eq', field: '/launchProfileId', value: null }] } });
+    });
     it('constructs the one Protocol filter grammar from bounded scalar clause controls', () => {
         expect(readPluginEventAutomationFilterDraft([
             { id: 'one', field: '/action', op: 'eq', valueText: '"opened"' },

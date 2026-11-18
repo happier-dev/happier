@@ -44,6 +44,8 @@ export type WorkflowTriggerSaveFailure = Readonly<{ kind: 'failed'; message: str
 
 export type WorkflowTriggerEditing = Readonly<{
     set: WorkflowTriggerSetV1 | null;
+    /** The authored set lifetime, also carried when a sentence opens the full editor. */
+    lifetimeSession: Readonly<{ sessionId: string }> | undefined;
     draft: WorkflowTriggerDraft;
     triggerEvents: readonly WorkflowTriggerEventDeclarationV1[] | undefined;
     intendedTriggers: readonly WorkflowIntendedTriggerV1[] | undefined;
@@ -87,10 +89,21 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     /** The editor's Where, which seeds the set's one machine when its first trigger is added. */
     projectTarget: WorkflowProjectTargetV1 | null;
     lifetimeSession?: Parameters<typeof saveWorkflowTriggerDraft>[0]['lifetimeSession'];
+    /** A new habit authored from a Session may deliberately target all Sessions. */
+    sessionIntake?: Readonly<{ subject: Readonly<{ sessionId: string }> }>;
     accountLifetime?: ServerAccountScopeLifetime | null;
     initialIncomplete?: WorkflowTriggerIncomplete;
 }>): WorkflowTriggerEditing {
-    const lifetimeSessionId = params.lifetimeSession?.sessionId;
+    const activeScope = useActiveServerAccountScope();
+    const scope = params.accountLifetime === undefined ? activeScope : params.accountLifetime?.scope ?? null;
+    const scopeKey = scope ? serverAccountScopeKeySuffix(scope) : null;
+    const identity = React.useMemo(() => ({}), [params.sourceKey, scopeKey]);
+    const identityRef = React.useRef(identity);
+    identityRef.current = identity;
+    // The first trigger write can finish before the newly created definition id reaches these props.
+    const acknowledgedSetRef = React.useRef<Readonly<{ identity: object; set: WorkflowTriggerSetV1 | null }>>({ identity, set: null });
+    const acceptedSet = acknowledgedSetRef.current.identity === identity ? acknowledgedSetRef.current.set : null;
+    const lifetimeSessionId = acceptedSet ? acceptedSet.scopeSessionId ?? undefined : params.lifetimeSession?.sessionId;
     const request = React.useMemo(() => params.definitionId === null ? null : lifetimeSessionId === undefined
         ? { workflow: params.definitionId } : { lifetimeSession: { sessionId: lifetimeSessionId } },
     [params.definitionId, lifetimeSessionId]);
@@ -101,18 +114,16 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     const listedSet = workflowQueryKey === null ? null : lifetimeSessionId === undefined ? sets[0] ?? null
         : sets.find(candidate => candidate.scopeSessionId === lifetimeSessionId
             && matchesWorkflowTriggerQuery(workflowQueryKey, candidate) === true) ?? null;
-    const activeScope = useActiveServerAccountScope();
-    const scope = params.accountLifetime === undefined ? activeScope : params.accountLifetime?.scope ?? null;
-    const scopeKey = scope ? serverAccountScopeKeySuffix(scope) : null;
-    const identity = React.useMemo(() => ({}), [params.sourceKey, scopeKey]);
-    const identityRef = React.useRef(identity);
-    identityRef.current = identity;
-    // The first trigger write can finish before the newly created definition id reaches these props.
-    const acknowledgedSetRef = React.useRef<Readonly<{ identity: object; set: WorkflowTriggerSetV1 | null }>>({ identity, set: null });
     const set = params.definitionId === null && acknowledgedSetRef.current.identity === identity ? acknowledgedSetRef.current.set : listedSet;
     const pendingSave = React.useRef<Readonly<{ identity: object; draft: WorkflowTriggerDraft }> | null>(null);
     const [state, setState] = React.useState(() => ({ identity, draft: EMPTY_WORKFLOW_TRIGGER_DRAFT }));
     const draft = state.identity === identity ? state.draft : EMPTY_WORKFLOW_TRIGGER_DRAFT;
+    // Existing sets keep their admitted lifetime. A new all-Session habit belongs to the Account,
+    // while a Session/project/Machine watch retains the originating Session's lifetime.
+    const lifetimeSession = set ? set.scopeSessionId ? { sessionId: set.scopeSessionId } : undefined
+        : params.sessionIntake && projectWorkflowTriggerRows(null, draft).some(row => row.trigger.kind === 'sessionLifecycle'
+            && !('triggerDefinitionEnvelope' in row.trigger) && row.trigger.subject === undefined)
+            ? undefined : params.lifetimeSession ?? (params.sessionIntake ? { sessionId: params.sessionIntake.subject.sessionId } : undefined);
     const initialIncomplete = params.initialIncomplete ?? EMPTY_WORKFLOW_TRIGGER_INCOMPLETE;
     const [incompleteState, setIncompleteState] = React.useState(() => ({ identity, value: initialIncomplete }));
     const incomplete = incompleteState.identity === identity ? incompleteState.value : initialIncomplete;
@@ -127,8 +138,8 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     const setDraft = React.useCallback((next: WorkflowTriggerDraft) => {
         if (identityRef.current === identity) setState({ identity, draft: next });
     }, [identity]);
-    const stateRef = React.useRef({ identity, set, draft, projectTarget: params.projectTarget, lifetimeSession: params.lifetimeSession });
-    stateRef.current = { identity, set, draft, projectTarget: params.projectTarget, lifetimeSession: params.lifetimeSession };
+    const stateRef = React.useRef({ identity, set, draft, projectTarget: params.projectTarget, lifetimeSession });
+    stateRef.current = { identity, set, draft, projectTarget: params.projectTarget, lifetimeSession };
     const rowIdentities = React.useMemo(() => {
         const knownDefinitions: WorkflowTriggerKnownDefinitions = new Map();
         return {
@@ -253,5 +264,5 @@ export function useWorkflowTriggerEditing(params: Readonly<{
         const triggerId = rowIdentities.clients.get(clientId)?.triggerId;
         return triggerId !== undefined && !draft.removes.includes(triggerId) && (set?.triggers.some((row) => row.id === triggerId) ?? false);
     }, [draft, incomplete, set, rowIdentities]);
-    return { set, draft, triggerEvents: eventProjection?.triggerEvents, intendedTriggers: eventProjection?.intendedTriggers, setDraft, captureSnapshot, restoreSnapshot, status, retry, dirty: isWorkflowTriggerDraftDirty(draft), incomplete, updateIncomplete, summary, hasTriggerRow, save };
+    return { set, lifetimeSession, draft, triggerEvents: eventProjection?.triggerEvents, intendedTriggers: eventProjection?.intendedTriggers, setDraft, captureSnapshot, restoreSnapshot, status, retry, dirty: isWorkflowTriggerDraftDirty(draft), incomplete, updateIncomplete, summary, hasTriggerRow, save };
 }

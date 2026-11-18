@@ -116,7 +116,8 @@ it('saves a Session-lifetime sentence without a Project and carries that lifetim
     expect(home.automations.creates).toHaveLength(1);
 });
 
-it.each(['session', 'project', 'machine', 'any'] as const)('keeps Session lifetime while the shared sentence watches %s scope', async kind => {
+// Reviews U7: deliberate new all-Session habits belong to the Account; retained habits keep their lifetime.
+it.each(['session', 'project', 'machine', 'any', 'chooseAny', 'chooseSession'] as const)('saves the shared sentence with its authored %s lifetime', async kind => {
     const home = await sourceHome();
     const subject = { kind: 'session', serverId: resolvePortableServerIdentityForRoutingId(home.lifetime.scope.serverId)!, sessionId: 'lifetime-session' } as const;
     const startContext = { session: { subject } };
@@ -126,25 +127,42 @@ it.each(['session', 'project', 'machine', 'any'] as const)('keeps Session lifeti
         await act(async () => { expect(await other.getCurrent().save()).toEqual({ status: 'applied' }); });
         await other.unmount();
     }
-    const watched = kind === 'session' ? subject : kind === 'project'
+    const watched = kind === 'session' || kind === 'chooseSession' ? subject : kind === 'project'
         ? { kind, serverId: subject.serverId, projectKey: 'project-a' } as const : kind === 'machine'
             ? { kind, serverId: subject.serverId, machineId: 'machine-a' } as const : undefined;
-    const intent = createSessionWorkflowSentenceIntent({ name: 'Session automation', session: startContext.session },
-        kind === 'session' ? undefined : { subject: watched });
+    const accountHabit = kind === 'any' || kind === 'chooseAny';
+    const intent = createSessionWorkflowSentenceIntent({ name: 'Session automation', session: startContext.session,
+        ...(accountHabit || kind === 'chooseSession' ? { project: { machineId: 'machine-a', directory: '/repo' } } : {}) },
+        kind === 'session' || kind === 'chooseAny' ? undefined : { subject: kind === 'chooseSession' ? undefined : watched });
     if (intent === null) throw new Error('Expected Session intake');
     const hook = await renderHook(() => authoring.useWorkflowSentenceDraft({ ...intent, step: message }, home.lifetime));
     expect(hook.getCurrent().triggers.draft.adds).toMatchObject([{ trigger: { kind: 'sessionLifecycle' } }]);
+    if (kind === 'chooseAny' || kind === 'chooseSession') {
+        const add = hook.getCurrent().triggers.draft.adds[0]!;
+        if (add.trigger.kind !== 'sessionLifecycle' || !('events' in add.trigger)) throw new Error('Expected lifecycle habit');
+        const { subject: _subject, ...allSessions } = add.trigger;
+        await act(async () => hook.getCurrent().triggers.setDraft(editWorkflowTriggerDraft(hook.getCurrent().triggers.draft,
+            { kind: 'add', clientId: add.clientId, trigger: kind === 'chooseSession' ? { ...allSessions, subject } : allSessions })));
+    }
+    const initialEntry = hook.getCurrent().openInEditor();
+    if (!initialEntry) throw new Error('Expected the unsaved editor entry');
+    const initialSeed = readWorkflowDefinitionDraftSeed(initialEntry.params.definitionDraftSeedId, home.lifetime.scope);
+    if (accountHabit) expect(initialSeed).not.toHaveProperty('lifetimeSession');
+    else expect(initialSeed).toHaveProperty('lifetimeSession', { sessionId: subject.sessionId });
     await act(async () => { expect(await hook.getCurrent().save(), JSON.stringify(home.requests)).toEqual({ status: 'applied' }); });
-    expect(home.automations.creates.at(-1)).toMatchObject({ scopeSessionId: subject.sessionId });
+    if (accountHabit) expect(home.automations.creates.at(-1)).toMatchObject({ scopeSessionId: null });
+    else expect(home.automations.creates.at(-1)).toMatchObject({ scopeSessionId: subject.sessionId });
     await vi.waitFor(() => expect(hook.getCurrent().triggers.set?.triggers[0]?.kind).toBe('sessionLifecycle'));
     const savedTrigger = hook.getCurrent().triggers.set!.triggers[0];
     expect(savedTrigger).toMatchObject({ kind: 'sessionLifecycle', policy: { kind: 'everyMatch' } });
     if (watched === undefined) expect(savedTrigger).not.toHaveProperty('subject');
     else expect(savedTrigger).toHaveProperty('subject', watched);
     const entry = hook.getCurrent().openInEditor();
-    expect(entry && readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, home.lifetime.scope))
-        .toMatchObject({ startContext, lifetimeSession: { sessionId: subject.sessionId },
-            triggers: { rows: [{ trigger: { kind: 'sessionLifecycle', policy: { kind: 'everyMatch' } } }] } });
+    const savedSeed = entry && readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, home.lifetime.scope);
+    expect(savedSeed).toMatchObject({ startContext,
+        triggers: { rows: [{ trigger: { kind: 'sessionLifecycle', policy: { kind: 'everyMatch' } } }] } });
+    if (accountHabit) expect(savedSeed).not.toHaveProperty('lifetimeSession');
+    else expect(savedSeed).toHaveProperty('lifetimeSession', { sessionId: subject.sessionId });
 });
 
 it('carries exact-turn intake through the same sentence create Action', async () => {

@@ -48,9 +48,17 @@ function declaredScalarSample(schema: PluginJsonSchemaV2): ScalarSample | null {
 }
 
 function readScalarSample(schema: PluginJsonSchemaV2): ScalarSample | null {
-    // Composed schemas and collection schemas can have valid JSON Schema
-    // meanings, but they do not declare one unambiguous scalar Event leaf.
-    if (schema.anyOf || schema.oneOf || schema.allOf || schema.type === 'array') return null;
+    // An optional nullable scalar still declares one editable leaf. Mixed scalar
+    // unions and intersections do not supply one unambiguous control kind.
+    const alternatives = schema.anyOf ?? schema.oneOf;
+    if (alternatives) {
+        if (schema.anyOf && schema.oneOf || schema.allOf || schema.type !== undefined) return null;
+        const samples = alternatives.map(readScalarSample);
+        if (samples.some(sample => sample === null)) return null;
+        const nonNull = samples.filter(sample => sample?.scalarKind !== 'null');
+        return nonNull.length === 1 ? nonNull[0]! : null;
+    }
+    if (schema.allOf || schema.type === 'array') return null;
     const declared = declaredScalarSample(schema);
     if (schema.type === undefined) return declared;
     switch (schema.type) {
