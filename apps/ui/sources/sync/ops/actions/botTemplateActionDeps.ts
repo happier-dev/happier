@@ -34,7 +34,8 @@ export async function readUiBotTemplatePet(serverId: string, accountPetId: strin
         if (pet.origin.kind === 'registry') return { ok: true, pet: { name: pet.manifest.displayName, source: {
             kind: 'registry', sourceId: pet.origin.sourceId, itemId: pet.origin.itemId,
         } } };
-        const asset = await readAccountPetSpritesheet(account.credentials, accountPetId, { request: account.request });
+        const asset = await readAccountPetSpritesheet(account.credentials, accountPetId, { request: account.request,
+            expected: { mediaType: pet.spritesheetAssetRef.mediaType, digest: pet.spritesheetAssetRef.digest } });
         if (!asset.ok) return asset;
         return { ok: true, pet: { name: pet.manifest.displayName, source: { kind: 'package', package: buildAccountPetCreateRequestV1({
             manifest: pet.manifest, mediaType: asset.mediaType, spritesheetBytes: asset.bytes, origin: pet.origin,

@@ -3,6 +3,7 @@ import { PET_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds
 import { DaemonPetImportResponseV1Schema, DaemonPetValidatePackageResponseV1Schema, PET_DAEMON_RPC_METHODS } from '@happier-dev/protocol/pets/daemonRpc';
 import { buildAccountPetCreateRequestV1, PetImportPreviewV1Schema } from '@happier-dev/protocol/pets/importActionV1';
 import { findMatchingAccountPetV1 } from '@happier-dev/protocol/pets/portablePetV1';
+import { isAccountPetEncryptedLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
 import type { RegistryPetAcquisitionV1 } from '@happier-dev/protocol/registries/registryPetV1';
 import { createAccountPet, deleteAccountPet, listAccountPets } from '@/sync/api/pets/apiAccountPets';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -54,6 +55,10 @@ export function createUiPetActionExecute(account: PetActionAccount | null,
             account.assertCurrent(); args.context.signal?.throwIfAborted();
             if (!result.ok) return { ...result, ...('validation' in result && result.validation ? { details: { validation: result.validation } } : {}) };
             if (result.target !== 'account') return { ok: false, errorCode: 'invalid_response', error: 'Unexpected pet import target.' };
+            // The daemon opens sealed E2EE responses; an unopened entry is never presented as a pet.
+            if (result.account.ok && isAccountPetEncryptedLibraryEntryV1(result.account.pet)) {
+                return { ok: false, errorCode: 'invalid_response', error: 'Unexpected sealed pet entry.' };
+            }
             return result.account.ok ? { ok: true, result: { pet: result.account.pet,
                 ...(result.account.reused ? { reused: true } : {}) } } : result.account;
         }

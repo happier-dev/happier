@@ -5,10 +5,8 @@ import type { ServerFetch } from "@/sync/http/client";
 
 import type {
     AccountPetMetadata,
-    AccountPetsListResponse,
     AccountPetLibraryStatus,
 } from "./accountPetLibraryTypes";
-import { resolveAccountPetReadAdmission } from "./resolveAccountPetReadAdmission";
 
 type AccountPetsSyncDecisionParams = Readonly<{
     serverId?: string;
@@ -32,7 +30,6 @@ export type FetchAndApplyAccountPetsParams = Readonly<{
     /** Captured Sync transport for the applied Home; never resolve staged selection here. */
     request?: ServerFetch;
     resolvePetsSyncEnabled?: (params: AccountPetsSyncDecisionParams) => Promise<boolean>;
-    listPets?: (credentials: AuthCredentials) => Promise<AccountPetsListResponse>;
     applyAccountPets: (pets: AccountPetMetadata[]) => void;
     setAccountPetsStatus?: (status: Exclude<AccountPetLibraryStatus, 'pending'>) => void;
 }>;
@@ -72,17 +69,10 @@ async function fetchAndApplyAccountPetsInternal(
         return { status: "disabled" };
     }
 
-    const admission = params.request
-        ? await resolveAccountPetReadAdmission(params.credentials, { request: params.request })
-        : await resolveAccountPetReadAdmission(params.credentials);
-    if (!shouldContinue()) return { status: "cancelled" };
-    if (admission.status === "unavailable") return admission;
-
-    const result = params.listPets
-        ? await params.listPets(params.credentials)
-        : params.request
-            ? await listAccountPets(params.credentials, { request: params.request })
-            : await listAccountPets(params.credentials);
+    // The list owner decides Account mode, opens E2EE entries and reports unavailable admission.
+    const result = params.request
+        ? await listAccountPets(params.credentials, { request: params.request })
+        : await listAccountPets(params.credentials);
     if (!shouldContinue()) return { status: "cancelled" };
 
     if (!result.ok) {

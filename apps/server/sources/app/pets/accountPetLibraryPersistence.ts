@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { z } from "zod/mini";
 
-import { AccountPetOriginV1Schema, PetAssetMediaTypeV1Schema, type AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
+import { AccountPetEncryptedLibraryEntryV1Schema, AccountPetOriginV1Schema, PetAssetMediaTypeV1Schema, isAccountPetEncryptedLibraryEntryV1, type AccountPetStoredLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
 import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1 } from '@happier-dev/protocol/pets/constants';
 import { PetPackageManifestV1Schema } from '@happier-dev/protocol/pets/manifest';
 import { PetCellBoundsV1Schema } from '@happier-dev/protocol/pets/atlasPixelInspection';
@@ -15,7 +15,7 @@ export type PersistedAccountPet = Readonly<{
     accountId: string;
     accountPetId: string;
     contentMode: string;
-    entry: AccountPetLibraryEntryV1 | null;
+    entry: AccountPetStoredLibraryEntryV1 | null;
     asset: {
         contentMode: string;
         objectKey: string;
@@ -24,7 +24,8 @@ export type PersistedAccountPet = Readonly<{
 
 export type PersistAccountPetParams = Readonly<{
     accountId: string;
-    entry: AccountPetLibraryEntryV1;
+    /** A plaintext entry persists for a Plain Account and a sealed entry for an E2EE Account. */
+    entry: AccountPetStoredLibraryEntryV1;
     objectKey: string;
 }>;
 
@@ -42,7 +43,7 @@ export type AccountPetQuotaLimits = Readonly<{
 
 export type PersistAccountPetResult =
     | Readonly<{ ok: true }>
-    | Readonly<{ ok: false; error: "plaintext-required" | "quota-exceeded" | "internal" }>;
+    | Readonly<{ ok: false; error: "mode-mismatch" | "quota-exceeded" | "internal" }>;
 
 export type AccountPetLibraryPersistence = Readonly<{
     persistAccountPet(params: PersistAccountPetParams & { quotaLimits: AccountPetQuotaLimits }): Promise<PersistAccountPetResult>;
@@ -75,12 +76,23 @@ type AccountPetPackageRow = Readonly<{
     assets: AccountPetAssetRow[];
 }>;
 
+/** Sealed E2EE rows keep the Account envelope in the manifest column; origin holds no content. */
+const StoredEncryptedPetContentSchema = z.strictObject({ t: z.literal("encrypted"), c: z.string() });
+
+/** Content representation of a persisted row, decided by the entry the writer admitted. */
+export function accountPetContentModeForEntry(entry: AccountPetStoredLibraryEntryV1): "plain" | "encrypted" {
+    return isAccountPetEncryptedLibraryEntryV1(entry) ? "encrypted" : "plain";
+}
+
 // The manifest JSON column retains server-measured metadata without changing the
 // imported package manifest or requiring a second pixel scan on library reads.
 const StoredAccountPetManifestV1Schema = z.extend(PetPackageManifestV1Schema, {
     opaqueBounds: z.optional(PetCellBoundsV1Schema),
     hasNeutralLookCell: z.optional(z.boolean()),
 });
+
+/** Sealed spritesheets are opaque bytes to the Home; the real media type is inside the envelope. */
+export const ACCOUNT_PET_SEALED_ASSET_MEDIA_TYPE = "application/octet-stream";
 
 function toPrismaJson(value: unknown): Prisma.InputJsonValue {
     return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -94,6 +106,26 @@ function mapAccountPetRow(row: AccountPetPackageRow): PersistedAccountPet {
             objectKey: asset.objectKey,
         }
         : null;
+    if (asset && row.contentMode === "encrypted" && asset.contentMode === "encrypted") {
+        const content = StoredEncryptedPetContentSchema.safeParse(row.manifest);
+        const entry = content.success ? AccountPetEncryptedLibraryEntryV1Schema.safeParse({
+            accountPetId: row.id,
+            packageFormat: row.packageFormat,
+            content: content.data,
+            spritesheetAssetRef: { assetId: asset.id, digest: asset.digest, sizeBytes: asset.byteLength },
+            digest: row.digest,
+            sizeBytes: row.sizeBytes,
+            createdAt: row.createdAt.getTime(),
+            updatedAt: row.updatedAt.getTime(),
+        }) : null;
+        return {
+            accountId: row.accountId,
+            accountPetId: row.id,
+            contentMode: row.contentMode,
+            entry: entry?.success ? entry.data : null,
+            asset: persistedAsset,
+        };
+    }
     if (!asset || row.packageFormat !== PET_PACKAGE_FORMAT_CODEX_ATLAS_V1) {
         return {
             accountId: row.accountId,
@@ -174,13 +206,17 @@ export function createPrismaAccountPetLibraryPersistence(
                     const accountCurrentness = account
                         ? deriveAccountEncryptionCurrentnessFromRow(account)
                         : null;
+                    // The write fence decides mode against the persisted Account inside this transaction.
+                    const contentMode = accountPetContentModeForEntry(params.entry);
                     if (
                         !accountCurrentness
                         || accountCurrentness.status !== "ready"
-                        || accountCurrentness.currentness.encryptionMode !== "plain"
+                        || accountCurrentness.currentness.encryptionMode !== (contentMode === "encrypted" ? "e2ee" : "plain")
                     ) {
-                        return { ok: false, error: "plaintext-required" };
+                        return { ok: false, error: "mode-mismatch" };
                     }
+                    const entry = params.entry;
+                    const sealed = isAccountPetEncryptedLibraryEntryV1(entry);
 
                     const aggregate = await tx.accountPetPackage.aggregate({
                         where: {
@@ -208,18 +244,18 @@ export function createPrismaAccountPetLibraryPersistence(
 
                     await tx.accountPetPackage.create({
                         data: {
-                            id: params.entry.accountPetId,
+                            id: entry.accountPetId,
                             accountId: params.accountId,
-                            packageFormat: params.entry.packageFormat,
-                            contentMode: "plain",
-                            manifest: toPrismaJson({
-                                ...params.entry.manifest,
-                                ...(params.entry.opaqueBounds ? { opaqueBounds: params.entry.opaqueBounds } : {}),
-                                ...(params.entry.hasNeutralLookCell !== undefined ? { hasNeutralLookCell: params.entry.hasNeutralLookCell } : {}),
+                            packageFormat: entry.packageFormat,
+                            contentMode,
+                            manifest: toPrismaJson(sealed ? entry.content : {
+                                ...entry.manifest,
+                                ...(entry.opaqueBounds ? { opaqueBounds: entry.opaqueBounds } : {}),
+                                ...(entry.hasNeutralLookCell !== undefined ? { hasNeutralLookCell: entry.hasNeutralLookCell } : {}),
                             }),
-                            digest: params.entry.digest,
-                            sizeBytes: params.entry.sizeBytes,
-                            origin: toPrismaJson(params.entry.origin),
+                            digest: entry.digest,
+                            sizeBytes: entry.sizeBytes,
+                            origin: toPrismaJson(sealed ? {} : entry.origin),
                             version: 1,
                             createdAt: new Date(params.entry.createdAt),
                             updatedAt: new Date(params.entry.updatedAt),
@@ -230,11 +266,11 @@ export function createPrismaAccountPetLibraryPersistence(
                             id: params.entry.spritesheetAssetRef.assetId,
                             accountId: params.accountId,
                             petPackageId: params.entry.accountPetId,
-                            contentMode: "plain",
+                            contentMode,
                             storageKind: "privateFile",
                             objectKey: params.objectKey,
                             byteLength: params.entry.spritesheetAssetRef.sizeBytes,
-                            mediaType: params.entry.spritesheetAssetRef.mediaType,
+                            mediaType: sealed ? ACCOUNT_PET_SEALED_ASSET_MEDIA_TYPE : entry.spritesheetAssetRef.mediaType,
                             digest: params.entry.spritesheetAssetRef.digest,
                             createdAt: new Date(params.entry.createdAt),
                             updatedAt: new Date(params.entry.updatedAt),

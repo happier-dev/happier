@@ -1,128 +1,17 @@
-import { createHash } from "node:crypto";
-import { posix } from "node:path";
-
-import { AccountPetCreateRequestV1Schema, AccountPetOriginV1Schema, type AccountPetCreateRequestV1, type PetAssetMediaTypeV1 } from '@happier-dev/protocol/pets/accountLibrary';
-import { PetPackageManifestV1Schema } from '@happier-dev/protocol/pets/manifest';
-import { inspectPetAtlasRgbaPixelsV1, type PetCellBoundsV1 } from '@happier-dev/protocol/pets/atlasPixelInspection';
-import { PET_ATLAS_V2, getPetAtlasForDimensionsV1, PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
+import { inspectPetAtlasRgbaPixelsV1 } from '@happier-dev/protocol/pets/atlasPixelInspection';
+import {
+    validateAccountPetCreateRequestV1,
+    type AccountPetCreateValidationOptionsV1,
+    type AccountPetCreateValidationResultV1,
+    type PetAtlasInspectionV1,
+} from '@happier-dev/protocol/pets/accountPetCreateValidation';
 import { loadSharp } from "@/storage/blob/sharpRuntime";
 
-export type PetAtlasInspection = Readonly<{
-    width: number;
-    height: number;
-    hasAlpha: boolean;
-    hasOpaqueBackground?: boolean;
-    hasTransparentBackground?: boolean;
-    hasVisibleUsedCells?: boolean;
-    hasTransparentUnusedCells?: boolean;
-    opaqueBounds?: PetCellBoundsV1 | null;
-    hasNeutralLookCell?: boolean;
-}>;
+export type PetAtlasInspection = PetAtlasInspectionV1;
 
-export type AccountPetCreateValidationOptions = Readonly<{
-    maxManifestBytes?: number;
-    maxSpritesheetBytes?: number;
-    maxPackageBytes?: number;
-    inspectAtlas?: (bytes: Uint8Array, mediaType: PetAssetMediaTypeV1) => Promise<PetAtlasInspection>;
-}>;
+export type AccountPetCreateValidationOptions = Partial<AccountPetCreateValidationOptionsV1>;
 
-export type AccountPetCreateValidationResult =
-    | Readonly<{
-        ok: true;
-        request: AccountPetCreateRequestV1;
-        spritesheetBytes: Uint8Array;
-        opaqueBounds?: PetCellBoundsV1;
-        hasNeutralLookCell?: boolean;
-    }>
-    | Readonly<{
-        ok: false;
-        errorCode: "invalid_request";
-        error: "invalid_request";
-    }>;
-
-const INVALID_RESULT: AccountPetCreateValidationResult = {
-    ok: false,
-    errorCode: "invalid_request",
-    error: "invalid_request",
-};
-
-const TOP_LEVEL_KEYS = new Set(Object.keys(AccountPetCreateRequestV1Schema.def.shape));
-const MANIFEST_KEYS = new Set(Object.keys(PetPackageManifestV1Schema.def.shape));
-const SPRITESHEET_KEYS = new Set(Object.keys(AccountPetCreateRequestV1Schema.def.shape.spritesheet.def.shape));
-const ORIGIN_KEYS_BY_KIND: ReadonlyMap<string, ReadonlySet<string>> = new Map(AccountPetOriginV1Schema.def.options.map(schema => [
-    schema.def.shape.kind.def.values[0], new Set(Object.keys(schema.def.shape)),
-]));
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function hasUnexpectedKeys(value: unknown, allowedKeys: ReadonlySet<string>): boolean {
-    if (!isRecord(value)) return true;
-    return Object.keys(value).some((key) => !allowedKeys.has(key));
-}
-
-function hasUnexpectedOriginKeys(value: unknown): boolean {
-    if (!isRecord(value) || typeof value.kind !== "string") return true;
-    const allowedKeys = ORIGIN_KEYS_BY_KIND.get(value.kind);
-    if (!allowedKeys) return true;
-    return hasUnexpectedKeys(value, allowedKeys);
-}
-
-function isSafeManifestSpritesheetPath(path: string): boolean {
-    const raw = path.replace(/\\/g, "/").trim();
-    if (!raw || raw.startsWith("/") || raw.includes("\0") || raw.includes(":")) return false;
-    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) return false;
-    const normalized = posix.normalize(raw);
-    if (normalized === "." || normalized === ".." || normalized.startsWith("../")) return false;
-    const parts = normalized.split("/").filter(Boolean);
-    if (parts.length !== 1 || parts.some((part) => part === "..")) return false;
-    return normalized === "spritesheet.webp" || normalized === "spritesheet.png";
-}
-
-function decodeStrictBase64(value: string): Uint8Array | null {
-    try {
-        const bytes = Buffer.from(value, "base64");
-        if (bytes.byteLength === 0) return null;
-        const canonical = bytes.toString("base64").replace(/=+$/, "");
-        const provided = value.replace(/=+$/, "");
-        if (canonical !== provided) return null;
-        return new Uint8Array(bytes);
-    } catch {
-        return null;
-    }
-}
-
-function calculateDigest(bytes: Uint8Array): string {
-    return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-}
-
-function utf8JsonByteLength(value: unknown): number {
-    return Buffer.byteLength(JSON.stringify(value), "utf8");
-}
-
-function hasExpectedMagicBytes(bytes: Uint8Array, mediaType: PetAssetMediaTypeV1): boolean {
-    if (mediaType === "image/webp") {
-        return bytes.byteLength >= 12
-            && bytes[0] === 0x52
-            && bytes[1] === 0x49
-            && bytes[2] === 0x46
-            && bytes[3] === 0x46
-            && bytes[8] === 0x57
-            && bytes[9] === 0x45
-            && bytes[10] === 0x42
-            && bytes[11] === 0x50;
-    }
-    return bytes.byteLength >= 8
-        && bytes[0] === 0x89
-        && bytes[1] === 0x50
-        && bytes[2] === 0x4e
-        && bytes[3] === 0x47
-        && bytes[4] === 0x0d
-        && bytes[5] === 0x0a
-        && bytes[6] === 0x1a
-        && bytes[7] === 0x0a;
-}
+export type AccountPetCreateValidationResult = AccountPetCreateValidationResultV1;
 
 export async function inspectPetAtlasWithSharp(bytes: Uint8Array): Promise<PetAtlasInspection> {
     const sharp = await loadSharp();
@@ -146,93 +35,13 @@ export async function inspectPetAtlasWithSharp(bytes: Uint8Array): Promise<PetAt
     };
 }
 
-function hasExpectedAtlasContract(inspection: PetAtlasInspection): boolean {
-    return getPetAtlasForDimensionsV1(inspection.width, inspection.height) !== null
-        && inspection.hasAlpha === true
-        && inspection.hasOpaqueBackground !== true
-        && inspection.hasTransparentBackground !== false
-        && inspection.hasVisibleUsedCells !== false
-        && inspection.hasTransparentUnusedCells !== false;
-}
-
+/** Plain-Account admission: the protocol owner's package checks with the Home's sharp decoder. */
 export async function validateAccountPetCreateRequest(
     rawRequest: unknown,
     options: AccountPetCreateValidationOptions = {},
 ): Promise<AccountPetCreateValidationResult> {
-    if (
-        hasUnexpectedKeys(rawRequest, TOP_LEVEL_KEYS)
-        || !isRecord(rawRequest)
-        || hasUnexpectedKeys(rawRequest.manifest, MANIFEST_KEYS)
-        || hasUnexpectedKeys(rawRequest.spritesheet, SPRITESHEET_KEYS)
-        || hasUnexpectedOriginKeys(rawRequest.origin)
-    ) {
-        return INVALID_RESULT;
-    }
-
-    const parsed = AccountPetCreateRequestV1Schema.safeParse(rawRequest);
-    if (!parsed.success || !isSafeManifestSpritesheetPath(parsed.data.manifest.spritesheetPath)) {
-        return INVALID_RESULT;
-    }
-
-    const manifestBytes = utf8JsonByteLength(parsed.data.manifest);
-    const maxManifestBytes = options.maxManifestBytes ?? PET_PACKAGE_LIMITS_V1.maxManifestBytes;
-    if (manifestBytes > maxManifestBytes) {
-        return INVALID_RESULT;
-    }
-
-    const spritesheet = parsed.data.spritesheet;
-    const maxSpritesheetBytes = options.maxSpritesheetBytes ?? PET_PACKAGE_LIMITS_V1.maxCanonicalSpritesheetBytes;
-    if (spritesheet.sizeBytes > maxSpritesheetBytes) {
-        return INVALID_RESULT;
-    }
-
-    const maxPackageBytes = options.maxPackageBytes ?? PET_PACKAGE_LIMITS_V1.maxCanonicalPackageBytes;
-    if (manifestBytes + spritesheet.sizeBytes > maxPackageBytes) {
-        return INVALID_RESULT;
-    }
-
-    const encoded = spritesheet.data.trim();
-    // Use the encoded payload to verify the size claim before allocating decoded bytes.
-    if (Buffer.byteLength(encoded, "base64") !== spritesheet.sizeBytes) {
-        return INVALID_RESULT;
-    }
-
-    const bytes = decodeStrictBase64(encoded);
-    if (!bytes || bytes.byteLength !== spritesheet.sizeBytes) {
-        return INVALID_RESULT;
-    }
-    if (!hasExpectedMagicBytes(bytes, spritesheet.mediaType)) {
-        return INVALID_RESULT;
-    }
-    if (spritesheet.digest !== calculateDigest(bytes)) {
-        return INVALID_RESULT;
-    }
-
-    const inspectAtlas = options.inspectAtlas ?? inspectPetAtlasWithSharp;
-    let opaqueBounds: PetCellBoundsV1 | undefined;
-    let hasNeutralLookCell: boolean | undefined;
-    try {
-        const inspection = await inspectAtlas(bytes, spritesheet.mediaType);
-        if (!hasExpectedAtlasContract(inspection)) {
-            return INVALID_RESULT;
-        }
-        opaqueBounds = inspection.opaqueBounds ?? undefined;
-        const atlas = getPetAtlasForDimensionsV1(inspection.width, inspection.height);
-        if (atlas === PET_ATLAS_V2) {
-            parsed.data.manifest.spriteVersionNumber = 2;
-            hasNeutralLookCell = inspection.hasNeutralLookCell === true;
-        } else if (parsed.data.manifest.spriteVersionNumber !== undefined) {
-            parsed.data.manifest.spriteVersionNumber = 1;
-        }
-    } catch {
-        return INVALID_RESULT;
-    }
-
-    return {
-        ok: true,
-        request: parsed.data,
-        spritesheetBytes: bytes,
-        ...(opaqueBounds ? { opaqueBounds } : {}),
-        ...(hasNeutralLookCell !== undefined ? { hasNeutralLookCell } : {}),
-    };
+    return await validateAccountPetCreateRequestV1(rawRequest, {
+        ...options,
+        inspectAtlas: options.inspectAtlas ?? inspectPetAtlasWithSharp,
+    });
 }

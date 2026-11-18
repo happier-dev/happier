@@ -2,6 +2,8 @@ import { z } from "zod/mini";
 
 import { AccountPetAssetReadResponseV1Schema, AccountPetCreateResponseV1Schema, AccountPetDeleteResponseV1Schema, AccountPetListResponseV1Schema } from '@happier-dev/protocol/pets/accountLibrary';
 
+import { ACCOUNT_PET_ENCRYPTED_LIMITS_V1 } from '@happier-dev/protocol/pets/accountPetEncryptionV1';
+
 import { readPetsFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import type { Fastify } from "@/app/api/types";
@@ -13,15 +15,21 @@ const BASE64_EXPANSION_NUMERATOR = 4;
 const BASE64_EXPANSION_DENOMINATOR = 3;
 const ACCOUNT_PET_CREATE_JSON_OVERHEAD_BYTES = 16 * 1024;
 
+function base64Length(bytes: number): number {
+    return Math.ceil((bytes * BASE64_EXPANSION_NUMERATOR) / BASE64_EXPANSION_DENOMINATOR);
+}
+
+/** The larger of the Plain package body and the sealed E2EE body derived from the same package limits. */
 function resolveAccountPetCreateBodyLimitBytes(): number {
     const limits = readPetsFeatureEnv(process.env);
     const maxBinaryPayloadBytes = Math.max(
         limits.maxCanonicalSpritesheetBytes,
         limits.maxCanonicalPackageBytes,
     );
-    return Math.ceil((maxBinaryPayloadBytes * BASE64_EXPANSION_NUMERATOR) / BASE64_EXPANSION_DENOMINATOR)
-        + limits.maxManifestBytes
-        + ACCOUNT_PET_CREATE_JSON_OVERHEAD_BYTES;
+    const plainBody = base64Length(maxBinaryPayloadBytes) + limits.maxManifestBytes;
+    const sealedBody = base64Length(ACCOUNT_PET_ENCRYPTED_LIMITS_V1.maxSpritesheetCiphertextBytes)
+        + ACCOUNT_PET_ENCRYPTED_LIMITS_V1.maxContentCiphertextChars;
+    return Math.max(plainBody, sealedBody) + ACCOUNT_PET_CREATE_JSON_OVERHEAD_BYTES;
 }
 
 function sendAssetHeaders(reply: { header: (name: string, value: string) => unknown }, asset: { mediaType: string; digest: string }) {
@@ -76,7 +84,7 @@ export function registerAccountPetLibraryRoutes(app: Fastify): void {
         if (!result.ok && result.errorCode === "quota_exceeded") {
             return reply.code(400).send(result);
         }
-        if (!result.ok && result.errorCode === "custom_pet_sync_requires_plaintext") {
+        if (!result.ok && (result.errorCode === "custom_pet_sync_requires_plaintext" || result.errorCode === "account_encryption_mode_mismatch")) {
             return reply.code(400).send(result);
         }
         if (!result.ok) {

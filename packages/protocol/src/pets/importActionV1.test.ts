@@ -57,7 +57,9 @@ describe('pet import confirmation projection', () => {
     expect(api.readPetImportOutcomeV1({ ok: true, result: { pet, reused: true } }))
       .toEqual({ kind: 'added', pet, reused: true });
     for (const [errorCode, kind] of [['quota_exceeded', 'library_full'], ['feature_disabled', 'pet_sync_off'],
-      ['custom_pet_sync_requires_plaintext', 'pet_sync_off'], ['custom_pet_sync_unavailable', 'pet_sync_off'],
+      // Account mode or Home storage policy is not the pet sync switch; only feature_disabled points there.
+      ['custom_pet_sync_requires_plaintext', 'could_not_add'], ['custom_pet_sync_unavailable', 'could_not_add'],
+      ['account_encryption_mode_mismatch', 'could_not_add'],
       ['invalid_request', 'could_not_add'], ['validation_failed', 'could_not_add']] as const) {
       expect(api.readPetImportOutcomeV1({ ok: false, errorCode }))
         .toMatchObject({ kind, errorCode });

@@ -53,8 +53,9 @@ function toDataUri(mediaType: PetAssetMediaTypeV1, dataBase64: string): string {
     return `data:${mediaType};base64,${dataBase64}`;
 }
 
-async function readAccountPetSpritesheetSource(accountPetId: string, credentials: AuthCredentials, request: ServerFetch, signal: AbortSignal): Promise<ImageProps['source'] | null> {
-    const asset = await readAccountPetSpritesheet(credentials, accountPetId, { request, signal });
+async function readAccountPetSpritesheetSource(source: Extract<SelectedPetPackageSource, { kind: 'accountPet' }>, credentials: AuthCredentials, request: ServerFetch, signal: AbortSignal): Promise<ImageProps['source'] | null> {
+    const expected = source.mediaType && source.digest ? { mediaType: source.mediaType, digest: source.digest } : undefined;
+    const asset = await readAccountPetSpritesheet(credentials, source.accountPetId, { request, signal, ...(expected ? { expected } : {}) });
     return asset.ok ? toDataUri(asset.mediaType, encodeBase64(asset.bytes, 'base64')) : null;
 }
 
@@ -100,7 +101,7 @@ async function readSharedPetSpritesheetSource(source: Exclude<SelectedPetPackage
     const scope = JSON.stringify([serverId, credentialKey, machineId]);
     const key = spritesheetSourceKey(source);
     return spritesheetReads.run(key, sharedSignal => source.kind === 'accountPet'
-        ? readAccountPetSpritesheetSource(source.accountPetId, credentials, createServerFetchForActiveServer(activeServer, { credentials }), sharedSignal)
+        ? readAccountPetSpritesheetSource(source, credentials, createServerFetchForActiveServer(activeServer, { credentials }), sharedSignal)
         : readDaemonPetPreviewSource(source, credentials, scope, sharedSignal), {
         scope: source.kind === 'accountPet' ? [scope, String(activeServer.generation)] : scope,
         signal,

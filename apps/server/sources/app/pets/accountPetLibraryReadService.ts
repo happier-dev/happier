@@ -18,9 +18,10 @@ function customPetSyncUnavailableResponse(): AccountPetSyncUnavailableResponseV1
     };
 }
 
-async function resolvePlainAccountEncryptionMode(
+/** Persisted Account mode decides which content representation the read may disclose. */
+async function resolveAccountPetReadEncryptionMode(
     accountId: string,
-): Promise<"plain" | null> {
+): Promise<"plain" | "e2ee" | null> {
     const account = await inTx(tx => tx.account.findUnique({
         where: { id: accountId },
         select: {
@@ -33,20 +34,16 @@ async function resolvePlainAccountEncryptionMode(
     const accountCurrentness = account
         ? deriveAccountEncryptionCurrentnessFromRow(account)
         : null;
-    if (
-        !accountCurrentness
-        || accountCurrentness.status !== "ready"
-        || accountCurrentness.currentness.encryptionMode !== "plain"
-    ) {
+    if (!accountCurrentness || accountCurrentness.status !== "ready") {
         return null;
     }
-    return "plain";
+    return accountCurrentness.currentness.encryptionMode;
 }
 
 export async function listAccountPetsForAccount(
     params: Pick<ListAccountPetsForAccountParams, "accountId">,
 ): Promise<AccountPetListResponseV1> {
-    const accountEncryptionMode = await resolvePlainAccountEncryptionMode(
+    const accountEncryptionMode = await resolveAccountPetReadEncryptionMode(
         params.accountId,
     );
     if (!accountEncryptionMode) {
@@ -61,7 +58,7 @@ export async function listAccountPetsForAccount(
 export async function readAccountPetAssetForAccount(
     params: Omit<ReadAccountPetAssetForAccountParams, "accountEncryptionMode">,
 ): Promise<AccountPetAssetReadResult | null> {
-    const accountEncryptionMode = await resolvePlainAccountEncryptionMode(
+    const accountEncryptionMode = await resolveAccountPetReadEncryptionMode(
         params.accountId,
     );
     if (!accountEncryptionMode) {

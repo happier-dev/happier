@@ -31,10 +31,11 @@ export async function createAccountPetForAccount(
     const currentness =
         deriveAccountEncryptionCurrentnessFromRow(account);
     if (currentness.status === "inconsistent") {
+        // Inconsistent E2EE bindings fail closed; they never fall back to the Plain path.
         return {
             ok: false,
-            errorCode: "custom_pet_sync_requires_plaintext",
-            error: "custom_pet_sync_requires_plaintext",
+            errorCode: "account_encryption_mode_mismatch",
+            error: "account_encryption_mode_mismatch",
         };
     }
     const encryptionEnv = readEncryptionFeatureEnv(process.env);

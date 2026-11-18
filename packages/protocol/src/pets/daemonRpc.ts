@@ -269,6 +269,7 @@ export const DaemonPetImportResponseV1Schema = lazyZodSchema(() => z.union([
         'validation_failed',
         'quota_exceeded',
         'custom_pet_sync_requires_plaintext',
+        'account_encryption_mode_mismatch',
         'rate_limited',
         'internal_error',
       ]),

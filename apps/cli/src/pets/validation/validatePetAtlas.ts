@@ -1,5 +1,6 @@
 import { inspectPetAtlasRgbaPixelsV1 } from '@happier-dev/protocol/pets/atlasPixelInspection';
 import { getPetAtlasForDimensionsV1 } from '@happier-dev/protocol/pets/constants';
+import type { PetAtlasInspectorV1 } from '@happier-dev/protocol/pets/accountPetCreateValidation';
 import type { PetAssetMediaTypeV1, PetPackageValidationIssueV1 } from '@happier-dev/protocol';
 
 export type PetAtlasValidationResult =
@@ -177,6 +178,23 @@ async function inspectImageContentWithSharp(input: Readonly<{
     return null;
   }
 }
+
+/**
+ * Atlas inspection for the protocol Account package check, run here before sealing for an
+ * E2EE Account (the Home cannot decode sealed bytes). Decode failures reject the package.
+ */
+export const inspectPetAtlasForAccountUpload: PetAtlasInspectorV1 = async (bytes) => {
+  const sharp = (await import('sharp')).default;
+  const image = sharp(Buffer.from(bytes), { failOn: 'error' });
+  const metadata = await image.metadata();
+  const raw = await image.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  return {
+    width: metadata.width ?? 0,
+    height: metadata.height ?? 0,
+    hasAlpha: Boolean(metadata.hasAlpha),
+    ...inspectPetAtlasRgbaPixelsV1({ data: raw.data, width: raw.info.width, height: raw.info.height, channels: raw.info.channels }),
+  };
+};
 
 export async function defaultPetImageInfoDecoder(input: Readonly<{
   bytes: Buffer;

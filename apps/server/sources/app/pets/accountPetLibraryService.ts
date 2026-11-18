@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1, PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
-import { type AccountPetCreateResponseV1, type AccountPetDeleteResponseV1, type AccountPetLibraryEntryV1, type AccountPetListResponseV1, type AccountPetSyncUnavailableResponseV1, type PetAssetMediaTypeV1 } from '@happier-dev/protocol/pets/accountLibrary';
+import { isAccountPetEncryptedLibraryEntryV1, type AccountPetCreateResponseV1, type AccountPetDeleteResponseV1, type AccountPetEncryptedLibraryEntryV1, type AccountPetLibraryEntryV1, type AccountPetListResponseV1, type AccountPetStoredLibraryEntryV1, type AccountPetSyncUnavailableResponseV1, type PetAssetMediaTypeV1 } from '@happier-dev/protocol/pets/accountLibrary';
+import { admitAccountPetEncryptedCreateRequestV1, isAccountPetEncryptedCreateRequestV1 } from '@happier-dev/protocol/pets/accountPetEncryptionV1';
 import { computeAccountPetPackageDigestV1 } from '@happier-dev/protocol/pets/portablePetV1';
 
 import type { PrivateFilesBackend } from "@/storage/privateFiles/privateFiles";
@@ -11,14 +12,16 @@ import {
     validateAccountPetCreateRequest,
     type AccountPetCreateValidationOptions,
 } from "./accountPetLibraryValidation";
-import type {
-    AccountPetLibraryPersistence,
-    PersistedAccountPet,
+import {
+    ACCOUNT_PET_SEALED_ASSET_MEDIA_TYPE,
+    accountPetContentModeForEntry,
+    type AccountPetLibraryPersistence,
+    type PersistedAccountPet,
 } from "./accountPetLibraryPersistence";
 
 export type AccountPetAssetReadResult = Readonly<{
     ok: true;
-    mediaType: PetAssetMediaTypeV1;
+    mediaType: PetAssetMediaTypeV1 | typeof ACCOUNT_PET_SEALED_ASSET_MEDIA_TYPE;
     bytes: Uint8Array;
     digest: string;
 }> | AccountPetSyncUnavailableResponseV1;
@@ -70,10 +73,10 @@ export type AccountPetLibraryServiceOptions = Readonly<{
 type StoredAccountPet = Readonly<{
     accountId: string;
     accountPetId: string;
-    contentMode: "plain";
-    entry: AccountPetLibraryEntryV1;
+    contentMode: "plain" | "encrypted";
+    entry: AccountPetStoredLibraryEntryV1;
     asset: {
-        contentMode: "plain";
+        contentMode: "plain" | "encrypted";
         objectKey: string;
     };
 }>;
@@ -83,9 +86,12 @@ type AccountMutationLockState = {
     tail: Promise<void>;
 };
 
-function isReadableAccountPet(record: PersistedAccountPet): record is StoredAccountPet {
-    return Boolean(record.entry && record.asset
-        && record.contentMode === "plain" && record.asset.contentMode === "plain");
+/** Mode/envelope agreement: Plain Accounts read plaintext rows, E2EE Accounts sealed rows. */
+function isReadableAccountPet(record: PersistedAccountPet, accountEncryptionMode: "plain" | "e2ee"): record is StoredAccountPet {
+    if (!record.entry || !record.asset) return false;
+    const contentMode = accountPetContentModeForEntry(record.entry);
+    return record.contentMode === contentMode && record.asset.contentMode === contentMode
+        && contentMode === (accountEncryptionMode === "e2ee" ? "encrypted" : "plain");
 }
 
 async function deletePrivateFileOrThrow(privateFiles: PrivateFilesBackend, objectKey: string): Promise<void> {
@@ -108,15 +114,15 @@ function keySegment(value: string): string {
     return Buffer.from(value, "utf8").toString("base64url");
 }
 
-function extensionForMediaType(mediaType: PetAssetMediaTypeV1): "png" | "webp" {
-    return mediaType === "image/png" ? "png" : "webp";
+function extensionForMediaType(mediaType: PetAssetMediaTypeV1 | typeof ACCOUNT_PET_SEALED_ASSET_MEDIA_TYPE): "png" | "webp" | "bin" {
+    return mediaType === ACCOUNT_PET_SEALED_ASSET_MEDIA_TYPE ? "bin" : mediaType === "image/png" ? "png" : "webp";
 }
 
 function createPrivateObjectKey(params: {
     accountId: string;
     petId: string;
     assetDigest: string;
-    mediaType: PetAssetMediaTypeV1;
+    mediaType: PetAssetMediaTypeV1 | typeof ACCOUNT_PET_SEALED_ASSET_MEDIA_TYPE;
 }): string {
     return [
         "private",
@@ -161,14 +167,16 @@ function customPetSyncUnavailableResponse(): AccountPetSyncUnavailableResponseV1
     };
 }
 
-function isCustomPetSyncStorageAllowed(params: Pick<CreateAccountPetForAccountParams, "accountEncryptionMode" | "storagePolicy">): boolean {
-    if (params.accountEncryptionMode === "e2ee") {
-        return false;
-    }
-    if (params.storagePolicy === "required_e2ee") {
-        return false;
-    }
-    return true;
+function accountEncryptionModeMismatchResponse(): AccountPetCreateResponseV1 {
+    return {
+        ok: false,
+        errorCode: "account_encryption_mode_mismatch",
+        error: "account_encryption_mode_mismatch",
+    };
+}
+
+function internalCreateResponse(): AccountPetCreateResponseV1 {
+    return { ok: false, errorCode: "internal_error", error: "internal_error" };
 }
 
 function notFoundDeleteResponse(): AccountPetDeleteResponseV1 {
@@ -206,13 +214,14 @@ function createInMemoryAccountPetLibraryPersistence(): AccountPetLibraryPersiste
                 return { ok: false, error: "quota-exceeded" } as const;
             }
 
+            const contentMode = accountPetContentModeForEntry(params.entry);
             recordsByPetId.set(params.entry.accountPetId, {
                 accountId: params.accountId,
                 accountPetId: params.entry.accountPetId,
-                contentMode: "plain",
+                contentMode,
                 entry: params.entry,
                 asset: {
-                    contentMode: "plain",
+                    contentMode,
                     objectKey: params.objectKey,
                 },
             });
@@ -281,12 +290,93 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
         }
     }
 
+    const quotaLimits = () => ({
+        maxImportedPetsPerAccount: options.maxImportedPetsPerAccount ?? PET_PACKAGE_LIMITS_V1.maxImportedPetsPerAccount,
+        maxImportedPetBytesPerAccount: options.maxImportedPetBytesPerAccount ?? PET_PACKAGE_LIMITS_V1.maxImportedPetBytesPerAccount,
+    });
+
+    /** Called under the Account create lock: private bytes first, then the quota-checked row, cleaning up on refusal. */
+    async function persistWithPrivateFile(params: Readonly<{
+        accountId: string;
+        entry: AccountPetStoredLibraryEntryV1;
+        objectKey: string;
+        bytes: Uint8Array;
+    }>): Promise<AccountPetCreateResponseV1> {
+        await options.privateFiles.writePrivateFile(params.objectKey, params.bytes);
+        let refusal: AccountPetCreateResponseV1;
+        try {
+            const persisted = await persistence.persistAccountPet({
+                accountId: params.accountId,
+                entry: params.entry,
+                objectKey: params.objectKey,
+                quotaLimits: quotaLimits(),
+            });
+            if (persisted.ok) return { ok: true, pet: params.entry };
+            refusal = persisted.error === "quota-exceeded" ? quotaExceededResponse()
+                : persisted.error === "mode-mismatch" ? accountEncryptionModeMismatchResponse()
+                    : internalCreateResponse();
+        } catch {
+            refusal = internalCreateResponse();
+        }
+        try {
+            await deletePrivateFileOrThrow(options.privateFiles, params.objectKey);
+        } catch {
+            return internalCreateResponse();
+        }
+        return refusal;
+    }
+
+    /**
+     * E2EE create: the writing client validated and sealed the package. The Home admits
+     * ciphertext structure and size, then quota; it has no plaintext digest to reuse.
+     */
+    async function createEncryptedAccountPet(accountId: string, request: unknown): Promise<AccountPetCreateResponseV1> {
+        const admitted = admitAccountPetEncryptedCreateRequestV1(request);
+        if (!admitted) return invalidCreateResponse();
+        const petId = createId();
+        const assetId = createId();
+        const timestamp = nowMs();
+        const objectKey = createPrivateObjectKey({
+            accountId,
+            petId,
+            assetDigest: admitted.spritesheetDigest,
+            mediaType: ACCOUNT_PET_SEALED_ASSET_MEDIA_TYPE,
+        });
+        const contentBytes = Buffer.byteLength(admitted.content.c, "utf8");
+        const entry: AccountPetEncryptedLibraryEntryV1 = {
+            accountPetId: petId,
+            packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
+            content: admitted.content,
+            spritesheetAssetRef: {
+                assetId,
+                digest: admitted.spritesheetDigest,
+                sizeBytes: admitted.spritesheetCiphertext.byteLength,
+            },
+            digest: `sha256:${createHash("sha256").update(admitted.content.c).update("\n").update(admitted.spritesheetCiphertext).digest("hex")}`,
+            sizeBytes: contentBytes + admitted.spritesheetCiphertext.byteLength,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        };
+        return await withCreateLock(accountId, () => persistWithPrivateFile({
+            accountId, entry, objectKey, bytes: admitted.spritesheetCiphertext,
+        }));
+    }
+
     return {
         async createAccountPetForAccount(params) {
             if (!params.accountId) {
                 return invalidCreateResponse();
             }
-            if (!isCustomPetSyncStorageAllowed(params)) {
+            const sealedRequest = isAccountPetEncryptedCreateRequestV1(params.request);
+            if (params.accountEncryptionMode === "e2ee") {
+                return sealedRequest
+                    ? await createEncryptedAccountPet(params.accountId, params.request)
+                    : accountEncryptionModeMismatchResponse();
+            }
+            if (sealedRequest) {
+                return accountEncryptionModeMismatchResponse();
+            }
+            if (params.storagePolicy === "required_e2ee") {
                 return customPetSyncRequiresPlaintextResponse();
             }
 
@@ -331,76 +421,23 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             };
 
             return await withCreateLock(params.accountId, async () => {
+                // Plaintext package-digest reuse is a Plain-Account Home decision; E2EE reuse is decided by the client.
                 const existing = await persistence.readAccountPetByDigest(params.accountId, packageDigest);
                 if (existing) {
-                    return isReadableAccountPet(existing)
+                    return isReadableAccountPet(existing, "plain")
                         ? { ok: true, pet: existing.entry, reused: true }
-                        : { ok: false, errorCode: "internal_error", error: "internal_error" };
+                        : internalCreateResponse();
                 }
-                const maxImportedPetsPerAccount = options.maxImportedPetsPerAccount ?? PET_PACKAGE_LIMITS_V1.maxImportedPetsPerAccount;
-                const maxImportedPetBytesPerAccount = options.maxImportedPetBytesPerAccount ?? PET_PACKAGE_LIMITS_V1.maxImportedPetBytesPerAccount;
-
-                await options.privateFiles.writePrivateFile(objectKey, validated.spritesheetBytes);
-                try {
-                    const persisted = await persistence.persistAccountPet({
-                        accountId: params.accountId,
-                        entry,
-                        objectKey,
-                        quotaLimits: {
-                            maxImportedPetsPerAccount,
-                            maxImportedPetBytesPerAccount,
-                        },
-                    });
-                    if (!persisted.ok) {
-                        try {
-                            await deletePrivateFileOrThrow(options.privateFiles, objectKey);
-                        } catch {
-                            return {
-                                ok: false,
-                                errorCode: "internal_error",
-                                error: "internal_error",
-                            };
-                        }
-                        if (persisted.error === "quota-exceeded") {
-                            return quotaExceededResponse();
-                        }
-                        if (persisted.error === "plaintext-required") {
-                            return customPetSyncRequiresPlaintextResponse();
-                        }
-                        return {
-                            ok: false,
-                            errorCode: "internal_error",
-                            error: "internal_error",
-                        };
-                    }
-                } catch {
-                    try {
-                        await deletePrivateFileOrThrow(options.privateFiles, objectKey);
-                    } catch {
-                        return {
-                            ok: false,
-                            errorCode: "internal_error",
-                            error: "internal_error",
-                        };
-                    }
-                    return {
-                        ok: false,
-                        errorCode: "internal_error",
-                        error: "internal_error",
-                    };
-                }
-
-                return { ok: true, pet: entry };
+                return await persistWithPrivateFile({
+                    accountId: params.accountId, entry, objectKey, bytes: validated.spritesheetBytes,
+                });
             });
         },
         async listAccountPetsForAccount(params) {
-            if (params.accountEncryptionMode !== "plain") {
-                return customPetSyncUnavailableResponse();
-            }
             const records = await persistence.listAccountPets(params.accountId);
-            const pets: AccountPetLibraryEntryV1[] = [];
+            const pets: AccountPetStoredLibraryEntryV1[] = [];
             for (const record of records) {
-                if (!isReadableAccountPet(record)) {
+                if (!isReadableAccountPet(record, params.accountEncryptionMode)) {
                     return customPetSyncUnavailableResponse();
                 }
                 pets.push(record.entry);
@@ -411,14 +448,11 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             };
         },
         async readAccountPetAssetForAccount(params) {
-            if (params.accountEncryptionMode !== "plain") {
-                return customPetSyncUnavailableResponse();
-            }
             const record = await persistence.readAccountPet(params.accountId, params.petId);
             if (!record) {
                 return null;
             }
-            if (!isReadableAccountPet(record)) {
+            if (!isReadableAccountPet(record, params.accountEncryptionMode)) {
                 return customPetSyncUnavailableResponse();
             }
             const assetRef = record.entry.spritesheetAssetRef;
@@ -428,7 +462,7 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             const bytes = await options.privateFiles.readPrivateFile(record.asset.objectKey);
             return {
                 ok: true,
-                mediaType: assetRef.mediaType,
+                mediaType: isAccountPetEncryptedLibraryEntryV1(record.entry) ? ACCOUNT_PET_SEALED_ASSET_MEDIA_TYPE : record.entry.spritesheetAssetRef.mediaType,
                 bytes,
                 digest: assetRef.digest,
             };

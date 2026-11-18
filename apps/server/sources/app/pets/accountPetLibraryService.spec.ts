@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { db } from "@/storage/db";
 import { createLocalPrivateFilesBackend } from "@/storage/privateFiles/privateFilesLocal";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { validateAccountPetCreateRequestV1 } from "@happier-dev/protocol/pets/accountPetCreateValidation";
+import { openAccountPetSpritesheetV1, openAccountPetStoredEntryForModeV1, sealAccountPetPackageV1 } from "@happier-dev/protocol/pets/accountPetEncryptionV1";
 
 import {
     createPrismaAccountPetLibraryPersistence,
@@ -982,37 +985,89 @@ describe("account pet library services", () => {
         })).resolves.toEqual({ ok: true, pets: [] });
     });
 
-    it("denies custom pet sync for e2ee accounts before writing private bytes", async () => {
+    it("stores an E2EE Account's sealed package as ciphertext only and serves it back for opening", async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-"));
+        tempDirs.push(rootDir);
+        const privateFiles = createLocalPrivateFilesBackend({ rootDir });
+        await privateFiles.init();
+        const material = { type: "dataKey", machineKey: new Uint8Array(32).fill(5) } as const;
+        await db.account.create({ data: { id: "account-e2ee", encryptionMode: "e2ee", ...createSignedAccountContentBinding() } });
+        const services = createAccountPetLibraryServices({
+            privateFiles,
+            persistence: createPrismaAccountPetLibraryPersistence(),
+        });
+        const validated = await validateAccountPetCreateRequestV1(requestFor(WEBP_BYTES, "tide"), {
+            inspectAtlas: async () => ({ width: 1536, height: 1872, hasAlpha: true }),
+        });
+        if (!validated.ok) throw new Error(validated.reason);
+        const sealed = sealAccountPetPackageV1({ validated, material, randomBytes: (length) => new Uint8Array(randomBytes(length)) });
+        if (!sealed.ok) throw new Error(sealed.reason);
+
+        const created = await services.createAccountPetForAccount({
+            accountId: "account-e2ee", accountEncryptionMode: "e2ee", storagePolicy: "optional", request: sealed.request,
+        });
+        expect(created).toMatchObject({ ok: true, pet: { content: sealed.request.content,
+            spritesheetAssetRef: { digest: sealed.request.spritesheet.digest, sizeBytes: sealed.request.spritesheet.sizeBytes } } });
+        if (!created.ok) throw new Error(created.errorCode);
+
+        const row = await db.accountPetPackage.findFirstOrThrow({ where: { accountId: "account-e2ee" }, include: { assets: true } });
+        expect(row.contentMode).toBe("encrypted");
+        expect(row.assets[0]?.contentMode).toBe("encrypted");
+        expect(JSON.stringify(row)).not.toContain("tide");
+        expect(JSON.stringify(row)).not.toContain("Blink");
+
+        const listed = await services.listAccountPetsForAccount({ accountId: "account-e2ee", accountEncryptionMode: "e2ee" });
+        if (!listed.ok) throw new Error(listed.errorCode);
+        const opened = openAccountPetStoredEntryForModeV1(listed.pets[0]!, { mode: "e2ee", material });
+        expect(opened).toMatchObject({ manifest: { id: "tide" }, origin: { kind: "manualImport" } });
+
+        const asset = await services.readAccountPetAssetForAccount({
+            accountId: "account-e2ee", accountEncryptionMode: "e2ee", petId: created.pet.accountPetId, assetId: null,
+        });
+        if (!asset?.ok) throw new Error("asset unavailable");
+        expect(asset.mediaType).toBe("application/octet-stream");
+        const sheet = openAccountPetSpritesheetV1({ ciphertext: asset.bytes, material,
+            expected: { mediaType: "image/webp", digest: opened!.spritesheetAssetRef.digest } });
+        expect(sheet && Array.from(sheet)).toEqual(Array.from(WEBP_BYTES));
+        // The Plain reader never discloses sealed rows.
+        await expect(services.listAccountPetsForAccount({ accountId: "account-e2ee", accountEncryptionMode: "plain" }))
+            .resolves.toMatchObject({ ok: false, errorCode: "custom_pet_sync_unavailable" });
+    });
+
+    it.each([
+        { name: "a plaintext package for an E2EE Account", accountEncryptionMode: "e2ee", sealed: false },
+        { name: "a sealed package for a Plain Account", accountEncryptionMode: "plain", sealed: true },
+    ] as const)("refuses $name with a typed mismatch before writing private bytes", async ({ accountEncryptionMode, sealed }) => {
         const rootDir = await mkdtemp(join(tmpdir(), "happier-account-pets-"));
         tempDirs.push(rootDir);
         const privateFiles = createLocalPrivateFilesBackend({ rootDir });
         await privateFiles.init();
         const services = createAccountPetLibraryServices({
             privateFiles,
-            inspectAtlas: async () => ({
-                width: 1536,
-                height: 1872,
-                hasAlpha: true,
-            }),
+            inspectAtlas: async () => ({ width: 1536, height: 1872, hasAlpha: true }),
         });
+        const plainRequest = requestFor(WEBP_BYTES);
+        let request: unknown = plainRequest;
+        if (sealed) {
+            const validated = await validateAccountPetCreateRequestV1(plainRequest, {
+                inspectAtlas: async () => ({ width: 1536, height: 1872, hasAlpha: true }),
+            });
+            if (!validated.ok) throw new Error(validated.reason);
+            const result = sealAccountPetPackageV1({ validated, material: { type: "dataKey", machineKey: new Uint8Array(32).fill(5) },
+                randomBytes: (length) => new Uint8Array(randomBytes(length)) });
+            if (!result.ok) throw new Error(result.reason);
+            request = result.request;
+        }
 
-        const createParams = {
-            accountId: "account-1",
-            accountEncryptionMode: "e2ee",
-            storagePolicy: "optional",
-            request: requestFor(WEBP_BYTES),
-        } as const;
-        const created = await services.createAccountPetForAccount(createParams);
+        const created = await services.createAccountPetForAccount({
+            accountId: "account-1", accountEncryptionMode, storagePolicy: "optional", request,
+        });
 
         expect(created).toEqual({
             ok: false,
-            errorCode: "custom_pet_sync_requires_plaintext",
-            error: "custom_pet_sync_requires_plaintext",
+            errorCode: "account_encryption_mode_mismatch",
+            error: "account_encryption_mode_mismatch",
         });
-        await expect(services.listAccountPetsForAccount({
-            accountId: "account-1",
-            accountEncryptionMode: "plain",
-        })).resolves.toEqual({ ok: true, pets: [] });
         await expect(readdir(rootDir)).resolves.toEqual([]);
     });
 

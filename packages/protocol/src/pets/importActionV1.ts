@@ -71,9 +71,9 @@ export function readPetImportOutcomeV1(execution: PetImportExecutionV1): PetImpo
         : { undo: { actionId: PET_DELETE_ACTION_ID_V1, input: { accountPetId: parsed.data.pet.accountPetId } } }) } : null;
   }
   if (!execution.errorCode) return null;
+  // Only the pets.sync feature decision is "pet sync off"; Account mode and Home storage refusals are not.
   const kind = execution.errorCode === 'quota_exceeded' ? 'library_full'
-    : execution.errorCode === 'feature_disabled' || execution.errorCode === 'custom_pet_sync_requires_plaintext'
-      || execution.errorCode === 'custom_pet_sync_unavailable' ? 'pet_sync_off' : 'could_not_add';
+    : execution.errorCode === 'feature_disabled' ? 'pet_sync_off' : 'could_not_add';
   return { kind, errorCode: execution.errorCode, ...(execution.details === undefined ? {} : { details: execution.details }) };
 }
 

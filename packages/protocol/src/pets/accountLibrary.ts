@@ -53,6 +53,41 @@ export const AccountPetLibraryEntryV1Schema = lazyZodSchema(() => z.looseObject(
 
 export type AccountPetLibraryEntryV1 = z.infer<typeof AccountPetLibraryEntryV1Schema>;
 
+/**
+ * An E2EE Account's library entry. Content (manifest, origin, spritesheet media
+ * type and plaintext digests) is sealed under the Account envelope; the Home sees
+ * only ids, ciphertext sizes and digests, version and timestamps. Clients open it
+ * into an `AccountPetLibraryEntryV1` through `openAccountPetLibraryEntryV1`.
+ */
+export const AccountPetEncryptedLibraryEntryV1Schema = lazyZodSchema(() => z.looseObject({
+    accountPetId: z.string().check(z.minLength(1), z.maxLength(500)),
+    packageFormat: z.literal(PET_PACKAGE_FORMAT_CODEX_ATLAS_V1),
+    content: z.strictObject({ t: z.literal('encrypted'), c: z.string().check(z.minLength(1)) }),
+    spritesheetAssetRef: z.looseObject({
+      assetId: z.string().check(z.minLength(1), z.maxLength(500)),
+      digest: z.string().check(z.minLength(1), z.maxLength(500)),
+      sizeBytes: z.number().check(z.int(), z.minimum(0)),
+    }),
+    digest: z.string().check(z.minLength(1), z.maxLength(500)),
+    sizeBytes: z.number().check(z.int(), z.minimum(0)),
+    createdAt: z.number().check(z.int(), z.minimum(0)),
+    updatedAt: z.number().check(z.int(), z.minimum(0)),
+  }));
+
+export type AccountPetEncryptedLibraryEntryV1 = z.infer<typeof AccountPetEncryptedLibraryEntryV1Schema>;
+
+/** Wire entry: Plain Accounts receive the released plaintext shape, E2EE Accounts the sealed one. */
+export const AccountPetStoredLibraryEntryV1Schema = lazyZodSchema(() => z.union([
+  AccountPetLibraryEntryV1Schema,
+  AccountPetEncryptedLibraryEntryV1Schema,
+]));
+
+export type AccountPetStoredLibraryEntryV1 = z.infer<typeof AccountPetStoredLibraryEntryV1Schema>;
+
+export function isAccountPetEncryptedLibraryEntryV1(entry: AccountPetStoredLibraryEntryV1): entry is AccountPetEncryptedLibraryEntryV1 {
+  return 'content' in entry;
+}
+
 export const AccountPetCreateRequestV1Schema = lazyZodSchema(() => z.looseObject({
     manifest: PetPackageManifestV1Schema,
     spritesheet: z.object({
@@ -74,8 +109,21 @@ export const AccountPetCreateRequestV1Schema = lazyZodSchema(() => z.looseObject
 
 export type AccountPetCreateRequestV1 = z.infer<typeof AccountPetCreateRequestV1Schema>;
 
+/** E2EE create: the client validated and sealed the package; the Home checks only sizes and quota. */
+export const AccountPetEncryptedCreateRequestV1Schema = lazyZodSchema(() => z.strictObject({
+    content: z.strictObject({ t: z.literal('encrypted'), c: z.string().check(z.minLength(1)) }),
+    spritesheet: z.strictObject({
+      encoding: z.literal('base64'),
+      data: z.string().check(z.minLength(1)),
+      sizeBytes: z.number().check(z.int(), z.minimum(1)),
+      digest: z.string().check(z.minLength(1), z.maxLength(500)),
+    }),
+  }));
+
+export type AccountPetEncryptedCreateRequestV1 = z.infer<typeof AccountPetEncryptedCreateRequestV1Schema>;
+
 export const AccountPetCreateResponseV1Schema = lazyZodSchema(() => z.union([
-  z.looseObject({ ok: z.literal(true), pet: AccountPetLibraryEntryV1Schema, reused: z.optional(z.literal(true)) }),
+  z.looseObject({ ok: z.literal(true), pet: AccountPetStoredLibraryEntryV1Schema, reused: z.optional(z.literal(true)) }),
   z.looseObject({
       ok: z.literal(false),
       errorCode: z.enum([
@@ -83,6 +131,7 @@ export const AccountPetCreateResponseV1Schema = lazyZodSchema(() => z.union([
         'feature_disabled',
         'quota_exceeded',
         'custom_pet_sync_requires_plaintext',
+        'account_encryption_mode_mismatch',
         'internal_error',
       ]),
       error: z.string().check(z.minLength(1)),
@@ -102,7 +151,7 @@ export const AccountPetSyncUnavailableResponseV1Schema = lazyZodSchema(() => z.l
 export type AccountPetSyncUnavailableResponseV1 = z.infer<typeof AccountPetSyncUnavailableResponseV1Schema>;
 
 export const AccountPetListResponseV1Schema = lazyZodSchema(() => z.union([
-  z.looseObject({ ok: z.literal(true), pets: z.array(AccountPetLibraryEntryV1Schema) }),
+  z.looseObject({ ok: z.literal(true), pets: z.array(AccountPetStoredLibraryEntryV1Schema) }),
   z.looseObject({
       ok: z.literal(false),
       errorCode: z.enum(['feature_disabled', 'custom_pet_sync_unavailable', 'internal_error']),

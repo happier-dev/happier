@@ -366,7 +366,7 @@ describe("accountPetLibraryPersistence", () => {
         await transition;
         await expect(persistence).resolves.toEqual({
             ok: false,
-            error: "plaintext-required",
+            error: "mode-mismatch",
         });
         await expect(db.accountPetPackage.count()).resolves.toBe(0);
         await expect(db.accountPetAsset.count()).resolves.toBe(0);

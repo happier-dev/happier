@@ -7,6 +7,8 @@ import { decodeBase64, readCanonicalPaddedBase64DecodedLength } from './base64.j
  */
 export type AccountScopedBlobKind =
   | 'account_settings'
+  | 'account_pet_metadata'
+  | 'account_pet_spritesheet'
   | 'account_session_follow_rule'
   | 'authoring_memory'
   | 'account_profile_record'
@@ -113,6 +115,8 @@ const ACCOUNT_SCOPED_KIND_BYTE = Object.freeze({
   account_session_follow_rule: 50,
   session_owner_display: 51,
   provider_account_usage_day_summary: 52,
+  account_pet_metadata: 53,
+  account_pet_spritesheet: 54,
 } satisfies Record<AccountScopedBlobKind, number>);
 
 /**

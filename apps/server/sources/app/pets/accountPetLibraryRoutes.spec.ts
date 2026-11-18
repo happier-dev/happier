@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PET_PACKAGE_LIMITS_V1 } from "@happier-dev/protocol";
+import { ACCOUNT_PET_ENCRYPTED_LIMITS_V1 } from "@happier-dev/protocol/pets/accountPetEncryptionV1";
 
 import { createRouteTestBuilder } from "@/app/api/testkit/routeTestBuilder";
 import type { FakeRouteApp } from "@/app/api/testkit/routeHarness";
@@ -245,6 +246,11 @@ describe("accountPetLibraryRoutes", () => {
 
         expect(entry?.opts.bodyLimit).toEqual(expect.any(Number));
         expect(entry?.opts.bodyLimit).toBeGreaterThan(PET_PACKAGE_LIMITS_V1.maxCanonicalPackageBytes);
+        // A maximal sealed E2EE spritesheet travels as base64 ciphertext and must still fit.
+        expect(entry?.opts.bodyLimit).toBeGreaterThan(
+            Math.ceil(ACCOUNT_PET_ENCRYPTED_LIMITS_V1.maxSpritesheetCiphertextBytes * 4 / 3)
+                + ACCOUNT_PET_ENCRYPTED_LIMITS_V1.maxContentCiphertextChars,
+        );
         expect(entry?.opts.bodyLimit).toBeLessThan(100 * 1024 * 1024);
     });
 
