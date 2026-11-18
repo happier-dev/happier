@@ -21,7 +21,7 @@ export {
     resolveManagedServerLightPathEnvValue,
     resolvePersonalHomePrivateFilesDir,
 } from './personalHome/pathResolvers.js';
-export { replacePersonalHomeFileDurably } from './personalHome/durableFile.js';
+export { publishPersonalHomeFileNoClobberDurably, replacePersonalHomeFileDurably } from './personalHome/durableFile.js';
 export {
     assertPersonalHomeBootAdmission,
     PersonalHomeBootAdmissionError,

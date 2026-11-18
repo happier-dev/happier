@@ -1,3 +1,5 @@
+import { isSharedDatabaseConsumer } from "@/config/sharedDatabaseConsumer";
+
 export function isPrismaErrorCode(error: unknown, code: string): boolean {
     return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
@@ -142,7 +144,7 @@ export function readSharedQaSchemaMismatchDiagnostic(
     error: unknown,
     env: NodeJS.ProcessEnv = process.env,
 ): SharedQaSchemaMismatchDiagnostic | null {
-    if (!env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK?.trim()) return null;
+    if (!isSharedDatabaseConsumer(env)) return null;
     if (!isPrismaErrorCode(error, 'P2021') && !isPrismaErrorCode(error, 'P2022')) return null;
     return {
         error: 'shared_qa_schema_mismatch',

@@ -1,5 +1,14 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+
+import {
+    publishPersonalHomeFileNoClobberDurably,
+    replacePersonalHomeFileDurably,
+} from '@happier-dev/cli-common/firstPartyRuntime/server';
 import { SERVER_IDENTITY_ID_PATTERN } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 
+import { isSharedDatabaseConsumer, resolveServerPrivateRuntimeDir } from "@/config/sharedDatabaseConsumer";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
@@ -38,12 +47,100 @@ function createServerIdentityId(): string {
     return `srv_${randomKeyNaked(32)}`;
 }
 
-async function persistPinnedServerIdentityId(serverIdentityId: string): Promise<void> {
-    await db.simpleCache.upsert({
-        where: { key: SERVER_IDENTITY_CACHE_KEY },
-        create: { key: SERVER_IDENTITY_CACHE_KEY, value: serverIdentityId },
-        update: { value: serverIdentityId },
-    });
+/**
+ * Where this server keeps its identity. A database row normally; a Stack shared-database consumer
+ * shares its source's rows, so it keeps its own identity in its private runtime directory and
+ * never reads or writes the source's row (owner ruling 2026-11-18: per-stack Home identity).
+ */
+type ServerIdentityStore = Readonly<{
+    read: () => Promise<string | null>;
+    /** Records a pinned identity, replacing any earlier value. */
+    pin: (serverIdentityId: string) => Promise<void>;
+    /** Stores the candidate unless another writer stored first; returns the stored identity. */
+    create: (candidate: string) => Promise<string>;
+}>;
+
+const databaseServerIdentityStore: ServerIdentityStore = {
+    read: () => readPersistedServerIdentityId(),
+    pin: async (serverIdentityId) => {
+        await db.simpleCache.upsert({
+            where: { key: SERVER_IDENTITY_CACHE_KEY },
+            create: { key: SERVER_IDENTITY_CACHE_KEY, value: serverIdentityId },
+            update: { value: serverIdentityId },
+        });
+    },
+    create: async (candidate) => {
+        try {
+            const created = await db.simpleCache.create({
+                data: { key: SERVER_IDENTITY_CACHE_KEY, value: candidate },
+                select: { value: true },
+            });
+            return created.value;
+        } catch (error) {
+            if (!isPrismaErrorCode(error, "P2002")) throw error;
+            const raced = await readPersistedServerIdentityId();
+            if (raced) return raced;
+            throw error;
+        }
+    },
+};
+
+function isFileExistsError(error: unknown, code: "ENOENT" | "EEXIST"): boolean {
+    return error !== null && typeof error === "object" && "code" in error && error.code === code;
+}
+
+function createFileServerIdentityStore(path: string): ServerIdentityStore {
+    const read = async (): Promise<string | null> => {
+        let stored: string;
+        try {
+            stored = await readFile(path, "utf8");
+        } catch (error) {
+            if (isFileExistsError(error, "ENOENT")) return null;
+            throw error;
+        }
+        const value = stored.trim();
+        return value ? assertValidServerIdentityId(value, path) : null;
+    };
+    const writeTemporary = async (serverIdentityId: string): Promise<string> => {
+        await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+        const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+        await writeFile(temporaryPath, `${serverIdentityId}\n`, { encoding: "utf8", mode: 0o600 });
+        return temporaryPath;
+    };
+    return {
+        read,
+        pin: async (serverIdentityId) => {
+            const temporaryPath = await writeTemporary(serverIdentityId);
+            try {
+                await replacePersonalHomeFileDurably(temporaryPath, path);
+            } finally {
+                await rm(temporaryPath, { force: true });
+            }
+        },
+        create: async (candidate) => {
+            const temporaryPath = await writeTemporary(candidate);
+            try {
+                await publishPersonalHomeFileNoClobberDurably(temporaryPath, path);
+                return candidate;
+            } catch (error) {
+                if (!isFileExistsError(error, "EEXIST")) throw error;
+                const raced = await read();
+                if (raced) return raced;
+                throw error;
+            } finally {
+                await rm(temporaryPath, { force: true });
+            }
+        },
+    };
+}
+
+function resolveServerIdentityStore(env: NodeJS.ProcessEnv): ServerIdentityStore {
+    if (!isSharedDatabaseConsumer(env)) return databaseServerIdentityStore;
+    const runtimeDir = resolveServerPrivateRuntimeDir(env);
+    if (!runtimeDir) {
+        throw new Error("A shared-database consumer needs HAPPIER_SERVER_LIGHT_DATA_DIR for its own Home identity");
+    }
+    return createFileServerIdentityStore(join(runtimeDir, "server.identity"));
 }
 
 async function readPersistedServerIdentityId(reader: Pick<Tx, "simpleCache"> = db): Promise<string | null> {
@@ -61,7 +158,9 @@ function projectPersistedServerIdentityId(storedValue: string | null): string | 
 
 /** Composed reads capture the persisted value in their own statement; identity precedence stays here. */
 export function projectCurrentServerIdentityId(storedValue: string | null, env: NodeJS.ProcessEnv = process.env): string | null {
-    return readCachedServerIdentityIdForHotPath(env) ?? projectPersistedServerIdentityId(storedValue);
+    const cached = readCachedServerIdentityIdForHotPath(env);
+    if (cached || isSharedDatabaseConsumer(env)) return cached;
+    return projectPersistedServerIdentityId(storedValue);
 }
 
 /** Reads the process identity without opening an out-of-transaction writer during cold composition. */
@@ -69,34 +168,24 @@ export async function readCurrentServerIdentityId(
     env: NodeJS.ProcessEnv = process.env,
     reader: Pick<Tx, "simpleCache"> = db,
 ): Promise<string | null> {
-    return readCachedServerIdentityIdForHotPath(env) ?? await readPersistedServerIdentityId(reader);
+    const cached = readCachedServerIdentityIdForHotPath(env);
+    if (cached) return cached;
+    return isSharedDatabaseConsumer(env)
+        ? await resolveServerIdentityStore(env).read()
+        : await readPersistedServerIdentityId(reader);
 }
 
 async function resolveServerIdentityId(env: NodeJS.ProcessEnv): Promise<string> {
     const pinned = readPinnedServerIdentityId(env);
+    const store = resolveServerIdentityStore(env);
     if (pinned) {
-        await persistPinnedServerIdentityId(pinned);
+        await store.pin(pinned);
         return pinned;
     }
 
-    const persisted = await readPersistedServerIdentityId();
+    const persisted = await store.read();
     if (persisted) return persisted;
-
-    const candidate = createServerIdentityId();
-    try {
-        const created = await db.simpleCache.create({
-            data: { key: SERVER_IDENTITY_CACHE_KEY, value: candidate },
-            select: { value: true },
-        });
-        return created.value;
-    } catch (error) {
-        if (!isPrismaErrorCode(error, "P2002")) {
-            throw error;
-        }
-        const raced = await readPersistedServerIdentityId();
-        if (raced) return raced;
-        throw error;
-    }
+    return await store.create(createServerIdentityId());
 }
 
 /** One persisted identity per process; all callers share cold initialization and warm reads. */

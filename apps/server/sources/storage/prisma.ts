@@ -9,6 +9,7 @@ import { log, warn } from "@/utils/logging/log";
 import { AsyncLock } from "@/utils/runtime/lock";
 import { databaseQueryDurationHistogram, registerDatabasePoolStatsReader } from "@/app/monitoring/metrics/databaseDriverMetrics";
 import { readMetricsServerConfigFromEnv } from "@/config/monitoring";
+import { isSharedDatabaseConsumer } from "@/config/sharedDatabaseConsumer";
 import {
     createDefaultPrismaClient,
     createGeneratedPrismaClient,
@@ -66,7 +67,7 @@ export function getActivePrismaRuntime(): typeof import("@prisma/client").Prisma
 }
 
 function withSharedQaSchemaDiagnostics(client: PrismaClientType): PrismaClientType {
-    if (!process.env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK?.trim() && process.env.HAPPIER_WEB_LATENCY_TRACE !== '1') return client;
+    if (!isSharedDatabaseConsumer(process.env) && process.env.HAPPIER_WEB_LATENCY_TRACE !== '1') return client;
     const extended = client.$extends({
         query: {
             async $allOperations({ args, query, model, operation }) {

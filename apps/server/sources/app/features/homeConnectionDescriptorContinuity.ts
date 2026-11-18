@@ -3,7 +3,6 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import {
-    resolveManagedServerLightPathEnvValue,
     resolvePersonalHomeRuntimeLayout,
     replacePersonalHomeFileDurably,
 } from '@happier-dev/cli-common/firstPartyRuntime/server';
@@ -12,6 +11,7 @@ import { type HomeConnectionEndpointV1 } from '@happier-dev/protocol/auth/accoun
 import { compareAndSetSimpleCache, compareAndSetSimpleCacheInTx, readFromSimpleCache } from '@/storage/cache/simpleCache';
 import type { Tx } from '@/storage/inTx';
 import { isPersonalHomeRuntimePurpose } from '@/app/runtime/personalHomeRuntimePurpose';
+import { isSharedDatabaseConsumer, resolveServerPrivateRuntimeDir } from '@/config/sharedDatabaseConsumer';
 
 export type HomeConnectionDescriptorContinuity = Readonly<{
     revision: number;
@@ -78,18 +78,14 @@ export function createHomeConnectionDescriptorContinuityStoreForServer(
     }
 
     const dbProvider = String(env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER ?? '').trim();
-    const sharedDbConsumer = Boolean(env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK?.trim());
+    const sharedDbConsumer = isSharedDatabaseConsumer(env);
     if (!sharedDbConsumer && (dbProvider === 'postgres' || dbProvider === 'mysql')) {
         return createSimpleCacheHomeConnectionDescriptorContinuityStore(dependencies);
     }
     if (sharedDbConsumer || dbProvider === 'sqlite' || dbProvider === 'pglite') {
-        const dataDir = resolveManagedServerLightPathEnvValue(
-            env,
-            'HAPPIER_SERVER_LIGHT_DATA_DIR',
-            'HAPPY_SERVER_LIGHT_DATA_DIR',
-        ).trim();
-        if (!dataDir) return null;
-        return createFileHomeConnectionDescriptorContinuityStore(join(dataDir, 'runtime', 'home.descriptor.json'));
+        const runtimeDir = resolveServerPrivateRuntimeDir(env);
+        if (!runtimeDir) return null;
+        return createFileHomeConnectionDescriptorContinuityStore(join(runtimeDir, 'home.descriptor.json'));
     }
     return null;
 }
