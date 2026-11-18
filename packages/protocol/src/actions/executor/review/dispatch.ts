@@ -282,7 +282,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const selectedSource = ScmComparisonSourceSchema.safeParse(reviewInput.source);
         const comparisonCwd = reviewInput.cwd ?? ctx.agentStartContext?.baseline.directory;
         const comparisonTarget = reviewInput.comparisonId
-          ? await resolveReviewComparisonTargetV1(deps, ctx, sessionId) : undefined;
+          ? await resolveReviewComparisonTargetV1(deps, ctx, sessionId, actionId) : undefined;
         const comparisonCapture = reviewInput.comparisonId && selectedSource.success && comparisonCwd && comparisonTarget
           ? { target: comparisonTarget, input: { cwd: comparisonCwd, source: selectedSource.data,
             comparisonId: reviewInput.comparisonId, ...(sessionId ? { sessionId } : {}) } } : undefined;

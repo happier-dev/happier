@@ -12,10 +12,10 @@ import type { ReviewRoundComparisonCaptureV1 } from '../../../reviews/reviewArti
 
 /** Retain the same Machine authority the Review's SCM operation uses. */
 export async function resolveReviewComparisonTargetV1(deps: ActionExecutorDeps, ctx: ActionExecutorContext,
-  sessionId: string | null): Promise<ReviewRoundComparisonCaptureV1['target'] | undefined> {
+  sessionId: string | null, actionId: ActionId): Promise<ReviewRoundComparisonCaptureV1['target'] | undefined> {
   if (ctx.externalActionTarget?.kind === 'machine') return ctx.externalActionTarget;
   const machineId = ctx.executionRunTargetMachineId
-    ?? (sessionId ? await deps.resolveSessionMachineId?.(sessionId) : undefined)
+    ?? (sessionId ? await deps.resolveApiTokenGrantSessionMachineId?.({ actionId, sessionId, context: ctx }) : undefined)
     ?? ctx.agentStartContext?.baseline.machineId ?? ctx.defaultSessionMachineId;
   return machineId ? { kind: 'machine', machineId } : undefined;
 }
@@ -36,7 +36,7 @@ export async function dispatchReviewRoundAction(inv: RoundActionInvocation): Pro
     return { ok: true, result: await prepareReviewRoundV1(input, {
       reviewRecords: records, cwd: inv.ctx.agentStartContext?.baseline.directory,
       comparisonTarget: await resolveReviewComparisonTargetV1(inv.deps, inv.ctx,
-        resolveSessionIdFromInput(input.reviewInput, inv.ctx)),
+        resolveSessionIdFromInput(input.reviewInput, inv.ctx), inv.actionId),
       startedAt: Date.now(), signal: inv.ctx.signal,
       captureComparison: async request => {
         const capture = await inv.executeHostChild('scm.diffSummary.capture', request, inv.ctx);

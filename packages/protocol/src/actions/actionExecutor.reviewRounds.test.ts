@@ -14,7 +14,8 @@ describe('Review round preparation', () => {
     const starts = vi.spyOn(records, 'start');
     let preparedComparisonId: string | undefined;
     const executor = createActionExecutor({ reviewRecords: () => records,
-      resolveSessionMachineId: async () => 'capture-machine',
+      resolveApiTokenGrantSessionMachineId: async ({ actionId, sessionId, context }) =>
+        actionId === 'review.start' && sessionId === 'capture-session' && context.surface === 'ui' ? 'capture-machine' : null,
       reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
       executionRunStart: async () => ({ runId: 'native-run', callId: 'call', sidechainId: 'sidechain' }),
       workflowAction: async invocation => {
