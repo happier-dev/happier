@@ -1,5 +1,5 @@
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDeploymentActionOperationRequestIdV1, resolveDeploymentPreviewExecutionMachineIdV1, isDeploymentTemplatePreviewInputV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentMachineTransportActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDeploymentActionOperationRequestIdV1, resolveDeploymentEnvironmentExecutionMachineIdV1, resolveDeploymentPreviewExecutionMachineIdV1, isDeploymentTemplatePreviewInputV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentMachineTransportActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isActionOutcomeUnknownErrorCodeV1, ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -283,25 +283,20 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         let machineId: string;
         // Link completion belongs to the controller's enrollment owner, including
         // content authored here under the captured Account's encryption mode.
-        if (linkControllerMachineId) machineId = linkControllerMachineId;
-        else if (actionId === DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1) machineId = DeploymentActionInputSchemasV1[actionId].parse(input).machineId;
-        else if (actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1) {
+        if (actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1) {
             const create = DeploymentActionInputSchemasV1[actionId].parse(input);
             const selected = await readEnvironmentCreateController(create, context);
             if (!selected.ok) return selected;
             machineId = selected.machineId;
         }
-        else if ('controllerMachineId' in effectInput && typeof effectInput.controllerMachineId === 'string') machineId = effectInput.controllerMachineId;
-        else if ('environmentId' in effectInput) {
-            if (!('serverId' in effectInput) || typeof effectInput.serverId !== 'string'
-                || typeof effectInput.environmentId !== 'string') return failure('invalid_parameters');
-            const selected = await readEnvironmentController({
-                serverId: effectInput.serverId, environmentId: effectInput.environmentId,
-            }, context);
+        else {
+            const selected = await resolveDeploymentEnvironmentExecutionMachineIdV1(actionId, effectInput, {
+                readEnvironmentController: address => readEnvironmentController(address, context),
+                ...(linkControllerMachineId ? { knownControllerMachineId: linkControllerMachineId } : {}),
+            });
             if (!selected.ok) return selected;
-            machineId = selectedReadInput && 'machineId' in selectedReadInput
-                && typeof selectedReadInput.machineId === 'string' ? selectedReadInput.machineId : selected.machineId;
-        } else return failure('invalid_parameters');
+            machineId = selected.machineId;
+        }
         // The controller owns preparation and approval. Preserve the sealed person/agent origin so its
         // existing review owner can carry a person's review back for native confirmation.
         const result = await machine(actionId, effectInput, context, machineId);

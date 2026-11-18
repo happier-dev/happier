@@ -602,6 +602,13 @@ external, anonymous and unrelated volumes supply no deletion choice. The existin
 teardown Action consumes the retained explicit choices after copying and app
 deployment; ordinary restricted deploys supply no automatic cleanup authority.
 
+In 0.3 development, the app and credentialed CLI use the shared Environment
+placement resolver before dispatch. An unplaced Action that needs an
+Environment's controller uses the controller returned by one Environment read
+with the requester's credential. An explicit execution Machine reaches Home
+admission as supplied. An Action that already carries its controller can be
+placed without an Environment read.
+
 Teardown mint and Domain Remove child admission keep the Environment's recorded
 controller Machine authoritative. A request on another Machine returns
 `credential_scope_denied` with reason `controller_placement_mismatch`, the

@@ -624,12 +624,13 @@ it.each([true, false])('routes current health through the selected native Machin
 describe('deployment record Actions retain receiving-daemon preparation', () => {
     it('observes a compact provider receipt through the Environment controller', async () => {
         const detail = createDeploymentEnvironmentDetailV1();
+        const environmentPath = `/v1/deployments/environments/${detail.environment.id}`;
         const input = DeploymentActionInputSchemasV1['deployments.receipts.observe'].parse({ serverId,
             environmentId: detail.environment.id, deploymentId: 'running-provider-receipt' });
         const result = DeploymentActionOutputSchemasV1['deployments.receipts.observe'].parse({ ok: true,
             environmentId: detail.environment.id, revision: 2, deploymentId: input.deploymentId,
             deploymentRevision: 2, state: 'succeeded' });
-        homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
+        homes.answer(serverId, `GET ${environmentPath}`, { body: {
             ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
         } });
         await answerControllerAction('deployments.receipts.observe', detail.environment.controllerMachineId, (admitted, transport) => {
@@ -639,14 +640,17 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
         });
         expect(await createUiDeploymentActionDeps(requireAccount()).deploymentAction!('deployments.receipts.observe', input,
             { ...uiHost, actionRequestId: 'observe-original' })).toEqual(result);
+        expect(homes.requests.filter(request => request.serverId === serverId && request.method === 'GET'
+            && new URL(request.path, request.serverUrl).pathname === environmentPath)).toHaveLength(1);
         expect(homes.requestsFor('/v1/actions/deployments.receipts.observe')).toHaveLength(1);
         expect(homes.artifacts(serverId).list()).toHaveLength(0);
     });
 
     it.each(['forbidden', 'stale'] as const)('retains the server link refusal after private preparation for a %s Environment', async admission => {
         const detail = createDeploymentEnvironmentDetailV1();
+        const environmentPath = `/v1/deployments/environments/${detail.environment.id}`;
         if (admission === 'forbidden') detail.environment.capabilities.manageTargets = false;
-        homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
+        homes.answer(serverId, `GET ${environmentPath}`, { body: {
             ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
         } });
         const errorCode = admission === 'forbidden' ? 'deployment_access_denied' : 'deployment_conflict';
@@ -661,6 +665,8 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
         expect(result).toMatchObject({ ok: false, errorCode: admission === 'forbidden' ? 'deployment_access_denied' : 'deployment_conflict' });
         // A refused association leaves only the requester's private Artifact, not a second admission owner.
         expect(homes.artifacts(serverId).list()).toHaveLength(1);
+        expect(homes.requests.filter(request => request.serverId === serverId && request.method === 'GET'
+            && new URL(request.path, request.serverUrl).pathname === environmentPath)).toHaveLength(1);
         expect(homes.requestsFor('/v1/actions/deployments.targets.link')).toHaveLength(1);
     });
 
