@@ -18653,6 +18653,7 @@ const zhHans: WorkflowBuiltinTranslations = {
     freshOpinions: { title: '独立意见', description: '针对同一问题独立作答，也可汇总各方回答。' },
     answerAndReview: { title: '回答 + 审阅', description: '由一个代理回答，再由另一个代理审阅该回答。' },
     debate: { title: '辩论', description: '按你选择的轮数比较观点，并在每轮结束后汇总。' },
+    repositoryReview: { title: '审查整个仓库', description: '使用选定的审阅者审查整个仓库。' },
     patternInputs: { question: '问题', participants: '参与者', synthesis: '汇总回答', synthesizer: '汇总代理', answerer: '回答代理', reviewer: '审阅代理', rounds: '轮数', digestAuthor: '每轮汇总代理', previousRoundContext: '上一轮' },
     openAPullRequest: { title: '打开拉取请求', description: '先征求第二意见，再打开拉取请求。如果第二意见不同意，它会等待你。', inputs: { base: '基础分支', title: '拉取请求标题', body: '描述', question: '给第二意见的问题' } },
 };

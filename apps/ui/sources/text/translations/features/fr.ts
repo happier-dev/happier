@@ -18836,6 +18836,7 @@ const fr: WorkflowBuiltinTranslations = {
     freshOpinions: { title: 'Avis indépendants', description: 'Des réponses indépendantes à la même question, avec un résumé facultatif.' },
     answerAndReview: { title: 'Réponse + relecture', description: 'Un agent répond, puis un autre relit cette réponse précise.' },
     debate: { title: 'Débat', description: 'Compare les points de vue sur le nombre de tours choisi, avec un résumé après chaque tour.' },
+    repositoryReview: { title: 'Réviser le dépôt', description: 'Révise tout le dépôt avec les relecteurs sélectionnés.' },
     patternInputs: { question: 'Question', participants: 'Participants', synthesis: 'Résumer les réponses', synthesizer: 'Qui résume', answerer: 'Qui répond', reviewer: 'Qui relit', rounds: 'Tours', digestAuthor: 'Qui résume chaque tour', previousRoundContext: 'Tour précédent' },
     openAPullRequest: { title: 'Ouvrir une pull request', description: 'Demande un second avis, puis ouvre une pull request. Si le second avis n’est pas d’accord, il t’attend.', inputs: { base: 'Branche de base', title: 'Titre de la pull request', body: 'Description', question: 'Question pour le second avis' } },
 };

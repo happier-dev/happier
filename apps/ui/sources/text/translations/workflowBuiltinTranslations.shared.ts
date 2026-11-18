@@ -1,6 +1,8 @@
 import { BUILTIN_WORKFLOW_TITLES_V1 } from '@happier-dev/protocol/workflows/workflowRunDisplayMetadataV1';
 
-export type WorkflowBuiltinTranslations = typeof en;
+export type WorkflowBuiltinTranslations = Omit<typeof en, 'repositoryReview'> & {
+    repositoryReview?: typeof en.repositoryReview;
+};
 
 
 
@@ -12,6 +14,7 @@ export const en = {
     freshOpinions: { title: BUILTIN_WORKFLOW_TITLES_V1['builtin:fresh-opinions'], description: 'Independent answers to the same question, with an optional summary.' },
     answerAndReview: { title: BUILTIN_WORKFLOW_TITLES_V1['builtin:answer-and-review'], description: 'One agent answers, then another reviews that exact answer.' },
     debate: { title: BUILTIN_WORKFLOW_TITLES_V1['builtin:debate'], description: 'Compare views over your chosen rounds, with a summary after each round.' },
+    repositoryReview: { title: BUILTIN_WORKFLOW_TITLES_V1['builtin:repository-review'], description: 'Review the entire repository with the selected reviewers.' },
     patternInputs: { question: 'Question', participants: 'Participants', synthesis: 'Summarize the answers', synthesizer: 'Who summarizes', answerer: 'Who answers', reviewer: 'Who reviews', rounds: 'Rounds', digestAuthor: 'Who summarizes each round', previousRoundContext: 'Previous round' },
     openAPullRequest: { title: BUILTIN_WORKFLOW_TITLES_V1['builtin:open-a-pull-request'], description: 'Asks for a second opinion, then opens a pull request. If the second opinion disagrees, it waits for you.', inputs: { base: 'Base branch', title: 'Pull request title', body: 'Description', question: 'Question for the second opinion' } },
 };

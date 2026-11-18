@@ -17,6 +17,22 @@ function listBlocks(blocks: readonly WorkflowBlock[]): WorkflowBlock[] {
 }
 
 describe('built-in workflow catalog', () => {
+  it('offers a schedulable Hunt through one repository-scoped review admission', () => {
+    const entry = catalog.getBuiltinWorkflowCatalogV1().find(entry => entry.id === 'builtin:repository-review');
+    expect(entry).toBeDefined();
+    expect(entry?.requiresOriginSession).toBe(false);
+    expect(validateWorkflowDefinition(entry?.definition).issues).toEqual([]);
+    const choice = entry?.definition.blocks[0];
+    expect(choice?.kind).toBe('if');
+    if (choice?.kind !== 'if') throw new Error('missing_hunt_composition');
+    for (const branch of [choice.then, choice.otherwise]) expect(branch).toEqual([
+      expect.objectContaining({ kind: 'action', actionId: 'review.start', input: expect.objectContaining({
+        scope: { kind: 'literal', value: 'repository' }, reviewers: { kind: 'input', name: 'reviewers' },
+      }) }),
+    ]);
+    expect(choice.then[0]).toMatchObject({ input: { steps: { kind: 'input', name: 'steps' } } });
+    expect(choice.otherwise[0]).not.toHaveProperty('input.steps');
+  });
   // F5 (owner 2026-11-12): each built-in carries its own presentation mark; several share a purpose.
   it('gives every built-in its own mark', () => {
     const icons = catalog.getBuiltinWorkflowCatalogV1().map((entry) => entry.icon);
@@ -74,7 +90,7 @@ describe('built-in workflow catalog', () => {
     expect(catalog.getBuiltinWorkflowCatalogV1().map((entry) => entry.id)).toEqual([
       'builtin:keep-going',
       'builtin:review-and-converge', 'builtin:plan-with-a-panel', 'builtin:open-a-pull-request',
-      'builtin:fresh-opinions', 'builtin:parallel-implementations', 'builtin:answer-and-review', 'builtin:debate',
+      'builtin:fresh-opinions', 'builtin:parallel-implementations', 'builtin:answer-and-review', 'builtin:debate', 'builtin:repository-review',
     ]);
   });
 
@@ -95,7 +111,7 @@ describe('built-in workflow catalog', () => {
   });
 
   it.each(['keep-going', 'review-and-converge', 'plan-with-a-panel', 'open-a-pull-request',
-    'fresh-opinions', 'parallel-implementations', 'answer-and-review', 'debate'])('ships a strict, semantically valid %s definition', (id) => {
+    'fresh-opinions', 'parallel-implementations', 'answer-and-review', 'debate', 'repository-review'])('ships a strict, semantically valid %s definition', (id) => {
     const resolved = catalog.resolveBuiltinWorkflowDefinitionV1(id);
     expect(resolved).not.toBeNull();
     expect(WorkflowDefinitionBaseSchema.safeParse(resolved?.definition).success).toBe(true);

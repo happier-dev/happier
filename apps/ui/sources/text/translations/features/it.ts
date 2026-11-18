@@ -18779,6 +18779,7 @@ const it: WorkflowBuiltinTranslations = {
     freshOpinions: { title: 'Opinioni indipendenti', description: 'Risposte indipendenti alla stessa domanda, con un riepilogo facoltativo.' },
     answerAndReview: { title: 'Risposta + revisione', description: 'Un agente risponde, poi un altro revisiona quella stessa risposta.' },
     debate: { title: 'Dibattito', description: 'Confronta i punti di vista per i cicli che scegli, con un riepilogo dopo ciascuno.' },
+    repositoryReview: { title: 'Revisione del repository', description: 'Revisiona l’intero repository con i revisori selezionati.' },
     patternInputs: { question: 'Domanda', participants: 'Partecipanti', synthesis: 'Riepiloga le risposte', synthesizer: 'Chi riepiloga', answerer: 'Chi risponde', reviewer: 'Chi revisiona', rounds: 'Cicli', digestAuthor: 'Chi riepiloga ogni ciclo', previousRoundContext: 'Ciclo precedente' },
     openAPullRequest: { title: 'Apri una pull request', description: 'Chiede un secondo parere, poi apre una pull request. Se il secondo parere non è d’accordo, ti aspetta.', inputs: { base: 'Branch di base', title: 'Titolo della pull request', body: 'Descrizione', question: 'Domanda per il secondo parere' } },
 };

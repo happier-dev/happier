@@ -18713,6 +18713,7 @@ const ja: WorkflowBuiltinTranslations = {
     freshOpinions: { title: '独立した意見', description: '同じ質問にそれぞれ独立して回答します。必要に応じて要約も作成します。' },
     answerAndReview: { title: '回答 + レビュー', description: '1人のエージェントが回答し、別のエージェントがその回答をレビューします。' },
     debate: { title: '討論', description: '選んだラウンド数で意見を比較し、各ラウンドの後に要約します。' },
+    repositoryReview: { title: 'リポジトリをレビュー', description: '選択したレビュアーでリポジトリ全体をレビューします。' },
     patternInputs: { question: '質問', participants: '参加者', synthesis: '回答を要約する', synthesizer: '要約するエージェント', answerer: '回答するエージェント', reviewer: 'レビューするエージェント', rounds: 'ラウンド数', digestAuthor: '各ラウンドを要約するエージェント', previousRoundContext: '前のラウンド' },
     openAPullRequest: { title: 'プルリクエストを開く', description: 'セカンドオピニオンを求めてからプルリクエストを開きます。意見が合わない場合はあなたを待ちます。', inputs: { base: 'ベースブランチ', title: 'プルリクエストのタイトル', body: '説明', question: 'セカンドオピニオンへの質問' } },
 };

@@ -18273,6 +18273,7 @@ const de: WorkflowBuiltinTranslations = {
     freshOpinions: { title: 'Unabhängige Meinungen', description: 'Unabhängige Antworten auf dieselbe Frage, mit optionaler Zusammenfassung.' },
     answerAndReview: { title: 'Antwort + Prüfung', description: 'Ein Agent antwortet, dann prüft ein anderer genau diese Antwort.' },
     debate: { title: 'Debatte', description: 'Vergleiche Standpunkte über die gewählten Runden, mit einer Zusammenfassung nach jeder Runde.' },
+    repositoryReview: { title: 'Repository prüfen', description: 'Prüfe das gesamte Repository mit den ausgewählten Prüfern.' },
     patternInputs: { question: 'Frage', participants: 'Teilnehmende', synthesis: 'Antworten zusammenfassen', synthesizer: 'Wer fasst zusammen', answerer: 'Wer antwortet', reviewer: 'Wer prüft', rounds: 'Runden', digestAuthor: 'Wer fasst jede Runde zusammen', previousRoundContext: 'Vorherige Runde' },
     openAPullRequest: { title: 'Pull-Request öffnen', description: 'Holt eine zweite Meinung ein und öffnet dann einen Pull-Request. Wenn die zweite Meinung widerspricht, wartet er auf dich.', inputs: { base: 'Basis-Branch', title: 'Titel des Pull-Requests', body: 'Beschreibung', question: 'Frage an die zweite Meinung' } },
 };

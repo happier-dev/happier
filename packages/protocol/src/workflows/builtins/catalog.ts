@@ -9,6 +9,7 @@ import { REVIEW_AND_CONVERGE_WORKFLOW_V1 } from './reviewAndConverge.js';
 import { FRESH_OPINIONS_WORKFLOW_V1, PARALLEL_IMPLEMENTATIONS_WORKFLOW_V1 } from './freshOpinions.js';
 import { ANSWER_AND_REVIEW_WORKFLOW_V1 } from './answerAndReview.js';
 import { DEBATE_WORKFLOW_V1 } from './debate.js';
+import { REPOSITORY_REVIEW_WORKFLOW_V1 } from './repositoryReview.js';
 
 export { WORKFLOW_STARTER_EXAMPLE_KEYS_V1, WORKFLOW_STARTER_EXAMPLES_V1, getWorkflowStarterExamplesV1,
   type WorkflowStarterExampleKeyV1, type WorkflowStarterExampleV1 } from './examples.js';
@@ -21,7 +22,7 @@ export type BuiltinWorkflowPurposeV1 = 'goal' | 'review' | 'plan' | 'pull_reques
  * own glyph. Presentation only: it never decides behaviour.
  */
 export type BuiltinWorkflowIconV1 = 'target' | 'shield-check' | 'list-checks' | 'git-pull-request' | 'users' | 'git-branch'
-  | 'seal-check' | 'scales';
+  | 'seal-check' | 'scales' | 'scan-search';
 
 type CatalogEntryFieldsV1 = Readonly<{
   id: `builtin:${string}`;
@@ -67,6 +68,10 @@ export const BUILTIN_WORKFLOW_CATALOG_V1 = Object.freeze([
   { id: 'builtin:debate', version: 1, titleKey: 'workflows.builtins.debate.title',
     descriptionKey: 'workflows.builtins.debate.description', purpose: 'review', icon: 'scales', requiresOriginSession: false,
     definition: DEBATE_WORKFLOW_V1 },
+  { id: 'builtin:repository-review', version: 1,
+    titleKey: 'workflows.builtins.repositoryReview.title',
+    descriptionKey: 'workflows.builtins.repositoryReview.description', purpose: 'review', icon: 'scan-search', requiresOriginSession: false,
+    definition: REPOSITORY_REVIEW_WORKFLOW_V1 },
 ] satisfies readonly CatalogEntryFieldsV1[]);
 
 export type BuiltinWorkflowIdV1 = (typeof BUILTIN_WORKFLOW_CATALOG_V1)[number]['id'];

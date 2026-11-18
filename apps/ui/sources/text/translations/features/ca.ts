@@ -18793,6 +18793,7 @@ const ca: WorkflowBuiltinTranslations = {
     freshOpinions: { title: 'Opinions independents', description: 'Respostes independents a la mateixa pregunta, amb un resum opcional.' },
     answerAndReview: { title: 'Resposta + revisió', description: 'Un agent respon i un altre revisa aquella mateixa resposta.' },
     debate: { title: 'Debat', description: 'Compara punts de vista durant les rondes que triïs, amb un resum després de cadascuna.' },
+    repositoryReview: { title: 'Revisió del repositori', description: 'Revisa tot el repositori amb els revisors seleccionats.' },
     patternInputs: { question: 'Pregunta', participants: 'Participants', synthesis: 'Resumeix les respostes', synthesizer: 'Qui resumeix', answerer: 'Qui respon', reviewer: 'Qui revisa', rounds: 'Rondes', digestAuthor: 'Qui resumeix cada ronda', previousRoundContext: 'Ronda anterior' },
     openAPullRequest: { title: 'Obre una pull request', description: 'Demana una segona opinió i després obre una pull request. Si la segona opinió no hi està d’acord, t’espera.', inputs: { base: 'Branca base', title: 'Títol de la pull request', body: 'Descripció', question: 'Pregunta per a la segona opinió' } },
 };

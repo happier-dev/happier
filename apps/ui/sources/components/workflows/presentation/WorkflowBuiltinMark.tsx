@@ -12,6 +12,7 @@ const builtinMarks = {
     'git-branch': 'git-branch',
     'seal-check': 'seal-check',
     scales: 'scales',
+    'scan-search': 'magnifying-glass',
 } as const satisfies Record<BuiltinWorkflowIconV1, IconName>;
 
 /** A built-in workflow's own mark, in its navigation row, library row, pickers and run fold. */

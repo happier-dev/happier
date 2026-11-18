@@ -18807,6 +18807,7 @@ const ru: WorkflowBuiltinTranslations = {
     freshOpinions: { title: 'Независимые мнения', description: 'Независимые ответы на один вопрос с необязательным обобщением.' },
     answerAndReview: { title: 'Ответ + рецензия', description: 'Один агент отвечает, а другой рецензирует именно этот ответ.' },
     debate: { title: 'Дебаты', description: 'Сравните мнения за выбранное число раундов с обобщением после каждого раунда.' },
+    repositoryReview: { title: 'Проверка репозитория', description: 'Проверьте весь репозиторий выбранными рецензентами.' },
     patternInputs: { question: 'Вопрос', participants: 'Участники', synthesis: 'Обобщить ответы', synthesizer: 'Кто обобщает', answerer: 'Кто отвечает', reviewer: 'Кто рецензирует', rounds: 'Раунды', digestAuthor: 'Кто обобщает каждый раунд', previousRoundContext: 'Предыдущий раунд' },
     openAPullRequest: { title: 'Открыть pull request', description: 'Запрашивает второе мнение, затем открывает pull request. Если второе мнение не согласно, ждёт вас.', inputs: { base: 'Базовая ветка', title: 'Заголовок pull request', body: 'Описание', question: 'Вопрос для второго мнения' } },
 };

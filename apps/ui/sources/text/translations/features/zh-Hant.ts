@@ -18653,6 +18653,7 @@ const zhHant: WorkflowBuiltinTranslations = {
     freshOpinions: { title: '獨立意見', description: '針對同一問題獨立作答，也可彙整各方回答。' },
     answerAndReview: { title: '回答 + 審閱', description: '由一個代理回答，再由另一個代理審閱該回答。' },
     debate: { title: '辯論', description: '按你選擇的輪數比較觀點，並在每輪結束後彙整。' },
+    repositoryReview: { title: '審查整個儲存庫', description: '使用選取的審閱者審查整個儲存庫。' },
     patternInputs: { question: '問題', participants: '參與者', synthesis: '彙整回答', synthesizer: '彙整代理', answerer: '回答代理', reviewer: '審閱代理', rounds: '輪數', digestAuthor: '每輪彙整代理', previousRoundContext: '上一輪' },
     openAPullRequest: { title: '開啟提取請求', description: '先徵詢第二意見，再開啟提取請求。如果第二意見不同意，它會等待你。', inputs: { base: '基礎分支', title: '提取請求標題', body: '描述', question: '給第二意見的問題' } },
 };
