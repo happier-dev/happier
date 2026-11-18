@@ -75,10 +75,16 @@ export async function runQaGreenPass({ repoDir, stateDir, check, log = () => {} 
   return { revision: head, status };
 }
 
-/** Reload the checker bed at `revision` with `--verify` and return its verdict line. */
-export async function checkRevisionOnBed({ repoDir, stackName, revision, env = process.env }) {
+/** Reload the checker bed at `revision` with `--verify` and return its verdict line. The reload's own owners bound it
+ * (admission owns preparation, the start's readiness budget bounds readiness and the verify probes); `signal` is the
+ * checker's cancellation: it stops the reload's process group and reports a check that proved nothing. */
+export async function checkRevisionOnBed({ repoDir, stackName, revision, env = process.env, signal }) {
   const { resolveStacksStorageRoot } = await import('../utils/stack/repo_stack_identity.mjs');
-  if (!existsSync(join(resolveStacksStorageRoot(env), stackName, 'env'))) return { status: 'UNAVAILABLE', code: 'checker_stack_missing' };
+  const bedDir = join(resolveStacksStorageRoot(env), stackName);
+  if (!existsSync(join(bedDir, 'env'))) return { status: 'UNAVAILABLE', code: 'checker_stack_missing' };
+  // `stack qa-bed create` seeds and signs the bed in after its first start; a bed whose create stopped earlier can only
+  // fail at sign-in, which says nothing about this revision.
+  if (!existsSync(join(bedDir, 'qa-bed', 'seed.json'))) return { status: 'UNAVAILABLE', code: 'checker_bed_not_seeded' };
   // An uncommitted lockfile refuses every committed-revision reload; that says nothing about this revision.
   const { refuseWorkingLockfileDrift } = await import('../runtime/launch/reloadLockfilePreflight.mjs');
   try { await refuseWorkingLockfileDrift({ repoDir }); }
@@ -86,11 +92,17 @@ export async function checkRevisionOnBed({ repoDir, stackName, revision, env = p
   // The bed's own env selects everything; a committer's stack selection (HAPPIER_STACK_*) must not leak in.
   const childEnv = Object.fromEntries(Object.entries(env).filter(([name]) => !/^(GIT_(INDEX_FILE|DIR|WORK_TREE|COMMON_DIR)|HAPPIER_STACK_)/.test(name)
     || name === 'HAPPIER_STACK_STORAGE_DIR'));
+  if (signal?.aborted) return { status: 'UNAVAILABLE', code: 'check_cancelled' };
+  // Its own process group, so cancellation reaches the whole reload (remote transport included), not just its launcher.
   const child = spawn(process.execPath, [join(repoDir, 'apps/stack/scripts/repo_local.mjs'), 'stack', 'start', stackName,
-    '--runtime=source', '--restart', '--verify', '--no-ui', `--rev=${revision}`], { cwd: repoDir, env: childEnv, stdio: ['ignore', 'pipe', 'inherit'] });
+    '--runtime=source', '--restart', '--verify', '--no-ui', `--rev=${revision}`], { cwd: repoDir, env: childEnv, detached: true, stdio: ['ignore', 'pipe', 'inherit'] });
   let out = '';
   child.stdout.on('data', chunk => { out += chunk; process.stdout.write(chunk); });
-  const code = await new Promise(resolveExit => { child.once('error', () => resolveExit(null)); child.once('close', resolveExit); });
+  const exited = new Promise(resolveExit => { child.once('error', () => resolveExit(null)); child.once('close', resolveExit); });
+  const cancel = () => { void import('../utils/proc/proc.mjs').then(({ killProcessTree }) => killProcessTree(child, 'SIGTERM')); };
+  signal?.addEventListener('abort', cancel, { once: true });
+  const code = await exited.finally(() => signal?.removeEventListener('abort', cancel));
+  if (signal?.aborted) return { status: 'UNAVAILABLE', code: 'check_cancelled' };
   let verdict = null;
   for (const line of out.split('\n')) {
     try { const parsed = JSON.parse(line); if (parsed?.status === 'READY' || parsed?.status === 'NOT_READY') verdict = parsed; } catch { /* reload log lines */ }
@@ -100,7 +112,7 @@ export async function checkRevisionOnBed({ repoDir, stackName, revision, env = p
 
 /** The single rolling owner: checks the newest HEAD until it has been checked, then exits. */
 export async function runQaGreenRolling({ repoDir, env = process.env, stackName = env.HAPPIER_STACK_QA_GREEN_STACK || DEFAULT_QA_GREEN_STACK,
-  check = revision => checkRevisionOnBed({ repoDir, stackName, revision, env }), log = message => console.error(message) }) {
+  signal, check = revision => checkRevisionOnBed({ repoDir, stackName, revision, env, signal }), log = message => console.error(message) }) {
   const stateDir = await resolveQaGreenStateDir({ repoDir, env });
   for (;;) {
     let last;
@@ -138,7 +150,12 @@ if (process.argv[1] === self) {
   const [command, repoArg] = process.argv.slice(2);
   const repoDir = resolve(repoArg ?? process.cwd());
   try {
-    if (command === '--rolling') process.exitCode = await runQaGreenRolling({ repoDir });
+    if (command === '--rolling') {
+      // Stopping the checker (TERM/INT) cancels its check: the reload stops, nothing is proven, the lock is released.
+      const cancellation = new AbortController();
+      for (const name of ['SIGTERM', 'SIGINT']) process.once(name, () => cancellation.abort());
+      process.exitCode = await runQaGreenRolling({ repoDir, signal: cancellation.signal });
+    }
     else if (command === '--kick') console.log(await kickQaGreenCheck({ repoDir }));
     else if (command === '--show') console.log(JSON.stringify(await readQaGreen({ stateDir: await resolveQaGreenStateDir({ repoDir }) })));
     else { console.error('usage: qa_green.mjs --show | --kick | --rolling [repoDir]'); process.exitCode = 2; }

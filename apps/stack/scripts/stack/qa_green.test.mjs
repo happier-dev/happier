@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
-import { readQaGreen, resolveQaGreenStateDir, runQaGreenPass } from './qa_green.mjs';
+import { checkRevisionOnBed, readQaGreen, resolveQaGreenStateDir, runQaGreenPass } from './qa_green.mjs';
 import { selectReloadSourceRevision } from '../runtime/launch/prepareSourceRuntimeReload.mjs';
 
 async function gitRepo(t) {
@@ -92,4 +92,45 @@ test('the green state belongs to the repository, whatever stack the committer\'s
     HAPPIER_STACK_REPO_DIR: '/elsewhere/0.2' } });
   assert.equal(selected, plain);
   assert.ok(plain.startsWith(storage));
+});
+
+// 2026-11-18: a green check sat 4 h inside its bed reload (a remote command whose script frame never came) holding
+// check.lock, and stopping the checker left that reload running. Cancelling a check must stop its reload and say
+// the check proved nothing, so the lock is released and the next kick checks HEAD again.
+test('a cancelled green check stops its bed reload and reports the checker unavailable', { timeout: 30_000 }, async t => {
+  const { repoDir, commit } = await gitRepo(t);
+  const revision = await commit('one');
+  const storage = join(repoDir, '..', 'stacks');
+  await mkdir(join(storage, 'bed', 'qa-bed'), { recursive: true });
+  await writeFile(join(storage, 'bed', 'env'), '');
+  await writeFile(join(storage, 'bed', 'qa-bed', 'seed.json'), '{}');
+  const pidFile = join(repoDir, '..', 'reload.pid');
+  // The bed reload is a child process (the boundary); this one never settles, like the 4 h reload.
+  await mkdir(join(repoDir, 'apps/stack/scripts'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/stack/scripts/repo_local.mjs'),
+    `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1 << 30);`
+      .replace("require('node:fs')", "(await import('node:fs'))"));
+  const cancellation = new AbortController();
+  const verdict = checkRevisionOnBed({ repoDir, stackName: 'bed', revision, env: { ...process.env, HAPPIER_STACK_STORAGE_DIR: storage }, signal: cancellation.signal });
+  let pid;
+  while (!(pid = await readFile(pidFile, 'utf8').catch(() => ''))) await new Promise(resolveWait => setTimeout(resolveWait, 50));
+  cancellation.abort();
+  assert.deepEqual(await verdict, { status: 'UNAVAILABLE', code: 'check_cancelled' });
+  assert.throws(() => process.kill(Number(pid), 0), { code: 'ESRCH' });
+});
+
+// 2026-11-18: the checker bed's create failed at its first start, so it was never seeded or signed in. A check on it
+// can only fail at sign-in and would mark a good HEAD NOT_READY; until `stack qa-bed create` finishes it proves nothing.
+test('a checker bed that was never seeded is unavailable, not a NOT_READY verdict about HEAD', async t => {
+  const { repoDir, commit } = await gitRepo(t);
+  const revision = await commit('one');
+  const storage = join(repoDir, '..', 'stacks');
+  await mkdir(join(storage, 'bed'), { recursive: true });
+  await writeFile(join(storage, 'bed', 'env'), '');
+  const marker = join(repoDir, '..', 'reload-started');
+  await mkdir(join(repoDir, 'apps/stack/scripts'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/stack/scripts/repo_local.mjs'), `(await import('node:fs')).writeFileSync(${JSON.stringify(marker)}, '1');`);
+  assert.deepEqual(await checkRevisionOnBed({ repoDir, stackName: 'bed', revision, env: { ...process.env, HAPPIER_STACK_STORAGE_DIR: storage } }),
+    { status: 'UNAVAILABLE', code: 'checker_bed_not_seeded' });
+  assert.equal(await readFile(marker, 'utf8').catch(() => null), null);
 });

@@ -5,14 +5,15 @@ import { projectStackReloadVerification } from './reload_verdict.mjs';
  * The wrapper selects the Stack's auth home and daemon host. The child process
  * is the boundary `run` stands for; null means the command printed no envelope.
  */
-export async function runRetainedRuntimeCli({ rootDir, stackName, args, kind, run, input, runtimeMode }) {
+export async function runRetainedRuntimeCli({ rootDir, stackName, args, kind, run, input, runtimeMode, timeoutMs }) {
   const { join } = await import('node:path');
   const runCli = run ?? (await import('../utils/proc/proc.mjs')).runCaptureResult;
   // Bare `--runtime` selects the built runtime snapshot; a source stack runs its retained source bundle.
   const runtimeFlag = runtimeMode === 'source-snapshot' ? '--runtime=source' : '--runtime';
   // `input` is the child's stdin (e.g. `--secrets-json-stdin`), never argv.
   const result = await runCli(process.execPath, [join(rootDir, 'scripts/stack.mjs'),
-    'happier', stackName, runtimeFlag, '--', ...args, '--json'], { cwd: rootDir, env: process.env, ...(input == null ? {} : { input }) });
+    'happier', stackName, runtimeFlag, '--', ...args, '--json'], { cwd: rootDir, env: process.env, ...(input == null ? {} : { input }),
+    ...(timeoutMs == null ? {} : { timeoutMs }) });
   let found = null;
   for (const line of result.out.split(/\r?\n/)) {
     try {
@@ -36,8 +37,8 @@ function readAgentProbeFailure(phase, envelope) {
  * attach (the same `session create` path QA uses), then stop and archive it
  * through the canonical Session owners. No prompt is sent, so no model turn runs.
  */
-export async function probeStackAgentStart({ rootDir, stackName, runtimeMode, machineId, run }) {
-  const cli = (args, kind) => runRetainedRuntimeCli({ rootDir, stackName, args, kind, run, runtimeMode });
+export async function probeStackAgentStart({ rootDir, stackName, runtimeMode, machineId, run, remainingMs }) {
+  const cli = (args, kind) => runRetainedRuntimeCli({ rootDir, stackName, args, kind, run, runtimeMode, timeoutMs: remainingMs?.() });
   // The inventory owner composes Machine and connected-account readiness.
   const inventory = await cli(['actions', 'invoke', 'agents.backends.list', '--input-json',
     JSON.stringify({ machineId })], 'actions_invoke');
@@ -90,7 +91,25 @@ export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, ar
     if (start?.readiness === 'pending') {
       return { ...projectStackReloadVerification({ info, beforeManagedCli, start }), durationMs: Date.now() - startedAt };
     }
-    check = 'daemon_tree';
+    return await verifyStartedStack({ rootDir, stackName, info, beforeManagedCli, startedAt });
+  } catch (error) {
+    // Never expose command output, auth envelopes or environment values in a verdict.
+    return { ...projectStackReloadVerification({ beforeManagedCli, failure: { check, error } }), durationMs: Date.now() - startedAt };
+  }
+}
+
+/** The started Stack's probes, in order, each settling the verdict at the first check that fails. They run inside the
+ * start's own readiness budget: a probe that never answers (a UI that never sends its first API request, a CLI that
+ * never prints its envelope) settles NOT_READY at its check instead of holding the verify, and a QA green check's lock,
+ * forever (P03-QA-TRAIN-2). */
+export async function verifyStartedStack({ rootDir, stackName, info, beforeManagedCli, startedAt, run, smokeWebBoot }) {
+  let check = 'daemon_tree';
+  const { resolveBackgroundReadyTimeoutMs } = await import('./run_script_with_stack_env.mjs');
+  const budgetMs = resolveBackgroundReadyTimeoutMs(process.env);
+  const budget = AbortSignal.timeout(budgetMs);
+  const deadline = Date.now() + budgetMs;
+  const remainingMs = () => Math.max(1, deadline - Date.now());
+  try {
     const reload = await readThisReloadRecord({ stackBaseDir: info?.baseDir, startedAt });
     // QA train canary: the validity checks refuse READY only on Stacks that opted in (HAPPIER_STACK_QA_TRAIN=1).
     const { readEnvObjectFromFile } = await import('../utils/env/read.mjs');
@@ -98,7 +117,7 @@ export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, ar
     check = 'auth';
     // Keep the envelope private: only the owner's authenticated boolean is exposed.
     const runtimeMode = info?.runtime?.mode;
-    const status = await runRetainedRuntimeCli({ rootDir, stackName, args: ['auth', 'status'], kind: 'auth_status', runtimeMode });
+    const status = await runRetainedRuntimeCli({ rootDir, stackName, args: ['auth', 'status'], kind: 'auth_status', runtimeMode, run, timeoutMs: remainingMs() });
     const auth = { authenticated: status?.ok === true && status.data?.authenticated === true };
     check = 'sign_in';
     const { probeKeyLogin } = await import('./qa_bed.mjs');
@@ -110,7 +129,7 @@ export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, ar
       return { ...verdict, durationMs: Date.now() - startedAt };
     }
     check = 'agent';
-    const agent = await probeStackAgentStart({ rootDir, stackName, runtimeMode, machineId: status.data?.machineId });
+    const agent = await probeStackAgentStart({ rootDir, stackName, runtimeMode, machineId: status.data?.machineId, run, remainingMs });
     // Resolve all non-render failures before acquiring a managed browser.
     const agentVerdict = projectStackReloadVerification({ info, beforeManagedCli, auth, agent, reload, signIn, enforceValidity });
     if (agentVerdict.status === 'NOT_READY' && agentVerdict.check !== 'render') {
@@ -119,14 +138,17 @@ export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, ar
     let render;
     if (info.urls?.uiUrl) {
       check = 'render';
-      const { smokeSourceWebBoot } = await import('../runtime/launch/smokeSourceRuntimeReload.mjs');
+      const smoke = smokeWebBoot ?? (await import('../runtime/launch/smokeSourceRuntimeReload.mjs')).smokeSourceWebBoot;
       const cancellation = new AbortController();
       const cancel = () => cancellation.abort(new Error('[reload] verification interrupted'));
       process.once('SIGINT', cancel);
       process.once('SIGTERM', cancel);
       try {
-        const api = await smokeSourceWebBoot({ repoDir: info.repo.dir, stackName, url: info.urls.uiUrl, signal: cancellation.signal, observeApiOrigin: enforceValidity });
+        const api = await smoke({ repoDir: info.repo?.dir, stackName, url: info.urls.uiUrl, signal: AbortSignal.any([cancellation.signal, budget]), observeApiOrigin: enforceValidity });
         render = { status: 'ready', processStartedAt: info.runtime.borrowedExpo?.runtimeStartedAt ?? info.runtime.startedAt, ...api };
+      } catch (error) {
+        if (!budget.aborted || cancellation.signal.aborted) throw error;
+        render = { status: 'timed_out' };
       } finally {
         process.removeListener('SIGINT', cancel);
         process.removeListener('SIGTERM', cancel);

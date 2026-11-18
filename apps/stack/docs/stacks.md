@@ -204,7 +204,11 @@ Stacks with `HAPPIER_STACK_QA_TRAIN=1` in their env; elsewhere READY lists them
 under `validity`. The browser loads after
 the serving process has started; an old `Web Bundled` log line cannot satisfy
 this check. Stacks with UI disabled skip the browser step. Borrowed Expo is
-verified without restarting its producer.
+verified without restarting its producer. The checks after start run inside the
+start's own readiness budget (`HAPPIER_STACK_STACK_BACKGROUND_READY_TIMEOUT_MS`,
+600 s by default): a check that does not answer in it, such as a page that never
+sends its first API request, reports NOT_READY at that check (`render` reports
+`status: "timed_out"`).
 
 **Green pointer.** A plain QA reload (no `--rev`, no overlay) selects the green
 commit: the newest commit whose own reload, on the green checker bed
@@ -215,7 +219,11 @@ runs at a time and always takes the newest HEAD. Verdicts are appended to
 `<repository dev stack>/qa-green/checks.log`; the pointer is `green.json` there
 (`node apps/stack/scripts/stack/qa_green.mjs --show`). It never moves backwards.
 Without a green commit, selection is unchanged. `--rev=HEAD` takes HEAD. During
-the canary only Stacks with `HAPPIER_STACK_QA_TRAIN=1` select it.
+the canary only Stacks with `HAPPIER_STACK_QA_TRAIN=1` select it. Stopping the
+checker (TERM or INT on its PID) stops its bed reload, records the check as
+UNAVAILABLE (it proved nothing, so the next kick checks HEAD again) and releases
+`check.lock`. A checker bed that `stack qa-bed create` has not finished seeding
+(no `qa-bed/seed.json`) is UNAVAILABLE too.
 
 A committed-revision reload refuses before any preparation when the shared
 checkout's `pnpm-lock.yaml` differs from HEAD's (`working_lockfile_differs_from_head`),

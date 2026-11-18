@@ -10,7 +10,7 @@ import { withPatchedProcessEnv } from '../testkit/core/env_scope.mjs';
 import { resolveStackRootFromMeta } from '../testkit/core/stack_root.mjs';
 import { recordStackRuntimeStart } from '../utils/stack/runtime_state.mjs';
 import { readStackInfoSnapshot } from './stack_info_snapshot.mjs';
-import { probeStackAgentStart, runVerifiedStackStart } from './stack_reload_verification.mjs';
+import { probeStackAgentStart, runVerifiedStackStart, verifyStartedStack } from './stack_reload_verification.mjs';
 
 /** This reload's own record and a working QA sign-in: the validity evidence every READY needs. */
 function validity() {
@@ -302,4 +302,27 @@ test('outside the QA train canary the validity checks are reported with READY, n
   const verdict = projectStackReloadVerification(input);
   assert.equal(verdict.status, 'READY');
   assert.deepEqual(verdict.validity, { sign_in: { status: 'failed', evidence: { status: 503 } } });
+});
+
+// P03-QA-TRAIN residual: the API-origin wait (and every other post-start probe) had no budget, so a UI that never
+// sent an API request held `--verify`, and with it the QA green check's lock, forever. The probes run inside the
+// start's own readiness budget and settle NOT_READY at the probe that did not answer.
+test('a post-start probe that never answers settles NOT_READY within the start\'s readiness budget', { timeout: 20_000 }, async t => {
+  const info = readyInfo();
+  info.urls = { uiUrl: 'http://qa-ui' };
+  const working = fakeRuntimeCli({
+    'auth status': { ok: true, kind: 'auth_status', data: { authenticated: true, machineId: 'probe-machine' } },
+    'session create': { ok: true, kind: 'session_create', data: { created: true, session: { id: 'probe-1' } } },
+    'session stop': { ok: true, kind: 'session_stop', data: { sessionId: 'probe-1', stopped: true } },
+    'session archive': { ok: true, kind: 'session_archive', data: { sessionId: 'probe-1' } },
+  });
+  // The browser is the boundary: this page renders but never sends its first API request.
+  const smokeWebBoot = ({ signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STACK_BACKGROUND_READY_TIMEOUT_MS: '300' });
+  const startedAt = Date.now();
+  const verdict = await verifyStartedStack({ rootDir: '/repo', stackName: 'qa', info, beforeManagedCli: info.runtime.managedCli,
+    startedAt, run: working.run, smokeWebBoot });
+  assert.equal(verdict.status, 'NOT_READY');
+  assert.equal(verdict.check, 'render');
+  assert.deepEqual(verdict.evidence, { status: 'timed_out' });
 });

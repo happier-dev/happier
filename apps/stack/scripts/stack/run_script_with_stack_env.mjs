@@ -68,6 +68,13 @@ import { ensureDevTargetSyncProject, flushDevTargetSync, runDevTargetControlProc
 
 const DEFAULT_BACKGROUND_READY_TIMEOUT_MS = 600_000;
 
+/** The start's readiness budget: how long a started Stack may take to answer once preparation settled.
+ * `--verify` runs its post-start probes inside the same budget. */
+export function resolveBackgroundReadyTimeoutMs(env = process.env) {
+  const configured = Number(String(env.HAPPIER_STACK_STACK_BACKGROUND_READY_TIMEOUT_MS ?? '').trim());
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_BACKGROUND_READY_TIMEOUT_MS;
+}
+
 
 async function readBackgroundRunnerFailure(error, { logPath, sourceSnapshot, env }) {
   // Keep the original outcome on its own line before attaching a runner tail.
@@ -1364,13 +1371,7 @@ async function runStackScriptWithStackEnvOnce({ rootDir, stackName, scriptPath, 
               });
             });
             const readyPromise = (async () => {
-              const timeoutMsRaw = (
-                process.env.HAPPIER_STACK_STACK_BACKGROUND_READY_TIMEOUT_MS
-                ?? String(DEFAULT_BACKGROUND_READY_TIMEOUT_MS)
-              ).toString().trim();
-              const timeoutMs = timeoutMsRaw
-                ? Number(timeoutMsRaw)
-                : DEFAULT_BACKGROUND_READY_TIMEOUT_MS;
+              const timeoutMs = resolveBackgroundReadyTimeoutMs(process.env);
               await waitForBackgroundStackReadiness({
                 stackName,
                 scriptPath,
