@@ -878,7 +878,7 @@ export const zhHant = {
     action_spec_search: "搜尋動作規格",
     action_spec_get: "取得動作規格",
     action_options_resolve: "解析動作選項",
-    action_invoke: "呼叫擴充動作",
+    action_invoke: "執行擴充功能動作",
     review_walkthrough: "逐步檢視審查",
     review_explain_findings: "說明審查發現",
     subagents_delegate_start: "啟動委派執行",

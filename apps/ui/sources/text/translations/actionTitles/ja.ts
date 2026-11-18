@@ -878,7 +878,7 @@ export const ja = {
     action_spec_search: "アクション仕様を検索",
     action_spec_get: "アクション仕様を取得",
     action_options_resolve: "アクションの選択肢を解決",
-    action_invoke: "登録済みアクションを実行",
+    action_invoke: "プラグインのアクションを実行",
     review_walkthrough: "レビューを順に確認",
     review_explain_findings: "レビューの指摘を説明",
     subagents_delegate_start: "委任実行を開始",

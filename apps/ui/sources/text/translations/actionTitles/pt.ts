@@ -878,7 +878,7 @@ export const pt = {
     action_spec_search: "Buscar especificações de ações",
     action_spec_get: "Obter especificação da ação",
     action_options_resolve: "Resolver opções da ação",
-    action_invoke: "Invocar ação fornecida por contribuição",
+    action_invoke: "Executar uma ação de plug-in",
     review_walkthrough: "Percorrer revisão",
     review_explain_findings: "Explicar apontamentos da revisão",
     subagents_delegate_start: "Iniciar execução delegada",

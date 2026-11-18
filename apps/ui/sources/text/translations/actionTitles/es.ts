@@ -878,7 +878,7 @@ export const es = {
     action_spec_search: "Buscar especificaciones de acciones",
     action_spec_get: "Consultar especificación de acción",
     action_options_resolve: "Resolver opciones de acción",
-    action_invoke: "Ejecutar acción aportada",
+    action_invoke: "Ejecutar una acción de un complemento",
     review_walkthrough: "Recorrer revisión paso a paso",
     review_explain_findings: "Explicar hallazgos de revisión",
     subagents_delegate_start: "Iniciar ejecución delegada",

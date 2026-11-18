@@ -238,7 +238,7 @@ function createActionOptionsActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'action.invoke', executionPlacement: 'machine', approval: {result: 'required'},
-    title: 'Invoke contributed action',
+    title: 'Run a plugin action',
     description: 'Invoke one currently available contributed Action through the canonical host dispatcher. If the result is `denied`, the person declined the confirmation: report that and do not invoke it again unless they ask.',
     sideEffectClass: 'external',
     safety: 'safe',
@@ -257,7 +257,7 @@ function createActionOptionsActionSpecs() {
       rpc: true,
     },
     inputHints: {
-      title: 'Invoke contributed action',
+      title: 'Run a plugin action',
       description: 'Use the exact qualified Action identity returned by action discovery and only its declared input.',
       fields: [
         { path: 'action.pluginId', title: 'Plugin id', widget: 'text', required: true },

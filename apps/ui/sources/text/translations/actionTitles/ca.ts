@@ -878,7 +878,7 @@ export const ca = {
     action_spec_search: "Cerca especificacions d'accions",
     action_spec_get: "Consulta una especificació d'acció",
     action_options_resolve: "Resol les opcions de l'acció",
-    action_invoke: "Executa una acció aportada",
+    action_invoke: "Executa una acció d’un connector",
     review_walkthrough: "Recorre la revisió",
     review_explain_findings: "Explica les observacions de la revisió",
     subagents_delegate_start: "Inicia una execució delegada",

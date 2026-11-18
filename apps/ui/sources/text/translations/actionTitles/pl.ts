@@ -878,7 +878,7 @@ export const pl = {
     action_spec_search: "Wyszukaj specyfikacje akcji",
     action_spec_get: "Odczytaj specyfikację akcji",
     action_options_resolve: "Ustal opcje akcji",
-    action_invoke: "Wywołaj akcję udostępnioną przez wtyczkę",
+    action_invoke: "Uruchom akcję wtyczki",
     review_walkthrough: "Przejdź przez przegląd",
     review_explain_findings: "Wyjaśnij ustalenia przeglądu",
     subagents_delegate_start: "Rozpocznij wykonanie delegowane",

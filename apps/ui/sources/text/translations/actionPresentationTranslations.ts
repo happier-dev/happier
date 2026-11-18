@@ -886,7 +886,7 @@ const en = {
         action_spec_search: "Search action specs",
         action_spec_get: "Get action spec",
         action_options_resolve: "Resolve action options",
-        action_invoke: "Invoke contributed action",
+        action_invoke: "Run a plugin action",
         review_walkthrough: "Walk through review",
         review_explain_findings: "Explain review findings",
         subagents_delegate_start: "Start delegate run",

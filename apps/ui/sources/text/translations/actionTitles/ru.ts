@@ -878,7 +878,7 @@ export const ru = {
     action_spec_search: "Найти спецификации действий",
     action_spec_get: "Получить спецификацию действия",
     action_options_resolve: "Определить варианты действия",
-    action_invoke: "Выполнить действие расширения",
+    action_invoke: "Выполнить действие плагина",
     review_walkthrough: "Пройти проверку пошагово",
     review_explain_findings: "Объяснить замечания проверки",
     subagents_delegate_start: "Запустить делегированную задачу",

@@ -878,7 +878,7 @@ export const zhHans = {
     action_spec_search: "搜索操作规范",
     action_spec_get: "获取操作规范",
     action_options_resolve: "解析操作选项",
-    action_invoke: "调用扩展操作",
+    action_invoke: "运行插件操作",
     review_walkthrough: "逐项查看审查",
     review_explain_findings: "解释审查发现",
     subagents_delegate_start: "启动委派运行",

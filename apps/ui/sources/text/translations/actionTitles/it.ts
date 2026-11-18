@@ -878,7 +878,7 @@ export const it = {
     action_spec_search: "Cerca nelle specifiche delle azioni",
     action_spec_get: "Leggi la specifica di un'azione",
     action_options_resolve: "Determina le opzioni dell'azione",
-    action_invoke: "Esegui un'azione fornita da un contributo",
+    action_invoke: "Esegui un'azione di un plugin",
     review_walkthrough: "Segui la revisione guidata",
     review_explain_findings: "Spiega i risultati della revisione",
     subagents_delegate_start: "Avvia un'esecuzione delegata",

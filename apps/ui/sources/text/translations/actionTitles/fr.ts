@@ -878,7 +878,7 @@ export const fr = {
     action_spec_search: "Rechercher des définitions d’action",
     action_spec_get: "Consulter une définition d’action",
     action_options_resolve: "Résoudre les options de l’action",
-    action_invoke: "Exécuter une action fournie par une extension",
+    action_invoke: "Exécuter une action de plugin",
     review_walkthrough: "Parcourir la revue",
     review_explain_findings: "Expliquer les constats de revue",
     subagents_delegate_start: "Démarrer une exécution déléguée",

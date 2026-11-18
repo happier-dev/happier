@@ -878,7 +878,7 @@ export const de = {
     action_spec_search: "Aktionsdefinitionen suchen",
     action_spec_get: "Aktionsdefinition abrufen",
     action_options_resolve: "Aktionsoptionen ermitteln",
-    action_invoke: "Bereitgestellte Aktion aufrufen",
+    action_invoke: "Plugin-Aktion ausführen",
     review_walkthrough: "Review Schritt für Schritt durchgehen",
     review_explain_findings: "Review-Ergebnisse erklären",
     subagents_delegate_start: "Delegierten Durchlauf starten",
