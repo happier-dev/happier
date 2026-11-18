@@ -10,7 +10,8 @@ import { createDaemonSessionAccountActionExecutor } from '@/daemon/agentRuntime/
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCliActionDeps } from './createCliActionDeps';
-import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionMessageSendResultV1Schema, SessionInputRequestV2Schema, deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { WorkflowAcceptedAuthorizationV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 const sockets = vi.hoisted(() => ({ connect: vi.fn() }));
@@ -26,6 +27,47 @@ vi.mock('@/api/session/sockets', async importOriginal => {
 
 describe('CLI host Message admission', () => {
   beforeEach(() => vi.clearAllMocks());
+  it.each([false, true])('admits Workflow Message input with its retained source authority (mediated=%s)', async mediated => {
+    const accountId = 'workflow-owner';
+    const sessionId = 'cmv3workflowmessageaaaaaa';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null };
+    const workflow = { purpose: 'invocation', runId: 'workflow-run', invocationRecordId: 'workflow-input' } as const;
+    const sourceAuthority = { mediatorPluginId: 'happier.channels', sourceRef: 'channels:binding:binding-1',
+      sourceRevisionOrEpoch: '4:7', remoteApprovalMaxScope: 'session' } as const;
+    const authorization = WorkflowAcceptedAuthorizationV1Schema.parse({ admittedPermissionCeiling: 'default',
+      principal: { kind: 'api', accountId, principalId: accountId, credentialId: '8f250f0e-4f31-4f7d-8f68-61638b73b526' },
+      ...(mediated ? { sourceAuthority } : {}),
+    });
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
+        id: sessionId, active: true, encryptionMode: 'plain', machineId: 'workflow-machine',
+        metadata: JSON.stringify({ machineId: 'workflow-machine', permissionMode: 'default' }),
+      }) } };
+      throw new Error(`Unexpected Workflow Message HTTP read: ${url}`);
+    });
+    const admitted: unknown[] = [];
+    const deps = createCliActionDeps({ token, credentials, sessionId, mode: 'plain', ctx: null,
+      machineAdmissionTransport: async request => {
+        if (request.content.t !== 'plain') throw new Error('Expected plain Workflow Message');
+        const body = request.content.v;
+        if (!body || typeof body !== 'object' || !('meta' in body) || !body.meta || typeof body.meta !== 'object') {
+          throw new Error('Expected protected Workflow Message metadata');
+        }
+        admitted.push(SessionInputRequestV2Schema.parse(Reflect.get(body.meta, 'happierInputRequestV1')));
+        return { status: 'accepted', localId: request.localId };
+      },
+    });
+    const result = await deps.sessionSendMessage!({ sessionId, message: 'Continue the Workflow', wait: false,
+      requestedAction: { v: 1, kind: 'enqueue' }, actionCaller: { kind: 'workflowRun', runId: workflow.runId, authorization },
+      context: { surface: 'agent', authority: 'account_automation', workflowSessionInput: workflow },
+    });
+    expect(result).toMatchObject({ status: 'accepted', localId: deriveWorkflowSessionInputLocalIdV2(workflow) });
+    expect(admitted).toEqual([{ v: 2, producer: 'workflow', caller: { kind: 'host' }, workflow,
+      permission: { requestedPermissionCeiling: 'default' }, ...(mediated ? { sourceAuthority } : {}) }]);
+    expect(http.post).not.toHaveBeenCalled();
+  });
   it('keeps the original host input record for a retained approval result', async () => {
     const accountId = 'approval-owner';
     const serverId = 'approval-profile';

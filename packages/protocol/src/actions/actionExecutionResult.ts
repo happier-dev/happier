@@ -207,7 +207,9 @@ export const ActionExecuteFailureSchema = lazyZodSchema(() => z.strictObject({
   automationNotices: z.optional(ActionAutomationNoticesV1Schema),
 }));
 
-export type ActionExecuteFailure = Readonly<z.infer<typeof ActionExecuteFailureSchema>>;
+export type ActionExecuteFailure = Readonly<Omit<z.infer<typeof ActionExecuteFailureSchema>, 'automationNotices'> & {
+  automationNotices?: readonly ActionAutomationNoticeV1[] | undefined;
+}>;
 
 /** Closed code-only cause; never exception messages, native output or arbitrary fields. */
 type KnownActionFailureCauseV1 = Readonly<{

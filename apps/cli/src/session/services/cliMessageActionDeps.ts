@@ -480,9 +480,7 @@ export function createCliMessageActionDeps(
       const workflowInputAdmission = workflow && workflowCaller && workflowPermissionCeiling
         ? buildWorkflowSessionInputAdmissionV2(workflow, { requestedPermissionCeiling: workflowPermissionCeiling,
             ...(canonicalReplyIntent ? { replyIntent: canonicalReplyIntent } : {}),
-            ...(workflowCaller.authorization.sourceAuthority ? { sourceAuthority: { kind: 'mediatedExternal',
-              ...workflowCaller.authorization.sourceAuthority,
-              admittedPermissionCeiling: workflowCaller.authorization.admittedPermissionCeiling } } : {}),
+            ...(workflowCaller.authorization.sourceAuthority ? { sourceAuthority: workflowCaller.authorization.sourceAuthority } : {}),
             ...(context?.actionRequestAttributionV1 ? { actionRequestAttributionV1: context.actionRequestAttributionV1 } : {}),
           }) : undefined;
       const workflowLocalId = workflow ? deriveWorkflowSessionInputLocalIdV2(workflow) : undefined;
