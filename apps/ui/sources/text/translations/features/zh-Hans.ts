@@ -595,6 +595,7 @@ const deploymentSettingsTranslations = {
     scheduleOn: '开启 · 每晚 02:00',
     scheduleTurnOn: '开启',
     setupNoDestination: '备份需要一个存放副本的地方。请先从商店添加备份存储。',
+    setupDestinationsUnavailable: '目前无法读取备份存储选项。请稍后再试。',
     setupOpenStore: '打开商店',
     setupRoleRequired: "必需的已保存密钥",
     setupRoleOptional: '可选 · 仅当你的存储需要时',

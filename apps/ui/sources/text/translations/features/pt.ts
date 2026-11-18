@@ -610,6 +610,7 @@ const deploymentSettingsTranslations = {
     scheduleOn: 'Ativados · todas as noites às 02:00',
     scheduleTurnOn: 'Ativar',
     setupNoDestination: 'Os backups precisam de um sítio onde ficar. Adicione primeiro armazenamento na Loja.',
+    setupDestinationsUnavailable: 'Não foi possível ler agora as opções de armazenamento de backups. Tente novamente daqui a pouco.',
     setupOpenStore: 'Abrir Loja',
     setupRoleRequired: "Segredo guardado obrigatório",
     setupRoleOptional: 'Opcional · só se o seu armazenamento o usar',

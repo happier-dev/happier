@@ -607,6 +607,7 @@ const deploymentSettingsTranslations = {
     scheduleOn: 'Activadas · cada noche a las 02:00',
     scheduleTurnOn: 'Activar',
     setupNoDestination: 'Las copias necesitan un lugar donde guardarse. Añade primero un almacenamiento desde la Tienda.',
+    setupDestinationsUnavailable: 'Ahora mismo no se pudieron leer las opciones de almacenamiento de copias. Inténtalo de nuevo en un momento.',
     setupOpenStore: 'Abrir Tienda',
     setupRoleRequired: "Secreto guardado obligatorio",
     setupRoleOptional: 'Opcional · solo si tu almacenamiento lo usa',

@@ -602,6 +602,7 @@ const deploymentSettingsTranslations = {
     scheduleOn: 'Włączone · co noc o 02:00',
     scheduleTurnOn: 'Włącz',
     setupNoDestination: 'Kopie potrzebują miejsca. Najpierw dodaj magazyn kopii ze Sklepu.',
+    setupDestinationsUnavailable: 'Nie udało się teraz odczytać opcji magazynu kopii. Spróbuj ponownie za chwilę.',
     setupOpenStore: 'Otwórz Sklep',
     setupRoleRequired: "Wymagany zapisany sekret",
     setupRoleOptional: 'Opcjonalne · tylko jeśli magazyn go używa',

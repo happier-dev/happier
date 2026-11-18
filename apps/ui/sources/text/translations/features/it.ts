@@ -607,6 +607,7 @@ const deploymentSettingsTranslations = {
     scheduleOn: 'Attivi · ogni notte alle 02:00',
     scheduleTurnOn: 'Attiva',
     setupNoDestination: 'I backup hanno bisogno di un posto dove stare. Aggiungi prima uno storage dallo Store.',
+    setupDestinationsUnavailable: 'Al momento non è stato possibile leggere le opzioni di storage per i backup. Riprova tra poco.',
     setupOpenStore: 'Apri lo Store',
     setupRoleRequired: "Segreto salvato obbligatorio",
     setupRoleOptional: 'Facoltativo · solo se il tuo storage lo usa',

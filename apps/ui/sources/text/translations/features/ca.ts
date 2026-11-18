@@ -609,6 +609,7 @@ const deploymentSettingsTranslations = {
     scheduleOn: 'Activades · cada nit a les 02:00',
     scheduleTurnOn: 'Activa',
     setupNoDestination: 'Les còpies necessiten un lloc on guardar-se. Afegeix primer un emmagatzematge des de la Botiga.',
+    setupDestinationsUnavailable: 'Ara mateix no s’han pogut llegir les opcions d’emmagatzematge de còpies. Torna-ho a provar d’aquí a una estona.',
     setupOpenStore: 'Obre la Botiga',
     setupRoleRequired: "Secret desat obligatori",
     setupRoleOptional: 'Opcional · només si el teu emmagatzematge el fa servir',

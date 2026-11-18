@@ -605,6 +605,7 @@ const deploymentSettingsTranslations = {
     scheduleOn: 'An · jede Nacht um 02:00',
     scheduleTurnOn: 'Einschalten',
     setupNoDestination: 'Backups brauchen einen Ort für die Kopien. Fügen Sie zuerst Backup-Speicher aus dem Store hinzu.',
+    setupDestinationsUnavailable: 'Die Optionen für Backup-Speicher konnten gerade nicht gelesen werden. Versuchen Sie es gleich noch einmal.',
     setupOpenStore: 'Store öffnen',
     setupRoleRequired: "Erforderliches gespeichertes Geheimnis",
     setupRoleOptional: 'Optional · nur wenn Ihr Speicher es nutzt',

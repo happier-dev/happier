@@ -602,6 +602,7 @@ const deploymentSettingsTranslations = {
     scheduleOn: 'オン · 毎晩 02:00',
     scheduleTurnOn: 'オンにする',
     setupNoDestination: 'バックアップにはコピーの保存先が必要です。まずストアからバックアップストレージを追加してください。',
+    setupDestinationsUnavailable: 'バックアップ保存先の選択肢を今は読み込めませんでした。しばらくしてからもう一度お試しください。',
     setupOpenStore: 'ストアを開く',
     setupRoleRequired: "必須の保存済みシークレット",
     setupRoleOptional: '任意 · ストレージが使う場合のみ',

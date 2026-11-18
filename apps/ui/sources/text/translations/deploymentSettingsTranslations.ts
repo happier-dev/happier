@@ -236,6 +236,7 @@ export type DeploymentSettingsTranslations = Readonly<{
   scheduleOn: string;
   scheduleTurnOn: string;
   setupNoDestination: string;
+  setupDestinationsUnavailable: string;
   setupOpenStore: string;
   setupRoleRequired: string;
   setupRoleOptional: string;
@@ -368,6 +369,7 @@ export const deploymentSettingsTranslations = {
     scheduleOn: 'On · every night at 02:00',
     scheduleTurnOn: 'Turn on',
     setupNoDestination: 'Backups need somewhere to keep the copies. Add backup storage from the Store first.',
+    setupDestinationsUnavailable: 'Backup storage options couldn’t be read right now. Try again in a moment.',
     setupOpenStore: 'Open Store',
     setupRoleRequired: "Required Saved Secret",
     setupRoleOptional: 'Optional · only if your storage uses it',

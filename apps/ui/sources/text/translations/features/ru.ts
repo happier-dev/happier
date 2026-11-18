@@ -605,6 +605,7 @@ const deploymentSettingsTranslations = {
     scheduleOn: 'Включено · каждую ночь в 02:00',
     scheduleTurnOn: 'Включить',
     setupNoDestination: 'Копиям нужно место для хранения. Сначала добавьте хранилище в Магазине.',
+    setupDestinationsUnavailable: 'Сейчас не удалось прочитать варианты хранилища копий. Попробуйте ещё раз чуть позже.',
     setupOpenStore: 'Открыть Магазин',
     setupRoleRequired: "Обязательный сохранённый секрет",
     setupRoleOptional: 'Необязательно · только если хранилище его использует',

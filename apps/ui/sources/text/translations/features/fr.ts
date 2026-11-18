@@ -610,6 +610,7 @@ const deploymentSettingsTranslations = {
     scheduleOn: 'Activées · chaque nuit à 02:00',
     scheduleTurnOn: 'Activer',
     setupNoDestination: 'Les sauvegardes ont besoin d’un endroit où être gardées. Ajoutez d’abord un stockage depuis la Boutique.',
+    setupDestinationsUnavailable: 'Les options de stockage des sauvegardes n’ont pas pu être lues pour l’instant. Réessayez dans un moment.',
     setupOpenStore: 'Ouvrir la Boutique',
     setupRoleRequired: "Secret enregistré requis",
     setupRoleOptional: 'Facultatif · seulement si votre stockage l’utilise',

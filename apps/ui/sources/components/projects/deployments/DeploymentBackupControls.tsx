@@ -516,19 +516,23 @@ export function DeploymentBackupSetup(props: Readonly<{
     open();
   }, [route.deploymentEnvironment, route.deploymentSetup, props.detail.environment.id,
     projection.interactionEnabled, destinations.length, open]);
+  // "Nothing to back up here" is offered only where the definition declares no database (PAGE-ACCEPT-176 D14).
+  const declaresData = (props.detail.content.template?.data?.length ?? 0) > 0;
   const finish = (content: React.ReactNode) => <>{content}
-    <Item title={t('projects.deployments.backupNotNeededTitle')} mode="info" rightElement={
+    {declaresData ? null : <Item title={t('projects.deployments.backupNotNeededTitle')} mode="info" rightElement={
       <SectionActionButton testID={`${id}.notNeeded`} title={t('projects.deployments.backupNotNeededAction')}
         disabled={change.running} onPress={() => change.press(async () => {
           const result = await props.actions.configureBackup(props.detail.environment, { intent: 'markNotNeeded' });
           if (result.kind === 'notNeeded') props.onChanged();
           return { ok: true };
-        })} />} />
+        })} />} />}
     {change.outcome ? <DeployOutcomeBanner controller={change.banner}
       machine={props.machineName(props.detail.environment.controllerMachineId)} copy="setting" /> : null}</>;
   if (projection.phase === 'establishing') return finish(<Item testID={id} title={t('projects.deployments.loading')} mode="info" />);
   if (!destinations.length && projection.phase !== 'current') return finish(<Item testID={id}
-    title={t('projects.deployments.settingsSections.setupTitle')} subtitle={t('projects.deployments.backupStatusUnavailable')} mode="info" />);
+    title={t('projects.deployments.settingsSections.setupTitle')}
+    // Why setup can't start: the storage options didn't read, not past runs (R2-D17).
+    subtitle={t('projects.deployments.settingsSections.setupDestinationsUnavailable')} mode="info" />);
   if (!destinations.length) {
     const openStore = () => router.push(buildPluginsHomeRoute('app', { view: 'search', query: STORE_BACKUP_QUERY }));
     return finish(<Item testID={id} title={t('projects.deployments.settingsSections.setupTitle')}
