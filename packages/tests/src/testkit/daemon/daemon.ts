@@ -950,6 +950,11 @@ export async function startTestDaemon(params: {
   startupTimeoutMs?: number;
   /** Enrollment needs acknowledged server presence and Machine RPC registration, beyond the local HTTP listener. */
   requireMachineControlReady?: boolean;
+  /**
+   * Default true: when the daemon process exits, the harness terminates every descendant it
+   * observed (runners, Session holders, Agents). A test of what survives daemon death must pass
+   * false, or it measures this cleanup instead of the product.
+   */
   cleanupDescendantsOnExit?: boolean;
   cliLaunchSpec?: CliTestLaunchSpec;
   /** Test-only artifact preparation after daemon setup and immediately before process spawn. */
