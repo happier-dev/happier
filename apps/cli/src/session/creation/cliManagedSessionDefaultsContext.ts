@@ -14,11 +14,29 @@ import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/re
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { readProjectSessionDefaults } from '@/workspaces/projectAccountRows';
+import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+
+/** CLI-private data travels with executor context, never with the admitted Action input. */
+export const sessionCreationAccountSettingsContext = Symbol('sessionCreationAccountSettingsContext');
+export type CliSessionCreationDefaults = NonNullable<ActionExecutorContext['sessionCreationDefaults']> & Readonly<{
+  [sessionCreationAccountSettingsContext]?: ActiveAccountSettingsSnapshot;
+}>;
+
+export function readSessionCreationAccountSettingsContext(defaults: ActionExecutorContext['sessionCreationDefaults']): ActiveAccountSettingsSnapshot | undefined {
+  return (defaults as CliSessionCreationDefaults | undefined)?.[sessionCreationAccountSettingsContext];
+}
 
 function governanceValue(value: unknown): unknown {
   const failure = ActionExecuteFailureSchema.safeParse(value);
   if (failure.success) throw createActionExecuteFailureError(failure.data);
   return value;
+}
+
+/** Private preferences require the creating Account's retained custody or ordinary stored login. */
+export function canReadPrivateSessionDefaults(credentials: StoredCredentials, context?: ActionExecutorContext): boolean {
+  return Boolean(readRequesterAccountActionContext(context?.externalActionExecutionAuthorization))
+    || hasStoredSessionCredentialProvenance(credentials)
+      && !context?.externalActionCredential && !context?.externalActionExecutionAuthorization;
 }
 
 /** Network ports bound to the creating Account, never the installed custodian. */
@@ -41,9 +59,7 @@ export function createCliManagedSessionDefaultsContextLoader(input: Readonly<{
       privateKey: input.externalActionMachineRequestPrivateKey, installationId: input.externalActionMachineInstallationId,
     })),
   });
-  const requester = readRequesterAccountActionContext(context.externalActionExecutionAuthorization);
-  const privateAccountAvailable = Boolean(requester) || hasStoredSessionCredentialProvenance(input.credentials)
-    && !context.externalActionCredential && !context.externalActionExecutionAuthorization;
+  const privateAccountAvailable = canReadPrivateSessionDefaults(input.credentials, context);
   const binding = context.externalActionExecutionAuthorization?.binding;
   const teamAvailable = privateAccountAvailable
     || (binding !== undefined && isExternalActionProjectSessionDefaultsReadAdmittedV1(binding, 'teams.get'));

@@ -199,6 +199,10 @@ describe('Session spawn defaults at admission', () => {
     { name: 'MCP Team defaults', surface: 'mcp' as const, layer: 'team', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'native recovery preserves authored facets when optional Account defaults are unavailable', surface: 'mcp' as const, layer: 'recovery', permission: 'read-only', modelId: 'retained-model' },
     { name: 'saved member defaults', surface: 'mcp' as const, layer: 'member', permission: 'read-only', modelId: 'member-model' },
+    { name: 'CLI creation preparation reaches saved member defaults', surface: 'cli' as const, layer: 'member', permission: 'read-only', modelId: 'member-model' },
+    { name: 'cold CLI preparation shares one Account settings read with admission', surface: 'cli' as const, layer: 'member', cold: true, permission: 'read-only', modelId: 'member-model' },
+    { name: 'cold direct admission establishes the Account settings read baseline', surface: 'mcp' as const, layer: 'member', cold: true, permission: 'read-only', modelId: 'member-model' },
+    { name: 'CLI Team Project defaults precede general member defaults', surface: 'cli' as const, layer: 'member', project: true, permission: 'safe-yolo', modelId: 'project-model' },
     { name: 'Machine approval profile is captured at Session birth', surface: 'cli' as const, layer: 'approval-machine', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'explicit null clears the Machine approval profile at Session birth', surface: 'cli' as const, layer: 'approval-null', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'Team approval profile is captured with derived provenance at Session birth', surface: 'cli' as const, layer: 'approval-team', permission: 'safe-yolo', modelId: 'team-model' },
@@ -220,6 +224,7 @@ describe('Session spawn defaults at admission', () => {
     const crossAccount = ['requester', 'requester-project', 'unadmitted', 'retired'].includes(testCase.layer);
     const custodianToken = `e30.${Buffer.from(JSON.stringify({ sub: 'custodian' })).toString('base64url')}.signature`;
     const reads: string[] = [];
+    let settingsReads = 0;
     const launched: SpawnDaemonSessionRequest[] = [];
     const settings = accountSettingsParse({ memoryUpkeepInNewBots: false,
       ...(testCase.layer === 'approval-machine' || testCase.layer === 'approval-null'
@@ -239,6 +244,11 @@ describe('Session spawn defaults at admission', () => {
     vi.spyOn(axios, 'request').mockImplementation(async config => {
       const path = new URL(String(config.url)).pathname;
       reads.push(path);
+      if ('project' in testCase && path === '/v1/projects/sources/selected') return { status: 200, data: { ok: true,
+        source: { id: 'selected', name: 'Shared', revision: 1, owner: { kind: 'team', teamId: 'team' },
+          audience: [], createdByAccountId: 'owner' }, canManage: false,
+        sessionDefaults: { revision: 1, defaults: values('safe-yolo', 'project-model') },
+      } };
       if (crossAccount) {
         const headers = config.headers;
         expect(Object.keys(headers ?? {}).map(name => name.toLowerCase())).not.toContain('authorization');
@@ -264,6 +274,17 @@ describe('Session spawn defaults at admission', () => {
       throw new Error(`Unexpected Home Action read: ${path}`);
     });
     vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      if ('cold' in testCase && String(url).endsWith('/v2/account/settings')) {
+        settingsReads++;
+        return { status: 200, data: { version: 1, content: { t: 'plain', v: settings } } };
+      }
+      if ('cold' in testCase && String(url).endsWith('/v1/account/entity-rows/connected-accounts/purposes')) {
+        return { status: 200, data: { status: 'present', revision: 1, content: { t: 'plain', v: {
+          key: 'purposes', value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: [
+            { purpose: purpose.purpose, target: { kind: 'account', account: { service, accountId: 'member-account' } } },
+          ] }),
+        } } } };
+      }
       if (testCase.layer === 'requester-project' && String(url).endsWith('/v1/account/encryption')) {
         expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
         return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
@@ -359,13 +380,16 @@ describe('Session spawn defaults at admission', () => {
         snapshot: { ...snapshot, scopeKey: resolveAccountSettingsScopeKeyForToken(custodianToken),
           settings: params.actionsSettingsProvider.getAccountSettings()! }, serverHttpBaseUrl: 'https://home.test', isCurrent: async () => true });
     }
-    const deps = createCliActionDeps({ ...params, externalActionMachineInstallationId: 'installation',
+    const invocationParams = 'cold' in testCase ? { ...params, savedSecretOperationContext: undefined,
+      isCredentialCurrent: async () => true } : params;
+    const deps = createCliActionDeps({ ...invocationParams, externalActionMachineInstallationId: 'installation',
       externalActionMachineRequestPrivateKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).secretKey });
-    const executor = createCliActionExecutor(params);
+    const executor = createCliActionExecutor(invocationParams);
     const input = SessionSpawnNewInputV2Schema.parse({ creationKey: `defaults-${testCase.layer}`,
       executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/tmp' }, agentTarget: target,
       ...(testCase.layer === 'approval-null' ? { approvalProfileId: null } : {}),
       ...(testCase.layer === 'requester-project' ? { projectContext: { projectRef: { serverId: 'home', projectKey: 'personal-project' } } } : {}),
+      ...('project' in testCase ? { projectContext: { sourceRef: { serverId: 'home', sourceId: 'selected' } } } : {}),
       ...(testCase.layer === 'home' ? {} : { primaryTeamId: 'team' }),
       ...(testCase.layer === 'recovery' ? { permissionMode: 'read-only', modelSelection: model('retained-model'),
         configuration: { providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'existing-provider-session' },
@@ -394,7 +418,7 @@ describe('Session spawn defaults at admission', () => {
       ? voiceBinder.bindVoiceSessionSpawnInput(input)
       : null;
     if (voiceInput && !voiceInput.ok) throw new Error(voiceInput.errorCode);
-    const spawn = testCase.layer.startsWith('approval-')
+    const spawn = testCase.layer.startsWith('approval-') || testCase.surface === 'cli' && testCase.layer === 'member'
       ? executor.execute('session.spawn_new', input, { surface: testCase.surface, authority: 'present_user',
         serverId: 'home', actionRequestId: `defaults-${testCase.layer}`, bypassApprovals: true })
       : testCase.surface === 'voice' && voiceInput?.ok
@@ -438,6 +462,10 @@ describe('Session spawn defaults at admission', () => {
     expect(launched[0]).toMatchObject({ permissionMode: testCase.permission,
       ...(testCase.layer === 'team-resource' || testCase.layer === 'automatic' || testCase.layer === 'v2' ? {} : { modelSelection: model(testCase.modelId) }),
     });
+    // One settings acquisition plus the existing Connected Account purpose
+    // cutover's source read; preparation must not add a second acquisition.
+    if ('cold' in testCase) expect(settingsReads).toBe(2);
+    expect(launched[0]).not.toHaveProperty('accountSettingsContext');
     if (testCase.layer === 'recovery') { expect(reads).toEqual([]); return; }
     if (testCase.layer.startsWith('approval-')) {
       const approvalProfileId = testCase.layer === 'approval-null' ? null

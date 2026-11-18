@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
-import { MachineSetupLocalPlanInputV1Schema, type MachineSetupLocalPlanResultV1 } from './prepareMachineSetupPlan';
+import { getMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { MachineSetupLocalPlanInputV1Schema, prepareMachineSetupPlanV1 } from './prepareMachineSetupPlan';
 import { prepareMachineSetupApps } from './prepareMachineSetupApps';
 
 it('prepares each declared Agent once and refuses a changed reviewed install operand', async () => {
@@ -9,9 +10,12 @@ it('prepares each declared Agent once and refuses a changed reviewed install ope
     { kind: 'bundledPreset', ref: { pluginId: 'com.example.catalog', localId: 'preset', revision: 'one' },
       setup: { items: [{ kind: 'agent', agentId: 'catalog/agent' }] } }],
   });
-  const plan: MachineSetupLocalPlanResultV1 = { sources: input.sources!, desiredRevision: 0, exclusions: [],
-    recipePlans: [], support: [{ sourceIndex: 0, itemIndex: 0, status: 'unverifiable' },
-      { sourceIndex: 0, itemIndex: 1, status: 'unverifiable' }, { sourceIndex: 1, itemIndex: 0, status: 'unverifiable' }] };
+  const current = await getMachineSetupDesiredV1({
+    read: async () => ({ status: 'ready', metadata: {}, metadataVersion: 0 }),
+    compareAndSwap: async () => { throw new Error('Planning must not write desired setup'); },
+  });
+  const plan = await prepareMachineSetupPlanV1({ input, current });
+  if ('errorCode' in plan) throw new Error(`Expected a prepared setup plan: ${plan.errorCode}`);
   const prepared = await prepareMachineSetupApps(input, plan, { surface: 'cli', authority: 'present_user' }, {});
   expect(prepared).toMatchObject({ appChildren: [
     { sourceIndex: 0, itemIndex: 0, actionId: 'machines.agents.install', input: {

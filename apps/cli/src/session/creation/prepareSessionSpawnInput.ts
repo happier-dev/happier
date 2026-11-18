@@ -18,7 +18,10 @@ import { readSettings } from '@/persistence';
 import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
 import { readRequesterAccountActionContext, resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { CliActionDepsParams } from '@/session/actions/cliActionDeps/types';
-import { createCliManagedSessionDefaultsContextLoader } from './cliManagedSessionDefaultsContext';
+import { canReadPrivateSessionDefaults, createCliManagedSessionDefaultsContextLoader, sessionCreationAccountSettingsContext, type CliSessionCreationDefaults } from './cliManagedSessionDefaultsContext';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { readSessionSpawnMemberDefaults } from './readSessionSpawnMemberDefaults';
 import { readSessionSpawnModelChoice } from './readSessionSpawnModelChoice';
 import { resolveSessionCreationAgentTarget } from './resolveSessionCreationAgentTarget';
 import { prepareOriginalAccountManagedPresetAcquire } from '@/api/managedPresetOrigination';
@@ -95,6 +98,24 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
     const agentTarget = selected.agentTarget.value ?? agentFallback;
     const resolvedAgent = resolveSessionCreationAgentTarget(agentTarget, catalog);
     if (!resolvedAgent) return unavailable('agent_contribution_unavailable');
+    const memberSnapshot = retained || !canReadPrivateSessionDefaults(custody.credentials, context) ? null
+      : custody.operation ? custody.operation.readSnapshot()
+      : await runWithServerHttpBaseUrl(requesterServerHttpBaseUrl, () => bootstrapAccountSettingsContext({
+        credentials: custody.credentials, mode: 'blocking', publication: 'invocation',
+        deps: { applySideEffects: () => undefined }, ...(context.signal ? { signal: context.signal } : {}),
+      }));
+    if (!retained && custody.operation && !memberSnapshot) {
+      throw createActionExecuteFailureError({ ok: false, errorCode: 'permission_denied', error: 'permission_denied', effectAttempted: false });
+    }
+    const completeContext = buildManagedSessionDefaultsContext({ context: captured.context,
+      ...(memberSnapshot ? { memberDefaults: readSessionSpawnMemberDefaults(agentTarget, {
+        agentId: resolvedAgent.agentId, accountSettings: memberSnapshot.settings,
+        purposeCatalog: memberSnapshot.connectedPurposeCatalog,
+      }) } : {}),
+    });
+    const selectedModel = resolveManagedSessionDefaults({ ...completeContext,
+      agentTargetKey: buildBackendTargetKeyV2(agentTarget),
+    }).model.value;
     const { modelSelectionInput, connectedServicesAuthIntent, ...authoredInput } = input;
     const modelSelectionRef = modelSelectionInput ? resolveSessionModelSelectionInputRefV1({
       agentTargetKey: buildBackendTargetKeyV2(agentTarget),
@@ -149,18 +170,20 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
       // Team resource model in the private defaults context makes the receiver
       // resolve a different provider/runtime tuple from an explicit request.
       ...(!modelSelectionInput && readSessionSpawnModelChoice(input, buildBackendTargetKeyV2(agentTarget)) === undefined
-        && selected.model.value
-        ? { modelSelection: selected.model.value } : {}),
+        && selectedModel
+        ? { modelSelection: selectedModel } : {}),
       ...(modelSelectionInput && modelSelectionRef ? { modelSelection: { v: 1, ref: modelSelectionRef, updatedAt: modelSelectionInput.updatedAt } } : {}),
       ...(sessionConfiguration ? { configuration: sessionConfiguration } : {}),
       ...(connectedServices ? { connectedServices } : {}),
     });
-    return { input: projectSessionSpawnNewActionInputV2(exactInput), defaults: { context: captured.context,
+    const defaults = { context: completeContext,
+      ...(memberSnapshot ? { [sessionCreationAccountSettingsContext]: memberSnapshot } : {}),
       ...(captured.unavailableDefaults ? { unavailableDefaults: captured.unavailableDefaults } : {}),
       ...(managedPresetAcquisition ? { managedPresetAcquisition } : {}),
       ...(managedPresetControllerAccess ? { managedPresetControllerAccess } : {}),
       authoredChoices: { ...(input.executionTarget ? { executionTarget: input.executionTarget } : {}),
         ...(input.sessionPlacement ? { sessionPlacement: input.sessionPlacement } : {}),
-        ...(input.agentTarget ? { agentTarget: input.agentTarget } : {}) } } };
+        ...(input.agentTarget ? { agentTarget: input.agentTarget } : {}) } } satisfies CliSessionCreationDefaults;
+    return { input: projectSessionSpawnNewActionInputV2(exactInput), defaults };
   };
 }

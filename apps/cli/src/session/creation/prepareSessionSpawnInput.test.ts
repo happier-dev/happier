@@ -9,9 +9,34 @@ import { TeamSummaryV1Schema, resolveTeamAdmissionProjectionV1 } from '@happier-
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams/capabilities';
 import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { createPrepareSessionSpawnInput } from './prepareSessionSpawnInput';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { readSessionCreationAccountSettingsContext } from './cliManagedSessionDefaultsContext';
 
 // HTTP is the boundary. Preparation, context loading, custody and precedence stay real.
 afterEach(() => vi.restoreAllMocks());
+
+it('keeps the captured Account snapshot outside requester wire defaults and signed input', async () => {
+  const credentials = { token: 'requester-token', encryption: null, credentialProvenance: 'stored_session' as const };
+  const operation = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: 'https://home.test',
+    isCurrent: async () => true, snapshot: { settings: accountSettingsParse({}), settingsVersion: 987654321,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], source: 'network',
+      scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token) } });
+  vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { homeDefaults: null } });
+  const prepare = createPrepareSessionSpawnInput({ credentials, token: credentials.token, mode: 'plain',
+    sessionId: '', ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://home.test', savedSecretOperationContext: operation,
+  }, { serverId: 'home', serverHttpBaseUrl: 'https://home.test' }, {
+    spawnConnectedServicesList: async () => { throw new Error('no connected-services intent'); },
+  });
+  const prepared = await prepare({ executionTarget: { serverId: 'home', machineId: 'machine' },
+    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    directory: { kind: 'path', path: '/repo' } }, { surface: 'cli', authority: 'present_user' });
+  expect(readSessionCreationAccountSettingsContext(prepared.defaults)?.settingsVersion).toBe(987654321);
+  const wire = ExternalActionRequesterInvocationV1Schema.shape.sessionCreationDefaults.parse(prepared.defaults);
+  expect(readSessionCreationAccountSettingsContext(wire)).toBeUndefined();
+  expect(JSON.stringify({ input: prepared.input, defaults: prepared.defaults })).not.toContain('987654321');
+});
 
 it.each(['machine', 'preset', 'unavailable-team', 'automatic', 'authored-model'] as const)('prepares public no-box defaults while preserving private preset custody (%s)', async placement => {
   const token = `e30.${Buffer.from(JSON.stringify({ sub: 'custodian' })).toString('base64url')}.signature`;

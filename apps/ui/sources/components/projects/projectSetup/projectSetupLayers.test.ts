@@ -1,55 +1,33 @@
 import { describe, expect, it } from 'vitest';
+import { resolveProjectDefinitionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
 
 import { t } from '@/text';
 
 import { listProjectSetupEffect } from './ProjectSetupReview';
 import { readProjectSetupLayers } from './projectSetupLayers';
 
-const definition = {
-  origins: [
-    { path: ['toolchain'], layer: 'repository' as const, overridden: false },
-    {
-      path: ['workspace', 'setup'],
-      layer: 'shared' as const,
-      overridden: false,
-    },
-    {
-      path: ['services', 'redis'],
-      layer: 'personal' as const,
-      overridden: false,
-    },
-    {
-      path: ['scripts', 'lint'],
-      layer: 'repository' as const,
-      overridden: true,
-    },
-    {
-      path: ['scripts', 'lint'],
-      layer: 'personal' as const,
-      overridden: false,
-    },
-  ],
-  sharedBasis: {
+const definition = resolveProjectDefinitionV1({
+  repositoryManifest: {
+    version: 1,
+    toolchain: { kind: 'toolchain', tool: 'mise' },
+    scripts: { lint: { source: { kind: 'command', command: 'lint repository' } } },
+  },
+  acceptedSharedSetup: {
     sourceId: 'src-acme-web',
     contentRevision: { headerVersion: 1, bodyVersion: 3 },
     digest: 'a'.repeat(64),
+    manifest: { version: 1, workspace: {
+      setup: [{ kind: 'command', command: './scripts/seed-dev.sh --orders 500' }],
+    } },
   },
-};
-const manifest = {
-  version: 1 as const,
-  toolchain: { kind: 'toolchain' as const, tool: 'mise' },
-  workspace: {
-    setup: [
-      {
-        kind: 'command' as const,
-        command: './scripts/seed-dev.sh --orders 500',
-      },
-    ],
+  setupOverrides: {
+    version: 1,
+    services: { redis: { source: { kind: 'command', command: 'redis-server' } } },
+    scripts: { lint: { source: { kind: 'command', command: 'lint personal' } } },
   },
-  services: {
-    redis: { source: { kind: 'command' as const, command: 'redis-server' } },
-  },
-};
+});
+const manifest = definition.effectiveManifest;
+if (!manifest) throw new Error('Expected the authored Project layers to compose');
 
 describe('project setup layers (plan A L6)', () => {
   it('names the layer that decides each review line, and lists services only for the update review', () => {

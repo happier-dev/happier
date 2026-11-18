@@ -8,11 +8,8 @@ import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/ac
 import { resolveAgentSpawnPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
 import type { OrganizationPolicyLoadResult } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import { getOrganizationPolicySessionDefaults } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
-import { readAccountSettingValueForBackendTarget } from '@happier-dev/protocol/account/settings/accountSettings';
 import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings } from '@happier-dev/protocol/account/settings/connected-services';
-import { readAgentDefaultModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import { sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
-import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
@@ -20,7 +17,7 @@ import type { ConnectedAccountCatalogSnapshotV1 } from '@happier-dev/protocol/co
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { buildManagedSessionDefaultsContext, resolveManagedSessionDefaults, type ManagedSessionDefaultsContext, type ManagedConnectedServiceDefaultV1, type ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams/managedDefaults';
+import { buildManagedSessionDefaultsContext, resolveManagedSessionDefaults, type ManagedSessionDefaultsContext, type ManagedConnectedServiceDefaultV1 } from '@happier-dev/protocol/teams/managedDefaults';
 import { loadManagedSessionDefaultsContextV1, type ManagedSessionDefaultsContextLoaderV1 } from '@happier-dev/protocol/projects/loadManagedSessionDefaultsContextV1';
 import { tryNormalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -28,6 +25,7 @@ import type { SessionPlacementSelectionV1 } from '@happier-dev/protocol/sessions
 import type { ConnectedServiceBindingsV2, SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol';
 import { materializeSessionSpawnConnectedServicesDefaults, mergeSessionTeamCredentialBindingIntents, readAgentPurposeDefaults, type ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
 import { readSessionSpawnModelChoice } from './readSessionSpawnModelChoice';
+import { readSessionSpawnMemberDefaults } from './readSessionSpawnMemberDefaults';
 
 type SpawnDefaultSelections = Pick<SessionSpawnNewInputV2,
   'executionTarget' | 'agentTarget' | 'projectContext' | 'approvalProfileId' | 'primaryTeamId' | 'initialAccess' | 'permissionMode' | 'modelSelection' | 'configuration' | 'teamCredentialBindings' | 'identity' | 'attestedContext' | 'isolationOverride' | 'sourceContext' | 'sessionPlacement'>
@@ -122,12 +120,8 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
   const targetKey = buildBackendTargetKeyV2(input.agentTarget);
   const settings = params.accountSettings && typeof params.accountSettings === 'object' && !Array.isArray(params.accountSettings)
     ? params.accountSettings as Readonly<Record<string, unknown>> : {};
-  const memberPermission = parseAgentPermissionIntentV1Alias(String(readAccountSettingValueForBackendTarget(
-    settings, 'sessionDefaultPermissionModeByTargetKey', input.agentTarget) ?? ''));
-  const memberModel = readAgentDefaultModelSelectionV1(settings.providerDefaultModelSelectionsByAgentTargetKeyV1, input.agentTarget);
   const purposes = { agentId: params.agentId, accountSettings: settings, purposeCatalog: params.purposeCatalog };
   const declarations = readAgentPurposeDefaults(purposes);
-  const memberPurposes = readAgentPurposeDefaults({ ...purposes, onlySavedDefaults: true });
   const explicitPurposes = declarations.flatMap((entry): ManagedConnectedServiceDefaultV1[] => {
     if (input.connectedServices === null) return [{ ...entry, target: null, teamResource: null }];
     const binding = input.connectedServices?.bindingsByServiceId[buildQualifiedPluginContributionKey(entry.service)];
@@ -158,11 +152,7 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
   }
   const sharedTeamIds = new Set(input.initialAccess?.grants.flatMap(({ subject }) => subject.kind === 'account' ? [] : [subject.teamId]));
   const policy = getOrganizationPolicySessionDefaults(params.organizationPolicy);
-  const memberDefaults: ManagedSessionDefaultsV1 = {
-    ...(memberPermission ? { permissionModeByAgentTargetKey: { [targetKey]: memberPermission } } : {}),
-    ...(memberModel ? { modelByAgentTargetKey: { [targetKey]: memberModel } } : {}),
-    connectedServicesByAgentTargetKey: { [targetKey]: memberPurposes },
-  };
+  const memberDefaults = readSessionSpawnMemberDefaults(input.agentTarget, purposes);
   const captured = params.capturedContext ? { context: params.capturedContext, unavailableDefaults: params.unavailableDefaults }
     : input.sourceContext || input.configuration?.providerSessionResume
       ? { context: buildManagedSessionDefaultsContext({}), unavailableDefaults: params.unavailableDefaults }

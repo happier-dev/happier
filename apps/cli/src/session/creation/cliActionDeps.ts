@@ -76,7 +76,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { refreshConnectedAccountCatalogForAdmission } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
 import { agentSupportsSpawnConnectedServicesDefaults, ConnectedServicesDefaultUnavailableError } from '@/session/services/spawnConnectedServicesDefaults';
-import { createCliManagedSessionDefaultsContextLoader } from './cliManagedSessionDefaultsContext';
+import { canReadPrivateSessionDefaults, createCliManagedSessionDefaultsContextLoader, readSessionCreationAccountSettingsContext } from './cliManagedSessionDefaultsContext';
 import { createPrepareSessionSpawnInput } from './prepareSessionSpawnInput';
 
 
@@ -691,8 +691,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       // A signed no-box request has public defaults authority, but no private
       // Account reader. Never borrow the installed custodian's preferences.
       const retainedDefaults = sourceContext !== undefined || configurationSnapshot?.providerSessionResume !== undefined;
-      const defaultsCustody = !retainedDefaults && (admittedRequester
-        || !externalRequest && hasStoredSessionCredentialProvenance(params.credentials))
+      const defaultsCustody = !retainedDefaults && canReadPrivateSessionDefaults(params.credentials, context)
         ? resolveRequesterSavedSecretActionCustody({
           authorization: context?.externalActionExecutionAuthorization, credentials: params.credentials,
           operationContext: params.savedSecretOperationContext,
@@ -703,7 +702,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       if (defaultsOperation && !retainedSettings) {
         return { type: 'error', code: 'permission_denied', retryable: false };
       }
-      const defaultsContext = defaultsCustody ? retainedSettings ?? await runWithServerHttpBaseUrl(machineReferenceServerUrl,
+      const defaultsContext = defaultsCustody ? retainedSettings ?? readSessionCreationAccountSettingsContext(context?.sessionCreationDefaults)
+        ?? await runWithServerHttpBaseUrl(machineReferenceServerUrl,
         () => bootstrapAccountSettingsContext({ credentials: defaultsCredentials, mode: 'blocking', publication: 'invocation',
           deps: { applySideEffects: () => undefined }, ...(signal ? { signal } : {}) })) : null;
       const operation = defaultsContext ? defaultsOperation ?? createInvocationSavedSecretOperationContextV1({
