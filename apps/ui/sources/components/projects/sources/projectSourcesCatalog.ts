@@ -16,7 +16,6 @@ export function createProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime
     const queries = new Map<string, Query>();
     const sources = new Map<string, Readonly<{ controller: ReturnType<typeof createProjectSourcesController>;
         demand(): () => void; settle(): Promise<ProjectSourcesState['current']>; dispose(): void }>>();
-    const defaultKey = JSON.stringify(['', null, null]);
     let demand = 0;
     function observe(entry: Query) {
         if (demand > 0 && entry.subscribers > 0 && !entry.stopObserve) entry.stopObserve = observeProjectSources(entry.controller);
@@ -47,9 +46,9 @@ export function createProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime
                     subscribed = false; stop(); entry.subscribers -= 1;
                     if (entry.subscribers !== 0) return;
                     entry.stopObserve?.(); entry.stopObserve = null;
-                    // Only the ordinary catalog persists across navigation. Old search prefixes
-                    // have no consumer and must not fan out future Account-change requests.
-                    if (key !== defaultKey && queries.get(key) === entry) {
+                    // Keep the ordinary Account and Team catalogs available for navigation.
+                    // Searches and audience filters have no reader after the last unsubscribe.
+                    if ((query !== '' || audience !== undefined) && queries.get(key) === entry) {
                         entry.stopChanges(); owner.retireCatalog('source_query_retired'); owner.dispose(); queries.delete(key);
                     }
                 };

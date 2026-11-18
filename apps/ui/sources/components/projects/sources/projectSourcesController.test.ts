@@ -127,21 +127,27 @@ describe('Project Sources controller through Source Actions', () => {
         expect(controller.getSnapshot().current?.id).toBe('source-b');
         controller.dispose();
     });
-    it('retires unused searches from wake demand while retaining the default catalog across navigation', async () => {
-        const requested: string[] = [];
+    it('retires unused searches and keeps the Account and Team catalogs across navigation without idle reads', async () => {
+        const requested: Array<{ query: string; team: string | null }> = [];
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             ...createProjectSourceActionDeps({ ...scope, credentialAuthorityKind: 'account', assertCurrent() {},
                 workflowArtifacts: { read: async () => null }, request: async path => {
-                    requested.push(new URL(path, 'https://home.test').searchParams.get('query') ?? '');
+                    const params = new URL(path, 'https://home.test').searchParams;
+                    requested.push({ query: params.get('query') ?? '', team: params.get('sharedWithTeamId') });
                     return answer({ ok: true, sources: [source()], coverage: { complete: true, nextCursor: null } });
                 } }),
         }));
-        const catalog = createProjectSourcesCatalog({ scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
-            (id, input, context) => executor.execute(id, input, { ...context, authority: 'present_user', bypassApprovals: true }));
+        const dispatch: Parameters<typeof createProjectSourcesCatalog>[1] = (id, input, context) =>
+            executor.execute(id, input, { ...context, authority: 'present_user', bypassApprovals: true });
+        const catalog = createProjectSourcesCatalog({ scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) }, dispatch);
         const all = catalog.read('', undefined);
         const stopAll = all.subscribe(() => {});
         const stopDemand = catalog.demand();
         await all.load();
+        const team = catalog.read('', undefined, 'team-a');
+        const stopTeam = team.subscribe(() => {});
+        await team.load();
+        stopTeam();
         const searched = catalog.read('old search', undefined);
         const stopSearch = searched.subscribe(() => {});
         await searched.load('old search');
@@ -149,7 +155,14 @@ describe('Project Sources controller through Source Actions', () => {
         expect(searched.getSnapshot().rows).toEqual([]);
         requested.length = 0;
         publishHomeAccountChange(scope.serverId, [PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1]);
-        await vi.waitFor(() => expect(requested).toEqual(['']));
+        await vi.waitFor(() => expect(requested).toEqual([{ query: '', team: null }]));
+        const openedAgain = createProjectSourcesController(scope, dispatch, undefined, catalog.read, 'team-a');
+        try {
+            expect(openedAgain.getSnapshot().rows.map(row => row.id)).toEqual(['source-a']);
+            expect(requested).toEqual([{ query: '', team: null }]);
+        } finally {
+            openedAgain.dispose();
+        }
         stopAll(); stopDemand();
         expect(catalog.read('', undefined).getSnapshot().rows).toBe(all.getSnapshot().rows);
         expect(all.getSnapshot().rows.map(row => row.id)).toEqual(['source-a']);
