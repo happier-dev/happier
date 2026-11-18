@@ -31,10 +31,11 @@ export async function runGitPushWithConnectedAccount(input: Readonly<{
         errorCode: SCM_OPERATION_ERROR_CODES.SCM_SOURCE_CHANGED });
     if (!input.remote) return authRequired();
     const recordedSource = readCurrentBackendRuntimeServices()?.projectFilesSource;
-    const sourceUrl = recordedSource?.repository.cloneUrl
-        ?? (recordedSource ? `${recordedSource.provider.baseUrl.replace(/\/+$/, '')}/${recordedSource.repository.nameWithOwner}` : undefined);
-    const normalizedSourceUrl = sourceUrl ? normalizeRemoteUrl(sourceUrl) : null;
-    if (!normalizedSourceUrl) return destinationMismatch();
+    if (!recordedSource) return authRequired();
+    const sourceUrl = recordedSource.repository.cloneUrl
+        ?? `${recordedSource.provider.baseUrl.replace(/\/+$/, '')}/${recordedSource.repository.nameWithOwner}`;
+    const normalizedSourceUrl = normalizeRemoteUrl(sourceUrl);
+    if (!normalizedSourceUrl) return authRequired();
     // Read the effective push destination after Git's insteadOf/pushurl rules. A guest can edit
     // this config, so every destination must match the immutable host-recorded recipe source.
     const configured = await runScmCommand({ ...input.command, args: ['remote', 'get-url', '--push', '--all', input.remote] });
