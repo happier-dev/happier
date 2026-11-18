@@ -94,6 +94,7 @@ describe('prospective native request account scope', () => {
     ['plus', 'personal'], ['team', 'workspace'], ['future-plan', undefined],
   ] as const)('attributes exact %s response completions while retaining cumulative context', async (planType, accountScope) => {
     await withCodexNativeAttachFixture(async ({ runtime, emitNotification }) => {
+      await runtime.updateConfig({ modelId: 'fixture-model' });
       const events: CodexAppServerEvent[] = [];
       runtime.events.subscribe(event => events.push(event));
       expect(await runtime.runtimeAuth.apply({ serviceId: service.localId, authGeneration: {
@@ -172,6 +173,7 @@ describe('prospective native request account scope', () => {
     let planType = 'plus';
     let socket: WebSocket | undefined;
     await withCodexNativeAttachFixture(async ({ runtime, emitNotification, requests }) => {
+      await runtime.updateConfig({ modelId: 'fixture-model' });
       const events: CodexAppServerEvent[] = [];
       runtime.events.subscribe(event => events.push(event));
       const apply = (profileId: string) => runtime.runtimeAuth.apply({ serviceId: service.localId,
@@ -216,6 +218,7 @@ describe('prospective native request account scope', () => {
 
   it.each(['missing', 'unrecognized', 'failed'] as const)('leaves %s native plan evidence unknown', async kind => {
     await withCodexNativeAttachFixture(async ({ runtime, emitNotification }) => {
+      await runtime.updateConfig({ modelId: 'fixture-model' });
       const events: CodexAppServerEvent[] = [];
       runtime.events.subscribe(event => events.push(event));
       expect(await runtime.runtimeAuth.apply({ serviceId: service.localId, authGeneration: {
@@ -243,6 +246,7 @@ describe('prospective native request account scope', () => {
     const delayedRead = new Promise<unknown>(resolve => { releaseRead = resolve; });
     let blockRead = false;
     await withCodexNativeAttachFixture(async ({ runtime, emitNotification }) => {
+      await runtime.updateConfig({ modelId: 'fixture-model' });
       const events: CodexAppServerEvent[] = [];
       runtime.events.subscribe(event => events.push(event));
       const apply = (profileId: string) => runtime.runtimeAuth.apply({ serviceId: service.localId, authGeneration: {

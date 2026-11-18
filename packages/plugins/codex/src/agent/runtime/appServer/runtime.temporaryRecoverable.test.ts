@@ -1078,7 +1078,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   it('attributes only actual request auth and reports unknown native attribution after an in-turn account switch', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-request-attribution-'));
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
-    const runtime = createRuntime({ processEnv: { CODEX_HOME: codexHome }, connectedAccountService: service });
+    const runtime = createRuntime({ processEnv: { CODEX_HOME: codexHome }, initialModelId: 'gpt-5.4', connectedAccountService: service });
     const events: CodexAppServerEvent[] = [];
     runtime.events.subscribe(event => events.push(event));
     const apply = (profileId: string) => runtime.runtimeAuth.apply({ serviceId: service.localId,
@@ -1525,6 +1525,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         },
       });
       const runtime = createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: {
           CODEX_HOME: codexHome,
           HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
@@ -3409,6 +3410,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       );
 
       const runtime = createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: {
           CODEX_HOME: codexHome,
           HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
@@ -3479,6 +3481,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       );
       clientState.deferNextRateLimitsRead();
       const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: {
           CODEX_HOME: codexHome,
           HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
@@ -3557,6 +3560,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         }),
       );
       const runtime = createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: {
           CODEX_HOME: codexHome,
           HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
@@ -3618,6 +3622,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         },
       }));
       const runtime = createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: {
           CODEX_HOME: codexHome,
           HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
@@ -3760,6 +3765,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         },
       }));
       const runtime = createRuntime({
+        initialModelId: 'gpt-5.4',
         happierSessionId: 'session-connected-notification',
         processEnv: {
           CODEX_HOME: codexHome,
@@ -3823,6 +3829,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         },
       });
       const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: {
           CODEX_HOME: codexHome,
           HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
@@ -3898,6 +3905,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
           onExit: clientState.onExit, dispose: async () => undefined };
       });
       const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: {
           CODEX_HOME: codexHome,
           HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
@@ -3967,6 +3975,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         access_token: 'launch-access', account_id: 'acct_launch',
       } }));
       const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: { CODEX_HOME: codexHome, HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
           kind: 'profile', serviceId: 'openai-codex', profileId: 'launch', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
         }]) },
@@ -4021,6 +4030,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         },
       });
       const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: { CODEX_HOME: codexHome },
         ctx: {
           auth: {
@@ -4180,6 +4190,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         'utf8',
       );
       const runtime = createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: {
           CODEX_HOME: codexHome,
           HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
@@ -4257,6 +4268,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         tokens: { access_token: buildJwt({ exp: 1 }), account_id: 'acct_target' },
       }), 'utf8');
       const runtime = createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: {
           CODEX_HOME: codexHome,
           HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
@@ -4361,6 +4373,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       tokens: { access_token: buildJwt({ exp: 1 }), account_id: 'acct_target' },
     }));
     const runtime = asConnectedServiceAuthRuntime(createCodexAppServerRuntime({
+      initialModelId: 'gpt-5.4',
       directory: '/workspace', happierSessionId: 'execution-run-without-refresh',
       host: {
         baseProcessEnv: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
@@ -4442,6 +4455,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     try {
       await mkdir(codexHome, { recursive: true });
       const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: { CODEX_HOME: codexHome },
       }));
 
@@ -4498,6 +4512,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     try {
       await mkdir(codexHome, { recursive: true });
       const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: { CODEX_HOME: codexHome },
       }));
       const initialRequest = {
@@ -4565,6 +4580,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     try {
       await mkdir(codexHome, { recursive: true });
       const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: { CODEX_HOME: codexHome },
       }));
       const selection = {
@@ -4744,6 +4760,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         'utf8',
       );
       const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: {
           CODEX_HOME: codexHome,
           HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
@@ -4916,6 +4933,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     try {
       await mkdir(codexHome, { recursive: true });
       const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: { CODEX_HOME: codexHome },
       }));
       await runtime.runtimeAuth.apply({
@@ -4964,6 +4982,65 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       emitNotification('turn/completed', completedTurn('turn-busy'));
       await completion;
     } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('requires a selected model before starting a ChatGPT Connected Account session', async () => {
+    const runtime = createRuntime({
+      connectedAccountService: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+    });
+    try {
+      await expect(startCodexAppServerRuntime(runtime)).rejects.toMatchObject({
+        code: 'agent_startup_model_reconciliation_failed',
+        details: { failureCause: { phase: 'client_start', failureReason: 'model_selection_required', retryable: false } },
+      });
+      expect(clientState.requests.some(({ method }) => method === 'thread/start')).toBe(false);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it('refuses the inherited CLI default before dispatch after switching to a ChatGPT account', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-chatgpt-model-switch-'));
+    const runtime = asConnectedServiceAuthRuntime(createRuntime({ processEnv: { CODEX_HOME: codexHome } }));
+    try {
+      clientState.setNextThreadResumeResult({ threadId: 'thread-1', model: 'native-cli-default' });
+      await startCodexAppServerRuntime(runtime, { resumeId: 'thread-1' });
+      await expect(runtime.send({ v: 1, text: 'before account switch' })).resolves.toMatchObject({ status: 'accepted' });
+      expect(clientState.requests.find(({ method }) => method === 'turn/start')?.params)
+        .toMatchObject({ model: 'native-cli-default' });
+      const completion = waitForCodexAppServerRuntimeTurnCompletion(runtime);
+      emitNotification('turn/completed', completedTurn('turn-1'));
+      await completion;
+
+      await expect(runtime.runtimeAuth.apply({
+        serviceId: 'openai-codex',
+        authGeneration: {
+          credential: buildConnectedCodexCredential(),
+          forcedWorkspaceId: 'acct_target',
+          selection: { kind: 'profile', serviceId: 'openai-codex', profileId: 'target' },
+        },
+      })).resolves.toMatchObject({ ok: true });
+
+      const input = { v: 1 as const, text: 'retain this input' };
+      await expect.soft(runtime.send(input)).resolves.toMatchObject({
+        status: 'rejected',
+        diagnosticCode: 'model_selection_required',
+        retryable: false,
+        failureCause: { phase: 'turn_start', failureReason: 'model_selection_required' },
+      });
+      expect(clientState.requests.filter(({ method }) => method === 'turn/start')).toHaveLength(1);
+
+      await runtime.updateConfig({ modelId: 'gpt-5.4' });
+      await expect(runtime.send(input)).resolves.toMatchObject({ status: 'accepted' });
+      expect(clientState.requests.filter(({ method }) => method === 'turn/start').at(-1)?.params)
+        .toMatchObject({ model: 'gpt-5.4' });
+      const retryCompletion = waitForCodexAppServerRuntimeTurnCompletion(runtime);
+      emitNotification('turn/completed', completedTurn('turn-2'));
+      await retryCompletion;
+    } finally {
+      await runtime.dispose();
       await rm(codexHome, { recursive: true, force: true });
     }
   });
@@ -5026,6 +5103,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       await mkdir(codexHome, { recursive: true });
       clientState.deferNextLoginStart();
       const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: { CODEX_HOME: codexHome },
       }));
 
@@ -5106,6 +5184,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       await mkdir(codexHome, { recursive: true });
       clientState.deferNextLoginStart();
       const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        initialModelId: 'gpt-5.4',
         processEnv: { CODEX_HOME: codexHome },
       }));
       const request = {

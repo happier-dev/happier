@@ -980,6 +980,8 @@ export function createCodexAppServerRuntime(
     }
   };
   let currentModelId: string | null = trimStringValue(params.initialModelId);
+  // Native thread readback can supply a model without a Happier selection.
+  let hasExplicitModelSelection = currentModelId !== null && currentModelId !== 'default';
   let currentNativeModelProvider: string | null = null;
   let currentNativeAuthType: CodexActiveProviderAccount['authType'];
   let currentCollaborationModeId: string | null = trimStringValue(params.initialCollaborationModeId);
@@ -1059,6 +1061,22 @@ export function createCodexAppServerRuntime(
   let appliedChatGptAccessTokens: Readonly<{ accessToken: string; accountId: string }> | null = null;
   let clientHasExternalAuthTokens = false;
   let latestConnectedServiceRuntimeIdentity: CodexConnectedServiceRuntimeIdentity | null = null;
+  const assertConnectedAccountModelSelection = (
+    explicit: boolean,
+    phase: 'client_start' | 'turn_start',
+  ): void => {
+    if (explicit || (!params.connectedAccountService && !activeChatGptAuthTokensRefreshSelection
+      && !clientHasExternalAuthTokens && !latestConnectedServiceRuntimeIdentity)) return;
+    // App-server model/list can return the startup provider's cached models.
+    // This route has no exact account catalog observation for a CLI default.
+    const code = phase === 'client_start' ? 'agent_startup_model_reconciliation_failed' : 'model_selection_required';
+    throw new PluginError({
+      code,
+      message: 'Choose a model for the selected ChatGPT account.',
+      retryable: false,
+      details: { failureCause: { code, phase, failureReason: 'model_selection_required', retryable: false } },
+    });
+  };
   let publishedProvisionalProviderAccountUsageRecordId: string | null = null;
   const pendingProviderPrompts = new Set<PendingProviderPrompt>();
   const runtimeSubscribers = new Set<(event: CodexAppServerEvent) => void>();
@@ -3037,6 +3055,7 @@ export function createCodexAppServerRuntime(
         text: prompt,
         ...(input.structuredInput === undefined ? {} : { structuredInput: input.structuredInput }),
       });
+      const explicitModel = hasExplicitModelSelection;
       const requestParams: Record<string, unknown> = {
         ...buildCodexAppServerPermissionParams({
           policy,
@@ -3086,11 +3105,15 @@ export function createCodexAppServerRuntime(
         }
         activeTurn.providerAccountScope = liveAccount?.accountScope;
       };
-      const requestTurnStart = async (params: Record<string, unknown>): Promise<unknown> => {
+      const dispatchTurnStart = async (params: Record<string, unknown>): Promise<unknown> => {
         await captureRequestAccount();
+        assertConnectedAccountModelSelection(explicitModel, 'turn_start');
         activeTurn.nativePermissionPolicyKey = serializeCodexAppServerPolicy(policy);
         turnStartDispatched = true;
-        return await appServerClient.request('turn/start', params)
+        return await appServerClient.request('turn/start', params);
+      };
+      const requestTurnStart = async (params: Record<string, unknown>): Promise<unknown> => {
+        return await dispatchTurnStart(params)
           .then((result) => {
             if (Object.prototype.hasOwnProperty.call(params, 'permissions')) {
               permissionSupport = 'supported';
@@ -3105,9 +3128,7 @@ export function createCodexAppServerRuntime(
             const retryParams = { ...params };
             delete retryParams.permissions;
             turnStartDispatched = false;
-            await captureRequestAccount();
-            turnStartDispatched = true;
-            return await appServerClient.request('turn/start', {
+            return await dispatchTurnStart({
               ...retryParams,
               ...buildCodexAppServerLegacyPermissionParams({ policy, target: 'turn' }),
             });
@@ -3162,6 +3183,10 @@ export function createCodexAppServerRuntime(
       const failure = !turnStartDispatched || readCodexAppServerStartRejection(classifiedFailure)
         ? classifiedFailure : error instanceof Error ? error : new Error(String(error));
       failPendingTurn(failure, classifiedFailure);
+      if (!turnStartDispatched && isPluginError(error) && error.code === 'model_selection_required') {
+        return { status: 'rejected', diagnosticCode: error.code, diagnostic: error.message,
+          retryable: false, failureCause: readCodexAppServerFailureCause(classifiedFailure) };
+      }
       if (readCodexAppServerStartRejection(failure)) {
         // Quota evidence can defer settlement. Finish attempted lifecycle while
         // native admission still buffers it, before the host can dispose us.
@@ -3879,6 +3904,7 @@ export function createCodexAppServerRuntime(
           startedEmptyThreadWithoutExplicitModel = false;
         }
         currentModelId = nextModelId;
+        hasExplicitModelSelection = nextModelId !== 'default';
       }
       const configOption = readRecord(update.configOption);
       const configOptionId = normalizeCodexAppServerConfigOptionId(configOption?.id);
@@ -3948,7 +3974,10 @@ export function createCodexAppServerRuntime(
     },
   };
 
-  codexAppServerRuntimeStarters.set(runtime, openSession);
+  codexAppServerRuntimeStarters.set(runtime, async (options) => {
+    assertConnectedAccountModelSelection(hasExplicitModelSelection, 'client_start');
+    return await openSession(options);
+  });
   codexAppServerRuntimeCompletionWaiters.set(runtime, () => backgroundCompletion ?? waitForTurnCompletion());
   return runtime;
 }
