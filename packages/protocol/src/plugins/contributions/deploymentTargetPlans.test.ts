@@ -13,6 +13,12 @@ it('admits declared plan facts without requiring plans on existing targets', () 
     expect(DeploymentTargetContributionV1Schema.parse({ ...target, plans: [plan] })).toEqual({ ...target, plans: [plan] });
 });
 
+it('a priced fact carries the shared ProviderAmountV1 shape, beside text facts that state no price (owner ruling A1)', () => {
+    const priced = { ...plan, facts: [...plan.facts,
+        { label: 'Extra requests', price: { amount: '0.30', currency: 'USD', unit: '1M requests' } }] };
+    expect(DeploymentTargetContributionV1Schema.parse({ ...target, plans: [priced] }).plans).toEqual([priced]);
+});
+
 it('rejects unknown plan fields and malformed source provenance', () => {
     for (const invalid of [
         { ...plan, priceCalculator: 'external' },
@@ -21,6 +27,8 @@ it('rejects unknown plan fields and malformed source provenance', () => {
         // One price shape (O-DEPLOY, owner ruling A1): a price written as a text fact beside it is refused.
         { ...plan, facts: [{ label: 'Price', value: '$0 a month' }] },
         { ...plan, facts: [{ label: 'price', value: 'Free' }] },
+        { ...plan, facts: [{ label: 'Extra requests', value: '0.30', price: { amount: '0.30', currency: 'USD', unit: '1M requests' } }] },
+        { ...plan, facts: [{ label: 'Extra requests', price: { amount: 'free', currency: 'USD', unit: '1M requests' } }] },
         { ...plan, facts: [{ ...plan.facts[0], currency: 'USD' }] },
         { ...plan, source: { ...plan.source, live: true } },
         { ...plan, source: { ...plan.source, url: 'not a URL' } },

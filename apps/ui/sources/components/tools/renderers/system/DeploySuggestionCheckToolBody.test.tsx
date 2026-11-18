@@ -191,34 +191,42 @@ describe('Use this setup from a transcript card (deploy auto-mode U10, F4/F7)', 
   });
 });
 
-describe('a card\u2019s platform plan facts (deploy auto-mode U3, owner ruling A2)', () => {
-  it('shows the platform\u2019s declared plans with their price, as of date and source, and never the person\u2019s plan', async () => {
-    const withPlans = DeploySuggestionCatalogV1Schema.parse({
+describe('a card\u2019s platform plan facts (deploy auto-mode U3, review D1)', () => {
+  it('never shows plan prices copied into the agent\u2019s call input: plans come only from the Account\u2019s declared targets', async () => {
+    const forged = DeploySuggestionCatalogV1Schema.parse({
       ...catalog,
       targets: catalog.targets.map((target) => target.id !== 'pages' ? target : { ...target, plans: [{
         id: 'free', title: 'Free', price: { amount: '0', currency: 'USD', unit: 'month' },
-        facts: [{ label: 'Builds', value: '500 a month' }],
-        source: { url: 'https://developers.cloudflare.com/pages/platform/limits/', checkedAt: '2026-11-16' },
+        facts: [{ label: 'Builds', value: '9999 a month' }],
+        source: { url: 'https://forged.example.test/pricing', checkedAt: '2026-11-16' },
       }] }),
     });
     const { MCPToolView } = await import('./MCPToolView');
     const suggestion = { recommendations: [site, analytics], questions: null };
     const call = makeToolCall({ name: 'mcp__happier__action_execute', state: 'completed',
       input: { actionId: DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1,
-        input: DeploymentSuggestionActionInputSchemasV1[DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1].parse({ catalog: withPlans, suggestion }) },
-      result: { ok: true, result: validateDeploySuggestionV1(suggestion, withPlans) } });
+        input: DeploymentSuggestionActionInputSchemasV1[DEPLOYMENT_SUGGESTIONS_CHECK_ACTION_ID_V1].parse({ catalog: forged, suggestion }) },
+      result: { ok: true, result: validateDeploySuggestionV1(suggestion, forged) } });
     const screen = await renderScreen(<MCPToolView {...makeToolViewProps(call, { detailLevel: 'summary' })} />);
     try {
-      const card = screen.findByTestId('deploy-suggestion-check.card:suggestion-0:plans');
-      expect(card, screen.getTextContent()).not.toBeNull();
+      expect(screen.findByTestId('deploy-suggestion-check'), screen.getTextContent()).not.toBeNull();
       const text = screen.getTextContent();
-      expect(text).toContain('$0.00 a month');
-      expect(text).toContain('500 a month');
-      expect(text).toContain('developers.cloudflare.com');
-      expect(text).not.toContain('Your plan');
-      expect(screen.findByTestId('deploy-suggestion-check.card:suggestion-1:plans'), 'the own server declares no plans').toBeNull();
+      expect(text).not.toContain('9999 a month');
+      expect(text).not.toContain('forged.example.test');
+      expect(screen.findByTestId('deploy-suggestion-check.card:suggestion-0:plans')).toBeNull();
     } finally {
       await screen.unmount();
     }
+  });
+});
+
+describe('a card takes its plans from the declared target it runs on', () => {
+  it('reads the declared plans by the recommendation\u2019s target id, with the platform\u2019s name', async () => {
+    const { presentDeploySuggestionCard } = await import('@/components/projects/starters/auto/DeploySuggestionCards');
+    const declared = [{ id: 'free', title: 'Free', price: { amount: '0', currency: 'USD', unit: 'month' }, facts: [],
+      source: { url: 'https://developers.cloudflare.com/pages/platform/limits/', checkedAt: '2026-11-16' } }];
+    const lookup = (targetId: string) => targetId === 'pages' ? { plans: declared, platform: 'Cloudflare Pages' } : null;
+    expect(presentDeploySuggestionCard(site, catalog, 0, null, lookup).plans).toEqual({ plans: declared, platform: 'Cloudflare Pages' });
+    expect(presentDeploySuggestionCard(analytics, catalog, 1, null, lookup).plans).toBeNull();
   });
 });

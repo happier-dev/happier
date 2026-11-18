@@ -1207,7 +1207,7 @@ describe('Environment draft Machine Home', () => {
       const cost = screen.findHostByTestId('project-deployments.draft.cost');
       expect(cost, 'Review has a cost group for a platform that declares plans').not.toBeNull();
       const costText = cost!.findAll(() => true).flatMap(child => child.children.filter(value => typeof value === 'string')).join(' ');
-      for (const expected of ['Free', '$0 a month', 'Pro', '$20 a month', 'alpha.example']) expect(costText, expected).toContain(expected);
+      for (const expected of ['Free', '$0.00 a month', 'Pro', '$20.00 a month', 'alpha.example']) expect(costText, expected).toContain(expected);
       await act(async () => header().props.primaryAction.onPress());
       await waitForHomeGovernance(async () => { await act(async () => {}); expect(saved, screen.getTextContent()).toHaveLength(1); });
       expect(creates).toHaveLength(1);

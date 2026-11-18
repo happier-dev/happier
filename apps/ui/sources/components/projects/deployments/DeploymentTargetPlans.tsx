@@ -23,21 +23,18 @@ const words = (value: string) => value.trim().toLowerCase().split(/[\s_-]+/).fil
 
 /**
  * The declared plan the connected account is on: the provider's plan name matched to a declared plan's id or title,
- * or to that title named with its product ("Workers Paid" is Cloudflare Workers' Paid). A name qualified with another
- * product matches nothing here, so an account-wide Workers plan never reads as the Pages plan. An unmapped or absent
- * name matches nothing, and the facts stand alone (deploy auto-mode U4).
+ * ignoring case and separators ("Workers Paid" is the plan id `workers-paid`). A plugin names an account-wide plan by
+ * its own plan id, so a Workers plan never reads as the Pages plan. An unmapped or absent name matches nothing, and
+ * the facts stand alone (deploy auto-mode U4).
  */
-export function matchAccountPlan(plans: Plans, planLabel: string | null | undefined, platform: string): Plans[number] | null {
+export function matchAccountPlan(plans: Plans, planLabel: string | null | undefined): Plans[number] | null {
   const name = planLabel ? words(planLabel) : '';
   if (!name) return null;
-  const product = words(platform);
-  return plans.find((plan) => {
-    const title = words(plan.title);
-    if (words(plan.id) === name || title === name) return true;
-    const named = `${product} ${title}`;
-    return named.endsWith(` ${name}`) && name.split(' ').length > title.split(' ').length;
-  }) ?? null;
+  return plans.find((plan) => words(plan.id) === name || words(plan.title) === name) ?? null;
 }
+
+/** A fact's value: a priced fact through the shared cost presenter, any other as the plugin wrote it. */
+const factValue = (fact: Plans[number]['facts'][number]) => 'price' in fact ? formatDeclaredPlanPrice(fact.price) : fact.value;
 
 /**
  * A platform's declared plans in its Where card (journey-deploy where): each plan's title, its price through the shared
@@ -72,7 +69,7 @@ export function DeploymentTargetPlans(props: DeploymentTargetPlansProps) {
   const [comparing, setComparing] = React.useState(false);
   const anchorRef = React.useRef<View>(null);
   const title = t('newApp.deploy.plan.includedTitle', { platform: props.platform });
-  const yourPlan = matchAccountPlan(props.plans, props.accountPlanLabel, props.platform);
+  const yourPlan = matchAccountPlan(props.plans, props.accountPlanLabel);
   return (
     <View style={styles.body}>
       {yourPlan ? (
@@ -91,7 +88,7 @@ export function DeploymentTargetPlans(props: DeploymentTargetPlansProps) {
             ) : null}
             {plan.facts.map((fact, index) => (
               <FieldLayout key={`${index}:${fact.label}`} label={fact.label} columns>
-                <FieldValue value={fact.value} />
+                <FieldValue value={factValue(fact)} />
               </FieldLayout>
             ))}
             <Text variant="meta" style={{ color: theme.colors.text.secondary }}>{sourceLine(plan.source)}</Text>
@@ -148,7 +145,10 @@ function DeploymentTargetPlanComparison(props: Readonly<{ plans: Plans; title: s
         {props.plans.some((plan) => plan.price) ? row(':price', t('newApp.deploy.plan.price'),
           props.plans.map((plan) => plan.price ? formatDeclaredPlanPrice(plan.price) : '—')) : null}
         {labels.map((label) => row(label, label,
-          props.plans.map((plan) => plan.facts.find((fact) => fact.label === label)?.value ?? '—')))}
+          props.plans.map((plan) => {
+            const fact = plan.facts.find((candidate) => candidate.label === label);
+            return fact ? factValue(fact) : '—';
+          })))}
         {included ? row(':included', t('newApp.deploy.plan.includedLabel'),
           props.plans.map((plan) => plan.included?.join('\n') || '—')) : null}
       </View>

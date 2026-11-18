@@ -54,9 +54,10 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
   const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
   // Dated display facts, as a platform plugin declares them (Protocol DeploymentTargetPlanV1); both platforms declare them.
   const declaredPlans = options.plans ? { description: 'Hosting for web apps', plans: [{ id: 'free', title: 'Free',
-          facts: [{ label: 'Price', value: '$0 a month' }, { label: 'Requests', value: '100,000 a day' }],
+          price: { amount: '0', currency: 'USD', unit: 'month' }, facts: [{ label: 'Requests', value: '100,000 a day' }],
           included: ['Automatic HTTPS'], source: { url: 'https://alpha.example/pricing', checkedAt: '2026-11-16' } },
-        { id: 'pro', title: 'Pro', facts: [{ label: 'Price', value: '$20 a month' }, { label: 'Credit', value: '$20 a month' }],
+        { id: 'pro', title: 'Pro', price: { amount: '20', currency: 'USD', unit: 'month' },
+          facts: [{ label: 'Credit', price: { amount: '20', currency: 'USD', unit: 'month' } }],
           included: ['Preview deployments'], source: { url: 'https://alpha.example/pricing', checkedAt: '2026-11-16' } }] } : {};
   const inspect = (name: string) => ({
     title: `Inspect ${name}`, execution, surfaces: ['ui', 'cli'], dangerLevel: 'safe', readOnly: true,

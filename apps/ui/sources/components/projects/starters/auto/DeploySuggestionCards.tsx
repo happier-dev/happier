@@ -12,6 +12,9 @@ import { FieldLayout } from '@/components/ui/lists/FieldRow';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { DeploymentTargetPlans } from '@/components/projects/deployments/DeploymentTargetPlans';
+import { useDeploymentPlatformTargets } from '@/components/projects/deployments/DeploymentPlatformTargetSheet';
+import type { DeploymentPlatformTarget } from '@/components/projects/deployments/platformTargetLink';
+import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 
 /** One labelled fact on a suggestion card (lab autoRecs): what it starts from, where it runs, its data. */
 export type NewAppAutoFact = Readonly<{
@@ -27,10 +30,11 @@ export type NewAppAutoCard = Readonly<{
   recommended: boolean;
   facts: readonly NewAppAutoFact[];
   /** The platform's declared plans with their dated source (U3); never the person's plan, which only Review reads (A2). */
-  plans: Readonly<{ plans: TargetPlans; platform: string }> | null;
+  plans: DeclaredTargetPlans | null;
 }>;
 
-type TargetPlans = NonNullable<DeploySuggestionCatalogV1['targets'][number]['plans']>;
+/** A target's plans as its plugin declared them to this Account, with the platform's name. */
+export type DeclaredTargetPlans = Readonly<{ plans: NonNullable<DeploymentPlatformTarget['plans']>; platform: string }>;
 
 const CARD_PREFIX = 'suggestion-';
 
@@ -55,6 +59,11 @@ export function presentDeploySuggestionCard(
   catalog: DeploySuggestionCatalogV1,
   index: number,
   starterMark: React.ReactNode,
+  /**
+   * The Account's declared plans for a target id. Plans never come from the catalog copy a Session agent passes in its
+   * check call, which it may have paraphrased (review D1).
+   */
+  declaredPlans: (targetId: string) => DeclaredTargetPlans | null,
 ): NewAppAutoCard {
   const source = recommendation.source;
   const sourceTitle =
@@ -63,10 +72,9 @@ export function presentDeploySuggestionCard(
       : source.kind === 'catalogApp'
         ? catalog.apps.find((item) => item.id === source.appId)?.title
         : undefined;
-  const targetRow = catalog.targets.find(
+  const target = catalog.targets.find(
     (item) => item.id === recommendation.targetId,
-  );
-  const target = targetRow?.title;
+  )?.title;
   const data = recommendation.data;
   const dataTitle =
     data.kind === 'store'
@@ -92,8 +100,27 @@ export function presentDeploySuggestionCard(
     title: recommendation.whatToBuild,
     recommended: index === 0,
     facts,
-    plans: targetRow?.plans?.length ? { plans: targetRow.plans, platform: targetRow.title } : null,
+    plans: declaredPlans(recommendation.targetId),
   };
+}
+
+/**
+ * The Account's declared plans by target id, read through the same declared-target reader Where it runs uses, and only
+ * while a recommendation runs on a platform. Both hosts' cards take their plans from here (review D1).
+ */
+export function useDeclaredTargetPlans(
+  recommendations: readonly DeploySuggestionRecommendationV1[] | null,
+  catalog: DeploySuggestionCatalogV1 | null,
+): (targetId: string) => DeclaredTargetPlans | null {
+  const wantsPlans = Boolean(recommendations?.some((recommendation) =>
+    catalog?.targets.some((target) => target.id === recommendation.targetId && target.targetClass === 'platform')));
+  const lifetime = useActiveServerAccountScopeLifetime();
+  const platforms = useDeploymentPlatformTargets(wantsPlans ? lifetime : null).state;
+  const declared = platforms.status === 'ready' ? platforms.targets : null;
+  return React.useCallback((targetId: string) => {
+    const target = declared?.find((candidate) => candidate.key === targetId);
+    return target?.plans?.length ? { plans: target.plans, platform: target.title } : null;
+  }, [declared]);
 }
 
 /** The checked result's cards, in order, with the starter glyph both hosts draw before a starter's name. */
@@ -103,20 +130,19 @@ export function useDeploySuggestionCards(
 ): readonly NewAppAutoCard[] {
   const { theme } = useUnistyles();
   const glyph = theme.colors.text.secondary;
-  return React.useMemo(
-    () =>
-      !recommendations || !catalog
-        ? []
-        : recommendations.map((recommendation, index) =>
-            presentDeploySuggestionCard(
-              recommendation,
-              catalog,
-              index,
-              <Icon name="sparkle" size={ICON_SIZE.sm} color={glyph} />,
-            ),
-          ),
-    [catalog, glyph, recommendations],
-  );
+  const declaredPlans = useDeclaredTargetPlans(recommendations, catalog);
+  return React.useMemo(() => {
+    if (!recommendations || !catalog) return [];
+    return recommendations.map((recommendation, index) =>
+      presentDeploySuggestionCard(
+        recommendation,
+        catalog,
+        index,
+        <Icon name="sparkle" size={ICON_SIZE.sm} color={glyph} />,
+        declaredPlans,
+      ),
+    );
+  }, [catalog, declaredPlans, glyph, recommendations]);
 }
 
 /**

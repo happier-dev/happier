@@ -8,6 +8,8 @@ import { resolvePublishTargetRecommendation } from '../resolvePublishTargetRecom
 import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { DeploymentTargetPlanV1Schema } from '../../plugins/contributions/deploymentTargets.js';
+// Monetary amounts belong to declared provider facts, including when model prose embeds them.
+import { containsPriceTextV1 } from '../../common/providerAmountV1.js';
 
 const id = () => z.string().check(z.minLength(1));
 export const DeploySuggestionCatalogV1Schema = lazyZodSchema(() => z.strictObject({
@@ -62,13 +64,6 @@ export const DeploySuggestionCheckResultV1Schema = lazyZodSchema(() => z.strictO
 }));
 export type DeploySuggestionCheckResultV1 = z.infer<typeof DeploySuggestionCheckResultV1Schema>;
 
-// Monetary amounts belong to declared provider facts, including when model prose embeds them.
-function containsPriceText(value: unknown): boolean {
-    if (typeof value === 'string') return /\p{Sc}\s*\d|\d\s*\p{Sc}|\b(?:USD|EUR|GBP|CAD)\s*\d+(?:[.,]\d+)?\b|\b\d+(?:[.,]\d+)?\s*(?:USD|EUR|GBP|CAD|dollars?)\b/iu.test(value);
-    if (Array.isArray(value)) return value.some(containsPriceText);
-    return value !== null && typeof value === 'object' && Object.values(value).some(containsPriceText);
-}
-
 /** Untrusted model output is admitted once, before either host presents an actionable card. */
 export function validateDeploySuggestionV1(raw: unknown, catalog: DeploySuggestionCatalogV1): DeploySuggestionCheckResultV1 {
     const envelope = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
@@ -80,7 +75,7 @@ export function validateDeploySuggestionV1(raw: unknown, catalog: DeploySuggesti
         const parsed = DeploySuggestionRecommendationV1Schema.safeParse(rawRecommendation);
         if (!parsed.success) { result.dropped.push({ index, reason: 'invalid_recommendation' }); return; }
         const recommendation = parsed.data;
-        if (containsPriceText(recommendation)) { result.dropped.push({ index, reason: 'invalid_recommendation' }); return; }
+        if (containsPriceTextV1(recommendation)) { result.dropped.push({ index, reason: 'invalid_recommendation' }); return; }
         const source = recommendation.source;
         const starter = source.kind === 'starter' ? catalog.starters.find(row => row.id === source.starterId) : undefined;
         const data = recommendation.data;

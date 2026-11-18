@@ -26,7 +26,7 @@ import type {
   NewAppAutoMachine,
   NewAppAutoView,
 } from './NewAppAutoStep';
-import { deploySuggestionCardId, deploySuggestionCardIndex, presentDeploySuggestionCard } from './DeploySuggestionCards';
+import { deploySuggestionCardId, deploySuggestionCardIndex, presentDeploySuggestionCard, useDeclaredTargetPlans } from './DeploySuggestionCards';
 
 type Runner = Extract<DeploySuggestionProgress, { kind: 'runner' }>;
 type RunStop = Extract<DeploySuggestionProgress, { kind: 'run' }>['stop'];
@@ -193,6 +193,9 @@ export function useNewAppAutoSuggestions(
     [params.serverId, router],
   );
 
+  // The cards' plans come from the Account's declared targets, as on a Session card (review D1).
+  const shown = phase.kind === 'settled' && phase.outcome.kind === 'recommendations' ? phase.outcome : null;
+  const declaredPlans = useDeclaredTargetPlans(shown?.recommendations ?? null, shown?.catalog ?? null);
   const view = React.useMemo((): NewAppAutoView => {
     if (phase.kind === 'describe') return { kind: 'describe' };
     if (phase.kind === 'working')
@@ -221,6 +224,7 @@ export function useNewAppAutoSuggestions(
               size={ICON_SIZE.sm}
               color={theme.colors.text.secondary}
             />,
+            declaredPlans,
           ),
         ),
       };
@@ -237,7 +241,7 @@ export function useNewAppAutoSuggestions(
     if (outcome.kind === 'questions') return { kind: 'questions', questions: outcome.questions.questions };
     if (outcome.kind === 'failed') return { kind: 'failed', code: outcome.code };
     return { kind: 'nothing' };
-  }, [openMachineSetup, params.serverId, phase, stop, theme.colors.text.secondary]);
+  }, [declaredPlans, openMachineSetup, params.serverId, phase, stop, theme.colors.text.secondary]);
 
   const settled = phase.kind === 'settled' ? phase.outcome : phase.kind === 'working' ? lastRecommendations.current : null;
   const chosen = React.useMemo((): NewAppAutoChosen | null => {

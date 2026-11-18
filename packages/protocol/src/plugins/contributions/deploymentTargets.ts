@@ -64,15 +64,17 @@ export function createDeploymentTargetDataV1Schema<TAction extends z.ZodMiniType
     });
 }
 
+const planFactLabel = () => z.string().check(z.refine(label => label.trim().toLowerCase() !== 'price', 'Declare the price as `price`.'));
+
 /** Dated display facts, not executable billing rules or live price quotes. The price is data the shared cost presenter prints. */
 export const DeploymentTargetPlanV1Schema = lazyZodSchema(() => z.strictObject({
     id: local(), title: z.string(),
     price: z.optional(ProviderAmountV1Schema),
-    // The price is `price`; a "Price" text fact beside it would be a second, unformatted copy.
-    facts: z.array(z.strictObject({
-        label: z.string().check(z.refine(label => label.trim().toLowerCase() !== 'price', 'Declare the price as `price`.')),
-        value: z.string(),
-    })),
+    // A fact states a price only as a ProviderAmountV1 `price`, which the shared cost presenter prints.
+    facts: z.array(z.union([
+        z.strictObject({ label: planFactLabel(), value: z.string() }),
+        z.strictObject({ label: planFactLabel(), price: ProviderAmountV1Schema }),
+    ])),
     included: z.optional(z.array(z.string())),
     source: z.strictObject({ url: z.url(), checkedAt: z.iso.date() }),
 }));

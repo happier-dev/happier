@@ -40,21 +40,29 @@ const plans = [
 
 describe('a platform’s declared plans with the connected account’s plan (deploy auto-mode U3/U4)', () => {
   it('matches the provider’s plan name to a declared plan by id or title, and nothing else', () => {
-    expect(matchAccountPlan(plans, 'Pro', 'Vercel')?.id).toBe('pro');
-    expect(matchAccountPlan(plans, 'hobby', 'Vercel')?.id).toBe('hobby');
-    expect(matchAccountPlan(plans, 'Enterprise', 'Vercel')).toBeNull();
-    expect(matchAccountPlan(plans, null, 'Vercel')).toBeNull();
+    expect(matchAccountPlan(plans, 'Pro')?.id).toBe('pro');
+    expect(matchAccountPlan(plans, 'hobby')?.id).toBe('hobby');
+    expect(matchAccountPlan(plans, 'Enterprise')).toBeNull();
+    expect(matchAccountPlan(plans, null)).toBeNull();
   });
 
-  it('a plan named with its product matches only that product\u2019s plans: a Workers plan is never the Pages plan (R5)', () => {
+  it('a product-named account plan matches its own plan id only: a Workers plan is never the Pages plan (R5, D4)', () => {
     const plan = (id: string, title: string) => ({ id, title, facts: [],
       source: { url: 'https://developers.cloudflare.com/workers/platform/pricing/', checkedAt: '2026-11-16' } });
-    const workers = [plan('free', 'Free'), plan('paid', 'Paid')];
+    const workers = [plan('workers-free', 'Free'), plan('workers-paid', 'Paid')];
     const pages = [plan('free', 'Free')];
-    expect(matchAccountPlan(workers, 'Workers Paid', 'Cloudflare Workers')?.id).toBe('paid');
-    expect(matchAccountPlan(workers, 'Workers Free', 'Cloudflare Workers')?.id).toBe('free');
-    expect(matchAccountPlan(pages, 'Workers Free', 'Cloudflare Pages')).toBeNull();
-    expect(matchAccountPlan(pages, 'Workers Paid', 'Cloudflare Pages')).toBeNull();
+    expect(matchAccountPlan(workers, 'Workers Paid')?.id).toBe('workers-paid');
+    expect(matchAccountPlan(pages, 'Workers Paid')).toBeNull();
+    expect(matchAccountPlan(pages, 'Workers Free')).toBeNull();
+  });
+
+  it('prints a priced fact through the shared cost presenter (owner ruling A1)', async () => {
+    const priced = [{ ...plans[1]!, facts: [{ label: 'Extra requests', price: { amount: '0.30', currency: 'USD', unit: '1M requests' } }] }];
+    const screen = await renderScreen(
+      <DeploymentTargetPlans plans={priced} platform="Vercel" columns phone={false} testID="plans" />,
+    );
+    expect(screen.getTextContent()).toContain('$0.30 per 1M requests');
+    await screen.unmount();
   });
 
   it('says “Your plan” only for a declared plan, and dates every plan by its public page', async () => {
