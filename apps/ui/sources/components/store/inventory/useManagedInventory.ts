@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { storeKinds, type InstalledRow, type StoreDemand, type StoreInstalledInput } from '../catalog/storeKinds';
+import { storeKinds, type InstalledFamilyResult, type InstalledRow, type StoreDemand, type StoreInstalledInput } from '../catalog/storeKinds';
 import { useManagedInventoryAttention } from './useManagedInventoryAttention';
 import { useManagedConfiguredBackups, useManagedConfiguredChecks, useManagedSetup, useManagedWatchedServices, type ManagedConfiguredBackupRow, type ManagedConfiguredCheckRow, type ManagedSetupRow,
     type ManagedWatchedServiceRow } from './managedOperationalInventory';
@@ -31,7 +31,7 @@ export type ManagedInventoryView = Readonly<{
 }>;
 
 /** Summary only; callers retain each original family for reason, recovery and paging. */
-export function summarizeInstalledFamilies<Result extends Pick<ManagedInventoryFamilies[keyof ManagedInventoryFamilies], 'coverage'>>(results: readonly Result[]) {
+export function summarizeInstalledFamilies(results: readonly InstalledFamilyResult<unknown, unknown, unknown>[]) {
     const loading = results.some(family => family.coverage === 'loading');
     const coverage = results.length > 0 && results.every(family => typeof family.coverage === 'object' && 'unavailable' in family.coverage)
         ? 'unavailable' : results.every(family => family.coverage === 'available')
@@ -75,8 +75,9 @@ export function useManagedInventory(query: ManagedInventoryQuery): ManagedInvent
     const attention = useManagedInventoryAttention(attentionQuery, families, rows, admitted.scope);
     return React.useMemo(() => {
         // Checks claim no Machine, so on a Machine door they neither add to nor soften that Machine's own coverage.
-        const results = [...Object.entries(families).filter(([kind]) => query.kinds === undefined
-            || query.kinds.includes(kind as keyof ManagedInventoryFamilies)).map(([, family]) => family),
+        const results = [...Object.entries(families).filter(([kind]) =>
+            (kind !== 'theme' || families.theme.appliesToScope)
+            && (query.kinds === undefined || query.kinds.includes(kind as keyof ManagedInventoryFamilies))).map(([, family]) => family),
             ...(requested('configuredBackup') && !requested('app') ? [configuredBackup] : []),
             ...(requested('watchedService') ? [watchedService] : []), ...(requested('setup') ? [setup] : []),
             ...(!input.machine && requested('configuredCheck') ? [configuredCheck] : [])];

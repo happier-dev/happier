@@ -7,24 +7,25 @@ import type { InstalledFamilyResult, StoreDemand, StoreInstalledInput } from './
 import { projectInstalledStoreThemeRows, type InstalledThemeRow } from './storeThemes';
 
 type ThemeInventory = ReturnType<typeof useThemeLibraryInventory>;
-type InstalledThemesResult = InstalledFamilyResult<InstalledThemeRow, StoreScopeFailure | ThemeInventory, () => void>;
+type InstalledThemesResult = InstalledFamilyResult<InstalledThemeRow, StoreScopeFailure | ThemeInventory, () => void>
+    & Readonly<{ appliesToScope: boolean }>;
 const EMPTY_ROWS: readonly InstalledThemeRow[] = Object.freeze([]);
 
 /** Account-owned faces consume the canonical header library, never Machine inventory or selected bodies. */
 export function useInstalledThemes(input: StoreInstalledInput, demand: StoreDemand, admitted: InstalledScopeAdmission): InstalledThemesResult {
     const currentScope = useAccountSettingsScope();
     const matchesScope = admitted.scope !== null && areAccountSettingsScopesEqual(admitted.scope, currentScope);
-    const portable = !input.machine && !input.projectKey;
-    const presented = demand.presented && portable && matchesScope;
+    const appliesToScope = !input.machine && !input.projectKey;
+    const presented = demand.presented && appliesToScope && matchesScope;
     const native = useThemeLibraryInventory(presented);
     const rows = React.useMemo(() => presented && admitted.scope
         ? projectInstalledStoreThemeRows(native.entries, admitted.scope) : EMPTY_ROWS,
     [presented, admitted.scope, native.entries]);
     return React.useMemo(() => {
-        if (!admitted.scope) return { rows: EMPTY_ROWS, coverage: admitted.coverage };
-        if (!portable) return { rows: EMPTY_ROWS, coverage: 'available' as const };
-        if (!matchesScope) return { rows: EMPTY_ROWS, coverage: { unavailable: 'scope-retired' as const } };
-        return { rows, coverage: native.failed ? { partial: native } : native.loaded ? 'available' as const : 'loading' as const,
+        if (!appliesToScope) return { appliesToScope, rows: EMPTY_ROWS, coverage: 'available' as const };
+        if (!admitted.scope) return { appliesToScope, rows: EMPTY_ROWS, coverage: admitted.coverage };
+        if (!matchesScope) return { appliesToScope, rows: EMPTY_ROWS, coverage: { unavailable: 'scope-retired' as const } };
+        return { appliesToScope, rows, coverage: native.failed ? { partial: native } : native.loaded ? 'available' as const : 'loading' as const,
             ...(presented && native.failed ? { continuation: native.retry } : {}) };
-    }, [admitted.scope, admitted.coverage, portable, matchesScope, rows, native.loaded, native.failed, native.retry, presented]);
+    }, [admitted.scope, admitted.coverage, appliesToScope, matchesScope, rows, native.loaded, native.failed, native.retry, presented]);
 }

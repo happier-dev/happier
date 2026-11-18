@@ -35,7 +35,7 @@ it.each([false, true])('offers Docker removal only for manageable installations 
   const appNavigation: InstalledAppsResult['navigation'] = { hasNextPage: false, hasPreviousPage: false,
     nextPage: () => undefined, previousPage: () => undefined, refresh: async () => {} };
   const inventory: ManagedInventoryView = {
-    families: { app: { ...empty, navigation: appNavigation }, theme: empty, browserExtension: empty, mcpServer: empty, skill: empty, agent: empty,
+    families: { app: { ...empty, navigation: appNavigation }, theme: { ...empty, appliesToScope: !machineDoor }, browserExtension: empty, mcpServer: empty, skill: empty, agent: empty,
       provider: empty, plugin: empty, software: { rows: [row], coverage: 'available' } },
     operationalFamilies: { watchedService: empty, setup: empty, configuredCheck: empty, configuredBackup: { ...empty, navigation: appNavigation } },
     rows: [row], coverage: 'complete', loading: false, attention: [], noticeSource: null,
@@ -82,7 +82,7 @@ it.each([1, 2] as const)('windows all installed theme listings in the physical p
   const navigation: InstalledAppsResult['navigation'] = { hasNextPage: false, hasPreviousPage: false,
     nextPage() {}, previousPage() {}, refresh: async () => {} };
   const inventory: ManagedInventoryView = {
-    families: { app: { ...empty, navigation }, theme: { rows, coverage: 'available' }, browserExtension: empty,
+    families: { app: { ...empty, navigation }, theme: { rows, coverage: 'available', appliesToScope: true }, browserExtension: empty,
       mcpServer: empty, skill: empty, agent: empty, provider: empty, plugin: empty, software: empty },
     operationalFamilies: { watchedService: empty, setup: empty, configuredCheck: empty, configuredBackup: { ...empty, navigation } },
     rows, coverage: 'complete', loading: false, attention: [], noticeSource: null,
