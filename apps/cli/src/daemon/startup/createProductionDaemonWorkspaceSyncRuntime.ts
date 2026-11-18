@@ -2497,8 +2497,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     const accountRowsCustody = { serverId: semanticServerId, accountId: admission.actorAccountId,
       serverHttpBaseUrl: requester.serverHttpBaseUrl, isCurrent: custody.isCurrent };
     let checkout: Awaited<ReturnType<typeof preparePrivateProjectOpenCheckout>> | undefined;
-    let retained = false;
+    let retainedRelationshipId: string | undefined;
     let captured = false;
+    let targetPhaseContext = context;
     try {
       let snapshot = admittedSnapshot ?? await factories.refreshProjectRows({ credentials: requester.credentials, sessionCustody: accountRowsCustody,
         serverId: semanticServerId, selection: { kinds: ['workspace-ref', 'relationship-graph'] }, signal });
@@ -2509,7 +2510,6 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       const action = { kind: 'create_relationship' as const, mode: request.actionInput.mode,
         contentPolicy: request.actionInput.contentPolicy, flushBeforeCommit: true as const };
       const localTarget = request.actionInput.targetMachineId === input.localMachineId;
-      let targetPhaseContext = context;
       {
         const authorization = context.callerInputAuthorization;
         const binding = authorization?.binding;
@@ -2593,17 +2593,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       let preparedTarget: Readonly<{ endpoint?: MachineInstallationPublicIdentityV1;
         operationId: string; machineId: string; workspaceRefId: string }> | undefined;
       const bindRetainedRelationship = (id: string) => {
-        // The create Action's request lifetime ends here. Later signed
-        // preparation belongs to the retained relationship's SOURCE custody.
-        const boundary = input.requesterMachineAdmissionBoundary;
-        targetPhaseContext = { ...targetPhaseContext, verifyMachineAdmissionCurrent: async () => {
-          if (!boundary) return false;
-          const verifyCurrent = native ? verifyWorkspaceSyncRelationshipMachineAdmissionCurrent : verifyWorkspaceSyncSourceMachineAdmissionCurrent;
-          return await verifyCurrent({ credentials: requester.credentials,
-            sessionId: id, attribution: executionIdentity.requester, serverHttpBaseUrl: requester.serverHttpBaseUrl,
-            boundary });
-        } };
-        retained = true;
+        retainedRelationshipId = id;
       };
       const execution: WorkspaceSyncPrivateExecution = {
         credentials: requester.credentials, accountRowsCustody,
@@ -2685,7 +2675,19 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         resolveWorkspaceRef: id => resolveWorkspaceRefById(capture.execution.getSnapshot?.()?.workspaceRefs ?? [], id, semanticServerId),
         relationshipOwner: requesterRelationshipOwner(capture), ...(targetWorkspaceRefId ? { targetWorkspaceRefId } : {}) }, request, signal);
     } finally {
-      if (!retained) {
+      const id = retainedRelationshipId;
+      if (id !== undefined) {
+        // Create's target preparation and settlement use its ingress admission.
+        // Later requests use the retained relationship's SOURCE custody.
+        const boundary = input.requesterMachineAdmissionBoundary;
+        const verifyCurrent = checkout ? verifyWorkspaceSyncRelationshipMachineAdmissionCurrent : verifyWorkspaceSyncSourceMachineAdmissionCurrent;
+        targetPhaseContext = { ...targetPhaseContext, verifyMachineAdmissionCurrent: async () => {
+          if (!boundary) return false;
+          return await verifyCurrent({ credentials: requester.credentials,
+            sessionId: id, attribution: executionIdentity.requester, serverHttpBaseUrl: requester.serverHttpBaseUrl,
+            boundary });
+        } };
+      } else {
         if (captured) await runtime!.handoffAdapter.releasePrivateExecution?.(request.operationId);
         else { try { await checkout?.dispose(); } finally { await custody.release(); } }
       }
