@@ -181,6 +181,7 @@ describe('Review requested-person HTTP flow', () => {
             expect((await post(guest.id, 'verdicts', { roundOrdinal: 1, verdict: 'approve' })).json())
                 .toMatchObject({ error: 'review_reviewer_not_requested' });
             await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: bob.id } }, data: { status: 'suspended' } });
+            await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: guest.id } }, data: { role: 'member' } });
             expect((await post(bob.id, 'verdicts', { roundOrdinal: 1, verdict: 'approve' })).statusCode).toBe(200);
             const outstanding = await app.inject({ method: 'GET', url: `/v1/reviews/${reviewId}/human`, headers: headers(alice.id) });
             expect(outstanding.json().needsYou).toMatchObject({ requestedVerdict: true, needsYou: true });
@@ -195,7 +196,9 @@ describe('Review requested-person HTTP flow', () => {
                 { principal: { kind: 'team', teamId: team.id }, required: true },
                 { principal: { kind: 'account', accountId: alice.id }, required: true },
             ]));
-            expect((await post(bob.id, 'verdicts', { roundOrdinal: 2, verdict: 'approve' })).statusCode).toBe(200);
+            expect((await post(bob.id, 'verdicts', { roundOrdinal: 2, verdict: 'approve' })).json())
+                .toMatchObject({ error: 'review_reviewer_not_requested' });
+            expect((await post(guest.id, 'verdicts', { roundOrdinal: 2, verdict: 'approve' })).statusCode).toBe(200);
         });
     });
 });

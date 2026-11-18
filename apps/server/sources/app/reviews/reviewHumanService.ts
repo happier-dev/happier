@@ -13,6 +13,7 @@ import type { ReviewAccessCapability } from './reviewAccess';
 import { readAdmittedReviewCountsInTx } from './reviewListService';
 import type { Tx } from '@/storage/inTx';
 import type { ReviewReviewersSetInputV1, ReviewVerdictSubmitInputV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import { admitReviewRequestedReviewersInTx } from './reviewReviewerAdmission';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { resolveArtifactAudiencesInTx } from '@/app/artifacts/artifactAccessService';
 
@@ -140,16 +141,8 @@ export async function setAdmittedReviewersInTx(tx: Tx, input: Readonly<{
     const current = await tx.reviewMetadata.findUnique({ where: { artifactId: input.access.reviewId }, select: { currentRoundOrdinal: true } });
     if (!current || current.currentRoundOrdinal !== input.request.roundOrdinal) throw Object.assign(new Error('review_round_not_admitted'), { code: 'review_round_not_admitted' });
     await tx.reviewRequestedReviewer.deleteMany({ where: { reviewId: input.access.reviewId, roundOrdinal: input.request.roundOrdinal } });
-    for (const reviewer of input.request.reviewers) {
-        const eligibleAccounts = reviewer.principal.kind === 'account'
-            ? [reviewer.principal.accountId]
-            : reviewer.principal.kind === 'team'
-                ? (await tx.teamMembership.findMany({ where: { teamId: reviewer.principal.teamId, status: 'active', account: { status: 'active' }, team: { archivedAt: null }, role: { in: ['owner', 'admin', 'member'] } }, select: { accountId: true } })).map(row => row.accountId)
-                : (await tx.teamGroupMembership.findMany({ where: { teamGroupId: reviewer.principal.groupId, teamMembership: { status: 'active', account: { status: 'active' }, team: { archivedAt: null }, role: { in: ['owner', 'admin', 'member'] } } }, select: { teamMembership: { select: { accountId: true } } } })).map(row => row.teamMembership.accountId);
-        await tx.reviewRequestedReviewer.create({ data: { reviewId: input.access.reviewId, roundOrdinal: input.request.roundOrdinal,
-            principalKey: reviewer.principal.kind === 'account' ? `account:${reviewer.principal.accountId}` : reviewer.principal.kind === 'team' ? `team:${reviewer.principal.teamId}` : `group:${reviewer.principal.teamId}:${reviewer.principal.groupId}`,
-            principal: reviewer.principal, required: reviewer.required, eligibleAccounts: { create: eligibleAccounts.map(accountId => ({ accountId })) } } });
-    }
+    await admitReviewRequestedReviewersInTx(tx, { reviewId: input.access.reviewId,
+        roundOrdinal: input.request.roundOrdinal, reviewers: input.request.reviewers });
     return readAdmittedReviewHumanStateInTx(tx, { actorAccountId: input.actorAccountId, access: input.access });
 }
 
