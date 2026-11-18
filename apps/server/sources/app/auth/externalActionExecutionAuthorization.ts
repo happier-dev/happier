@@ -1989,15 +1989,16 @@ async function readSetupReceiverSigner(binding: ExternalActionExecutionAuthoriza
 }
 
 /** Managed reference reads retain the admitted Home and requester custody. */
-function isMachineDeploymentReferenceHttpPurpose(binding: ExternalActionExecutionAuthorizationV1['binding'],
-    effectActionId: string, proof: ExternalActionExecutionRequestProof): boolean {
+function isMachineDeploymentReferenceHttpPurpose(verified: VerifiedSignedChildRequest,
+    proof: ExternalActionExecutionRequestProof): boolean {
+    const { binding, effectActionId } = verified;
     if (effectActionId !== binding.actionId || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
     const url = new URL(proof.path, 'http://localhost');
     if (url.pathname !== '/v1/deployments/machine-references') return false;
     const selection = MachineDeploymentReferencesInputV1Schema.safeParse(Object.fromEntries(url.searchParams));
     if (!selection.success || selection.data.homeId !== binding.serverIdentityId) return false;
     if (isManagedReferenceCensusActionIdV1(binding.actionId)) {
-        return binding.custodianAccountId === binding.accountId;
+        return isRequesterOwnMachineRequest(verified);
     }
     return MACHINE_REBOOT_ACTION_IDS.some(id => id === binding.actionId)
         && binding.target.kind === 'machine' && selection.data.machineId === binding.target.machineId;
@@ -4231,7 +4232,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             ? SessionLookupByTagsRequestV2Schema.safeParse(proof.body) : null;
         if (verified.effectActionId !== verified.binding.actionId
             || !isAccountEncryptionCurrentnessHttpRead(proof) && !(lookup?.success && lookup.data.matchExternalIdentity === true)) return refuse('verification_purpose');
-    } else if (isMachineDeploymentReferenceHttpPurpose(verified.binding, verified.effectActionId, proof)) {
+    } else if (isMachineDeploymentReferenceHttpPurpose(verified, proof)) {
         // The native deployment read route owns requester access to each reference.
     } else if (managedRoot.success && !admittedReadRootRequesterGet) {
         const path = proof.path.split('?')[0];

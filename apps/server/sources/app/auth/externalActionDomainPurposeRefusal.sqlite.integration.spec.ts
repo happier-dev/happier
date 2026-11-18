@@ -35,6 +35,7 @@ import { SESSION_DATA_KEY_ENVELOPE_BYTES_V1 } from '@happier-dev/protocol/sessio
 import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
+import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 
 let harness: LightSqliteHarness;
 beforeAll(async () => {
@@ -53,7 +54,7 @@ afterAll(async () => {
   await harness?.close();
 });
 
-it('names the refusing reviewed-purpose check without changing admission', async () => {
+async function createFixture() {
   const account = await db.account.create({
     data: { publicKey: null, encryptionMode: 'plain' },
   });
@@ -115,6 +116,7 @@ it('names the refusing reviewed-purpose check without changing admission', async
     method: string,
     path: string,
     body: unknown,
+    signer?: Readonly<{ privateKey: Uint8Array; resolveCurrentSessionMachine: () => Promise<string> }>,
   ) => {
     let phase: string | undefined;
     const result = await verifyExternalActionDomainExecutionRequest({
@@ -124,6 +126,7 @@ it('names the refusing reviewed-purpose check without changing admission', async
       method,
       path,
       body,
+      resolveCurrentSessionMachine: signer?.resolveCurrentSessionMachine,
       machineSignature: signExternalActionMachineRequestV1({
         authorizationToken: root.token,
         effectActionId,
@@ -133,7 +136,7 @@ it('names the refusing reviewed-purpose check without changing admission', async
         method,
         path,
         body,
-        privateKey: keys.secretKey,
+        privateKey: signer?.privateKey ?? keys.secretKey,
       }),
       onRefusal: (refused) => {
         phase = refused;
@@ -141,6 +144,25 @@ it('names the refusing reviewed-purpose check without changing admission', async
     });
     return { admitted: result !== null, phase };
   };
+  return { account, app, homeId, keys, machine, mint, verify };
+}
+
+async function createBoundManagedMachine({ account, homeId, machine, mint }: Awaited<ReturnType<typeof createFixture>>) {
+  const root = await mint('machines.managed.acquire', { homeId });
+  if (typeof root === 'string') throw new Error('Bound Setup acquisition did not mint');
+  const managed = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+    controllerMachineId: machine.id, controllerInstallationId: machine.installationId!,
+    admittedActionRequestId: root.binding.requestId, admittedInput: { acquisitionMode: 'resource-bound' },
+    allocation: 'bound', launch: { provider: { pluginId: 'fixture.setup', localId: 'vm' },
+      schemaVersion: 1, name: 'Bound', choices: {} },
+    resource: { contributionRef: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, value: {} },
+    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+  return { managed, root };
+}
+
+it('names the refusing reviewed-purpose check without changing admission', async () => {
+  const fixture = await createFixture();
+  const { account, app, homeId, keys, machine, mint, verify } = fixture;
   const target = { homeId, managedId: 'retained-managed' };
   const machineTarget = { serverId: homeId, machineId: machine.id };
   const machinePath = `/v1/machines/${encodeURIComponent(machine.id)}`;
@@ -286,24 +308,7 @@ it('names the refusing reviewed-purpose check without changing admission', async
       workspace: { ...setupInput.workspace, rootPath: '/tmp/another-project' } })).toBeNull();
     expect(await verifySetupInspection({ ...inspectRepository, reviewSharedSetup: { sourceId: 'selected-source' } })).toBeNull();
     expect(await verifySetupInspection(inspectRepository, false)).toBeNull();
-    const root = await mint('machines.managed.acquire', { homeId });
-    if (typeof root === 'string') throw new Error('Bound Setup acquisition did not mint');
-    const managed = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
-      controllerMachineId: machine.id, controllerInstallationId: machine.installationId!,
-      admittedActionRequestId: root.binding.requestId, admittedInput: { acquisitionMode: 'resource-bound' },
-      allocation: 'bound', launch: { provider: { pluginId: 'fixture.setup', localId: 'vm' },
-        schemaVersion: 1, name: 'Bound', choices: {} },
-      resource: { contributionRef: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, value: {} },
-      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
-    const deleteInput = { homeId, managedId: managed.id, expectedRevision: 0, when: 'now', intent: 'delete', reviewedDependencies: true };
-    const deleteRoot = await mint('machines.managed.delete', deleteInput);
-    if (typeof deleteRoot === 'string') throw new Error(`Managed delete did not mint: ${deleteRoot}`);
-    const deleteCensus = `/v1/deployments/machine-references?homeId=${encodeURIComponent(homeId)}&machineId=${encodeURIComponent(machine.id)}`;
-    expect(await verify(deleteRoot, 'machines.managed.delete', 'GET', deleteCensus, undefined))
-      .toEqual({ admitted: true, phase: undefined });
-    expect((await verify(deleteRoot, 'machines.managed.delete', 'GET',
-      `/v1/deployments/machine-references?homeId=another-home&machineId=${encodeURIComponent(machine.id)}`, undefined)).admitted)
-      .toBe(false);
+    const { managed, root } = await createBoundManagedMachine(fixture);
     const report = { homeId, managedId: managed.id, presetId: 'setup', presetRevision: 1,
       target: { kind: 'bound', controller: { machineId: machine.id, installationId: machine.installationId! } },
       state: 'running', operation: { operationId: 'bound-setup' } };
@@ -337,6 +342,54 @@ it('names the refusing reviewed-purpose check without changing admission', async
     }
     await db.session.update({ where: { id: session.id }, data: { archivedAt: new Date() } });
     expect((await verify(spawn, 'session.spawn_new', 'POST', '/v1/machines/setup/report', installed)).admitted).toBe(false);
+  } finally {
+    await app.close();
+  }
+});
+
+it('requires the bound Machine signer for the managed delete census on its Home', async () => {
+  const fixture = await createFixture();
+  const { account, app, homeId, keys, machine, mint, verify } = fixture;
+  try {
+    const { managed } = await createBoundManagedMachine(fixture);
+    const deleteInput = { homeId, managedId: managed.id, expectedRevision: 0, when: 'now', intent: 'delete', reviewedDependencies: true };
+    const deleteRoot = await mint('machines.managed.delete', deleteInput);
+    if (typeof deleteRoot === 'string') throw new Error(`Managed delete did not mint: ${deleteRoot}`);
+    const deleteCensus = `/v1/deployments/machine-references?homeId=${encodeURIComponent(homeId)}&machineId=${encodeURIComponent(machine.id)}`;
+    expect(await verify(deleteRoot, 'machines.managed.delete', 'GET', deleteCensus, undefined))
+      .toEqual({ admitted: true, phase: undefined });
+    expect((await verify(deleteRoot, 'machines.managed.delete', 'GET',
+      `/v1/deployments/machine-references?homeId=another-home&machineId=${encodeURIComponent(machine.id)}`, undefined)).admitted)
+      .toBe(false);
+    const sourceKeys = tweetnacl.sign.keyPair();
+    const source = await db.machine.create({ data: {
+      id: crypto.randomUUID(), accountId: account.id, metadata: machine.metadata,
+      dataEncryptionKey: machine.dataEncryptionKey, installationId: crypto.randomUUID(),
+      installationPublicKey: new Uint8Array(sourceKeys.publicKey),
+    } });
+    const sourceSession = await db.session.create({ data: {
+      accountId: account.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain',
+    } });
+    await db.accessKey.create({ data: {
+      accountId: account.id, machineId: source.id, sessionId: sourceSession.id, data: 'source-session-key',
+    } });
+    const binding = deleteRoot.binding;
+    if (!('authentication' in binding)) throw new Error('Expected an Account delete admission');
+    const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1, requestId: binding.requestId,
+      caller: { kind: 'session', sessionId: sourceSession.id, starterDepth: 1, turnDepth: 1 },
+      sourceTurnId: 'delete-turn', callerPermissionMode: 'default',
+      causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+    });
+    // Keep mint and signer verification real. Only current socket publisher discovery is supplied by the fixture.
+    const resolveCurrentSessionMachine = async () => source.id;
+    const sessionDelete = await auth.mintExternalActionExecutionAuthorization({ ...binding, sessionActionOrigin,
+      sessionActionSource: { machineId: source.id, installationId: source.installationId! },
+    }, { resolveCurrentSessionMachine });
+    expect(await verify(sessionDelete, 'machines.managed.delete', 'GET', deleteCensus, undefined,
+      { privateKey: keys.secretKey, resolveCurrentSessionMachine })).toEqual({ admitted: true, phase: undefined });
+    expect(await verify(sessionDelete, 'machines.managed.delete', 'GET', deleteCensus, undefined,
+      { privateKey: sourceKeys.secretKey, resolveCurrentSessionMachine }))
+      .toEqual({ admitted: false, phase: 'managed_machine_purpose' });
   } finally {
     await app.close();
   }
