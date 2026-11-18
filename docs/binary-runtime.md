@@ -1194,7 +1194,9 @@ the bytes of a module that differs from HEAD with HEAD's, so another lane's
 half-landed package edit cannot break `stack start` or a reload. Source-runtime
 registration installs that same pin before loading workspace modules or tsx,
 including when a tooling child inherits the raw source-runtime preload before
-the Stack bootstrap. Product entrypoints remain outside tooling pin scope. When HEAD moves,
+the Stack bootstrap. A process registers the pin once, even when a namespaced
+TypeScript loader re-imports source registration, so its load hook always stays
+below tsx. Product entrypoints remain outside tooling pin scope. When HEAD moves,
 the controller writes HEAD's bytes of every module the checkout changed, then
 HEAD's blob manifest, into the Git-ignored `.happier-tooling-pin/`, which the
 source mirror carries to execution hosts.

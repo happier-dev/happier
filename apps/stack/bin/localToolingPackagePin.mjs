@@ -67,7 +67,11 @@ export function synchronousLoadHooksSupported(version = process.versions.node) {
   return Boolean(first) && (minor > first[0] || minor === first[0] && patch >= first[1]);
 }
 
-let stackToolingPin;
+// One registration per process, not per module instance: a namespaced
+// TypeScript loader re-imports this module under a query (`?tsx-namespace=`),
+// and a second load hook registered then sits above tsx, replacing its output
+// with raw HEAD TypeScript (P03-ENTRY-PARSE 2026-11-18).
+const STACK_TOOLING_PIN = Symbol.for('happier.stack.toolingPackagePin');
 /** Bootstrap and inherited raw preloads share one registration. Bootstrap must
  * protect its dependency-custody imports before entering the source runtime. */
 export function registerStackToolingPackagePin({ repoDir }) {
@@ -80,7 +84,7 @@ export function registerStackToolingPackagePin({ repoDir }) {
   if (!isToolEntry) return null;
   // Tests exercise their own uncommitted package edits.
   if (/\.test\.[cm]?[jt]s$/u.test(entry)) process.env.HAPPIER_STACK_TOOLING_PACKAGES = 'live';
-  return stackToolingPin ??= registerToolingPackagePin({ repoDir });
+  return globalThis[STACK_TOOLING_PIN] ??= registerToolingPackagePin({ repoDir });
 }
 
 function writeAtomic(path, bytes) {
@@ -312,8 +316,11 @@ export function registerToolingPackagePin({ repoDir, env = process.env, stderr =
     nodeModule.register(import.meta.url, { data: { repoDir } });
   }
   if (typeof nodeModule.registerHooks !== 'function') return inactive;
+  let resolutionRegistered = false;
   return {
     registerResolution() {
+      if (resolutionRegistered) return;
+      resolutionRegistered = true;
       nodeModule.registerHooks({
         resolve(specifier, context, nextResolve) {
           try {

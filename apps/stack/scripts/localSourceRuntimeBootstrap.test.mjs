@@ -224,3 +224,49 @@ test('checkout tooling loads product packages at the committed revision, on the 
   assert.equal(afterMoveProbe.status, 0, afterMoveProbe.stderr);
   assert.equal(afterMoveProbe.stdout, 'committed+helper');
 });
+
+// P03-ENTRY-PARSE 2026-11-18: the workspace build loads the bundled-plugin
+// generator through a namespaced tsx loader, and the generator re-imports the
+// source runtime. tsx's namespace query made that a second module instance,
+// whose pin registered another load hook above tsx: it swapped tsx's output for
+// raw HEAD TypeScript and every entry-load died on an inline `type` import.
+test('a source runtime re-imported through a namespaced TypeScript loader keeps one tooling pin below tsx', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-tooling-pin-namespace-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repo = fileURLToPath(new URL('../../../', import.meta.url));
+  const checkout = join(root, 'checkout');
+  await cp(join(repo, 'apps/stack/bin'), join(checkout, 'apps/stack/bin'), { recursive: true, filter: source => !source.includes('/node_modules') });
+  await cp(join(repo, 'apps/stack/scripts/utils'), join(checkout, 'apps/stack/scripts/utils'), { recursive: true, filter: source => !source.includes('/node_modules') });
+  await cp(join(repo, 'packages/cli-common'), join(checkout, 'packages/cli-common'), { recursive: true,
+    filter: source => source === join(repo, 'packages/cli-common') || /\.(?:mjs|cjs|json)$/u.test(source) && dirname(source) === join(repo, 'packages/cli-common') });
+  const write = async (relative, contents) => {
+    await mkdir(dirname(join(checkout, relative)), { recursive: true });
+    await writeFile(join(checkout, relative), contents);
+  };
+  await write('apps/cli/package.json', JSON.stringify({ name: 'fixture-cli', type: 'module' }));
+  await write('apps/cli/tsconfig.runtime.json', JSON.stringify({ compilerOptions: { module: 'esnext', target: 'es2022' } }));
+  await write('apps/cli/src/field.ts', 'export interface Field { name: string }\nexport const field = (name: string): Field => ({ name });\n');
+  await write('apps/cli/src/help.ts', 'import { field, type Field } from "./field.js";\nexport const help: Field = field("committed");\n');
+  // The generator's shape: it imports the source runtime, then loads CLI source.
+  await write('apps/cli/scripts/generator.ts', 'import "../../../packages/cli-common/registerSourceRuntime.mjs";\nexport const { help } = await import("../src/help.js");\n');
+  await write('apps/stack/scripts/probe.mjs', [
+    'import { createCliSourceLoader } from "../../../packages/cli-common/cliSourceLoader.mjs";',
+    'const loader = await createCliSourceLoader("probe");',
+    'const { help } = await loader.import(new URL("../../cli/scripts/generator.ts", import.meta.url).href, import.meta.url);',
+    'process.stdout.write(help.name);',
+  ].join('\n'));
+  const git = args => {
+    const result = spawnSync('git', ['-C', checkout, '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  git(['init', '-q']);
+  git(['add', '-A']);
+  git(['commit', '-q', '-m', 'fixture']);
+  await symlink(join(repo, 'node_modules'), join(checkout, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+  const result = spawnSync(process.execPath, ['--conditions=happier-source',
+    `--import=${pathToFileURL(join(checkout, 'apps/stack/bin/localSourceRuntimeBootstrap.mjs')).href}`,
+    join(checkout, 'apps/stack/scripts/probe.mjs')], { cwd: checkout, encoding: 'utf8',
+    env: { ...process.env, NODE_OPTIONS: '', HAPPIER_STACK_TOOLING_PACKAGES: '' } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'committed');
+});
