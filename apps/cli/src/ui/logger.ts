@@ -646,7 +646,7 @@ export class Logger {
       }
 
       case 'warn': {
-        writeConsoleLogBestEffort(chalk.yellow(prefix), message, ...args)
+        writeConsoleErrorBestEffort(chalk.yellow(prefix), message, ...args)
         break
       }
 

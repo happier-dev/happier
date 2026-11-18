@@ -429,16 +429,31 @@ describe('logger.debugLargeJson', () => {
         }
     });
 
+    it('keeps warning diagnostics on stderr so stdout remains available for JSON output', async () => {
+        const { logger } = await import('@/ui/logger');
+        const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        try {
+            logger.warn('bundled declaration unavailable', { code: 'bundled_declaration_asset_stale' });
+            expect(stdout).not.toHaveBeenCalled();
+            expect(stderr.mock.calls.flat()).toContain('bundled declaration unavailable');
+            expect(stderr.mock.calls.flat()).toContainEqual({ code: 'bundled_declaration_asset_stale' });
+        } finally {
+            stdout.mockRestore();
+            stderr.mockRestore();
+        }
+    });
+
     it('does not throw when console logging hits EPIPE', async () => {
         const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
         const epipeError = Object.assign(new Error('broken pipe'), { code: 'EPIPE' });
-        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {
+        const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {
             throw epipeError;
         });
 
         try {
             expect(() => {
-                logger.warn('[TEST] warn survives broken stdout');
+                logger.warn('[TEST] warn survives broken stderr');
             }).not.toThrow();
         } finally {
             consoleSpy.mockRestore();
