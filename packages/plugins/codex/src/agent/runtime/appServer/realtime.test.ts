@@ -859,7 +859,29 @@ describe('Codex app-server realtime V3 adapter', () => {
     }));
   });
 
-  it('carries secret-free upstream status, vendor code, and type into the realtime diagnostic', async () => {
+  it.each([
+    {
+      label: 'standard identifiers',
+      code: 'usage_limit_exceeded',
+      type: 'rate_limit',
+      expectedCode: 'usage_limit_exceeded',
+      expectedType: 'rate_limit',
+    },
+    {
+      label: 'long native code and prose in the type field',
+      code: `vendor_${'a'.repeat(122)}`,
+      type: 'private prose from upstream',
+      expectedCode: `vendor_${'a'.repeat(122)}`,
+    },
+    {
+      label: 'prose in the code field',
+      code: 'private prose in the code',
+      type: 'rate_limit',
+      expectedType: 'rate_limit',
+    },
+  ])('keeps HTTP status and canonical identifiers with $label', async ({
+    code, type, expectedCode, expectedType,
+  }) => {
     const fixture = createClientFixture();
     const startPromise = createConversation(fixture).start({
       transport: { kind: 'webrtc', offerSdp: 'offer' },
@@ -873,8 +895,8 @@ describe('Codex app-server realtime V3 adapter', () => {
       threadId: 'thread-1',
       message: `HTTP 429: ${JSON.stringify({
         error: {
-          code: 'usage_limit_exceeded',
-          type: 'rate_limit',
+          code,
+          type,
           message: 'Bearer sk-private-upstream-body',
         },
       })}`,
@@ -885,19 +907,29 @@ describe('Codex app-server realtime V3 adapter', () => {
       status: 'failed',
       diagnostic: {
         code: 'codex_realtime_upstream_error',
-        message: 'Codex Realtime Voice reported an upstream error (HTTP 429; provider code usage_limit_exceeded; provider type rate_limit).',
         details: {
           failureCause: {
             phase: 'codex.realtime.upstream',
             httpStatus: 429,
-            nativeErrorCode: 'usage_limit_exceeded',
-            nativeErrorReason: 'rate_limit',
           },
         },
       },
     });
     const result = await startPromise;
     expect(JSON.stringify(result)).not.toContain('sk-private-upstream-body');
+    if (expectedCode) {
+      expect(result).toHaveProperty('diagnostic.details.failureCause.nativeErrorCode', expectedCode);
+      expect(result).toHaveProperty('diagnostic.message', expect.stringContaining(expectedCode));
+    } else {
+      expect(result).not.toHaveProperty('diagnostic.details.failureCause.nativeErrorCode');
+      expect(JSON.stringify(result)).not.toContain(code);
+    }
+    if (expectedType) {
+      expect(result).toHaveProperty('diagnostic.details.failureCause.nativeErrorReason', expectedType);
+    } else {
+      expect(result).not.toHaveProperty('diagnostic.details.failureCause.nativeErrorReason');
+      expect(JSON.stringify(result)).not.toContain(type);
+    }
   });
 
   it.each([

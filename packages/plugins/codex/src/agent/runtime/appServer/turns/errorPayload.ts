@@ -12,12 +12,9 @@ export type CodexAppServerErrorPayload = Readonly<{
   requestId?: string;
 }>;
 
-const CODEX_UPSTREAM_IDENTIFIER = /^-?[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
-
-function readCodexUpstreamIdentifier(value: unknown): string | undefined {
+function readCodexUpstreamIdentifierCandidate(value: unknown): string | undefined {
   if (typeof value === 'number' && Number.isInteger(value)) return String(value);
-  if (typeof value === 'string' && CODEX_UPSTREAM_IDENTIFIER.test(value)) return value;
-  return undefined;
+  return typeof value === 'string' ? value : undefined;
 }
 
 export function readCodexAppServerErrorPayload(
@@ -92,10 +89,10 @@ export function readCodexAppServerErrorPayload(
   }
 
   const requestId = trimStringValue(error.requestId ?? error.request_id);
-  const upstreamErrorCode = readCodexUpstreamIdentifier(
+  const upstreamErrorCode = readCodexUpstreamIdentifierCandidate(
     upstreamError.code ?? upstreamError.errorCode ?? upstreamError.providerErrorCode,
   );
-  const upstreamErrorType = readCodexUpstreamIdentifier(
+  const upstreamErrorType = readCodexUpstreamIdentifierCandidate(
     upstreamError.type ?? upstreamError.errorType ??
       (typeof errorInfo === 'string' ? errorInfo : undefined),
   );

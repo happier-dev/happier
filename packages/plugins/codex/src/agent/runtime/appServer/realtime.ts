@@ -174,12 +174,14 @@ function realtimeUpstreamFailureCause(
   const projected = projectActionFailureCauseV1(record, phase, { allowUnknownErrorCode: false });
   const payload = readCodexAppServerErrorPayload(record);
   if (!payload) return projected;
-  return {
-    ...projected,
-    ...(payload.httpStatus === undefined ? {} : { httpStatus: payload.httpStatus }),
-    ...(payload.upstreamErrorCode === undefined ? {} : { nativeErrorCode: payload.upstreamErrorCode }),
-    ...(payload.upstreamErrorType === undefined ? {} : { nativeErrorReason: payload.upstreamErrorType }),
-  };
+  return projectActionFailureCauseV1({
+    failureCause: {
+      ...projected,
+      ...(payload.httpStatus === undefined ? {} : { httpStatus: payload.httpStatus }),
+      ...(payload.upstreamErrorCode === undefined ? {} : { nativeErrorCode: payload.upstreamErrorCode }),
+      ...(payload.upstreamErrorType === undefined ? {} : { nativeErrorReason: payload.upstreamErrorType }),
+    },
+  });
 }
 
 function realtimeUpstreamReason(failureCause: ReturnType<typeof projectActionFailureCauseV1>): string {
