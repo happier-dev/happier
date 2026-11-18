@@ -30,6 +30,7 @@ import {
 } from './createPluginSurfaceHostApi';
 import { createContextualResourceWatchOwner, invalidatedEvent, terminalEvent, type PluginSurfaceResourceWatchTransport } from './daemonResourceWatch';
 import { subscribeMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
+import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
 export type { PluginSurfaceResourceWatchTransport } from './daemonResourceWatch';
 
 /**
@@ -105,10 +106,13 @@ export function createPluginContextualResourceWatchClient(input: Readonly<{
     return Object.freeze({
         onWatchRecovery(listener) {
             const machineId = input.resource.machineId;
-            const release = machineId === null ? () => {} : subscribeMachineContributionRegistryProjectionInvalidation({
-                machineId, serverId: input.resource.serverId ?? null,
-            }, listener);
-            return { dispose: release };
+            if (machineId === null) return { dispose() {} };
+            const scope = { machineId, serverId: input.resource.serverId ?? null };
+            const detachRegistry = subscribeMachineContributionRegistryProjectionInvalidation(scope, listener);
+            const detachRecovery = subscribeMachineRpcRecovery({
+                ...scope, expectedAccountId: input.resource.accountId ?? null,
+            }, () => listener());
+            return { dispose() { detachRegistry(); detachRecovery(); } };
         },
         async watchResource(resource, listener, options) {
             const host = 'hostResource' in input.resource ? input.resource.hostResource : null;

@@ -8,6 +8,7 @@ import type { DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/deploy
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
+import { clearMachineRequestReachabilityForMachine } from '@/sync/domains/machines/reachability/machineReachability';
 import * as machineServiceResource from '@/components/machines/resources/useMachineServiceResource';
 import { machineServicesListProjection } from '@/components/machines/services/machineServicesListProjection';
 import { createDeploymentReadTransport } from './deploymentReadTransport';
@@ -25,8 +26,12 @@ beforeEach(async () => {
 });
 afterEach(async () => { await homes.reset(); });
 
-it.each(['target_unavailable', 'credential_scope_denied'] as const)(
-    'settles a Machine Services watch refused with %s without idle Action requests', async refusal => {
+it.each([
+    { refusal: 'target_unavailable', recovery: 'registry' },
+    { refusal: 'target_unavailable', recovery: 'reconnect' },
+    { refusal: 'credential_scope_denied', recovery: 'none' },
+] as const)(
+    'settles Machine Services $refusal with zero idle requests and recovery via $recovery', async ({ refusal, recovery }) => {
     const machineId = 'machine-a';
     const installationId = 'installation';
     const row = { ...createPlainMachineRowFixture({ id: machineId, accountId: 'account' }), installationId };
@@ -133,10 +138,13 @@ it.each(['target_unavailable', 'credential_scope_denied'] as const)(
             pending: 'idle', subscription: 'reconnecting', error: { code: 'target_unavailable' },
         });
         refused = false;
-        publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: 'unrelated-machine' }, 'authority');
+        const recover = (id: string) => recovery === 'reconnect'
+            ? clearMachineRequestReachabilityForMachine(scope, id)
+            : publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: id }, 'authority');
+        recover('unrelated-machine');
         await vi.advanceTimersByTimeAsync(0);
         expect(requests).toHaveLength(openCount);
-        publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId }, 'authority');
+        recover(machineId);
         await vi.waitFor(() => expect(requests.filter(method => method === open)).toHaveLength(2));
         await vi.waitFor(() => expect(requests.filter(method => method === next)).toHaveLength(2));
         await vi.waitFor(() => expect(resource.selection.getSnapshot()).toMatchObject({
