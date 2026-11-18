@@ -10,7 +10,7 @@ import { readDeploymentDomainServingUrlV1 } from '@happier-dev/protocol/deployme
 import { fetchArtifactViaApi, decodeEncryptedArtifactJsonBase64ForCliAccessKey } from '../artifactApi';
 import { buildTestAccountCliAuthCredentials } from '../cliAuth';
 import { fetchJson } from '../http';
-import { fetchAllMessages, fetchSessionsV2 } from '../sessions';
+import { fetchAllMessages, fetchSessionV2, fetchSessionsV2 } from '../sessions';
 import { startServerLight, type StartedServer } from '../process/serverLight';
 import { createRunDirs } from '../runDir';
 import { isQaBedProfileName, seedQaBedAccount } from './seedQaBedAccount';
@@ -83,7 +83,9 @@ it('seeds the demo story world: named Sessions, a featured turn with a diff and 
   const open = <T>(encryptedJsonBase64: string, dataEncryptionKeyBase64: unknown) => decodeEncryptedArtifactJsonBase64ForCliAccessKey<T>({
     encryptedJsonBase64, dataEncryptionKeyBase64: String(dataEncryptionKeyBase64), cliAccessKey });
 
-  const { sessions } = await fetchSessionsV2(demoServer.baseUrl, seeded.auth.token, { limit: 50 });
+  // The list row omits metadata and agent state; the by-id read carries them.
+  const listed = await fetchSessionsV2(demoServer.baseUrl, seeded.auth.token, { limit: 50 });
+  const sessions = await Promise.all(listed.sessions.map(row => fetchSessionV2(demoServer!.baseUrl, seeded.auth.token, row.id)));
   const named = sessions.map(session => ({ session, name: open<{ name: string }>(session.metadata, session.dataEncryptionKey)?.name }));
   expect(named.map(entry => entry.name).sort()).toEqual(QA_BED_DEMO_STORY.sessions.map(story => story.name).sort());
   expect(seeded.summary).toMatchObject({ profile, machines: 1, sessions: QA_BED_DEMO_STORY.sessions.length });
