@@ -33,6 +33,7 @@ pub(crate) struct DesktopPetOverlayPosition {
 pub(crate) struct DesktopPetOverlayMonitorRect {
     pub id: String,
     pub rect: Rect,
+    pub scale: f64,
 }
 
 pub(crate) const PET_OVERLAY_PARK_OFFSCREEN_DISTANCE_PX: f64 = 10_000.0;
@@ -297,6 +298,7 @@ mod tests {
         let monitors = vec![
             DesktopPetOverlayMonitorRect {
                 id: "left".to_string(),
+                scale: 1.0,
                 rect: Rect {
                     x: 0.0,
                     y: 0.0,
@@ -306,6 +308,7 @@ mod tests {
             },
             DesktopPetOverlayMonitorRect {
                 id: "right".to_string(),
+                scale: 1.0,
                 rect: Rect {
                     x: 800.0,
                     y: 0.0,

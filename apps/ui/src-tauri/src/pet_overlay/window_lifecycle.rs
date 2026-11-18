@@ -61,21 +61,19 @@ pub(crate) fn resolve_pet_overlay_ignore_cursor_events(input_locked: bool) -> bo
     input_locked
 }
 
-pub(crate) fn monitor_to_logical_rect(
-    monitor: &tauri::Monitor,
-    fallback_scale_factor: f64,
-) -> Rect {
+fn monitor_logical_geometry(monitor: &tauri::Monitor, fallback_scale_factor: f64) -> (Rect, f64) {
     let scale_factor = if monitor.scale_factor().is_finite() && monitor.scale_factor() > 0.000_1 {
         monitor.scale_factor()
     } else {
         fallback_scale_factor.max(0.000_1)
     };
-    Rect {
+    let rect = Rect {
         x: monitor.position().x as f64 / scale_factor,
         y: monitor.position().y as f64 / scale_factor,
         width: monitor.size().width as f64 / scale_factor,
         height: monitor.size().height as f64 / scale_factor,
-    }
+    };
+    (rect, scale_factor)
 }
 
 fn resolve_pet_overlay_monitor_id(monitor: &tauri::Monitor) -> String {
@@ -99,9 +97,11 @@ fn monitor_to_overlay_monitor_rect(
     monitor: &tauri::Monitor,
     fallback_scale_factor: f64,
 ) -> DesktopPetOverlayMonitorRect {
+    let (rect, scale) = monitor_logical_geometry(monitor, fallback_scale_factor);
     DesktopPetOverlayMonitorRect {
         id: resolve_pet_overlay_monitor_id(monitor),
-        rect: monitor_to_logical_rect(monitor, fallback_scale_factor),
+        rect,
+        scale,
     }
 }
 
@@ -136,27 +136,29 @@ pub(crate) fn resolve_pet_overlay_monitor_rect_with_id<R: Runtime>(
         }
     }
 
+    let (rect, scale) = resolve_pet_overlay_monitor_geometry(app, overlay_window);
     DesktopPetOverlayMonitorRect {
         id: "current".to_string(),
-        rect: resolve_pet_overlay_monitor_rect(app, overlay_window),
+        rect,
+        scale,
     }
 }
 
-pub(crate) fn resolve_pet_overlay_monitor_rect<R: Runtime>(
+fn resolve_pet_overlay_monitor_geometry<R: Runtime>(
     app: &AppHandle<R>,
     overlay_window: &WebviewWindow<R>,
-) -> Rect {
+) -> (Rect, f64) {
     let overlay_scale_factor = overlay_window.scale_factor().unwrap_or(1.0).max(0.000_1);
     let from_overlay_current = overlay_window
         .current_monitor()
         .ok()
         .flatten()
-        .map(|monitor| monitor_to_logical_rect(&monitor, overlay_scale_factor));
+        .map(|monitor| monitor_logical_geometry(&monitor, overlay_scale_factor));
     let from_overlay_primary = overlay_window
         .primary_monitor()
         .ok()
         .flatten()
-        .map(|monitor| monitor_to_logical_rect(&monitor, overlay_scale_factor));
+        .map(|monitor| monitor_logical_geometry(&monitor, overlay_scale_factor));
 
     let from_main = app.get_webview_window("main").and_then(|main| {
         let main_scale_factor = main
@@ -166,7 +168,7 @@ pub(crate) fn resolve_pet_overlay_monitor_rect<R: Runtime>(
         main.current_monitor()
             .ok()
             .flatten()
-            .map(|monitor| monitor_to_logical_rect(&monitor, main_scale_factor))
+            .map(|monitor| monitor_logical_geometry(&monitor, main_scale_factor))
     });
     let from_main_primary = app.get_webview_window("main").and_then(|main| {
         let main_scale_factor = main
@@ -176,19 +178,19 @@ pub(crate) fn resolve_pet_overlay_monitor_rect<R: Runtime>(
         main.primary_monitor()
             .ok()
             .flatten()
-            .map(|monitor| monitor_to_logical_rect(&monitor, main_scale_factor))
+            .map(|monitor| monitor_logical_geometry(&monitor, main_scale_factor))
     });
 
     from_overlay_current
         .or(from_main)
         .or(from_overlay_primary)
         .or(from_main_primary)
-        .unwrap_or(Rect {
+        .unwrap_or((Rect {
             x: 0.0,
             y: 0.0,
             width: 0.0,
             height: 0.0,
-        })
+        }, overlay_scale_factor))
 }
 
 pub(crate) fn ensure_pet_overlay_window<R: Runtime>(
@@ -255,17 +257,9 @@ pub(crate) fn park_pet_overlay_window_offscreen<R: Runtime>(
     app: &AppHandle<R>,
     window: &WebviewWindow<R>,
 ) -> Result<(), String> {
-    let parking =
-        resolve_pet_overlay_parking_position(resolve_pet_overlay_monitor_rect(app, window));
-    set_pet_overlay_window_frame(
-        window,
-        DesktopPetOverlayPosition {
-            x: parking.x,
-            y: parking.y,
-        },
-        1.0,
-        1.0,
-    )?;
+    let (monitor, scale) = resolve_pet_overlay_monitor_geometry(app, window);
+    let parking = resolve_pet_overlay_parking_position(monitor);
+    set_pet_overlay_window_frame(window, parking, 1.0, 1.0, scale)?;
     show_pet_overlay_window_if_hidden(window)
 }
 
@@ -288,13 +282,27 @@ pub(crate) fn set_pet_overlay_window_frame<R: Runtime>(
     position: DesktopPetOverlayPosition,
     width: f64,
     height: f64,
+    monitor_scale: f64,
 ) -> Result<(), String> {
-    window
-        .set_size(LogicalSize::new(width.max(1.0), height.max(1.0)))
-        .map_err(|error| error.to_string())?;
-    window
-        .set_position(LogicalPosition::new(position.x, position.y))
-        .map_err(|error| error.to_string())
+    let position = LogicalPosition::new(position.x, position.y);
+    let size = LogicalSize::new(width.max(1.0), height.max(1.0));
+    // The retained Windows host may still have the previous monitor's DPI.
+    #[cfg(target_os = "windows")]
+    let (position, size) = (
+        position.to_physical::<i32>(monitor_scale),
+        size.to_physical::<u32>(monitor_scale),
+    );
+    #[cfg(target_os = "windows")]
+    {
+        window.set_position(position).map_err(|error| error.to_string())?;
+        window.set_size(size).map_err(|error| error.to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = monitor_scale;
+        window.set_size(size).map_err(|error| error.to_string())?;
+        window.set_position(position).map_err(|error| error.to_string())
+    }
 }
 
 #[cfg(test)]

@@ -1095,6 +1095,7 @@ fn apply_desktop_pet_overlay_payload<R: Runtime>(
         position,
         effective_window_size.width,
         effective_window_size.height,
+        target_monitor.scale,
     )?;
     let _ = window.set_always_on_top(payload.policy.always_on_top);
     let _ = window.set_ignore_cursor_events(resolve_pet_overlay_ignore_cursor_events(
@@ -1831,6 +1832,7 @@ mod tests {
         let monitors = vec![
             DesktopPetOverlayMonitorRect {
                 id: "left".to_string(),
+                scale: 1.0,
                 rect: Rect {
                     x: 0.0,
                     y: 0.0,
@@ -1840,6 +1842,7 @@ mod tests {
             },
             DesktopPetOverlayMonitorRect {
                 id: "right".to_string(),
+                scale: 1.0,
                 rect: Rect {
                     x: 800.0,
                     y: 0.0,
