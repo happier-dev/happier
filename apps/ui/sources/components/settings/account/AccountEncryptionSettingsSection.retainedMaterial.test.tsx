@@ -517,6 +517,7 @@ describe('Account encryption historical material custody', () => {
             await convertWithReview(h.screen, false);
             expect(h.migrations).toEqual([]);
             expect(h.d10CatalogReads).toEqual([]);
+            expect(Modal.alertAsync).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage');
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
@@ -719,7 +720,7 @@ describe('Account encryption historical material custody', () => {
             await h.screen.pressByTestIdAsync('settings-account-encryption-recover-templates');
             expect(h.writes).toEqual([]);
             await h.expectCredentialsUnchanged();
-            expect(Modal.alertAsync).toHaveBeenCalled();
+            expect(Modal.alertAsync).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage');
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
@@ -732,7 +733,7 @@ describe('Account encryption historical material custody', () => {
             await forgetWithReview(h.screen);
             await h.expectCredentialsUnchanged();
             expect(Modal.confirm).not.toHaveBeenCalled();
-            expect(Modal.alertAsync).toHaveBeenCalled();
+            expect(Modal.alertAsync).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage');
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 

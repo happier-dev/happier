@@ -26,6 +26,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { requireActionSuccess } from '@/sync/ops/actions/actionResult';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { AccountEncryptionModeConversionFailureSchema, AccountEncryptionModeConversionResultSchema } from '@/sync/ops/account/convertAccountEncryptionMode';
 import { AccountHistoricalEncryptionKeyForgetResultV1Schema, AccountEncryptionAutomationTemplatesRecoverResultV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
 import { isAccountModeDowngradeUnverifiedError } from '@happier-dev/sync-client';
@@ -229,7 +231,10 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
             });
             if (!result.ok) {
                 if (result.errorCode === 'action_account_scope_changed') return;
-                throw new Error(result.error);
+                await Modal.alertAsync(t('common.error'), resolveActionExecutionErrorMessage(
+                    result, t('settingsAccount.encryptionUpdateFailed'),
+                ));
+                return;
             }
             const outcome = AccountEncryptionAutomationTemplatesRecoverResultV1Schema.parse(result.result);
             await Modal.alertAsync(t('common.success'), t(outcome.templates.every(template => template.status === 'recovered' || template.status === 'already_plain')
@@ -287,7 +292,10 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
             });
             if (!result.ok) {
                 if (result.errorCode === 'action_account_scope_changed') return;
-                throw new Error(result.error);
+                await Modal.alertAsync(t('common.error'), resolveActionExecutionErrorMessage(
+                    result, t('settingsAccount.forgetEncryptionKeyFailed'),
+                ));
+                return;
             }
             const outcome = AccountHistoricalEncryptionKeyForgetResultV1Schema.parse(result.result);
             if (outcome.status === 'forgotten') await Modal.alertAsync(t('common.success'), t('settingsAccount.forgetEncryptionKeyComplete'));
@@ -368,7 +376,7 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
                                             if (!isCurrent()) return;
                                             if (!invocation.ok) {
                                                 if (isActionApprovalDeclinedErrorCode(invocation.errorCode)) return;
-                                                throw new HappyError(invocation.error, false, { code: invocation.errorCode });
+                                                requireActionSuccess(invocation);
                                             }
                                             const outcome = SettingsDeclarationActionOutputSchemasV1['settings.invoke'].parse(invocation.result);
                                             if (outcome.status === 'cancelled' || outcome.status === 'interaction_opened') return;
@@ -422,7 +430,8 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
                                                         return;
                                                     }
                                                 }
-                                                await Modal.alertAsync(encryptionRefusalTitle(e), e.message);
+                                                await Modal.alertAsync(encryptionRefusalTitle(e),
+                                                    resolveActionExecutionErrorMessage(e, e.message));
                                                 return;
                                             }
                                             await Modal.alertAsync(t('common.error'), t('settingsAccount.encryptionUpdateFailed'));
