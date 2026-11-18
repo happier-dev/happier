@@ -825,11 +825,12 @@ function withPrivateReviewTranscriptSession(
     sanitize: (value: string) => string,
 ): AgentSessionRuntime {
     if (!context) return session;
+    let contextAdmitted = false;
     return Object.freeze({
         ...session,
         async send(request: Parameters<AgentSessionRuntime['send']>[0], options?: Parameters<AgentSessionRuntime['send']>[1]) {
             try {
-                const result = await session.send({ ...request, input: withReviewTranscriptProviderContext(request.input, context) }, options);
+                const result = await session.send({ ...request, input: withReviewTranscriptProviderContext(request.input, contextAdmitted ? '' : context) }, options);
                 return result.status === 'admitted' ? result
                     : { ...result, diagnostic: sanitizeNativeProviderDiagnostic(result.diagnostic, sanitize) };
             } catch (error) {
@@ -839,6 +840,7 @@ function withPrivateReviewTranscriptSession(
         },
         watch(listener: Parameters<AgentSessionRuntime['watch']>[0]) {
             return session.watch(event => {
+                if (event.kind === 'input-accepted') contextAdmitted = true;
                 if (event.kind === 'transcript-message-committed' && event.role === 'user') {
                     // A native history echo may carry the enriched prompt in both
                     // representations. Happier already owns the authored input.
@@ -1078,6 +1080,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
     const sanitizeProviderDiagnosticText =
         params.options.sanitizeProviderDiagnosticText ?? ((value: string) => value);
     const reviewTranscriptContext = buildReviewTranscriptProviderContext(params.options.start?.reviewTranscriptEvidence);
+    let reviewTranscriptAdmitted = false;
     const ownedAbortController = new AbortController();
     const signal = params.generationSignal
         ? AbortSignal.any([ownedAbortController.signal, params.generationSignal])
@@ -1453,7 +1456,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
         input: AgentSessionInput,
         options: Parameters<AgentExecutionRunRuntime['send']>[1],
     ): Promise<Awaited<ReturnType<AgentExecutionRunRuntime['send']>>> {
-        if (!params.sessionTurnRecoveryOwned) input = withReviewTranscriptProviderContext(input, reviewTranscriptContext);
+        if (!params.sessionTurnRecoveryOwned && !reviewTranscriptAdmitted) input = withReviewTranscriptProviderContext(input, reviewTranscriptContext);
         // The caller's current mode is host-private admission metadata. Only
         // the existing public SDK options cross the Agent boundary, including
         // when recovery resends the host's admitted input metadata.
@@ -1467,6 +1470,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
             const turn = beginInputTurn(options?.localInputId);
             try {
                 const result = await opened.runtime.send(input, { ...providerOptions, localInputId: turn.inputIds[0] });
+                if (result.status === 'admitted') reviewTranscriptAdmitted = true;
                 if (result.status !== 'admitted') activeInputTurn = null;
                 return result.status !== 'admitted' && result.diagnostic
                     ? { ...result, diagnostic: sanitizeNativeProviderDiagnostic(result.diagnostic, sanitizeProviderDiagnosticText) }
@@ -1498,6 +1502,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
                 ...(options?.causalPermissionAuthority ? { causalPermissionAuthority: options.causalPermissionAuthority } : {}) }, {
                 ...providerOptions, permissionIntent: normalizeExecutionRunPermissionMode(authority.effectiveCallerPermissionMode),
             });
+            if (result.status === 'admitted') reviewTranscriptAdmitted = true;
             return result.status !== 'admitted' && result.diagnostic
                 ? { ...result, diagnostic: sanitizeNativeProviderDiagnostic(result.diagnostic, sanitizeProviderDiagnosticText) }
                 : result;
@@ -1604,6 +1609,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
             } else {
                 opened = { kind: 'finite', runtime: await directExecutionRuns!.open(admittedRequest, context) };
             }
+            if (opened.kind === 'finite' && request.kind === 'create') reviewTranscriptAdmitted = true;
             try {
                 assertUsable();
                 nativeRuntime = opened;

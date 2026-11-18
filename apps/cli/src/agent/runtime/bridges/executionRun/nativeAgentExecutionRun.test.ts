@@ -176,10 +176,13 @@ it.each(['session', 'retained-session', 'detached', 'execution-only'] as const)(
                 ? { sessions: { async open(request) {
                     openRequests.push(request);
                     let listener: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+                    let sequence = 0;
                     return { async send(input) {
                         inputs.push(input.input);
+                        listener?.({ kind: 'input-accepted', sessionId: request.sessionId,
+                            sequence: ++sequence, emittedAtMs: sequence, inputIds: input.inputIds, delivery: input.delivery });
                         listener?.({ kind: 'transcript-message-committed', sessionId: request.sessionId,
-                            sequence: 1, emittedAtMs: 1, messageId: 'native-user-message', role: 'user',
+                            sequence: ++sequence, emittedAtMs: sequence, messageId: 'native-user-message', role: 'user',
                             text: input.input.text, nativeContent: [{ type: 'text', text: input.input.text }] });
                         return { status: 'admitted' as const };
                     }, watch(next) { listener = next; return { dispose() {} }; }, async dispose() {} };
@@ -225,6 +228,14 @@ it.each(['session', 'retained-session', 'detached', 'execution-only'] as const)(
                 expect(JSON.stringify(observedEvents)).not.toContain(evidence.items[0].text);
                 if (facet === 'session' || facet === 'retained-session') {
                     expect(JSON.stringify(openRequests)).not.toContain(evidence.items[0].text);
+                }
+                // A bounded Session Run has one active input; retained Sessions
+                // and finite execution runtimes expose ordinary follow-up sends.
+                if (facet !== 'session') {
+                    await expect(host.deliverInput('private-review', { text: 'Clarification: include the regression tests.' }, { localId: 'review-follow-up' }))
+                        .resolves.toMatchObject({ status: 'admitted' });
+                    expect(inputs).toHaveLength(2);
+                    expect(inputs[1]?.text).toBe('Clarification: include the regression tests.');
                 }
             } finally { await host.dispose(); }
         }
@@ -1066,6 +1077,47 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
         } finally {
             await host.dispose();
         }
+    });
+
+    it('retries private Review transcript after an acknowledged input is rejected before provider effect', async () => {
+        const privateText = 'private source context required by the Review retry';
+        const evidence = { sourceSession: { serverId: 'home', sessionId: 'source' }, coverage: 'complete',
+            items: [{ id: 'request', createdAt: 1, role: 'user', semanticRole: 'user', kind: 'message', text: privateText }],
+        } satisfies ReviewTranscriptEvidence;
+        const requests: Parameters<AgentSessionRuntime['send']>[0][] = [];
+        const eventSource: { emit?: (event: AgentSessionRuntimeEvent) => void } = {};
+        let sequence = 0;
+        // The native Agent SDK is the boundary; retained Session admission stays real.
+        const runtime: AgentRuntime = { sessions: { async open() { return {
+            async send(request) { requests.push(request); return { status: 'admitted' as const }; },
+            watch(handler) { eventSource.emit = handler; return { dispose() {} }; },
+            async dispose() {},
+        }; } } };
+        const host = createNativeAgentSessionInteractionHostRuntime({
+            runtime,
+            lease: { pluginId: 'acme.private', pluginVersion: '1.0.0', agentId: 'acme.private/default',
+                localAgentId: 'default', occurrenceId: 'private-review-retry', isCurrent: () => true },
+            options: { cwd: '/repo', runId: 'private-review-retry', scope: 'session_owned', backendId: 'acme.private/default',
+                permissionMode: 'read_only', start: { intent: 'review', runClass: 'long_lived', retentionPolicy: 'resumable',
+                    reviewTranscriptEvidence: evidence } },
+            sessionCapabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+            createSessionContext: ({ services, signal }) => createVoiceSessionContextLease({ services, signal, async dispose() {} }),
+        });
+        const outcomes: unknown[] = [];
+        host.subscribeProviderInputOutcomes?.(outcome => outcomes.push(outcome));
+        try {
+            const { runtimeId } = await host.provisionRuntime();
+            await expect(host.deliverInput(runtimeId, { text: 'Review the code' }, { localId: 'review-input' }))
+                .resolves.toEqual({ status: 'admitted' });
+            expect(requests[0]?.input.text).toContain(privateText);
+            expect(outcomes).toEqual([]);
+            eventSource.emit?.({ kind: 'input-rejected', sessionId: 'session-parent', sequence: ++sequence, emittedAtMs: sequence,
+                inputIds: requests[0]!.inputIds, retryable: true, diagnostic: { code: 'provider_busy', severity: 'error' } });
+            expect(outcomes).toMatchObject([{ kind: 'rejected_before_effect', localId: 'review-input' }]);
+            await expect(host.deliverInput(runtimeId, { text: 'Review the code' }, { localId: 'review-input' }))
+                .resolves.toEqual({ status: 'admitted' });
+            expect(requests[1]?.input.text).toContain(privateText);
+        } finally { await host.dispose(); }
     });
 
     it('preserves resolved structured media and references at the retained native input boundary', async () => {
