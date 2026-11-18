@@ -224,10 +224,17 @@ function readReaderRecords(readersDir) {
   return records;
 }
 
-/** Remove every generation no current reader can be using: not the current one,
- * and older than the oldest generation a live reader registered on. A reader
- * record without a generation (an older client) retains all of them. Returns the
- * removed names. */
+/** Live processes that already hold a reader or retention record: they keep the
+ * generation they registered on, so a switch adds nothing for them. */
+export function readRegisteredDependencyProcesses(readersDir) {
+  try { return new Set(readReaderRecords(readersDir).map(record => record.pid)); }
+  catch (error) { if (error.code === 'ENOENT') return new Set(); throw error; }
+}
+
+/** Remove every generation no live record names, except the current one. A
+ * record pins only the generation it registered on, never the newer ones (a
+ * long-running Stack pinned all 18 on 2026-11-18). A reader record without a
+ * generation (an older client) retains all of them. Returns the removed names. */
 export async function pruneDependencyGenerations(installDir, { readersDir }) {
   const container = resolveDependencyGenerationContainer(installDir);
   const current = readCurrentDependencyGeneration(installDir);
@@ -238,11 +245,11 @@ export async function pruneDependencyGenerations(installDir, { readersDir }) {
   try { records = readReaderRecords(readersDir); }
   catch (error) { if (error.code === 'ENOENT') records = []; else throw error; }
   if (records.some(record => typeof record.generation !== 'string')) return [];
-  const oldestRead = records.map(record => record.generation).sort()[0] ?? current;
+  const retained = new Set(records.map(record => record.generation));
   const removed = [];
   for (const entry of entries) {
     const stale = entry.startsWith('.trash-');
-    if (!stale && (!GENERATION_NAME.test(entry) || entry === current || entry >= oldestRead)) continue;
+    if (!stale && (!GENERATION_NAME.test(entry) || entry === current || retained.has(entry))) continue;
     // Rename first: a removal interrupted midway leaves only trash, never a
     // half-deleted generation under its own name.
     const trash = stale ? join(container, entry) : join(container, `.trash-${entry}`);

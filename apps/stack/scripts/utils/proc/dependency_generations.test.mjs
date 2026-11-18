@@ -158,6 +158,33 @@ test('a Stack running on the checkout keeps the replaced generation until it exi
   assert.deepEqual(await readdir(container), [second]);
 });
 
+test('a long-running Stack pins only the generation it runs on, not every generation replaced while it runs', async t => {
+  // P03-INFRA-SWEEP-5 (2026-11-18): each switch retained the replaced generation for every
+  // running Stack, and pruning kept everything newer than the oldest record, so a 45 h
+  // Stack supervisor pinned all 18 dependency generations (22.6 GiB) on the controller.
+  const { fixture, env: baseEnv, installDir } = await setup(t);
+  const first = (await moveInPlaceInstallationIntoGeneration(installDir)).name;
+  const container = join(installDir, '.happier', 'deps', 'node_modules');
+  const stackProcess = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  t.after(() => stackProcess.kill());
+  const stacks = fixture.path('stacks');
+  await mkdir(join(stacks, 'dev'), { recursive: true });
+  await writeFile(join(stacks, 'dev', 'env'), `HAPPIER_STACK_REPO_DIR=${installDir}\n`);
+  await writeFile(join(stacks, 'dev', 'stack.runtime.json'), JSON.stringify({ ownerPid: stackProcess.pid }));
+  const env = { ...baseEnv, HAPPIER_STACK_STORAGE_DIR: stacks, HAPPIER_STACK_ENV_FILE: '', HAPPIER_STACK_STACK: '' };
+  const switchTo = async version => {
+    await writeFile(join(installDir, 'pnpm-lock.yaml'), `# ${version}\n`);
+    await dependencies.withDependencyRefresh({ installDir, env, generationInstall: true },
+      async ({ installCwd = installDir, publishInstallation }) => { await fakeInstall(installCwd, version); await publishInstallation?.(); });
+    return readCurrentDependencyGeneration(installDir);
+  };
+  await switchTo('v2');
+  const third = await switchTo('v3');
+  await dependencies.withDependencyConsumption({ installDir, env }, async () => { readInstalled(installDir); });
+  assert.deepEqual((await readdir(container)).sort(), [first, third].sort(),
+    'the Stack keeps the generation it runs on; the intermediate one nothing uses is collected');
+});
+
 test('a lock-only writer on a generation-managed tree runs beside a long-lived reader; new readers wait only from its mutation', async t => {
   const { env, installDir } = await setup(t);
   await moveInPlaceInstallationIntoGeneration(installDir);

@@ -81,9 +81,8 @@ export async function withDependencyReadLock({ lockPath, installDir, env, signal
   const notify = createWorkspaceBuildWaitNotifier({ env, label: 'dependency refresh', kind: 'lock' });
   const startedAt = Date.now();
   let reader;
-  // Readers resolve through the current links. The record retains the
-  // generation current at entry and every newer one until it is gone; one
-  // switched to meanwhile is newer, so it is retained too.
+  // The record pins the generation current at entry until the reader is gone.
+  // A generation switched to meanwhile is current, so pruning keeps it while it is.
   const generation = installDir ? readCurrentDependencyGeneration(installDir) : null;
   try {
     for (;;) {

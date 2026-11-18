@@ -18,7 +18,7 @@ import { inspectUiPostinstallOutputs } from './ui_postinstall.mjs';
 import { inspectPatchHashDrift, relockPatchHashes, validateRegisteredPatches } from './patch_hash_relock.mjs';
 import { createWorkspaceBuildWaitNotifier } from './workspaceBuildWaitNotifier.mjs';
 import { admitDependencyReaders, closeDependencyReaderAdmission, DEPENDENCY_LOCK_STALE_AFTER_MS, dependencyWriterEnv, hasDependencyReadLock, inheritedDependencyWriter, waitForDependencyReaders, withDependencyReadLock } from './dependency_consumption.mjs';
-import { createDependencyGeneration, flipDependencyGeneration, isDependencyGenerationManaged, moveInPlaceInstallationIntoGeneration, pruneDependencyGenerations, readCurrentDependencyGeneration, retainDependencyGeneration, retargetGenerationWorkspaceLinks } from './dependency_generations.mjs';
+import { createDependencyGeneration, flipDependencyGeneration, isDependencyGenerationManaged, moveInPlaceInstallationIntoGeneration, pruneDependencyGenerations, readCurrentDependencyGeneration, readRegisteredDependencyProcesses, retainDependencyGeneration, retargetGenerationWorkspaceLinks } from './dependency_generations.mjs';
 
 const REFRESH_STATE_VERSION = 7;
 const REFRESH_MARKER = '.happier-stack-dependencies-ready';
@@ -663,11 +663,13 @@ export async function withDependencyRefresh({
         // in-place mutation, while readers already in keep their generation.
         // A nested repair inside an active writer has no admission to close.
         context.closeReaderAdmission?.();
-        // Stacks running on this checkout keep the generation they run on.
+        // Stacks running on this checkout keep the generation they run on: the
+        // replaced one, unless they already registered the generation they started on.
         const replaced = readCurrentDependencyGeneration(installDir);
         if (replaced) {
+          const registered = readRegisteredDependencyProcesses(`${context.lockPath}.readers`);
           retainDependencyGeneration(`${context.lockPath}.readers`, replaced,
-            (await prepareDependencyConsumersForRefresh({ installDir, env })).processes);
+            (await prepareDependencyConsumersForRefresh({ installDir, env })).processes.filter(pid => !registered.has(pid)));
         }
         await markDependencyMutation({ installDir, env });
         // Published before the first path flips: a switch interrupted midway
