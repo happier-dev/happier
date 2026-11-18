@@ -168,13 +168,15 @@ it('waits for the selected event read despite a connected socket, then distingui
     expect(screen.findByType(EmptyState).props.title).toBe(t('workflows.events.gone'));
     failed = true;
     await act(async () => { await feed.getCurrent().retry().catch(() => {}); });
-    await expect.poll(() => feed.getCurrent().status).toBe('failed');
+    await expect.poll(() => feed.getCurrent().historyError).not.toBeNull();
+    expect(feed.getCurrent().status).toBe('live');
     expect(screen.findAllByType(EmptyState).filter(node => node.props.title === t('workflows.events.gone'))).toHaveLength(0);
     const state = screen.findByType(SurfaceStateCard);
     expect(state.props.kind).toBe('error');
     failed = false;
     await act(async () => { await state.props.action.onPress(); });
     await expect.poll(() => feed.getCurrent().status).toBe('live');
+    expect(feed.getCurrent().historyError).toBeNull();
     expect(screen.findByType(EmptyState).props.title).toBe(t('workflows.events.gone'));
   } finally {
     page.resolve();
