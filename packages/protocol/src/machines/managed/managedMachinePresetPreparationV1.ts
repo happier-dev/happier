@@ -61,7 +61,7 @@ export const ManagedMachinePresetPreparedV1Schema = lazyZodSchema(() => z.strict
   binding: ManagedMachinePresetPreparationBindingV1Schema,
   status: z.enum(['building', 'ready', 'failed', 'cancelled']),
   /** Historical source revision, independent of the configuration freshness binding. */
-  builtFromRevision: z.optional(z.number().check(z.int(), z.positive())),
+  builtFromRevision: z.optional(z.number().check(z.int(), z.nonnegative())),
   /** First confirmed native readiness, retained in the same private envelope. */
   builtAt: z.optional(z.number().check(z.int(), z.nonnegative())),
   artifact: z.optional(ManagedNativeOperationReferenceV1Schema),

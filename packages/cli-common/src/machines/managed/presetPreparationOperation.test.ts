@@ -36,7 +36,7 @@ beforeAll(async () => {
 
 /** The network persistence boundary retains the real mode-tagged private content. */
 function storageFixture(custody: ManagedMachinePresetPreparationCustodyV1 = { mode: 'plain' },
-  content: ManagedMachinePresetContentV1 = definition) {
+  content: ManagedMachinePresetContentV1 = definition, revision = 1) {
   const seed = new Uint8Array(32).fill(71);
   const publicKey = deriveBoxPublicKeyFromSeed(seed);
   const sealed = custody.mode === 'plain' ? { content: { t: 'plain', v: content }, recipients: [] }
@@ -46,7 +46,7 @@ function storageFixture(custody: ManagedMachinePresetPreparationCustodyV1 = { mo
         readiness: { status: 'available', contentPublicKey: encodeBase64(publicKey, 'base64'),
           contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) }, envelopeStatus: 'missing',
       })] });
-  let row = ManagedMachinePresetV1Schema.parse({ id: 'preset', homeId: 'home', revision: 1,
+  let row = ManagedMachinePresetV1Schema.parse({ id: 'preset', homeId: 'home', revision,
     owner: { kind: 'account', accountId: 'owner' }, contentEncryptionMode: custody.mode, ...sealed });
   const writes: ManagedMachinePresetV1[] = [];
   const storage: ManagedMachinePresetPreparationStorageV1 = {
@@ -79,6 +79,22 @@ async function editAuthor(fixture: ReturnType<typeof storageFixture>, content: M
 }
 
 describe('private preset preparation operation', () => {
+  it.each(['plain', 'e2ee'] as const)('prepares a newly created revision-zero preset in %s', async mode => {
+    let nonce = 51;
+    const custody: ManagedMachinePresetPreparationCustodyV1 = mode === 'plain' ? { mode }
+      : { mode, accountId: 'owner', accountKey: deriveBoxSecretKeyFromSeed(new Uint8Array(32).fill(71)),
+        randomBytes: length => new Uint8Array(length).fill(nonce++) };
+    // Captured A4 Prepare admission used expectedRevision: 0 on a fresh preset.
+    const fixture = storageFixture(custody, definition, 0);
+    const outcome = await settleManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one',
+      ...identity, expectedRevision: 0, custody, storage: fixture.storage,
+      composeBuild: async () => ({ input: buildInput }), native: nativeFixture() });
+
+    expect(outcome.kind).toBe('ready');
+    expect(fixture.opened().prepared).toMatchObject({ status: 'ready', builtFromRevision: 0, artifact });
+    expect(fixture.writes.map(row => row.revision)).toEqual([1, 2]);
+  });
+
   it.each(['confirmed', 'refused', 'throws'] as const)('cleans up a thrown build failure without replacing its cause when cleanup %s', async cleanup => {
     const fixture = storageFixture();
     const original = new Error('SSH host trust declined');
