@@ -22,14 +22,18 @@ export type UsagePricingOperandSelection = Group['selection'];
 /** Resolve the whole admitted subject before storing any dated subset. */
 export function projectUsagePricingOperandSelections(rows: readonly UsagePricingOperand[]): ReadonlyMap<UsagePricingOperand, UsagePricingOperandSelection> {
     const shared = resolveUsagePricingPopulationStates(rows);
-    return new Map(rows.map(row => [row, Object.fromEntries(modes.map(mode =>
-        [mode, selection(row.cost, shared.get(mode)?.get(row) ?? row.cost, mode)])) as UsagePricingOperandSelection]));
+    return new Map(rows.map(row => {
+        const cost = row.cost;
+        return [row, readUsagePricingSelection(cost, resolveUsagePricingReportCosts(row, cost, shared))];
+    }));
 }
 
 /** Retained selection states enter the existing group accumulator, never another money fold. */
 export function buildUsageAdmittedPricingPopulation(rows: readonly UsagePricingOperand[],
     selections: ReadonlyMap<UsagePricingOperand, UsagePricingOperandSelection>, complete = true): UsagePricingPopulation {
-    const steps = prepareUsagePricingPopulationSteps(rows, new Map(), complete, undefined, admitUsagePricingOperand, undefined, selections);
+    const noReportCosts: UsagePricingPopulationStates = new Map();
+    const steps = prepareUsagePricingPopulationSteps(rows, complete, row =>
+        prepareUsagePricingOperand(row, noReportCosts, undefined, selections.get(row)));
     let next = steps.next();
     while (!next.done) next = steps.next();
     return next.value.population;
@@ -87,17 +91,38 @@ function operandKey(modelId: string | null, categories: UsageObservationTokens |
 function groupKey(modelId: string | null, categories: UsageObservationTokens | null, raw: UsageObservationCost, states: Group['selection']) {
     return JSON.stringify([operandKey(modelId, categories, raw), states]);
 }
-function admitUsagePricingOperand(row: UsagePricingOperand) {
+function resolveUsagePricingReportCosts(row: UsagePricingOperand, cost: UsageObservationCost, shared: UsagePricingPopulationStates) {
+    return {
+        auto: shared.get('auto')?.get(row) ?? cost,
+        reported: shared.get('reported')?.get(row) ?? cost,
+        estimated: shared.get('estimated')?.get(row) ?? cost,
+    };
+}
+
+function readUsagePricingSelection(cost: UsageObservationCost, resolved: Record<typeof modes[number], UsageObservationCost>): UsagePricingOperandSelection {
+    return { auto: selection(cost, resolved.auto, 'auto'), reported: selection(cost, resolved.reported, 'reported'),
+        estimated: selection(cost, resolved.estimated, 'estimated') };
+}
+
+function prepareUsagePricingOperand(row: UsagePricingOperand, shared: UsagePricingPopulationStates,
+    mode?: UsageCostMode, admittedSelection?: UsagePricingOperandSelection) {
     const categories = row.tokenCategories ?? resolveUsageTokenCategories(row.tokens, null);
     const cost = row.cost;
     const { apiEquivalentUsd: _api, pricingSource: _price, effectiveUsd: _effective, selectedBasis: _selected,
         reportedTotalId: _total, reportedTotalContributionIds: _scope, ...raw } = cost;
-    return { categories, cost, raw, key: operandKey(row.modelId, categories, raw) };
+    const reports = admittedSelection ? undefined : resolveUsagePricingReportCosts(row, cost, shared);
+    const states = admittedSelection ?? readUsagePricingSelection(cost, reports ?? { auto: cost, reported: cost, estimated: cost });
+    const signature = groupKey(row.modelId, categories, raw, states);
+    const selected = mode === undefined ? undefined
+        : selectResolvedUsageCost(mode === 'api_equivalent' ? cost : reports?.[mode] ?? cost, mode);
+    return { categories, cost, raw, states, signature, selected };
 }
+
+type PrepareUsagePricingOperand = (row: UsagePricingOperand) => ReturnType<typeof prepareUsagePricingOperand>;
 
 /** Group only tariff/availability/raw-fact dimensions, never event ids or times. */
 export function buildUsagePricingPopulation(rows: readonly UsagePricingOperand[], sharedStates = resolveUsagePricingPopulationStates(rows), complete = true): UsagePricingPopulation {
-    const steps = prepareUsagePricingPopulationSteps(rows, sharedStates, complete);
+    const steps = prepareUsagePricingPopulationSteps(rows, complete, row => prepareUsagePricingOperand(row, sharedStates));
     let next = steps.next();
     while (!next.done) next = steps.next();
     return next.value.population;
@@ -106,15 +131,15 @@ export function buildUsagePricingPopulation(rows: readonly UsagePricingOperand[]
 /** Admit observed and already-priced money together, without estimating a row twice. */
 export function buildUsagePricedPartition(rows: readonly UsagePricingOperand[], mode: UsageCostMode,
     sharedStates = resolveUsagePricingPopulationStates(rows)) {
-    const steps = buildUsagePricedPartitionSteps(rows, mode, sharedStates, admitUsagePricingOperand);
+    const steps = buildUsagePricedPartitionSteps(rows, mode, row => prepareUsagePricingOperand(row, sharedStates, mode));
     let next = steps.next();
     while (!next.done) next = steps.next();
     return next.value;
 }
 
 function* buildUsagePricedPartitionSteps(rows: readonly UsagePricingOperand[], mode: UsageCostMode,
-    sharedStates: UsagePricingPopulationStates, admit: typeof admitUsagePricingOperand, shouldYield?: () => boolean) {
-    const { population, prices, resolvedCost } = yield* prepareUsagePricingPopulationSteps(rows, sharedStates, true, mode, admit, shouldYield);
+    admit: PrepareUsagePricingOperand, shouldYield?: () => boolean) {
+    const { population, prices, resolvedCost } = yield* prepareUsagePricingPopulationSteps(rows, true, admit, mode, shouldYield);
     // Selected provenance follows the witnessed row order, including interleaved
     // covered facts. Compact grouping is a separate operand, not a new ordering
     // of that canonical rich fold.
@@ -128,28 +153,25 @@ function* buildUsagePricedPartitionSteps(rows: readonly UsagePricingOperand[], m
         pricingSource: priced.every(price => price.source === priced[0]?.source) ? priced[0]?.source : 'effective_model_prices' };
 }
 
-/** One committed projection owns the operands shared by its output partitions. */
-export function createUsagePricedPartitionBuilder(mode: UsageCostMode, shouldYield?: () => boolean) {
-    const operands = new Map<UsagePricingOperand, ReturnType<typeof admitUsagePricingOperand>>();
-    const admit = (row: UsagePricingOperand) => {
-        let operand = operands.get(row);
-        if (!operand) { operand = admitUsagePricingOperand(row); operands.set(row, operand); }
+/** The total's admission fixes the monetary operands for all of its subsets. */
+export function* buildUsagePricedProjectionSteps(rows: readonly UsagePricingOperand[], mode: UsageCostMode,
+    shouldYield?: () => boolean, states: UsagePricingPopulationStates = resolveUsagePricingPopulationStates(rows)):
+    Generator<void, {
+        total: ReturnType<typeof buildUsagePricedPartition>;
+        project: (subset: readonly UsagePricingOperand[]) => Generator<void, ReturnType<typeof buildUsagePricedPartition>, void>;
+    }, void> {
+    const admitted = new Map<UsagePricingOperand, ReturnType<PrepareUsagePricingOperand>>();
+    const total = yield* buildUsagePricedPartitionSteps(rows, mode, row => {
+        const operand = prepareUsagePricingOperand(row, states, mode);
+        admitted.set(row, operand);
         return operand;
-    };
-    const steps = (rows: readonly UsagePricingOperand[], sharedStates = resolveUsagePricingPopulationStates(rows)) =>
-        buildUsagePricedPartitionSteps(rows, mode, sharedStates, admit, shouldYield);
-    return { steps, build(rows: readonly UsagePricingOperand[], sharedStates?: UsagePricingPopulationStates) {
-        const projection = steps(rows, sharedStates);
-        let next = projection.next();
-        while (!next.done) next = projection.next();
-        return next.value;
-    } };
-
+    }, shouldYield);
+    return { total, project: (subset: readonly UsagePricingOperand[]) =>
+        buildUsagePricedPartitionSteps(subset, mode, row => admitted.get(row)!, shouldYield) };
 }
 
-function* prepareUsagePricingPopulationSteps(rows: readonly UsagePricingOperand[], sharedStates: UsagePricingPopulationStates,
-    complete: boolean, selectedMode?: UsageCostMode, admit = admitUsagePricingOperand, shouldYield?: () => boolean,
-    selections?: ReadonlyMap<UsagePricingOperand, UsagePricingOperandSelection>) {
+function* prepareUsagePricingPopulationSteps(rows: readonly UsagePricingOperand[], complete: boolean,
+    admit: PrepareUsagePricingOperand, selectedMode?: UsageCostMode, shouldYield?: () => boolean) {
     const includePrices = selectedMode !== undefined;
     let observedCost: UsageObservationCost;
     const resolvedCosts = selectedMode === undefined ? undefined
@@ -157,11 +179,8 @@ function* prepareUsagePricingPopulationSteps(rows: readonly UsagePricingOperand[
     const grouped = new Map<string, { group: Group; costs?: ReturnType<typeof createUsageCostAccumulator>;
         api?: ReturnType<typeof createUsageMoneyAccumulator>; allPriced: boolean; source?: string }>();
     for (const row of rows) {
-        const { categories, cost, raw, key } = admit(row);
-        if (selectedMode !== undefined) resolvedCosts!.add(sharedStates.get(selectedMode)?.get(row) ?? cost);
-        const state = (mode: typeof modes[number]) => selection(cost, sharedStates.get(mode)?.get(row) ?? cost, mode);
-        const states = selections?.get(row) ?? { auto: state('auto'), reported: state('reported'), estimated: state('estimated') };
-        const signature = JSON.stringify([key, states]);
+        const { categories, cost, raw, states, signature, selected } = admit(row);
+        resolvedCosts?.add(cost, selected);
         const partition = grouped.get(signature);
         const api = includePrices && cost.apiEquivalentUsd !== undefined
             ? readUsageMoney(cost, 'apiEquivalentUsd', cost.apiEquivalentUsd) : undefined;

@@ -149,7 +149,7 @@ export function* buildUsageLeaderListSteps<T extends UsageLeaderContribution>(ro
         const sources: Array<{ key: string; value: Omit<UsageAnalyticsTimelineSource, 'cost'>;
             cost: UsageObservationCost; population: UsagePricingPopulation }> | undefined = includeSources ? [] : undefined;
         if (sources) for (const source of groupUsageLeaderSources(group.rows)) {
-            const { cost, population } = yield* pricing.price(source.rows);
+            const { cost, population } = source.rows.length === group.rows.length ? part : yield* pricing.price(source.rows);
             sources.push({ key: source.key, value: source.value, cost, population });
         }
         admitted.push({ value: { ...group.value, cost: withEffectiveUsageCost(part.cost, mode),
@@ -173,10 +173,13 @@ export function* buildUsageLeaderListSteps<T extends UsageLeaderContribution>(ro
     const answer: UsageRankedLeader[] = [];
     for (const leader of ranked) {
         const sources: UsageAnalyticsTimelineSource[] | undefined = includeSources ? [] : undefined;
-        if (sources) for (const part of groupUsageLeaderSources(sourceRows!.get(leader.key)!)
-            .sort((left, right) => left.key.localeCompare(right.key))) {
-            const cost = yield* aggregateUsageCostPartitionsSteps(part.rows.map(row => costs?.get(row) ?? row.cost), mode);
-            sources.push({ ...part.value, cost: withEffectiveUsageCost(cost, mode) });
+        if (sources) {
+            const leaderRows = sourceRows!.get(leader.key)!;
+            for (const part of groupUsageLeaderSources(leaderRows).sort((left, right) => left.key.localeCompare(right.key))) {
+                const cost = part.rows.length === leaderRows.length ? leader.cost
+                    : yield* aggregateUsageCostPartitionsSteps(part.rows.map(row => costs?.get(row) ?? row.cost), mode);
+                sources.push({ ...part.value, cost: withEffectiveUsageCost(cost, mode) });
+            }
         }
         answer.push({ ...leader, cost: withEffectiveUsageCost(leader.cost, mode), ...(sources ? { sources } : {}) });
     }

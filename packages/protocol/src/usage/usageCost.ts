@@ -13,7 +13,7 @@ import { hasCompleteUsageCostEvidence, repriceUsageAnalyticsCoverage } from './u
 export { hasCompleteUsageCostEvidence, repriceUsageAnalyticsCoverage } from './usageAnalyticsDemandProjection.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { repriceUsageAnalyticsSummary } from './usageSummary.js';
-import { createUsagePricedPartitionBuilder, resolveUsagePricingPopulationStates } from './usagePricingPopulation.js';
+import { buildUsagePricedProjectionSteps } from './usagePricingPopulation.js';
 import { usageModelCostOperandKey, type UsagePricingReuse } from './usagePricingReuse.js';
 export { createUsagePricingReuse, type UsagePricingReuse, type UsagePricingReuseCheckpoint } from './usagePricingReuse.js';
 export { projectUsageAnalyticsSummary, projectUsageAnalyticsSummarySteps } from './usageSummary.js';
@@ -180,14 +180,12 @@ export function* repriceUsageAnalyticsResponseSteps(value: UsageAnalyticsQueryRe
     contributions.push({ ...row, cost });
     if (shouldYield()) yield;
   }
-  const states = resolveUsagePricingPopulationStates(contributions);
-  const buildPartition = createUsagePricedPartitionBuilder(mode, shouldYield).steps;
-  const totalPartition = yield* buildPartition(contributions, states);
+  const { total: totalPartition, project: buildPartition } = yield* buildUsagePricedProjectionSteps(contributions, mode, shouldYield);
   const totalPopulation = totalPartition.population;
   const partitions: UsageAnalyticsPricingPartitions = { totals: totalPopulation, series: new Map(), ranked: new Map(), timelines: new Map() };
   const pricePartition = function* (rows: readonly UsageAnalyticsContribution[]) {
     return rows.length === contributions.length ? totalPartition
-      : yield* buildPartition(rows, states);
+      : yield* buildPartition(rows);
   };
   const totalCost = totalPartition.cost;
   const projectCost = function* (raw: UsageObservationCost, rows: readonly UsageAnalyticsContribution[], range?: { bucketStartMs: number; bucketEndMs: number }): Generator<void, UsageObservationCost, void> {

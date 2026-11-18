@@ -2,11 +2,18 @@ import { withUsageMoney, readUsageMoney } from './usageMoney.js';
 import { expect, it } from 'vitest';
 import { admitUsageAnalyticsServerPrices, projectUsageAnalyticsSummary, projectUsagePageCost, repriceUsageAnalyticsResponse, repriceUsageAnalyticsResponseSteps, repriceUsageObservationCost, resolveUsageCostFacts, resolveUsageCostBasis, resolveEffectiveUsageCostUsd } from './usageCost.js';
 import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
-import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
+import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, type UsageAnalyticsQueryResponse, type UsageObservationCost } from './usageAnalyticsContracts.js';
 import { addUsageCostForMode, aggregateUsageContributionCosts, aggregateUsageCostPartitions, createEmptyUsageCost, createEmptyUsageTokens } from './usageAggregation.js';
 import { projectUsageAgentAccountingCalendar } from './usageAgentCalendar.js';
 import { mergeUsageActivityProjectionFacts, projectUsageActivityProjectionDayFacts, projectUsageActivitySubjectProjectionFacts, projectUsageContributionTotals } from './usageActivityProjectionFacts.js';
-import { buildUsagePricingPopulation, createUsagePricedPartitionBuilder, priceUsagePricingPopulation } from './usagePricingPopulation.js';
+import { buildUsagePricedPartition, buildUsagePricedProjectionSteps, buildUsagePricingPopulation, priceUsagePricingPopulation,
+  resolveUsagePricingPopulationStates, type UsagePricingOperand } from './usagePricingPopulation.js';
+
+function finishProjection<T>(steps: Generator<void, T, void>): T {
+  let next = steps.next();
+  while (!next.done) next = steps.next();
+  return next.value;
+}
 
 it('reuses grouped observed money while selecting each priced operand in witnessed order', () => {
   const count = 128;
@@ -20,7 +27,7 @@ it('reuses grouped observed money while selecting each priced operand in witness
     }),
   }));
   scales = 0;
-  const result = createUsagePricedPartitionBuilder('auto').build(rows);
+  const result = buildUsagePricedPartition(rows, 'auto');
   expect(scales, 'each exact amount enters the compact raw group and ordered selection, without another raw row fold').toBe(count * 2);
   expect(result.population.groups).toHaveLength(1);
   const selected = resolveUsageCostBasis(result.cost, 'auto');
@@ -37,7 +44,7 @@ it('keeps grouped money work interruptible after admitting the input rows', () =
     observedAtMs: index, modelId: `model-${index}`, tokens, tokenCategories: tokens,
     cost: { reportedUsd: 0.1, estimatedUsd: 0, currency: 'USD', costSource: 'provider_reported' as const },
   }));
-  const steps = createUsagePricedPartitionBuilder('auto', () => true).steps(rows);
+  const steps = buildUsagePricedProjectionSteps(rows, 'auto', () => true);
   for (const _row of rows) expect(steps.next().done).toBe(false);
   expect(steps.next().done, 'distinct groups still have money work and must service the caller’s yield request').toBe(false);
   steps.return(undefined as never);
@@ -258,17 +265,45 @@ it('admits tariff-independent row metadata once across overlapping priced partit
     const rows = Array.from({ length: count }, (_, index) => ({ id: String(index), modelId: 'model', observedAtMs: index,
       eventCount: 1, tokens, get tokenCategories() { categoryReads++; return tokens; },
       cost: { reportedUsd: 0, estimatedUsd: 0.1, apiEquivalentUsd: 0.2, pricingSource: 'catalog', currency: 'USD' } }));
-    const build = createUsagePricedPartitionBuilder('auto').build;
-    const whole = build(rows);
-    const half = build(rows.slice(0, count / 2));
-    const repeated = build([...rows]);
+    const { total: whole, project } = finishProjection(buildUsagePricedProjectionSteps(rows, 'auto'));
+    const half = finishProjection(project(rows.slice(0, count / 2)));
+    const repeated = finishProjection(project([...rows]));
     expect(whole.cost).toEqual(repeated.cost);
     expect(whole.population.groups[0]!.contributionCount).toBe(count);
     expect(half.population.groups[0]!.contributionCount).toBe(count / 2);
     expect(categoryReads, 'partition membership changes sums, not admission of the same row metadata').toBe(count);
-    const anotherRequest = createUsagePricedPartitionBuilder('auto').build;
-    anotherRequest(rows);
+    finishProjection(buildUsagePricedProjectionSteps(rows, 'auto'));
     expect(categoryReads).toBe(count * 2);
+  }
+});
+
+it('admits each contribution’s resolved money once across ranked and dated partitions', () => {
+  const tokens = { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 };
+  for (const count of [8, 128]) {
+    let admissions = 0;
+    class ObservedSelection extends Map<UsagePricingOperand, UsageObservationCost> {
+      override get(row: UsagePricingOperand) {
+        admissions++;
+        return super.get(row);
+      }
+    }
+    const rows = Array.from({ length: count }, (_, index) => ({ id: `covered-${index}`, modelId: 'model', observedAtMs: index,
+      eventCount: 1, tokens, tokenCategories: tokens, cost: { reportedUsd: null, estimatedUsd: 0.1,
+        apiEquivalentUsd: 0.2, pricingSource: 'catalog', currency: 'USD', reportedTotalId: 'report' } }));
+    const report = { id: 'report', modelId: null, observedAtMs: count, eventCount: 1,
+      tokens: createEmptyUsageTokens(), tokenCategories: null, cost: { reportedUsd: 30, estimatedUsd: 0,
+        apiEquivalentUsd: 0, pricingSource: 'no_tokens', currency: 'USD', costSource: 'provider_reported' as const,
+        reportedTotalContributionIds: rows.map(row => row.id) } };
+    const population = [...rows, report];
+    const states = new Map([...resolveUsagePricingPopulationStates(population)].map(([mode, selected]) => [mode, new ObservedSelection(selected)]));
+    const { total, project } = finishProjection(buildUsagePricedProjectionSteps(population, 'auto', undefined, states));
+    expect(resolveEffectiveUsageCostUsd(total.cost, 'auto')).toBe(30);
+    expect(resolveEffectiveUsageCostUsd(finishProjection(project(rows)).cost, 'auto')).toBeNull();
+    expect(resolveEffectiveUsageCostUsd(finishProjection(project([report, ...rows.slice(0, 2)])).cost, 'auto')).toBe(30);
+    expect(resolveEffectiveUsageCostUsd(finishProjection(project(rows.slice(count / 2))).cost, 'auto')).toBeNull();
+    expect(admissions, 'one observation of each of three report selections per event, independent of output partitions').toBe(3 * population.length);
+    // A narrower population cannot select the report without its covered rows.
+    expect(resolveEffectiveUsageCostUsd(buildUsagePricedPartition([report], 'auto').cost, 'auto')).toBeNull();
   }
 });
 

@@ -240,9 +240,12 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
             for (const id of prepared.replayContext!.selectedEventIds) selectedEventIds.add(id);
         }
         if (isReaderClosed?.()) throw new Error('Usage reader closed');
-        // Both reads share this snapshot. Identity is already decided; primary-key
-        // hydration needs neither a native JSON predicate nor a new subject index.
-        rows = await loadUsageEventsForQuery(tx, accountId, range, [...selectedEventIds]);
+        // Both reads share the same account/time/source scope in this snapshot.
+        // A replay closure may include virtual legacy IDs, so count alone cannot
+        // establish that every stored event was selected.
+        const allBodiesSelected = events.evidence.length > 0 && selectedEventIds.size >= events.evidence.length
+            && events.evidence.every(row => selectedEventIds.has(row.id));
+        rows = await loadUsageEventsForQuery(tx, accountId, range, allBodiesSelected ? undefined : [...selectedEventIds]);
     } else rows = events.rows;
     // SQL captures counts by Session; the committed accounting population
     // selects which Session counts contribute to each response.
