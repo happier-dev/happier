@@ -252,6 +252,7 @@ describe('theme profile import/export', () => {
         expect(result.ok).toBe(true);
         if (result.ok) {
             expect(result.profile.overrides.light).toEqual({ 'background.canvas': '#fafafa' });
+            expect(result.profile.overrides.dark).toBe(result.document.profile.overrides.dark);
             expect(result.warnings).toContainEqual({ code: 'unknownToken', tokenId: 'unknown.token', mode: 'light' });
         }
     });

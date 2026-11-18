@@ -138,14 +138,12 @@ const sanitizeProfile = (
     profile: ThemeProfileV1,
     options: ImportOptions,
     warnings: ThemeProfileImportWarning[],
-    sanitizeOptions: SanitizeOverridesOptions = {},
 ): ThemeProfileV1 | null => {
-    const name = sanitizeThemeProfileName(profile.name, sanitizeOptions);
+    const name = sanitizeThemeProfileName(profile.name);
     if (!name) return null;
 
-    const light = sanitizeOverrides(profile.overrides?.light, 'light', warnings, sanitizeOptions);
-    const dark = sanitizeOverrides(profile.overrides?.dark, 'dark', warnings, sanitizeOptions);
-    if (light.invalid || dark.invalid) return null;
+    const light = sanitizeOverrides(profile.overrides?.light, 'light', warnings);
+    const dark = sanitizeOverrides(profile.overrides?.dark, 'dark', warnings);
 
     const sanitizedProfileWithoutAssetAppearance = {
         ...profile,
@@ -245,13 +243,19 @@ export const importThemeProfileFromJson = (json: string, options: ImportOptions)
             ? mergeThemeProfileDocumentEdit(read.document, { source: { kind: 'yours' } })
             : read.document;
         const warnings: ThemeProfileImportWarning[] = [];
-        const profile = sanitizeProfile(document.profile, options, warnings, {
-            defaultBlankName: true,
-            rejectInvalidColors: true,
-        });
-        if (!profile) {
-            return { ok: false, error: 'invalidProfile' };
-        }
+        const projectMode = (mode: ThemeProfileMode): ThemeProfileColorOverrides => {
+            const overrides = document.profile.overrides[mode];
+            const unknown = Object.keys(overrides).filter(tokenId => !getThemeProfileTokenDefinition(tokenId));
+            if (!unknown.length) return overrides;
+            const supported = { ...overrides };
+            for (const tokenId of unknown.sort((left, right) => left.localeCompare(right))) {
+                warnings.push({ code: 'unknownToken', tokenId, mode });
+                delete supported[tokenId];
+            }
+            return supported;
+        };
+        const profile = { ...document.profile, overrides: { light: projectMode('light'), dark: projectMode('dark') } };
+        profile.assetAppearance ??= inferThemeProfileAssetAppearance(profile);
 
         return {
             ok: true,
