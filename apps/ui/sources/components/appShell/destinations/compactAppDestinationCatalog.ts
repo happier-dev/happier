@@ -189,6 +189,12 @@ export type CompactAppBuiltinDestination = CompactAppDestinationCommon & Readonl
      * segment, a trailing `[...rest]` one or more; everything else matches exactly.
      */
     currentRoutePatterns?: readonly string[];
+    /**
+     * Its other top-level pages, drawn as main screens like its own route (a phone's Home line and bar, no Back): the
+     * pages its column lists beside its route, never a record it opens (Machines' fleet Updates and Activity, lab
+     * rdMach-fUpdp/fActp).
+     */
+    mainScreenRoutePaths?: readonly string[];
     /** The keyboard command that also opens it, shown beside its title. */
     shortcut?: KeyboardCommandId;
     /** A live count the rail marks on its icon, read only by that badge's own leaf. */
@@ -267,6 +273,7 @@ type BuiltinDestinationRow = Readonly<{
     activation: 'navigate' | 'overlay' | 'botsRoster';
     routePath: string;
     currentRoutePatterns?: readonly string[];
+    mainScreenRoutePaths?: readonly string[];
     shortcut?: KeyboardCommandId;
     signal?: CompactAppDestinationSignal;
     suggested?: true;
@@ -389,6 +396,7 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         id: 'machines', titleKey: 'settings.machines', icon: 'desktop', placement: { kind: 'rail', region: 'account' },
         column: 'machines', activation: 'navigate', routePath: '/machines',
         currentRoutePatterns: ['/machines/[...rest]'], railControl: 'footer',
+        currentRoutePatterns: ['/machines/[...rest]'], mainScreenRoutePaths: ['/machines/updates', '/machines/activity'], railControl: 'footer',
         workspaceNavigationIdentity: { resourceParam: 'id', scopeParams: ['serverId'] },
     },
     {
@@ -492,6 +500,7 @@ export function resolveCompactAppDestinations(input: Readonly<{
             ...(row.contextual === undefined ? {} : { contextual: row.contextual }),
             ...(row.column === undefined ? {} : { column: row.column }),
             ...(row.currentRoutePatterns === undefined ? {} : { currentRoutePatterns: row.currentRoutePatterns }),
+            ...(row.mainScreenRoutePaths === undefined ? {} : { mainScreenRoutePaths: row.mainScreenRoutePaths }),
             ...(row.shortcut === undefined ? {} : { shortcut: row.shortcut }),
             ...(row.signal === undefined ? {} : { signal: row.signal }),
             ...(row.suggested === undefined ? {} : { suggested: row.suggested }),
@@ -887,7 +896,9 @@ export function resolveCurrentAppDestination(
 export function isAppDestinationRootPath(catalog: readonly CompactAppDestination[], pathname: string): boolean {
     const current = resolveCurrentAppDestination(catalog, pathname);
     if (!current || current.placement.kind !== 'rail' || current.activation !== 'navigate') return false;
-    return normalizePathname(current.routePath.split('?')[0]!) === normalizePathname(pathname.split(/[?#]/, 1)[0]!);
+    const actual = normalizePathname(pathname.split(/[?#]/, 1)[0]!);
+    return [current.routePath, ...(current.kind === 'builtin' ? current.mainScreenRoutePaths ?? [] : [])]
+        .some((path) => normalizePathname(path.split('?')[0]!) === actual);
 }
 
 function decodeSegment(segment: string): string | null {

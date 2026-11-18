@@ -157,7 +157,9 @@ describe('resolveMobileBottomChromeModel', () => {
     it('keeps the main bar on every section page and pushed detail without a detail bar of its own', () => {
         for (const mobileWorkspaceExperience of ['cockpit', 'classic'] as const) {
             for (const pathname of ['/inbox/approvals/approval-1', '/boards', '/boards/board-1', '/discussions',
-                '/artifacts', '/home', '/projects/open', '/machines', '/session/recent']) {
+                '/artifacts', '/home', '/projects/open', '/machines', '/session/recent',
+                // The Machines destination's own fleet pages are pages, not a Machine's detail (lab rdMach-fUpdp/fActp; LABPARITY-ACCEPT-A G1).
+                '/machines/updates', '/machines/activity']) {
                 expect(resolveMobileBottomChromeModel(createChromeInput({ pathname, mobileWorkspaceExperience, sectionPage: true })), pathname)
                     .toEqual({ kind: 'mainAppTabs' });
             }

@@ -44,9 +44,10 @@ export function resolveMobileBottomChromeModel(input: Readonly<{
 
 /**
  * Pages whose detail host draws its own bar once mounted: a Session (not its history lists), a Project (not
- * its open and sources pickers), a Discussion, a Machine, a Workflow's editor or runs, an Environment.
+ * its open and sources pickers), a Discussion, a Machine (not the fleet Updates and Activity pages), a Workflow's
+ * editor or runs, an Environment.
  */
-const DETAIL_HOST_ROUTE = /^\/(?:session\/(?!recent$|archived$)[^/]+|projects\/(?!open$|sources$|deployments$)[^/]+|discussions\/(?!new$)[^/]+|machines\/(?!managed(?:\/|$))[^/]+|workflows\/.+|deployments\/[^/]+)/;
+const DETAIL_HOST_ROUTE = /^\/(?:session\/(?!recent$|archived$)[^/]+|projects\/(?!open$|sources$|deployments$)[^/]+|discussions\/(?!new$)[^/]+|machines\/(?!(?:managed|updates|activity)(?:\/|$))[^/]+|workflows\/.+|deployments\/[^/]+)/;
 
 function isDetailHostRoutePathname(pathname: string): boolean {
     return DETAIL_HOST_ROUTE.test(normalizeRoutePath(pathname));
