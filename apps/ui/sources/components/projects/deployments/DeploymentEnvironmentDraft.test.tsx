@@ -1124,7 +1124,7 @@ describe('Environment draft Machine Home', () => {
     const pluginId = 'com.example.draft-platform-create';
     const { DeploymentTargetLinkCreateIntentInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
     const notice = 'Beta: the source is final at creation.';
-    const authoredPlugin = createDeploymentTargetsTestPlugin(pluginId, undefined, { create: true, reviewNotice: notice });
+    const authoredPlugin = createDeploymentTargetsTestPlugin(pluginId, undefined, { create: true, reviewNotice: notice, plans: true });
     const installed = await installPortableAccountPluginReleaseForTest({ manifest: authoredPlugin.manifest,
       activate: api => authoredPlugin.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account),
       accountLifetime: account.accountLifetime, publishProjection: true });
@@ -1166,9 +1166,14 @@ describe('Environment draft Machine Home', () => {
         } });
       await publishMachineInventoryForTest(account.accountLifetime.scope,
         [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
-      const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
+      // The app's Account credentials: Review reads the chosen account's plan through the existing quota owner.
+      const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+      const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+      const credentials = await TokenStorage.getCredentialsForServerUrl('https://draft-platform-create.test');
+      const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+        <DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
         phone={false} platformAvailable actions={createDeploymentActions(account.accountLifetime, 'source-app')}
-        onApprovalRequested={() => {}} onSaved={(id, next) => saved.push([id, next])} onDiscard={() => {}} />);
+        onApprovalRequested={() => {}} onSaved={(id, next) => saved.push([id, next])} onDiscard={() => {}} /></InjectedAuthProvider>);
       const header = () => screen.findAllByType(PageHeader)[0]!;
       await act(async () => header().props.titleEditor.onChangeText('Marketing site'));
       await waitForTestEvent(screen.subscribe,
@@ -1198,6 +1203,11 @@ describe('Environment draft Machine Home', () => {
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(screen.findHostByTestId('project-deployments.draft.reviewNotice'), screen.getTextContent()).not.toBeNull(); });
       expect(screen.getTextContent()).toContain(notice);
+      // Review prices the chosen platform from its declared plans, with where and when they were read (deploy auto-mode U3).
+      const cost = screen.findHostByTestId('project-deployments.draft.cost');
+      expect(cost, 'Review has a cost group for a platform that declares plans').not.toBeNull();
+      const costText = cost!.findAll(() => true).flatMap(child => child.children.filter(value => typeof value === 'string')).join(' ');
+      for (const expected of ['Free', '$0 a month', 'Pro', '$20 a month', 'alpha.example']) expect(costText, expected).toContain(expected);
       await act(async () => header().props.primaryAction.onPress());
       await waitForHomeGovernance(async () => { await act(async () => {}); expect(saved, screen.getTextContent()).toHaveLength(1); });
       expect(creates).toHaveLength(1);

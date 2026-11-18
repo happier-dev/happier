@@ -1,12 +1,8 @@
 import type * as React from 'react';
 import type { ProviderPriceFactV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
-import { formatPriceUnit as formatSharedPriceUnit, presentManagedCost as presentSharedManagedCost,
-  type ManagedCost, type ManagedPriceLabels } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
-export { formatProviderAmount } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
-import { t } from '@/text';
-import { formatPriceSource } from '@/components/ui/presentation/providerCostPresentation';
-export { formatPriceSource } from '@/components/ui/presentation/providerCostPresentation';
+// Price text has one owner (deploy auto-mode U3); the Machines surfaces read it from there.
+export { formatPriceSource, formatPriceUnit, formatProviderAmount, presentManagedCost } from '@/components/ui/presentation/providerCostPresentation';
 import type { ManagedProvisionerRepairFailure } from './useManagedProvisionerPresentation';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ManagedProvisionerReadiness } from './managedProvisionerReadiness';
@@ -143,21 +139,6 @@ export type ManagedReceiptCost =
       }>[];
       note?: string;
     }>;
-
-function priceLabels(): ManagedPriceLabels {
-  return { perHour: t('managedMachines.price.perHour'), perMonth: t('managedMachines.price.perMonth'),
-    perUnit: unit => t('managedMachines.price.perUnit', { unit }), noBill: t('managedMachines.price.noBill'),
-    unavailable: provider => t('managedMachines.price.unavailable', { provider }) };
-}
-
-/** "an hour" / "a month" for the units providers report; another unit is said as the provider named it. */
-export function formatPriceUnit(unit: string): string {
-  return formatSharedPriceUnit(unit, priceLabels());
-}
-
-export function presentManagedCost(cost: ManagedCost): Readonly<{ value: string; unit: string }> {
-  return presentSharedManagedCost(cost, priceLabels());
-}
 
 /**
  * A country's name in the reader's language, from its ISO 3166-1 alpha-2 code. Nothing for an absent or

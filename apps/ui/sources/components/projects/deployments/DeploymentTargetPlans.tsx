@@ -9,29 +9,24 @@ import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS, Popover } from '@/componen
 import { resolveThemeHairlineBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { formatCalendarDate } from '@/utils/datetime/cachedIntlFormatters';
+import { formatDeclaredPlanSource } from '@/components/ui/presentation/providerCostPresentation';
+import { useQualifiedConnectedAccountQuota } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountQuota';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
 import type { DeploymentPlatformTarget } from './platformTargetLink';
 
 type Plans = NonNullable<DeploymentPlatformTarget['plans']>;
 
-/** "vercel.com" from a plan's public source, so the line names where the facts were read. */
-function sourceHost(url: string): string {
-  try {
-    return new URL(url).host.replace(/^www\./, '');
-  } catch {
-    return url;
-  }
-}
+const sourceLine = (source: Plans[number]['source']) => formatDeclaredPlanSource(source);
 
-/** A plan's `checkedAt` (an ISO calendar date) as the reader's calendar day, never shifted by a time zone. */
-function checkedDay(checkedAt: string): string {
-  const [year, month, day] = checkedAt.split('-').map(Number);
-  return formatCalendarDate(new Date(year!, month! - 1, day!));
-}
-
-function sourceLine(source: Plans[number]['source']): string {
-  return t('managedMachines.price.checked', { provider: sourceHost(source.url), time: checkedDay(source.checkedAt) });
+/**
+ * The declared plan the connected account is on: the provider's plan name matched to a declared plan's id or title.
+ * An unmapped or absent name matches nothing, and the facts stand alone (deploy auto-mode U4).
+ */
+export function matchAccountPlan(plans: Plans, planLabel: string | null | undefined): Plans[number] | null {
+  const name = planLabel?.trim().toLowerCase();
+  if (!name) return null;
+  return plans.find((plan) => plan.id.toLowerCase() === name || plan.title.trim().toLowerCase() === name) ?? null;
 }
 
 /**
@@ -39,7 +34,7 @@ function sourceLine(source: Plans[number]['source']): string {
  * wrote them, and where and when they were read; What's included opens them side by side (wherePeek). These are dated
  * display facts (Protocol DeploymentTargetPlanV1), printed as declared: nothing here computes a price.
  */
-export function DeploymentTargetPlans(props: Readonly<{
+type DeploymentTargetPlansProps = Readonly<{
   plans: Plans;
   /** The platform's name, for the comparison's title. */
   platform: string;
@@ -47,13 +42,34 @@ export function DeploymentTargetPlans(props: Readonly<{
   phone: boolean;
   /** The card's test id; the link and the comparison take `:included` and `:compare`. */
   testID: string;
-}>) {
+  /** The plan the connected account reports, by the provider's name for it ("Pro"); shown only when it is declared. */
+  accountPlanLabel?: string | null;
+}>;
+
+/**
+ * The plans with the plan the connected account is on (deploy auto-mode U4, F8): one read through the account's
+ * existing quota owner while shown, never polled; no account, no read.
+ */
+export function DeploymentTargetPlansForAccount(props: Omit<DeploymentTargetPlansProps, 'accountPlanLabel'>
+  & Readonly<{ account: QualifiedConnectedAccountRef }>) {
+  const { account, ...plans } = props;
+  const quota = useQualifiedConnectedAccountQuota(account, { fetchPolicy: 'once' });
+  return <DeploymentTargetPlans {...plans} accountPlanLabel={quota.snapshot?.planLabel ?? null} />;
+}
+
+export function DeploymentTargetPlans(props: DeploymentTargetPlansProps) {
   const { theme } = useUnistyles();
   const [comparing, setComparing] = React.useState(false);
   const anchorRef = React.useRef<View>(null);
   const title = t('newApp.deploy.plan.includedTitle', { platform: props.platform });
+  const yourPlan = matchAccountPlan(props.plans, props.accountPlanLabel);
   return (
     <View style={styles.body}>
+      {yourPlan ? (
+        <Text testID={`${props.testID}:yourPlan`} variant="meta" emphasis="medium">
+          {`${t('newApp.deploy.plan.yourPlan')} · ${yourPlan.title}`}
+        </Text>
+      ) : null}
       <View style={[styles.plans, props.columns ? styles.plansColumns : null]}>
         {props.plans.map((plan) => (
           <View key={plan.id} style={[styles.plan, props.columns ? styles.planColumn : null]}>

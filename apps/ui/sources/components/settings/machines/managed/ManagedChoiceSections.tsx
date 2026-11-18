@@ -22,6 +22,7 @@ import { t } from '@/text';
 
 import {
   countryFlag,
+  formatPriceUnit,
   managedImageLabel,
   type ManagedImageOption,
   type ManagedLocationOption,
@@ -194,7 +195,7 @@ function sizeByline(size: ManagedSizeOption, fieldColumns = false): string {
     size.cpu === '' ? null : Number.isFinite(cores) ? t('managedMachines.receipt.cores', { count: cores }) : size.cpu,
     size.memory,
     size.disk,
-    fieldColumns || size.hourly === undefined ? null : `${size.hourly} ${t('managedMachines.price.perHour')}`,
+    fieldColumns || size.hourly === undefined ? null : `${size.hourly} ${formatPriceUnit('hour')}`,
   ]
     .filter((part) => part !== null && part !== '')
     .join(' · ');

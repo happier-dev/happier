@@ -183,6 +183,8 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
   serverId: string | null;
   testID: string;
   plan?: DeploymentCreationReviewPlan;
+  /** A draft's cost facts (the chosen platform's declared plans), their own group before what happens next. */
+  cost?: React.ReactNode;
 }>) {
   const { review, testID, plan } = props;
   const builder = useServerScopedMachineLabel(props.serverId, review.creationDefaults.values.buildMachineId ?? null);
@@ -232,6 +234,9 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
         {review.copy.omitted.map(value => <Item key={value} mode="info" title={value} />)}
       </ItemGroup> : null}
       {review.template ? <DeploymentTemplateFacts review={review.template} serverId={props.serverId} testID={`${testID}.template`} /> : null}
+      {props.cost ? <ItemGroup testID={`${testID}.cost`} title={t('newApp.deploy.plan.costTitle')}><SectionContentRow>
+        {props.cost}
+      </SectionContentRow></ItemGroup> : null}
       {plan ? <ItemGroup title={t('newApp.deploy.plan.nextTitle')}><SectionContentRow>
         <SetupSteps testID={`${testID}.next`} steps={deploymentCreationNextSteps(plan)} />
       </SectionContentRow></ItemGroup> : null}

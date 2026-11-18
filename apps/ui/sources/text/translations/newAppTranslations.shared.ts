@@ -190,6 +190,10 @@ type Copy = Readonly<{
       whatsIncluded: string;
       includedTitle: (p: Readonly<{ platform: string }>) => string;
       includedLabel: string;
+      /** Review's group for the chosen platform's declared plans (deploy auto-mode U3). */
+      costTitle: string;
+      /** The plan the connected account is on, read through its connection (deploy auto-mode U4). */
+      yourPlan: string;
       notCreated: string;
       refusedRow: string;
       nothingWasCreated: string;
@@ -409,6 +413,8 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'What’s included',
         includedTitle: ({ platform }) => `What ${platform} plans include`,
         includedLabel: 'Included',
+        costTitle: 'Cost',
+        yourPlan: 'Your plan',
         notCreated: 'Not created yet',
         refusedRow: 'Couldn’t create it',
         nothingWasCreated: 'Nothing was created',
@@ -609,6 +615,8 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'Què inclou',
         includedTitle: ({ platform }) => `Què inclouen els plans de ${platform}`,
         includedLabel: 'Inclou',
+        costTitle: 'Cost',
+        yourPlan: 'El teu pla',
         notCreated: 'Encara no s’ha creat',
         refusedRow: 'No s’ha pogut crear',
         nothingWasCreated: 'No s’ha creat res',
@@ -809,6 +817,8 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'Was enthalten ist',
         includedTitle: ({ platform }) => `Was die Pläne von ${platform} enthalten`,
         includedLabel: 'Enthalten',
+        costTitle: 'Kosten',
+        yourPlan: 'Dein Plan',
         notCreated: 'Noch nicht erstellt',
         refusedRow: 'Konnte nicht erstellt werden',
         nothingWasCreated: 'Es wurde nichts erstellt',
@@ -1009,6 +1019,8 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'Qué incluye',
         includedTitle: ({ platform }) => `Qué incluyen los planes de ${platform}`,
         includedLabel: 'Incluye',
+        costTitle: 'Coste',
+        yourPlan: 'Tu plan',
         notCreated: 'Aún no creado',
         refusedRow: 'No se pudo crear',
         nothingWasCreated: 'No se creó nada',
@@ -1209,6 +1221,8 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'Ce qui est inclus',
         includedTitle: ({ platform }) => `Ce qu’incluent les offres ${platform}`,
         includedLabel: 'Inclus',
+        costTitle: 'Coût',
+        yourPlan: 'Votre offre',
         notCreated: 'Pas encore créé',
         refusedRow: 'Création impossible',
         nothingWasCreated: 'Rien n’a été créé',
@@ -1409,6 +1423,8 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'Cosa include',
         includedTitle: ({ platform }) => `Cosa includono i piani di ${platform}`,
         includedLabel: 'Incluso',
+        costTitle: 'Costo',
+        yourPlan: 'Il tuo piano',
         notCreated: 'Non ancora creato',
         refusedRow: 'Impossibile crearlo',
         nothingWasCreated: 'Non è stato creato nulla',
@@ -1609,6 +1625,8 @@ export const newAppTranslations: Readonly<
         whatsIncluded: '含まれるもの',
         includedTitle: ({ platform }) => `${platform} のプランに含まれるもの`,
         includedLabel: '含まれるもの',
+        costTitle: '費用',
+        yourPlan: 'ご利用中のプラン',
         notCreated: 'まだ作成されていません',
         refusedRow: '作成できませんでした',
         nothingWasCreated: '何も作成されませんでした',
@@ -1809,6 +1827,8 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'Co zawiera',
         includedTitle: ({ platform }) => `Co zawierają plany ${platform}`,
         includedLabel: 'Zawiera',
+        costTitle: 'Koszt',
+        yourPlan: 'Twój plan',
         notCreated: 'Jeszcze nie utworzono',
         refusedRow: 'Nie udało się utworzyć',
         nothingWasCreated: 'Nic nie zostało utworzone',
@@ -2009,6 +2029,8 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'O que está incluído',
         includedTitle: ({ platform }) => `O que os planos da ${platform} incluem`,
         includedLabel: 'Incluído',
+        costTitle: 'Custo',
+        yourPlan: 'Seu plano',
         notCreated: 'Ainda não criado',
         refusedRow: 'Não foi possível criar',
         nothingWasCreated: 'Nada foi criado',
@@ -2209,6 +2231,8 @@ export const newAppTranslations: Readonly<
         whatsIncluded: 'Что входит',
         includedTitle: ({ platform }) => `Что входит в тарифы ${platform}`,
         includedLabel: 'Входит',
+        costTitle: 'Стоимость',
+        yourPlan: 'Ваш план',
         notCreated: 'Ещё не создано',
         refusedRow: 'Не удалось создать',
         nothingWasCreated: 'Ничего не создано',
@@ -2405,6 +2429,8 @@ export const newAppTranslations: Readonly<
         whatsIncluded: '包含内容',
         includedTitle: ({ platform }) => `${platform} 套餐包含的内容`,
         includedLabel: '包含',
+        costTitle: '费用',
+        yourPlan: '你的套餐',
         notCreated: '尚未创建',
         refusedRow: '无法创建',
         nothingWasCreated: '未创建任何内容',
@@ -2601,6 +2627,8 @@ export const newAppTranslations: Readonly<
         whatsIncluded: '包含內容',
         includedTitle: ({ platform }) => `${platform} 方案包含的內容`,
         includedLabel: '包含',
+        costTitle: '費用',
+        yourPlan: '你的方案',
         notCreated: '尚未建立',
         refusedRow: '無法建立',
         nothingWasCreated: '未建立任何內容',

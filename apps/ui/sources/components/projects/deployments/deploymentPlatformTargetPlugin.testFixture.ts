@@ -52,6 +52,12 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
   const service = DEPLOYMENT_TARGETS_TEST_SERVICE;
   const execution = DEPLOYMENT_TARGETS_TEST_EXECUTION;
   const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
+  // Dated display facts, as a platform plugin declares them (Protocol DeploymentTargetPlanV1); both platforms declare them.
+  const declaredPlans = options.plans ? { description: 'Hosting for web apps', plans: [{ id: 'free', title: 'Free',
+          facts: [{ label: 'Price', value: '$0 a month' }, { label: 'Requests', value: '100,000 a day' }],
+          included: ['Automatic HTTPS'], source: { url: 'https://alpha.example/pricing', checkedAt: '2026-11-16' } },
+        { id: 'pro', title: 'Pro', facts: [{ label: 'Price', value: '$20 a month' }, { label: 'Credit', value: '$20 a month' }],
+          included: ['Preview deployments'], source: { url: 'https://alpha.example/pricing', checkedAt: '2026-11-16' } }] } : {};
   const inspect = (name: string) => ({
     title: `Inspect ${name}`, execution, surfaces: ['ui', 'cli'], dangerLevel: 'safe', readOnly: true,
     hostAccess: [`${name}.manage`],
@@ -121,14 +127,10 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
         inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.teardown.jsonSchema } } as const : {}) },
     deploymentTargets: {
       alpha: { role: 'runtime', title: 'Alpha runtime', targetKind: 'alpha', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
-        // Dated display facts, as a platform plugin declares them (Protocol DeploymentTargetPlanV1).
-        ...(options.plans ? { description: 'Hosting for web apps', plans: [{ id: 'free', title: 'Free',
-          facts: [{ label: 'Price', value: '$0 a month' }, { label: 'Requests', value: '100,000 a day' }],
-          included: ['Automatic HTTPS'], source: { url: 'https://alpha.example/pricing', checkedAt: '2026-11-16' } },
-        { id: 'pro', title: 'Pro', facts: [{ label: 'Price', value: '$20 a month' }, { label: 'Credit', value: '$20 a month' }],
-          included: ['Preview deployments'], source: { url: 'https://alpha.example/pricing', checkedAt: '2026-11-16' } }] } : {}),
+        ...declaredPlans,
         actions: { inspect: 'inspect-alpha', link: 'link', deploy: 'deploy', observe: 'observe' } },
       beta: { role: 'runtime', title: 'Beta runtime', targetKind: 'beta', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
+        ...declaredPlans,
         actions: { inspect: 'inspect-beta', link: 'link', deploy: 'deploy', observe: 'observe',
           ...(options.create ? { create: 'create-beta' } : {}),
           ...(options.upload ? { uploadDeploy: 'upload' } : {}),

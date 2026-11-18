@@ -14,7 +14,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { uploadDeploymentRestoreSource } from '@/sync/domains/transfers/uploadDeploymentRestoreSource';
 import { MachineProvisionerSnapshotResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { formatProviderPrice } from '@/components/ui/presentation/providerCostPresentation';
+import { formatProviderPrice, sourceName } from '@/components/ui/presentation/providerCostPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -366,7 +366,7 @@ function DeploymentRestoreSheet(
         volumes: preparation.snapshot.coverage.attachedVolumes ? t('common.yes') : t('common.no') }) },
       { key: 'snapshotCost', label: t('projects.deployments.settingsSections.restoreExtended.billing'), value: preparation.snapshot.cost.price
         ? formatProviderPrice(preparation.snapshot.cost.price, preparation.snapshot.cost.source)
-        : `${t('projects.deployments.settingsSections.restoreExtended.priceUnknown')} · ${preparation.snapshot.cost.source}` },
+        : [t('projects.deployments.settingsSections.restoreExtended.priceUnknown'), sourceName(preparation.snapshot.cost.source)].filter(Boolean).join(' · ') },
       { key: 'snapshotConsistency', label: t('projects.deployments.settingsSections.restoreExtended.consistency'), value: `${preparation.snapshot.consistency === 'running' ? t('projects.deployments.settingsSections.restoreExtended.consistencyRunning') : preparation.snapshot.consistency === 'stopped' ? t('projects.deployments.settingsSections.restoreExtended.consistencyStopped') : t('projects.deployments.settingsSections.restoreExtended.consistencyUnknown')} · ${t('projects.deployments.settingsSections.restoreExtended.noQuiesce')}` },
     ] : []),
   ] : [];

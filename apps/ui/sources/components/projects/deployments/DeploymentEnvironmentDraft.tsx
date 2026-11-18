@@ -71,8 +71,8 @@ import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { DeploymentPlatformTargetEditor, useDeploymentPlatformTargets } from './DeploymentPlatformTargetSheet';
-import { DeploymentTargetPlans } from './DeploymentTargetPlans';
-import { buildPlatformTargetCreateLinkInput, buildPlatformTargetLinkInput, type PreparedPlatformTargetLink } from './platformTargetLink';
+import { DeploymentTargetPlans, DeploymentTargetPlansForAccount } from './DeploymentTargetPlans';
+import { buildPlatformTargetCreateLinkInput, buildPlatformTargetLinkInput, readPreparedPlatformAccount, type PreparedPlatformTargetLink } from './platformTargetLink';
 import type { readDeploymentPlatformTargets } from './platformTargetLink';
 import {
   DeploymentRetentionChoice,
@@ -595,6 +595,8 @@ export const DeploymentEnvironmentDraft = React.memo(
       answered: refusal !== null,
       refused: refusal?.kind === 'refused',
     } : null;
+    // The account this platform acts through, once Configure has named it: Review says which of its plans it is on.
+    const platformAccount = onPlatform ? readPreparedPlatformAccount(platformProvider) : null;
     const reviewFacts = stepReview ? (
             <ActionConfirmationReviewFacts actionId={stepReview.actionId} actionArgs={stepReview.actionArgs}
               summaryPlacement="host"
@@ -602,7 +604,13 @@ export const DeploymentEnvironmentDraft = React.memo(
               testID="project-deployments.draft.confirmation" />
           ) : prepared ? (
             <DeploymentCreationReviewFacts review={prepared.review} serverId={props.lifetime?.scope.serverId ?? null}
-              testID="project-deployments.draft" plan={reviewPlan ?? undefined} />
+              testID="project-deployments.draft" plan={reviewPlan ?? undefined}
+              // The chosen platform's declared plans, as its Where card showed them (deploy auto-mode U3).
+              cost={onPlatform && platformTarget?.plans?.length ? (platformAccount
+                ? <DeploymentTargetPlansForAccount account={platformAccount} plans={platformTarget.plans} platform={platformTarget.title}
+                  columns={!props.phone} phone={props.phone} testID="project-deployments.draft.cost.plans" />
+                : <DeploymentTargetPlans plans={platformTarget.plans} platform={platformTarget.title} columns={!props.phone}
+                  phone={props.phone} testID="project-deployments.draft.cost.plans" />) : undefined} />
           ) : null;
     // What making this platform resource means, in the platform's own words (deploy auto-mode U8, e.g. a Pages source
     // is final at creation): one field from its inspect, shown before Create.

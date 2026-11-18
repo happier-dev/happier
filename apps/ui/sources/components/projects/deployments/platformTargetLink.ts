@@ -228,6 +228,14 @@ export type PreparedPlatformTargetLink =
   | Readonly<{ kind: 'existing'; provider: DeploymentTargetLinkProviderContentV1; reviewNotice: string | null }>
   | Readonly<{ kind: 'create'; requestKey: string; providerCreate: PlatformTargetProviderCreate; reviewNotice: string | null }>;
 
+/** The connected account a prepared platform draft acts through, when it names one Account-held account. */
+export function readPreparedPlatformAccount(prepared: PreparedPlatformTargetLink | null): QualifiedConnectedAccountRef | null {
+  if (!prepared) return null;
+  const principal = prepared.kind === 'existing' ? prepared.provider.credentialPrincipal : prepared.providerCreate.credentialPrincipal;
+  const target = 'target' in principal ? principal.target : null;
+  return target && target.kind === 'account' ? target.account : null;
+}
+
 /**
  * The platform's own Review notice (`preparedNative.reviewNotice`), from its inspect reply: an inspected resource, or
  * a draft before Create, which names no resource and is answered with the notice alone. One field; the UI never
