@@ -17,9 +17,11 @@ function markCurrentReleaseNotesSeen(): void {
 }
 
 /**
- * Shows the evergreen tour once, before auth, on the welcome. Existing users are silently seeded as seen.
- * Every other signed-out route is a task the person came to do (sign in with a key, open a Team
- * invitation, finish a terminal connect link): the tour waits for the welcome rather than covering it.
+ * Shows the evergreen tour once, right after the first sign-in or account creation this mount watched
+ * (signed out, then signed in). The signed-out doorway stays clear: welcome-1115 draws it with no sheet
+ * (LABPARITY-ACCEPT-D-1118). An app that opens already signed in is an existing user, silently seeded as
+ * seen. After sign-in the tour waits for Home and for any open modal, never covering a task the person
+ * came to do (a Team invitation, a terminal connect link).
  */
 export function OnboardingShowcaseAutoShowMount(): null {
     const auth = useAuth();
@@ -28,10 +30,13 @@ export function OnboardingShowcaseAutoShowMount(): null {
     const modalStackActive = modal.state.modals.length > 0;
     const welcomeActive = isWelcomeRoute(useCurrentRouteSegments());
     const ranRef = React.useRef(false);
+    // Whether this mount has watched the device signed out: only then is a sign-in a first one here.
+    const watchedSignedOutRef = React.useRef(false);
+    if (!auth.isAuthenticated) watchedSignedOutRef.current = true;
 
     React.useEffect(() => {
-        if (ranRef.current || !showcase.hasUnread) return;
-        if (auth.isAuthenticated) {
+        if (ranRef.current || !showcase.hasUnread || !auth.isAuthenticated) return;
+        if (!watchedSignedOutRef.current) {
             ranRef.current = true;
             showcase.markSeen();
             return;
@@ -61,8 +66,6 @@ export function OnboardingShowcaseAutoShowMount(): null {
                     manifest: showcase.manifest,
                     onComplete: markSeenAndClose,
                     onDismiss: markSeenAndClose,
-                    // Before sign-in this keeps only the explicit authoring intent; the ordinary
-                    // sign-in continuation opens the editable draft afterwards.
                     onAskHappier: () => {
                         markSeenAndClose();
                         fireAndForget(import('@/components/sessions/bots/askHappierEntry')

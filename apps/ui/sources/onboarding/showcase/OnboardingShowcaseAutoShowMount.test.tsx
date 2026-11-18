@@ -90,12 +90,33 @@ describe('OnboardingShowcaseAutoShowMount', () => {
         vi.useRealTimers();
     });
 
-    it('shows exactly once before authentication and records completion', async () => {
+    async function signIn(screen: Awaited<ReturnType<typeof renderScreen>>, element: React.ReactElement): Promise<void> {
+        authState.isAuthenticated = true;
+        authState.credentials = { token: 'token', secret: 'secret' };
+        await screen.update(element);
+    }
+
+    it('keeps the signed-out doorway clear, even for a returning signed-out visitor', async () => {
+        // LABPARITY-ACCEPT-D-1118 (UI refinements 14:58Z): welcome-1115 shows the doorway first, with no sheet.
+        routeState.segments = ['(app)', 'index'];
+        const { OnboardingShowcaseAutoShowMount } = await import('./OnboardingShowcaseAutoShowMount');
+        const screen = await renderScreen(<OnboardingShowcaseAutoShowMount />);
+
+        await vi.advanceTimersByTimeAsync(300);
+        await screen.update(<OnboardingShowcaseAutoShowMount />);
+        await vi.advanceTimersByTimeAsync(300);
+        expect(modalState.show).not.toHaveBeenCalled();
+    });
+
+    it('shows exactly once after the first sign-in on this device and records completion', async () => {
         const { ONBOARDING_SHOWCASE_MANIFEST } = await import('./manifest');
         const { getShowcaseSeenVersion } = await import('./storage');
         const { OnboardingShowcaseAutoShowMount } = await import('./OnboardingShowcaseAutoShowMount');
         const screen = await renderScreen(<OnboardingShowcaseAutoShowMount />);
+        await vi.advanceTimersByTimeAsync(300);
+        expect(modalState.show).not.toHaveBeenCalled();
 
+        await signIn(screen, <OnboardingShowcaseAutoShowMount />);
         await vi.advanceTimersByTimeAsync(300);
         expect(modalState.show).toHaveBeenCalledTimes(1);
 
@@ -114,7 +135,8 @@ describe('OnboardingShowcaseAutoShowMount', () => {
         const { ONBOARDING_SHOWCASE_MANIFEST } = await import('./manifest');
         const { getShowcaseSeenVersion } = await import('./storage');
         const { OnboardingShowcaseAutoShowMount } = await import('./OnboardingShowcaseAutoShowMount');
-        await renderScreen(<OnboardingShowcaseAutoShowMount />);
+        const screen = await renderScreen(<OnboardingShowcaseAutoShowMount />);
+        await signIn(screen, <OnboardingShowcaseAutoShowMount />);
 
         await vi.advanceTimersByTimeAsync(300);
         expect(modalState.lastConfig?.props?.onAskHappier).toBeTypeOf('function');
@@ -129,7 +151,8 @@ describe('OnboardingShowcaseAutoShowMount', () => {
         const { ONBOARDING_SHOWCASE_MANIFEST } = await import('./manifest');
         const { getShowcaseSeenVersion } = await import('./storage');
         const { OnboardingShowcaseAutoShowMount } = await import('./OnboardingShowcaseAutoShowMount');
-        await renderScreen(<OnboardingShowcaseAutoShowMount />);
+        const screen = await renderScreen(<OnboardingShowcaseAutoShowMount />);
+        await signIn(screen, <OnboardingShowcaseAutoShowMount />);
 
         await vi.advanceTimersByTimeAsync(300);
         await act(async () => {
@@ -161,10 +184,11 @@ describe('OnboardingShowcaseAutoShowMount', () => {
         ['sign-in with a key', ['(app)', 'restore', 'manual']],
         ['the sign-in choice', ['(app)', 'restore']],
         ['a terminal connect link', ['(app)', 'terminal', 'connect']],
-    ])('waits while %s is open, then shows once the person reaches the welcome', async (_name, segments) => {
+    ])('after sign-in, waits while %s is open, then shows once the person reaches Home', async (_name, segments) => {
         routeState.segments = segments;
         const { OnboardingShowcaseAutoShowMount } = await import('./OnboardingShowcaseAutoShowMount');
         const screen = await renderScreen(<OnboardingShowcaseAutoShowMount />);
+        await signIn(screen, <OnboardingShowcaseAutoShowMount />);
 
         await vi.advanceTimersByTimeAsync(300);
         expect(modalState.show).not.toHaveBeenCalled();
@@ -179,6 +203,7 @@ describe('OnboardingShowcaseAutoShowMount', () => {
         modalState.activeCount = 1;
         const { OnboardingShowcaseAutoShowMount } = await import('./OnboardingShowcaseAutoShowMount');
         const screen = await renderScreen(<OnboardingShowcaseAutoShowMount />);
+        await signIn(screen, <OnboardingShowcaseAutoShowMount />);
 
         await vi.advanceTimersByTimeAsync(300);
         expect(modalState.show).not.toHaveBeenCalled();
