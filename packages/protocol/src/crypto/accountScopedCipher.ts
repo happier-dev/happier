@@ -143,8 +143,14 @@ const derivedMachineKeyByMaterial = new WeakMap<AccountScopedCryptoMaterial, Rea
  * The Account content box secret key for either credential form: the data-key
  * machine key, or the content key derived from the recovery secret. Every
  * envelope sealed to the Account content public key opens with this key.
+ * Each call returns the caller's own copy, so a caller may wipe it without
+ * zeroing the credential or the retained derivation other readers share.
  */
 export function resolveAccountContentSecretKey(material: AccountScopedCryptoMaterial): Uint8Array {
+  return resolveSharedAccountContentSecretKey(material).slice();
+}
+
+function resolveSharedAccountContentSecretKey(material: AccountScopedCryptoMaterial): Uint8Array {
   if (material.type === 'dataKey') return material.machineKey;
   const retained = derivedMachineKeyByMaterial.get(material);
   if (retained && retained.secret.length === material.secret.length
@@ -175,13 +181,13 @@ export function deriveReviewCommentPublicationIdentityV1(params: Readonly<{
   }
   if (!params.material) throw new Error('review_comment_encryption_material_unavailable');
   return encodeBase64(hmacSha512(
-    resolveAccountContentSecretKey(params.material),
+    resolveSharedAccountContentSecretKey(params.material),
     encodeCanonicalLengthDelimited([domain, ...parts]),
   ).slice(0, 32), 'base64url');
 }
 
 export function reviewCommentPublicationContentKeyFingerprintV1(material: AccountScopedCryptoMaterial): string {
-  return computeContentPublicKeyFingerprint(tweetnacl.box.keyPair.fromSecretKey(resolveAccountContentSecretKey(material)).publicKey);
+  return computeContentPublicKeyFingerprint(tweetnacl.box.keyPair.fromSecretKey(resolveSharedAccountContentSecretKey(material)).publicKey);
 }
 
 /** Closed host-owned CRUD commitment; plaintext equality never leaves an E2EE Account unkeyed. */
@@ -199,7 +205,7 @@ export function deriveReviewCommentMutationCommitmentV1(params: Readonly<{
     return computeCanonicalDomainSeparatedDigest(domain, parts);
   }
   if (!params.material) throw new Error('review_comment_encryption_material_unavailable');
-  return encodeBase64(hmacSha512(resolveAccountContentSecretKey(params.material),
+  return encodeBase64(hmacSha512(resolveSharedAccountContentSecretKey(params.material),
     encodeCanonicalLengthDelimited([domain, ...parts])).slice(0, 32), 'base64url');
 }
 
@@ -217,7 +223,7 @@ export function deriveDeploymentEnvironmentCreateCommitmentV1(params: Readonly<{
     return computeCanonicalDomainSeparatedDigest(domain, parts);
   }
   if (!params.material) throw new Error('client_required');
-  return encodeBase64(hmacSha512(resolveAccountContentSecretKey(params.material),
+  return encodeBase64(hmacSha512(resolveSharedAccountContentSecretKey(params.material),
     encodeCanonicalLengthDelimited([domain, ...parts])).slice(0, 32), 'base64url');
 }
 
@@ -230,7 +236,7 @@ export function deriveAutomationTriggerEvidenceEqualityKeyV1(params: Readonly<{
   material: AccountScopedCryptoMaterial;
 }>): Uint8Array {
   return hmacSha512(
-    resolveAccountContentSecretKey(params.material),
+    resolveSharedAccountContentSecretKey(params.material),
     encodeUtf8('happier:automation-occurrence-equality:v1:trigger-evidence'),
   ).slice(0, 32);
 }
@@ -284,7 +290,7 @@ export function derivePluginCollectionIdentityTagV1(params: Readonly<{
     }
     return encodeBase64(
       deriveKey(
-        resolveAccountContentSecretKey(material),
+        resolveSharedAccountContentSecretKey(material),
         PLUGIN_COLLECTION_IDENTITY_KEYED_USAGE_V1,
         [
           PLUGIN_COLLECTION_IDENTITY_VERSION_V1,
@@ -327,7 +333,7 @@ function sealAccountScopedBlobCiphertextWithKindByte(params: {
     throw new Error(`Unsupported account-scoped blob kind: ${String(params.kind)}`);
   }
 
-  const machineKey = resolveAccountContentSecretKey(params.material);
+  const machineKey = resolveSharedAccountContentSecretKey(params.material);
   const key = deriveAccountScopedSecretboxKey({ machineKey, kind: params.kind });
   const nonce = params.randomBytes(ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES);
   if (nonce.length !== ACCOUNT_SCOPED_SECRETBOX_NONCE_BYTES) {
@@ -406,7 +412,7 @@ export function createAccountScopedBlobOpener(params: {
   const material = params.material;
   let key: Uint8Array | undefined;
   return (ciphertext) => openWithKindKey(kind, ciphertext, () => key ??= deriveAccountScopedSecretboxKey({
-    machineKey: resolveAccountContentSecretKey(material),
+    machineKey: resolveSharedAccountContentSecretKey(material),
     kind,
   }));
 }

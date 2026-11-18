@@ -11,7 +11,7 @@ vi.mock('@noble/hashes/hmac', async (importOriginal) => {
   }, actual.hmac) };
 });
 
-import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from './accountScopedCipher.js';
+import { openAccountScopedBlobCiphertext, resolveAccountContentSecretKey, sealAccountScopedBlobCiphertext } from './accountScopedCipher.js';
 
 const kind = 'session_owner_metadata' as Parameters<typeof sealAccountScopedBlobCiphertext>[0]['kind'];
 const secret = (fill: number) => new Uint8Array(32).fill(fill);
@@ -53,5 +53,20 @@ describe('account machine key reuse', () => {
 
     expect(openAccountScopedBlobCiphertext({ kind, material: first, ciphertext })?.value).toEqual({ row: 1 });
     expect(openAccountScopedBlobCiphertext({ kind, material: second, ciphertext })).toBeNull();
+  });
+
+  it('hands each caller its own key, so a caller that wipes it cannot zero the Account key', () => {
+    for (const material of [
+      { type: 'legacy' as const, secret: secret(1) },
+      { type: 'dataKey' as const, machineKey: secret(3) },
+    ]) {
+      const ciphertext = sealAccountScopedBlobCiphertext({ kind, material, payload: { row: 1 },
+        randomBytes: (length) => new Uint8Array(length).fill(7) });
+      const expected = resolveAccountContentSecretKey(material).slice();
+      resolveAccountContentSecretKey(material).fill(0);
+
+      expect(resolveAccountContentSecretKey(material)).toEqual(expected);
+      expect(openAccountScopedBlobCiphertext({ kind, material, ciphertext })?.value).toEqual({ row: 1 });
+    }
   });
 });
