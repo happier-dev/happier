@@ -11218,7 +11218,6 @@ const machineDetailPageTranslations = { ru: translated({
         machineScheduled: {
             title: "По расписанию",
             description: ({ machine }: { machine: string }) => `Что запускается по расписанию на ${machine}: crontab и таймеры, читаются при открытии.`,
-            refresh: "Прочитать снова",
             none: "Нет",
             more: "Показать ещё",
             nextRun: ({ time }: { time: string }) => `Следующий ${time}`,
@@ -11233,8 +11232,6 @@ const machineDetailPageTranslations = { ru: translated({
             systemdTimers: "Таймеры systemd",
             launchd: "launchd",
             taskScheduler: "Планировщик заданий",
-            oneJob: "1 задание",
-            jobs: ({ count }: { count: number }) => `${count} заданий`,
         },
         machineServices: {
             unresolvedEnvironment: english.machineServices.unresolvedEnvironment,
