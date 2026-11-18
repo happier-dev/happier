@@ -26,6 +26,7 @@ import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 import {
+    canMintDeploymentCiToken,
     resolveApiTokenExpiryInstant,
     type ApiTokenSettingsController,
 } from './apiTokenSettingsController';
@@ -147,7 +148,8 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
     const pickerOpen = onAccessStage && grantPicker.picker !== null;
     const labelReady = draft.label.trim().length > 0;
     const deployment = props.deploymentTitle !== undefined;
-    const deploymentReady = !deployment || state.encryptionAvailability === 'plain';
+    // A deployment token is minted on a plain Account and, with encryption access, on an E2EE one (CI-E2EE-176).
+    const deploymentReady = !deployment || canMintDeploymentCiToken(state.encryptionAvailability);
     const canSubmit = labelReady && !state.createPending && !state.recoveryTokenId
         && deploymentReady && (!limited || isApiTokenGrantDraftSendable(grant));
 
@@ -347,8 +349,8 @@ function ApiTokenCreateContent(props: Readonly<{ controller: ApiTokenSettingsCon
                         {deployment && !deploymentReady ? (
                             <ItemGroup><Item testID="settings-api-tokens-deployment-client-required"
                                 title={state.encryptionAvailability === 'unchecked' || state.encryptionAvailability === 'checking'
-                                    ? t('common.loading') : state.encryptionAvailability === 'unreadable' ? t('common.error') : t('projects.deployments.overviewStatus.ciClientRequired')}
-                                subtitle={state.encryptionAvailability === 'unchecked' || state.encryptionAvailability === 'checking' || state.encryptionAvailability === 'unreadable' ? undefined : 'client_required'}
+                                    ? t('common.loading') : state.encryptionAvailability === 'unreadable' ? t('common.error')
+                                    : t(state.encryptionAvailability === 'stale' ? 'settingsApiTokens.encryption.stale' : 'settingsApiTokens.encryption.notReady')}
                                 showChevron={false} mode="info" />
                                 <RoundButton size="normal" display="inverted" title={t('common.retry')} action={props.controller.refreshEncryptionAvailability} />
                             </ItemGroup>

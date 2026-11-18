@@ -56,19 +56,24 @@ it('creates only the selected Environment deployment grant while allowing its sa
     expect(request?.body.authorizeUnattendedTeamAccess).not.toBe(true);
 });
 
-it('shows client_required before creating a CLI deployment token for an encrypted Account', async () => {
+it('mints a deployment token with encryption access on an encrypted Account, as on a plain one (CI-E2EE-176)', async () => {
     const { controller, requests } = await createApiTokenSettingsControllerHarness({ mode: 'e2ee' });
     ({ ApiTokenCreateModal } = await import('./ApiTokenCreateModal'));
     await controller.refreshEncryptionAvailability();
-    controller.setCreateDraft({ label: 'Production CI', expiryPreset: '90d', access: 'limited', grant: {
+    // The CI sheet's preset asks for encryption access; the owner keeps it where the Account can mint it.
+    controller.setCreateDraft({ label: 'Production CI', expiryPreset: '90d', access: 'limited', encryptionAccess: true, grant: {
         ...API_TOKEN_FULL_GRANT_V1,
         actions: { families: [], ids: [...API_TOKEN_ENVIRONMENT_ACTION_IDS_V1] },
         targets: { sessions: [], machines: [], environments: ['env-production'] },
     } });
     const { screen, footer } = await renderDeploymentModal(controller, 'Production');
-    expect(screen.findByTestId('settings-api-tokens-deployment-client-required')).not.toBeNull();
-    expect((await footer()).findByTestId('settings-api-tokens-create-continue')?.props.disabled).toBe(true);
-    expect(requests.filter(row => row.path.endsWith('/create'))).toHaveLength(0);
+    expect(controller.getState().encryptionAvailability).toBe('ready');
+    expect(screen.findByTestId('settings-api-tokens-deployment-client-required')).toBeNull();
+    expect((await footer()).findByTestId('settings-api-tokens-create-continue')?.props.disabled).toBe(false);
+    await (await footer()).pressByTestIdAsync('settings-api-tokens-create-continue');
+    await (await footer()).pressByTestIdAsync('settings-api-tokens-create-submit');
+    await waitForTestEvent(controller.subscribe, () => { expect(controller.getState().reveal?.token).toBeTruthy(); });
+    expect(requests.find(row => row.path.endsWith('/create'))?.body.encryption).toBeDefined();
 });
 
 it('reopens an existing Environment token as its nonsecret summary and CI step', async () => {

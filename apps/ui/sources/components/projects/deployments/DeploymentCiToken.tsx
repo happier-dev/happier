@@ -8,7 +8,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { ApiTokenCreateModal } from '@/components/settings/apiTokens/ApiTokenCreateModal';
 import { ApiTokenRow } from '@/components/settings/apiTokens/ApiTokenRow';
 import { apiTokenRowHref } from '@/components/settings/apiTokens/collection/apiTokensCollection';
-import { createApiTokenSettingsController, type ApiTokenSettingsController, type ApiTokenSettingsToken } from '@/components/settings/apiTokens/apiTokenSettingsController';
+import { canMintDeploymentCiToken, createApiTokenSettingsController, type ApiTokenSettingsController, type ApiTokenSettingsToken } from '@/components/settings/apiTokens/apiTokenSettingsController';
 import { resolveApiTokenOperationErrorMessageKey } from '@/components/settings/apiTokens/apiTokenSettingsPresentation';
 import { createApiTokenModalLifecycle } from '@/components/settings/apiTokens/showApiTokenCreateModal';
 import { useApiTokenGrantNames } from '@/components/settings/apiTokens/grant/useApiTokenGrantCatalogs';
@@ -42,7 +42,9 @@ const styles = StyleSheet.create(theme => ({
 /** The token owner mints, reveals once, lists and revokes; this entry supplies only its exact preset. */
 export function showDeploymentCiTokenSheet(input: DeploymentCiInput): void {
   const controller = createApiTokenSettingsController(undefined, input.lifetime);
-  controller.setCreateDraft({ ...controller.getState().createDraft, label: `${input.name} CI`, access: 'limited',
+  // Encryption access is asked for up front: the owner keeps it only where the Account can mint it (an E2EE Home), so a
+  // plain Home gets an ordinary bearer and an E2EE Home a `hapc_v1` token, revealed once as HAPPIER_TOKEN (CI-E2EE-176).
+  controller.setCreateDraft({ ...controller.getState().createDraft, label: `${input.name} CI`, access: 'limited', encryptionAccess: true,
     grant: resolveApiTokenDeploymentGrantV1({ ...API_TOKEN_FULL_GRANT_V1,
       actions: { families: [], ids: [...API_TOKEN_ENVIRONMENT_ACTION_IDS_V1] },
       targets: { sessions: [], machines: [], environments: [input.environmentId] },
@@ -71,11 +73,11 @@ function DeploymentCiStep(props: Readonly<{ input: DeploymentCiInput; controller
   const step = React.useMemo(() => renderDeploymentGithubActionsStep(props.input), [props.input]);
   const checking = state.encryptionAvailability === 'unchecked' || state.encryptionAvailability === 'checking';
   const unreadable = state.encryptionAvailability === 'unreadable';
-  if (state.encryptionAvailability !== 'plain') return <SurfaceStateCard size="line"
+  if (!canMintDeploymentCiToken(state.encryptionAvailability)) return <SurfaceStateCard size="line"
     kind={checking ? 'loading' : unreadable ? 'error' : 'unavailable'}
     title={checking ? t('common.loading') : unreadable ? t(resolveApiTokenOperationErrorMessageKey('unavailable'))
-      : t('projects.deployments.overviewStatus.ciClientRequired')}
-    diagnosticCode={checking || unreadable ? undefined : 'client_required'}
+      : t(state.encryptionAvailability === 'stale' ? 'settingsApiTokens.encryption.stale' : 'settingsApiTokens.encryption.notReady')}
+    diagnosticCode={checking || unreadable ? undefined : `api_token_encryption_${state.encryptionAvailability === 'stale' ? 'stale' : 'not_ready'}`}
     action={{ label: t('common.retry'), onPress: () => { void props.controller.refreshEncryptionAvailability(); } }} />;
   return <View style={styles.step}>
     <Text style={styles.hint}>{t('projects.deployments.overviewStatus.ciStepHint')}</Text>

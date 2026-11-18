@@ -67,6 +67,14 @@ export type ApiTokenSettingsDestructiveTarget = ActiveServerAccountScopeLifetime
  */
 export type ApiTokenEncryptionAvailability = 'unchecked' | 'checking' | 'plain' | 'ready' | 'unavailable' | 'stale' | 'unreadable';
 
+/**
+ * Whether a deployment CI token can be minted for this Account (plan 40 P40-R38, CI-E2EE-176): a plain Account takes an
+ * ordinary bearer; an E2EE Account takes one with encryption access (`hapc_v1`). Any other state is the prerequisite.
+ */
+export function canMintDeploymentCiToken(availability: ApiTokenEncryptionAvailability): boolean {
+    return availability === 'plain' || availability === 'ready';
+}
+
 /** A token becomes presentational only after the Account-owned label client opens its reader projection. */
 export type ApiTokenSettingsToken = Omit<AccountApiTokenSummaryV1, 'label'> & Readonly<{ label: string }>;
 
