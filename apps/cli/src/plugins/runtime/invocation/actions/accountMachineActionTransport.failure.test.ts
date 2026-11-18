@@ -16,6 +16,62 @@ const httpGet = vi.hoisted(() => vi.fn());
 vi.mock('axios', () => ({ default: { defaults: {}, get: httpGet } }));
 
 describe('Account Machine Action failure cause', () => {
+  it.each(['ready', 'closed', 'identity_mismatch'] as const)('settles a finite Home call when the Home is %s', async outcome => {
+    const http = createServer((request, response) => {
+      if (request.url !== '/v1/machines/cancel-machine') { response.writeHead(404).end(); return; }
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ machine: { id: 'cancel-machine', kind: 'persistent',
+        storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } }));
+    });
+    const home = new Server(http, { path: '/v1/updates' });
+    const homeResponded = Promise.withResolvers<void>();
+    home.use((socket, next) => {
+      if (outcome === 'ready') return next();
+      if (outcome === 'closed') socket.conn.close();
+      else next(Object.assign(new Error('Selected Home refused the identity'), {
+        data: { error: 'identity_mismatch', statusCode: 409 },
+      }));
+      homeResponded.resolve();
+    });
+    home.on('connection', socket => {
+      socket.on(SOCKET_RPC_EVENTS.CALL, (_request, acknowledge) => {
+        acknowledge({ ok: true, result: { ok: true, result: {} } });
+        homeResponded.resolve();
+      });
+    });
+    http.listen(0, '127.0.0.1');
+    await once(http, 'listening');
+    const address = http.address();
+    if (!address || typeof address === 'string') throw new Error('Missing fixture Home address');
+    const child = spawn(process.execPath, ['--import', 'tsx',
+      fileURLToPath(new URL('./accountMachineActionTransport.cancel.child.ts', import.meta.url)),
+      `http://127.0.0.1:${address.port}`, 'finite'], { cwd: fileURLToPath(new URL('../../../../..', import.meta.url)),
+      env: { ...process.env, HAPPIER_SOCKET_FORCE_WEBSOCKET: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const callerPid = child.pid;
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', chunk => { stdout += String(chunk); });
+    child.stderr.on('data', chunk => { stderr += String(chunk); });
+    const closed = once(child, 'close');
+    try {
+      await Promise.race([
+        homeResponded.promise,
+        closed.then(([code]) => { throw new Error(`Caller ${callerPid} exited before Home responded (${code}): ${stderr}\n${stdout}`); }),
+      ]);
+      await vi.waitFor(() => expect(child.exitCode, `caller ${callerPid}: ${stderr}\n${stdout}`).toBe(outcome === 'ready' ? 0 : 1));
+      await closed;
+      expect(JSON.parse(stdout), stdout).toMatchObject(outcome === 'ready' ? { ok: true } : {
+        ok: false,
+        errorCode: outcome === 'closed' ? 'socket_disconnected_before_connect' : 'identity_mismatch',
+        ...(outcome === 'identity_mismatch' ? { failureCause: { errorCode: 'identity_mismatch', httpStatus: 409 } } : {}),
+      });
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+      await closed;
+      await new Promise<void>(resolve => home.close(() => resolve()));
+    }
+  });
+
   it.each(['action', 'observation'])('exits the cancelled caller while a noncooperative Machine %s acknowledgement stays pending', async mode => {
     // Real HTTP and Socket.IO boundaries: the remote Action accepts cancellation
     // but deliberately keeps its acknowledgement pending until fixture cleanup.

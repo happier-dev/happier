@@ -1229,7 +1229,6 @@ describe('callSessionRpc (plaintext sessions)', () => {
   });
 
   it('settles a connect-then-disconnect race before emission even with no acknowledgement timeout', async () => {
-    const observationFallback = new AbortController();
     configureNextSocket = (socket) => {
       socket.ackMode = 'never';
       socket.disconnectAfterConnect = true;
@@ -1242,14 +1241,11 @@ describe('callSessionRpc (plaintext sessions)', () => {
       method: 'sess_1:execution.run.wait',
       request: { runId: 'run_1' },
       timeoutMs: null,
-      signal: observationFallback.signal,
       ctx: null,
     });
-    expect(nextSocket?.emitted).toHaveLength(0);
-    observationFallback.abort(new Error('test observation fallback'));
 
     const error = await promise.catch((caught: unknown) => caught);
-    expect(error).toMatchObject({ message: 'RPC socket disconnected before acknowledgement' });
+    expect(readRpcErrorCode(error)).toBe(RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
     expect(readSessionRpcRequestDisposition(error)).toBe('notSent');
     expect(nextSocket?.emitted).toHaveLength(0);
     expect(nextSocket?.disconnectCalls).toBe(1);

@@ -1,3 +1,4 @@
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { awaitCliActionResult } from '@/session/actions/awaitCliActionResult';
@@ -23,9 +24,11 @@ try {
                 originSurface: 'cli', signal: caller.signal },
         });
         return execution.status === 'executed' ? { ok: true, result: execution.value }
-            : { ok: false, errorCode: execution.code, error: execution.message };
+            : { ok: false, errorCode: execution.code, error: execution.message,
+                ...readPluginActionFailureAuthorPayload(execution.data) };
     }, caller.signal);
     console.log(JSON.stringify(result));
+    if (process.argv[3] === 'finite' && !result.ok) process.exitCode = 1;
     console.error(JSON.stringify({ resources: process.getActiveResourcesInfo() }));
 } finally {
     process.removeListener('SIGINT', onInterrupt);

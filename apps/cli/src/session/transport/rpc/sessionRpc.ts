@@ -141,7 +141,6 @@ export async function callSessionRpc(params: CallSessionRpcParams): Promise<unkn
     return await withUserScopedRpcSocket({
       token: params.token, connectTimeoutMs, signal: params.signal,
       ...(params.authorityCeiling ? { authorityCeiling: params.authorityCeiling } : {}),
-      disconnectMessage: 'RPC socket disconnected before acknowledgement',
       ...(params.reattachOnReconnect ? { reattachOnReconnect: true } : {}),
     }, async (socket, connect, signal) => {
       await timeWebLatencyPhase('session.rpc.connect', connect);

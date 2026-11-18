@@ -546,7 +546,6 @@ export async function callExactMachineRpc(params: Readonly<{
       connectTimeoutMs,
       signal,
       ...(params.reattachOnReconnect ? { reattachOnReconnect: true } : {}),
-      disconnectMessage: 'Machine RPC socket disconnected before acknowledgement',
     }, async (socket, connect, attemptSignal) => {
       const machineTarget = await resolveMachineRpcContentCodec({
         credentials: params.credentials,

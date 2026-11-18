@@ -2153,20 +2153,17 @@ describe('callMachineRpc', () => {
       socketHandlers.get('disconnect')?.();
       resolveConnected();
     });
-    const observationFallback = new AbortController();
     const promise = callMachineRpc({
       credentials: { token: 'plain-token', encryption: null },
       machineId: 'machine-plain',
       method: 'execution.run.wait',
       request: { runId: 'run_1' },
       timeoutMs: null,
-      signal: observationFallback.signal,
     });
 
     await connected;
-    observationFallback.abort(new Error('test observation fallback'));
     const error = await promise.catch((caught) => caught);
-    expect(error).toMatchObject({ message: 'Machine RPC socket disconnected before acknowledgement' });
+    expect(readRpcErrorCode(error)).toBe(RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
     expect(readMachineRpcRequestDisposition(error)).toBe('notSent');
     expect(socket.emit).not.toHaveBeenCalled();
     expect(socket.disconnect).toHaveBeenCalledOnce();

@@ -1,8 +1,11 @@
 import { createUserScopedSocketConnection } from '@/api/session/sockets';
 import { markRpcRequestDisposition, readRpcRequestDisposition } from '@happier-dev/sync-client';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isRecord } from '@happier-dev/protocol/common/records';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { createManagedConnectionSupervisor, DEFAULT_MANAGED_CONNECTION_POLICY } from '@happier-dev/connection-supervisor';
 import { classifyTransportErrorToProbeResult } from '@/api/connection/classifyTransportErrorToProbeResult';
-import { createAuthenticationHttpStatusError } from '@/api/client/httpStatusError';
+import { createAuthenticationHttpStatusError, readHttpStatus } from '@/api/client/httpStatusError';
 
 type RpcSocket = ReturnType<typeof createUserScopedSocketConnection>['socket'];
 
@@ -55,7 +58,6 @@ export async function withUserScopedRpcSocket<R>(
     serverUrl?: string;
     connectTimeoutMs: number;
     signal?: AbortSignal;
-    disconnectMessage: string;
     /** Read-only observation only: reattach through the existing reconnect owner. */
     reattachOnReconnect?: true;
   }>,
@@ -113,20 +115,25 @@ export async function withUserScopedRpcSocket<R>(
   const connect = async () => {
     params.signal?.throwIfAborted();
     let onAbort = () => {};
-    let unsubscribe = () => {};
     const stopped = new Promise<never>((_resolve, reject) => {
       onAbort = () => reject(params.signal?.reason ?? Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
       params.signal?.addEventListener('abort', onAbort, { once: true });
-      unsubscribe = connection.transport.onDisconnected(() => reject(new Error(params.disconnectMessage)));
     });
     try {
-      // Prefer a lifecycle failure if a synchronous connection immediately disconnects.
+      // The adapter settles a connection that closes during the attempt.
+      // The RPC emission owner checks a socket that closes after it connected.
       await Promise.race([stopped, connection.transport.connect()]);
-      if (connection.socket.connected === false) throw new Error(params.disconnectMessage);
       params.signal?.throwIfAborted();
+    } catch (error) {
+      if (!(error instanceof Error && 'data' in error && isRecord(error.data))) throw error;
+      const code = readActionErrorCodeV1({ code: error.data.error });
+      if (!code) throw error;
+      const httpStatus = readHttpStatus(error);
+      throw Object.assign(new RpcError(`Home refused the RPC connection: ${code}`, code, {
+        phase: 'rpc.connect', errorClass: 'RpcError', errorCode: code, httpStatus,
+      }), { data: { statusCode: httpStatus } });
     } finally {
       params.signal?.removeEventListener('abort', onAbort);
-      unsubscribe();
     }
   };
   try {
