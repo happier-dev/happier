@@ -2649,7 +2649,8 @@ async function isAdmittedDeclaredDeploymentReadInScope(
 
 /**
  * A provider-role admission host (createDeploymentTargetRoleAdmissionHost) reads the Environment a
- * contributed provider read names (a Neon project list), then opens its content Artifact, with its
+ * contributed provider read names (a Neon project list), then opens its content Artifact and, for a
+ * linked read (Neon branches), the named target link's content Artifact, with its
  * admitted contributed root; that root carries no deployment read admission. The Environment and
  * Artifact routes keep the requester's own access, as for the requester's bearer read. A foreign
  * custodian (a Team member's Machine) chose the operand itself, so it names only an Environment its own
@@ -2666,9 +2667,12 @@ async function isContributedRootEnvironmentRead(verified: VerifiedSignedChildReq
         if (!read.success || read.data.serverId !== binding.serverIdentityId) return false;
         environmentId = read.data.environmentId;
     } else {
+        // The content Artifact is the Environment's own, or a current target link's that it names.
         const artifactId = readArtifactGetHttpPurpose(proof);
         const content = artifactId === null ? null : await db.deploymentEnvironment.findFirst({ where: {
-            contentArtifactId: artifactId, deletedAt: null }, select: { id: true } });
+            contentArtifactId: artifactId, deletedAt: null }, select: { id: true } })
+            ?? await db.deploymentTargetLink.findFirst({ where: { contentArtifactId: artifactId, deletedAt: null,
+                environment: { deletedAt: null } }, select: { environmentId: true } }).then(link => link && { id: link.environmentId });
         if (!content) return false;
         environmentId = content.id;
     }

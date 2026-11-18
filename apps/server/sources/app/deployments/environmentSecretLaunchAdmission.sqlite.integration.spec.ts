@@ -918,6 +918,10 @@ describe('private installed Environment secret launch transport', () => {
             // The same host then opens the Environment's content Artifact under that root.
             const content = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, `/v1/artifacts/${row.contentArtifactId}`));
             expect(content.statusCode, content.body).toBe(200);
+            // A linked provider read (Read Neon branches) also opens its named target link's content Artifact.
+            const link = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.payload.targetLinkId }, select: { contentArtifactId: true } });
+            const linkContent = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, `/v1/artifacts/${link.contentArtifactId}`));
+            expect(linkContent.statusCode, linkContent.body).toBe(200);
             const foreign = await app.inject(await read(outsider.id, outsider.tokenEpoch).catch(() => null) ?? { method: 'GET', url: '/v1/never' });
             expect(foreign.statusCode, foreign.body).not.toBe(200);
             // A foreign custodian that cannot read this Environment itself cannot name it under the requester's root.
