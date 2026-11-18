@@ -155,7 +155,9 @@ export function NewSessionLaunchSurface(props: Readonly<{
         label: t('newSession.temporaryComputer.title'),
         onRequestClose: temporaryLaunch.dismiss,
         focusReturnRef,
-        escapeEnabled: true,
+        // Only a pending launch owns Escape. A retained composer with nothing frozen sits behind every page, and an
+        // always-on editable layer here swallowed Escape in every field of the app.
+        escapeEnabled: frozen,
         allowEditableEscape: true,
     });
 
