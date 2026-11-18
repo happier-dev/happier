@@ -31,6 +31,18 @@ describe('expiry-first selection', () => {
     });
   }
 
+  it('skips an observed exhausted account until its known reset even after the snapshot ages out', () => {
+    const resolve = (nowMs: number) => selectConnectedServiceAuthGroupCandidate({
+      nowMs, activeProfileId: 'primary', allowCurrentProfileRetry: true, policy: basePolicy,
+      members: [member('primary', 1, 1), member('backup', 2, 2)],
+      memberStatesByProfileId: new Map([['primary', state(0, 120_000)], ['backup', state(40, 150_000)]]),
+    });
+    const before = resolve(61_001);
+    expect(before.selected?.profileId).toBe('backup');
+    expect(before.excluded).toContainEqual({ profileId: 'primary', reason: 'quota_exhausted', retryAtMs: 120_000 });
+    expect(resolve(120_000).excluded).toEqual([]);
+  });
+
   it.each(['quota_probe_deferred', 'quota_evidence_unavailable', 'not_meaningfully_better'] as const)(
     'preserves the selector reason %s through public pool and launch diagnostics', (reason) => {
       const result = selectConnectedServiceAuthGroupCandidate({

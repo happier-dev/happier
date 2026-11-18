@@ -774,14 +774,18 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
       exclude(snapshotBlocker.reason, snapshotBlocker.retryAtMs);
       continue;
     }
-    if (quotaSnapshot && isQuotaExhausted(quotaSnapshot)) {
-      exclude('quota_exhausted', resolveQuotaSnapshotExhaustionRetryAtMs(
-        quotaSnapshot,
-        state,
+    if (projectedQuotaSnapshot && isQuotaExhausted(projectedQuotaSnapshot)) {
+      const retryAtMs = resolveQuotaSnapshotExhaustionRetryAtMs(
+        projectedQuotaSnapshot,
+        quotaSnapshot ? state : null,
         params.nowMs,
         params.policy,
-      ));
-      continue;
+      );
+      // Freshness ages out the measured headroom. A witnessed future reset still bounds the exhausted window.
+      if (quotaSnapshot || (projectedQuotaSnapshot.capturedAtMs <= params.nowMs && retryAtMs !== null)) {
+        exclude('quota_exhausted', retryAtMs);
+        continue;
+      }
     }
     const recentLimiterRetry = resolveRecentLimiterRetry({
       state: effectiveState,
