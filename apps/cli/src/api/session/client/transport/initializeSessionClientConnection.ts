@@ -80,7 +80,7 @@ export function initializeSessionClientConnection(
         ) => Promise<boolean>;
         /** Content-free hint only; the destination reconciler re-observes durable authority. */
         onSessionFollowInvalidated?: () => void;
-        onAccountCatalogInvalidated?: () => Promise<void>;
+        onAccountCatalogInvalidated?: (wake: Update) => Promise<void>;
     }>,
 ): Readonly<{
     userSocket: AccountUpdatesSocket | null;
@@ -95,7 +95,7 @@ export function initializeSessionClientConnection(
         // AccountChange carries no Session identity. The existing changes-feed
         // owner determines whether this destination's context was invalidated.
         if (data.body?.t === 'account-change') {
-            void params.onAccountCatalogInvalidated?.().catch(() => {
+            void params.onAccountCatalogInvalidated?.(data).catch(() => {
                 logger.debug('[API] Captured Account catalog refresh unavailable');
             });
         }
