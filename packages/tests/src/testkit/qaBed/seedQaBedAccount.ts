@@ -1,9 +1,24 @@
 import { randomBytes } from 'node:crypto';
 
-import { formatRecoveryKey, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import {
+  AccountEncryptionModeResponseSchema,
+  ARTIFACT_PLAIN_DATA_KEY_MARKER,
+  buildAccountStoredContentCompatibilityHttpHeadersV1,
+  createPlainSessionOwnerMetadataEnvelopeV1,
+  createSessionOwnerMetadataV1,
+  CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+  encodePlainArtifactStoredContent,
+  encodePlainMachineStoredContent,
+  formatRecoveryKey,
+  MACHINE_PLAIN_DATA_KEY_MARKER,
+  projectSessionSharedMetadataV1,
+  sealEncryptedDataKeyEnvelopeV1,
+} from '@happier-dev/protocol';
 
-import { createEncryptedArtifactViaApi } from '../artifactApi';
-import { createTestAuth, type TestAuth } from '../auth';
+import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+
+import { buildEncryptedArtifactCreateRequestForCliAccessKey } from '../artifactApi';
+import { createTestAuth, type TestAuth, type TestSigningAuth } from '../auth';
 import { buildTestAccountCliAuthCredentials } from '../cliAuth';
 import { fetchJson } from '../http';
 import { createMachineInstallationIdentityFixture, registerMachineIdentity } from '../machineIdentity';
@@ -46,11 +61,35 @@ export type QaBedSeedSummary = Readonly<{
 }>;
 
 export type SeededQaBedAccount = Readonly<{
-  auth: TestAuth;
+  auth: TestSigningAuth | TestAuth;
   /** Formatted recovery key: what "Use a key" sign-in and `happier auth login --key` accept. */
   recoveryKey: string;
   summary: QaBedSeedSummary;
 }>;
+
+export class QaBedSeedError extends Error {
+  constructor(
+    readonly phase: 'account_mode' | 'machine_registration' | 'session_create' | 'message_write' | 'artifact_create',
+    readonly httpStatus?: number,
+  ) {
+    super(`QA bed ${phase} failed${httpStatus === undefined ? '' : ` (status=${httpStatus})`}`);
+  }
+}
+
+function createEncryptedFixtureStorage(auth: TestSigningAuth | TestAuth) {
+  if (!('accountMachineKey' in auth)) throw new QaBedSeedError('account_mode');
+  const credentials = buildTestAccountCliAuthCredentials({ auth, mode: 'dataKey' });
+  if (!('encryption' in credentials)) throw new QaBedSeedError('account_mode');
+  const recipientPublicKey = Buffer.from(credentials.encryption.publicKey, 'base64');
+  return {
+    mode: 'e2ee' as const,
+    auth,
+    credentials,
+    wrapDataKey: (dataKey: Uint8Array) => Buffer.from(sealEncryptedDataKeyEnvelopeV1({
+      dataKey, recipientPublicKey, randomBytes,
+    })).toString('base64'),
+  };
+}
 
 /** Short Sessions get 4–17 messages, spread deterministically. */
 function shortSessionMessageCount(index: number): number {
@@ -119,9 +158,9 @@ function fixtureAgentTurnMessage(localId: string, index: number, idPrefix: strin
 /**
  * Create one fresh Account and seed it through the server's public HTTP API, so
  * every stored row has the shape the server itself writes. Sessions are created
- * through `POST /v1/sessions` with legacy metadata and Artifacts without a
- * classification: the 0.2-era shapes 0.3 must keep reading (0.3 migrates them
- * on first view). The fixture Machines have no daemon and show as offline.
+ * through `POST /v1/sessions`. E2EE Sessions use legacy metadata to exercise
+ * 0.2-era shapes. Plain Sessions use the current owner/shared layout.
+ * The fixture Machines have no daemon and show as offline.
  */
 export async function seedQaBedAccount(params: Readonly<{
   baseUrl: string;
@@ -136,82 +175,123 @@ export async function seedQaBedAccount(params: Readonly<{
   const seed = params.seed ?? Date.now() % 1_000_000;
   const concurrency = params.concurrency ?? 16;
   const label = params.label ?? 'qa';
-  const auth = await createTestAuth(baseUrl);
+  const auth = await createTestAuth(baseUrl, { allowPlain: true });
+  const accountHeaders = { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json' };
+  const account = await fetchJson<unknown>(`${baseUrl}/v1/account/encryption`, { headers: accountHeaders });
+  if (account.status !== 200) throw new QaBedSeedError('account_mode', account.status);
+  const parsedMode = AccountEncryptionModeResponseSchema.safeParse(account.data);
+  if (!parsedMode.success) throw new QaBedSeedError('account_mode');
+  const storage = parsedMode.data.mode === 'e2ee' ? createEncryptedFixtureStorage(auth) : { mode: 'plain' as const };
+  const compatibilityHeaders = storage.mode === 'plain'
+    ? buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION)
+    : {};
+  const headers = { ...accountHeaders, ...compatibilityHeaders };
+  if (params.profile === 'deploy-preview' && storage.mode === 'plain') {
+    throw new QaBedSeedError('account_mode');
+  }
   const installation = params.profile === 'deploy-preview' ? createMachineInstallationIdentityFixture() : undefined;
   const story = params.profile === 'demo' ? QA_BED_DEMO_STORY : undefined;
-  const credentials = buildTestAccountCliAuthCredentials({ auth, mode: 'dataKey' });
-  if (!('encryption' in credentials)) throw new Error('QA bed seeding needs data-key credentials');
-  const recipientPublicKey = Buffer.from(credentials.encryption.publicKey, 'base64');
-  const wrapDataKey = (dataKey: Uint8Array) => Buffer.from(sealEncryptedDataKeyEnvelopeV1({
-    dataKey, recipientPublicKey, randomBytes,
-  })).toString('base64');
 
   const machineIds = await runStressTasksWithConcurrencyLimit(
     Array.from({ length: sizes.machines }, (_, index) => index), concurrency, async (index: number) => {
-      const dataKey = randomBytes(32);
       const host = story?.machine.host ?? `${label}-dev-${String(index).padStart(3, '0')}`;
       const homeDir = story?.machine.homeDir ?? '/home/qa';
-      const registered = await registerMachineIdentity({
-        baseUrl, token: auth.token, machineId: perfFixtureId(seed, 'machine', index),
-        // The fields a released daemon publishes; the client rejects metadata without them.
-        metadata: encryptDataKeyBase64({ host, platform: story?.machine.platform ?? ['linux', 'darwin', 'win32'][index % 3], homeDir,
-          happyHomeDir: `${homeDir}/.happier`, happyCliVersion: '0.0.0-qa-bed-fixture', displayName: story?.machine.displayName ?? host }, dataKey),
-        dataEncryptionKey: wrapDataKey(dataKey),
-        ...(installation ? { installation } : {}),
-      });
-      if (registered.status !== 200) throw new Error(`QA bed Machine registration failed (status=${registered.status})`);
-      return registered.machineId as string;
+      // The fields a released daemon publishes; the client rejects metadata without them.
+      const machineMetadata = { host, platform: story?.machine.platform ?? ['linux', 'darwin', 'win32'][index % 3], homeDir,
+        happyHomeDir: `${homeDir}/.happier`, happyCliVersion: '0.0.0-qa-bed-fixture', displayName: story?.machine.displayName ?? host };
+      const registration = { baseUrl, token: auth.token, machineId: perfFixtureId(seed, 'machine', index), installation };
+      let content: Pick<Parameters<typeof registerMachineIdentity>[0], 'metadata' | 'dataEncryptionKey' | 'compatibilityHeaders'>;
+      if (storage.mode === 'plain') {
+        content = { metadata: encodePlainMachineStoredContent(machineMetadata), dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, compatibilityHeaders };
+      } else {
+        const dataKey = randomBytes(32);
+        content = { metadata: encryptDataKeyBase64(machineMetadata, dataKey), dataEncryptionKey: storage.wrapDataKey(dataKey) };
+      }
+      const registered = await registerMachineIdentity({ ...registration, ...content });
+      if (registered.status !== 200) throw new QaBedSeedError('machine_registration', registered.status);
+      return registered.machineId;
     });
 
   const sessions = await runStressTasksWithConcurrencyLimit(
     Array.from({ length: sizes.sessions }, (_, index) => index), concurrency, async (index: number) => {
-      const dataKey = randomBytes(32);
       const storySession = story?.sessions[index];
       const storyUuid = (message: number) => `${label}-${seed}-${index}-${message}`;
       const storyMessages = storySession && story
         ? storySession.featured ? story.featuredTurn(storyUuid) : story.shortExchange(storySession.name, storyUuid)
         : undefined;
       const pendingApproval = storySession?.featured ? story?.pendingApproval : undefined;
-      const created = await createSessionWithCiphertexts({
-        baseUrl, token: auth.token, tag: `${label}-s-${seed}-${index}`,
-        metadataCiphertextBase64: encryptDataKeyBase64({ name: storySession?.name ?? `${label} session ${index}`,
-          path: storySession?.path ?? `/home/qa/p${index % 12}`, homeDir: story?.machine.homeDir ?? '/home/qa',
-          machineId: machineIds[index % machineIds.length], host: story?.machine.host ?? `${label}-dev`,
-          version: '0.0.0-qa-bed-fixture', flavor: 'claude' }, dataKey),
-        dataEncryptionKeyBase64: wrapDataKey(dataKey),
-        agentStateCiphertextBase64: encryptDataKeyBase64({
-          requests: pendingApproval ? { [pendingApproval.id]: { tool: pendingApproval.tool, arguments: pendingApproval.arguments,
-            createdAt: Date.now() } } : {},
-          completedRequests: {},
-        }, dataKey),
-      });
+      const tag = `${label}-s-${seed}-${index}`;
+      const metadata = { name: storySession?.name ?? `${label} session ${index}`,
+        path: storySession?.path ?? `/home/qa/p${index % 12}`, homeDir: story?.machine.homeDir ?? '/home/qa',
+        machineId: machineIds[index % machineIds.length], host: story?.machine.host ?? `${label}-dev`,
+        version: '0.0.0-qa-bed-fixture', flavor: 'claude' };
+      const agentState = {
+        requests: pendingApproval ? { [pendingApproval.id]: { tool: pendingApproval.tool, arguments: pendingApproval.arguments,
+          createdAt: Date.now() } } : {},
+        completedRequests: {},
+      };
+      let sessionId: string;
+      let encodeMessage: (value: unknown) => { t: 'plain'; v: unknown } | { t: 'encrypted'; c: string };
+      if (storage.mode === 'e2ee') {
+        const dataKey = randomBytes(32);
+        const created = await createSessionWithCiphertexts({
+          baseUrl, token: auth.token, tag, metadataCiphertextBase64: encryptDataKeyBase64(metadata, dataKey),
+          dataEncryptionKeyBase64: storage.wrapDataKey(dataKey), agentStateCiphertextBase64: encryptDataKeyBase64(agentState, dataKey),
+        });
+        sessionId = created.sessionId;
+        encodeMessage = (value) => ({ t: 'encrypted', c: encryptDataKeyBase64(value, dataKey) });
+      } else {
+        const owner = createSessionOwnerMetadataV1({ metadata });
+        if (!owner.ok) throw new QaBedSeedError('session_create');
+        const created = await fetchJson<{ session?: { id?: string } }>(`${baseUrl}/v1/sessions`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ tag, encryptionMode: 'plain', metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
+            sharedMetadata: { ciphertext: JSON.stringify(projectSessionSharedMetadataV1({ metadata, agentState })) },
+            ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(owner.ownerMetadata),
+            agentState: JSON.stringify(agentState), dataEncryptionKey: null }),
+        });
+        const id = created.data?.session?.id;
+        if (created.status !== 200 || !id) throw new QaBedSeedError('session_create', created.status);
+        sessionId = id;
+        encodeMessage = (value) => ({ t: 'plain', v: value });
+      }
       const longCount: number | undefined = sizes.longMessages[index];
       const count = storyMessages?.length ?? longCount ?? shortSessionMessageCount(index);
       for (let message = 0; message < count; message++) {
         const localId = storyUuid(message);
-        const written = await fetchJson<{ didWrite?: boolean }>(`${baseUrl}/v2/sessions/${created.sessionId}/messages`, {
+        const written = await fetchJson<{ didWrite?: boolean }>(`${baseUrl}/v2/sessions/${sessionId}/messages`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json', 'Idempotency-Key': localId },
-          body: JSON.stringify({ localId, content: { t: 'encrypted', c: encryptDataKeyBase64(storyMessages?.[message]
-            ?? (sizes.agentTurns ? fixtureAgentTurnMessage(localId, message, `${seed}_${index}`) : fixtureMessage(localId, message)), dataKey) } }),
+          headers: { ...headers, 'Idempotency-Key': localId },
+          body: JSON.stringify({ localId, content: encodeMessage(storyMessages?.[message]
+            ?? (sizes.agentTurns ? fixtureAgentTurnMessage(localId, message, `${seed}_${index}`) : fixtureMessage(localId, message))) }),
           timeoutMs: 20_000,
         });
-        if (written.status !== 200) throw new Error(`QA bed message write failed (status=${written.status})`);
+        if (written.status !== 200) throw new QaBedSeedError('message_write', written.status);
       }
-      return { sessionId: created.sessionId, messages: count, long: longCount !== undefined, featured: storySession?.featured === true };
+      return { sessionId, messages: count, long: longCount !== undefined, featured: storySession?.featured === true };
     });
 
   await runStressTasksWithConcurrencyLimit(
     Array.from({ length: sizes.artifacts }, (_, index) => index), concurrency, async (index: number) => {
-      await createEncryptedArtifactViaApi({ baseUrl, token: auth.token, artifactId: perfFixtureId(seed, 'artifact', index),
-        headerJson: { title: story?.artifact.title ?? `${label} artifact ${index}` },
-        bodyJson: { text: story?.artifact.body ?? 'fixture notes\n'.repeat(16 + (index % 32)) },
-        cliAccessKey: credentials });
+      const artifactId = perfFixtureId(seed, 'artifact', index);
+      const headerJson = { title: story?.artifact.title ?? `${label} artifact ${index}` };
+      const bodyJson = { text: story?.artifact.body ?? 'fixture notes\n'.repeat(16 + (index % 32)) };
+      const request = storage.mode === 'e2ee' ? buildEncryptedArtifactCreateRequestForCliAccessKey({
+        artifactId, headerJson, bodyJson, cliAccessKey: storage.credentials,
+      }) : {
+        id: artifactId, header: encodePlainArtifactStoredContent(headerJson), body: encodePlainArtifactStoredContent(bodyJson),
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      };
+      const created = await fetchJson<unknown>(`${baseUrl}/v1/artifacts`, {
+        method: 'POST', headers, body: JSON.stringify(request),
+      });
+      if (created.status !== 200) throw new QaBedSeedError('artifact_create', created.status);
     });
 
   const featuredSessionId = sessions.find((session) => session.featured)?.sessionId;
-  const deploymentFixture = installation
-    ? await (await import('./seedDeployPreview')).seedDeployPreview({ baseUrl, auth, machineId: machineIds[0], installation })
+  const deploymentFixture = installation && storage.mode === 'e2ee'
+    ? await (await import('./seedDeployPreview')).seedDeployPreview({ baseUrl, auth: storage.auth, machineId: machineIds[0], installation,
+      credentials: storage.credentials })
     : undefined;
   return {
     auth,

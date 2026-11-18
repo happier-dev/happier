@@ -9,7 +9,6 @@ import {
   DeploymentDomainMutationResultV1Schema, deploymentDomainObservationProofPayloadV1,
   sealAccountScopedBlobCiphertext, signMachineInstallationProof, type DeploymentTransitionInputV1,
 } from '@happier-dev/protocol';
-import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { encodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
@@ -29,16 +28,16 @@ import { prepareExternalActionRequesterAccountAuthorizationResult, createExterna
 import { readAccountIdFromToken, readCredentialEpochFromToken } from '../../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { createEncryptedArtifactViaApi } from '../artifactApi';
 import type { TestAuth } from '../auth';
-import { buildTestAccountCliAuthCredentials } from '../cliAuth';
+import type { TestAccountCliAuthCredentials } from '../cliAuth';
 import { fetchJson } from '../http';
 import type { MachineInstallationIdentityFixture } from '../machineIdentity';
 
 /** Signed records only: this fixture never invokes an Action executor or a native deployment. */
 export async function seedDeployPreview(params: Readonly<{
   baseUrl: string; auth: TestAuth; machineId: string; installation: MachineInstallationIdentityFixture;
+  credentials: Extract<TestAccountCliAuthCredentials, { encryption: unknown }>;
 }>) {
-  const { baseUrl, auth, machineId, installation } = params;
-  const credentials = buildTestAccountCliAuthCredentials({ auth, mode: 'dataKey' });
+  const { baseUrl, auth, machineId, installation, credentials } = params;
   let artifactsCreated = 0;
   const headers = { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json' };
   const post = async (path: string, body: unknown, authorizationHeaders: Readonly<Record<string, string>> = headers) => {
@@ -61,10 +60,9 @@ export async function seedDeployPreview(params: Readonly<{
   };
   const features = FeaturesResponseSchema.parse((await fetchJson<unknown>(`${baseUrl}/v1/features`)).data);
   const serverId = features.capabilities.serverIdentity.serverIdentityId;
-  const accountMode = AccountEncryptionModeResponseSchema.parse((await fetchJson<unknown>(`${baseUrl}/v1/account/encryption`, { headers })).data).mode;
   const accountId = readAccountIdFromToken(auth.token);
   const tokenEpochHint = readCredentialEpochFromToken(auth.token);
-  if (!accountId || tokenEpochHint === null || accountMode !== 'e2ee') throw new Error('QA preview requires its fresh E2EE Account');
+  if (!accountId || tokenEpochHint === null) throw new Error('QA preview requires its fresh E2EE Account');
   const source = ProjectSourcesCreateOutputV1Schema.parse(await post('/v1/projects/sources', ProjectSourcesCreateInputV1Schema.parse({
     serverId, requestKey: randomUUID(), name: 'QA preview records only', owner: { kind: 'account', accountId }, defaultRef: 'main',
     repository: { provider: { id: 'github', kind: 'github', displayName: 'QA fixture forge', baseUrl: 'https://github.example' },
@@ -74,7 +72,7 @@ export async function seedDeployPreview(params: Readonly<{
   if (!source.ok) throw new Error(`QA preview Source refused: ${source.error}`);
   const projectSourceId = source.source.id;
   const projectId = randomUUID();
-  const projectCipher = createProjectAccountRowCipherV1({ mode: accountMode,
+  const projectCipher = createProjectAccountRowCipherV1({ mode: 'e2ee',
     material: { type: 'dataKey', machineKey: auth.accountMachineKey }, randomBytes });
   const project = ProjectAccountRowMutationResponseV1Schema.parse(await post(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`,
     ProjectAccountRowMutationRequestV1Schema.parse({ topologyChange: true, expectedRefs: [], mutations: [
@@ -132,7 +130,7 @@ export async function seedDeployPreview(params: Readonly<{
     ...await artifact(DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, 'Records-only preview receipt; no workload or health observation', receiptContent) };
   const target = { kind: 'machine' as const, machineId };
   const prepared = await prepareExternalActionRequesterAccountAuthorizationResult({ actionId: 'deployments.deploy', input,
-    requestId: randomUUID(), target, machineId, accountId, accountEncryptionMode: accountMode, tokenEpochHint, token: auth.token,
+    requestId: randomUUID(), target, machineId, accountId, accountEncryptionMode: 'e2ee', tokenEpochHint, token: auth.token,
     material: { type: 'dataKey', machineKey: auth.accountMachineKey }, serverId, serverIdentityId: serverId, serverHttpBaseUrl: baseUrl,
     installationId: installation.installationId, privateKey });
   if (!('authorization' in prepared)) throw new Error(`QA preview Action refused: ${prepared.phase}/${prepared.requiredFact}${'code' in prepared ? `/${prepared.code}` : ''}`);

@@ -138,6 +138,7 @@ export async function registerMachineIdentity(params: Readonly<{
   baseUrl: string;
   token: string;
   machineId?: string;
+  compatibilityHeaders?: Readonly<Record<string, string>>;
   metadata?: string;
   daemonState?: string | null;
   dataEncryptionKey?: string | null;
@@ -181,6 +182,7 @@ export async function registerMachineIdentity(params: Readonly<{
     method: 'POST',
     headers: {
       Authorization: `Bearer ${params.token}`,
+      ...params.compatibilityHeaders,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),

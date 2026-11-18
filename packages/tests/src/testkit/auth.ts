@@ -8,10 +8,13 @@ import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/acc
 import { fetchJson } from './http';
 import { createKeyChallengeV2SigningInput, KeyChallengeV2IssueResponseSchema } from '@happier-dev/protocol/auth/keyChallenge';
 
-export type TestAuth = {
+export type TestSigningAuth = {
   token: string;
   publicKeyBase64: string;
   accountSigningSeed: Uint8Array;
+};
+
+export type TestAuth = TestSigningAuth & {
   accountMachineKey: Uint8Array;
 };
 
@@ -37,7 +40,9 @@ export async function createTestTerminalAuth(baseUrl: string, auth: TestAuth): P
   return { ...auth, token: response.data.token };
 }
 
-export async function createTestAuth(baseUrl: string): Promise<TestAuth> {
+export function createTestAuth(baseUrl: string, options: { allowPlain: true }): Promise<TestSigningAuth | TestAuth>;
+export function createTestAuth(baseUrl: string): Promise<TestAuth>;
+export async function createTestAuth(baseUrl: string, options?: { allowPlain: true }): Promise<TestSigningAuth | TestAuth> {
   const accountSigningSeed = Uint8Array.from(randomBytes(tweetnacl.sign.seedLength));
   const kp = tweetnacl.sign.keyPair.fromSeed(accountSigningSeed);
   // privacy-kit Bytes is `Uint8Array<ArrayBuffer>`; ensure our buffers are compatible across TS libs.
@@ -45,6 +50,33 @@ export async function createTestAuth(baseUrl: string): Promise<TestAuth> {
   const secretKey = Uint8Array.from(kp.secretKey);
   const challenge = Uint8Array.from(randomBytes(32));
   const signature = Uint8Array.from(tweetnacl.sign.detached(challenge, secretKey));
+  const body = {
+    publicKey: privacyKit.encodeBase64(publicKey),
+    challenge: privacyKit.encodeBase64(challenge),
+    signature: privacyKit.encodeBase64(signature),
+  };
+  const create = (binding?: { contentPublicKey: string; contentPublicKeySig: string }) =>
+    fetchJson<{ token?: string; error?: string }>(`${baseUrl}/v1/auth`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, ...binding }),
+      timeoutMs: 15_000,
+    });
+  const requireToken = (res: Awaited<ReturnType<typeof create>>) => {
+    if (res.status !== 200 || typeof res.data?.token !== 'string' || res.data.token.length === 0) {
+      throw new Error(`Failed to create test auth token (status=${res.status})`);
+    }
+    return { token: res.data.token, publicKeyBase64: body.publicKey, accountSigningSeed };
+  };
+
+  if (options?.allowPlain) {
+    const provisioned = await create();
+    // The server's admission decision says whether fresh provisioning needs a content binding.
+    if (provisioned.status !== 400 || provisioned.data?.error !== 'content_public_key_required') {
+      return requireToken(provisioned);
+    }
+  }
+
   const accountMachineKey = deriveAccountMachineKeyFromRecoverySecret(accountSigningSeed);
   const contentPublicKey = Uint8Array.from(
     tweetnacl.box.keyPair.fromSecretKey(accountMachineKey).publicKey,
@@ -54,31 +86,11 @@ export async function createTestAuth(baseUrl: string): Promise<TestAuth> {
     contentPublicKey,
   });
 
-  const body = {
-    publicKey: privacyKit.encodeBase64(publicKey),
-    challenge: privacyKit.encodeBase64(challenge),
-    signature: privacyKit.encodeBase64(signature),
+  const provisioned = await create({
     contentPublicKey: privacyKit.encodeBase64(contentPublicKey),
     contentPublicKeySig: privacyKit.encodeBase64(contentPublicKeySig),
-  };
-
-  const res = await fetchJson<{ token?: string }>(`${baseUrl}/v1/auth`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    timeoutMs: 15_000,
   });
-
-  if (res.status !== 200 || typeof res.data?.token !== 'string' || res.data.token.length === 0) {
-    throw new Error(`Failed to create test auth token (status=${res.status})`);
-  }
-
-  return {
-    token: res.data.token,
-    publicKeyBase64: body.publicKey,
-    accountSigningSeed,
-    accountMachineKey,
-  };
+  return { ...requireToken(provisioned), accountMachineKey };
 }
 
 export async function createTestAuthMtls(

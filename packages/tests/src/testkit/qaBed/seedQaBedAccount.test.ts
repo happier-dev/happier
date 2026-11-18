@@ -1,15 +1,20 @@
 import { afterAll, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
-import { FeaturesResponseSchema, DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol';
+import {
+  AccountEncryptionCurrentnessResponseSchema, AccountEncryptionModeResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
+  CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, decodePlainArtifactStoredContent, decodePlainMachineStoredContent,
+  DeploymentActionOutputSchemasV1, FeaturesResponseSchema,
+} from '@happier-dev/protocol';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema, ProjectAccountWorkspaceRefV1Schema }
   from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { projectProjectListV1, resolveProjectContextSourceV1 } from '@happier-dev/protocol/projects/projectListProjectionV1';
 import { readDeploymentDomainServingUrlV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 
-import { fetchArtifactViaApi, decodeEncryptedArtifactJsonBase64ForCliAccessKey } from '../artifactApi';
+import { fetchArtifactViaApi, decodeEncryptedArtifactJsonBase64ForCliAccessKey, listArtifactsViaApi } from '../artifactApi';
 import { buildTestAccountCliAuthCredentials } from '../cliAuth';
 import { fetchJson } from '../http';
+import type { MachineIdentityRow } from '../machineIdentity';
 import { fetchAllMessages, fetchSessionV2, fetchSessionsV2 } from '../sessions';
 import { startServerLight, type StartedServer } from '../process/serverLight';
 import { createRunDirs } from '../runDir';
@@ -25,6 +30,48 @@ it('admits the record-only deployment preview bed through the canonical profile 
   expect(isQaBedProfileName('deploy-preview-live')).toBe(false);
 });
 
+it.each(['plain', 'e2ee'] as const)('seeds a small bed on an optional Home with %s as its default', async (mode) => {
+  const home = await startServerLight({ testDir: createRunDirs({ runLabel: 'qa-bed' }).testDir(`small-${mode}`), dbProvider: 'sqlite',
+    extraEnv: {
+      HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+      HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: mode,
+      HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: '1',
+    } });
+  try {
+    const seeded = await seedQaBedAccount({ baseUrl: home.baseUrl, profile: 'small' });
+    const headers = { Authorization: `Bearer ${seeded.auth.token}`,
+      ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) };
+    const account = await fetchJson<unknown>(`${home.baseUrl}/v1/account/encryption`, { headers });
+    expect(AccountEncryptionModeResponseSchema.parse(account.data).mode).toBe(mode);
+    expect(seeded.summary).toMatchObject({ sessions: 12, machines: 2, artifacts: 6 });
+    const machineList = await fetchJson<MachineIdentityRow[]>(`${home.baseUrl}/v1/machines`, { headers });
+    expect(machineList.status).toBe(200);
+    const machines = machineList.data;
+    const artifacts = await listArtifactsViaApi({ baseUrl: home.baseUrl, token: seeded.auth.token });
+    expect(machines).toHaveLength(2);
+    expect(artifacts).toHaveLength(6);
+    if (mode === 'plain') {
+      const currentness = await fetchJson<unknown>(`${home.baseUrl}/v1/account/encryption/currentness`, { headers });
+      expect(AccountEncryptionCurrentnessResponseSchema.parse(currentness.data).contentKeyFingerprint).toBeNull();
+      expect(machines.map(machine => typeof machine.metadata === 'string' ? decodePlainMachineStoredContent(machine.metadata) : null)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ host: 'qa-dev-000' }),
+        expect.objectContaining({ host: 'qa-dev-001' }),
+      ]));
+      expect(artifacts.map(artifact => decodePlainArtifactStoredContent(artifact.header))).toContainEqual({ title: 'qa artifact 0' });
+    }
+    const longSessionId = seeded.summary.longSessionIds[0];
+    expect(longSessionId).toBeDefined();
+    const messages = await fetchJson<{ messages: Array<{ content: unknown }> }>(`${home.baseUrl}/v1/sessions/${longSessionId}/messages?afterSeq=0&limit=120`, { headers });
+    expect(messages.status).toBe(200);
+    expect(messages.data.messages).toHaveLength(120);
+    expect(messages.data.messages[0]?.content).toMatchObject(mode === 'plain'
+      ? { t: 'plain', v: { role: 'user' } }
+      : { t: 'encrypted', c: expect.any(String) });
+  } finally {
+    await home.stop();
+  }
+}, 240_000);
+
 it('seeds Production and a deployed preview as ordinary API records without a daemon or provider', async () => {
   const profile = 'deploy-preview';
   expect(isQaBedProfileName(profile)).toBe(true);
@@ -32,6 +79,7 @@ it('seeds Production and a deployed preview as ordinary API records without a da
   server = await startServerLight({ testDir: createRunDirs({ runLabel: 'qa-bed' }).testDir('deploy-preview'), dbProvider: 'sqlite',
     extraEnv: { HAPPIER_FEATURE_DEPLOYMENTS__ENABLED: '1', HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1' } });
   const seeded = await seedQaBedAccount({ baseUrl: server.baseUrl, profile, seed: 90210 });
+  if (!('accountMachineKey' in seeded.auth)) throw new Error('deploy-preview fixture requires E2EE');
   const features = await fetchJson<unknown>(`${server.baseUrl}/v1/features`);
   const serverId = FeaturesResponseSchema.parse(features.data).capabilities.serverIdentity.serverIdentityId;
   const headers = { Authorization: `Bearer ${seeded.auth.token}` };
@@ -79,6 +127,7 @@ it('seeds the demo story world: named Sessions, a featured turn with a diff and 
   if (!isQaBedProfileName(profile)) throw new Error('demo profile unavailable');
   demoServer = await startServerLight({ testDir: createRunDirs({ runLabel: 'qa-bed' }).testDir('demo'), dbProvider: 'sqlite' });
   const seeded = await seedQaBedAccount({ baseUrl: demoServer.baseUrl, profile, seed: 4242 });
+  if (!('accountMachineKey' in seeded.auth)) throw new Error('demo fixture expected E2EE');
   const cliAccessKey = buildTestAccountCliAuthCredentials({ auth: seeded.auth, mode: 'dataKey' });
   const open = <T>(encryptedJsonBase64: string, dataEncryptionKeyBase64: unknown) => decodeEncryptedArtifactJsonBase64ForCliAccessKey<T>({
     encryptedJsonBase64, dataEncryptionKeyBase64: String(dataEncryptionKeyBase64), cliAccessKey });
