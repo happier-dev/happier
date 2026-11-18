@@ -36,7 +36,7 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { ThemeProfileEditorView } from './ThemeProfileEditorView';
 import type { ThemeProfileEditorViewProps } from './themeProfileEditorViewTypes';
 
-import { AppShellPluginUiProjectionValueProvider, type AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { AppShellPluginUiProjectionValueProvider, useAppShellPluginUiProjectionSubscription, type AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 
 const testGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean };
@@ -558,7 +558,22 @@ describe('Theme profile settings screen', () => {
             platform: 'web', accountLifetime: null, clientExecutableActivation: { status: 'ready' },
             reloadClientExecutables() {}, reloadConnectedAccountProjection() {},
         };
+        let activeSubscribers = 0;
+        function ObserveProjectionSubscriptions() {
+            const projection = useAppShellPluginUiProjectionSubscription();
+            React.useLayoutEffect(() => {
+                const subscribe = projection.subscribe;
+                const observation = vi.spyOn(projection, 'subscribe').mockImplementation(listener => {
+                    activeSubscribers++;
+                    const unsubscribe = subscribe(listener);
+                    return () => { activeSubscribers--; unsubscribe(); };
+                });
+                return () => observation.mockRestore();
+            }, [projection]);
+            return null;
+        }
         const screen = await renderSettingsView(<AppShellPluginUiProjectionValueProvider value={value}>
+            <ObserveProjectionSubscriptions />
             <ThemeProfilesSettingsScreen />
         </AppShellPluginUiProjectionValueProvider>);
         await measureMountedCollections(screen, { width: 1200, height: 6000 });
@@ -568,6 +583,7 @@ describe('Theme profile settings screen', () => {
             const text = tile!.findAll(node => typeof node.type === 'string').flatMap(node => node.children).join(' ');
             expect(text).toContain('Studio Palette');
         }
+        expect(activeSubscribers).toBe(2); // One library family and one addressed selection.
     });
 
     it('adds a theme from the section menu through creation, import or Store Themes', async () => {

@@ -84,13 +84,13 @@ export function useThemeLibraryArtifactInventory(enabled = true,
 }
 
 /** The library consumes private header inputs. Its CSS-heavy bodies stay on demand. */
-export function useThemeLibraryInventory(enabled = true): ThemeLibraryInventory {
+export function useThemeLibraryInventory(enabled = true): ThemeLibraryInventory & Readonly<{ plugins: readonly PluginThemeListItem[] }> {
     const inventory = useThemeLibraryArtifactInventory(enabled);
     const plugins = usePluginThemeList(enabled);
     const entries = React.useMemo(() => enabled
         ? projectThemeLibraryEntries(inventory.entries, projectPluginThemeLibraryEntries(plugins), getBuiltInThemeLibraryEntries()) : noEntries,
         [enabled, inventory.entries, plugins]);
-    return { ...inventory, entries };
+    return { ...inventory, entries, plugins };
 }
 
 export function useThemeLibraryEntries(enabled = true): readonly ThemeLibraryEntry[] {

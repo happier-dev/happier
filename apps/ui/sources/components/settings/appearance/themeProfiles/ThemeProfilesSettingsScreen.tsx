@@ -13,7 +13,6 @@ import { presentActionTurnedOffNoticeIfOff } from '@/sync/ops/actions/actionTurn
 import { t } from '@/text';
 import { resolveThemeRuntimeVisualTheme } from '@/theme/profiles/themeProfileRuntime';
 import type { ThemeProfileMode, ThemeReference } from '@/theme/profiles/themeProfileTypes';
-import { usePluginThemeList } from '@/theme/profiles/usePluginThemeList';
 import { useApplyThemeSelection } from '../useApplyThemeSelection';
 import { buildThemePresetSourceOptions } from './themeProfilePresetOptions';
 import { ThemeLibraryView } from './ThemeLibraryView';
@@ -56,8 +55,8 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
     const darkDocument = useThemeProfileDocument(selection.dark, presented).document;
     const selectedDocuments = React.useMemo(() => ({ light: lightDocument, dark: darkDocument }), [lightDocument, darkDocument]);
     const inventory = useThemeLibraryInventory(presented);
-    const pluginThemes = usePluginThemeList(presented);
-    const pluginNames = React.useMemo(() => new Map(pluginThemes.map(theme => [theme.pluginId, theme.pluginName])), [pluginThemes]);
+    const { plugins } = inventory;
+    const pluginNames = React.useMemo(() => new Map(plugins.map(theme => [theme.pluginId, theme.pluginName])), [plugins]);
     const options = React.useMemo(() => buildThemePresetSourceOptions(inventory.entries), [inventory.entries]);
     const execute = useThemeActionExecution();
     const [deviceTarget, setDeviceTarget] = React.useState<ThemeDevicePickerInput['theme'] | null>(null);
