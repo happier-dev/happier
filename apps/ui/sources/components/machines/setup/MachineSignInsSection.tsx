@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import {
   useMachineCliSignIns,
@@ -141,13 +143,16 @@ export const MachineSignInsList = React.memo(function MachineSignInsList(
           showChevron={false}
           rightElement={
             props.editable && canStartNativeSignIn(row) ? (
-              <RoundButton
-                testID={`machine-setup-sign-in-start:${row.id}`}
-                size="small"
-                display="secondary"
-                title={t('machinePresets.setup.tab.signInAction')}
-                onPress={() => props.onSignIn(row)}
-              />
+              // Natural width when the row stacks it under the words on a phone, not the row's full width.
+              <View style={styles.action}>
+                <RoundButton
+                  testID={`machine-setup-sign-in-start:${row.id}`}
+                  size="small"
+                  display="secondary"
+                  title={t('machinePresets.setup.tab.signInAction')}
+                  onPress={() => props.onSignIn(row)}
+                />
+              </View>
             ) : undefined
           }
         />
@@ -155,3 +160,7 @@ export const MachineSignInsList = React.memo(function MachineSignInsList(
     </ItemGroup>
   );
 });
+
+const styles = StyleSheet.create(() => ({
+  action: { alignSelf: 'flex-start' },
+}));
