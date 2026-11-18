@@ -519,12 +519,13 @@ describe('mounted managed configurator', () => {
     expect(harness.requests.filter(request => /machines\.provisioners\.(check|options)|machines\.managed\.acquire/.test(request.path))).toHaveLength(0);
   });
 
-  it.each([
+  it.each(([
     { availability: { state: 'known', connectedCount: 0, enabledCount: 1 }, disabled: true },
     { availability: { state: 'known', connectedCount: 1, enabledCount: 1 }, disabled: false },
     { availability: { state: 'unknown' }, disabled: false },
     { availability: null, disabled: false },
-  ] as const)('projects shared availability into delegated pool review ($availability.state, $disabled)', async ({ availability, disabled }) => {
+  ] as const).flatMap(testCase => (['use', 'create'] as const).map(surface => ({ ...testCase, surface }))))(
+    'projects shared availability into delegated pool $surface review ($availability.state, $disabled)', async ({ availability, disabled, surface }) => {
     const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://delegated-pool.example.test',
       serverIdentityId: 'srv_delegated_pool', accountId: 'owner', currentAccount: true, teamsEnabled: true, machinePoolsEnabled: true });
     const poolId = '6be84651-2df7-4125-aac4-0d093217b198';
@@ -542,14 +543,16 @@ describe('mounted managed configurator', () => {
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
     const { t } = await import('@/text');
     const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
-      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} presetId={saved.id} onUse={vi.fn()} />);
+      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} presetId={saved.id}
+      {...(surface === 'use' ? { onUse: vi.fn() } : {})} />);
+    const primaryTestId = surface === 'use' ? 'managed-config.use' : 'managed-config.create';
     try {
       if (availability === null) {
         const { storage } = await import('@/sync/domains/state/storage');
         const scopeServerId = resolveServerProfileScopeIdForIdentifier(serverId) ?? serverId;
         await waitForHomeGovernance(() => expect(storage.getState().machinePoolListStatusByServerId[scopeServerId]).toBe('error'));
       }
-      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(disabled));
+      await waitForHomeGovernance(() => expect(screen.findByTestId(primaryTestId)?.props.disabled).toBe(disabled));
       // Nothing is left to choose: the receipt is the page body, never an aside beside an empty column (TH MB-4).
       expect(screen.findByTestId('managed-config.receipt')).not.toBeNull();
       expect(screen.findByTestId('managed-config.receipt-aside')).toBeNull();

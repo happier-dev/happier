@@ -642,8 +642,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const poolView = useMachinePoolView(props.serverId, poolId);
     const poolName = useMachinePoolName(props.serverId, props.presetOnly && pooledDraft ? draft?.controllerPoolId || null : null);
     // The shared Pool projection already owns the current availability answer. A known zero-connected
-    // pool cannot satisfy Use; show its typed refusal at review instead of waiting for Send to fail.
-    const poolUnavailableAtReview = isManagedPoolUnavailableAtReview(poolView, !props.presetOnly && props.onUse !== undefined && poolId !== undefined);
+    // pool cannot satisfy Use or Create; show its typed refusal at review before either is attempted.
+    const poolUnavailableAtReview = isManagedPoolUnavailableAtReview(poolView, !props.presetOnly && poolId !== undefined);
     const controllerName = pooledDraft ? poolName ?? t('machinePresets.controllerPoolAny') : knownControllerName ?? t('managedMachines.receipt.managingComputer');
     const controllerSentence = !pooledDraft ? controllerName : poolName ? t('machinePresets.controllerPoolIn', { pool: poolName })
         : t('machinePresets.controllerPoolInUnnamed');
