@@ -12,7 +12,7 @@ import {
 import { executeTerminalHostDisposition } from '@/terminal/attachment/terminalHostDisposition';
 import { readTerminalClientProcessState } from '@/terminal/host/terminalClientCustody';
 import { logger } from '@/ui/logger';
-import type { TerminalMode } from '@/terminal/runtime/terminalConfig';
+import { isHostedTerminalMode, terminalModesRealizedByHostKind, type TerminalMode } from '@/terminal/runtime/terminalConfig';
 
 import { removeSessionMarker as removeDefaultSessionMarker } from '../sessionRegistry';
 import type { SessionRunnerServiceabilityProbe } from './isSessionRunnerActive';
@@ -205,8 +205,7 @@ export function resolveDisconnectedTerminalMode(input: Readonly<{
     return null;
   }
   const mode = input.terminal?.mode;
-  if (mode === 'pty') return input.hostKind === 'pty' ? mode : null;
-  return mode === 'windows_terminal' || mode === 'windows_console' ? mode : null;
+  return isHostedTerminalMode(mode) && terminalModesRealizedByHostKind(input.hostKind).includes(mode) ? mode : null;
 }
 
 /** A held Agent is alive while its holder and its Agent processes are. */

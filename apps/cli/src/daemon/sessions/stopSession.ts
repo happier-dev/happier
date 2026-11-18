@@ -20,7 +20,7 @@ import {
   executeTerminalHostDisposition,
 } from '@/terminal/attachment/terminalHostDisposition';
 import { buildLegacyTerminalAttachmentHostHandle } from '@/terminal/attachment/legacyTerminalAttachmentHandle';
-import type { TerminalMode } from '@/terminal/runtime/terminalConfig';
+import { isHostedTerminalMode, isTerminalMode, terminalModesRealizedByHostKind, type HostedTerminalMode, type TerminalMode } from '@/terminal/runtime/terminalConfig';
 import { probeTerminalHostForRecovery } from '@/integrations/terminal/host/recoveryLiveness';
 import { createProcessTreeTerminator, type ProcessTreeTerminationInput, type ProcessTreeTerminationResult } from '@/processes/terminate/terminateProcessTree';
 import type { ProcessCensusDependencies } from '@/processes/census/processCensus';
@@ -87,16 +87,13 @@ function resolveRetiredTerminalMode(
   attachmentInfo: ExactTerminalHostAttachmentInfo,
   actualTerminalModes: readonly (TerminalMode | undefined)[],
 ): TerminalMode | null {
-  if (attachmentInfo.handle.kind === 'pty') {
-    const windowsModes = new Set(
-      actualTerminalModes.filter(
-        (mode): mode is 'windows_terminal' | 'windows_console' | 'pty' =>
-          mode === 'windows_terminal' || mode === 'windows_console' || mode === 'pty',
-      ),
-    );
-    return windowsModes.size === 1 ? Array.from(windowsModes)[0]! : null;
-  }
-  return attachmentInfo.handle.kind;
+  if (attachmentInfo.handle.kind !== 'pty') return attachmentInfo.handle.kind;
+  // One host serves several realized modes; retiring it needs one unique actual mode.
+  const realized = terminalModesRealizedByHostKind(attachmentInfo.handle.kind);
+  const actualModes = new Set(actualTerminalModes.filter(
+    (mode): mode is HostedTerminalMode => isHostedTerminalMode(mode) && realized.includes(mode),
+  ));
+  return actualModes.size === 1 ? Array.from(actualModes)[0]! : null;
 }
 
 function readActualTerminalMode(
@@ -113,15 +110,7 @@ function readActualTerminalMode(
     return undefined;
   }
   const mode = terminal?.mode;
-  return mode === 'plain'
-    || mode === 'tmux'
-    || mode === 'zellij'
-    || mode === 'herdr'
-    || mode === 'windows_terminal'
-    || mode === 'windows_console'
-    || mode === 'pty'
-    ? mode
-    : undefined;
+  return isTerminalMode(mode) ? mode : undefined;
 }
 
 async function forceKillTrackedRunner(params: Readonly<{
@@ -431,8 +420,7 @@ export function createStopSession(params: Readonly<{
         logWarning(`[DAEMON RUN] Refusing to stop marker-derived session ${normalizedSessionId} without explicit terminal topology provenance`);
         return incompleteStopSession('missing_topology_proof');
       }
-      const matchedTerminalHost = terminalModes.some((mode) =>
-        mode === 'tmux' || mode === 'zellij' || mode === 'herdr' || mode === 'windows_terminal' || mode === 'windows_console' || mode === 'pty');
+      const matchedTerminalHost = terminalModes.some(isHostedTerminalMode);
       if (
         !attachmentInfo
         && matchedTerminalHost
@@ -440,8 +428,7 @@ export function createStopSession(params: Readonly<{
         && !hasExactPredecessorWindowsRunner
       ) {
         for (const [index, mode] of terminalModes.entries()) {
-          if (mode !== 'tmux' && mode !== 'zellij' && mode !== 'herdr'
-            && mode !== 'windows_terminal' && mode !== 'windows_console' && mode !== 'pty') continue;
+          if (!isHostedTerminalMode(mode)) continue;
           const pid = pidsToStop[index]!;
           const expected = expectedTrackedSessionsByPid.get(pid);
           // No unknown host is signalled or disposed. A positively dead runner

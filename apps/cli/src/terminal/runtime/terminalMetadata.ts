@@ -2,6 +2,7 @@ import type { Metadata } from '@/api/types';
 import type { TerminalHostHandle } from '@happier-dev/agents';
 import type { TerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 
+import { isTerminalMode } from './terminalConfig';
 import type { TerminalRuntimeFlags } from './terminalRuntimeFlags';
 
 function buildTerminalControlServiceability(
@@ -178,7 +179,7 @@ export function buildTerminalMetadataFromRuntimeFlags(
   if (!flags) return undefined;
 
   const mode = flags.mode;
-  if (mode !== 'plain' && mode !== 'tmux' && mode !== 'zellij' && mode !== 'herdr' && mode !== 'windows_terminal' && mode !== 'windows_console' && mode !== 'pty') return undefined;
+  if (!isTerminalMode(mode)) return undefined;
 
   const terminal: NonNullable<Metadata['terminal']> = {
     mode,

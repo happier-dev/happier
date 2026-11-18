@@ -7,7 +7,7 @@ import {
   readCanonicalSpawnRuntimeSelectionFromCompatIngress,
   readSpawnRuntimeDescriptorV1,
 } from '@/rpc/handlers/spawnRuntimeSelection';
-import type { TerminalMode, TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
+import { TERMINAL_MODES, type TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import { BackendTargetRefSchema } from '@happier-dev/protocol/backends/targets/backendTargetRef';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { BackendTargetRefV2Schema, readBackendTargetRefV2, writePersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -33,7 +33,6 @@ import {
 import { HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY } from '@/agent/runtime/sessionConnectedServiceMaterializationIdentityEnv';
 import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 
-const TERMINAL_MODES = ['plain', 'tmux', 'zellij', 'herdr', 'windows_terminal', 'windows_console', 'pty'] as const satisfies readonly TerminalMode[];
 const SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = [
   'CLAUDE_CONFIG_DIR',
   'CODEX_HOME',

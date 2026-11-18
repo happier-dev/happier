@@ -1,7 +1,32 @@
 import { posix as pathPosix } from 'node:path';
 import type { SessionAuthoringTerminalV1 } from '@happier-dev/protocol/sessions/authoring/creationFieldsV1';
+import type { TerminalHostKind } from '@happier-dev/agents';
 
-export type TerminalMode = 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | 'pty';
+export const TERMINAL_MODES = ['plain', 'tmux', 'zellij', 'herdr', 'windows_terminal', 'windows_console', 'pty'] as const;
+
+export type TerminalMode = typeof TERMINAL_MODES[number];
+
+/** A realized mode some terminal host serves; `plain` is the only mode no host realizes. */
+export type HostedTerminalMode = Exclude<TerminalMode, 'plain'>;
+
+/**
+ * The `pty` host serves Windows Terminal, the hidden Windows console and the plain holder PTY; every
+ * other host realizes only its own kind. Readers of a recorded mode derive from this one owner (a
+ * hand-copied list missing `pty` caused ba4361af702).
+ */
+const PTY_HOSTED_TERMINAL_MODES = ['windows_terminal', 'windows_console', 'pty'] as const satisfies readonly HostedTerminalMode[];
+
+export function isTerminalMode(value: unknown): value is TerminalMode {
+  return (TERMINAL_MODES as readonly unknown[]).includes(value);
+}
+
+export function isHostedTerminalMode(value: unknown): value is HostedTerminalMode {
+  return value !== 'plain' && isTerminalMode(value);
+}
+
+export function terminalModesRealizedByHostKind(kind: TerminalHostKind): readonly HostedTerminalMode[] {
+  return kind === 'pty' ? PTY_HOSTED_TERMINAL_MODES : [kind];
+}
 
 export type TerminalTmuxSpawnOptions = {
   /**
