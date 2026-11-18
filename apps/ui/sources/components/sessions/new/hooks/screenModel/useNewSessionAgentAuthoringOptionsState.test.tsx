@@ -26,6 +26,24 @@ function nativeSelection(agentTargetKey: string, modelId: string, updatedAt: num
 }
 
 describe('useNewSessionAgentAuthoringOptionsState', () => {
+    it('resolves Team model defaults for the Agent picked in a Project draft', async () => {
+        const agentTarget = AgentExecutionTargetV1Schema.parse({
+            kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        });
+        const agentTargetKey = resolveBackendTargetKeyV2(agentTarget);
+        const selection = nativeSelection(agentTargetKey, 'gpt-5.1-codex', 1);
+        const hook = await renderHook(useNewSessionAgentAuthoringOptionsState, { initialProps: {
+            agentType: 'codex', backendTargetKey: agentTargetKey, agentTarget,
+            hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null,
+            managedDefaults: { teamDefaults: { team: { modelByAgentTargetKey: { [agentTargetKey]: selection } }, groups: {} } },
+        } });
+        try {
+            expect(hook.getCurrent().modelSelection).toEqual(selection);
+            expect(hook.getCurrent().modelSource).toBe('team');
+            expect(hook.getCurrent().modelIsManagedDefault).toBe(true);
+        } finally { await hook.unmount(); }
+    });
+
     it.each(['selection', 'target', 'engine'] as const)('resets a stale Team %s intent after switching Agents', async setter => {
         const codex = 'agent:happier.agent.codex/codex';
         const pi = 'agent:happier.agent.pi/pi';

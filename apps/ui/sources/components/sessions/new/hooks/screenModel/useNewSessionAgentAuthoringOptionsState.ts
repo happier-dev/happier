@@ -212,6 +212,7 @@ function resolveAuthoringAcpSessionModeId(params: Readonly<{
 export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     agentType: string;
     backendTargetKey?: string | null;
+    agentTarget?: AgentExecutionTargetV1 | null;
     allowTargetlessDraftEngineSelection?: boolean;
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;
@@ -320,7 +321,8 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
             providerConnectionId: null, modelId: currentModelState.modelMode } } : undefined;
     const modelDecision = resolveManagedSessionDefaults({ ...params.managedDefaults,
         agentTargetKey: effectiveModelTargetKey,
-        explicitChoices: explicitModel ? { modelByAgentTargetKey: { [effectiveModelTargetKey]: explicitModel } } : undefined,
+        explicitChoices: { ...(params.agentTarget ? { defaultAgentTarget: params.agentTarget } : {}),
+            ...(explicitModel ? { modelByAgentTargetKey: { [effectiveModelTargetKey]: explicitModel } } : {}) },
     }).model;
     const managedModel = modelDecision.value;
     const modelIsManagedDefault = modelDecision.source !== 'none' && modelDecision.source !== 'explicit';

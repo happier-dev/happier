@@ -1604,6 +1604,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         setCapabilitySelection,
     } = useNewSessionAgentAuthoringOptionsState({
         managedDefaults: managedSessionDefaults.read.context,
+        agentTarget: canonicalAgentTarget,
         explicitTeamCredentialModel: storedTeamCredentialModel,
         agentType: agentPolicyType,
         backendTargetKey: selectedBackendTargetKey,
