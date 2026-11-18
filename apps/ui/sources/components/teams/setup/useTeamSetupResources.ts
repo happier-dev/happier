@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { useProjectSources } from '@/components/projects/sources/useProjectSources';
 import { useMachinePreset } from '@/components/settings/machines/managed/useMachinePresets';
 import type { TeamSectionContext } from '@/components/settings/teams/teamSectionContext';
@@ -31,6 +32,12 @@ export function useTeamSetupResources(context: TeamSetupResourceContext) {
         sharedWithTeamId: context.address.teamId,
         repositoryFacts: false,
     });
+    // Repository-free Sources still carry shared setup/defaults. Keep them visible;
+    // only repository selectors can enter the native clone plan.
+    const sourceKinds = React.useMemo(() => ({
+        repositorySources: sources.state.rows.filter(source => source.repository !== undefined),
+        repositoryFreeSources: sources.state.rows.filter(source => source.repository === undefined),
+    }), [sources.state.rows]);
     const credentialsEnabled = useFeatureEnabled('teams.credentialResources', {
         scopeKind: 'spawn', serverId: context.scope.serverId,
     });
@@ -46,6 +53,7 @@ export function useTeamSetupResources(context: TeamSetupResourceContext) {
         managedDefaultsStatus: context.team.policy.managedDefaultsStatus,
         preset: placement?.kind === 'preset' ? preset : null,
         sources,
+        ...sourceKinds,
         credentials,
         credentialsEnabled,
         credentialDisplayNames,

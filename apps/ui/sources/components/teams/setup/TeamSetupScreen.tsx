@@ -9,6 +9,7 @@ import {
   suggestProjectOpenDestination,
 } from '@/components/projects/activation/projectOpenChoices';
 import { presentProjectSourceIssue } from '@/components/projects/sources/projectSourceIssue';
+import { projectSourceRoute } from '@/components/projects/sources/projectSourceNavigation';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
@@ -232,10 +233,7 @@ function TeamSetupPlanPage(
   const plan = useTeamSetupPlan(execute, actionContext);
 
   const presetValue = resources.preset?.state.value ?? null;
-  const repositories = React.useMemo(
-    () => resources.sources.state.rows.filter((source) => source.repository),
-    [resources.sources.state.rows],
-  );
+  const repositories = resources.repositorySources;
   const [excluded, setExcluded] = React.useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -362,7 +360,7 @@ function TeamSetupPlanPage(
       return updated;
     }), []);
   if (resources.sharedResources.status === 'ready' && sourcesState.status === 'ready' && sourcesState.coverage.complete
-    && !hasPreset && repositories.length === 0 && sharedKeys.length === 0) {
+    && !hasPreset && sourcesState.rows.length === 0 && sharedKeys.length === 0) {
     return (
       <>
       <TeamSetupHeader context={context} lead={false} />
@@ -403,6 +401,7 @@ function TeamSetupPlanPage(
       hasPreset={hasPreset}
       machinePlan={machinePlan}
       repositories={repositories}
+      repositoryFreeSources={resources.repositoryFreeSources}
       excluded={excluded}
       onToggleRepository={toggleRepository}
       batch={plan.batch}
@@ -438,6 +437,7 @@ export function TeamSetupPageView(
     hasPreset: boolean;
     machinePlan: TeamSetupPreparedMachine | null;
     repositories: readonly ProjectSourceV1[];
+    repositoryFreeSources: readonly ProjectSourceV1[];
     excluded: ReadonlySet<string>;
     onToggleRepository: (sourceId: string, included: boolean) => void;
     batch: TeamSetupBatch | null;
@@ -446,6 +446,7 @@ export function TeamSetupPageView(
   }>,
 ) {
   const { teamName, machineId, machineLabel, run, repositories } = props;
+  const router = useRouter();
   const { theme } = useUnistyles();
   const compact = useDeviceType() === 'phone';
   const running = run.kind === 'running';
@@ -597,6 +598,19 @@ export function TeamSetupPageView(
               disabled={running || run.kind === 'done'}
               iconColor={theme.colors.text.secondary}
               onToggle={(next) => props.onToggleRepository(source.id, next)}
+            />
+          ))}
+        </ItemGroup>
+      ) : null}
+      {props.repositoryFreeSources.length > 0 ? (
+        <ItemGroup testID="team-setup-sources" title={t('projects.sources.title')}>
+          {props.repositoryFreeSources.map((source) => (
+            <Item
+              key={source.id}
+              testID={`team-setup-source:${source.id}`}
+              icon={<Icon name="git-branch" size={20} color={theme.colors.text.secondary} />}
+              title={source.name}
+              onPress={() => router.push(projectSourceRoute(source.id))}
             />
           ))}
         </ItemGroup>

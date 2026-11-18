@@ -167,6 +167,7 @@ function SetupFrame() {
         hasPreset
         machinePlan={MACHINE_PLAN}
         repositories={REPOSITORIES}
+        repositoryFreeSources={[]}
         excluded={NO_EXCLUSIONS}
         onToggleRepository={noop}
         batch={null}
