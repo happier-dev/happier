@@ -34,10 +34,11 @@ it('shares Account facts during cold restore while preserving a fresh authority 
     disposeHome = restored.dispose;
     const { sync } = await import('./syncEngine');
     await sync.awaitBootstrapForegroundAcquisition();
+    // Foreground Settings admission owns its read; Authoring Memory no longer imports Settings.
+    const settingsReads = counts.get('/v2/account/settings') ?? 0;
+    expect(settingsReads).toBe(1);
     await sync.applyAuthoringMemoryDelta({});
-    // Initial Settings admission and the later legacy import are separate
-    // operations. The import's three unchanged aliases share one census.
-    expect(counts.get('/v2/account/settings')).toBe(2);
+    expect((counts.get('/v2/account/settings') ?? 0) - settingsReads).toBe(0);
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const { fetchAccountEncryptionIdentity, fetchAccountEncryptionMode } = await import('@/sync/api/account/apiAccountEncryptionMode');
     const context = await captureLazyActionAccountContext(restored.serverId);
@@ -111,6 +112,7 @@ it('hydrates Sessions over the connected Account socket through its admitted mod
     const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
     const replacedBinding = apiSocket.getAccountEncryptionObservationBinding(restored.credentials)!;
     const serverUrl = 'https://socket-bound-hydration.test';
+    const beforeReplacementRead = currentnessReads();
     apiSocket.initialize({ endpoint: serverUrl, token: restored.credentials.token, credentials: restored.credentials,
         serverId: restored.serverId, generation: getActiveServerSnapshot().generation,
         request: createServerFetchAtEndpoint({ endpointUrl: serverUrl, serverId: restored.serverId, credentials: restored.credentials }),
@@ -120,11 +122,11 @@ it('hydrates Sessions over the connected Account socket through its admitted mod
     const replacement = apiSocket.getAccountEncryptionObservationBinding(restored.credentials)!;
     expect(replacement).not.toBe(replacedBinding);
     expect(replacedBinding.isCurrent()).toBe(false);
-    const beforeReplacementRead = currentnessReads();
-    await hydrate('socket-bound-after-replacement');
+    // Connecting admits the fresh observation before any hydration borrows it.
+    await expect(replacement.read()).resolves.toMatchObject({ mode: 'plain' });
     expect(currentnessReads() - beforeReplacementRead).toBeGreaterThanOrEqual(1);
-    await replacement.read();
     const replacementSettled = currentnessReads();
+    await hydrate('socket-bound-after-replacement');
     for (let index = 0; index < 3; index++) await hydrate(`socket-bound-replacement-${index}`);
     expect(currentnessReads() - replacementSettled).toBe(0);
 
