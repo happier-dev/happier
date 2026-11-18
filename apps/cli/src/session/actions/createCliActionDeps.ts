@@ -1396,7 +1396,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
       if (!('environmentId' in input)) return executionRunActionFailure('invalid_parameters');
       let opened: ReturnType<typeof DeploymentEnvironmentGetResultV1Schema.parse> | undefined;
       const selected = await resolveDeploymentEnvironmentExecutionMachineIdV1(actionId, input, {
-        ...(context.externalActionTarget?.kind === 'machine' && actionId !== DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1
+        // An installed Workflow root carries its Run workspace here. The
+        // deployment Action's own input names the receiver when it is explicit.
+        ...(context.actionCaller?.kind !== 'workflowRun' && context.externalActionTarget?.kind === 'machine'
+          && actionId !== DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1
           ? { explicitMachineId: context.externalActionTarget.machineId } : {}),
         readEnvironmentController: async request => {
           const loaded = await deploymentStorage('deployments.environments.get', request, context);

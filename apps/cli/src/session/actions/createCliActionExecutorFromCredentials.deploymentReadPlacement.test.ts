@@ -2,11 +2,15 @@ import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { WorkflowAcceptedAuthorizationV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { configuration } from '@/configuration';
 import { writeDaemonState } from '@/persistence';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
+import { createCliActionDeps } from './createCliActionDeps';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createMachineInstallationIdentityFixture } from '../../../../../packages/tests/src/testkit/machineIdentity';
 
 vi.mock('undici', async importOriginal => {
     const actual = await importOriginal<typeof import('undici')>();
@@ -88,6 +92,52 @@ describe('deployment read placement from a CLI on another Machine', () => {
             expect(calls.filter(call => call.includes('/v1/deployments/environments/env')), evidence).toHaveLength(machineId ? 0 : 1);
             expect(evidence).toContain(`/v1/machines/${machineId ?? 'controller-machine'}`);
             expect(evidence).not.toContain(`/v1/machines/${machineId ? 'controller-machine' : 'own-machine'}`);
+        });
+    });
+
+    it('places a Workflow Environment child at its controller, independent of the Run workspace', async () => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-workflow-deployment-placement-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const credentials = { token, encryption: null };
+            const identity = createMachineInstallationIdentityFixture();
+            const environment = createDeploymentEnvironmentHeaderV1({ id: 'env', serverId: 'srv_home',
+                controllerMachineId: 'controller-machine' });
+            const environmentReads = vi.spyOn(axios, 'request').mockResolvedValue({ status: 200,
+                data: { ok: true, environment, targetLinks: [] } });
+            const machineReads: string[] = [];
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                const path = new URL(url).pathname;
+                if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+                machineReads.push(path);
+                return { status: 404, data: { error: 'machine_not_found' } };
+            });
+            const workspace = { machineId: 'workflow-machine', directory: process.cwd() };
+            const runId = 'workflow-run';
+            const context = buildWorkflowActionContext({ runId, workspace,
+                authorization: WorkflowAcceptedAuthorizationV1Schema.parse({
+                    admittedPermissionCeiling: 'default', principal: { kind: 'host' },
+                }),
+            });
+            const deps = createCliActionDeps({ token, credentials, sessionId: '', ctx: null, mode: 'plain',
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.test',
+                machineActionDirectTargetTransport: { machineId: workspace.machineId, invoke: async () => {
+                    throw new Error('The child must not execute on the Run workspace');
+                } },
+                externalActionMachineRequestPrivateKey: identity.privateKeyBase64,
+                externalActionMachineInstallationId: identity.installationId,
+            });
+            const result = await deps.deploymentAction!('deployments.domains.remove', {
+                serverId: environment.serverId, environmentId: environment.id, domainId: 'domain',
+                expectedRevision: 1, expectedDomainRevision: 1, requestKey: 'remove-domain',
+            }, { ...context, actionRequestId: `${runId}/deployment/0`,
+                externalActionTarget: { kind: 'machine', machineId: workspace.machineId, project: workspace } });
+            const evidence = JSON.stringify({ result, machineReads });
+            expect(environmentReads.mock.calls.map(([request]) => request), evidence).toEqual([expect.objectContaining({
+                method: 'GET', url: expect.stringContaining('/v1/deployments/environments/env'),
+            })]);
+            expect(machineReads, evidence).toContain('/v1/machines/controller-machine');
+            expect(machineReads, evidence).not.toContain('/v1/machines/workflow-machine');
         });
     });
 
