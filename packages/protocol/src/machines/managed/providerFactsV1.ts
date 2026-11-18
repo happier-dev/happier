@@ -217,13 +217,7 @@ export const ManagedBootstrapSshCarrierV1Schema = lazyDefinition(() => z.strictO
 }));
 export const ManagedBootstrapCarrierV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [ManagedBootstrapNativeCarrierV1Schema, ManagedBootstrapSshCarrierV1Schema]));
 export type ManagedBootstrapCarrierV1 = z.infer<typeof ManagedBootstrapCarrierV1Schema>;
-export const ManagedRefusalCodeV1Schema = lazyDefinition(() => z.enum([
-  'invalid_request', 'permission_denied', 'account_mode_mismatch', 'managed_power_required', 'admission_unavailable', 'acquisition_disabled',
-  'controller_unavailable', 'controller_retired', 'credential_unavailable', 'provider_unavailable',
-  'request_conflict', 'intent_changed', 'managed_not_found', 'enrollment_retired', 'resource_mismatch',
-  'preset_not_found', 'preset_archived', 'preset_limit_reached', 'pool_no_available_machine',
-  'enrollment_identity_review_required', 'enrollment_attendance_required',
-]));
+export { ManagedRefusalCodeV1Schema } from './managedRefusalCodeV1.js';
 export const ManagedNativeOperationReferenceV1Schema = lazyDefinition(() => z.strictObject({ contributionRef: asProtocolZod(PluginContributionIdentityV1Schema), schemaVersion: z.int().check(z.gt(0)), value: PluginJsonValueV2Schema }));
 // Native stderr is a diagnostic excerpt bounded to the existing Action-operation
 // error-text envelope (10,000 characters), after the canonical privacy projection.

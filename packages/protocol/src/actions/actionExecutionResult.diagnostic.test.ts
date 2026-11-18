@@ -4,6 +4,8 @@ import { completeActionResult, normalizeActionExecutorThrownError } from './exec
 import { ActionOperationFailureV1Schema } from './operations/v1.js';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1 } from './actionExecutionResult.js';
 import * as actionResults from './actionExecutionResult.js';
+import { RpcError } from '../rpc/errors.js';
+import { restorePluginErrorFromWire } from '../plugins/errors.js';
 
 describe('Action failure error adapter', () => {
   it('retains an explicitly public child failure in an adapter cause and excludes raw causes', () => {
@@ -41,6 +43,13 @@ describe('Action failure error adapter', () => {
 
 describe('Action failure cause projection', () => {
   it.each([
+    { error: { code: 'private_account_token_7d91c2', status: 429 },
+      expected: { phase: 'voice.provider', errorClass: 'UnknownThrownValue', errorCode: null, httpStatus: 429 } },
+    { error: { name: 'ManagedMachineControllerError', code: 'private_account_token_7d91c2', status: 429 },
+      expected: { phase: 'voice.provider', errorClass: 'ManagedMachineControllerError', errorCode: null, httpStatus: 429 } },
+    { error: Object.assign(new Error('private provider response'), {
+      name: 'ManagedMachineControllerError', code: 'private_account_token_7d91c2', status: 429 }),
+      expected: { phase: 'voice.provider', errorClass: 'ManagedMachineControllerError', errorCode: null, httpStatus: 429 } },
     { error: Object.assign(new Error('private provider response'), { code: 'private-vendor-code', status: 429 }),
       expected: { phase: 'voice.provider', errorClass: 'Error', errorCode: null, httpStatus: 429 } },
     { error: new TypeError('private wrapper', { cause: Object.assign(new Error('private response'), {
@@ -56,9 +65,24 @@ describe('Action failure cause projection', () => {
       phase: 'voice.provider.open', errorClass: 'TypeError', errorCode: 'provider_refused', httpStatus: 429,
     } }), expected: { phase: 'voice.provider.open', errorClass: 'TypeError', errorCode: 'provider_refused', httpStatus: 429 } },
   ])('projects external failures without copying arbitrary native codes ($expected.errorClass/$expected.httpStatus)', ({ error, expected }) => {
-    const cause = projectActionFailureCauseV1(error, 'voice.provider', { allowUnknownErrorCode: false });
+    const cause = projectActionFailureCauseV1(error, 'voice.provider');
     expect(cause).toEqual(expected);
     expect(JSON.stringify(cause)).not.toContain('private');
+  });
+
+  it.each([
+    actionResults.createActionExecuteFailureError({ ok: false, errorCode: 'role_read_only', error: 'Role cannot be changed' }),
+    new RpcError('Role cannot be changed', 'role_read_only'),
+    restorePluginErrorFromWire({ name: 'PluginError', code: 'role_read_only', message: 'Role cannot be changed' }),
+  ])('retains a domain code carried by its declared public failure owner', error => {
+    expect(projectActionFailureCauseV1(error, 'roles.change'))
+      .toMatchObject({ phase: 'roles.change', errorCode: 'role_read_only', httpStatus: null });
+  });
+
+  it.each(['route_conflict', 'invalid_provider_output', 'deployment_unavailable', 'provider_request_failed',
+    'enrollment_retired', 'workspace_sync_child_unavailable'])('retains the closed diagnostic code %s', code => {
+    expect(projectActionFailureCauseV1({ code, status: 503 }, 'dispatch'))
+      .toMatchObject({ errorCode: code, httpStatus: 503 });
   });
 
   it('retains the original Action cause after a Session wrapper crosses another Action boundary', () => {
@@ -195,18 +219,19 @@ describe('code-only JSON-RPC failure diagnostics', () => {
 });
 
 describe('managed controller failure causes', () => {
-  it('retains a managed controller code and never its message or other fields', () => {
-    const error = Object.assign(new Error('PRIVATE_MESSAGE'), { name: 'ManagedMachineControllerError',
-      code: 'native_acquisition_unconfirmed', data: { token: 'PRIVATE_TOKEN' } });
+  it('retains an explicitly public managed controller cause without copying raw fields', () => {
+    const error = Object.assign(new Error('PRIVATE_MESSAGE', { cause: { ok: false,
+      errorCode: 'native_acquisition_unconfirmed', error: 'native_acquisition_unconfirmed' } }), { name: 'ManagedMachineControllerError',
+      code: 'PRIVATE_CONTROLLER_CODE', data: { token: 'PRIVATE_TOKEN' } });
     const result = readUnexpectedActionErrorDiagnosticV1(error);
-    expect(result).toMatchObject({ errorClass: 'ManagedMachineControllerError', errorCode: 'native_acquisition_unconfirmed' });
+    expect(result).toMatchObject({ errorClass: 'ManagedMachineControllerError', errorCode: null });
     expect(JSON.stringify(result)).not.toMatch(/PRIVATE_/);
     expect(projectActionFailureCauseV1(error, 'machines.managed.acquire')).toEqual({
       phase: 'machines.managed.acquire', errorClass: 'ManagedMachineControllerError',
       errorCode: 'native_acquisition_unconfirmed', httpStatus: null });
     expect(ActionFailureCauseV1Schema.safeParse(projectActionFailureCauseV1(error, 'machines.managed.acquire')).success).toBe(true);
     // The detached operation stores exactly this projection, so its readers see the code.
-    const failure = normalizeActionExecutorThrownError(error, 'machines.managed.acquire');
+    const { ok: _ok, ...failure } = { ok: false, ...normalizeActionExecutorThrownError(error, 'machines.managed.acquire') };
     expect(ActionOperationFailureV1Schema.parse(failure)).toMatchObject({ errorCode: 'native_acquisition_unconfirmed',
       failureCause: { errorClass: 'ManagedMachineControllerError', errorCode: 'native_acquisition_unconfirmed' } });
   });

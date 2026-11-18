@@ -1384,7 +1384,7 @@ describe('createPluginActionInvocation', () => {
       status: 'failed',
       code: 'plugin_action_execution_failed',
       message: 'provider credential is secret',
-      data: { failureCause: { phase: 'action.handler', errorClass: 'Error', errorCode: 'fixture_provider_failed', httpStatus: null } },
+      data: { failureCause: { phase: 'action.handler', errorClass: 'Error', errorCode: null, httpStatus: null } },
     });
   });
 });

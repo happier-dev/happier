@@ -131,6 +131,12 @@ This changes no persisted format, service ABI or released wire epoch.
 
 ## Action refusal diagnostics (unreleased 0.3)
 
+Action failure projection retains codes from public failure carriers and the
+shared set of known diagnostic codes. For raw exceptions, an undeclared code is
+dropped by default while the phase, error class, and valid HTTP status survive.
+An adapter that enables `allowUnknownErrorCode` is responsible for establishing
+that the code is public before passing it to the projector.
+
 The Action failure-cause owner keeps provider-authored `nativeErrorCode` separate
 from the Happier `errorCode` classification. Plugin author-payload and RPC readers
 normalize malformed code/status leaves independently, retaining the valid cause

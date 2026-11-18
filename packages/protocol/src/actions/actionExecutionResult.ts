@@ -4,13 +4,15 @@ import { SessionGoalControlFailureV1Schema } from '../sessions/work/state/sessio
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { QualifiedConnectedAccountPurposeV1Schema } from '../connect/connectedAccountPurposeIdentity.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
-import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '../rpc/errors.js';
+import { isRpcError, MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '../rpc/errors.js';
 import { ActionErrorClassV1Schema, readActionErrorCodeV1, type ActionErrorClassV1 } from './actionErrorClassV1.js';
 import { isPluginError } from '../plugins/errors.js';
 import { ApprovalProfileResolutionV1Schema } from './approvalProfiles.js';
 import { ActionOperationIdentifierV1Schema } from './operations/identifierV1.js';
 import { ActionIdSchema } from './actionIds.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import { DeploymentTargetRoleFailureV1Schema } from '../plugins/contributions/deploymentTargetRoleFailureV1.js';
+import { ManagedRefusalCodeV1Schema } from '../machines/managed/managedRefusalCodeV1.js';
 export { readActionErrorCodeV1 } from './actionErrorClassV1.js';
 export { readActionFailurePresentationV1, projectActionFailureForAgentV1, type ActionFailurePresentationV1 } from './actionFailurePresentation.js';
 
@@ -280,7 +282,15 @@ export function readActionFailureCauseV1(value: unknown): ActionFailureCauseV1 {
     ...(nativeReason.success ? { nativeErrorReason: nativeReason.data } : {}) };
 }
 
-/** Raw external exceptions use closed diagnostic codes; authored causes remain authoritative. */
+function readDeclaredActionFailureCode(error: unknown): string | null {
+  try {
+    const failure = parseActionExecuteFailure(error);
+    const code = failure?.errorCode ?? (isRpcError(error) ? error.rpcErrorCode : isPluginError(error) ? error.code : null);
+    return readActionErrorCodeV1({ code });
+  } catch { return null; /* A diagnostic accessor cannot replace the original failure. */ }
+}
+
+/** Raw external exceptions use closed diagnostic codes; authored causes and public carriers remain authoritative. */
 export function projectActionFailureCauseV1(
   error: unknown,
   phase?: string,
@@ -299,14 +309,16 @@ export function projectActionFailureCauseV1(
   catch { /* Preserve the original failure if a diagnostic accessor throws. */ }
   const parsedPhase = ActionFailurePhaseV1Schema.safeParse(phase ?? stage ?? 'dispatch');
   const settledPhase = parsedPhase.success ? parsedPhase.data : 'dispatch';
-  const allowUnknownErrorCode = options?.allowUnknownErrorCode !== false;
-  const errorCode = (allowUnknownErrorCode ? readActionErrorCodeV1(error) : null) ?? diagnostic.errorCode;
+  const allowUnknownErrorCode = options?.allowUnknownErrorCode === true;
+  const errorCode = readDeclaredActionFailureCode(error)
+    ?? (allowUnknownErrorCode ? readActionErrorCodeV1(error) : null) ?? diagnostic.errorCode;
   if (errorCode === null || diagnostic.httpStatus === null) {
     try {
       const immediate = error && typeof error === 'object' && 'cause' in error ? error.cause : undefined;
       const child = readUnexpectedActionErrorDiagnosticV1(immediate);
       return { phase: settledPhase, errorClass: diagnostic.errorClass,
-        errorCode: errorCode ?? (allowUnknownErrorCode ? readActionErrorCodeV1(immediate) : null) ?? child.errorCode,
+        errorCode: errorCode ?? readDeclaredActionFailureCode(immediate)
+          ?? (allowUnknownErrorCode ? readActionErrorCodeV1(immediate) : null) ?? child.errorCode,
         httpStatus: diagnostic.httpStatus ?? child.httpStatus };
     } catch { /* A hostile cause accessor cannot replace the original failure. */ }
   }
@@ -408,11 +420,14 @@ export function readUnexpectedActionErrorDiagnosticV1(error: unknown): Readonly<
         'SQLITE_CANTOPEN', 'SQLITE_CORRUPT',
         'session_detail_invalid_response', 'session_detail_projection_unavailable', 'not_authenticated', 'client-upgrade-required',
         'database_transaction_conflict_exhausted', 'database_transaction_timeout', 'database_connection_unavailable',
+        'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE', 'socket_connect_timeout', 'socket_disconnected_before_connect', 'socket_destroyed',
+        'workspace_sync_child_unavailable',
         'route_conflict', 'invalid_provider_output',
-      ].includes(code) || Object.values(RPC_ERROR_CODES).some(known => known === code))) errorCode = code;
-      // The managed controller throws only its own closed, code-only identifiers.
-      if (errorCode === null && name === 'ManagedMachineControllerError' && typeof code === 'string'
-        && code.length <= 200 && /^[a-z][a-z0-9_-]*$/iu.test(code)) errorCode = code;
+      ].includes(code) || Object.values(RPC_ERROR_CODES).some(known => known === code)
+        || DeploymentTargetRoleFailureV1Schema.shape.code.safeParse(code).success
+        || ManagedRefusalCodeV1Schema.safeParse(code).success
+        || (name === 'ManagedMachineControllerError' && (code === 'managed_request_failed'
+          || code === 'native_acquisition_unconfirmed')))) errorCode = code;
       // JSON-RPC reserves these protocol/server codes. Preserve only that
       // bounded vocabulary, never native application data or message text.
       if (name === 'JsonRpcApplicationError' && typeof code === 'number' && Number.isInteger(code)
