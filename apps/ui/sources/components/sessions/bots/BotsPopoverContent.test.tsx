@@ -26,6 +26,7 @@ import {
 
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createLockedEncryptedSessionByIdResponseFixture, createPlainSessionByIdResponseFixture, createSessionFixture, createSessionListRenderableSessionFixture, createSessionOwnerViewerFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSessionFromListRenderable } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { perfFixtureId } from '../../../../../../packages/tests/src/testkit/stress/scenarios/perfProfile';
@@ -46,9 +47,8 @@ import { encodeV2SessionListCursorV1 } from '@happier-dev/protocol/sessions/cont
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/sessions/organization/constants';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
-import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { Modal } from '@/modal';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { PINNED_GROUP_KEY_V1 } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
@@ -77,12 +77,7 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 vi.mock('socket.io-client', async importOriginal =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal),
 );
-// Metro's deferred require is the loader boundary; the real Action executor remains underneath it.
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
-  const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
-  const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
-  return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
-});
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
 installDisconnectedServerSocketBoundary(socket => {
   socket.connect = vi.fn(() => {
@@ -146,6 +141,7 @@ describe('Bots roster', () => {
     webLocks = installWebLockManagerMock();
     persistedOrder = null;
     askFirst = false;
+    vi.mocked(Modal.confirm).mockReset().mockResolvedValue(false);
     serveHealthyOrdinarySnapshot = false;
     ordinarySessions = [];
     holdBotQuery = false;
@@ -257,7 +253,7 @@ describe('Bots roster', () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
     const bot = createSessionListRenderableSessionFixture({ id: 'clock-bot', active: true, activeAt: now,
-      presence: 'online', latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: undefined,
+      presence: 'online', thinking: true, thinkingAt: now,
       meaningfulActivityAt: now, metadata: { path: '/project', bot: { kind: 'bot' } } });
     storage.getState().applyServerScopedSessionListRows(serverId, [bot], { source: 'ordinary', mode: 'replace' });
     let commits = 0;
@@ -1046,9 +1042,11 @@ describe('Bots roster', () => {
       }
   });
 
-  it.each(['list', 'rail'] as const)('keeps an Ask-first %s move pending until the captured Home approval settles', async projection => {
+  it.each(['list', 'rail'] as const)('keeps an Ask-first %s move pending until the person confirms', async projection => {
     const serverId = resolveServerProfileScopeIdForIdentifier(connection!.home.id);
     const ids = ['first-bot', 'list-only', 'last-bot'];
+    const confirmation = createDeferred<boolean>();
+    vi.mocked(Modal.confirm).mockReturnValueOnce(confirmation.promise);
     askFirst = true;
     storage.getState().applySettingsLocal(actionApprovalSettings());
     storage.setState({ profileScope: { serverId, accountId: 'account-a' }, settingsScope: { serverId, accountId: 'account-a' } });
@@ -1116,22 +1114,13 @@ describe('Bots roster', () => {
       }
       void pending.then(() => { settled = true; });
     });
-    await vi.waitFor(() => expect(artifacts.list()).toHaveLength(1));
-    await flushHookEffects({ cycles: 3 });
-    const artifactId = artifacts.list()[0]!.id;
-    expect(ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!))).toMatchObject({
-      status: 'open', actionId: 'session.organization.move',
-      actionArgs: { scope: { serverId, accountId: 'account-a' }, ...(projection === 'rail' ? { projection: 'rail' } : {}) },
-      executionOriginV1: { serverId },
-    });
+    await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
     expect(persistedOrder).toBeNull();
     expect(settled).toBe(false);
-    await expect(decideApprovalAsInbox(serverId, artifactId, 'approve')).resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
-    expect(ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!))).toMatchObject({
-      status: 'executed', execution: { ok: true, result: { status: 'applied' } },
-    });
+    await act(async () => { confirmation.resolve(true); });
     await vi.waitFor(() => expect(settled).toBe(true));
     expect(persistedOrder).toEqual(['list-only', 'last-bot', 'first-bot']);
+    expect(artifacts.list()).toEqual([]);
     if (projection === 'list') await expect(pending).resolves.toEqual({ status: 'applied' });
     await hook.unmount();
   });
@@ -1139,6 +1128,8 @@ describe('Bots roster', () => {
   it('settles an overflow Bot move on its captured Home after More closes', async () => {
     const serverId = resolveServerProfileScopeIdForIdentifier(connection!.home.id);
     const ids = ['first-bot', 'last-bot'];
+    const confirmation = createDeferred<boolean>();
+    vi.mocked(Modal.confirm).mockReturnValueOnce(confirmation.promise);
     askFirst = true;
     storage.getState().applySettingsLocal(actionApprovalSettings());
     storage.setState({ profileScope: { serverId, accountId: 'account-a' }, settingsScope: { serverId, accountId: 'account-a' } });
@@ -1156,7 +1147,6 @@ describe('Bots roster', () => {
     const { buildAppRailEntries } = await import('@/components/navigation/shell/appRail/appRailModel');
     const { resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
     const { useSessionListRailOrganizationAction } = await import('@/components/sessions/shell/useSessionListRailOrganizationAction');
-    const { Modal } = await import('@/modal');
     const alert = vi.spyOn(Modal, 'alert');
     const catalogEntries = buildAppRailEntries(resolveCompactAppDestinations({
       builtins: { externalSessions: false, inbox: false, workflows: false, friends: false }, pages: [],
@@ -1199,17 +1189,13 @@ describe('Bots roster', () => {
       await click('app-rail-more.trigger');
       await click('app-rail-more:overflow-0');
       await click('dropdown-option-move-down_overflow-0');
-      await vi.waitFor(() => expect(artifacts.list()).toHaveLength(1));
-      const artifactId = artifacts.list()[0]!.id;
-      expect(ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!))).toMatchObject({
-        status: 'open', actionArgs: { projection: 'rail', scope: { serverId, accountId: 'account-a' } },
-        executionOriginV1: { serverId, accountId: 'account-a' },
-      });
+      await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
       expect(persistedOrder).toBeNull();
       expect(alert).not.toHaveBeenCalled();
       await click('app-rail-more.trigger');
-      await expect(decideApprovalAsInbox(serverId, artifactId, 'approve')).resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
+      await domAct(async () => { confirmation.resolve(true); });
       await vi.waitFor(() => expect(persistedOrder).toEqual(['last-bot', 'first-bot']));
+      expect(artifacts.list()).toEqual([]);
       expect(alert).not.toHaveBeenCalled();
     } finally {
       await domAct(async () => root.unmount());

@@ -50,11 +50,20 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 // The browser recycler is the platform boundary; keep the real overlay list, rows and actions.
+const legendGeometry = vi.hoisted(() => ({ contentLength: 0, listeners: new Set<(size: number) => void>() }));
 vi.mock('@legendapp/list/react-native', async () => {
     const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
     return createLegendListModuleMock({
         refHandle: { getScrollableNode: vi.fn(() => ({ clientWidth: 480, clientHeight: 320 })) },
-        resolveState: () => ({ contentLength: 0, listen: () => () => {} }),
+        resolveState: () => ({
+            contentLength: legendGeometry.contentLength,
+            listen: (key, listener) => {
+                if (key !== 'totalSize') return () => {};
+                const sizeListener = listener as (size: number) => void;
+                legendGeometry.listeners.add(sizeListener);
+                return () => { legendGeometry.listeners.delete(sizeListener); };
+            },
+        }),
     });
 });
 vi.mock('@/components/ui/text/Text', async () => {
@@ -228,6 +237,8 @@ describe('DesktopActivityOverlayRoute', () => {
 
     beforeEach(() => {
         vi.resetModules();
+        legendGeometry.contentLength = 0;
+        legendGeometry.listeners.clear();
         isDesktopHostMock.mockReturnValue(true);
         isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
         listenDesktopActivityOverlayWindowStateMock.mockImplementation(async () => () => {});
@@ -555,7 +566,8 @@ describe('DesktopActivityOverlayRoute', () => {
             reducedMotion.value = false;
             setDesktopGlassPanelShapeMock.mockClear();
             await act(async () => {
-                screen.findByTestId('desktop-activity-overlay-expanded-scroll')?.props.onContentSizeChange(464, 240);
+                legendGeometry.contentLength = 240;
+                for (const publish of [...legendGeometry.listeners]) publish(legendGeometry.contentLength);
             });
             await flushHookEffects();
             expect(setDesktopGlassPanelShapeMock.mock.calls).toEqual([[null]]);

@@ -148,7 +148,7 @@ describe('closed Bots entries summary', () => {
 
   it('keeps raw liveness fresh while twelve heartbeats cause zero sorts/publications, then publishes the awareness deadline', () => {
     const bot = createSessionListRenderableSessionFixture({ id: 'working', active: true, activeAt: now, presence: 'online',
-      latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: undefined, meaningfulActivityAt: 10,
+      thinking: true, thinkingAt: now, meaningfulActivityAt: 10,
       metadata: { path: '/p', bot: { kind: 'bot' } } });
     let rows = { working: bot };
     const read = createBotsPresentationReader(['home-a']);

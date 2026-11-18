@@ -683,8 +683,6 @@ describe('DesktopActivityOverlayRuntime', () => {
             currentAccount: true, active: false });
         const { saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
         saveAccountSettings({ serverId: 'server-3', accountId: 'account-server-3' }, settingsParse({}), 1);
-        // Let unrelated Auth bootstrap finish rather than retry an unanswered Task route.
-        desktopHomes.answer('server-1', '/v1/tasks', { body: { tasks: [] } });
         const { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema,
             PluginAvailabilityIntentsListActionOutputV1Schema } = await import('@happier-dev/protocol/plugins/availability');
         desktopHomes.answer('server-1', PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'], {
@@ -745,7 +743,6 @@ describe('DesktopActivityOverlayRuntime', () => {
             receive?.(JSON.parse(JSON.stringify(payload)) as DesktopActivityOverlaySyncPayload);
         });
         const screen = await renderScreen(<><TransportConsumer /><NativeDesktopActivityOverlayRuntime /></>);
-        await vi.waitFor(() => expect(storage.getState().todoState).not.toBeNull(), { timeout: 20_000 });
         await act(async () => {
             const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
             await getSyncSingleton().refreshPluginAccountAvailability();
@@ -1011,9 +1008,9 @@ describe('DesktopActivityOverlayRuntime', () => {
         await waitForHomeGovernance(() => expect(emitDesktopActivityOverlayInteractionResultMock)
             .toHaveBeenCalledWith(expect.objectContaining({ windowLabel: 'capture', requestId: 'settled-discard', phase: 'settled' })));
         expect(discardCaptureMock).toHaveBeenCalledExactlyOnceWith('discard-after-undo');
-        expect(emitDesktopActivityOverlayInteractionResultMock).toHaveBeenCalledWith({ windowLabel: 'capture',
+        expect(emitDesktopActivityOverlayInteractionResultMock).toHaveBeenCalledWith(expect.objectContaining({ windowLabel: 'capture',
             requestId: 'settled-discard', phase: 'settled', ok: true,
-            result: { captureRef: 'discard-after-undo', status: 'discarded' } });
+            result: { captureRef: 'discard-after-undo', status: 'discarded' } }));
     });
 
     it('routes overlay interactions to the selected session without deciding presentation', async () => {

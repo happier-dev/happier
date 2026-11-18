@@ -77,6 +77,7 @@ function stubDesktopHost() {
 
 describe('Settings → Desktop app → Windows', () => {
   it('turns the Session window Bot rail off and on from the row and from settings.set', async () => {
+    stubDesktopHost();
     const account = await createSecretSettingsTestHarness({
       settings: settingsParse({
         actionsSettingsV1: {
@@ -85,7 +86,6 @@ describe('Settings → Desktop app → Windows', () => {
         },
       }),
     });
-    stubDesktopHost();
     storage.getState().applyLocalSettings({ ...localSettingsDefaults });
     try {
       const screen = await renderScreen(<DesktopWindowsSettingsSection />);

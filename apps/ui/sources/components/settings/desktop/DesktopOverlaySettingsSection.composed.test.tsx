@@ -12,11 +12,11 @@ import { createSecretSettingsTestHarness } from '@/components/settings/secrets/s
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
-import { flushHookEffects } from '@/dev/testkit';
+import { createDeferred, flushHookEffects } from '@/dev/testkit';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { resolveDesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/resolveDesktopOverlayPolicy';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { Modal } from '@/modal';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -33,13 +33,18 @@ await loadSyncSingletonForTests();
 const { DesktopOverlaySettingsSection } = await import('./DesktopOverlaySettingsSection');
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 const originalState = storage.getState();
-afterEach(() => { standardCleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); storage.setState(originalState, true); });
+afterEach(() => {
+    standardCleanup();
+    vi.mocked(Modal.confirm).mockReset();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    storage.setState(originalState, true);
+});
 
 describe('Notch declared settings composition', () => {
     it('contracts the page and admits device edits through Off, Ask and Allowed without Account writes', async () => {
         const baseline = settingsParse({ actionsSettingsV1: { v: 1,
             actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } });
-        const account = await createSecretSettingsTestHarness({ settings: baseline });
         vi.stubGlobal('isTauri', true);
         const secureStorage = createDesktopSecureStorageBoundary();
         vi.stubGlobal('__TAURI_INTERNALS__', { invoke: (command: string, args?: Record<string, unknown>) => {
@@ -48,6 +53,7 @@ describe('Notch declared settings composition', () => {
             });
             return secureStorage.invoke(command, args);
         } });
+        const account = await createSecretSettingsTestHarness({ settings: baseline });
         storage.getState().applyLocalSettings({ ...localSettingsDefaults, desktopOverlayEnabled: true });
         let commits = 0;
         const writes = vi.spyOn(getPersistenceStorage(), 'set');
@@ -66,19 +72,22 @@ describe('Notch declared settings composition', () => {
             expect(storage.getState().localSettings.desktopOverlayVisibilityMode).toBe('attention_only');
             expect(localWrites()).toHaveLength(0);
             await act(async () => { account.replaceSettings(settingsParse({ ...baseline, actionsSettingsV1: { v: 1,
-                actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } } } })); });
+                actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } } } }), { version: 2 }); });
+            const confirmation = createDeferred<boolean>();
+            vi.mocked(Modal.confirm).mockReturnValueOnce(confirmation.promise);
             let pending: Promise<unknown>;
             await act(async () => { pending = mode().props.onChange('active_sessions'); });
-            await flushHookEffects();
+            await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
             expect(storage.getState().localSettings.desktopOverlayVisibilityMode).toBe('attention_only');
             expect(localWrites()).toHaveLength(0);
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'approve');
-            await act(async () => { await pending!; });
+            await act(async () => {
+                confirmation.resolve(true);
+                expect(await pending!).toBe(true);
+            });
             expect(storage.getState().localSettings.desktopOverlayVisibilityMode).toBe('active_sessions');
             expect(localWrites()).toHaveLength(1);
             await act(async () => { account.replaceSettings(settingsParse({ ...baseline, actionsSettingsV1: { v: 1,
-                approvalWaivedSurfaces: { 'settings.set': ['ui', 'agent'] } } })); });
+                approvalWaivedSurfaces: { 'settings.set': ['ui', 'agent'] } } }), { version: 3 }); });
             await act(async () => { await choices().find(row => row.props.testID === 'settings-desktop-notch-conversation-presentation')!
                 .props.onChange('window'); });
             expect(storage.getState().localSettings.desktopNotchConversationPresentation).toBe('window');
@@ -93,6 +102,8 @@ describe('Notch declared settings composition', () => {
             }
             expect(localWrites()).toHaveLength(4);
             expect(resolveDesktopOverlayPolicy(storage.getState().localSettings)).toEqual(uiPolicy);
+            expect(Modal.confirm).toHaveBeenCalledTimes(1);
+            expect(account.artifacts.list()).toEqual([]);
             expect(account.settingsWrites).toEqual([]);
             await flushHookEffects(); commits = 0;
             await act(async () => { storage.getState().applyLocalSettings({ desktopPetOverlayLocked: true }); });

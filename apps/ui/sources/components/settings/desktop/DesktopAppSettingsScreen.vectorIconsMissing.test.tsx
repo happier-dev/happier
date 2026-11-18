@@ -1,21 +1,13 @@
+/** @vitest-environment jsdom */
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import 'fake-indexeddb/auto';
 
-import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
+import { storage } from '@/sync/domains/state/storage';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
-
-const autostartState = vi.hoisted(() => ({
-    supported: true,
-    mode: 'at-login' as 'at-login' | 'on-demand' | null,
-    installed: true as boolean | null,
-    loading: false,
-    error: null as string | null,
-    setMode: async (_mode: 'at-login' | 'on-demand') => {},
-}));
-const localSettingsState = vi.hoisted(() => ({
-    value: {} as Record<string, unknown>,
-}));
 
 installSettingsViewCommonModuleMocks({
     icons: async () => ({
@@ -25,43 +17,39 @@ installSettingsViewCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key: string) => key });
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useLocalSettings: () => localSettingsState.value,
-        });
-    },
+    storage: 'real',
 });
 
-vi.mock('@/utils/platform/desktopHost', () => ({
-    isDesktopHost: () => true,
-    desktopHostKind: () => null,
-}));
-
-vi.mock('./useDesktopLoginStart', () => ({
-    useDesktopLoginStart: () => autostartState,
-}));
+const { DesktopAppSettingsScreen } = await import('./DesktopAppSettingsScreen');
 
 describe('DesktopAppSettingsScreen (missing vector icons)', () => {
-    beforeEach(() => {
-        autostartState.supported = true;
-        autostartState.mode = 'at-login';
-        autostartState.installed = true;
-        autostartState.loading = false;
-        autostartState.error = null;
-        localSettingsState.value = {
-            desktopOverlayEnabled: true,
-        };
+    afterEach(async () => {
+        await standardCleanup();
+        vi.unstubAllGlobals();
     });
 
     it('does not crash when Ionicons is unavailable at runtime', async () => {
-        const { DesktopAppSettingsScreen } = await import('./DesktopAppSettingsScreen');
-        const screen = await withPopoverWebGlobals(async () => renderSettingsView(<DesktopAppSettingsScreen />));
-
-        expect(screen.findRow('settings-desktop-autostart-enabled')).toBeTruthy();
-        expect(screen.findRow('settings-desktop-overlay-enabled')).toBeTruthy();
-        expect(screen.findRow('settings-desktop-overlay-visibility-mode')).toBeTruthy();
-        expect(screen.findRow('settings-desktop-overlay-presentation-mode')).toBeTruthy();
-        expect(screen.findRow('settings-desktop-overlay-compact-style')).toBeNull();
+        const secureStorage = createDesktopSecureStorageBoundary();
+        let callbackId = 0;
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: (command: string, args?: Record<string, unknown>) => {
+            if (command === 'desktop_host_get_availability') return Promise.resolve({
+                activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' },
+            });
+            if (command === 'plugin:event|listen') return Promise.resolve(++callbackId);
+            return secureStorage.invoke(command, args);
+        }, transformCallback: () => ++callbackId });
+        vi.stubGlobal('__TAURI_EVENT_PLUGIN_INTERNALS__', { unregisterListener: () => {} });
+        const originalSettings = storage.getState().localSettings;
+        storage.setState({ localSettings: { ...originalSettings, desktopOverlayEnabled: true } });
+        try {
+            const screen = await renderSettingsView(<DesktopAppSettingsScreen />);
+            expect(screen.findRow('settings-desktop-autostart-enabled')).toBeTruthy();
+            await vi.waitFor(() => expect(screen.findRow('settings-desktop-overlay-enabled')).toBeTruthy());
+            expect(screen.findRow('settings-desktop-overlay-visibility-mode')).toBeTruthy();
+            expect(screen.findRow('settings-desktop-notch-conversation-presentation')).toBeTruthy();
+            expect(screen.findRow('settings-desktop-overlay-compact-style')).toBeNull();
+        } finally {
+            storage.setState({ localSettings: originalSettings });
+        }
     });
 });
