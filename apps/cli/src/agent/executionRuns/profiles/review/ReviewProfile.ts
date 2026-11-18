@@ -1,4 +1,5 @@
 import { REVIEW_SCM_SCOPE_INPUT_KEY } from '@happier-dev/protocol/reviews/reviewStart';
+import { SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY } from '@happier-dev/protocol/reviews/scmPullRequestScope';
 import { REVIEW_NEW_ROUND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ReviewRoundBindingV1Schema } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
@@ -56,6 +57,13 @@ export const ReviewProfile: ExecutionRunIntentProfile = bindScmExecutionRunProfi
       ? await readCapturedScmComparison({ cwd, comparisonId: existing.comparisonId, ...(sessionId ? { sessionId } : {}) }) : null;
     const scmReviewScope = await resolveScope({ cwd,
       intentInput: { ...existing, ...(captured ? { comparison: captured.comparison } : {}) } });
+    if (scmReviewScope.status === 'unsupported'
+      && (existing.comparisonId !== undefined || existing[SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY] !== undefined)) {
+      const diagnostic = scmReviewScope.diagnostics[0];
+      throw Object.assign(new Error(diagnostic?.message ?? 'The selected review scope is unavailable.'), {
+        code: diagnostic?.code ?? 'scm_status_unavailable',
+      });
+    }
     const selectedPaths = new Set(scmReviewScope.selectedPaths);
     const comparison = captured ? { ...captured.comparison, inventory: { ...captured.comparison.inventory,
       files: captured.comparison.inventory.files.filter(file => selectedPaths.has(file.path)) } } : undefined;

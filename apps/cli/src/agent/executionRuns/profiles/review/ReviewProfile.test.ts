@@ -82,12 +82,12 @@ describe('ReviewProfile', () => {
       expect(prompt).not.toContain('ambientIssue();');
       expect(prompt).not.toContain('infer the repository');
       expect(prompt).not.toContain('current uncommitted');
-      const contradictory = await ReviewProfile.prepareStartParams!({ cwd: fixture.rootPath, request: {
+      const contradictory = ReviewProfile.prepareStartParams!({ cwd: fixture.rootPath, request: {
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, intent: 'review', instructions: 'Review the repository.',
         permissionMode: 'read_only', runClass: 'bounded', retentionPolicy: 'ephemeral', ioMode: 'request_response',
         intentInput: { scope: 'repository', comparisonId },
       } });
-      expect(contradictory?.intentInput).toMatchObject({ scmReviewScope: { status: 'unsupported' } });
+      await expect(contradictory).rejects.toMatchObject({ code: 'scm_status_unavailable' });
     } finally {
       if (comparisonId) await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId });
       await rm(fixture.rootPath, { recursive: true, force: true });
@@ -383,10 +383,10 @@ describe('ReviewProfile', () => {
         status: 'scope_present',
         scope: scmPullRequestReviewScope,
       });
-      const contradictory = await ReviewProfile.prepareStartParams!({ cwd, request: {
+      const contradictory = ReviewProfile.prepareStartParams!({ cwd, request: {
         ...request, intentInput: { ...request.intentInput, scope: 'repository' },
       } });
-      expect(contradictory?.intentInput).toMatchObject({ scmReviewScope: { status: 'unsupported' } });
+      await expect(contradictory).rejects.toMatchObject({ code: 'scm_status_unavailable' });
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
