@@ -160,12 +160,19 @@ it('admits the receiver archive download whose parent proof still carries the re
       authorization: root, effectActionId: 'daemon.filesystem.download' as const, target: root.binding.target,
       installationId: 'receiver-install', machineSignature: 'a'.repeat(86), deploymentChildExecution: proof } } };
   expect(await rpc.handleRequest(request)).toMatchObject({ rootAccount: root.binding.accountId });
-  // A different signed root still refuses even with the same sealed parent proof.
-  const other = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, token: 'other-root' });
-  expect(await rpc.handleRequest({ ...request, callerInputAuthorization: other,
+  // The same sealed parent proof admits no other root, binding, receiver or Account.
+  const attempt = async (presented: typeof root, installationId = 'receiver-install') => await rpc.handleRequest({
+    ...request, callerInputAuthorization: presented,
     workspaceSyncSourceExecution: { ...request.workspaceSyncSourceExecution, externalActionExecution: {
-      ...request.workspaceSyncSourceExecution.externalActionExecution, authorization: other } } }))
-    .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      ...request.workspaceSyncSourceExecution.externalActionExecution, authorization: presented, installationId } } });
+  const refused = { errorCode: RPC_ERROR_CODES.FORBIDDEN };
+  expect(await attempt(ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, token: 'other-root' })))
+    .toMatchObject(refused);
+  expect(await attempt(ExternalActionExecutionAuthorizationV1Schema.parse({ ...root,
+    binding: { ...root.binding, requestId: 'other-request' } }))).toMatchObject(refused);
+  expect(await attempt(root, 'other-receiver-install')).toMatchObject(refused);
+  expect(await attempt(ExternalActionExecutionAuthorizationV1Schema.parse({ ...root,
+    binding: { ...root.binding, accountId: 'other-account' } }))).toMatchObject(refused);
 });
 
 it.each(['account', 'terminal'] as const)('preserves the %s root authority when admitting exact-machine terminal observation', async kind => {
