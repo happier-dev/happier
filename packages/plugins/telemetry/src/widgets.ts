@@ -159,7 +159,7 @@ export const TELEMETRY_WIDGET_VIEWS: readonly UiView[] = [
     target: { kind: 'app' },
     renderer: 'metric-widget',
     icon: 'chart',
-    title: { key: 'plugins.telemetry.widgets.metric', fallback: 'Metric' },
+    title: { key: 'plugins.telemetry.widgets.metric', fallback: 'App metric' },
     description: {
       key: 'plugins.telemetry.widgets.metric.description',
       fallback: 'Latency, errors, requests or heap over time',
