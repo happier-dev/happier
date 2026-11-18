@@ -102,10 +102,26 @@ it('keeps input-sensitive plugin effects discoverable and settles only mutation 
     expect(await discover('conditional')).toMatchObject({ ok: true, result: { actionSpec: { sideEffectClass: 'external' } } });
     expect(await discover('read')).toMatchObject({ ok: true, result: { actionSpec: { sideEffectClass: 'read' } } });
     expect(await discover('scoped')).toMatchObject({ ok: true, result: { actionSpec: { approvalScope: 'environment' } } });
+    expect(await discover('scoped')).toMatchObject({ result: { actionSpec: { automation: {
+      subjectKinds: ['environment', 'approvalProfile'],
+    } } } });
+    const healthDiscovery = await discover('health');
+    expect(healthDiscovery).toMatchObject({ result: { actionSpec: { automation: {
+      before: true, after: true, subjectKinds: ['healthCheck', 'approvalProfile'],
+      primarySubject: { kind: 'healthCheck', field: 'checkId' },
+    } } } });
+    expect(await executor.execute('action.spec.search', { query: actionId('health'), purpose: 'automation', limit: null },
+      { surface: 'cli' })).toMatchObject({ ok: true, result: { actionSpecs: expect.arrayContaining([
+        expect.objectContaining({ id: actionId('health'), automation: expect.objectContaining({
+          subjectKinds: ['healthCheck', 'approvalProfile'],
+        }) }),
+      ]) } });
     expect(await discover('effect')).toMatchObject({ ok: true, result: { actionSpec: { sideEffectClass: 'external' } } });
     const undeclared = await discover('undeclared');
     expect(undeclared).toMatchObject({ ok: true });
     expect(undeclared).not.toHaveProperty('result.actionSpec.sideEffectClass');
+    expect(undeclared).toMatchObject({ result: { actionSpec: { automation: { subjectKinds: ['approvalProfile'] } } } });
+    expect(undeclared).not.toHaveProperty('result.actionSpec.automation.primarySubject');
     const invoke = async (localId: string, mode: string) => {
       const result = await executor.execute('action.invoke', { action: { pluginId: authored.manifest.id, localId }, input: { mode } },
         { surface: 'cli', authority: 'present_user', actionRequestId: `${localId}-${mode}`, serverId: 'home', serverIdentityId: 'home' });

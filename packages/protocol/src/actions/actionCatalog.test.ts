@@ -24,6 +24,25 @@ import { createActionExecutor } from './actionExecutor.js';
 import { ActionDiscoveryDefinitionSummaryV1Schema } from './actionDefinitionV1.js';
 
 describe('actionCatalog action-definition adapter', () => {
+  it.each([
+    { scope: 'environment' as const, kinds: ['environment', 'approvalProfile'], primary: undefined },
+    { scope: 'healthCheck' as const, kinds: ['healthCheck', 'approvalProfile'], primary: { kind: 'healthCheck', field: 'checkId' } },
+    { scope: { kind: 'plugin' as const, subjectKindId: 'ticket', identityField: 'ticketId' },
+      kinds: ['plugin', 'approvalProfile'], primary: { kind: 'plugin', field: 'ticketId' } },
+    { scope: undefined, kinds: ['approvalProfile'], primary: undefined },
+  ])('publishes contributed operand metadata from its existing $scope approval declaration', ({ scope, kinds, primary }) => {
+    const definition: ActionDefinitionV1 = {
+      ...actionSpecToActionDefinitionV1(getActionSpec('action.spec.get')),
+      id: 'example.catalog/actions/resource', sideEffectClass: 'external', approvalScope: scope, automation: undefined,
+    };
+    const publicDefinition = projectActionDefinitionForExternalDiscovery(definition);
+    expect(publicDefinition.automation).toMatchObject({ before: true, after: true, subjectKinds: kinds });
+    expect(publicDefinition.automation?.primarySubject).toEqual(primary);
+    const [summary] = searchSerializedActionSpecsForSurface({ surface: 'cli', query: definition.id,
+      purpose: 'automation', limit: null, additionalDefinitions: [definition], isActionEnabled: () => false });
+    expect(summary.automation).toEqual(publicDefinition.automation);
+  });
+
   it('validates the primary subject pair at the strict discovery boundary', () => {
     const summary = serializeActionSpec(getActionSpec('session.stop'), { includeOutputSchema: false });
     const read = (primarySubject: unknown) => ActionDiscoveryDefinitionSummaryV1Schema.safeParse({
@@ -683,7 +702,7 @@ describe('actionCatalog action-definition adapter', () => {
     })).toEqual([{
       id: 'com.acme.actions/actions/strictprojectionneedle9x',
       title: 'Strictprojectionneedle9x',
-      automation: { before: true, after: true, workflowStep: false },
+      automation: { before: true, after: true, workflowStep: false, subjectKinds: ['approvalProfile'] },
       description: null,
       safety: 'safe',
       placements: [],

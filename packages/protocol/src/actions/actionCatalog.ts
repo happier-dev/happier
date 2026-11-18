@@ -201,28 +201,38 @@ function projectSerializedActionOutput(
   return { ...metadata, ...(outputSchema ? { outputSchema } : {}) };
 }
 
+type ActionAutomationSubjectDeclaration = Readonly<{
+  approvalScope?: ActionSpec['approvalScope'] | ActionDefinitionSummaryV1['approvalScope'];
+  sessionTarget?: ActionSpec['sessionTarget'];
+}>;
+
 function projectActionAutomationChoices(definition: Pick<ActionDefinitionSummaryV1,
-  'id' | 'surfaces' | 'sideEffectClass' | 'executionPlacement' | 'automation'> & Readonly<{ completion?: unknown }>) {
+  'id' | 'surfaces' | 'sideEffectClass' | 'executionPlacement' | 'automation'>
+  & ActionAutomationSubjectDeclaration & Readonly<{ completion?: unknown }>,
+  declaredSubjects?: Pick<NonNullable<ActionDefinitionSummaryV1['automation']>, 'subjectKinds' | 'primarySubject'>) {
   const before = isActionEffectHookableV1(definition.sideEffectClass);
+  const subjects = declaredSubjects ?? definition.automation;
+  const primarySubject = subjects ? subjects.primarySubject : projectContributedActionPrimarySubject(definition);
   return {
     before,
     after: before,
     workflowStep: isWorkflowStepActionSpecV1(definition),
-    ...(definition.automation?.subjectKinds ? { subjectKinds: definition.automation.subjectKinds } : {}),
-    ...(definition.automation?.primarySubject ? { primarySubject: definition.automation.primarySubject } : {}),
+    subjectKinds: subjects?.subjectKinds ?? projectActionSubjectKinds(definition),
+    ...(primarySubject ? { primarySubject } : {}),
   };
 }
 
-function projectNativeActionSubjectKinds(spec: ActionSpec): AutomationSubjectKindV1[] {
+function projectActionSubjectKinds(spec: ActionAutomationSubjectDeclaration): AutomationSubjectKindV1[] {
   const kinds = new Set<AutomationSubjectKindV1>();
   if (typeof spec.approvalScope === 'string') kinds.add(spec.approvalScope);
+  else if (spec.approvalScope && 'kind' in spec.approvalScope) kinds.add('plugin');
   else for (const kind of spec.approvalScope?.subjectKinds ?? []) kinds.add(kind);
   if (spec.sessionTarget) {
     kinds.add('session');
     kinds.add('project');
     kinds.add('machine');
   }
-  // The admitted profile is optional context for every native Action.
+  // The admitted profile is optional context for every Action.
   kinds.add('approvalProfile');
   return [...kinds];
 }
@@ -235,12 +245,20 @@ function projectNativeActionPrimarySubject(spec: ActionSpec): ActionAutomationPr
   return undefined;
 }
 
+function projectContributedActionPrimarySubject(spec: ActionAutomationSubjectDeclaration): ActionAutomationPrimarySubjectV1 | undefined {
+  if (spec.sessionTarget) return { kind: 'session', field: spec.sessionTarget.field };
+  if (spec.approvalScope === 'healthCheck') return { kind: 'healthCheck', field: 'checkId' };
+  if (spec.approvalScope && typeof spec.approvalScope === 'object' && 'identityField' in spec.approvalScope) {
+    return { kind: 'plugin', field: spec.approvalScope.identityField };
+  }
+  return undefined;
+}
+
 function serializeActionSpecMetadata(
   spec: ActionSpec,
   params?: ActionCatalogSurfaceParams,
 ): SerializedActionSpec {
   const projection = resolveActionCatalogSurfaceProjection(spec, params?.surface);
-  const primarySubject = projectNativeActionPrimarySubject(spec);
   return {
     id: spec.id,
     title: spec.title,
@@ -265,8 +283,8 @@ function serializeActionSpecMetadata(
     ...(typeof spec.approvalScope === 'string' ? { approvalScope: spec.approvalScope } : {}),
     ...(spec.execution ? { execution: spec.execution } : {}),
     ...(spec.sideEffectClass ? { sideEffectClass: spec.sideEffectClass } : {}),
-    automation: { ...projectActionAutomationChoices(spec), subjectKinds: projectNativeActionSubjectKinds(spec),
-      ...(primarySubject ? { primarySubject } : {}) },
+    automation: projectActionAutomationChoices(spec, { subjectKinds: projectActionSubjectKinds(spec),
+      primarySubject: projectNativeActionPrimarySubject(spec) }),
     ...(spec.operation ? { operation: spec.operation } : {}),
   };
 }

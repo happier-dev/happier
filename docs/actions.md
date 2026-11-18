@@ -2151,7 +2151,7 @@ produces a visible Skip because a source-owner evaluator is unavailable; the
 actor's keys never open another Account's trigger definition.
 
 Development Action discovery summaries expose `automation.before`,
-`automation.after`, `automation.workflowStep`, native `automation.subjectKinds`
+`automation.after`, `automation.workflowStep`, `automation.subjectKinds`
 and an optional `automation.primarySubject` containing its declared `kind` and
 operand `field`.
 The existing `action.spec.search` and `action.spec.get` Actions return these
@@ -2168,6 +2168,11 @@ primary subject directly. It does not choose from ambient subjects such as the
 bound approval profile. Matching retains the full `subjectKinds` list. Actions
 without an unconditional existing resource operand, including global and creation
 Actions, omit the primary subject.
+Contributed Actions expose the same subject metadata from their admitted declaration:
+saved Health checks use `checkId`, plugin resource kinds use their declared identity
+field, and Session targets use their declared target field. An Environment approval
+scope advertises applicability to Environments; without a declared unconditional
+input operand it does not invent an `environmentId` primary subject.
 
 In 0.3 development source, `action_interception_rejected` is presented as
 a refusal. `readActionFailurePresentationV1` owns that classification and reads
