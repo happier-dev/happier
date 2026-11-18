@@ -59,7 +59,7 @@ const FAMILIES: Readonly<Record<string, Family>> = {
     // PowerShell resolves -File before applying -WorkingDirectory (unlike bun --cwd).
     pwsh: { inline: ['-command', '-c'], script: ['-file', '-f'], caseInsensitive: true,
         // EncodedCommand does not consume the remaining arguments: a later -File wins.
-        valued: ['-encodedcommand', '-ec', '-e', '-executionpolicy', '-ep', '-configurationname', '-workingdirectory', '-wd', '-windowstyle', '-outputformat', '-of', '-inputformat', '-if', '-settingsfile', '-custompipename', '-version', '-v'] },
+        valued: ['-encodedcommand', '-ec', '-e', '-executionpolicy', '-ep', '-configurationname', '-workingdirectory', '-wd', '-windowstyle', '-w', '-outputformat', '-of', '-o', '-inputformat', '-if', '-settingsfile', '-custompipename', '-version', '-v'] },
 };
 const WRAPPERS = new Set(['env', 'sudo', 'exec', 'command', 'time', 'nohup', 'call']);
 const SUDO_VALUED = new Set(['-u', '-g', '-C', '-D', '-h', '-p', '-r', '-t', '-U']);

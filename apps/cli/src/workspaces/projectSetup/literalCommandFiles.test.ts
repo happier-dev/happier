@@ -28,6 +28,8 @@ describe('files a literal Project command runs', () => {
     ],
     ['pwsh -Command ./inline.ps1', []],
     ['pwsh -ep bypass -file setup.ps1', ['setup.ps1']],
+    ['powershell -w hidden -ep bypass -file setup.ps1', ['setup.ps1']],
+    ['powershell -o text -ep bypass -file setup.ps1', ['setup.ps1']],
     ['pwsh -executionpolicy bypass -f setup.ps1', ['setup.ps1']],
     ['powershell.exe -ep Bypass -File setup.ps1', ['setup.ps1']],
     ['pwsh -configurationname Remote -file setup.ps1', ['setup.ps1']],
