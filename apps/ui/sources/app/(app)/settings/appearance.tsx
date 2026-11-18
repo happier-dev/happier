@@ -1,5 +1,5 @@
 import { BotMotionSchema } from '@happier-dev/protocol/account/settings/accountSettings';
-import { useThemeLibraryEntries, useThemeProfileReferenceSelection } from '@/sync/store/useThemeProfiles';
+import { useThemeLibrarySummary, useThemeProfileReferenceSelection } from '@/sync/store/useThemeProfiles';
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { UI_FONT_SCALE_PRESETS } from '@/components/ui/text/uiFontScale';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -50,7 +50,8 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { ItemDensityChoiceRow } from '@/components/settings/appearance/ItemDensityPreview';
-import { buildThemePresetSourceOptions, getThemePresetSourceReferenceId } from '@/components/settings/appearance/themeProfiles/themeProfilePresetOptions';
+import { CANONICAL_BASE_THEME_IDS } from '@/theme/profiles/baseThemeCatalog';
+import { BUILT_IN_THEME_PROFILES, getBuiltInThemeProfileDefinition } from '@/theme/profiles/builtInThemeProfiles';
 import { Modal } from '@/modal';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t, getLanguageNativeName, SUPPORTED_LANGUAGES } from '@/text';
@@ -105,8 +106,8 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     const [showChatCodeBlockWrapControls, setShowChatCodeBlockWrapControls] = useSettingMutable('showChatCodeBlockWrapControls');
     const [wrapChatCodeBlocks, setWrapChatCodeBlocks] = useSettingMutable('wrapChatCodeBlocks');
     const [themePreference] = useLocalSettingMutable('themePreference');
-    const entries = useThemeLibraryEntries();
     const selection = useThemeProfileReferenceSelection();
+    const { customCount, lightName, darkName } = useThemeLibrarySummary(selection);
     const [uiFontScale, setUiFontScale] = useLocalSettingMutable('uiFontScale');
     const previewUiFontScale = useLocalSettingPreview('uiFontScale');
     const [uiContentWidthMode, setUiContentWidthMode] = useLocalSettingMutable('uiContentWidthMode');
@@ -136,23 +137,21 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     // The Themes row summarizes the library: which theme each mode uses and how many there are. The
     // library screen owns choosing them.
     const themesSummary = React.useMemo(() => {
-        const options = buildThemePresetSourceOptions(entries);
         const nameFor = (mode: 'light' | 'dark') => {
             const reference = selection[mode];
-            const profileId = reference ? getThemePresetSourceReferenceId(reference) : null;
-            const option = profileId ? options.find((candidate) => candidate.id === profileId) : null;
-            return option?.title ?? t('common.default');
+            const builtIn = reference?.kind === 'built-in' ? getBuiltInThemeProfileDefinition(reference.presetId) : undefined;
+            const customName = mode === 'light' ? lightName : darkName;
+            return builtIn ? t(builtIn.translationKey) : customName ?? t('common.default');
         };
-        const custom = options.filter((option) => option.kind === 'custom').length;
         return {
             slots: <Text style={styles.themesSummary}>{t('settingsAppearance.themesSummary', {
                 light: '{light}', dark: '{dark}',
             }).split(/(\{light\}|\{dark\})/).map((part, index) => part === '{light}' || part === '{dark}'
                 ? <Text key={index} style={styles.themeName}>{nameFor(part === '{light}' ? 'light' : 'dark')}</Text>
                 : part)}</Text>,
-            count: t('settingsAppearance.themesCount', { builtIn: options.length - custom, custom }),
+            count: t('settingsAppearance.themesCount', { builtIn: BUILT_IN_THEME_PROFILES.length + CANONICAL_BASE_THEME_IDS.length, custom: customCount }),
         };
-    }, [entries, selection]);
+    }, [customCount, darkName, lightName, selection]);
     const gitBadgeMenuItems = React.useMemo((): readonly DropdownMenuItem[] => {
         return [
             { id: 'changedFiles', title: t('settingsAppearance.tabBarBadges.gitChangedFiles') },

@@ -2,6 +2,8 @@ import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { ThemeLibraryEntry, ThemeProfileDocument, ThemeProfileMode, ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { THEME_ARTIFACT_KIND } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useArtifactBody, type ArtifactBodyState } from '@/components/artifacts/useArtifactBody';
 import { useArtifactInventoryRead } from '@/components/artifacts/useArtifactInventoryRead';
 import { isArtifactInventoryLoaded, isArtifactInventoryReady } from '@/sync/domains/artifacts/artifactInventory';
@@ -11,7 +13,7 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import type { StorageSubscriptionScope } from '@/sync/domains/state/storageSubscriptions';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { getBuiltInThemeLibraryEntries, getBuiltInThemeProfileDocument } from '@/theme/profiles/builtInThemeProfiles';
-import { projectThemeProfileArtifactSummary, readThemeProfileArtifactDocument } from '@/theme/profiles/themeProfileArtifactProjection';
+import { projectThemeProfileArtifactSummary, readThemeProfileArtifactDocument, readThemeProfileArtifactHeader } from '@/theme/profiles/themeProfileArtifactProjection';
 import { DEFAULT_THEME_PROFILES_LOCAL_STATE, readThemeProfileReferenceSelection } from '@/theme/profiles/themeProfilePersistence';
 import { projectPluginThemeLibraryEntries, projectPluginThemeProfileDocument, projectThemeLibraryEntries } from '@/theme/profiles/themeProfilePresentation';
 import { readPluginThemeList, type PluginThemeListItem } from '@/theme/profiles/pluginThemeCatalog';
@@ -77,10 +79,52 @@ export function useThemeLibraryArtifactInventory(enabled = true,
     selectEntries: (entries: readonly ThemeLibraryEntry[]) => readonly ThemeLibraryEntry[] = allEntries): ThemeLibraryInventory {
     const entries = getStorage()(useShallow(state => enabled
         ? selectEntries(artifactLibraryEntries(state.artifactThemeLibraryArtifacts, state.settingsScope)) : noEntries), enabled ? inventoryScope : noSubscription);
+    return { entries, ...useThemeArtifactInventoryRead(enabled) };
+}
+
+function useThemeArtifactInventoryRead(enabled: boolean) {
     const status = getStorage()(useShallow(state => enabled ? { loaded: isArtifactInventoryReady(state, THEME_PROFILE_ARTIFACT_KINDS),
         complete: isArtifactInventoryLoaded(state, THEME_PROFILE_ARTIFACT_KINDS) } : noStatus), enabled ? inventoryStatusScope : noSubscription);
     const read = useArtifactInventoryRead(enabled && !status.loaded, enabled ? THEME_PROFILE_ARTIFACT_KINDS : NO_ARTIFACT_KINDS);
-    return { entries, loaded: status.loaded, failed: read.failed || status.loaded && !status.complete, retry: read.retry };
+    return { loaded: status.loaded, failed: read.failed || status.loaded && !status.complete, retry: read.retry };
+}
+
+function pluginThemeReferenceKey(reference: ThemeReference | null): string {
+    return reference?.kind === 'plugin'
+        ? buildQualifiedPluginContributionKey({ pluginId: reference.pluginId, localId: reference.contributionId }) : '';
+}
+
+/** Appearance reads counts and selected names without projecting library miniatures. */
+export function useThemeLibrarySummary(selection: Readonly<Record<ThemeProfileMode, ThemeReference | null>>) {
+    useThemeArtifactInventoryRead(true);
+    const light = selection.light;
+    const dark = selection.dark;
+    const saved = getStorage()(useShallow(state => {
+        let count = 0;
+        let lightName: string | undefined;
+        let darkName: string | undefined;
+        if (state.settingsScope) {
+            for (const row of Object.values(state.artifactThemeLibraryArtifacts)) {
+                const header = readThemeProfileArtifactHeader(row, state.settingsScope);
+                if (!header || header.themeSource.kind === 'built-in') continue;
+                count++;
+                if (light?.kind === 'artifact' && light.id === row.id) lightName = header.title;
+                if (dark?.kind === 'artifact' && dark.id === row.id) darkName = header.title;
+            }
+        }
+        return { count, lightName, darkName };
+    }), inventoryScope);
+    const lightKey = pluginThemeReferenceKey(light);
+    const darkKey = pluginThemeReferenceKey(dark);
+    const plugins = useAppShellPluginUiProjection(({ pluginUiProjection }) => {
+        const themes = pluginUiProjection?.themesById;
+        return {
+            count: themes ? Object.keys(themes).length : 0,
+            lightName: themes?.[lightKey]?.definition.theme.name,
+            darkName: themes?.[darkKey]?.definition.theme.name,
+        };
+    });
+    return { customCount: saved.count + plugins.count, lightName: saved.lightName ?? plugins.lightName, darkName: saved.darkName ?? plugins.darkName };
 }
 
 /** The library consumes private header inputs. Its CSS-heavy bodies stay on demand. */

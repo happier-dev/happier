@@ -23,6 +23,10 @@ function readAdmittedHeader(row: DecryptedArtifact, scope: ServerAccountScope): 
     return value;
 }
 
+export function readThemeProfileArtifactHeader(row: DecryptedArtifact, scope: ServerAccountScope): ThemeProfileArtifactHeader | null {
+    return readAdmittedHeader(row, scope)?.header ?? null;
+}
+
 export function readThemeProfileArtifactDocument(row: DecryptedArtifact, scope: ServerAccountScope): ThemeProfileArtifactRecord | null {
     if (typeof row.body !== 'string' || !readAdmittedHeader(row, scope)) return null;
     let raw: unknown;

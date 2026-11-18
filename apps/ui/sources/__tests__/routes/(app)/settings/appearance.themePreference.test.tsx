@@ -7,6 +7,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { localSettingsParse } from '@/sync/domains/settings/localSettings';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { BUILT_IN_THEME_PROFILES } from '@/theme/profiles/builtInThemeProfiles';
+import { ThemeProfileRuntimeSync } from '@/theme/ThemeProfileRuntimeSync';
 import { initializeAuthRouteRuntimeForTests } from '@/dev/testkit/harness/authRouteRuntimeHarness';
 import { renderSessionSettingsEntryView as renderSettingsView, resetSessionSettingsEntryState, sessionSettingsEntryState } from './sessionSettingsEntryTestHelpers';
 
@@ -157,6 +158,33 @@ describe('Appearance settings theme preference', () => {
         expect(themesRow.props.detail).toBe(`settingsAppearance.themesCount(builtIn=${BUILT_IN_THEME_PROFILES.length + 2},custom=0)`);
     });
 
+    it('keeps the Appearance summary stable when an unselected plugin theme is edited', async () => {
+        const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+        const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+        const { createThemeProfileDraft } = await import('@/theme/profiles/createThemeProfileDraft');
+        const { default: Appearance } = await import('@/app/(app)/settings/appearance');
+        const appearance = <Appearance />;
+        const wrap = (name: string) => <AppShellPluginUiProjectionValueProvider value={{
+            pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, themesById: { 'sample.palette/paper': {
+                id: 'sample.palette/paper', pluginId: 'sample.palette', pluginVersion: '1.0.0',
+                definition: { id: 'paper', theme: createThemeProfileDraft({ id: 'paper', name, now: '2026-11-16' }) },
+            } } },
+            pluginBrowserProjection: null, phase: 'current', interactionEnabled: true, machineId: null, serverId: null,
+            platform: 'web', accountLifetime: null, connectedAccountProjectionRevision: 0, clientExecutableActivation: { status: 'ready' },
+            reloadClientExecutables() {}, reloadConnectedAccountProjection() {},
+        }}>{appearance}</AppShellPluginUiProjectionValueProvider>;
+        const screen = await renderAppearance(wrap('Paper'));
+        const row = () => screen.findRow('settings-appearance-themeProfiles')!;
+        expect(row().props.detail).toBe(`settingsAppearance.themesCount(builtIn=${BUILT_IN_THEME_PROFILES.length + 2},custom=1)`);
+        const original = row().props.subtitle;
+        await screen.update(wrap('Renamed paper'));
+        expect(row().props.subtitle).toBe(original);
+        await act(async () => {
+            storage.getState().applyLocalSettings({ themeProfileSelection: { light: { kind: 'plugin', pluginId: 'sample.palette', contributionId: 'paper' }, dark: null } });
+        });
+        expect((await renderScreen(row().props.subtitle)).getTextContent()).toContain('Renamed paper');
+    });
+
     const findThemeModeTiles = (screen: Awaited<ReturnType<typeof renderSettingsView>>) =>
         screen.findByProps({ testIdPrefix: 'settings-appearance-themeMode' });
 
@@ -174,8 +202,8 @@ describe('Appearance settings theme preference', () => {
     });
 
     it('applies status bar style immediately when selecting dark mode', async () => {
-        const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderAppearance(React.createElement(mod.default), {
+        const { default: Appearance } = await import('@/app/(app)/settings/appearance');
+        const screen = await renderAppearance(<><ThemeProfileRuntimeSync /><Appearance /></>, {
             flushOptions: { cycles: 0 },
         });
 
@@ -195,17 +223,17 @@ describe('Appearance settings theme preference', () => {
         Object.defineProperty(transitionDom.window.document.documentElement, 'animate', {
             configurable: true, value: shared.documentElementAnimate,
         });
-        Object.defineProperty(transitionDom.window.document, 'startViewTransition', {
-            configurable: true, value: shared.startViewTransition,
-        });
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
             value: transitionDom.window.document,
         });
 
-        const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderAppearance(React.createElement(mod.default), {
+        const { default: Appearance } = await import('@/app/(app)/settings/appearance');
+        const screen = await renderAppearance(<><ThemeProfileRuntimeSync /><Appearance /></>, {
             flushOptions: { cycles: 0 },
+        });
+        Object.defineProperty(transitionDom.window.document, 'startViewTransition', {
+            configurable: true, value: shared.startViewTransition,
         });
 
         await act(async () => {
