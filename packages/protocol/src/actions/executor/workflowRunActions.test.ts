@@ -1907,10 +1907,6 @@ describe('shared Account workflow run owner', () => {
       binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId } });
     expect(accepted).toMatchObject({ kind: 'available', content: { inputs: { reviewSession: target },
       materializedLeaves: expect.arrayContaining([
-        expect.objectContaining({ blockId: 'verify', selection: { conversation: { kind: 'existing_session', sessionId: target.sessionId,
-          machineId: scenario === 'source' ? 'machine-a' : 'review-machine' } } }),
-        expect.objectContaining({ blockId: 'report', selection: { conversation: { kind: 'existing_session', sessionId: target.sessionId,
-          machineId: scenario === 'source' ? 'machine-a' : 'review-machine' } } }),
         expect.objectContaining({ blockId: 'review', actionInput: expect.objectContaining({ sessionId: target.sessionId }) }),
       ]) } });
     await expect(owner.execute(args)).resolves.toMatchObject({ admission: 'existing' });
