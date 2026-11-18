@@ -8,6 +8,7 @@ import {
   defineUiSurface,
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
+import { AutomationsSection } from '@happier-dev/plugin-ui/components';
 import {
   WorkbenchProvider,
   useDatabaseTargets,
@@ -51,6 +52,11 @@ function OverviewPane(props: Readonly<{ targetKey: string; scope: WorkbenchLaunc
         meta={meta.length > 0 ? meta : [{ key: 'engine', text: databaseEngineName(descriptor.engine) }]}
       />
       <TableDirectory targetKey={props.targetKey} />
+      {/* The database's own Automations (lab automations-v-database), on the subject its admitted read projected. */}
+      {descriptor.automationSubject?.ok ? (
+        <AutomationsSection subject={descriptor.automationSubject.subject} subjectName={descriptor.label}
+          testID="database-automations" />
+      ) : null}
     </Stack>
   );
 }

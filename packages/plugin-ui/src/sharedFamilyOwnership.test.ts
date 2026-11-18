@@ -137,6 +137,8 @@ const APPROVED_CATALOG_VOCABULARY = [
   'SecretValueText', 'SecretValueControls',
   // Providers parity S3a (owner 2026-11-15): the host's saved-secret choice list; the host loads the catalog.
   'SavedSecretChoiceList',
+  // Automations everywhere D13: public requests to the one resource controller and subject picker.
+  'AutomationsSection', 'AutomationSubjectPicker',
   // C6/C5 (N3 FR1-10): the controlled Memory duplicate choice and the Doc suggested-edit card.
   'MemoryDuplicateChoice', 'DocEditProposal',
   // Capabilities A7 (owner-approved 2026-10-22): the capability row anatomy Happier's Skills/MCP/Agents pages use.
@@ -3145,6 +3147,48 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
       },
     },
   },
+  {
+    publicName: 'AutomationsSection',
+    propTypeName: 'AutomationsSectionProps',
+    family: 'Resource automations',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentationHost/context.ts',
+    sharedSymbol: 'useOptionalPluginUiPresentationHost',
+    pluginOwner: { module: 'components/Automations.tsx', symbol: 'AutomationsSection' },
+    // The bound core controller is live; shared-presentation graduation remains separate.
+    coreConsumers: [],
+    positiveConsumer: {
+      kind: 'external-author-reference',
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/ticketAutomationsSection.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable',
+      reason: 'The mounted resource controller owns subject reads and trigger authoring; V2 has no resource automation node.' },
+  },
+  ...(['AutomationSubjectPicker'] as const).map((publicName) => ({
+    publicName,
+    propTypeName: `${publicName}Props`,
+    family: 'Resource automations',
+    disposition: 'required' as const,
+    proofTier: 'behavior-owning' as const,
+    phase: 'in-progress' as const,
+    publiclyExported: true,
+    sharedModule: 'presentationHost/context.ts',
+    sharedSymbol: 'useOptionalPluginUiPresentationHost',
+    pluginOwner: { module: 'components/Automations.tsx', symbol: publicName },
+    // The public contract is available; the one core resource controller supplies the host binding.
+    coreConsumers: [],
+    positiveConsumer: {
+      kind: 'external-author-reference' as const,
+      pathFromRepoRoot: 'packages/plugin-ui/fixtures/external-authoring/src/ticketAutomationSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable' as const,
+      reason: 'The mounted resource controller owns subject reads and trigger authoring; V2 has no resource automation node.' },
+  })),
   // Source ownership evidence only: none of these rows asserts loaded-platform graduation.
   {
     publicName: 'AvatarStack',
@@ -4198,7 +4242,7 @@ describe('graduated shared presentation families (§8.2)', () => {
       'SetupSteps', 'LocalDateTimeField', 'WidgetGlanceRow', 'DiffStat', 'InlineCode', 'ComposerStatusBadge', 'ThreadMessage', 'ReplyQuote',
       'RowStatusLine', 'HappierRequesterDisclosureContent', 'SessionCard', 'BotFace', 'PageAsideColumns', 'PagePinnedBar', 'KeyboardStickyFooter', 'widgetFootprintBodyRows',
       'CollectionSavedViewsStrip', 'CollectionRowNeedsYouHighlight', 'AccountByline', 'ReturnedAnswerQuote', 'MemoryDuplicateChoice', 'CapabilityAddDetailAction', 'CapabilityListingSections', 'capabilityCollectionAnatomy', 'DocEditProposal', 'ExecutableParticipantPicker',
-      'SecretValueText', 'SecretValueControls', 'SavedSecretChoiceList',
+      'SecretValueText', 'SecretValueControls', 'SavedSecretChoiceList', 'AutomationsSection', 'AutomationSubjectPicker',
       'AvatarStack', 'CollectionConditionTokens', 'CollectionSpaceIcon', 'CollectionTitleButton',
       'EntityFlatReorderList', 'HorizontalScrollEdgeMask', 'ModalCardFooterActions', 'PageLoadingRows',
       'PlanChecklistCard', 'RegistryShelf', 'RegistryShelfAddControl', 'RegistrySourcesUnavailable',

@@ -2,6 +2,7 @@ import type { HappierCodeEditorRequest } from '../presentation/content/CodeEdito
 import type { ShareSheetHost } from '../components/shareSheetHost.js';
 import type { ShareGrantRowPresentation } from '../components/ShareGrantRow.js';
 import type { PluginUiActionBindingCommit } from './actionBindingPresentation.js';
+import type { AutomationsSectionProps, AutomationSubjectPickerProps } from '../components/Automations.js';
 import type { IconButtonProps } from '../components/Button.js';
 import type { ToggleProps } from '../components/Form.js';
 import type { FormProps } from '../components/Form.js';
@@ -230,6 +231,10 @@ export type PluginUiPaneHeaderHost = Readonly<{
  * navigation roots, or modal/portal infrastructure.
  */
 export type PluginUiPresentationHost = Readonly<{
+  /** The same selected-subject controller core resource pages use; no plugin-only attachment owner. */
+  renderAutomationsSection?(props: AutomationsSectionProps): ReactNode;
+  /** The incumbent picker owns demand and contributed list reads. */
+  renderAutomationSubjectPicker?(props: AutomationSubjectPickerProps): ReactNode;
   /** Host-created editors retain the package's existing drafts and notice owner. Absent in hosted HTML. */
   renderActionPropertyList?(props: PropertyListProps): ReactElement;
   renderActionIconButton?(props: IconButtonProps): ReactElement;

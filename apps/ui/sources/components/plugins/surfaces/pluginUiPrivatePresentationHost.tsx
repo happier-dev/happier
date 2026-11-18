@@ -4,6 +4,11 @@ import type { HappierCodeEditorRequest } from '@happier-dev/plugin-ui/presentati
 import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import { useShareGrantRowPresentation } from '@/components/sharing/sharePresentationHost';
 import type { PluginSurfaceActionControls } from './pluginSurfaceActionControls';
+import { PluginAutomationSubjectPicker } from './PluginAutomationSubjectPicker';
+import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import type { PluginSurfaceTarget } from '@happier-dev/plugin-sdk/ui';
+import type { WorkflowActionCallerContext } from '@/sync/domains/workflows/callWorkflowAction';
 import { PluginInlineActionControl } from './MountedPluginActionControls';
 import { createPluginUiActionBindingPresentation } from '@happier-dev/plugin-ui/advanced';
 import {
@@ -213,7 +218,16 @@ export type PluginDestinationRowInput = NavigationListDestination & Readonly<{
 /** A plugin row that needs the person reads the same highlight facts as a core row. */
 const PLUGIN_UI_COLLECTION_ROW_NEEDS_YOU = { useFacts: useCollectionRowNeedsYouHostFacts };
 
+export type PluginUiAutomationPresentationScope = Readonly<{
+    accountLifetime: ServerAccountScopeLifetime | null;
+    target: PluginSurfaceTarget;
+    context?: WorkflowActionCallerContext;
+    isCurrent(): boolean;
+}>;
+
 export type PluginUiPrivatePresentationHostOptions = Readonly<{
+    /** Borrow the physical mount's identity; an empty selection cannot capture the focused Account. */
+    automations?: PluginUiAutomationPresentationScope;
     typography?: ReturnType<typeof readPluginUiHostTypography>;
     actionControls?: PluginSurfaceActionControls;
     runPress?: import('@happier-dev/plugin-ui/advanced').PluginUiPresentationHost['runPress'];
@@ -738,8 +752,18 @@ export function createPluginUiPrivatePresentationHost(
         find: options?.find,
     });
     const pluginId = options?.pluginId;
+    const automations = options?.automations;
     return Object.freeze({
         ...presentationRenderers,
+        ...(automations ? {
+            renderAutomationsSection(input: import('@happier-dev/plugin-ui/components').AutomationsSectionProps) {
+                return <SubjectTriggersSection subject={input.subject} subjectName={input.subjectName ?? ''} testID={input.testID}
+                    accountLifetime={automations.isCurrent() ? automations.accountLifetime : null} />;
+            },
+            renderAutomationSubjectPicker(input: import('@happier-dev/plugin-ui/components').AutomationSubjectPickerProps) {
+                return <PluginAutomationSubjectPicker {...input} {...automations} />;
+            },
+        } : {}),
         renderDetailsPaneOpenAsPageButton(input: import('@happier-dev/plugin-ui/components').DetailsPaneOpenAsPageButtonProps) {
             const label = input.accessibilityLabel ?? t('settingsPlugins.surfaces.openAsPage');
             return <IconButton testID={input.testID} iconName="arrow-square-out"

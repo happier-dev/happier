@@ -8,6 +8,7 @@ import {
   DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
   DATABASE_STRUCTURE_READ_ACTION_ID_V1,
   DATABASE_TARGETS_LIST_ACTION_ID_V1,
+  readAutomationDatabaseSubjectV1,
   type DatabaseDescriptorV1,
 } from '@happier-dev/database-protocol';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
@@ -398,6 +399,22 @@ describe('Database workbench surfaces', () => {
       await fixture.dispose();
     }
   });
+  it('mounts the database\u2019s Automations on the Overview, on the subject its admitted read projected', async () => {
+    const automated = { ...descriptor, automationSubject: readAutomationDatabaseSubjectV1(descriptor.placement.serverId, descriptor.target) };
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'page-automations', mountNonce: 'page-automations' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor: automated }), subPath: 'overview',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([automated]), replacePageLocation: async ({ subPath }) => subPath },
+    });
+    try {
+      await settle(20);
+      // This test host has no core Automations controller, so the public section says so in its place.
+      expect(await fixture.getByText('Automations are unavailable on this host.')).toBeTruthy();
+    } finally { await fixture.dispose(); }
+  });
+
   it('shows the database Overview as its table directory: biggest first, with data, index and total sizes', async () => {
     const executeAction = daemonAnswers([descriptor]);
     const fixture = await createPluginUiTestkit({

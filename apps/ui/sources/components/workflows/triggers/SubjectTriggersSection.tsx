@@ -96,6 +96,7 @@ export type SubjectTriggersSectionProps = Readonly<{
       accountLifetime?: ServerAccountScopeLifetime | null;
       /** The page's own name for its subject, used in the agent's prompt and the read-back. */
       subjectName: string;
+      testID?: string;
       actionsRef?: React.Ref<SubjectTriggersSectionActions>;
       exactTurnPrefill?: ExactTurnAutomationPrefill;
       /** A deep link to one of this resource's automations opens its editor once. */
@@ -251,7 +252,7 @@ export const SubjectTriggersSectionContent = React.memo(
     );
     const section = (
       <ItemGroup
-        testID="subject-triggers"
+        testID={props.testID ?? 'subject-triggers'}
         {...(widget ? { surface: 'none' as const } : { title: t('workflows.triggers.section.title'), description, action: sectionActions })}
       >
         {widget ? <WidgetGlanceRow variant="fact" title={description} testID="subject-triggers-description" /> : null}

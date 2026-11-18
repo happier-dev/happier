@@ -1,6 +1,8 @@
 export { projectWidgetGroupCellContent, resolveWidgetGroupCells, resolveWidgetGroupColumns, packWidgetGroupBands } from '../data/widgetGroupLayout.js';
 export { formatUsageDurationCompact } from '@happier-dev/plugin-sdk/ui';
 export * from './Action.js';
+export { AutomationsSection, AutomationSubjectPicker, type AutomationsSectionProps,
+  type AutomationSubjectPickerProps, type AutomationSubjectPickerDemand, type AutomationSubjectKind } from './Automations.js';
 export { BotFace, type BotFaceProps, type BotFaceValue } from './BotFace.js';
 export {
   PlanChecklistCard,

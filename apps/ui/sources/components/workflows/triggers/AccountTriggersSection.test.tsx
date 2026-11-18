@@ -276,6 +276,56 @@ function writtenContext(input: ReturnType<typeof AutomationDefinitionReconcileRe
 // The retained Account adapter below exercises settings, source intake and legacy
 // links. Primary Library presentation consumes the unified view tested alongside it.
 describe('Account Workflow Library and settings', () => {
+    it('binds the public plugin Automations section to the core selected read using its physical Account and visible demand', async () => {
+        const { AutomationsSection } = await import('@happier-dev/plugin-ui/components');
+        const { createSurfaceContextFixture } = await import('@happier-dev/plugin-sdk/testing');
+        const { HappierUiEnvironmentProvider } = await import('../../../../../../packages/plugin-ui/src/environment/context');
+        const { projectHappierUiEnvironment } = await import('../../../../../../packages/plugin-ui/src/environment/projectEnvironment');
+        const { PluginUiPresentationHostProviderInternal } = await import('../../../../../../packages/plugin-ui/src/presentationHost/context');
+        const { createPluginUiPrivatePresentationHost } = await import('@/components/plugins/surfaces/pluginUiPrivatePresentationHost');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { AutomationSubjectV1Schema } = await import('@happier-dev/protocol/automations/automationSubjectV1');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const physicalContext = await captureLazyActionAccountContext(serverId);
+        const physicalAccount = physicalContext.accountLifetime;
+        const focusedServerId = await home.addHome({ name: 'Focused plugin Home',
+            serverUrl: `https://focused-plugin-${crypto.randomUUID()}.test`, accountId: 'account-b' });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+        storage.setState({ profileScope: { serverId: focusedServerId, accountId: 'account-b' },
+            settingsScope: { serverId: focusedServerId, accountId: 'account-b' } });
+        expect(captureActiveServerAccountScopeLifetime()?.scope.serverId).toBe(focusedServerId);
+        expect(physicalAccount.isCurrent()).toBe(true);
+        let mounted = false;
+        try {
+            const subject = AutomationSubjectV1Schema.parse({ kind: 'plugin', serverId, pluginId: 'acme.tickets',
+                subjectKindId: 'ticket', identity: { id: 'issue-1' } });
+            home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
+                automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0,
+            }) });
+            const host = createPluginUiPrivatePresentationHost(undefined, { automations: {
+                accountLifetime: physicalAccount, target: { kind: 'app' }, isCurrent: () => mounted,
+            } });
+            const view = (active: boolean) => <PluginSurfaceFocusEligibilityProvider active={active}>
+                <HappierUiEnvironmentProvider environment={projectHappierUiEnvironment(createSurfaceContextFixture())}>
+                <PluginUiPresentationHostProviderInternal host={host}>
+                    <AutomationsSection subject={subject} subjectName="Issue one" testID="plugin-resource-automations" />
+                </PluginUiPresentationHostProviderInternal>
+                </HappierUiEnvironmentProvider>
+            </PluginSurfaceFocusEligibilityProvider>;
+            const screen = await renderAccountScreen(view(false));
+            expect(listRequests()).toHaveLength(0);
+            await act(async () => screen.update(view(true)));
+            expect(listRequests()).toHaveLength(0);
+            mounted = true;
+            await act(async () => screen.update(view(true)));
+            await waitForHomeGovernance(() => expect(listRequests()).toHaveLength(1));
+            expect(listRequests()[0]).toEqual(expect.objectContaining({ serverId, input: expect.objectContaining({ subject }) }));
+            expect(screen.findHostByTestId('plugin-resource-automations')).toBeTruthy();
+            expect(home.requests.filter(request => request.method === 'GET' && request.path.startsWith('/v3/automations?'))).toEqual([]);
+            await screen.unmount();
+        } finally { physicalContext.dispose(); }
+    });
     it.each(['account', 'session', 'session-cold'] as const)('hydrates only an interacted selected attachment and uses its set revision through the mounted shared section (%s)', async scope => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
         const { SubjectTriggersSectionContent } = await import('./SubjectTriggersSection');

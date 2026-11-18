@@ -1309,6 +1309,11 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
             canonicalRenderIdentity.brand,
             {
                 pluginId: canonicalRenderIdentity.pluginId,
+                automations: {
+                    accountLifetime: canonicalAccountLifetime,
+                    target: canonicalRenderIdentity.target,
+                    isCurrent: props.mountLifetime.isCurrent,
+                },
                 ...(canonicalAccountLifetime ? { markdownWorkspace: {
                     target: canonicalRenderIdentity.target,
                     serverId: canonicalAccountLifetime.scope.serverId,
@@ -1382,6 +1387,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
             signal,
             canonicalAccountLifetime,
             presented,
+            props.mountLifetime.isCurrent,
             props.focusEligible,
             canonicalRenderIdentity.brand,
             canonicalRenderIdentity.pluginId,

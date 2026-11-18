@@ -231,6 +231,33 @@ authority. A host control grants no waiver: explicit Ask and setup consent stay
 effective, and Allow for a Project must remain a separate control from Run. See the
 [canonical ownership contract](../../docs/plugin-platform.md#mounted-host-action-controls-03-development).
 
+### Resource automations (0.3 development source)
+
+A plugin resource page can mount the host's existing Automations section for its
+qualified subject. Declare the resource kind through the SDK's `subjectKinds`
+contribution, then pass the selected resource's complete identity:
+
+```tsx
+import type { AutomationSubjectV1 } from '@happier-dev/plugin-sdk/automations';
+import { AutomationsSection } from '@happier-dev/plugin-ui/components';
+
+function TicketAutomations(props: {
+  subject: Extract<AutomationSubjectV1, { kind: 'plugin' }>;
+  title: string;
+}) {
+  return <AutomationsSection subject={props.subject} subjectName={props.title} />;
+}
+```
+
+Keep the subject's Home, plugin id, kind id and identity together; equal local ids
+from different plugins refer to different subjects. The mounted host supplies its
+Account scope and the same selected-resource read and authoring controller used by
+core resource pages. A hidden section makes no read. Hosts without this binding
+show an unavailable state. This is an unreleased 0.3 source contract.
+
+The [external author example](fixtures/external-authoring/src/ticketAutomationsSection.tsx)
+uses the same public imports.
+
 ### Memory facts (0.3 development source)
 
 Import `HappierMemoryFactRow` and its props from `@happier-dev/plugin-ui/components`

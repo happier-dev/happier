@@ -57,6 +57,8 @@ import { WorkUpdateCardExample } from './workUpdateCardSurface.js';
 import { ReviewReadyNoticeExample } from './reviewReadyNoticeSurface.js';
 import { MemoryFactsExample } from './memoryFactsSurface.js';
 import { MemoryDuplicateChoiceExample } from './memoryDuplicateChoiceSurface.js';
+import { TicketAutomationExample } from './ticketAutomationSurface.js';
+import { EXTERNAL_TICKET_PLUGIN_ID } from './ticketAutomationPlugin.js';
 import { WorkflowPatternExample } from './workflowPatternSurface.js';
 import { externalWorkflowStartInput } from './workflowPattern.js';
 
@@ -265,6 +267,7 @@ function ExternalAuthoringSemanticSurface(props: Pick<RenderContext, 'launchInpu
       <ReviewReadyNoticeExample />
       <MemoryFactsExample />
       <MemoryDuplicateChoiceExample />
+      <TicketAutomationExample pluginId={EXTERNAL_TICKET_PLUGIN_ID} />
       <WorkflowPatternExample input={externalWorkflowStartInput} />
       <Button
         title="Open an editable authoring draft"

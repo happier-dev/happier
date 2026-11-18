@@ -12,6 +12,8 @@ import { SavedSecretChoiceExample } from './savedSecretChoiceSurface.js';
 import { DocEditProposalExample } from './docEditProposalSurface.js';
 import { MemoryFactsExample } from './memoryFactsSurface.js';
 import { MemoryDuplicateChoiceExample } from './memoryDuplicateChoiceSurface.js';
+import { TicketAutomationExample } from './ticketAutomationSurface.js';
+import { EXTERNAL_TICKET_PLUGIN_ID } from './ticketAutomationPlugin.js';
 import { BuiltInParityExample } from './builtInParitySurface.js';
 import {
   Button,
@@ -86,6 +88,7 @@ function Summary() {
       <DocEditProposalExample />
       <MemoryFactsExample />
       <MemoryDuplicateChoiceExample />
+      <TicketAutomationExample pluginId={EXTERNAL_TICKET_PLUGIN_ID} />
       <ReplyQuoteExample />
       <ReturnedAnswerQuoteExample />
       <ExecutableParticipantPickerExample multiple />

@@ -39,6 +39,12 @@ Declaration: `dist/index.d.ts`
 - type `ApprovalPendingNoticeProps` from `dist/index.d.ts`
 - value `ApprovalPrompt` from `dist/index.d.ts`
 - type `ApprovalPromptProps` from `dist/index.d.ts`
+- type `AutomationSubjectKind` from `dist/index.d.ts`
+- value `AutomationSubjectPicker` from `dist/index.d.ts`
+- type `AutomationSubjectPickerDemand` from `dist/index.d.ts`
+- type `AutomationSubjectPickerProps` from `dist/index.d.ts`
+- value `AutomationsSection` from `dist/index.d.ts`
+- type `AutomationsSectionProps` from `dist/index.d.ts`
 - value `Avatar` from `dist/index.d.ts`
 - type `AvatarProps` from `dist/index.d.ts`
 - value `AvatarStack` from `dist/index.d.ts`
@@ -2058,6 +2064,12 @@ Declaration: `dist/components/index.d.ts`
 - type `ApprovalPendingNoticeProps` from `dist/components/index.d.ts`
 - value `ApprovalPrompt` from `dist/components/index.d.ts`
 - type `ApprovalPromptProps` from `dist/components/index.d.ts`
+- type `AutomationSubjectKind` from `dist/components/index.d.ts`
+- value `AutomationSubjectPicker` from `dist/components/index.d.ts`
+- type `AutomationSubjectPickerDemand` from `dist/components/index.d.ts`
+- type `AutomationSubjectPickerProps` from `dist/components/index.d.ts`
+- value `AutomationsSection` from `dist/components/index.d.ts`
+- type `AutomationsSectionProps` from `dist/components/index.d.ts`
 - value `Avatar` from `dist/components/index.d.ts`
 - type `AvatarProps` from `dist/components/index.d.ts`
 - value `AvatarStack` from `dist/components/index.d.ts`
