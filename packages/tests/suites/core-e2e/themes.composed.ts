@@ -490,12 +490,33 @@ export async function runF1() {
     expect(await selection()).toEqual(beforeApply);
     expect(artifactWrites()).toHaveLength(0);
     expect(accountSettingsWrites()).toHaveLength(0);
+
+    // The first-use Account deliberately has no Machine. Exercise daemon ingress
+    // with the answering UI client and the enrolled daemon on the same Account.
+    await ui!.close();
+    uiCredentials = controlCredentials;
+    ui = await connectUiActionClient({ serverUrl: home!.baseUrl, credentials: uiCredentials });
+    await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId), { timeoutMs: 60_000 });
+    const reversePath = '../../../../apps/ui/sources/components/appShell/runtime/ClientActionReverseRuntime';
+    const renderPath = '../../../../apps/ui/sources/dev/testkit/render/renderScreen';
+    const reactPath = 'react';
+    const [{ ClientActionReverseRuntime }, { renderScreen }, { createElement }] =
+        await Promise.all([import(reversePath), import(renderPath), import(reactPath)]);
+    const screen = await renderScreen(createElement(ClientActionReverseRuntime));
+    try { await runDaemonThemeApprovals(); } finally { await screen.unmount(); }
+}
+
+async function runDaemonThemeApprovals() {
+    await waitFor(async () => (await theme<{ devices: unknown[] }>('list', { includeDevices: true })).devices.length === 1,
+        { timeoutMs: 60_000 });
     const importFile = (name: string, css?: string) => ({ file: {
         name: 'theme.json', text: JSON.stringify(createThemeProfileFile(document(name, css).raw)),
     } });
-    expect(await daemonAction('import', importFile('Colour-only import'), 'mcp'))
+    const directImport = await daemonAction('import', importFile('Colour-only import'), 'mcp');
+    expect(directImport, JSON.stringify(directImport))
         .toMatchObject({ ok: true, result: { entry: { name: 'Colour-only import' } } });
-    expect(await daemonAction('import', importFile('CSS import', '[data-surface="sidebar"] { border-radius: 12px; }'), 'mcp'))
+    const cssImport = await daemonAction('import', importFile('CSS import', '[data-surface="sidebar"] { border-radius: 12px; }'), 'mcp');
+    expect(cssImport, JSON.stringify(cssImport))
         .toMatchObject({ ok: true, result: { kind: 'approval_request_created',
             actionId: THEME_ACTION_IDS.import, artifactId: expect.any(String) } });
     const afterAsk = await theme<{ themes: Entry[] }>('list', {});
@@ -503,10 +524,11 @@ export async function runF1() {
 
     // Ask must settle before the destructive effect; explicit user confirmation
     // is tested separately from the unconfirmed ingress.
-    const refused = await daemonAction('delete', { ref: sibling.entry.reference });
-    expect(refused).toMatchObject({ ok: true, result: { kind: 'approval_request_created',
+    const { entry: controlSibling } = await theme<{ entry: Entry }>('save', { document: document('Control Account sibling') });
+    const refused = await daemonAction('delete', { ref: controlSibling.reference }, 'mcp');
+    expect(refused, JSON.stringify(refused)).toMatchObject({ ok: true, result: { kind: 'approval_request_created',
         actionId: 'appearance.themes.delete', artifactId: expect.any(String) } });
-    await theme('get', { ref: sibling.entry.reference });
+    await theme('get', { ref: controlSibling.reference });
 }
 
 export async function runF2() {
