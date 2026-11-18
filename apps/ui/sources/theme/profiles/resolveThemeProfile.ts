@@ -28,7 +28,7 @@ const getCacheKey = (mode: ThemeProfileMode, profile: NonNullable<ResolveThemePr
     JSON.stringify(profile.style),
 ].join('|');
 
-const resolveUncachedThemeProfile = ({ mode, profile }: ResolveThemeProfileInput): ResolvedThemeProfile => {
+export const resolveUncachedThemeProfile = ({ mode, profile }: ResolveThemeProfileInput): ResolvedThemeProfile => {
     const baseTheme = getBaseTheme(mode);
     if (!profile) {
         return { theme: baseTheme, paint: deriveThemeColorsWithPaint(baseTheme, baseTheme).paint };

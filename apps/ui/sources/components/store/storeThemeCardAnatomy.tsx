@@ -8,8 +8,7 @@ import { useMeasuredNearViewport } from '@/components/widgets/nearViewport';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { getThemeRegistryLifecycle } from '@/theme/profiles/themeTryOnRuntime';
-import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
-import type { AcquiredRegistryTheme } from '@/registries/themeRegistryInstall';
+import type { AcquiredRegistryThemePreview } from '@/registries/themeRegistryInstall';
 
 import { THEME_MINIATURE_CARD_MIN_WIDTH, ThemeMiniaturePreview } from '@/components/settings/appearance/ThemeModePreview';
 import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
@@ -91,7 +90,7 @@ const StoreThemeCardPreview = React.memo(function StoreThemeCardPreview(props: R
     const { sourceId, itemId, version } = props;
     const identity = JSON.stringify([sourceId, itemId, version]);
     const { near, measure } = useMeasuredNearViewport(tracker, node, presented, identity);
-    const [resolved, setResolved] = React.useState<Readonly<{ scope: typeof scope; identity: string; value: AcquiredRegistryTheme }> | null>(null);
+    const [resolved, setResolved] = React.useState<Readonly<{ scope: typeof scope; identity: string; value: AcquiredRegistryThemePreview }> | null>(null);
     const acquired = resolved?.scope === scope && resolved?.identity === identity ? resolved.value : null;
     React.useEffect(() => {
         if (!presented || !near || props.faces.length > 0 || !sourceId || !itemId || !version) return;
@@ -102,9 +101,7 @@ const StoreThemeCardPreview = React.memo(function StoreThemeCardPreview(props: R
         }).catch(() => { /* The registry mark remains visible when this optional preview is unavailable. */ });
         return () => { active = false; };
     }, [presented, near, props.faces, sourceId, itemId, version, scope, identity]);
-    const faces = React.useMemo(() => props.faces.length > 0 ? props.faces
-        : acquired?.item.payload.themes.map(face => projectThemeLibraryEntry(face.document).miniature) ?? props.faces,
-    [props.faces, acquired]);
+    const faces = props.faces.length > 0 ? props.faces : acquired?.miniatures ?? props.faces;
     return (
         <View ref={node} collapsable={false} onLayout={measure} style={styles.inset}
             accessibilityElementsHidden importantForAccessibility="no-hide-descendants">

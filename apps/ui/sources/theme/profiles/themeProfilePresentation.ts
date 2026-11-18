@@ -2,7 +2,7 @@ import { parseThemeProfileDocument, type ThemeLibraryEntry, type ThemeMiniatureD
 import { THEME_MINIATURE_OVERRIDE_TOKENS, type ThemeProfileArtifactHeader } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
 import { resolveKnownFontFamily } from '@/constants/Typography';
 import { DEFAULT_THEME_RADIUS_SCALE_NAME } from '@/theme/themeStyleScales';
-import { resolveThemeProfile } from './resolveThemeProfile';
+import { resolveThemeProfileWithPaint } from './resolveThemeProfile';
 import { resolveThemeProfileAssetAppearance, resolveThemeProfileSupportedModes } from './themeProfileAssetAppearance';
 import { getThemeProfileTokenDefinition } from './themeProfileTokenRegistry';
 import { readThemeProfilePathValue } from './themeProfilePathAccess';
@@ -37,8 +37,12 @@ export function projectThemeMiniaturePalette(profile: ThemeMiniatureInput, mode 
 }
 
 /** Resolve the same compact presentation for Artifact headers, built-ins and plugin declarations. */
-export function projectThemeMiniature(profile: ThemeMiniatureInput, mode = resolveThemeProfileAssetAppearance(profile)): ThemeMiniatureData {
-    const { colors } = resolveThemeProfile({ mode, profile });
+export function projectThemeMiniature(
+    profile: ThemeMiniatureInput,
+    mode = resolveThemeProfileAssetAppearance(profile),
+    resolve = resolveThemeProfileWithPaint,
+): ThemeMiniatureData {
+    const { colors } = resolve({ mode, profile }).theme;
     const values = Object.fromEntries(Object.entries(THEME_MINIATURE_OVERRIDE_TOKENS).map(([role, token]) =>
         [role, readThemeProfilePathValue(colors, getThemeProfileTokenDefinition(token)!.path)!])) as Record<keyof typeof THEME_MINIATURE_OVERRIDE_TOKENS, string>;
     return { mode, ...values, radius: profile.style?.radius ?? DEFAULT_THEME_RADIUS_SCALE_NAME };

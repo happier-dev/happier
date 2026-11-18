@@ -1,7 +1,9 @@
-import { mergeThemeProfileDocumentEdit, type ThemeLibraryMutationResult, type ThemeProfileMode } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { mergeThemeProfileDocumentEdit, type ThemeLibraryMutationResult, type ThemeMiniatureData, type ThemeProfileMode } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { createActionExecuteFailureError, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { RegistryItemPointerV1 } from '@happier-dev/protocol/registries/registryContentRefV1';
 import { createThemeProfileLibrary, createThemeProfileSourceAdapter, type ThemeProfileLibraryContext } from '@/theme/profiles/themeProfileLibrary';
+import { projectThemeMiniature } from '@/theme/profiles/themeProfilePresentation';
+import { resolveUncachedThemeProfile } from '@/theme/profiles/resolveThemeProfile';
 import type { RegistryThemeAcquisitionV1 } from '@happier-dev/protocol/registries/registryThemeV1';
 import type { ThemeTryOnSnapshot } from '@/theme/profiles/themeTryOn';
 import type { ThemeInstallFaceOutcome, ThemeInstallResult, ThemeRegistryItemKey } from '@happier-dev/protocol/actions/themeActionFamily';
@@ -10,8 +12,9 @@ import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccou
 export type { ThemeInstallFaceOutcome, ThemeInstallResult, ThemeRegistryItemKey } from '@happier-dev/protocol/actions/themeActionFamily';
 
 export type AcquiredRegistryTheme = RegistryThemeAcquisitionV1;
+export type AcquiredRegistryThemePreview = AcquiredRegistryTheme & Readonly<{ miniatures: readonly ThemeMiniatureData[] }>;
 export type ThemeRegistryOperationOptions = Readonly<{ expectedScope: AccountSettingsScope | null; signal?: AbortSignal }>;
-type CachedRegistryThemeAcquisition = { promise: Promise<AcquiredRegistryTheme>; failed: boolean; excluded: boolean; value: AcquiredRegistryTheme | null };
+type CachedRegistryThemeAcquisition = { promise: Promise<AcquiredRegistryThemePreview>; failed: boolean; excluded: boolean; value: AcquiredRegistryThemePreview | null };
 
 /** Registry admission/acquisition and MODEL persistence retain their own authorities. */
 export function createThemeRegistryLifecycle(deps: Readonly<{
@@ -50,13 +53,20 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
         } } };
         return sourced;
     };
-    const acquirePreview = (listing: ThemeRegistryItemKey & Pick<RegistryItemPointerV1, 'version'>, options: ThemeRegistryOperationOptions): Promise<AcquiredRegistryTheme> => {
-        if (!options.expectedScope) return acquire(listing, options);
-        const key = serverAccountScopedResourceKey(options.expectedScope, listing.sourceId, listing.itemId, listing.version);
+    const acquireWithMiniatures = async (listing: ThemeRegistryItemKey & Pick<RegistryItemPointerV1, 'version'>, options: ThemeRegistryOperationOptions): Promise<AcquiredRegistryThemePreview> => {
+        const acquired = await acquire(listing, options);
+        // This acquisition retains its previews. Gallery palettes must not replace the live paint entry.
+        const miniatures = acquired.item.payload.themes.map(face =>
+            projectThemeMiniature(face.document.profile, face.mode, resolveUncachedThemeProfile));
+        return { ...acquired, miniatures };
+    };
+    const acquirePreview = (listing: ThemeRegistryItemKey & Pick<RegistryItemPointerV1, 'version'>, options: ThemeRegistryOperationOptions): Promise<AcquiredRegistryThemePreview> => {
+        if (!options.expectedScope) return acquireWithMiniatures(listing, options);
+        const key = previewKey(listing, options.expectedScope);
         const retained = previewAcquisitions.get(key);
         if (retained) return retained.promise;
         // One finite acquisition serves cards and opened listings; a card unmount only ends its publication.
-        const pending: CachedRegistryThemeAcquisition = { promise: acquire(listing, { expectedScope: options.expectedScope }), failed: false, excluded: false, value: null };
+        const pending: CachedRegistryThemeAcquisition = { promise: acquireWithMiniatures(listing, { expectedScope: options.expectedScope }), failed: false, excluded: false, value: null };
         pending.promise = pending.promise.then(acquired => {
             // Absence is a settled manifest fact, not an upstream/network failure.
             pending.excluded = acquired.item.payload.themes.length === 0;

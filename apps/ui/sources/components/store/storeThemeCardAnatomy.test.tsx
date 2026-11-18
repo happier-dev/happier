@@ -7,6 +7,7 @@ import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/prompt
 import { deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
 import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
 import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
+import * as themeColors from '@/theme/profiles/deriveThemeColors';
 import type { StoreThemeCardView } from './storeThemeViewTypes';
 import type { CollectionAnatomy } from '@happier-dev/plugin-ui';
 
@@ -50,7 +51,8 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
             if (id === 'failed') return Response.json({ error: 'unavailable' }, { status: 503 });
             const response = Response.json({ themes: id === 'icons' ? [] : [{ key: 'dark', label: 'Dark', mode: 'dark', document: { schemaVersion: 1,
                 id, name: id, createdAt: '2026-11-17', updatedAt: '2026-11-17', base: { light: 'light', dark: 'dark' },
-                overrides: { light: {}, dark: {} }, assetAppearance: 'dark' } }] });
+                overrides: { light: {}, dark: { 'background.canvas': id === 'far' ? '#28313a' : '#172033' } },
+                assetAppearance: 'dark' } }] });
             const json = response.json.bind(response);
             response.json = () => { bodyParses++; return json(); };
             return response;
@@ -178,9 +180,15 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
     expect(surfaces[3]!.screen.findAllByType(HappierBrandMark)).toHaveLength(1);
     expect(surfaces[3]!.screen.findAll(node => node.type === 'View')[0]).toBe(failedShell);
     await scroll(0);
+    const originalMiniature = surfaces[0]!.screen.findAllByType(ThemeMiniaturePreview)[0]!.props.miniature;
     await surfaces[0]!.screen.unmount();
+    const derives = vi.spyOn(themeColors, 'deriveThemeColorsWithPaint');
+    onTestFinished(() => { derives.mockRestore(); });
     surfaces[0]!.screen = await renderScreen(surfaces[0]!.tree(), { createNodeMock: () => surfaces[0]!.node });
     await vi.waitFor(() => expect(surfaces[0]!.screen.findAllByType(ThemeMiniaturePreview)).toHaveLength(1));
+    expect(surfaces[0]!.screen.findAllByType(ThemeMiniaturePreview)[0]!.props.miniature).toBe(originalMiniature);
+    expect(derives).not.toHaveBeenCalled();
+    derives.mockRestore();
     expect(reads.sort(), 'scroll-back and a recycled card reuse the versioned package').toEqual(['failed', 'far', 'icons', 'near-a', 'near-b']);
     await scroll(1400);
     await flushHookEffects();

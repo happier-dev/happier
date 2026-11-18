@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseThemeProfileDocument, type ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
-import type { RegistryThemeAcquisitionV1 } from '@happier-dev/protocol/registries/registryThemeV1';
+import { RegistryThemeFaceV1Schema, type RegistryThemeAcquisitionV1 } from '@happier-dev/protocol/registries/registryThemeV1';
 import { createThemeProfileLibrary, type ThemeProfileArtifactAdapter } from '@/theme/profiles/themeProfileLibrary';
 import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
+import * as themeColors from '@/theme/profiles/deriveThemeColors';
+import { clearEffectiveThemeCache, resolveThemeProfileWithPaint } from '@/theme/profiles/resolveThemeProfile';
 import { createThemeRegistryLifecycle } from './themeRegistryInstall';
 import { createThemeActionExecute } from '@/sync/ops/actions/themeActionDeps';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -84,6 +86,65 @@ function setup(acquisitionGate?: Promise<void>) {
 }
 
 describe('Store theme lifecycle through the MODEL library', () => {
+    it('projects visible faces once per acquisition without evicting the live paint palette', async () => {
+        const { acquired, listing: baseListing, options } = setup();
+        const listings = Array.from({ length: 14 }, (_, index) => ({
+            ...baseListing, itemId: `theme-${index}`, version: '1.0.0',
+        }));
+        const { themes } = acquired.item.payload;
+        let acquisitions = 0;
+        const lifecycle = createThemeRegistryLifecycle({
+            acquire: async listing => {
+                acquisitions++;
+                const canvas = `#3344${listing.itemId.slice('theme-'.length).padStart(2, '0')}`;
+                const faces = themes.map(face => RegistryThemeFaceV1Schema.parse({
+                    ...face,
+                    document: { ...face.document, raw: { ...face.document.raw,
+                        overrides: { light: { 'background.canvas': canvas }, dark: { 'background.canvas': canvas } },
+                    } },
+                }));
+                return {
+                    item: { ...acquired.item, summary: { ...acquired.item.summary, ...listing },
+                        payload: { ...acquired.item.payload, themes: faces } },
+                    provenance: { sourceId: listing.sourceId, itemId: listing.itemId, format: 'git', sourceUrl: 'https://themes.example.test/catalog',
+                        ref: acquired.item.payload.ref, importedAt: 0 },
+                };
+            },
+            withThemeProfileContext: async () => { throw new Error('Gallery must not read theme library storage'); },
+            readMode: () => 'light',
+            revertStorePreview: () => {},
+        });
+        const liveInput = { mode: 'light' as const, profile: document('live').profile };
+        clearEffectiveThemeCache();
+        const livePaint = resolveThemeProfileWithPaint(liveInput);
+        // Every uncached resolution derives paints once. Count the real work without replacing it.
+        const derives = vi.spyOn(themeColors, 'deriveThemeColorsWithPaint');
+        try {
+            const openPage = () => Promise.all(listings.map(listing => lifecycle.acquirePreview(listing, options)));
+            const cards = await openPage();
+            const cold = derives.mock.calls.length;
+            const first = cards.map(card => card.miniatures);
+            const firstMount = derives.mock.calls.length - cold;
+            const paintSurvivedFirstMount = resolveThemeProfileWithPaint(liveInput) === livePaint;
+            derives.mockClear();
+            const reopened = await openPage();
+            const reopen = derives.mock.calls.length;
+            const paintSurvivedReopen = resolveThemeProfileWithPaint(liveInput) === livePaint;
+
+            expect({ cold, firstMount, reopen, paintSurvivedFirstMount, paintSurvivedReopen }).toEqual({
+                cold: listings.length * themes.length, firstMount: 0, reopen: 0,
+                paintSurvivedFirstMount: true, paintSurvivedReopen: true,
+            });
+            for (const [index, card] of reopened.entries()) expect(card.miniatures).toBe(first[index]);
+            expect(first[0]).toMatchObject([{ mode: 'light', canvas: '#334400' }, { mode: 'dark', canvas: '#334400' }]);
+            expect(first[13]).toMatchObject([{ mode: 'light', canvas: '#334413' }, { mode: 'dark', canvas: '#334413' }]);
+            expect(acquisitions).toBe(listings.length);
+        } finally {
+            derives.mockRestore();
+            clearEffectiveThemeCache();
+        }
+    });
+
     it('publishes version-scoped non-theme exclusion once, coalescing 60 gallery consumers', async () => {
         const state = setup();
         state.acquired.item.payload.themes.length = 0;
