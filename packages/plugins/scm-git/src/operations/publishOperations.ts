@@ -11,7 +11,7 @@ import {
 import type { ScmBackendContext } from '../types.js';
 import { runGitPushWithConnectedAccount } from './connectedAccountPush.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
-import { normalizeScmRemoteRequest } from '../remote.js';
+import { buildGitPublishArgs, normalizeScmRemoteRequest } from '../remote.js';
 import { evaluateRemoteMutationPreconditions } from '../remoteGuards.js';
 import { evaluateGitPushConfiguration, finalizeGitRemoteMutation } from './remoteOperations.js';
 
@@ -104,7 +104,7 @@ export async function gitRemotePublish(input: {
     const configured = await evaluateGitPushConfiguration({ context: input.context, remote: remote.remote, hasExplicitRefspec: true });
     if (configured) return configured;
 
-    const args = ['push', '--set-upstream', remote.remote, head];
+    const args = buildGitPublishArgs({ remote: remote.remote, branch: head });
     const push = await runGitPushWithConnectedAccount({ remote: remote.remote, command: {
         bin: 'git',
         cwd: input.context.cwd,

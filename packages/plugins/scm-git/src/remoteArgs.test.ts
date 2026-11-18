@@ -3,22 +3,29 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import {
     buildGitPullArgs,
+    buildGitPublishArgs,
     buildGitPushArgs,
     mapGitErrorCode,
     normalizeScmRemoteRequest,
 } from './remote.js';
 
 describe('git remote arg builders', () => {
+    it('bypasses guest hooks for first publish', () => {
+        expect(buildGitPublishArgs({ remote: 'origin', branch: 'main' })).toEqual([
+            'push', '--no-verify', '--set-upstream', 'origin', 'main',
+        ]);
+    });
     it('uses explicit remote + branch for push when both are provided', () => {
         expect(buildGitPushArgs({ remote: 'upstream', branch: 'feature/x' } as any)).toEqual([
             'push',
+            '--no-verify',
             'upstream',
             'feature/x',
         ]);
     });
 
     it('defaults to origin when push has branch without remote', () => {
-        expect(buildGitPushArgs({ branch: 'feature/x' } as any)).toEqual(['push', 'origin', 'feature/x']);
+        expect(buildGitPushArgs({ branch: 'feature/x' } as any)).toEqual(['push', '--no-verify', 'origin', 'feature/x']);
     });
 
     it('uses explicit remote + branch for pull when both are provided', () => {
