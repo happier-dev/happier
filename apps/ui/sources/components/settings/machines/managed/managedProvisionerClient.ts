@@ -15,8 +15,10 @@ import { readManagedMachineActionOutputV1 } from '@/sync/api/machines/managedMac
 import { isPluginErrorData, type PluginErrorContractData } from '@happier-dev/protocol/plugins/errors';
 import { PluginDiagnosticRemediationV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import type { PluginActionFailureAuthorPayloadV1 } from '@happier-dev/protocol/plugins/actions/invocation';
+import { readMachineProvisionerOptionsRefusalV1, type MachineProvisionerCheckResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
 export type ManagedProvisionerFailure = Readonly<{ kind: 'failed'; code: string; requestId?: string;
+    optionsRefusal?: MachineProvisionerCheckResultV1;
     nativeCause?: MachineProvisionerNativeCauseV1; details?: ManagedNativeFailureDetailsV1; failureCause?: ActionExecuteFailure['failureCause'] }>
     & Pick<PluginErrorContractData, 'message'> & Pick<PluginActionFailureAuthorPayloadV1, 'remediation'>;
 export type ManagedProvisionerClientResult<T> = Exclude<MachinePresetCollectionResult<T>, { kind: 'failed' }>
@@ -34,10 +36,13 @@ export function projectManagedProvisionerFailure(code: string, details?: unknown
     const authored = isPluginErrorData(details) && details.code === code ? details : undefined;
     const message = authored?.message?.trim();
     const remediation = PluginDiagnosticRemediationV1Schema.safeParse(authored && 'remediation' in authored ? authored.remediation : undefined);
-    const native = ManagedNativeFailureDetailsV1Schema.safeParse(authored && 'details' in authored ? authored.details : details);
+    const authoredDetails = authored && 'details' in authored ? authored.details : undefined;
+    const optionsRefusal = readMachineProvisionerOptionsRefusalV1(code, authoredDetails);
+    const native = ManagedNativeFailureDetailsV1Schema.safeParse(authoredDetails ?? details);
     return { kind: 'failed', code, ...(requestId ? { requestId } : {}), ...(message ? { message } : {}),
         ...(failureCause ? { failureCause } : {}),
         ...(remediation.success ? { remediation: remediation.data } : {}),
+        ...(optionsRefusal ? { optionsRefusal } : {}),
         ...(native.success ? { details: native.data, nativeCause: native.data.nativeCause } : {}) };
 }
 function admittedReceipt(actionId: ManagedMachineActionIdV1, code: string, details: unknown) {

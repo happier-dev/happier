@@ -8,6 +8,7 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { isPluginErrorData } from '@happier-dev/protocol/plugins/errors';
 import { PluginDiagnosticRemediationV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import { readMachineProvisionerOptionsRefusalV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { PluginError } from '../../plugins/errors.js';
 
 export class ManagedMachineControllerError extends Error {
@@ -40,13 +41,15 @@ export class ManagedMachineControllerError extends Error {
         const authored = isPluginErrorData(failure.details) && failure.details.code === failure.errorCode ? failure.details : undefined;
         const message = authored?.message?.trim();
         const remediation = PluginDiagnosticRemediationV1Schema.safeParse(authored && 'remediation' in authored ? authored.remediation : undefined);
+        const optionsRefusal = phase === 'machines.provisioners.options' && authored && 'details' in authored
+            ? readMachineProvisionerOptionsRefusalV1(failure.errorCode, authored.details) : undefined;
         // Keep native-only diagnostics in their existing closed shape. Authored
         // repairs travel as the existing public Action failure in Error.cause.
-        const presentation = authored && (message && message !== authored.code || remediation.success)
+        const presentation = authored && (message && message !== authored.code || remediation.success || optionsRefusal)
             ? { error: message || failure.errorCode,
                 details: new PluginError({ code: authored.code, message, retryable: authored.retryable,
                     ...(remediation.success ? { remediation: remediation.data } : {}),
-                    ...(details ? { details } : {}) }).data }
+                    ...(optionsRefusal || details ? { details: optionsRefusal ?? details } : {}) }).data }
             : failure.error.trim() && failure.error !== failure.errorCode || publicDetails !== details
                 ? { error: failure.error.trim() || failure.errorCode, ...(publicDetails ? { details: publicDetails } : {}) }
                 : undefined;

@@ -970,6 +970,49 @@ describe('mounted managed configurator', () => {
       expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
     } finally { await screen.unmount(); }
   });
+  it('offers the provider repair from a refused options read even when the shared check was ready', async () => {
+    const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+    restoreViewport = () => viewport.mockRestore();
+    const { PluginError } = await import('@happier-dev/plugin-sdk/errors');
+    const { readPluginActionError } = await import('@happier-dev/protocol/plugins/actions/invocation');
+    const { ManagedMachineControllerError } = await import('@happier-dev/cli-common/machines/managed');
+    const { normalizeActionExecutorThrownError } = await import('@happier-dev/protocol/actions/executor/resultProjection');
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://options-repair.example.test',
+      serverIdentityId: 'srv_options_repair', accountId: 'owner', currentAccount: true });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
+      id: defaultController.machineId, installationId: defaultController.installationId,
+    })]);
+    for (const [actionId, result] of [
+      ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
+      ['machines.provisioners.check', { available: true }],
+    ] as const) await answerProvisionerAction(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = readProvisionerRequest(value);
+      return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
+    } });
+    const pluginId = provisioner.contribution.pluginId;
+    const failure = readPluginActionError(new PluginError({ code: 'credential_unavailable', message: 'Sign in to Docker',
+      details: { available: false, code: 'credential_unavailable', status: 'Sign in to Docker',
+        prerequisites: [{ requirement: { kind: 'managedDependency', id: { pluginId, localId: 'docker-sandboxes-cli' } },
+        status: 'unavailable', reason: 'Sign in to Docker', repairAction: { action: { pluginId, localId: 'sign-in' }, input: {} } }] } }))!;
+    const actionId = 'machines.provisioners.options';
+    const error = ManagedMachineControllerError.fromActionFailure({ ok: false, errorCode: failure.code,
+      error: failure.message, details: failure.data }, actionId);
+    const execution = { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.options', { select: value => {
+      const request = readProvisionerRequest(value);
+      return { body: { v: 1, actionId, requestId: request.requestId, execution } };
+    } });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} initialController={defaultController} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.error')).not.toBeNull());
+      const requirementId = buildQualifiedPluginContributionKey({ pluginId, localId: 'docker-sandboxes-cli' });
+      expect(screen.findByTestId(`managed-config.repair:managedDependency:${requirementId}`)?.props.onPress).toEqual(expect.any(Function));
+      expect(screen.getTextContent()).toContain('Sign in to Docker');
+      expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+    } finally { await screen.unmount(); }
+  });
   it('keeps a settled options failure through Retry and publishes only a changed answer', async () => {
     const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://options-retry.example.test',
       serverIdentityId: 'srv_options_retry', accountId: 'owner', currentAccount: true });

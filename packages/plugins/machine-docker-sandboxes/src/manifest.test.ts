@@ -67,6 +67,8 @@ describe('activated Docker Sandboxes public role boundary', () => {
     try {
       expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({ available: false, code: 'credential_unavailable',
         prerequisites: [{ repairAction: { action: { pluginId: DOCKER_SANDBOXES_PLUGIN.manifest.id, localId: 'sign-in' } } }] });
+      await expect(kit.invokeAction('options', {}, { surface: 'plugin' })).rejects.toMatchObject({ code: 'credential_unavailable',
+        details: { prerequisites: [{ repairAction: { action: { pluginId: DOCKER_SANDBOXES_PLUGIN.manifest.id, localId: 'sign-in' }, input: {} } }] } });
       expect(run.mock.calls.some(([request]) => request.args?.[0] === 'login')).toBe(false);
     } finally { await kit.dispose(); }
   });

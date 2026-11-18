@@ -10,7 +10,7 @@ import {
   MachineProvisionerOptionsResultV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerPutFileResultV1Schema,
   projectMachineProvisionerActionFailure,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import type { MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { MachineProvisionerAuthorDefinitionV1, MachineProvisionerCheckResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createDockerSandboxesProvider, DOCKER_SANDBOXES_DEPENDENCY_ID, DOCKER_SANDBOXES_PLUGIN_ID,
   DOCKER_SANDBOXES_PROVISIONER_ID } from './machine/provider.js';
 import { DOCKER_SANDBOXES_ROLE_SCHEMAS, DOCKER_SANDBOXES_RECONCILIATION_SCHEMAS, DOCKER_SANDBOXES_PREPARATION_SCHEMAS,
@@ -29,6 +29,14 @@ const actionDefaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostA
 function errorCode(error: unknown) {
   return error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
     ? error.code : 'docker_sandbox_unavailable';
+}
+function readDockerSignInRefusal(error: unknown) {
+  if (!(error instanceof PluginError) || error.code !== 'credential_unavailable') return null;
+  return { available: false, code: error.code, status: 'Sign in to Docker', prerequisites: [{
+    requirement: { kind: 'managedDependency', id: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: DOCKER_SANDBOXES_DEPENDENCY_ID } },
+    status: 'unavailable', reason: 'Docker Sandboxes is installed but needs native sign-in.',
+    repairAction: { action: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: 'sign-in' }, input: {} },
+  }] } satisfies MachineProvisionerCheckResultV1;
 }
 class MissingDockerSandboxesDependency extends Error {
   readonly code = 'docker_sandbox_unavailable';
@@ -223,18 +231,12 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
       resultSchema: defineProtocolUnion([defineProtocolLiteral(null), defineProtocolObject({ url: defineProtocolString() }, { policy: 'closed' })]),
     },
     check: { ...actionDefaults, title: 'Check Docker Sandboxes', dangerLevel: 'safe',
-      hostAccess: [processAccess, DOCKER_ACCOUNT_PURPOSE],
       inputSchema: DOCKER_SANDBOXES_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
         try { return machineCheckPresentation(await (await provider(context)).check()); }
         catch (error) {
-          if (error instanceof PluginError && error.code === 'credential_unavailable') return {
-            available: false, code: error.code, status: 'Sign in to Docker', prerequisites: [{
-              requirement: { kind: 'managedDependency' as const, id: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: DOCKER_SANDBOXES_DEPENDENCY_ID } },
-              status: 'unavailable' as const, reason: 'Docker Sandboxes is installed but needs native sign-in.',
-              repairAction: { action: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: 'sign-in' }, input: {} },
-            }],
-          };
+          const signIn = readDockerSignInRefusal(error);
+          if (signIn) return signIn;
           return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: errorCode(error),
           ...(error instanceof MissingDockerSandboxesDependency ? { prerequisites: [{ requirement: { kind: 'managedDependency' as const,
             id: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: DOCKER_SANDBOXES_DEPENDENCY_ID } }, status: 'unavailable' as const,
@@ -245,7 +247,14 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
     },
     options: { ...actionDefaults, title: 'Discover Docker Sandbox templates', dangerLevel: 'safe',
       inputSchema: DOCKER_SANDBOXES_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema,
-      async run(_input, context) { return (await provider(context)).options(); },
+      async run(_input, context) {
+        try { return await (await provider(context)).options(); }
+        catch (error) {
+          const signIn = readDockerSignInRefusal(error);
+          if (!signIn) throw error;
+          throw new PluginError({ code: signIn.code, message: signIn.status, retryable: true, details: signIn });
+        }
+      },
     },
     acquire: { ...actionDefaults, title: 'Create Docker Sandbox', dangerLevel: 'writesLocal',
       confirmation: { title: 'Create Docker Sandbox', confirmLabel: 'Create' },

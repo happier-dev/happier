@@ -444,6 +444,13 @@ export const MachineProvisionersListResultV1Schema = lazyZodSchema(() => z.stric
 })));
 export type MachineProvisionerCheckResultV1 = mini.infer<typeof MachineProvisionerCheckResultV1Schema>;
 export type MachineProvisionerOptionsResultV1 = mini.infer<typeof MachineProvisionerOptionsResultV1Schema>;
+
+/** Options can author the same unavailable finding as Check in PluginError details. */
+export function readMachineProvisionerOptionsRefusalV1(code: string, details: unknown): MachineProvisionerCheckResultV1 | undefined {
+  const parsed = MachineProvisionerCheckResultV1Schema.safeParse(details);
+  if (parsed.success && !parsed.data.available && parsed.data.code === code) return parsed.data;
+  return undefined;
+}
 /** Selected configuration facts replace discovery prerequisites, including an explicit empty snapshot. */
 export function readMachineProvisionerPrerequisitesV1(check: MachineProvisionerCheckResultV1 | undefined,
   options: MachineProvisionerOptionsResultV1 | null | undefined): mini.infer<typeof ManagedPrerequisiteV1Schema>[] {

@@ -74,8 +74,10 @@ export async function readManagedConfiguration(input: Readonly<{
             checkRead, input.selectors !== undefined ? readChoices() : Promise.resolve(null),
         ]);
         if (!current()) return { kind: 'retired' };
-        const failure = check.kind === 'failed' ? check : choices?.kind === 'failed' ? choices : undefined;
-        return { kind: 'settled', ...(check.kind === 'succeeded' ? { check: check.value } : {}),
+        const choicesFailure = choices?.kind === 'failed' ? choices : undefined;
+        const optionsRefusal = choicesFailure && 'optionsRefusal' in choicesFailure ? choicesFailure.optionsRefusal : undefined;
+        const failure = optionsRefusal ? choicesFailure : check.kind === 'failed' ? check : choicesFailure;
+        return { kind: 'settled', check: optionsRefusal ?? (check.kind === 'succeeded' ? check.value : undefined),
             options: choices?.kind === 'succeeded' ? choices.value : null,
             ...(failure ? { failure } : {}) };
     } catch {

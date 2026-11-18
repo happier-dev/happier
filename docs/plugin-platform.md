@@ -4809,6 +4809,14 @@ selected `base` launch. When present, that complete snapshot replaces the check
 prerequisites in the existing receipt and repair flow; an empty list clears them.
 When absent, the check prerequisites remain in use.
 
+When a safe Options read is refused before it can supply a launch, it can put
+the same unavailable Check result in `PluginError.details`. The result must
+carry the error's code. The managed configurator keeps that reason and routes
+its prerequisites through the existing repair controls. Local Docker Sandboxes
+uses this for native sign-in. Check and Options observe the installed runtime
+without selecting an Account. The explicit Sign in Action still owns credential
+use and approval.
+
 In unreleased 0.3 development source, the Docker container provisioner defaults
 to an image, with an optional setup script and optional `workspaceFolder`. Without
 a host workspace it uses a container-owned volume. The image path invokes the
