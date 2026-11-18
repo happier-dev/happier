@@ -331,7 +331,9 @@ function takeReportLock(root) {
   return null;
 }
 
-if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(self)) {
+// Under `node -e '<importer>' <args>` argv[1] is an argument, not a path: compare only an existing file (a throw here
+// broke every importer's load, gate.sh's textual step included).
+if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(self)) {
   const args = process.argv.slice(2);
   const option = name => { const index = args.indexOf(`--${name}`); return index < 0 ? undefined : args[index + 1]; };
   const repo = resolve(option('repo') ?? process.cwd());

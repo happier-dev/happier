@@ -73,6 +73,7 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
     for (const key of ['user.name', 'user.email']) {
       if (!git('config', '--get', key)) throw new Error(`Missing Git ${key}`);
     }
+    let gatedTree;
     for (;;) {
       const head = git('rev-parse', 'HEAD');
       git('read-tree', head);
@@ -84,51 +85,18 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
       if (!committed.length) throw new Error('Refusing an empty commit');
       if (committed.some((name) => name === '.project' || name.startsWith('.project/'))) throw new Error('Never stage .project paths');
       const tree = git('write-tree');
-      // Blocking syntax check of the packet's changed sources, the same function the commit wrapper's gate runs
-      // (P03 GATE-PARITY 2026-11-18: 5346aa3091c landed an unparsable spec through this path).
-      const { commitSourceSyntax } = await import('../workspaces/commitSourceSyntax.mjs');
-      const syntax = await commitSourceSyntax({ repo: cwd, base: head, tree });
-      if (syntax.findings.length) {
-        throw new Error([`Commit refused: ${syntax.findings.length} syntax error(s) in the packet's changed sources:`,
-          ...syntax.findings.map(finding => `  ${finding}`)].join('\n'));
-      }
-      // Blocking producer closure (owner 2026-11-15, supersedes the 11-07 warn-only rule for this
-      // check): the commit checker's textual scan runs on every packet, at every CAS attempt.
-      const { commitProducerClosure } = await import('../workspaces/checkCommitTypeCoherence.mjs');
-      const closure = commitProducerClosure({ repo: cwd, base: head, tree });
-      if (closure.findings.length) {
-        throw new Error([`Commit refused: producer closure found ${closure.findings.length} new break(s) in the packet's tree:`,
-          ...closure.findings.map(finding => `  ${finding}`),
-          'Commit each producer (export, module, package.json) with its consumer, or the importer adaptations with the producer change; otherwise leave the consumer uncommitted.'].join('\n'));
-      }
-      // Blocking plugin import-boundary check of the packet tree (changed plugin files, Git-object manifests).
-      const { commitExtensionBoundaries } = await import('../workspaces/checkCommitTypeCoherence.mjs');
-      const boundary = commitExtensionBoundaries({ repo: cwd, base: head, tree });
-      if (boundary.findings.length) {
-        throw new Error([`Commit refused: the packet adds ${boundary.findings.length} extension import-boundary violation(s):`,
-          ...boundary.findings.map(finding => `  ${finding}`)].join('\n'));
-      }
-      // Entry loads of the packet's own tree (owner ruling 2026-11-18), shared with the commit wrapper's gate. Report
-      // mode (default) records the verdict after the commit lands; HAPPIER_COMMIT_TREE_GATE=block refuses here.
-      const treeEntryLoads = await import('../workspaces/commitTreeEntryLoads.mjs');
-      const treeGate = treeEntryLoads.commitTreeGateMode();
-      if (treeGate === 'block') {
-        const loads = await treeEntryLoads.commitTreeEntryLoads({ repo: cwd, base: head, tree });
-        if (loads.findings.length) {
-          throw new Error([`Commit refused: ${loads.findings.length} entry graph(s) fail to load from the packet's own tree:`,
-            ...loads.findings.map(finding => `  ${finding}`)].join('\n'));
-        }
-      }
+      // The commit gate: the same checks every HEAD writer runs (scripts/workspaces/commitGate.mjs), on every CAS attempt.
+      // After a lost CAS the packet is rechecked as a replay of the tree that already passed.
+      const { runCommitGate, formatCommitGateRefusal, moveRefUnderCommitLock } = await import('../workspaces/commitGate.mjs');
+      const gate = await runCommitGate({ repo: cwd, base: head, tree, prior: gatedTree, label: 'commitFromPrivateIndex' });
+      for (const note of gate.notes) console.error(`commit gate: ${note}`);
+      if (gate.verdict !== 'pass') throw new Error(formatCommitGateRefusal(gate));
+      gatedTree = tree;
       const commit = git('commit-tree', tree, '-p', head, '-F', messageFile);
       try {
-        // The ref update takes the commit wrapper's lock (.project/scripts/p03/cw-head/commit-partial.sh), so it never
-        // moves HEAD between that wrapper's locked recheck and its compare-and-swap (P03-GATE-FIX 2026-11-17: DBW-SPINE
-        // lost its final CAS to commits from this path). The reflog names the committer. Native Windows has no flock and
-        // no wrapper; there the update stays a plain compare-and-swap.
-        const update = ['update-ref', '-m', `commitFromPrivateIndex: pid ${process.pid}`, 'HEAD', commit, head];
-        if (process.platform === 'win32') git(...update);
-        else execFileSync('flock', ['-x', path.join(git('rev-parse', '--path-format=absolute', '--git-common-dir'), 'p03-commit-partial.lock'), 'git', ...update],
-          { cwd, env, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+        // Under the commit lock, so HEAD never moves between the commit wrapper's locked recheck and its CAS. The reflog
+        // names the committer.
+        moveRefUnderCommitLock({ repo: cwd, ref: 'HEAD', commit, head, reason: `commitFromPrivateIndex: pid ${process.pid}` });
       } catch (error) {
         if (git('rev-parse', 'HEAD') !== head) continue; // Rebuild, never attach an old tree to a new parent.
         throw error;
@@ -137,10 +105,6 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
       // HEAD moved: the rolling HEAD typecheck (owner ruling 2026-11-15) covers this commit; it never waits.
       const { kickRollingHeadTypecheck } = await import('../workspaces/commitPackageTypecheck.mjs');
       console.error(kickRollingHeadTypecheck({ repo: cwd, commit }));
-      if (treeGate === 'report') {
-        const pid = treeEntryLoads.startCommitTreeEntryLoadReport({ repo: cwd, base: head, tree: commit, label: 'commitFromPrivateIndex' });
-        if (pid) console.error(`Commit tree entry loads: report started (pid ${pid}); verdict in ${treeEntryLoads.defaultCommitTreeLedger(cwd)}`);
-      }
       await syncSharedIndex(cwd, commit, committed);
       return commit;
     }

@@ -39,6 +39,7 @@ import { uiTypedRoutesDeclaration } from '../../apps/ui/scripts/uiTypedRoutesDec
 import { commitProducerClosure } from './commitProducerClosure.mjs';
 import { kickRollingHeadTypecheck } from './commitPackageTypecheck.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
+import { formatCommitGateRefusal, moveRefUnderCommitLock, runCommitGate } from './commitGate.mjs';
 import { readStaleServerGeneratedClients, resolveServerGeneratedClients } from '../../apps/stack/scripts/build/server_generated_clients.mjs';
 
 // The textual producer-closure scan (missing modules/exports, untracked lockfile importers) runs
@@ -674,8 +675,10 @@ function replayPacket(git, base, tree, head) {
 }
 
 /** Finalizes an in-memory checker result. The caller still owns identity, hooks, own-hunk
- * verification and shared-index synchronization. No lock is held while the compiler queues. */
-export function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEAD' }) {
+ * verification and shared-index synchronization. No lock is held while the compiler queues. Before every
+ * compare-and-swap the packet passes the commit gate every HEAD writer runs (commitGate.mjs); a refusal
+ * returns with `checked.gate` and no commit. The ref moves under the commit wrapper's lock. */
+export async function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEAD' }) {
   const git = repository(repo);
   const original = checked;
   const packetPaths = git.sliceOf(original.base, original.tree).map(({ path }) => path);
@@ -686,8 +689,9 @@ export function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEA
     recheckedGroups: [...rechecked].sort(),
     reusedGroups: checked.groups.map(group => group.id).filter(id => !rechecked.has(id)).sort(),
   });
+  let gatedTree;
   while (true) {
-    if (checked.fresh.length || checked.unowned.length || checked.closure?.length) return outcome();
+    if (checked.fresh.length || checked.unowned.length || checked.gate) return outcome();
     const head = git.gitText(['rev-parse', 'HEAD']).trim();
     if (head !== checked.base) {
       const replayStarted = Date.now();
@@ -756,19 +760,19 @@ export function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEA
       console.error(`${replayLog} phase=complete ms=${Date.now() - replayStarted}`);
       continue;
     }
-    // A landed commit can drop an export or module the packet reads; check the replayed parent.
-    // A landed commit can also change a manifest the packet's plugin files are judged against.
-    const closure = checked.base === original.base ? []
-      : [...commitProducerClosure({ repo, base: head, tree: checked.tree }).findings,
-        ...commitExtensionBoundaries({ repo, base: head, tree: checked.tree }).findings];
-    if (closure.length) {
-      checked = { ...checked, closure };
+    // The commit gate judges the packet against the parent it lands on; after HEAD moved, the replayed packet is a
+    // recheck of the tree that already passed (a landed commit can drop an export or module the packet reads).
+    const gate = await runCommitGate({ repo, base: head, tree: checked.tree, prior: gatedTree, label: 'checkCommitTypeCoherence' });
+    for (const note of gate.notes) console.error(`commit gate: ${note}`);
+    if (gate.verdict !== 'pass') {
+      checked = { ...checked, gate };
       continue;
     }
+    gatedTree = checked.tree;
     const sign = git.gitText(['config', '--bool', '--default=false', '--get', 'commit.gpgsign']).trim() === 'true';
     const commit = git.git(['commit-tree', ...(sign ? ['-S'] : []), checked.tree, '-p', head], { input: message, encoding: 'utf8' }).trim();
     try {
-      git.git(['update-ref', ref, commit, head]);
+      moveRefUnderCommitLock({ repo, ref, commit, head, reason: `checkCommitTypeCoherence: pid ${process.pid}` });
       return outcome(commit);
     } catch (error) {
       if (git.gitText(['rev-parse', 'HEAD']).trim() === head) throw error;
@@ -777,7 +781,7 @@ export function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEA
   }
 }
 
-function main(argv) {
+async function main(argv) {
   const repo = execFileSync('git', ['rev-parse', '--show-toplevel'], {
     encoding: 'utf8',
   }).trim();
@@ -841,22 +845,19 @@ function main(argv) {
       );
     for (const file of result.unowned) console.log(`  unowned source: ${file} (no ancestor tsconfig.json)`);
     if (result.fresh.length || result.unowned.length || closure.length || boundary.length) incoherent += 1;
-    if (messageFile && (closure.length || boundary.length)) {
-      console.error(`Packet refused: closure=${closure.length} boundary=${boundary.length}`);
-      return 1;
-    }
     if (messageFile) {
-      const finalized = finalizeCommitTypeCoherence({ repo, checked: result, message: readFileSync(messageFile, 'utf8'), ref: option('ref') });
+      // The commit gate (closure and boundary included) refuses inside finalization, as in every other writer.
+      const finalized = await finalizeCommitTypeCoherence({ repo, checked: result, message: readFileSync(messageFile, 'utf8'), ref: option('ref') });
       if (!finalized.commit) {
         for (const row of finalized.checked.fresh)
           console.log(`  ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text}`);
         for (const file of finalized.checked.unowned) console.log(`  unowned source: ${file} (no ancestor tsconfig.json)`);
-        for (const finding of finalized.checked.closure ?? []) console.log(`  ${finding}`);
-        console.error(`Packet refused: new=${finalized.checked.fresh.length} unowned=${finalized.checked.unowned.length} closure=${finalized.checked.closure?.length ?? 0}`);
+        if (finalized.checked.gate) console.log(formatCommitGateRefusal(finalized.checked.gate));
+        console.error(`Packet refused: new=${finalized.checked.fresh.length} unowned=${finalized.checked.unowned.length} gate=${finalized.checked.gate?.check ?? 'pass'}`);
         return 1;
       }
       console.log(`committed ${finalized.commit}: parent=${finalized.checked.base} reused=${finalized.reusedGroups.join(',')} rechecked=${finalized.recheckedGroups.join(',')}`);
-      console.log(kickRollingHeadTypecheck({ repo }));
+      console.log(kickRollingHeadTypecheck({ repo, commit: finalized.commit }));
     }
   }
   return incoherent ? 1 : 0;
@@ -864,7 +865,7 @@ function main(argv) {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
-    process.exitCode = main(process.argv.slice(2));
+    process.exitCode = await main(process.argv.slice(2));
   } catch (error) {
     console.error(error?.stderr?.toString?.() || error?.message || error);
     process.exitCode = 2;

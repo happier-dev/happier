@@ -135,6 +135,25 @@ test('refuses a packet whose changed source does not parse, judged from the pack
   assert.match(f.git('show', '--name-only', '--format=', 'HEAD'), /src\/fine\.tsx/);
 });
 
+// P03-SPLIT-AUDIT-A P1-1: the wrapper's gate refused an eager import cycle (a TDZ at load), this path committed it.
+test('refuses a packet that closes an eager import cycle, the same commit gate as the wrapper, without advancing HEAD', async (t) => {
+  const f = fixture(t);
+  fs.mkdirSync(path.join(f.cwd, 'packages/pkg/src'), { recursive: true });
+  f.write('packages/pkg/package.json', JSON.stringify({ name: '@fixture/pkg', type: 'module' }));
+  f.write('packages/pkg/src/provenance.ts', 'export const Provenance = { kind: "provenance" };\n');
+  f.write('packages/pkg/src/profiles.ts', "import { Provenance } from './provenance.js';\n\nexport const Source = { provenance: Provenance };\n");
+  f.git('add', '--', 'packages');
+  f.git('commit', '-qm', 'test: cycle basis');
+  const before = f.git('rev-parse', 'HEAD');
+  f.write('packages/pkg/src/provenance.ts', "import { Source } from './profiles.js';\nexport const Provenance = { kind: \"provenance\" };\nexport function describe() { return Source; }\n");
+  await assert.rejects(commitFromPrivateIndex({ ...f, paths: ['packages/pkg/src/provenance.ts'] }), (error) => {
+    assert.match(error.message, /refused/);
+    assert.match(error.message, /profiles\.ts:3 reads Provenance/);
+    return true;
+  });
+  assert.equal(f.git('rev-parse', 'HEAD'), before);
+});
+
 test('commits a consumer with its producer while an unchanged pre-existing break and ignored generated output never block', async (t) => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.cwd, 'src/generated'), { recursive: true });
