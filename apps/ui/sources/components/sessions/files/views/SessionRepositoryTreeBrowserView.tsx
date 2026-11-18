@@ -108,7 +108,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     // The pane header's live line: where this Session works ("folder on machine"), then how many files changed (the Git pane's words).
     const rootPath = scope?.rootPath ?? (displayIdentity.basePath || null);
     // The same checkout reachability the page's notice says: out of reach, no change fact can arrive.
-    const checkoutReachability = useCheckoutReachability(displayMachineScope);
+    const checkoutReachability = useCheckoutReachability(scope ?? displayMachineScope);
     const chrome = useRepositoryTreePaneChrome({ rootPath: withoutFolder ? null : rootPath, machineName, scmSnapshot,
         changesReadable: !checkoutReachability.unreachable });
     // A changed file's row menu ends with Discard all changes in this file, the Session's own discard (lab FB1k).
