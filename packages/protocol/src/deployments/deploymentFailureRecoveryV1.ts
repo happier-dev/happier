@@ -216,12 +216,13 @@ const missingFacts = {
 } as const;
 
 const legacyGenericRemedy = 'Inspect the reported deployment phase and current target state. Restore the missing prerequisite or choose a supported target action, then retry the original request after confirming whether the previous change took effect.';
+const fallback = recovery('Happier could not complete this change. Check deployment history and the running app before trying again.', 'history', 'Review deployment');
 // This owner's earlier wordings, saved into receipts; they read as the current remedy for their code.
 const supersededRemedies: ReadonlySet<string> = new Set([legacyGenericRemedy,
     'A machine operation failed. Open the deployment logs to find the failed step before trying again.',
+    fallback.remedy,
     // Daemons before DEPLOY-REACCEPT-1113 D7 authored this beside activeDomainMembers; its one remedy is now Deploy.
     'Deploy the app so it is running on this Machine, then add the domain']);
-const fallback = recovery('Happier could not complete this change. Check deployment history and the running app before trying again.', 'history', 'Review deployment');
 const transactionRollbackRecovery = recovery('The Home could not record this change and rolled it back. Review the deployment and try again.', 'review', 'Review deployment');
 const nativeConflictRecovery = recovery('Happier could not identify one running service generation for this change. Check the services on the serving machine before trying again.', 'machines', 'Check running services');
 // The daemon's file boundary names the Compose file the selected revision lacks; the generic Source setup would send

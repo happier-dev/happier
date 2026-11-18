@@ -277,6 +277,20 @@ describe('deployment failure recovery', () => {
         }))).not.toHaveProperty('nextAction');
     });
 
+    it('keeps a specific placement remedy beneath a generic native wrapper', () => {
+        const placement = 'Run this action on Machine controller, or make that controller reachable, then retry';
+        const projected = projectDeploymentFailureRecoveryV1({
+            step: 'native_execution',
+            requiredFact: 'nativeExecutionResult',
+            remedy: readDeploymentFailureRecoveryV1('future_failure').remedy,
+            failure: {
+                reason: 'controller_placement_mismatch', requiredFact: 'controllerMachineId=controller', remedy: placement,
+                failureCause: { phase: 'deployment.controller.placement', errorCode: 'credential_scope_denied' },
+            },
+        }, 'credential_scope_denied');
+        expect(projected.remedy).toBe(placement);
+    });
+
     it.each([undefined, null, [], 'opaque', { providerPayload: 'private-sentinel' }])('keeps a safe unknown-code fallback for %j', details => {
         const projected = readDeploymentFailureRecoveryV1('future_failure', details);
         expect(projected).toEqual(readDeploymentFailureRecoveryV1('future_failure'));
