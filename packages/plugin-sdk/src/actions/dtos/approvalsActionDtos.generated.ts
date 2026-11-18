@@ -298,6 +298,21 @@ export type ApprovalsActionResultById = {
                 callerSurface?: 'foreign_session_html' | undefined;
                 approvalProfileId?: null | string | undefined;
                 agentStartWorkDepth?: number | undefined;
+                reviewCommentActor?: undefined | {
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
+                } | {
+                    kind: 'plugin';
+                    pluginId: string;
+                    engineRunId?: string | undefined;
+                } | {
+                    kind: 'user';
+                    userId: string;
+                } | {
+                    kind: 'workflow';
+                    runId: string;
+                };
                 serverIdentityId?: string | undefined;
                 accountId?: string | undefined;
                 principalId?: string | undefined;
@@ -1142,6 +1157,21 @@ export type ApprovalsActionResultById = {
                 callerSurface?: 'foreign_session_html' | undefined;
                 approvalProfileId?: null | string | undefined;
                 agentStartWorkDepth?: number | undefined;
+                reviewCommentActor?: undefined | {
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
+                } | {
+                    kind: 'plugin';
+                    pluginId: string;
+                    engineRunId?: string | undefined;
+                } | {
+                    kind: 'user';
+                    userId: string;
+                } | {
+                    kind: 'workflow';
+                    runId: string;
+                };
                 serverIdentityId?: string | undefined;
                 accountId?: string | undefined;
                 principalId?: string | undefined;
@@ -1958,6 +1988,21 @@ export type ApprovalsActionResultById = {
                 callerSurface?: 'foreign_session_html' | undefined;
                 approvalProfileId?: null | string | undefined;
                 agentStartWorkDepth?: number | undefined;
+                reviewCommentActor?: undefined | {
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
+                } | {
+                    kind: 'plugin';
+                    pluginId: string;
+                    engineRunId?: string | undefined;
+                } | {
+                    kind: 'user';
+                    userId: string;
+                } | {
+                    kind: 'workflow';
+                    runId: string;
+                };
                 serverIdentityId?: string | undefined;
                 accountId?: string | undefined;
                 principalId?: string | undefined;

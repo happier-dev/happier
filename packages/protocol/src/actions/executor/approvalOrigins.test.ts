@@ -7,6 +7,26 @@ import { buildApprovalExecutionOriginV1, isPresentUserApprovalDecisionForOrigin,
 import { projectDeploymentPreparationAdmissionV1 } from '../../deployments/deploymentPreparationAdmissionV1.js';
 import { buildMachineSetupTargetApplyInput } from '../../machines/managed/actionsV1.js';
 
+it('retains the admitted Review actor with its Session caller and refuses another Session', () => {
+  const actor = { kind: 'agent', agentId: 'acme.agent/selected', sessionId: 'original-session' } as const;
+  const context = { surface: 'agent', authority: 'account_automation', serverId: 'home', actionRequestId: 'review-apply',
+    actionCaller: { kind: 'session', sessionId: 'original-session', starterDepth: 0, turnDepth: 0 },
+    reviewCommentPrincipal: { actor } } as const;
+  const args = { actionId: 'review.apply', input: { sessionId: 'destination', reviewId: 'review' },
+    targetSessionId: 'destination', context } as const;
+  const origin = buildApprovalExecutionOriginV1(args);
+  expect(origin).toMatchObject({ reviewCommentActor: actor });
+  for (const denied of [{ ...actor, sessionId: 'another-session' }, { kind: 'user', userId: 'person' },
+    { kind: 'plugin', pluginId: 'plugin' }, { kind: 'workflow', runId: 'run' }]) {
+    expect(ApprovalExecutionOriginV1Schema.safeParse({ ...origin, reviewCommentActor: denied }).success).toBe(false);
+  }
+  expect(ApprovalExecutionOriginV1Schema.safeParse({ ...origin, reviewCommentActor: undefined }).success).toBe(true);
+  expect(ApprovalExecutionOriginV1Schema.safeParse({ ...origin,
+    caller: { kind: 'host' } }).success).toBe(false);
+  expect(buildApprovalExecutionOriginV1({ ...args, context: { ...context,
+    reviewCommentPrincipal: { actor: { ...actor, sessionId: 'another-session' } } } })).toBeNull();
+});
+
 it.each([
   { surface: 'voice', authority: 'present_user', expectedSurface: 'voice' },
   { surface: 'voice', authority: 'account_automation', expectedSurface: 'ui' },

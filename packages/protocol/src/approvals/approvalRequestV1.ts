@@ -32,6 +32,7 @@ import { ActionFailureCauseV1Schema, ActionOperationCredentialUseV1Schema } from
 import { SessionMessageRefV1Schema } from '../sessions/messages/sessionMessageRefV1.js';
 import { DiscussionReplyReturnV1Schema } from '../workflows/workflowDiscussionPublicationV1.js';
 import { DiscussionIdSchema } from '../discussions/references.js';
+import { ReviewCommentActorRefV1Schema } from '../reviews/comments/v1.js';
 import { SessionMessageAccountActorV1Schema } from '../sessions/messages/sessionMessageAccountActorV1.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actions/actionSpecs.js';
 import {
@@ -249,6 +250,8 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
   /** Host-admitted native Workflow leaf depth, retained through its approval. */
   agentStartWorkDepth: z.optional(SessionWorkDepthV1Schema),
   caller: ApprovalExecutionOriginCallerV1Schema,
+  /** Host-admitted author identity; request proofs, intent and Workflow scope are not replayable. */
+  reviewCommentActor: z.optional(ReviewCommentActorRefV1Schema),
   /** Local profile identifier used to route the replay to its configured Home. */
   serverId: z.string().check(z.trim(), z.minLength(1)),
   /** Cryptographic Home identity, required for a Home-signed external invocation. */
@@ -280,6 +283,11 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
   actionId: ActionIdSchema,
   requestId: z.string().check(z.trim(), z.minLength(1)),
 }).check(z.superRefine((value, ctx) => {
+  const reviewActor = value.reviewCommentActor;
+  if (reviewActor && (reviewActor.kind !== 'agent' || value.caller.kind !== 'session'
+    || reviewActor.sessionId !== value.caller.sessionId)) {
+    ctx.addIssue({ code: 'custom', path: ['reviewCommentActor'], message: 'Review actor must match its admitted Session caller' });
+  }
   const starter = !value.actionRequestAttributionV1 && value.caller.kind === 'workflowRun'
     ? value.caller.authenticatedStarterV1 : undefined;
   if (starter && (starter.requester.accountId !== value.accountId

@@ -521,6 +521,8 @@ selects accepted findings through the shared acceptance owner, and sends one
 verification-and-fix request through `session.message.send`. It does not start
 another review. Historical requests carrying raw findings retain their existing
 input contract and consume current persisted acceptance at the same owner.
+Agent and MCP requests ask for approval by default; a person's saved surface
+waiver uses the existing Action approval policy.
 Prepared review-workspace materialization remains at the host-stamped source
 plugin owner; it has no public CLI, Agent, MCP or Machine RPC entry point.
 

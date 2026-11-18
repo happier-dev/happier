@@ -31,6 +31,20 @@ function expectOwnUiReview(
   expect(decision.uiConfirmationRequired === true, message).toBe(confirmationRequired);
 }
 
+it.each(['agent', 'mcp'] as const)('asks before a %s applies Review fixes unless the person saved a waiver', surface => {
+  const actionId = 'review.apply';
+  const context = { surface, authority: 'account_automation',
+    actionCaller: { kind: 'session', sessionId: 'review-session', starterDepth: 0, turnDepth: 0 } } as const;
+  const args = { actionId, spec: getActionSpec(actionId), input: { sessionId: 'review-session', reviewId: 'review' },
+    context } as const;
+  expect(resolveActionApprovalRouting({ ...args, settings: EMPTY_SETTINGS }).required).toBe(true);
+  const waived = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } });
+  expect(resolveActionApprovalRouting({ ...args, settings: waived }).required).toBe(false);
+  const required = normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: [surface] } },
+    approvalWaivedSurfaces: { [actionId]: [surface] } });
+  expect(resolveActionApprovalRouting({ ...args, settings: required }).required).toBe(true);
+});
+
 it('routes a host-prepared review through the same own-UI disposition while retaining input acquisition', () => {
   const actionId = 'workspace.sync.relationship.replace';
   const own = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;

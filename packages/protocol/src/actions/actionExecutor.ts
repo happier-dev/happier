@@ -2037,6 +2037,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ...(origin.data.sessionInputSource !== undefined ? { sessionInputSource: origin.data.sessionInputSource } : {}),
         ...(origin.data.discussionReplyReturn ? { discussionReplyReturn: origin.data.discussionReplyReturn } : {}),
         ...(origin.data.actionRequestAttributionV1 ? { actionRequestAttributionV1: origin.data.actionRequestAttributionV1 } : {}),
+        ...(origin.data.reviewCommentActor ? { reviewCommentPrincipal: { actor: origin.data.reviewCommentActor } } : {}),
         ...(origin.data.externalActionExecutionAuthorization
           && 'authentication' in origin.data.externalActionExecutionAuthorization.binding
           && origin.data.externalActionExecutionAuthorization.binding.sessionActionOrigin?.workspaceWrites

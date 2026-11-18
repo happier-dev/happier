@@ -260,6 +260,7 @@ function createReviewActionSpecs(): readonly [
     title: 'Apply accepted review findings',
     sideEffectClass: 'external',
     safety: 'safe',
+    approvalPolicy: { agentDefault: 'authority' },
     placements: [],
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     bindings: { mcpToolName: 'review_apply', voiceClientToolName: 'review_apply' },

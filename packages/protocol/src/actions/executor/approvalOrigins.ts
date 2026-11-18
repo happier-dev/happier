@@ -316,6 +316,8 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
     ...(params.context.approvalProfileId === undefined ? {} : { approvalProfileId: params.context.approvalProfileId }),
     ...(admittedWorkflowLeafDepth === undefined ? {} : { agentStartWorkDepth: admittedWorkflowLeafDepth }),
     caller,
+    ...(caller.kind === 'session' && params.context.reviewCommentPrincipal?.actor
+      ? { reviewCommentActor: params.context.reviewCommentPrincipal.actor } : {}),
     serverId,
     ...(serverIdentityId
       ? { serverIdentityId }

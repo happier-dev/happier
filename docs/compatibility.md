@@ -10949,6 +10949,15 @@ exact binding checks. Account roots remain Agent automation and PAT roots retain
 API provenance. Matching Protocol and CLI source readers reload together; no
 wire field, epoch or compatibility adapter is added.
 
+Unreleased 0.3 Session approval origins optionally retain `reviewCommentActor`,
+the host-admitted Review author identity bound to the same Session caller.
+Approval replay restores that actor without retaining request proofs, current
+intent or Workflow scope, and never borrows the deciding caller's actor.
+Existing origins without the field still parse; a Review operation requiring
+the missing agent identity retains its ordinary permission refusal. Matching
+Protocol, SDK and daemon readers reload together; older strict development
+readers reject the added field. This adds no migration, wire epoch or adapter.
+
 Unreleased 0.3 Environment Copy failures use the template-instantiation partial
 result envelope: acknowledged Environment identity and revision, the failed
 binding step and code, and the existing typed continuation. Approval settlement

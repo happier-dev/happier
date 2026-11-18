@@ -167,7 +167,10 @@ describe('createActionExecutor (review comments)', () => {
     expect(sent).toEqual([]);
   });
 
-  it('re-reads acceptance when the semantic Apply request is approved', async () => {
+  it.each([
+    { surface: 'cli', legacy: false }, { surface: 'agent', legacy: false },
+    { surface: 'mcp', legacy: false }, { surface: 'agent', legacy: true },
+  ] as const)('re-reads acceptance when the $surface Apply request is approved (legacy actor: $legacy)', async ({ surface, legacy }) => {
     const finding = { id: 'finding', title: 'Unsafe read', summary: 'Check the read', severity: 'high', category: 'correctness' };
     let comment = ReviewCommentV1Schema.parse({
       v: 1, id: 'comment', accountId: 'account', workspace: { machineId: 'machine', path: '/repo' },
@@ -182,29 +185,47 @@ describe('createActionExecutor (review comments)', () => {
     let reads = 0;
     const executor = createActionExecutor(createDeps({
       // Artifact persistence and the authenticated Home/message transports are boundaries.
-      readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { 'review.apply': { approvalRequiredSurfaces: [context.surface] } } }),
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: surface === 'cli'
+        ? { 'review.apply': { approvalRequiredSurfaces: [surface] } } : {} }),
       resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { serverId: 'home', sessionId: sessionId! } }),
-      approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'apply-approval' }; },
+      approvalsCreate: async ({ request }) => {
+        if (legacy && request.v === 2 && request.executionOriginV1) {
+          // Stored approvals from before actor retention still lack that identity.
+          const { reviewCommentActor: _actor, ...oldOrigin } = request.executionOriginV1;
+          approval = { ...request, executionOriginV1: oldOrigin };
+        } else approval = request;
+        return { artifactId: 'apply-approval' };
+      },
       approvalsGet: async () => approval,
       approvalsUpdate: async ({ request }) => { approval = request; return { ok: true }; },
       isApprovalExecutionOriginCurrent: async () => true,
-      reviewCommentAction: async () => { reads++; return { items: [comment], cursor: null }; },
+      reviewCommentAction: async ({ reviewCommentPrincipal }) => {
+        if (surface !== 'cli') expect(reviewCommentPrincipal).toEqual({ actor: { kind: 'agent', agentId: 'codex', sessionId: 'origin' } });
+        reads++; return { items: [comment], cursor: null };
+      },
       sessionSendMessage: async ({ message }) => { sent.push(message); return { status: 'accepted', localId: 'apply' }; },
     }));
     const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home', serverIdentityId: 'srv_home',
       defaultSessionId: 'origin', defaultSessionMachineId: 'machine',
       runtimeAccountId: 'account', actionRequestId: 'apply-request', actionCaller: { kind: 'host' as const } };
     expect(await executor.execute('review.apply', { sessionId: 'origin', reviews: [{ runId: 'review', findings: [finding] }] },
-      { ...context, surface: 'cli' }))
+      { ...context, surface, ...(surface === 'cli' ? {} : { authority: 'account_automation' as const,
+        actionCaller: { kind: 'session' as const, sessionId: 'origin', starterDepth: 0, turnDepth: 0 } }),
+        reviewCommentPrincipal: { actor: { kind: 'agent', agentId: 'codex', sessionId: 'origin' } } }))
       .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(approval).toMatchObject({ actionId: 'review.apply' });
     expect(reads).toBe(0);
     comment = { ...comment, reviewTriageStatus: 'reject', serverRevision: 2 };
-    const decided = await executor.execute('approval.request.decide', { artifactId: 'apply-approval', decision: 'approve' }, context);
-    expect(decided, JSON.stringify(decided))
-      .toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true, result: { status: 'unchanged' } } } });
-    expect(reads).toBe(1);
-    expect(sent).toEqual([]);
+    const decided = await executor.execute('approval.request.decide', { artifactId: 'apply-approval', decision: 'approve' },
+      { ...context, reviewCommentPrincipal: { actor: { kind: 'agent', agentId: 'another-agent', sessionId: 'another-session' } } });
+    expect(decided, JSON.stringify(decided)).toMatchObject(legacy
+      ? { ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'review_comment_permission_denied' } } }
+      : { ok: true, result: { status: 'executed', execution: { ok: true, result: { status: 'unchanged' } } } });
+    expect(reads).toBe(legacy ? 0 : 1);
+    // The requesting Session receives only the approval outcome, never a fix request.
+    expect(sent.map(message => JSON.parse(message))).toEqual(surface === 'cli' ? [] : [expect.objectContaining({
+      artifactId: 'apply-approval', actionId: 'review.apply', status: legacy ? 'failed' : 'executed',
+    })]);
   });
 
   it('returns claimed correlations to the awaiting plugin after human approval', async () => {
