@@ -4,7 +4,7 @@ import type { ConnectedAccountAuthenticationContext, ConnectedAccountCredentialS
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import { manifest } from './manifest.js';
 import { activate, activateAccount } from './activate.js';
-import { PluginConnectedAccountDescriptorContributionV2Schema, resolveConnectedAccountAuthenticationModeMachineRequirement } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
+import { listConnectedAccountSecretCredentialKeysV1, PluginConnectedAccountDescriptorContributionV2Schema, resolveConnectedAccountAuthenticationModeMachineRequirement } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
 import { PluginError, readActionOutputDiagnostic } from '@happier-dev/plugin-sdk/errors';
 
 const accountId = 'a'.repeat(32);
@@ -79,6 +79,14 @@ describe('Cloudflare Connected Account through plugin activation', () => {
       expect(resolveConnectedAccountAuthenticationModeMachineRequirement(mode, true)).toBe('browser_unreachable');
       expect(resolveConnectedAccountAuthenticationModeMachineRequirement(mode, false)).toBeNull();
     }
+  });
+
+  it('allows a saved Secret to supply the API token field', () => {
+    const { authentication } = PluginConnectedAccountDescriptorContributionV2Schema.parse(
+      manifest.contributes?.connectedAccountDescriptors?.[0],
+    );
+    const mode = authentication.modes.find(mode => mode.id === 'token');
+    expect(listConnectedAccountSecretCredentialKeysV1(mode).get('token')).toBe('token');
   });
 
   it.each(['ENOTFOUND', 'ECONNREFUSED', 'plugin_fetch_redirect_refused'])('retains the typed %s cause without credential echoes', async code => {
