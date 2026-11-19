@@ -46,6 +46,7 @@ import {
 } from '../corpus/testkit/observations.test-support.js';
 import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js';
 import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
+import { parseTriageRouteSubPathV1 } from './navigation/location.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
@@ -523,9 +524,11 @@ describe('the PRs & Issues saved-view lens', () => {
         await act(async () => { await shell.press(openFacet); });
 
         const update = await toolbarMenuItem(shell, 'Views', 'menuitem', { name: 'Update this view' });
+        expect(accountKv.setCallCount()).toBe(0);
         await act(async () => { await shell.press(update); });
         await act(async () => { await Promise.resolve(); });
 
+        expect(accountKv.setCallCount()).toBe(1);
         expect([...(storedValue(accountKv).views[0]?.filters.states ?? [])].sort())
             .toEqual(['done', 'open']);
         // The label is the reader's, not the lens's: Update saves what they are
@@ -562,8 +565,16 @@ describe('the PRs & Issues saved-view lens', () => {
         await expect(toolbarMenuItem(shell, 'Views', 'menuitemradio', { name: 'Renamed elsewhere' })).resolves.toBeTruthy();
     });
 
-    it('clears the selected view id when the view is deleted', async () => {
+    it('clears only the selected view id when the view is deleted', async () => {
         const { shell, accountKv, locations } = await mountShell({ subPath: SELECTED_VIEW_LOCATION });
+        const openFacet = await filterFacetOption(shell, 'State', { name: 'Open' });
+        await act(async () => { await shell.press(openFacet); });
+        const editedLens = parseTriageRouteSubPathV1(locations.at(-1));
+        expect(editedLens).toMatchObject({
+            selectedViewId: VIEW_ID,
+            query: VIEW_QUERY,
+            filters: { states: ['done', 'open'] },
+        });
 
         const remove = await toolbarMenuItem(shell, 'Views', 'menuitem', { name: 'Delete' });
         await act(async () => { await shell.press(remove); });
@@ -571,7 +582,7 @@ describe('the PRs & Issues saved-view lens', () => {
 
         expect(storedValue(accountKv).views).toEqual([]);
         expect(storedValue(accountKv)).not.toHaveProperty('selectedViewId');
-        expect(locations[locations.length - 1] ?? '').not.toContain('sv,');
+        expect(parseTriageRouteSubPathV1(locations.at(-1))).toEqual({ ...editedLens, selectedViewId: null });
     });
 
     it('ignores the retired Account selection when the location carries no lens', async () => {
