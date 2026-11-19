@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { createWriteStream, existsSync, readFileSync } from 'node:fs';
-import { lstat, mkdir, readdir, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, posix } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Readable } from 'node:stream';
@@ -13,7 +14,7 @@ import { EMBEDDED_FEATURE_POLICIES_OUTPUT, isSourceGeneratedInput, isWorkspaceBu
 import { readStaleServerGeneratedClients, resolveServerGeneratedClients, SERVER_GENERATED_CLIENTS } from './server_generated_clients.mjs';
 import { run } from '../utils/proc/proc.mjs';
 import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
-import { isRevisionDependencyInput, prepareRevisionServerClientLayout, readRevisionServerClientRoots } from './source_revision_install.mjs';
+import { extractRevision, isRevisionDependencyInput, prepareRevisionServerClientLayout, readRevisionServerClientRoots } from './source_revision_install.mjs';
 
 /**
  * QA source captures run one committed revision plus the paths a Stack
@@ -174,15 +175,40 @@ export async function writeSourceRevisionDescriptor({ repoDir, identity, outputD
   // every base takes the revision's bytes from Git objects (`git archive` here, or
   // this controller's archive of the revision on a host without Git objects), so
   // no working tree, moving or mirrored, contributes a tracked byte to a base.
-  const revisionFiles = new Set();
-  if (!fullTree) {
-    const files = new Set();
-    const owners = new Set();
-    for (const component of components) {
-      const inputs = await readSourceComponentBuildInputs({ repoDir, component });
-      for (const file of inputs.files) files.add(file);
-      for (const dir of inputs.workspaceDirs) if (dir) owners.add(`${dir.replaceAll('\\', '/')}/`);
+  // Read the overlay once so inventory and emitted blobs use the same bytes.
+  const overlayBlobs = {};
+  for (const [path, expected] of Object.entries(identity.overlay)) {
+    if (expected === null) continue;
+    const bytes = await readCheckoutBytes(join(repoDir, path));
+    if (!bytes || sha256(bytes) !== expected) {
+      throw new BuildInputDriftError(`[source-revision] overlay ${path} moved while it was described; reload to select its current bytes`);
     }
+    overlayBlobs[path] = bytes;
+  }
+
+  const revisionFiles = new Set();
+  let inputsByComponent;
+  if (!fullTree) {
+    // Inventory workspace ownership from the same authored tree the compiler
+    // will read. A later checkout can have removed a dependency of this revision.
+    const selectedDir = await mkdtemp(join(tmpdir(), 'hstack-revision-inputs-'));
+    try {
+      await extractRevision({ repoDir, revision: identity.revision, outputDir: selectedDir });
+      for (const [path, digest] of Object.entries(identity.overlay)) {
+        const target = join(selectedDir, path);
+        if (digest === null) await rm(target, { recursive: true, force: true });
+        else await writeRevisionEntry(target, tree[path]?.[0] ?? '100644', overlayBlobs[path]);
+      }
+      inputsByComponent = Object.fromEntries(await Promise.all(components.map(async component => {
+        const { files, workspaceDirs } = await readSourceComponentBuildInputs({ repoDir: selectedDir, component });
+        return [component, { files, workspaceDirs: workspaceDirs.map(path => path.replaceAll('\\', '/')) }];
+      })));
+    } finally {
+      await rm(selectedDir, { recursive: true, force: true });
+    }
+    const inputs = Object.values(inputsByComponent);
+    const files = new Set(inputs.flatMap(({ files }) => files));
+    const owners = [...new Set(inputs.flatMap(({ workspaceDirs }) => workspaceDirs))].map(dir => `${dir}/`);
     // A host's live input walk can admit paths the controller's walk omits
     // (including tracked fixtures). Ship their Git bytes within the selected
     // workspace owners too: a mirror has no Git objects to repair them later.
@@ -206,20 +232,12 @@ export async function writeSourceRevisionDescriptor({ repoDir, identity, outputD
     ...Object.values(commitPaths ?? {}).filter(Boolean).map(([, id]) => id)])]);
   const blobs = [...[...revisionFiles].map(path => [path, blobBytes.get(tree[path][1])]),
     ...Object.entries(commitPaths ?? {}).filter(([, entry]) => entry).map(([path, [, id]]) => [`commit:${path}`, blobBytes.get(id)])];
-  // Capture once at description, before host queues or base preparation. Overlay
-  // paths were excluded from revisionFiles, so their blobs use the same path key.
-  for (const [path, expected] of Object.entries(identity.overlay)) {
-    if (expected === null) continue;
-    const bytes = await readCheckoutBytes(join(repoDir, path));
-    if (!bytes || sha256(bytes) !== expected) {
-      throw new BuildInputDriftError(`[source-revision] overlay ${path} moved while it was described; reload to select its current bytes`);
-    }
-    blobs.push([path, bytes]);
-  }
+  blobs.push(...Object.entries(overlayBlobs));
   const untracked = nulList(await git(repoDir, ['ls-files', '-z', '-o', '--exclude-standard']))
     .filter(path => !Object.hasOwn(identity.overlay, path));
   const descriptor = { version: SOURCE_REVISION_DESCRIPTOR_VERSION, revision: identity.revision,
     overlayDigest: identity.overlayDigest, key: identity.key, tree, untracked, overlay: identity.overlay, ...(fullTree ? { fullTree: true } : {}),
+    ...(inputsByComponent ? { inputsByComponent } : {}),
     ...(commitPaths ? { commit: { revision: commit.revision, paths: commitPaths } } : {}),
     blobs: blobs.map(([path, bytes]) => [path, bytes.length]) };
   await mkdir(outputDir, { recursive: true });
@@ -264,6 +282,16 @@ export async function readSourceRevisionOverlayBytes({ descriptor, path, sourceD
     throw new BuildInputDriftError(`[source-revision] overlay ${path} moved after it was described; reload to select its current bytes`);
   }
   return bytes;
+}
+
+/** Authored membership comes from the selection; the host supplies generated inputs. */
+export async function readSourceCaptureBuildInputs({ repoDir, component, descriptor }) {
+  const live = await readSourceComponentBuildInputs({ repoDir, component });
+  const selected = descriptor?.inputsByComponent?.[component];
+  if (!selected) return live;
+  const hostFiles = live.files.filter(path =>
+    !Object.hasOwn(descriptor.tree, path) && !Object.hasOwn(descriptor.overlay, path));
+  return { files: [...new Set([...selected.files, ...hostFiles])], workspaceDirs: selected.workspaceDirs };
 }
 
 /** The identity a capture records and a selection compares. */

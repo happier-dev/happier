@@ -42,7 +42,7 @@ import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourc
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 import { readSourceSelectionRollbackPaths } from '../runtime/shared/source_selection_rollback.mjs';
 import { readRevisionServerClientRoots, requestRevisionInstallArchive, resolveRevisionDependencyRoot, sourceRevisionTreesRoot } from './source_revision_install.mjs';
-import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
+import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceCaptureBuildInputs, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, assertSourceRuntimeCodeAscii, dropRedundantSourceRuntimeChunkImports, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 export { readWorkspacePackages, resolveWorkspaceSource } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -61,39 +61,44 @@ export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, sig
   const { ensureServerGeneratedProviderOutputs } = await import('../utils/proc/pm.mjs');
   await ensureServerGeneratedProviderOutputs(join(repoDir, 'apps/server'), repoDir, { env, quiet: true, signal });
   return await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, async () => {
+    const descriptor = revision ? await readSourceRevisionDescriptor(revision.descriptorPath) : null;
     let filesByComponent = {};
     let ownerDirsByComponent = {};
     const capture = await captureBuildInputFiles({ sourceDir: repoDir, captureDir: outputDir,
       readPaths: async () => {
         signal?.throwIfAborted();
         const inputs = Object.fromEntries(await Promise.all(['server', 'daemon'].map(async component => [
-          component, await readSourceComponentBuildInputs({ repoDir, component })])));
+          component, await readSourceCaptureBuildInputs({ repoDir, component, descriptor })])));
         filesByComponent = Object.fromEntries(Object.entries(inputs).map(([component, { files }]) => [component, files]));
         ownerDirsByComponent = Object.fromEntries(Object.entries(inputs).map(([component, { workspaceDirs }]) => [component, workspaceDirs]));
         return [...new Set(Object.values(filesByComponent).flat())];
       } });
     const captured = new Set(capture.files);
-    filesByComponent = Object.fromEntries(Object.entries(filesByComponent)
-      .map(([component, files]) => [component, files.filter(path => captured.has(path))]));
     let revisionIdentity;
     let dependencyRootDir;
-    if (revision) {
+    if (descriptor) {
       // One revision application for both roles keeps their shared bytes identical.
-      const descriptor = await readSourceRevisionDescriptor(revision.descriptorPath);
       // Its generated clients, mounted tools and captured runtime dependencies come
       // from the revision's own installation (the checkout's when identical). A caller
       // without the host's revision store (`treesRoot`) captures with the checkout's.
       dependencyRootDir = treesRoot ? await resolveRevisionDependencyRoot({ repoDir, descriptor, treesRoot,
         archivePath: revisionArchivePath, env, signal }) : repoDir;
-      const files = await applySourceRevision({ captureDir: outputDir, sourceDir: dependencyRootDir, files: capture.files,
+      const selectedFiles = Object.keys(filesByComponent).flatMap(component => descriptor.inputsByComponent?.[component]?.files ?? []);
+      const files = await applySourceRevision({ captureDir: outputDir, sourceDir: dependencyRootDir,
+        files: [...new Set([...capture.files, ...selectedFiles])],
         ownerDirs: [...new Set(Object.values(ownerDirsByComponent).flat())], descriptor, env, signal });
       // A capture-owned Prisma layout's client package and clients belong to the server.
       const serverClientRoots = readRevisionServerClientRoots(outputDir);
-      filesByComponent = Object.fromEntries(Object.entries(filesByComponent).map(([component, componentFiles]) => [component,
-        files.filter(path => componentFiles.includes(path) || (!captured.has(path)
-          && (ownerDirsByComponent[component].some(dir => path.startsWith(`${dir}/`))
-            || (component === 'server' && serverClientRoots.some(root => path.startsWith(`${root}/`))))))]));
+      filesByComponent = Object.fromEntries(Object.entries(filesByComponent).map(([component, componentFiles]) => {
+        const members = new Set(componentFiles);
+        const restored = [...ownerDirsByComponent[component], ...(component === 'server' ? serverClientRoots : [])];
+        return [component, files.filter(path => members.has(path) || (!captured.has(path)
+          && restored.some(dir => path.startsWith(`${dir}/`))))];
+      }));
       revisionIdentity = sourceRevisionIdentity(descriptor);
+    } else {
+      filesByComponent = Object.fromEntries(Object.entries(filesByComponent)
+        .map(([component, files]) => [component, files.filter(path => captured.has(path))]));
     }
     const ownDependencies = dependencyRootDir && dependencyRootDir !== repoDir ? { dependencyRootDir } : {};
     await writeFile(join(outputDir, SHARED_SOURCE_INPUT_MANIFEST), JSON.stringify({ filesByComponent, capturedAt: capture.capturedAt,
@@ -116,9 +121,10 @@ export async function captureSourceWebBuildInputs({ repoDir, outputDir, componen
   repoDir = resolve(repoDir);
   const sharedManifest = await readSharedSourceInputManifest(sharedSourceInputs);
   const sourceDir = sharedSourceInputs?.repoDir ?? repoDir;
-  const inputs = await readSourceComponentBuildInputs({ repoDir: sourceDir, component });
+  const descriptor = !sharedManifest && revision ? await readSourceRevisionDescriptor(revision.descriptorPath) : null;
+  const inputs = await readSourceCaptureBuildInputs({ repoDir: sourceDir, component, descriptor });
   const guestInputs = includeGuestPayload && component === 'server'
-    ? await readSourceComponentBuildInputs({ repoDir: sourceDir, component: 'daemon' }) : null;
+    ? await readSourceCaptureBuildInputs({ repoDir: sourceDir, component: 'daemon', descriptor }) : null;
   const workspaceDirs = [...new Set([...inputs.workspaceDirs, ...(guestInputs?.workspaceDirs ?? [])])];
   signal?.throwIfAborted();
   const started = performance.now();
@@ -126,11 +132,12 @@ export async function captureSourceWebBuildInputs({ repoDir, outputDir, componen
     readPaths: async () => {
       signal?.throwIfAborted();
       return sharedManifest ? sharedManifest.filesByComponent[component]
-        : (await readSourceComponentBuildInputs({ repoDir, component })).files;
+        : (await readSourceCaptureBuildInputs({ repoDir, component, descriptor })).files;
     } });
   // A shared capture already holds the revision's bytes; a direct capture applies it here.
-  const descriptor = !sharedManifest && revision ? await readSourceRevisionDescriptor(revision.descriptorPath) : null;
-  if (descriptor) capture.files = await applySourceRevision({ captureDir: outputDir, sourceDir: repoDir, files: capture.files,
+  if (descriptor) capture.files = await applySourceRevision({ captureDir: outputDir, sourceDir: repoDir,
+    files: [...new Set([...capture.files, ...(descriptor.inputsByComponent?.[component]?.files ?? []),
+      ...(guestInputs ? descriptor.inputsByComponent?.daemon?.files ?? [] : [])])],
     ownerDirs: workspaceDirs, descriptor, signal });
   const revisionIdentity = sharedManifest?.revision ?? (descriptor ? sourceRevisionIdentity(descriptor) : undefined);
   // The checkout's workspace list can name another lane's untracked package,

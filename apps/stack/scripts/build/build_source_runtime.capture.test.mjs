@@ -63,6 +63,29 @@ test('source capture includes new undeclared workspace imports and excludes unre
     component: 'server', serverComponent: 'happier-server-light', dbProvider: 'sqlite', sharedSourceInputs,
     env: native?.env ?? process.env });
   assert.equal((await import(pathToFileURL(built.entrypoint))).marker, 'new-source');
+
+  await t.test('revision includes workspace sources after the checkout drops their imports', async () => {
+    const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+    await writeFile(join(repoDir, '.gitignore'), 'node_modules/\n');
+    const cli = join(repoDir, 'apps/cli');
+    await mkdir(join(cli, 'src'), { recursive: true });
+    await writeFile(join(cli, 'package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module' }));
+    await writeFile(join(cli, 'src/index.ts'), 'export { marker } from "@happier-dev/added";');
+    await gitIn('add', '-A');
+    await gitIn('commit', '--quiet', '-m', 'server uses the workspace');
+    await writeFile(join(server, 'sources/main.light.ts'), 'export const marker = "checkout";');
+    await rm(join(repoDir, 'packages/transitive/src/index.ts'));
+    const revision = await resolveSourceRevision({ repoDir, outputDir: fixture.path('revisions') });
+    const sharedSourceInputs = await captureSourceRuntimeSharedInputs({ repoDir, outputDir: fixture.path('revision-shared'), revision });
+    const built = await (native?.build ?? buildSourceRuntimeBundle)({ repoDir, outputDir: fixture.path('revision-runtime'),
+      component: 'server', serverComponent: 'happier-server-light', dbProvider: 'sqlite', sharedSourceInputs,
+      env: native?.env ?? process.env });
+    assert.equal((await import(pathToFileURL(built.entrypoint))).marker, 'new-source');
+    assert.equal(built.sourceCapture.revision, revision.revision);
+    const direct = await captureSourceWebBuildInputs({ repoDir, component: 'server',
+      outputDir: fixture.path('revision-direct'), revision });
+    assert.equal(await readFile(join(direct.repoDir, 'packages/transitive/src/index.ts'), 'utf8'), 'export const marker = "new-source";');
+  });
 });
 
 test('server source capture retains matching default and generated provider clients after live regeneration', async t => {
