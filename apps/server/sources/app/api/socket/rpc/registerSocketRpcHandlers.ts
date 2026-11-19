@@ -20,7 +20,6 @@ import { readStructuredMessageActionRoutingV1 } from '@happier-dev/protocol/plug
 import { StructuredMessageActionRoutingV1Schema, type StructuredMessageActionRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol';
-import { doesWorkspaceSyncCopyRetirementRootMatchV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import { narrowCredentialAuthority } from '@/app/auth/effectiveCredentialAuthority';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS, parseSocketRpcAuthorizationContext, isSocketRpcSessionAuthorizationNamespace, resolveSocketRpcSessionAuthorization, type SocketRpcAuthorizationContext, type SocketRpcCurrentSessionPresentationOriginAuthorizationContext, type SessionPermissionDecisionAuthenticationV1 } from '@happier-dev/protocol/socketRpc';
@@ -2370,7 +2369,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 ...(originalActionEnvelope ? { originalActionEnvelope } : {}),
                 ...(workspaceSyncContext ? {
                     callerAuthority: sessionActionOrigin ? 'account_automation' as const : workspaceSyncContext.callerAuthority,
-                } : (moveChildExecution || isHandoffCurrent || isTransitionRoot || verifiedExternalAction?.sessionRpcTarget || verifiedExternalAction?.binding.workflowActionOrigin) && verifiedExternalAction
+                } : verifiedExternalAction
                     ? { callerAuthority: requestAuthentication.authority } : {}),
                 ...(liveApprovalOrigin ? { callerAuthority: 'present_user' as const } : {}),
                 ...(appClientContinuation ? { callerAuthority: requestAuthentication.authority, allowCallerTarget: true } : {}),
@@ -2382,14 +2381,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 ...(liveApprovalOrigin ? { answeringClient: { requireSingle: true } } : answeringClient ? { answeringClient } : {}),
                 callerSocket: params.socket,
                 ...(sessionActionOrigin ? { sessionActionOrigin } : {}),
-                ...((isTransitionRoot || verifiedExternalAction?.sessionRpcTarget || verifiedExternalAction?.binding.sessionActionOrigin || verifiedExternalAction?.binding.workflowActionOrigin
-                    || verifiedExternalAction?.binding.handoffAdmission || verifiedExternalAction?.binding.managedContinuation || isProjectSource
-                    || workspaceSyncSourceWriterTargetRouting && verifiedExternalAction
-                        && (isWorkspaceSyncRelationshipWriteActionId(verifiedExternalAction.binding.actionId)
-                            || externalActionExecution?.success && doesWorkspaceSyncCopyRetirementRootMatchV1(
-                                externalActionExecution.data.authorization, workspaceSyncSourceWriterTargetRouting))
-                    || workspaceSyncSeedRouting || retainedProjectSourceExecution || originalActionEnvelope || deploymentArchiveChild)
-                    && externalActionExecution?.success
+                ...(verifiedExternalAction && externalActionExecution?.success
                     ? { createCallerInputAuthorization: async () => externalActionExecution.data.authorization }
                     : {}),
                 ...(callerInputViewer && callerInputActionId ? { createCallerInputAuthorization: async ({ target, requestId }) => {

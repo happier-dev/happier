@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import nacl from 'tweetnacl';
 import type { Socket } from 'socket.io';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
@@ -6,6 +7,7 @@ import { encodeExternalActionResolvedTargetV1, encodeReviewedActionChildHttpProo
     signExternalActionMachineRequestV1, signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
+    bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema,
     type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineOperationProtocolCapabilitiesV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
@@ -33,6 +35,69 @@ describe('signed Session Agent readiness children', () => {
                 HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' } });
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
+
+    it.each(['terminal', 'account'] as const)('keeps a terminal Session root on its selected installation when the Account has two Machines (%s transport)', async transport => {
+        const f = await createSignedDiscussionHttpFixture();
+        try {
+            const secondKey = nacl.sign.keyPair();
+            const second = await db.machine.create({ data: {
+                id: randomUUID(), accountId: f.account.id, metadata: f.machine.metadata,
+                dataEncryptionKey: f.machine.dataEncryptionKey, metadataVersion: 1,
+                daemonState: null, daemonStateVersion: 0, installationId: randomUUID(),
+                installationPublicKey: new Uint8Array(secondKey.publicKey),
+            } });
+            const terminalToken = await auth.createToken(f.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+            for (const selected of [{ machine: f.machine, key: f.keyPair }, { machine: second, key: secondKey }]) {
+                await db.machine.update({ where: { id: selected.machine.id }, data: { active: true, lastActiveAt: new Date(),
+                    operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: MachineOperationProtocolCapabilitiesV1Schema.parse({
+                        requesterExecutionIsolation: { protocolVersions: [1] }, externalActionExecutionAuthorization: { protocolVersions: [1] } }) } });
+                const input = { executionTarget: { serverId: await getOrCreateServerIdentityId(), machineId: selected.machine.id },
+                    directory: { kind: 'path', path: '/workspace' },
+                    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
+                const envelope = { v: 1 as const, requestId: randomUUID(), target: { kind: 'machine' as const, machineId: selected.machine.id }, input };
+                const minted = await f.app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('session.spawn_new'),
+                    headers: { authorization: `Bearer ${terminalToken}` }, payload: { v: 1, machineId: selected.machine.id, envelope } });
+                expect(minted.statusCode, minted.body).toBe(200);
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+                expect(authorization.binding).toMatchObject({ machineId: selected.machine.id,
+                    installationId: selected.machine.installationId, authentication: { kind: 'terminal' } });
+                for (const nativeMethod of [RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT, RPC_METHODS.SESSION_SPAWN_NEW]) {
+                    const request = { method: `${selected.machine.id}:${nativeMethod}`, requestId: randomUUID(), params: input };
+                    const execution = { v: 1 as const, authorization, effectActionId: 'session.spawn_new' as const,
+                        target: envelope.target, installationId: selected.machine.installationId!,
+                        machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                            effectActionId: 'session.spawn_new', target: envelope.target, installationId: selected.machine.installationId!,
+                            ...request, privateKey: selected.key.secretKey }) };
+                    const accountStoredContentCompatibility = evaluateAccountStoredContentSocketCompatibility(
+                        buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION)).evaluation;
+                    let received: SocketRpcRequestPayload | undefined;
+                    // Socket.IO peers are the network boundary; issuance, both
+                    // installation signatures and the Home router remain real.
+                    const target = { id: randomUUID(), data: { clientType: 'machine-scoped', userId: f.account.id,
+                        machineId: selected.machine.id, verifiedMachineInstallationId: selected.machine.installationId, accountStoredContentCompatibility },
+                        timeout: () => ({ emitWithAck: async (_event: string, payload: SocketRpcRequestPayload) => {
+                            received = payload;
+                            return { selectedMachineId: selected.machine.id };
+                        } }) };
+                    const io = createSocketRoomDiscoveryHarness(async room => room === target.id || room === `rpc:${f.account.id}:${request.method}` ? [target] : []);
+                    const caller = Object.assign(createAuthenticatedFakeSocket({ data: { clientType: 'user-scoped', userId: f.account.id,
+                        authTokenKind: transport, authAuthority: transport === 'terminal' ? 'account_automation' : 'present_user',
+                        accountStoredContentCompatibility } }), { handshake: { auth: { token: transport === 'terminal' ? terminalToken : f.presentUserToken } } });
+                    registerSocketRpcHandlers({ userId: f.account.id, socket: caller as unknown as Socket, io });
+                    let response: unknown;
+                    await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { ...request, externalActionExecution: execution },
+                        (value: unknown) => { response = value; });
+                    expect(response).toMatchObject({ ok: true, result: { selectedMachineId: selected.machine.id } });
+                    expect(received?.callerAuthority).toBe('account_automation');
+                    expect(received?.callerInputAuthorization?.binding).toMatchObject(authorization.binding);
+                    await expect(verifyExternalActionMachineRpcExecution({ ...execution,
+                        machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                            effectActionId: 'session.spawn_new', target: envelope.target, installationId: selected.machine.installationId!,
+                            ...request, privateKey: selected.machine.id === second.id ? f.keyPair.secretKey : secondKey.secretKey }) }, request)).resolves.toBeNull();
+                }
+            }
+        } finally { await f.app.close(); }
+    });
 
     it('spends exact reviewed readiness children on the selected installation with requester Use access', async () => {
         const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
