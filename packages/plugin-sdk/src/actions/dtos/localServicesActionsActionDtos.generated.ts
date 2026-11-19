@@ -788,7 +788,7 @@ export type LocalServicesActionsActionResultById = {
                             code: string;
                         } | {
                             status: 'rejected';
-                            code: 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion';
+                            code: 'model_not_granted' | 'permission_mode_not_granted' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion';
                         };
                         attestedContext?: undefined | {
                             externalPrincipalId: string;
@@ -2129,7 +2129,7 @@ export type LocalServicesActionsActionResultById = {
                         code: string;
                     } | {
                         status: 'rejected';
-                        code: 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion';
+                        code: 'model_not_granted' | 'permission_mode_not_granted' | 'session_access_forbidden' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion';
                     };
                     attestedContext?: undefined | {
                         externalPrincipalId: string;
