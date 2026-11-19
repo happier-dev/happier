@@ -129,6 +129,7 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
         ...supplied, readSourceCandidates, readMachineRejections, readDeclaredDefaultOrigins,
         contextualTarget,
     });
+    const holdsContextualInstallation = contextualTarget?.installationId === undefined || !!selection.projectionTarget;
     const selectedSupplyFromSelection = React.useMemo(() => selection.selectedOrigin
         ? readPluginUiContributionSupplies(params.entry).find(supply => supply.executionOrigin
             && arePluginMachineExecutionOriginsEqual(supply.executionOrigin, selection.selectedOrigin!)) ?? null
@@ -149,7 +150,7 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
         )) : null;
     const sourceNotReady = offlineCandidate?.validation.kind === 'rejected'
         && offlineCandidate.validation.reason === 'source_not_ready';
-    const hasPreviousPresentation = params.enabled && accountLifetime?.isCurrent() === true
+    const hasPreviousPresentation = params.enabled && holdsContextualInstallation && accountLifetime?.isCurrent() === true
         && previous?.accountLifetime === accountLifetime && previous.entryId === params.entry?.id;
     const matchesPreviousSupply = (supply: NonNullable<typeof selectedSupplyFromSelection>) => (
         supply.executionOrigin !== null && previous?.supply.executionOrigin != null
@@ -180,7 +181,7 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
     const requestedTarget = params.enabled && accountLifetime?.isCurrent() === true ? selection.storedTarget ?? (demandOrigin ? {
         serverIdentityId: demandOrigin.serverIdentityId,
         machineId: getPluginMachineExecutionOriginRef(demandOrigin).machineId,
-    } : selection.projectionTarget ?? contextualTarget ?? null) : null;
+    } : selection.projectionTarget ?? (contextualTarget?.installationId === undefined ? contextualTarget : null) ?? null) : null;
     const choiceKey = JSON.stringify([params.pluginId, selection.storedTarget ?? null,
         contextualTarget === undefined ? 'automatic' : contextualTarget]);
     const mountedDemand = React.useRef<Readonly<{
@@ -193,7 +194,7 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
     // The same mounted consumer still needs its admitted target: do not turn
     // that withdrawal/return into cancellation followed by fresh acquisition.
     // Hold only this mount's demand while its current candidate still exists.
-    const retainedTarget = params.enabled && accountLifetime?.isCurrent() === true
+    const retainedTarget = params.enabled && holdsContextualInstallation && accountLifetime?.isCurrent() === true
         && previousDemand !== null && previousDemand.accountLifetime === accountLifetime && previousDemand.choiceKey === choiceKey
         && selection.candidates.some(candidate => {
             const origin = getPluginExecutionOriginCandidateOrigin(candidate);
@@ -262,5 +263,6 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
         if (!accountLifetime?.isCurrent()) return;
         for (const target of targets) publishMachineContributionRegistryProjectionInvalidation(target, 'refresh');
     }, [accountLifetime, selection.candidates]);
-    return { selection, selectedSupply, loading, unverified, retry, isExecutionOriginCurrent };
+    return { selection, selectedSupply, loading, unverified, retry, isExecutionOriginCurrent,
+        machineActionsById: projectionDemand.phase === 'ready' ? projectionDemand.inputs?.pluginUiProjection?.actionsById ?? null : null };
 }

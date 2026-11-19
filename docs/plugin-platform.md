@@ -13828,6 +13828,24 @@ Matching development author schemas, projection readers, and hosts reload
 together. The routing objects remain closed; this adds no persisted format,
 runtime ABI, released wire epoch, registry, or reverse-development adapter.
 
+### App-page Machine qualifier
+
+An App page that addresses Machine-local data can open
+`/plugins/<pluginId>/<localId>/~run-on/<serverId>/<machineId>/<installationId>/<subPath>`.
+The same `~run-on/…` suffix works as the `subPath` option to
+`openSurface`, with no one-shot launch input. Supply the portable server
+identity for links that need to open on another client, and keep credentials
+and other secrets out of the URL. The plugin receives only its local
+`subPath`. App page location changes keep the qualifier in the URL.
+
+The qualifier proposes where the App page's Machine-backed Resources and
+Actions run. Machine Administration uses the current Account's inventory and
+the ordinary plugin execution-origin admission to resolve the exact
+installation. An absent, revoked, or replaced Machine cannot execute the
+request, and the plugin's Run-on preference applies only to unqualified
+routes. If the data belongs to an Environment controller, use that controller's
+registered Machine and installation coordinates.
+
 ## Page Tabs navigation (0.3 development source)
 
 Public `Tabs` can declare `presentation="page"` with a qualified `pageKind`. Its Items remain the declaration for panels, labels, badges, disabled state and portable navigation metadata. The installed HostApi `setPageNavigation(descriptor | null)` lends that declaration to the physical page mount; it adds no Resource read or backend request. Nested `tabList="host"` Tabs retain their panel behavior and do not publish another declaration.

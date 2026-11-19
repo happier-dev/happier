@@ -56,7 +56,7 @@ import {
     selectPluginPagePlacements,
     type PluginPage,
 } from './pluginPages';
-import { appendPluginPageRouteSubPath, buildPluginPageRoutePath, parsePluginAppPageRoutePath, pluginPageTargetKey, type PluginPageTarget } from './pluginPageRoute';
+import { appendPluginPageRouteSubPath, buildPluginPageRoutePath, parsePluginAppPageRoutePath, pluginPageTargetKey, readPluginAppPageLocation, type PluginPageTarget } from './pluginPageRoute';
 import { usePluginPageIngress, type StagePluginPageExplicitHref } from './pluginPageIngress';
 
 /**
@@ -630,6 +630,13 @@ function openResolvedPluginPage(input: Readonly<{
             code: 'invalid_payload',
             reason: 'plugin_surface_open_sub_path_invalid',
         };
+    }
+    if (page.target.kind === 'app' && !page.target.context) {
+        const location = readPluginAppPageLocation(subPath);
+        if (!location) return { ok: false, code: 'invalid_payload', reason: 'plugin_surface_open_sub_path_invalid' };
+        if (location.machine && request.input !== undefined) {
+            return { ok: false, code: 'unsupported_method', reason: 'plugin_surface_open_launch_input_unsupported' };
+        }
     }
     const routePath = page.target.kind === 'machine' || (page.target.kind === 'app' && page.target.context)
         ? buildPluginPageRoutePath({ ...page.target, pluginId: page.pluginId, localId: page.localId, subPath })

@@ -2,7 +2,8 @@ import * as React from 'react';
 import { DetailsPaneSlotHost } from '@/components/appShell/panes/details/DetailsPaneSlot';
 import { PluginPageContent } from '@/components/plugins/pages/PluginPageContent';
 import { resolvePluginPageForRoute, usePluginPages, selectPluginPagePlacements } from '@/components/plugins/pages/pluginPages';
-import { buildPluginAppPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
+import { buildPluginAppPageRoutePath, readPluginAppPageLocation } from '@/components/plugins/pages/pluginPageRoute';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { useAppShellPluginUiProjection, useProjectedPluginLocalizedTextResolver } from './AppShellPluginUiProjection';
 import { t } from '@/text';
 import {
@@ -36,9 +37,17 @@ export function PluginAppPageScreen(props: Readonly<{
     const pages = usePluginPages({ target: { kind: 'app' }, placements, localize });
     const page = resolvePluginPageForRoute({ pages, pluginId: props.pluginId, localId: props.localId });
     const title = page?.label ?? t('pluginSurfaces.appPage.title');
+    const location = readPluginAppPageLocation(props.subPath);
+    const { serverId, machineId, installationId } = location?.machine ?? {};
+    const machine = React.useMemo(() => serverId && machineId && installationId
+        ? { serverId, machineId, installationId } : null, [serverId, machineId, installationId]);
+    const serverIdentityId = machine ? resolvePortableServerIdentityForRoutingId(machine.serverId) ?? machine.serverId : null;
+    const executionTarget = React.useMemo(() => machine && serverIdentityId
+        ? { serverIdentityId, machineId: machine.machineId, installationId: machine.installationId }
+        : undefined, [machine, serverIdentityId]);
     const routePathFor = React.useCallback((subPath: string, view: string | null) => buildPluginAppPageRoutePath({
-        pluginId: props.pluginId, localId: props.localId, subPath, view,
-    }), [props.pluginId, props.localId]);
+        pluginId: props.pluginId, localId: props.localId, subPath, view, machine,
+    }), [props.pluginId, props.localId, machine]);
     const renderContent = React.useCallback((content: React.ReactElement) => <DetailsPaneSlotHost testID="plugin-app-page-details" mainColumn={{
         hideLabel: t('panes.mainColumn.hidePage', { title }),
         showLabel: t('panes.mainColumn.showPage', { title }),
@@ -46,7 +55,10 @@ export function PluginAppPageScreen(props: Readonly<{
     }}>
         {content}
     </DetailsPaneSlotHost>, [title]);
-    return <PluginPageContent {...props} page={page} views={pages} projection={projection} routePathFor={routePathFor}
+    return <PluginPageContent key={machine ? JSON.stringify(machine) : undefined}
+        pluginId={props.pluginId} localId={props.localId} subPath={location?.subPath ?? null}
+        page={page} views={pages} projection={projection} routePathFor={routePathFor}
+        contextualExecutionTarget={executionTarget}
         initialView={props.view ?? null}
         accountScopeRestoring={coldAccountRestorePending || (appliedRuntimeAvailable && !isDataReady)}
         renderContent={renderContent} appChrome />;

@@ -2184,6 +2184,7 @@ function PluginSurfaceHostMount(props: Readonly<(
             : accountUnionMount && needsMachineExecution ? false : props.projectionInteractionEnabled;
     const daemonInteraction = usePluginSurfaceDaemonInteraction({
         machineId,
+        serverId,
         projectionInteractionEnabled,
     });
     const daemonSettingsInteraction = usePluginSurfaceDaemonInteraction({

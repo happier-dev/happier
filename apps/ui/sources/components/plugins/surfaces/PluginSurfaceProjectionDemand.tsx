@@ -12,6 +12,7 @@ const NO_TARGETS: readonly AppShellPluginProjectionTarget[] = Object.freeze([]);
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { normalizeCredentialScopeServerId, useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { usePluginSurfaceExecutionOrigin } from './pluginSurfaceExecutionOrigin';
+import type { PluginExecutionOriginContextualTarget } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 
 /**
  * An opened Machine-backed surface needs discovery before Administration can
@@ -25,6 +26,7 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
     pluginId?: string;
     accountScope: ServerAccountScope | null;
     enabled?: boolean;
+    contextualTarget?: PluginExecutionOriginContextualTarget;
     /** Acquire every presented installation, including declarations whose package content needs a live occurrence. */
     presents?: 'selectedOrigin' | 'allInstallations';
     /** What the surface presents when it is not a plugin's UI (Deploy an app: registry sources alone). */
@@ -63,9 +65,11 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
     }, [installed, owingRegistrySources, presented, props.accountScope?.serverId, props.pluginId, props.presents, readsRegistrySources, selectedOrigin]);
     const sections = props.sections ?? (props.pluginId !== undefined ? pluginUiSections(props.pluginId) : PLUGIN_UI_SECTIONS);
     const hosted = useHostedDemands(targets, `presentation:${JSON.stringify(sections)}`);
-    // Administration's uncontextual selection is plugin-scoped, so one presented body decides it for all.
+    // Share a selection demand only between surfaces that asked for the same context.
     const decides = selectedOrigin && presented;
-    const selection = React.useMemo(() => decides ? [[props.pluginId!, props.pluginId!] as const] : [], [decides, props.pluginId]);
+    const selection = React.useMemo(() => decides && props.pluginId !== undefined
+        ? [[JSON.stringify([props.pluginId, props.contextualTarget]), props.pluginId] as const] : [],
+    [decides, props.contextualTarget, props.pluginId]);
     const hostedSelection = useHostedDemands(selection, 'selectedOrigin');
     // One credential read per surface: Machine demands borrow their Home's lifetime (null until it binds), so
     // N Machines do not each read the same credential and wake separately when it answers.
@@ -76,7 +80,7 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
         accountLifetime={bindings.get(normalizeCredentialScopeServerId(target.serverIdentityId)) ?? null} />), [bindings, hosted, sections]);
     return <>
         {sourceDemands}
-        {hostedSelection.map(([key, pluginId]) => <SelectedOriginDemand key={key} pluginId={pluginId} />)}
+        {hostedSelection.map(([key, pluginId]) => <SelectedOriginDemand key={key} pluginId={pluginId} contextualTarget={props.contextualTarget} />)}
     </>;
 }
 
@@ -87,8 +91,9 @@ function SourceDemand(props: Readonly<{ target: MachineAdministrationTargetV1;
 }
 
 /** Administration's selected origin, and only it, acquires its presented UI sections. It renders no Run-on choice. */
-function SelectedOriginDemand(props: Readonly<{ pluginId: string }>): null {
-    usePluginSurfaceExecutionOrigin({ pluginId: props.pluginId, projection: null, enabled: true, includeMachineCandidates: false });
+function SelectedOriginDemand(props: Readonly<{ pluginId: string; contextualTarget?: PluginExecutionOriginContextualTarget }>): null {
+    usePluginSurfaceExecutionOrigin({ pluginId: props.pluginId, projection: null, enabled: true,
+        includeMachineCandidates: false, contextualTarget: props.contextualTarget });
     return null;
 }
 

@@ -64,7 +64,12 @@ export type PluginMachineSourceExecutionOriginCandidateV1 = PluginMachineRelease
 }>;
 export type PluginExecutionOriginCandidateV1 = PluginMachineExecutionOriginCandidateV1 | PluginMachineSourceExecutionOriginCandidateV1;
 
-export type PluginExecutionOriginContextualTarget = Readonly<{ serverIdentityId: string; machineId: string }>;
+export type PluginExecutionOriginContextualTarget = Readonly<{
+    serverIdentityId: string;
+    machineId: string;
+    /** A fixed App page address may name one exact installation of this Machine. */
+    installationId?: string;
+}>;
 
 export type PluginExecutionOriginMachineFactReader = (target: PluginExecutionOriginContextualTarget) => Readonly<{
     activeAt: number;

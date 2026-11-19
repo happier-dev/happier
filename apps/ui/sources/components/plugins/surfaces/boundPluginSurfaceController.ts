@@ -171,6 +171,7 @@ import { WidgetFrameBodyNoticeContext, type WidgetFrameBodyNotice, type WidgetFr
  */
 export function usePluginSurfaceDaemonInteraction(input: Readonly<{
     machineId?: string | null;
+    serverId?: string | null;
     projectionInteractionEnabled?: boolean;
 }>): Readonly<{
     endpointOnline: boolean;
@@ -183,7 +184,7 @@ export function usePluginSurfaceDaemonInteraction(input: Readonly<{
     const machineId = typeof input.machineId === 'string' && input.machineId.trim().length > 0
         ? input.machineId
         : null;
-    const machineTarget = useMachineCliDetectionTarget(machineId);
+    const machineTarget = useMachineCliDetectionTarget(machineId, input.serverId);
     const hasAddressedMachine = machineId !== null;
     const daemonReachable = hasAddressedMachine
             && endpointOnline

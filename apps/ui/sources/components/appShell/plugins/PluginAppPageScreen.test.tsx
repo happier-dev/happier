@@ -74,7 +74,7 @@ const {
 
 const targetedContributionsReadMock = vi.hoisted(() => vi.fn<(machineId: string,
     options: Readonly<{ pluginId: string; serverId?: string | null }>) => Promise<unknown>>());
-const preparationRpc = vi.hoisted(() => ({ answer: null as null | ((method: string, payload: unknown) => Promise<unknown>) }));
+const preparationRpc = vi.hoisted(() => ({ answer: null as null | ((method: string, payload: unknown, machineId: string) => Promise<unknown>) }));
 // The daemon answers a target read with its current occurrence: the one the
 // most recently built fixture projection names.
 const fixtureDaemonGeneration = vi.hoisted(() => ({ value: 9 }));
@@ -200,7 +200,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
             const payload = DaemonPluginUiTargetedContributionsReadRequestSchema.parse(params.payload);
             return targetedContributionsReadMock(params.machineId, { ...payload, serverId: params.serverId });
         }
-        if (preparationRpc.answer) return preparationRpc.answer(params.method, params.payload);
+        if (preparationRpc.answer) return preparationRpc.answer(params.method, params.payload, params.machineId);
         throw new Error(`Unexpected AppPage fixture RPC: ${params.method}`);
     });
 });
@@ -395,12 +395,15 @@ const pageCacheIdentity = {
 } as const;
 
 function daemonProjection(input: Readonly<{
+    machineId?: string;
+    connectionResource?: boolean;
     reviewContext?: boolean;
     reviewCompanion?: boolean;
     description?: string | Readonly<{ key: string; fallback: string }>;
     headerStyle?: 'page' | 'toolbar';
     availability?: Readonly<{ state: string; reason: string; diagnostics: readonly string[] }>;
     headerActions?: readonly unknown[];
+    refreshAvailable?: boolean;
     secondPlugin?: boolean;
     generation?: number;
     /** Simulates the plugin being uninstalled while its page is selected. */
@@ -427,7 +430,7 @@ function daemonProjection(input: Readonly<{
         occurrenceId: `${pluginId}-generation-${generation}`,
         sourceCustody,
         executionOrigin: PluginMachineExecutionOriginV1Schema.parse({ serverIdentityId,
-            sourceRef: { machineId: 'machine-1', pluginId, sourceCustody } }),
+            sourceRef: { machineId: input.machineId ?? 'machine-1', pluginId, sourceCustody } }),
         declaresContributionPoints: input.withoutContributionPoints !== true,
         brand: { state: 'missing' },
     });
@@ -451,6 +454,7 @@ function daemonProjection(input: Readonly<{
             binding,
             target: binding.target,
             renderer: { kind: 'reactNative', contributionId: 'notes-renderer' },
+            ...(input.connectionResource ? { runtime: { resourceCapability: { readable: true, dynamic: false } } } : {}),
             display: { titleKey: destinationId, developerFallback: destinationId === 'tasks' ? 'Tasks'
                 : pluginId === NOTES_PLUGIN_ID ? 'Notes' : 'Journal',
                 ...(input.description === undefined ? {} : { description: input.description }),
@@ -469,7 +473,8 @@ function daemonProjection(input: Readonly<{
         contributionKind: 'reactNativeBundle',
         contributionId: 'notes-renderer',
         generatedV2: true,
-        hostApi: { minVersion: '1.0.0', methods: ['context', ...(input.reviewCompanion ? ['setPageNavigation'] : [])] },
+        hostApi: { minVersion: '1.0.0', methods: ['context', ...(input.reviewCompanion ? ['setPageNavigation'] : []),
+            ...(input.connectionResource ? ['readResource'] : [])] },
         // This fixture exercises a daemon-backed page (its refresh Action is
         // declared below). The renderer must request that capability before
         // Administration selects an exact Machine and admits its target slice.
@@ -533,17 +538,21 @@ function daemonProjection(input: Readonly<{
                 surfaces: ['ui'],
                 execution: { target: 'daemon' },
                 dangerLevel: 'safe',
-                available: true,
+                available: input.refreshAvailable ?? true,
             },
         },
-        resourcesById: {},
+        resourcesById: input.connectionResource ? {
+            [`${NOTES_PLUGIN_ID}/connection`]: { id: 'connection', pluginId: NOTES_PLUGIN_ID,
+                occurrenceId: `${NOTES_PLUGIN_ID}-generation-${generation}`,
+                resourceKind: 'config', scope: 'surface', execution: { target: 'daemon' }, contentType: 'application/json' },
+        } : {},
         settingsById: {},
         familiesById: { pluginUi: { family: 'pluginUi', entriesById: entries } },
         diagnostics: [],
     } as never;
 }
 
-function composeAppProjection(rawProjection: unknown, serverId = 'server-1'): PluginUiProjectionModel {
+function composeAppProjection(rawProjection: unknown, serverId = 'server-1', otherProjection?: unknown): PluginUiProjectionModel {
     const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse(rawProjection));
     const serverIdentityId = serverId === 'server-1' ? 'srv_account_one' : 'srv_account_two';
     // The shell publishes the union after Administration chooses the exact
@@ -551,6 +560,14 @@ function composeAppProjection(rawProjection: unknown, serverId = 'server-1'): Pl
     const origins = new Map(Object.values(projection.installedPackagesById).map(plugin => [plugin.id,
         PluginMachineExecutionOriginV1Schema.parse(plugin.executionOrigin),
     ]));
+    const other = otherProjection === undefined ? [] : [{
+        machineId: 'machine-a',
+        serverId,
+        serverIdentityId,
+        projection: normalizePluginUiProjection(PluginProjectionV2Schema.parse(otherProjection)),
+        phase: 'current' as const,
+        interactionEnabled: true,
+    }];
     return unionPluginUiProjections([{
         machineId: 'machine-1',
         serverId,
@@ -558,7 +575,7 @@ function composeAppProjection(rawProjection: unknown, serverId = 'server-1'): Pl
         projection,
         phase: 'current',
         interactionEnabled: true,
-    }], origins).pluginUiProjection ?? EMPTY_PLUGIN_UI_PROJECTION;
+    }, ...other], origins).pluginUiProjection ?? EMPTY_PLUGIN_UI_PROJECTION;
 }
 
 async function primePageArtifact(pluginId: string) {
@@ -885,6 +902,79 @@ afterEach(async () => {
 });
 
 describe('plugin app page host route (EU-5b)', () => {
+    it.each([
+        { name: 'the addressed Machine', installationId: 'installation-a', revoked: false, ready: true },
+        { name: 'a replaced installation', installationId: 'replaced-installation', revoked: false, ready: false },
+        { name: 'a revoked Machine', installationId: 'installation-a', revoked: true, ready: false },
+    ])('honors a cold App page Machine qualifier for $name', async ({ installationId, revoked, ready }) => {
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const { act } = await import('react-test-renderer');
+        const fallback = { ...storage.getState().machines['machine-1']!, activeAt: Date.now() };
+        const addressed = createMachineFixture({ id: 'machine-a', installationId: 'installation-a', activeAt: Date.now(),
+            ...(revoked ? { revokedAt: 1 } : {}) });
+        await publishMachineInventoryForTest(pluginSurfaceAccountLifetime.value!.scope, [fallback, addressed]);
+        storage.setState({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1: { [`plugin.runOn:${NOTES_PLUGIN_ID}`]: {
+                serverIdentityId: 'srv_account_one', machineId: fallback.id,
+            } } } });
+        const projectionFor = (id: string) => daemonProjection({ machineId: id, connectionResource: true,
+            generation: id === addressed.id ? 9 : 10,
+            refreshAvailable: id === addressed.id,
+            headerActions: [{ id: 'refresh-notes', title: 'Refresh notes', command: { kind: 'executeAction',
+                action: { pluginId: NOTES_PLUGIN_ID, localId: 'refresh' } } }],
+        });
+        contributionProjectionDescribeMock.mockImplementation(async id => ({ protocolVersion: 1, projection: projectionFor(id) }));
+        const reads: string[] = [];
+        preparationRpc.answer = async (method, payload, id) => {
+            if (method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) throw new Error(`Unexpected Resource RPC: ${method}`);
+            expect(payload).toMatchObject({ machineId: id, context: { kind: 'surface', launchInput: { operation: 'describe' } } });
+            reads.push(id);
+            return { ok: true, resource: { pluginId: NOTES_PLUGIN_ID, localId: 'connection' }, kind: 'config',
+                contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`, bytesBase64: 'e30=' };
+        };
+        const { parsePluginAppPageRoutePath } = await import('@/components/plugins/pages/pluginPageRoute');
+        const route = `${NOTES_PAGE_PATH}/~run-on/srv_account_one/${addressed.id}/${installationId}`;
+        const location = parsePluginAppPageRoutePath(`${route}/detail`);
+        if (!location) throw new Error('Expected an App page route');
+        const render = await createPageRenderer({ ...location, machineId: null, serverId: null });
+        const model = composeAppProjection(projectionFor(fallback.id), 'server-1', projectionFor(addressed.id));
+        expect(model.actionsById[`${NOTES_PLUGIN_ID}/refresh`]).toMatchObject({
+            occurrenceId: `${NOTES_PLUGIN_ID}-generation-10`, available: false,
+        });
+        await renderScreen(render(model));
+
+        await vi.waitFor(() => {
+            const context = readRenderContext();
+            expect(context.surface.machineConnectionPending).toBe(false);
+            if (ready) expect(targetedContributionsReadMock.mock.calls.map(([target]) => target)).toContain(addressed.id);
+            expect(context.surface.machineExecutionReady, JSON.stringify({ origin: context.surface.executionOrigin,
+                projectionRequests: contributionProjectionDescribeMock.mock.calls.map(([id]) => id),
+                endpointStatus: storage.getState().endpointStatus,
+            })).toBe(ready);
+        });
+        expect(readRenderContext().subPath).toBe('detail');
+        expect(targetedContributionsReadMock.mock.calls.map(([target]) => target)).not.toContain(fallback.id);
+        const api = readRenderContext().hostApi;
+        const header = await renderScreen((stackOptions.at(-1)?.headerRight as () => React.ReactElement)());
+        const headerAction = 'plugin-app-page-header-action:refresh-notes';
+        if (ready) {
+            await expect(api.readResource('connection', { input: { operation: 'describe' } })).resolves.toMatchObject({
+                contentType: 'application/json',
+            });
+            expect(reads).toEqual([addressed.id]);
+            await vi.waitFor(() => expect(header.findByTestId(headerAction)?.props.disabled).toBe(false));
+            await act(async () => {
+                await expect(api.replacePageLocation('next')).resolves.toEqual({ subPath: 'next' });
+            });
+            expect(routerReplacements).toEqual([`${route}/next`]);
+        } else {
+            expect(header.findByTestId(headerAction)?.props.disabled).toBe(true);
+            await expect(api.readResource('connection', { input: { operation: 'describe' } })).rejects.toThrow();
+            await expect(api.executeAction('refresh', {})).rejects.toThrow();
+            expect(targetedContributionsReadMock).not.toHaveBeenCalled();
+            expect(reads).toEqual([]);
+        }
+    });
+
     it('lets the page\u2019s own Machine chip say a Machine is connecting, with no notice over the page\u2019s footer', async () => {
         contributionProjectionDescribeMock.mockImplementation(() => new Promise(() => {}));
         const screen = await renderPage();
@@ -1456,8 +1546,9 @@ describe('plugin app page host route (EU-5b)', () => {
     });
 
     it('keeps a page-bound Action enabled from its exact selected origin when the app union has no coarse machine', async () => {
-        const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
-        observeMachinePresenceForTest(pluginSurfaceAccountLifetime.value!.scope, ['machine-1']);
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const machine = storage.getState().machines['machine-1']!;
+        await publishMachineInventoryForTest(pluginSurfaceAccountLifetime.value!.scope, [{ ...machine, activeAt: Date.now() }]);
         await renderPage({
             machineId: null,
             serverId: null,
@@ -1498,6 +1589,9 @@ describe('plugin app page host route (EU-5b)', () => {
     });
 
     it('mounts the declared page at its root with one header execution chip and no duplicate body chip', () => withPopoverWebGlobals(async () => {
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const machine = storage.getState().machines['machine-1']!;
+        await publishMachineInventoryForTest(pluginSurfaceAccountLifetime.value!.scope, [{ ...machine, activeAt: Date.now() }]);
         const screen = await renderPage();
         expect(screen.findByTestId('plugin-surface-execution.chip')).toBeNull();
         const headerRight = stackOptions.at(-1)?.headerRight;

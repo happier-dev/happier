@@ -141,6 +141,8 @@ export function PluginPageHeaderActions(props: Readonly<{
     actions: readonly PluginUiPageHeaderActionProjection[];
     page: PluginPage;
     projection: PluginUiProjectionModel | null | undefined;
+    /** When a route binds a Machine, daemon Actions come from that Machine's projection. */
+    machineActionsById?: PluginUiProjectionModel['actionsById'] | null;
     /** Exact selected origin; the app-wide union is catalog-only here. */
     actionAuthority: PluginSurfaceLaunchAuthority | null | undefined;
     openSurface: PluginSurfaceOpenHandler;
@@ -152,10 +154,17 @@ export function PluginPageHeaderActions(props: Readonly<{
     const localize = usePluginLocalizedTextResolver({ projection: props.projection });
     const currentUiContextReader = useOptionalCurrentUiContextReader();
     usePluginUiClientExecutableRegistrationRevision();
-    const resolveContributedAction = React.useMemo(
-        () => createPluginUiProjectedActionResolver(props.projection?.actionsById),
-        [props.projection?.actionsById],
-    );
+    const resolveContributedAction = React.useMemo((): PluginSurfaceContributedActionDescriptorResolver => {
+        const resolveAppAction = createPluginUiProjectedActionResolver(props.projection?.actionsById);
+        if (props.machineActionsById === undefined) return resolveAppAction;
+        const resolveMachineAction = createPluginUiProjectedActionResolver(props.machineActionsById);
+        return identity => {
+            const machineAction = resolveMachineAction(identity);
+            if (machineAction?.execution.target === 'daemon') return machineAction;
+            const appAction = resolveAppAction(identity);
+            return appAction?.execution.target === 'daemon' ? null : appAction;
+        };
+    }, [props.projection?.actionsById, props.machineActionsById]);
     if (props.actions.length === 0) return null;
 
     const canExecuteContributedAction = (action: PluginUiPageHeaderActionProjection): boolean => {

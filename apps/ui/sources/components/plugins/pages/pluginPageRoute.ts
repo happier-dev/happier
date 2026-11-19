@@ -26,6 +26,26 @@ export function parsePluginProjectPageRoutePath(href: string): Readonly<{
 }
 
 export const PLUGIN_APP_PAGE_ROUTE_PREFIX = '/plugins';
+const APP_PAGE_MACHINE_SEGMENT = '~run-on';
+
+export type PluginAppPageMachineQualifier = Readonly<{
+    serverId: string;
+    machineId: string;
+    installationId: string;
+}>;
+
+/** Split the host's Machine qualifier from the path the plugin owns. */
+export function readPluginAppPageLocation(subPath: string | null): Readonly<{
+    subPath: string;
+    machine: PluginAppPageMachineQualifier | null;
+}> | null {
+    if (subPath === null) return null;
+    const [prefix, serverId, machineId, installationId, ...path] = subPath.split('/');
+    if (prefix !== APP_PAGE_MACHINE_SEGMENT) return { subPath, machine: null };
+    if (!serverId || !machineId || !installationId
+        || [serverId, machineId, installationId].some(id => id.trim() !== id || id.includes('\\'))) return null;
+    return { subPath: path.join('/'), machine: { serverId, machineId, installationId } };
+}
 
 /** Exact app-page address before URL parsing can normalize away invalid path segments. */
 export function parsePluginAppPageRoutePath(href: string): Readonly<{
@@ -117,12 +137,17 @@ export function appendPluginPageRouteSubPath(routePath: string, subPath: string)
 /** The host owns the prefix and encodes each plugin-local identity/location segment. */
 export function buildPluginAppPageRoutePath(input: Readonly<{
     pluginId: string; localId: string; subPath?: string;
+    machine?: PluginAppPageMachineQualifier | null;
     /** The page's own declared view the location presents (`replacePageLocation` `view`), when not the page itself. */
     view?: string | null;
 }>): string {
     const root = `${PLUGIN_APP_PAGE_ROUTE_PREFIX}/${encodeURIComponent(input.pluginId)}/${encodeURIComponent(input.localId)}`;
     const normalized = input.subPath === undefined ? '' : (normalizePluginUiSubPathV1(input.subPath) ?? '');
-    const path = normalized.length === 0 ? root : `${root}/${normalized.split('/').map(encodeURIComponent).join('/')}`;
+    const segments = input.machine
+        ? [APP_PAGE_MACHINE_SEGMENT, input.machine.serverId, input.machine.machineId, input.machine.installationId]
+        : [];
+    if (normalized) segments.push(...normalized.split('/'));
+    const path = segments.length === 0 ? root : `${root}/${segments.map(encodeURIComponent).join('/')}`;
     return input.view == null || input.view === input.localId ? path : `${path}?view=${encodeURIComponent(input.view)}`;
 }
 

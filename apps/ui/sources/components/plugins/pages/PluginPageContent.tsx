@@ -26,7 +26,7 @@ import { HAPPIER_PAGE_METRICS, HappierColumnEdgeContext } from '@happier-dev/plu
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
-import { resolveSelectedPluginSurfaceLaunchAuthority } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
+import { createPluginSurfaceLaunchAuthority, resolveSelectedPluginSurfaceLaunchAuthority } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 import { isPluginSurfaceMachineBound, usePluginSurfaceExecutionOrigin } from '@/components/plugins/surfaces/pluginSurfaceExecutionOrigin';
 import { t } from '@/text';
 import { buildPluginDetailRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
@@ -90,6 +90,8 @@ function PluginPageRouteActions(props: Readonly<{
     page: PluginPage | null;
     projection: AppShellPluginUiProjectionValue['pluginUiProjection'];
     surfaceTarget?: Parameters<typeof usePluginSurfaceExecutionOrigin>[0]['surfaceTarget'];
+    contextualExecutionTarget?: React.ComponentProps<typeof PluginSurfacePlacementHost>['contextualExecutionTarget'];
+    accountLifetime: AppShellPluginUiProjectionValue['accountLifetime'];
     compact: boolean;
     headerActions: Omit<React.ComponentProps<typeof PluginPageHeaderActions>, 'isDaemonExecutionCurrent'> | null;
 }>): React.ReactElement {
@@ -98,17 +100,27 @@ function PluginPageRouteActions(props: Readonly<{
         surface: props.page.placement,
         projection: props.projection,
     });
+    const fixedMachine = props.contextualExecutionTarget?.installationId !== undefined;
     const execution = usePluginSurfaceExecutionOrigin({
         pluginId: props.pluginId,
         projection: props.projection,
         entry: props.page?.placement,
         enabled: needsMachineExecution,
+        includeMachineCandidates: !fixedMachine,
+        contextualTarget: props.contextualExecutionTarget,
         surfaceTarget: props.page?.placement.target.kind === 'project' ? props.surfaceTarget : undefined,
     });
+    const actionAuthority = fixedMachine && needsMachineExecution
+        ? execution.selectedSupply && createPluginSurfaceLaunchAuthority({
+            ...execution.selectedSupply, accountLifetime: props.accountLifetime,
+        })
+        : props.headerActions?.actionAuthority;
     return <>
-        {needsMachineExecution ? <PluginMachineExecutionOriginSelectorView pluginId={props.pluginId} selection={execution.selection} presentation="chip" compact={props.compact}
+        {needsMachineExecution && !fixedMachine ? <PluginMachineExecutionOriginSelectorView pluginId={props.pluginId} selection={execution.selection} presentation="chip" compact={props.compact}
             groupTitle={t('settingsPlugins.executionOriginTitle')} testIDPrefix="plugin-page-execution" /> : null}
         {props.headerActions ? <PluginPageHeaderActions {...props.headerActions}
+            actionAuthority={actionAuthority}
+            machineActionsById={fixedMachine ? execution.machineActionsById : undefined}
             isDaemonExecutionCurrent={execution.isExecutionOriginCurrent} /> : null}
     </>;
 }
@@ -124,6 +136,7 @@ export function PluginPageContent(props: Readonly<{
     routePathFor: (subPath: string, view: string | null) => string;
     /** The declared view the route names (`?view=`): the chrome titles it from the first frame of a cold load. */
     initialView?: string | null;
+    contextualExecutionTarget?: React.ComponentProps<typeof PluginSurfacePlacementHost>['contextualExecutionTarget'];
     projectContext?: React.ComponentProps<typeof PluginSurfacePlacementHost>['projectContext'];
     reviewContext?: React.ComponentProps<typeof PluginSurfacePlacementHost>['reviewContext'];
     policyContext?: PluginUiPolicyEvaluationContext;
@@ -263,7 +276,9 @@ export function PluginPageContent(props: Readonly<{
     const launch = usePluginPageLaunch({
         pluginId: props.pluginId,
         localId: props.localId,
-        subPath: props.subPath,
+        // Qualified links carry their own location. The Account-wide launch
+        // queue belongs to the unqualified page's selected producer.
+        subPath: props.contextualExecutionTarget?.installationId === undefined ? props.subPath : null,
         preserveDeliveredLaunch: pageIsLive && locationOwner.preservesCurrentEditor(),
     });
     // A companion opened from this page shows the page's own entity: its launch input and current location.
@@ -374,6 +389,8 @@ export function PluginPageContent(props: Readonly<{
         // (QA-WAVE-1115 H3); the picker it opens names the Machine in full.
         compact={phoneTitleChrome || phone}
         surfaceTarget={props.projectContext?.target}
+        contextualExecutionTarget={props.contextualExecutionTarget}
+        accountLifetime={accountLifetime}
         headerActions={activePageForHeader && openSurface && pageHeaderActions.length > 0 ? {
             actions: pageHeaderActions,
             page: activePageForHeader,
@@ -384,6 +401,7 @@ export function PluginPageContent(props: Readonly<{
             isCurrent: isPageHeaderActionCurrent,
         } : null}
     />, [
+        accountLifetime,
         activePageForHeader,
         openSurface,
         pageHeaderActions,
@@ -392,6 +410,7 @@ export function PluginPageContent(props: Readonly<{
         pageHeaderActionAuthority,
         isPageHeaderActionCurrent,
         page,
+        props.contextualExecutionTarget,
         props.pluginId,
         props.projectContext?.target,
         phoneTitleChrome,
@@ -418,6 +437,7 @@ export function PluginPageContent(props: Readonly<{
     [headerOptions, largeTitle, mainScreenHead]);
     const renderPage = (body: React.ReactNode) => <PluginPagePresentation pluginId={props.pluginId} localId={props.localId}
         accountScope={accountLifetime?.scope ?? null} visible={isVisible}
+        contextualTarget={props.contextualExecutionTarget ?? undefined}
         demandProjection={props.subPath !== null && (page ? !page.disabledReason && isPluginSurfaceMachineBound({
             pluginId: props.pluginId, surface: page.placement, projection: projection.pluginUiProjection,
         }) : projection.phase === 'establishing' || projection.hasEstablishingMembers)}
@@ -478,6 +498,7 @@ export function PluginPageContent(props: Readonly<{
                     <PluginPageNavigationContext.Provider value={detailNavigation.projection}>
                     <PluginSurfacePlacementHost
                         placement={page.placement}
+                        contextualExecutionTarget={props.contextualExecutionTarget}
                         projectContext={props.projectContext}
                         reviewContext={props.reviewContext}
                         projectId={props.projectContext?.target?.checkout?.id}

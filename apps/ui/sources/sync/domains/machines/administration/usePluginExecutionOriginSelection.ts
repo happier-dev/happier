@@ -20,7 +20,8 @@ import {
     type OneShotAccountSettingsMutationResult,
 } from '@/sync/engine/settings/syncSettings';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
-import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useServerScopedMachine } from '@/sync/store/hooks';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 
 import {
     resolvePluginMachineMaterializationValidation,
@@ -274,6 +275,13 @@ function sameFreshPluginExecutionOriginInputs(left: readonly unknown[], right: r
     return left.length === right.length && left.every((value, index) => Object.is(value, right[index]));
 }
 
+const readInstallationId = (machine: Machine | null) => machine?.installationId;
+
+function matchesContextualInstallation(target: PluginExecutionOriginContextualTarget | null | undefined,
+    installationId: ReturnType<typeof readInstallationId>): boolean {
+    return target?.installationId === undefined || target.installationId === installationId;
+}
+
 /** Invocation-time closure over the current Availability and raw machine owners. */
 export function resolveFreshPluginMachineExecutionOrigin(params: FreshPluginExecutionOriginParams): FreshPluginMachineExecutionOriginV1 | null {
     const candidates = readFreshPluginMachineExecutionOriginCandidates(params);
@@ -291,7 +299,7 @@ export function resolveFreshPluginMachineExecutionOrigin(params: FreshPluginExec
         serverIdentityId: origin.serverIdentityId,
         machineId: getPluginMachineExecutionOriginRef(origin).machineId,
     });
-    if (!machineTarget) return null;
+    if (!machineTarget || !matchesContextualInstallation(params.contextualTarget, readInstallationId(machineTarget.machine))) return null;
     return Object.freeze({ origin, ...('source' in state.candidate ? { source: state.candidate.source } : { materialization: state.candidate.materialization }), machineTarget });
 }
 
@@ -389,7 +397,9 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
         accountLifetime: typeof expectedAccountLifetime;
         origin: PluginMachineExecutionOriginV1;
     }> | null>(null);
-    const hasContextualChoice = Boolean(params.contextualTarget && contextualChoice
+    const fixedTarget = enabled && params.contextualTarget?.installationId !== undefined ? params.contextualTarget : null;
+    const installationId = useServerScopedMachine(fixedTarget?.serverIdentityId, fixedTarget?.machineId, readInstallationId);
+    const hasContextualChoice = Boolean(params.contextualTarget && params.contextualTarget.installationId === undefined && contextualChoice
         && contextualChoice.pluginId === params.pluginId
         && contextualChoice.accountLifetime === expectedAccountLifetime
         && contextualChoice.target.serverIdentityId === params.contextualTarget.serverIdentityId
@@ -399,7 +409,8 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
     const storedOrigin = params.contextualTarget !== undefined
         ? hasContextualChoice ? contextualChoice!.origin : null
         : null;
-    const contextualTarget = hasContextualChoice ? undefined : params.contextualTarget;
+    const contextualTarget = hasContextualChoice ? undefined
+        : matchesContextualInstallation(fixedTarget, installationId) ? params.contextualTarget : null;
     const selectionRevisionRef = React.useRef<PluginExecutionOriginSelectionRevisionState>({
         pluginId: params.pluginId,
         origin: storedOrigin,
@@ -435,11 +446,12 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
     const contextualCommand = React.useMemo<CurrentUiContextPluginExecutionOriginCommand | null>(() => {
         const target = params.contextualTarget;
         const account = expectedAccountLifetime;
-        if (!target || !account || !enabled) return null;
+        if (!target || target.installationId !== undefined || !account || !enabled) return null;
         const facts = () => {
             const latest = contextualFacts.current;
             if (!latest.enabled || latest.expectedAccountLifetime !== account || !account.isCurrent()
                 || latest.params.pluginId !== params.pluginId
+                || latest.params.contextualTarget?.installationId !== undefined
                 || latest.params.contextualTarget?.serverIdentityId !== target.serverIdentityId
                 || latest.params.contextualTarget?.machineId !== target.machineId
                 || !areAccountSettingsScopesEqual(latest.expectedSettingsScope, storage.getState().settingsScope)) return null;
@@ -479,7 +491,8 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
                 return { status: 'applied' };
             },
         };
-    }, [enabled, expectedAccountLifetime, params.pluginId, params.contextualTarget?.serverIdentityId, params.contextualTarget?.machineId]);
+    }, [enabled, expectedAccountLifetime, params.pluginId, params.contextualTarget?.serverIdentityId,
+        params.contextualTarget?.machineId, params.contextualTarget?.installationId]);
     const readContextualCommandId = useCurrentUiContextMountedCommand(contextualCommand, t('settingsPlugins.executionOriginTitle'));
 
     const executePreference = React.useCallback(async (
