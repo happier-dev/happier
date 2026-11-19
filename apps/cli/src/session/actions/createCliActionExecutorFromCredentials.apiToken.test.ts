@@ -877,6 +877,61 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     ]);
   });
 
+  it('repeats a person-only Review through the public Action transport using its original Machine capture', async () => {
+    const actual = await vi.importActual<typeof import('@/api/machine/resolveCurrentAccountMachineTarget')>(
+      '@/api/machine/resolveCurrentAccountMachineTarget',
+    );
+    resolveCurrentAccountMachineTarget.mockImplementation(actual.resolveCurrentAccountMachineTarget);
+    const records = createInMemoryReviewRecordPortV1();
+    const source = { kind: 'workingTree', area: 'pending' } as const;
+    const oldComparisonId = 'a'.repeat(64);
+    const comparisonId = 'b'.repeat(64);
+    const first = await records.start({ reviewId: 'people-review', title: 'Person-only review',
+      subjectKind: 'comparison', sourceKind: 'direct', reviewerIds: [], startedAt: 1,
+      comparisonId: oldComparisonId, comparisonCapture: {
+        target: { kind: 'machine', machineId: 'original-machine' },
+        input: { cwd: '/original/workspace', source, comparisonId: oldComparisonId },
+      } });
+    await records.settle({ ...first, outcome: 'completed', finishedAt: 2, runs: [] });
+    const captures: ReturnType<typeof ScmComparisonCaptureInputSchema.parse>[] = [];
+    const receiver = createActionExecutor({
+      reviewRecords: () => records,
+      scmActionExecute: async request => {
+        expect(request.context.externalActionTarget).toEqual({ kind: 'machine', machineId: 'original-machine' });
+        captures.push(ScmComparisonCaptureInputSchema.parse(request.input));
+        return ScmComparisonCaptureOutputSchema.parse({ success: true,
+          comparison: { id: comparisonId, source, repository: { rootPath: '/original/workspace' },
+            endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } },
+          metadata: { source, sourceKey: comparisonId },
+        });
+      },
+      executionRunStart: async () => { throw new Error('A person-only round must not launch an Agent'); },
+      workflowAction: async () => { throw new Error('A person-only round must not launch a Workflow'); },
+    } satisfies ActionExecutorDeps);
+    installPatActionTransportMock(async (url, init) => {
+      expect(url.pathname).toBe('/v1/actions/review.new_round');
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+      expect(envelope.target).toEqual({ kind: 'machine', machineId: 'receiving-machine' });
+      expect(envelope.input).toEqual({ reviewId: first.reviewId });
+      const execution = await receiver.execute(REVIEW_NEW_ROUND_ACTION_ID_V1, envelope.input, {
+        surface: 'cli', serverId: 'home', externalActionTarget: envelope.target,
+      });
+      return { statusCode: 200, body: { v: 1, actionId: REVIEW_NEW_ROUND_ACTION_ID_V1, execution } };
+    });
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: { token: SYNTHETIC_API_TOKEN, encryption: null, credentialProvenance: 'api_token' },
+      machineId: 'receiving-machine', serverId: 'home', serverApiUrl: patActionEndpoint!,
+    });
+    const result = await executor.execute(REVIEW_NEW_ROUND_ACTION_ID_V1, { reviewId: first.reviewId }, { surface: 'cli' });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
+      result: { reviewRound: { reviewId: first.reviewId, roundOrdinal: 2 }, comparisonId } });
+    expect(captures).toEqual([{ cwd: '/original/workspace', source }]);
+    expect((await records.read(first.reviewId))?.rounds).toEqual([
+      expect.objectContaining({ ordinal: 1, state: 'completed', runs: [], comparisonId: oldComparisonId }),
+      expect.objectContaining({ ordinal: 2, state: 'completed', runs: [], reviewerIds: [], comparisonId }),
+    ]);
+  });
+
   it.each([
     { actionId: 'review.walkthrough', input: { runId: 'review-run', comparisonId: 'comparison' },
       expected: { runId: 'narrator-run', state: 'collecting' } },
