@@ -1344,9 +1344,7 @@ describe('the machine list column in the rail door', () => {
   });
 });
 
-describe('the presets group in the rail', () => {
-  const sectionIds = (tree: Awaited<ReturnType<typeof renderScreen>>['tree']) => tree.findAll((node) => typeof node.props?.testID === 'string'
-    && node.props.testID.startsWith('settings.machines.presets.')).map((node) => node.props.testID as string);
+describe('Presets in the Machines collection', () => {
 
   it('admits the active fleet beside an absent selected receipt while the archive is still loading', async () => {
     const { MachineCollectionRail } = await import('./collection/MachineCollectionList');
@@ -1413,7 +1411,7 @@ describe('the presets group in the rail', () => {
     }] } });
     const screen = await renderScreen(<MachineCollectionRail />);
     const ids = ['settings.machines.row.srv_a.machine-a1',
-      'settings.machinePools.row.srv_a.00000000-0000-4000-8000-000000000001', 'settings.machines.preset.srv_a.build'];
+      'settings.machinePools.row.srv_a.00000000-0000-4000-8000-000000000001', 'settings.machines.presets'];
     const read = (id: string) => screen.tree.findAll(node => typeof node.type === 'string' && node.props.testID === id)[0];
     // Initial hydration still holds the whole first answer.
     expect(read(ids[0]!)).toBeUndefined();
@@ -1428,10 +1426,11 @@ describe('the presets group in the rail', () => {
     // No admitted row is unmounted to show collection skeletons.
     for (const [index, id] of ids.entries()) expect(read(id)).toBe(admitted[index]);
     expect(read(ids[0]!)?.props.selected).toBe(true);
-    for (const id of ids) await act(async () => pressTestInstanceAsync(read(id)!));
+    // Presets are one row that opens their table, counting the active presets (lab ideas-1118-platform scene 7).
+    expect(read('settings.machines.presets')?.props.detail).toBe('1');
+    for (const id of ids.slice(0, 2)) await act(async () => pressTestInstanceAsync(read(id)!));
     expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/machines/machine-a1?serverId=srv_a');
     expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/machines/pools/00000000-0000-4000-8000-000000000001?serverId=srv_a');
-    expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/machines/presets/build?serverId=srv_a');
 
     await act(async () => storage.getState().applyMachines([
       { ...machine('machine-b', 'Builder', 'builder.local'), metadataVersion: arriving.metadataVersion + 1 },
@@ -1442,59 +1441,35 @@ describe('the presets group in the rail', () => {
     await screen.unmount();
   });
 
-  // On a busy Account Machines arrive and open one at a time, and each arrival redraws the rail. The Presets group lists
-  // no Machine: a Machine's change is not a reason to redraw its rows (each with a provider mark), only a change to the
-  // presets, their read state or the selection.
-  it('keeps the Presets group still while a Machine row changes', async () => {
-    const { MachineCollectionRail } = await import('./collection/MachineCollectionList');
-    const named = machine('machine-a1', 'Studio', 'studio.local');
-    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [named] }]);
-    routeState.pathname = '/settings/machines/machine-a1';
-    await primeFeatures();
-    const profileId = homeProfiles.get('srv_a')!;
-    home.answer(profileId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [createPlainManagedMachinePresetFixture({
-      id: 'build', homeId: 'srv_a', revision: 1, owner: { kind: 'account', accountId: 'account-a' },
-      controller: { machineId: 'machine-a1', installationId: 'machine-a1-installation' },
-      name: 'Build recipe',
-      launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build box', choices: {} },
-    })] } });
-    const screen = await renderScreen(<MachineCollectionRail />);
-    // The composite row the group draws: its props are a new object each time the group draws it.
-    const presetRow = () => screen.tree.findAll(node => typeof node.type !== 'string'
-      && node.props.testID === 'settings.machines.preset.srv_a.build')[0];
-    await waitForHomeGovernance(() => expect(presetRow()).toBeDefined());
-    await flushHookEffects();
-    const drawn = new Set<unknown>([presetRow()!.props]);
-    for (let index = 1; index <= 3; index++) {
-      await act(async () => storage.getState().applyMachines([machine(`machine-b${index}`, `Builder ${index}`, `builder-${index}.local`)],
-        false, { sourceServerId: 'srv_a' }));
-      await flushHookEffects();
-      await waitForHomeGovernance(() => expect(screen.tree.findAll(node => typeof node.type === 'string'
-        && node.props.testID === `settings.machines.row.srv_a.machine-b${index}`)[0]).toBeDefined());
-      drawn.add(presetRow()!.props);
-    }
-    expect(drawn.size).toBe(1);
-    await screen.unmount();
-  });
-
-  it('keeps its group and its add control while the list is read again, and only waits for the first answer', async () => {
-    const { MachinesColumn } = await import('@/components/machines/collection/MachinesColumn');
+  it('the Presets page lists each preset once read, says its image, and keeps its rows while the list is read again', async () => {
+    const { MachinePresetsIndex } = await import('./presets/MachinePresetsIndex');
     await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [machine('machine-a1', 'Machine A1', 'a.local')] }]);
     const profileId = homeProfiles.get('srv_a')!;
+    const listed = { body: { kind: 'listed', presets: [createPlainManagedMachinePresetFixture({
+      id: 'build', homeId: 'srv_a', revision: 1, owner: { kind: 'account', accountId: 'account-a' },
+      controller: { machineId: 'machine-a1', installationId: 'machine-a1-installation' },
+      name: 'Build recipe', preparation: { enabled: true },
+      launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build box', choices: {} },
+    })] } };
     const firstReply = createDeferred<void>();
-    home.answer(profileId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] }, respondAfter: firstReply.promise });
-    const screen = await renderScreen(React.createElement(MachinesColumn));
+    home.answer(profileId, '/v1/machines/presets/list', { ...listed, respondAfter: firstReply.promise });
+    const screen = await renderScreen(React.createElement(MachinePresetsIndex));
+    const row = () => screen.tree.findAll(node => node.props?.testID === 'preset-table.row.preset:srv_a:build')[0];
+    const image = () => screen.tree.findAll(node => node.props?.testID === 'preset-table.image.preset:srv_a:build')[0];
     await waitForHomeGovernance(() => expect(home.requests.some(request => request.path === '/v1/machines/presets/list')).toBe(true));
-    expect(sectionIds(screen.tree)).not.toContain('settings.machines.presets.new.srv_a');
+    expect(row()).toBeUndefined();
     await act(async () => firstReply.resolve());
-    await waitForHomeGovernance(() => expect(sectionIds(screen.tree)).toContain('settings.machines.presets.new.srv_a'));
+    await waitForHomeGovernance(() => expect(row()).toBeDefined());
+    // Kept ready but not built yet: the page's own word, and no button on the row (its Build stays on the preset page).
+    expect(image()).toBeDefined();
+    expect(screen.tree.findAll(node => node.props?.testID === 'preset-table.next.preset:srv_a:build')).toHaveLength(0);
     const refreshReply = createDeferred<void>();
-    home.answer(profileId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] }, respondAfter: refreshReply.promise });
+    home.answer(profileId, '/v1/machines/presets/list', { ...listed, respondAfter: refreshReply.promise });
     const initialRequests = home.requests.filter(request => request.path === '/v1/machines/presets/list').length;
     const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
     await act(async () => publishHomeAccountChange('srv_a', [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1], { source: 'socket', changeKinds: ['account'] }));
     await waitForHomeGovernance(() => expect(home.requests.filter(request => request.path === '/v1/machines/presets/list').length).toBeGreaterThan(initialRequests));
-    expect(sectionIds(screen.tree)).toContain('settings.machines.presets.new.srv_a');
+    expect(row()).toBeDefined();
     await act(async () => refreshReply.resolve());
     await screen.unmount();
   });

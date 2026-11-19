@@ -5,7 +5,7 @@ import { Text } from '@/components/ui/text/Text';
 import { useItemSubtitleTextStyle } from '@/components/ui/lists/ItemSubtitleText';
 import { Typography } from '@/constants/Typography';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { describeManagedPresetOffer, type ManagedConfigurationReceiptInput } from './managedConfigurationPresentation';
+import { describeManagedPresetFacts, describeManagedPresetOffer, type ManagedConfigurationReceiptInput } from './managedConfigurationPresentation';
 import { presentManagedPresetCost } from '@/components/ui/presentation/providerCostPresentation';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
@@ -412,6 +412,20 @@ export function ManagedPresetOfferLine(props: Readonly<{
         ...(creation ? { launch: creation.launch, savedLaunchPresentation: presentation.savedLaunchPresentation } : {}) }), props.extra]
         .filter(Boolean).join(' · ');
     return line ? <Text numberOfLines={1} style={rowSubtitleStyle}>{line}</Text> : null;
+}
+
+/**
+ * A preset's offer facts apart (the Presets table: its provider and place under the name, its size in its own
+ * column), through the mark's own identity read, from the same owner as the picker's one line.
+ */
+export function useManagedPresetFacts(props: Readonly<{
+    serverId: string;
+    accountScope?: ServerAccountScope | null;
+    preset: ManagedPresetMarkSource & Parameters<typeof describeManagedPresetOffer>[0];
+}>) {
+    const { creation, presentation } = useManagedPresetMarkPresentation(props, 'offer');
+    return describeManagedPresetFacts({ ...props.preset, providerTitle: creation ? presentation.title : null,
+        ...(creation ? { launch: creation.launch, savedLaunchPresentation: presentation.savedLaunchPresentation } : {}) });
 }
 
 /** The glyph a setup-only preset stands under (lab `setup/over` Tools row): what it sets up, not who makes it. */

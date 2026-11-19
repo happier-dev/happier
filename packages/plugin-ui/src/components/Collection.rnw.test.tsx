@@ -3557,6 +3557,18 @@ describe('render scope', () => {
       expect(view.query('row:b:column:memory')?.textContent).toBe('—');
     } finally { view.unmount(); }
   });
+  it('leaves a control list column empty on a row without the control (a missing step is not a missing value)', () => {
+    const view = mount({
+      presentation: 'list', scroll: 'page',
+      anatomy: { ...anatomy, fields: [{ key: 'next', title: '', minWidth: 88, priority: 1, align: 'end', listColumn: true, control: true,
+        render: (entry) => entry.id === 'a' ? 'Retry' : null }] },
+    });
+    try {
+      view.measure(1200);
+      expect(view.query('row:a:column:next')?.textContent).toBe('Retry');
+      expect(view.query('row:b:column:next')?.textContent).toBe('');
+    } finally { view.unmount(); }
+  });
   it('leads a shared sheet with an untitled group under no sub-heading of its own', () => {
     const view = mount({
       presentation: 'list', scroll: 'page',

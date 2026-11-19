@@ -76,14 +76,14 @@ registerWorkspaceRouteContext(Object.assign((key: string) => {
 // destination router, workspace owner and Machines layout execute the navigation.
 function PresetCollectionEntry() {
     const serverId = production[7].storage.getState().profileScope!.serverId;
-    return <MachinePresetCollectionSectionView rail selectedKey={null} replacing={false} query=""
-        section={{ key: 'presets', serverId, title: null, status: 'idle', rows: [{ kind: 'preset',
+    return <MachinePresetsPage grouped={false} activeServerId={serverId}
+        sections={[{ key: 'presets', serverId, title: null, status: 'idle', rows: [{ kind: 'preset',
             presetId: 'build', serverId, title: 'Build recipe', audience: 'You', preset: createPlainManagedMachinePresetFixture({
                 id: 'build', homeId: serverId, revision: 1, name: 'Build recipe', owner: { kind: 'account', accountId: 'alice' },
                 controller: { machineId: 'builder', installationId: 'builder-installation' },
                 launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build box', choices: {} },
             }).opened,
-        }], archivedRows: [] }} />;
+        }], archivedRows: [] }]} />;
 }
 function PresetRouteProbe() { return React.createElement('PresetRouteProbe', { door: useMachinesDoor() }); }
 
@@ -130,7 +130,7 @@ const loadProduction = () => Promise.all([
     import('@/components/settings/shell/SettingsSidebar'),
 ]);
 let production!: Awaited<ReturnType<typeof loadProduction>>;
-let MachinePresetCollectionSectionView!: (typeof import('@/components/settings/machines/collection/MachineCollectionList'))['MachinePresetCollectionSectionView'];
+let MachinePresetsPage!: (typeof import('@/components/settings/machines/presets/MachinePresetsIndex'))['MachinePresetsPage'];
 let useMachinesDoor!: (typeof import('@/components/machines/page/machinesDoor'))['useMachinesDoor'];
 let DestinationInstanceHost!: (Awaited<ReturnType<typeof loadProduction>>)[2]['DestinationInstanceHost'];
 let useDestinationInstanceKey!: (Awaited<ReturnType<typeof loadProduction>>)[2]['useDestinationInstanceKey'];
@@ -149,7 +149,7 @@ let baseline: ReturnType<(Awaited<ReturnType<typeof loadProduction>>)[7]['storag
     fixture = await serveActionHomes({ homes: [{ key: 'import', serverUrl: 'https://workspace-shell-import.test', accountId: 'alice', currentAccount: true }], route: () => undefined });
     disconnect = await fixture.restoreActiveConnection();
     production = await loadProduction();
-    ({ MachinePresetCollectionSectionView } = await import('@/components/settings/machines/collection/MachineCollectionList'));
+    ({ MachinePresetsPage } = await import('@/components/settings/machines/presets/MachinePresetsIndex'));
     ({ useMachinesDoor } = await import('@/components/machines/page/machinesDoor'));
     ({ DestinationInstanceHost, useDestinationInstanceKey, useDestinationFocus } = production[2]);
     ({ resolveDestinationRefFromHref } = production[3]);
@@ -286,9 +286,9 @@ describe('WorkspaceShell Machines preset entries', () => {
         const screen = await renderWorkspace(createWorkspaceState({ id: 'machines', target: { kind: 'machines', params: {} }, pinned: false, preview: true }));
         await act(async () => { await vi.dynamicImportSettled(); });
         const serverId = production[7].storage.getState().profileScope!.serverId;
-        await settle(() => expect(screen.findByTestId(`settings.machines.presets.new.${serverId}`)).not.toBeNull());
+        await settle(() => expect(screen.findByTestId('machine-presets.new:header')).not.toBeNull());
         await screen.pressByTestIdAsync(operation === 'new'
-            ? `settings.machines.presets.new.${serverId}` : `settings.machines.preset.${serverId}.build`);
+            ? 'machine-presets.new:header' : `preset-table.row.preset:${serverId}:build`);
         await settle(() => expect(screen.root.findAllByType('PresetRouteProbe')).toHaveLength(1));
         expect(screen.root.findByType('ShellColumnProbe').props.column).toEqual({ kind: 'builtin', id: 'machines' });
         expect(screen.root.findByType('PresetRouteProbe').props.door).toBe('rail');
@@ -296,7 +296,7 @@ describe('WorkspaceShell Machines preset entries', () => {
         expect(screen.root.findAllByType(MachineCollectionRail)).toHaveLength(0);
         const { navigation } = screen.root.findByType('WorkspaceStateProbe').props;
         await act(async () => navigation.back());
-        await settle(() => expect(screen.findByTestId(`settings.machines.presets.new.${serverId}`)).not.toBeNull());
+        await settle(() => expect(screen.findByTestId('machine-presets.new:header')).not.toBeNull());
         expect(screen.root.findByType('ShellColumnProbe').props.column).toEqual({ kind: 'builtin', id: 'machines' });
     });
 });

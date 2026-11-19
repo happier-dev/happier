@@ -456,6 +456,8 @@ describe('buildMachineCollection', () => {
         expect(machinePresetCollectionHref(collection.presetSections[0]!.rows[0]!)).toBe('/settings/machines/presets/recipe%20%2F?serverId=a');
         expect(resolveSelectedMachineCollectionKey('/settings/machines/presets/recipe%20%2F', { serverId: 'a' })).toBe('preset:a:recipe /');
         expect(resolveSelectedMachineCollectionKey('/settings/machines/presets/new', { serverId: 'a' })).toBe('presetDraft:a');
+        // The Presets table is its own page, never read as a machine named "presets".
+        expect(resolveSelectedMachineCollectionKey('/machines/presets', {})).toBe('presets');
         expect(buildMachineCollection({ groups: [group('a', [])], groupedByHome: false, presetsByServerId: { a: [preset] }, query: 'missing' }).presetSections[0]?.rows).toEqual([]);
     });
     it('keeps a paid pending resource reopenable without a Machine id, including unavailable cleanup', () => {

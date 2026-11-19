@@ -16,7 +16,7 @@ export function machinesIndexHref(door: MachinesDoor): typeof MACHINES_RAIL_ROOT
  * opened them (UI refinements RULING 2026-11-14 20:24Z): Settings → Machines leads there too, never into a Settings
  * copy of the page.
  */
-export function machineFleetPageHref(page: 'updates' | 'activity'): string {
+export function machineFleetPageHref(page: 'updates' | 'activity' | 'presets'): string {
     return `${MACHINES_RAIL_ROOT}/${page}`;
 }
 

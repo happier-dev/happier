@@ -66,6 +66,7 @@ export const workspaceRouteFiles: Readonly<Record<string, string>> = {
     "machines/managed/[id]": "./(app)/machines/managed/[id].tsx",
     "machines/updates": "./(app)/machines/updates.tsx",
     "machines/activity": "./(app)/machines/activity.tsx",
+    "machines/presets": "./(app)/machines/presets.tsx",
     "friends/manage": "./(app)/friends/manage.tsx",
     "friends/search": "./(app)/friends/search.tsx",
     "inbox/approvals/[id]": "./(app)/inbox/approvals/[id].tsx",

@@ -8,15 +8,6 @@ export type MachineIsolationLifecycle = Extract<MachineIsolationWorkChoiceV1, { 
 /** The work kinds, in the policy owner's own order (its default policy), never a hand-kept list. */
 export const MACHINE_ISOLATION_WORK_KINDS = Object.keys(machineIsolationMetadataFieldV1.defaultValue().workKinds) as readonly MachineIsolationWorkKind[];
 
-/** Saved policy assignments, rather than running Sessions, say which kinds of work use a sandbox. */
-export function machineIsolationSandboxUsedWorkKinds(policy: MachineIsolationPolicyV1,
-    configuredSandboxId: string): readonly MachineIsolationWorkKind[] {
-    return MACHINE_ISOLATION_WORK_KINDS.filter(kind => {
-        const choice = policy.workKinds[kind];
-        return choice.kind === 'sandbox' && choice.configuredSandboxId === configuredSandboxId;
-    });
-}
-
 /** One configured sandbox as the page shows it: its preset's name and whether its type can host the Agent's own sandbox. */
 export type MachineIsolationEntryPresentation = Readonly<{
     id: string;

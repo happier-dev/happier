@@ -275,7 +275,7 @@ function managedSummaryDimensions(facts: ManagedConfigurationFactsV1, localized:
  * the Keep it rule the preset sets now. A preset that follows the defaults says no rule of its own, so a rule
  * captured at review never stands in for the current one.
  */
-export function describeManagedPresetOffer(preset: Readonly<{
+type ManagedPresetOfferInput = Readonly<{
     /** The row already names the preset, so its identical provider title adds no information. */
     name?: string;
     reviewedFacts?: ManagedConfigurationFactsV1; retention?: MachineRetentionOverrideV1['retention']; wakeOnAcceptedMessage?: boolean;
@@ -283,16 +283,35 @@ export function describeManagedPresetOffer(preset: Readonly<{
     providerTitle?: string | null;
     launch?: ValidatedLaunchSnapshotV1;
     savedLaunchPresentation?: ManagedConfigurationReceiptInput['savedLaunchPresentation'];
-}>, localized: (value: PluginLocalizedStringV2) => string = fallbackLocalized): string | undefined {
-    const dimensions = preset.reviewedFacts ? managedSummaryDimensions(preset.reviewedFacts, localized) : [];
+}>;
+
+/**
+ * A preset's offer facts, each on its own: the provider it creates on, its size dimensions ("4 cores", "8 GiB"), where
+ * it runs (or a local machine's image) and the Keep it rule it sets now. The picker's one line and the Presets table's
+ * Size column and provider line read these same facts.
+ */
+export function describeManagedPresetFacts(preset: ManagedPresetOfferInput,
+    localized: (value: PluginLocalizedStringV2) => string = fallbackLocalized): Readonly<{
+    provider: string | null; size: readonly string[]; place: readonly string[]; keep: string | null;
+}> {
+    const native = preset.reviewedFacts?.nativeFacts;
+    const size = native?.size ? [localized(native.size.title)] : [];
+    const lead = preset.reviewedFacts ? (preset.reviewedFacts.billing.location === 'local' ? native?.image : native?.location) : undefined;
+    const place = lead ? [localized(lead.title)] : [];
     if (preset.launch) {
         const savedFacts = savedConfigurationFacts(preset.launch, preset.savedLaunchPresentation?.inputHints);
-        if (!preset.reviewedFacts?.nativeFacts?.size && savedFacts.size) dimensions.unshift(...managedSizeDimensions(savedFacts.size));
-        if (!preset.reviewedFacts?.nativeFacts?.image && savedFacts.image) dimensions.push(localized(savedFacts.image.title));
+        if (!native?.size && savedFacts.size) size.push(...managedSizeDimensions(savedFacts.size));
+        if (!native?.image && savedFacts.image) place.push(localized(savedFacts.image.title));
     }
     const keep = preset.retention
         ? describeRetentionPolicy({ retention: preset.retention, wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage === true }) : null;
-    return [...(preset.providerTitle && preset.providerTitle !== preset.name ? [preset.providerTitle] : []), ...dimensions, ...(keep ? [keep] : [])].join(' · ') || undefined;
+    return { provider: preset.providerTitle && preset.providerTitle !== preset.name ? preset.providerTitle : null, size, place, keep };
+}
+
+export function describeManagedPresetOffer(preset: ManagedPresetOfferInput,
+    localized: (value: PluginLocalizedStringV2) => string = fallbackLocalized): string | undefined {
+    const facts = describeManagedPresetFacts(preset, localized);
+    return [...(facts.provider ? [facts.provider] : []), ...facts.size, ...facts.place, ...(facts.keep ? [facts.keep] : [])].join(' · ') || undefined;
 }
 
 /**

@@ -459,6 +459,7 @@ export function resolveSelectedMachineCollectionKey(
     const segments = normalized.slice(root.length + 1).split('/').map(decodeSegment);
     const serverId = params.serverId?.trim() ?? '';
     if (segments[0] === 'presets') {
+        if (segments.length === 1) return 'presets';
         if (segments[1] === 'new') return `presetDraft:${serverId}`;
         return segments.length === 2 && segments[1] ? `preset:${serverId}:${segments[1]}` : null;
     }

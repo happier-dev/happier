@@ -8,7 +8,7 @@ vi.mock('@/text', async () => {
   });
 });
 
-const { describePreparedImageBuilt, projectPresetPreparationSteps } =
+const { describePreparedImageBuilt, describePresetImage, projectPresetPreparationSteps } =
   await import('./presetPreparationPresentation');
 
 describe('Prepare ahead phases and ready image', () => {
@@ -56,5 +56,43 @@ describe('Prepare ahead phases and ready image', () => {
       describePreparedImageBuilt({ builtAt: null, builtFromRevision: null }),
     ).toBeNull();
     expect(describePreparedImageBuilt(null)).toBeNull();
+  });
+});
+
+describe('the prepared image in one word (preset page, Presets table, Sandboxes table)', () => {
+  type Preset = Parameters<typeof describePresetImage>[0];
+  const preset = (fields: Partial<Preset>): Preset => ({ id: 'p1', ...fields }) as Preset;
+  const ready = { status: 'ready' } as NonNullable<Preset['prepared']>;
+  const built = { builtAt: null, builtFromRevision: 7, storageBytes: null };
+
+  it('speaks only when the image needs the person, with the next step it offers', () => {
+    const cases = [
+      describePresetImage(preset({}), null),
+      describePresetImage(preset({ preparation: { enabled: false } }), null),
+      describePresetImage(preset({ preparation: { enabled: true } }), null),
+      describePresetImage(preset({ preparation: { enabled: true }, prepared: { status: 'building' } as Preset['prepared'] }), null),
+      describePresetImage(preset({ preparation: { enabled: true }, prepared: ready }), { ...built, stale: false }),
+      describePresetImage(preset({ preparation: { enabled: true }, prepared: ready }), { ...built, stale: true }),
+      describePresetImage(preset({ preparation: { enabled: true }, prepared: { status: 'failed' } as Preset['prepared'] }), null),
+    ];
+    expect(cases.map((image) => [image.kind, image.tone, image.next])).toEqual([
+      ['none', 'quiet', null],
+      ['off', 'quiet', null],
+      ['notBuilt', 'quiet', 'build'],
+      ['building', 'running', null],
+      ['ready', 'quiet', null],
+      ['stale', 'warning', 'rebuild'],
+      ['failed', 'danger', 'retry'],
+    ]);
+  });
+
+  it('keeps when it was built under a ready or out-of-date image', () => {
+    const stale = describePresetImage(preset({ preparation: { enabled: true }, prepared: ready }), { ...built, stale: true });
+    expect(stale.word).toBe('machinePresets.prepareStale');
+    expect(stale.line).toBe(describePreparedImageBuilt({ ...built }));
+  });
+
+  it('an image kept from before says Off once its switch is turned off', () => {
+    expect(describePresetImage(preset({ preparation: { enabled: false }, prepared: ready }), { ...built, stale: false }).kind).toBe('off');
   });
 });

@@ -2914,7 +2914,7 @@ describe('reachable preset detail', () => {
     );
   });
 
-  it('mounts accessible presets in the Machines collection and opens the selected Home', async () => {
+  it('lists accessible presets on the Presets page and opens the selected Home', async () => {
     const serverId = await seed();
     await harness.selectHomes([serverId]);
     harness.answer(serverId, '/v1/machines/presets/list', {
@@ -2924,27 +2924,18 @@ describe('reachable preset detail', () => {
     const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
     await setActiveServer({ serverId });
     await publishMachineInventoryForTest({ serverId: scopeId, accountId: 'owner' }, []);
-    const screen = await renderSettingsView(<MachinesSettingsView />);
-    await waitForHomeGovernance(() =>
-      expect(
-        screen.findByTestId(`settings.machines.preset.${scopeId}.preset`),
-      ).not.toBeNull(),
-    );
-    await act(async () =>
-      screen.pressByTestId(`settings.machines.preset.${scopeId}.preset`),
-    );
+    const { MachinePresetsIndex } = await import('../presets/MachinePresetsIndex');
+    const screen = await renderSettingsView(<MachinePresetsIndex />);
+    const rowId = `preset-table.row.preset:${scopeId}:preset`;
+    await waitForHomeGovernance(() => expect(screen.findByTestId(rowId)).not.toBeNull());
+    await act(async () => screen.pressByTestId(rowId));
     expect(route.push).toHaveBeenLastCalledWith(
       `/settings/machines/presets/preset?serverId=${encodeURIComponent(scopeId)}`,
     );
-    // The group creates a preset from its header "+"; no separate "New preset" row repeats it.
-    expect(screen.getTextContent()).not.toContain(
-      t('machinePresets.newPreset'),
-    );
-    await act(async () =>
-      screen.pressByTestId(`settings.machines.presets.new.${scopeId}`),
-    );
+    // The page's header "+" is its one create entry; no row repeats it.
+    await act(async () => screen.pressByTestId('machine-presets.new:header'));
     expect(route.push).toHaveBeenLastCalledWith(
-      `/settings/machines/presets/new?serverId=${encodeURIComponent(scopeId)}`,
+      expect.stringMatching(/^\/settings\/machines\/presets\/new\?serverId=/),
     );
     expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual(
       [],

@@ -408,7 +408,7 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         // this destination's control (its popover), so no second rail icon is drawn.
         id: 'machines', titleKey: 'settings.machines', icon: 'desktop', placement: { kind: 'rail', region: 'account' },
         column: 'machines', activation: 'navigate', routePath: '/machines',
-        currentRoutePatterns: ['/machines/[...rest]'], mainScreenRoutePaths: ['/machines/updates', '/machines/activity'], railControl: 'footer',
+        currentRoutePatterns: ['/machines/[...rest]'], mainScreenRoutePaths: ['/machines/updates', '/machines/activity', '/machines/presets'], railControl: 'footer',
         workspaceNavigationIdentity: { resourceParam: 'id', scopeParams: ['serverId'] },
     },
     {

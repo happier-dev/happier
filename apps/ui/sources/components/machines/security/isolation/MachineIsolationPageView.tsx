@@ -7,9 +7,7 @@ import type {
   MachineIsolationWorkChoiceV1,
 } from '@happier-dev/protocol/machines/machineIsolationV1';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
 import {
   ValueFieldSelect,
@@ -22,6 +20,14 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { machinePresetCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
+import { Collection, useHappierCollection, type CollectionRowActions } from '@happier-dev/plugin-ui';
+import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { usePresetTableAnatomy, type PresetTableItem } from '@/components/settings/machines/presets/presetTable';
+import type { ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 import {
   describeMachineIsolationNativeSupport,
@@ -35,10 +41,12 @@ import {
 export type MachineIsolationEntryRow = MachineIsolationEntryPresentation &
   Readonly<{
     mark?: React.ReactNode;
-    /** Saved policy assignments, in the policy owner's order; the count is this array's length. */
-    usedWorkKinds?: readonly MachineIsolationWorkKind[];
-    /** The preset's offer line ("Docker Sandboxes · 2 CPU"); `extra` ends it with this row's note. */
-    renderLine?: (extra?: string) => React.ReactNode;
+    /** The preset this sandbox type was added from, as the Presets table reads it; `null` when it can't be read. */
+    preset?: ManagedMachinePresetListEntryV1 | null;
+    serverId?: string;
+    accountScope?: ServerAccountScope | null;
+    /** Sandboxes of this type running on this Machine now; absent until the inventory read settles. */
+    running?: number;
     /** The sandbox type is no longer contributed on this Machine. */
     missingType?: boolean;
   }>;
@@ -146,6 +154,20 @@ export function MachineIsolationPageView(props: MachineIsolationPageViewProps) {
         ? t('machineDetailPage.isolation.native.description')
         : t('machineDetailPage.isolation.native.noSandbox');
   const nativeDisabled = disabled || (native.allUnsupported && !nativeOn);
+  const checkFailure = props.checkFailure ? (
+    <SurfaceStateCard
+      testID="machine-isolation-check-failure"
+      kind="error"
+      size="line"
+      title={props.checkFailure.title}
+      diagnosticCode={props.checkFailure.code}
+      action={
+        props.checkFailure.onRetry
+          ? { label: t('common.retry'), onPress: props.checkFailure.onRetry }
+          : undefined
+      }
+    />
+  ) : null;
   return (
     <View testID="machine-isolation-page">
       <ItemGroup
@@ -199,45 +221,14 @@ export function MachineIsolationPageView(props: MachineIsolationPageViewProps) {
           />
         </ItemGroup>
       ) : null}
-      <ItemGroup
-        testID="machine-isolation-sandboxes"
-        title={t('machineDetailPage.isolation.sandboxes.title')}
-        description={
-          entries.length > 0
-            ? t('machineDetailPage.isolation.sandboxes.description', {
-                machine: machineName,
-              })
-            : undefined
-        }
-      >
-        {props.checkFailure ? (
-          <SurfaceStateCard
-            testID="machine-isolation-check-failure"
-            kind="error"
-            size="line"
-            title={props.checkFailure.title}
-            diagnosticCode={props.checkFailure.code}
-            action={
-              props.checkFailure.onRetry
-                ? {
-                    label: t('common.retry'),
-                    onPress: props.checkFailure.onRetry,
-                  }
-                : undefined
-            }
-          />
-        ) : null}
-        {entries.map((entry) => (
-          <MachineIsolationEntryItem
-            key={entry.id}
-            entry={entry}
-            disabled={disabled}
-            onRemove={props.onRemove}
-          />
-        ))}
-        {entries.length === 0 ? (
-          // Nothing added yet: the same invitation the Sandboxes tab makes, with its one action. Emptiness is the
-          // empty state's, whose inline layout owns the section-scale inset inside the sheet (lab scene 1 `unset`).
+      {entries.length === 0 ? (
+        <ItemGroup
+          testID="machine-isolation-sandboxes"
+          title={t('machineDetailPage.isolation.sandboxes.title')}
+        >
+          {checkFailure}
+          {/* Nothing added yet: the same invitation the Sandboxes tab makes, with its one action. Emptiness is the
+              empty state's, whose inline layout owns the section-scale inset inside the sheet (lab scene 1 `unset`). */}
           <EmptyState
             testID="machine-isolation-sandboxes-empty"
             layout="inline"
@@ -255,15 +246,24 @@ export function MachineIsolationPageView(props: MachineIsolationPageViewProps) {
                 }
               : {})}
           />
-        ) : props.onAdd ? (
-          <ItemAddRow
-            testID="machine-isolation-add"
-            title={t('machineDetailPage.isolation.host.emptyAction')}
+        </ItemGroup>
+      ) : (
+        // The sandbox types as the Presets table draws them (lab ideas-1118-platform scene 6, one table spec with
+        // scene 7), in this configuration section's own sheet; where each kind of work runs is the section above.
+        <ItemGroup
+          testID="machine-isolation-sandboxes"
+          title={t('machineDetailPage.isolation.sandboxes.title')}
+          description={t('machineDetailPage.isolation.sandboxes.description', { machine: machineName })}
+        >
+          {checkFailure}
+          <MachineIsolationSandboxesTable
+            entries={entries}
             disabled={disabled}
-            onPress={props.onAdd}
+            onRemove={props.onRemove}
+            onAdd={props.onAdd}
           />
-        ) : null}
-      </ItemGroup>
+        </ItemGroup>
+      )}
     </View>
   );
 }
@@ -357,65 +357,110 @@ function MachineIsolationRowControls(props: Readonly<{ children: (stacked: boole
   return <View style={[styles.controls, stacked ? styles.controlsStacked : null]}>{props.children(stacked)}</View>;
 }
 
-function MachineIsolationEntryItem(
+/** Running is delivered (MACH-PRESETS-DATA-1119); Last used follows the Machine → preset link. */
+const FACTS = Object.freeze({ inUse: true, lastUsed: false });
+
+/**
+ * The sandbox types this Machine added, through the one preset table (lab scene 6): the type with its provider, its
+ * size and its image in the Presets page's words. Its "…" removes the type from this Machine.
+ */
+function MachineIsolationSandboxesTable(
   props: Readonly<{
-    entry: MachineIsolationEntryRow;
+    entries: readonly MachineIsolationEntryRow[];
     disabled: boolean;
     onRemove: (entry: MachineIsolationEntryRow) => void;
+    onAdd?: () => void;
   }>,
 ) {
-  const [open, setOpen] = React.useState(false);
-  const { entry } = props;
-  const note = entry.missingType
-    ? t('machineDetailPage.isolation.sandboxes.missingType')
-    : entry.supportsAgentNativeSandbox === false
-      ? t('machineDetailPage.isolation.sandboxes.nativeUnavailable')
-      : null;
-  return (
-    <Item
-      testID={`machine-isolation-entry-${entry.id}`}
-      title={entry.name}
-      icon={entry.mark}
-      detail={entry.usedWorkKinds?.length
-        ? entry.usedWorkKinds.map((kind) => t(`machineDetailPage.isolation.workKinds.${kind}`)).join(' · ')
-        : undefined}
-      subtitle={
-        entry.renderLine
-          ? entry.renderLine(note ?? undefined)
-          : (note ?? undefined)
-      }
-      showChevron={false}
-      rightElement={
-        <DropdownMenu
-          open={open}
-          onOpenChange={setOpen}
-          matchTriggerWidth={false}
-          items={[
-            {
-              id: 'remove',
-              title: t('machineDetailPage.isolation.sandboxes.remove'),
-              destructive: true,
-            },
-          ]}
-          onSelect={() => {
-            setOpen(false);
-            props.onRemove(entry);
-          }}
-          trigger={({ toggle }) => (
-            <RoundButton
-              testID={`machine-isolation-entry-more-${entry.id}`}
-              size="small"
-              display="secondary"
-              title="…"
-              accessibilityLabel={t('common.more')}
-              disabled={props.disabled}
-              onPress={toggle}
-            />
-          )}
-        />
-      }
-    />
+  const router = useRouter();
+  const items = React.useMemo(
+    () =>
+      props.entries.map((entry): PresetTableItem & { entry: MachineIsolationEntryRow } => ({
+        key: entry.id,
+        entry,
+        serverId: entry.serverId ?? '',
+        accountScope: entry.accountScope ?? null,
+        preset: entry.preset ?? null,
+        title: entry.name,
+        ...(entry.running === undefined ? {} : { inUse: entry.running }),
+        ...(entry.missingType
+          ? { note: t('machineDetailPage.isolation.sandboxes.missingType') }
+          : entry.supportsAgentNativeSandbox === false
+            ? { note: t('machineDetailPage.isolation.sandboxes.nativeUnavailable') }
+            : {}),
+      })),
+    [props.entries],
   );
+  const openPreset = React.useCallback(
+    (item: PresetTableItem) => {
+      if (!item.preset || !item.serverId) return;
+      router.push(machinePresetCollectionHref({ serverId: item.serverId, presetId: item.preset.id }) as never);
+    },
+    [router],
+  );
+  const menu = React.useMemo(
+    () => ({ disabled: props.disabled, onRemove: props.onRemove }),
+    [props.disabled, props.onRemove],
+  );
+  const anatomy = usePresetTableAnatomy({ host: 'sandboxes', facts: FACTS, onNextStep: openPreset });
+  const model = useHappierCollection({
+    items,
+    keyOf: readItemKey,
+    openKey: null,
+    onOpenChange: (key: string | number | null) => {
+      const item = key === null ? null : items.find((candidate) => candidate.key === key);
+      if (item) openPreset(item);
+    },
+  });
+  return (
+    <IsolationRowMenuContext.Provider value={menu}>
+    <ListPresentationProvider value="page" pageInsets="contained">
+      <CoreCollectionScope>
+        <Collection<PresetTableItem & { entry: MachineIsolationEntryRow }>
+          testID="machine-isolation-sandboxes-table"
+          useRowActions={useIsolationRowActions}
+          model={model}
+          anatomy={anatomy}
+          accessibilityLabel={t('machineDetailPage.isolation.sandboxes.title')}
+          presentation="list"
+          detail="none"
+          scroll="page"
+          minListWidth={0}
+          minDetailWidth={0}
+          preferredListRatio={1}
+        />
+      </CoreCollectionScope>
+    </ListPresentationProvider>
+    {/* The section's add is its last row, in the same sheet under the table. */}
+    {props.onAdd ? (
+      <ItemAddRow
+        testID="machine-isolation-add"
+        title={t('machineDetailPage.isolation.host.emptyAction')}
+        disabled={props.disabled}
+        onPress={props.onAdd}
+      />
+    ) : null}
+    </IsolationRowMenuContext.Provider>
+  );
+}
+
+/** Each sandbox type's "…" (Remove), through the Collection's own row actions so every row keeps the header's columns. */
+const IsolationRowMenuContext = React.createContext<Readonly<{
+  disabled: boolean;
+  onRemove: (entry: MachineIsolationEntryRow) => void;
+}> | null>(null);
+
+function useIsolationRowActions(item: PresetTableItem & { entry: MachineIsolationEntryRow }): CollectionRowActions {
+  const menu = React.useContext(IsolationRowMenuContext);
+  return React.useMemo(() => menu === null || menu.disabled ? {} : {
+    secondaryActions: [{ id: 'remove', label: t('machineDetailPage.isolation.sandboxes.remove'), destructive: true }],
+    secondaryActionAccessibilityLabel: t('common.more'),
+    onSecondaryAction: () => menu.onRemove(item.entry),
+  }, [item.entry, menu]);
+}
+
+function readItemKey(item: PresetTableItem): string {
+  return item.key;
 }
 
 const styles = StyleSheet.create((theme) => ({

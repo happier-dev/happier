@@ -9,7 +9,6 @@ import { useManagedProvisioners } from '@/components/settings/machines/managed/u
 import {
   MANAGED_PROVISIONER_MARK_SIZE,
   ManagedPresetMark,
-  ManagedPresetOfferLine,
 } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { useMachineIsolationPolicy } from '@/hooks/machine/useMachineIsolationPolicy';
 import { Modal } from '@/modal';
@@ -20,7 +19,6 @@ import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { t } from '@/text';
 
 import {
-  machineIsolationSandboxUsedWorkKinds,
   withMachineIsolationLifecycle,
   withMachineIsolationSandbox,
   withMachineIsolationWorkTarget,
@@ -38,6 +36,10 @@ import { useMachineIsolationPresets } from './useMachineIsolationSummary';
 import { describeMachineIsolationAvailability } from './MachineIsolationAvailability';
 import { MachineIsolationAddSandboxModal, type MachineIsolationAddedSandbox } from './MachineIsolationAddSandboxModal';
 import { randomUUID } from '@/platform/randomUUID';
+import { useHostMachineSandboxes } from '@/components/settings/machines/managed/useHostMachineSandboxes';
+import { projectManagedPresetAllocationCounts } from '@/components/settings/machines/managed/hostMachineSandboxes';
+
+const NO_CONTROLLER: ManagedControllerV1 = Object.freeze({ machineId: '', installationId: '' });
 
 type SaveFailure = Readonly<
   | { kind: 'failed'; policy: MachineIsolationPolicyV1; code?: string; message?: string }
@@ -243,6 +245,14 @@ function MachineIsolationConfiguredPage(
 ) {
   const { policy, serverId, controller, ...view } = props;
   const presets = useMachineIsolationPresets(serverId, policy);
+  // Running (MACH-PRESETS-DATA-1119): this host's live sandboxes per preset, from the existing managed inventory;
+  // nothing is said while that read hasn't settled or a sandbox's power is unknown.
+  const host = useHostMachineSandboxes({ serverId, controller: controller ?? NO_CONTROLLER });
+  const hostSettled = controller !== undefined && host.entry?.status === 'ready';
+  const running = React.useMemo(
+    () => (hostSettled && controller ? projectManagedPresetAllocationCounts(host.sandboxes, controller) : null),
+    [controller, host.sandboxes, hostSettled],
+  );
   const catalog = useManagedProvisioners(serverId, undefined, controller);
   const accountScope = catalog.binding?.scope ?? null;
   const catalogSettled = !catalog.loading && !catalog.error;
@@ -261,7 +271,6 @@ function MachineIsolationConfiguredPage(
           );
           return {
             id,
-            usedWorkKinds: machineIsolationSandboxUsedWorkKinds(policy, id),
             name:
               preset?.name ??
               t('machineDetailPage.isolation.sandboxes.presetUnavailable'),
@@ -273,6 +282,10 @@ function MachineIsolationConfiguredPage(
                   )
                 : null,
             missingType: catalogSettled && !provisioner,
+            ...(running && !running.get(configured.presetId)?.powerUnknown
+              ? { running: running.get(configured.presetId)?.running ?? 0 } : {}),
+            serverId,
+            accountScope,
             ...(preset
               ? {
                   mark: (
@@ -283,14 +296,7 @@ function MachineIsolationConfiguredPage(
                       size={MANAGED_PROVISIONER_MARK_SIZE.row}
                     />
                   ),
-                  renderLine: (extra?: string) => (
-                    <ManagedPresetOfferLine
-                      serverId={serverId}
-                      accountScope={accountScope}
-                      preset={preset}
-                      extra={extra}
-                    />
-                  ),
+                  preset,
                 }
               : {}),
           };
@@ -302,6 +308,7 @@ function MachineIsolationConfiguredPage(
       presets.byEntry,
       catalog.provisioners,
       catalogSettled,
+      running,
       serverId,
       accountScope,
     ],

@@ -11,9 +11,6 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { Text } from '@/components/ui/text/Text';
-import { describeManagedPresetOffer } from '@/components/settings/machines/managed/managedConfigurationPresentation';
-import { InputHintsSchema } from '@happier-dev/protocol/inputs/inputFields';
 
 installMachinesSettingsCommonModuleMocks();
 
@@ -41,21 +38,25 @@ async function render(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Machine isolation page', () => {
-    it('shows a configured image and its assigned work without repeating the row title', async () => {
-        const saved = { name: 'Docker container', providerTitle: 'Docker container',
-            launch: { provider: docker, schemaVersion: 1, name: 'Docker container', choices: { system: 'node:22' } },
-            savedLaunchPresentation: { schema: { type: 'object' as const }, inputHints: InputHintsSchema.parse({ fields: [
-                { path: 'system', title: 'System', widget: 'text', role: 'image' },
-            ] }) } };
-        const { screen } = await render({ policy: CONFIGURED, entries: [{ id: 'node', name: saved.name,
-            supportsAgentNativeSandbox: true, usedWorkKinds: ['sessions', 'botsChannels'],
-            renderLine: (extra?: string) => <Text>{[describeManagedPresetOffer(saved), extra].filter(Boolean).join(' · ')}</Text> }] });
-        const row = findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-isolation-entry-node' });
-        expect(row?.props.title).toBe('Docker container');
-        expect.soft(row?.props.subtitle.props.children).toBe('node:22');
-        expect.soft(row?.props.detail).toBe('machineDetailPage.isolation.workKinds.sessions · machineDetailPage.isolation.workKinds.botsChannels');
-        const unassigned = findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-isolation-entry-py' });
-        expect(unassigned?.props.detail).toBeUndefined();
+    it('lists the added sandbox types in the preset table, with the image’s next step and Remove in each row’s “…”', async () => {
+        const failed = { id: 'node-22', name: 'Node 22', owner: { kind: 'account' }, preparation: { enabled: true },
+            prepared: { status: 'failed' } };
+        const { screen, handlers } = await render({ policy: CONFIGURED, entries: [
+            { id: 'node', name: 'Node 22', supportsAgentNativeSandbox: true, preset: failed, serverId: 'srv' },
+            { id: 'py', name: 'Python 3.12', supportsAgentNativeSandbox: null, missingType: true, preset: null, serverId: 'srv' },
+        ] });
+        // The image says it failed, and its one next step stands beside it; the healthy-or-unknown row carries none.
+        expect(screen.root.findAll(node => node.props.testID === 'preset-table.next.node').length).toBeGreaterThan(0);
+        expect(screen.root.findAll(node => node.props.testID === 'preset-table.next.py')).toHaveLength(0);
+        const text = screen.root.findAll(node => typeof node.props.children === 'string').map(node => node.props.children as string);
+        expect(text).toContain('machineDetailPage.isolation.sandboxes.missingType');
+        // Remove is each row's own "…", through the Collection's row actions.
+        const menus = screen.root.findAll(node => Array.isArray(node.props.secondaryActions)
+            && node.props.secondaryActions[0]?.id === 'remove' && typeof node.props.onSecondaryAction === 'function');
+        const pyMenu = menus.find(node => JSON.stringify(node.props.testID ?? '').includes('py')) ?? menus.at(-1);
+        expect(pyMenu).toBeDefined();
+        React.act(() => { pyMenu!.props.onSecondaryAction('remove'); });
+        expect(handlers.onRemove.mock.calls.map(([entry]) => entry.id)).toEqual(['py']);
     });
 
     it('runs every kind of work directly when nothing is set, with no lifecycle to pick and the Agent’s own sandbox off', async () => {

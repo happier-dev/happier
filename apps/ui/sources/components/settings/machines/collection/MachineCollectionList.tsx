@@ -41,8 +41,6 @@ import {
     type MachineCollectionRow,
     type MachineCollectionSection,
     type MachineCollectionTarget,
-    type MachinePresetCollectionRow,
-    type MachinePresetCollectionSection,
 } from './machineCollectionModel';
 import { recordMachineCollectionVisit, readLastVisitedMachine } from './machineCollectionVisit';
 import { useMachineAddOptions, type MachineAddOption } from './useMachineAddOptions';
@@ -58,13 +56,7 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { Modal } from '@/modal';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
-import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
-import type { MachinePresetQueryState } from '../managed/useMachinePresets';
-import type { ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { ManagedMachineReadApprovalNotice } from '../managed/ManagedMachineReadApprovalNotice';
-import { useTeamsDirectory } from '@/hooks/teams/useTeamsDirectory';
-import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
-import { MANAGED_PROVISIONER_MARK_SIZE, ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
 import { useMachineResourceFleetAttention } from '@/sync/domains/machines/resources/useMachineResourceFleetAttention';
 import { MachineListRowSummary, useMachineRowNeedsAttention } from '@/components/machines/summary/MachineListRowSummary';
@@ -77,17 +69,6 @@ const FIRST_READ = Object.freeze({ kind: 'loading' } as const);
 const SEARCH_THRESHOLD = COLLECTION_LIST_SEARCH_THRESHOLD;
 
 /** The directory batches known owners; an owner beyond its current page uses the same exact Team reader as detail. */
-function MachinePresetTeamCollectionRow(props: Readonly<{
-    serverId: string; teamId: string; knownName?: string; render: (audience: string) => React.ReactElement;
-}>) {
-    const binding = useTeamBinding(props.serverId, props.knownName ? '' : props.teamId);
-    const state = binding.kind === 'bound' ? binding.state : null;
-    // While the Team's name is read the row's audience stays empty, never a "Loading…" fact (TH D12).
-    const name = props.knownName ?? (state?.kind === 'ready' && state.team.capabilities.viewTeam ? state.team.name
-        : state?.kind === 'unavailable' ? t('common.unavailable') : '');
-    return props.render(name);
-}
-
 function readParam(value: string | string[] | undefined): string | null {
     const raw = Array.isArray(value) ? value[0] : value;
     const trimmed = typeof raw === 'string' ? raw.trim() : '';
@@ -324,7 +305,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     // The fleet pages are the Machines destination's (RULING 11-14 20:24Z): from Settings → Machines they open as that
     // section, so their shell column is Machines; inside the rail door they open in place like any row.
     const openSection = useOpenAppSection();
-    const openFleetPage = (page: 'updates' | 'activity') => door === 'settings'
+    const openFleetPage = (page: 'updates' | 'activity' | 'presets') => door === 'settings'
         ? openSection(machineFleetPageHref(page))
         : openHref(router, machineFleetPageHref(page), replaceConfiguration, `MachineCollectionList.${page}`);
     const selectedKey = rail ? resolveSelectedMachineCollectionKey(pathname, { serverId: readParam(params.serverId) }) : null;
@@ -340,14 +321,6 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         viewModel.managedFirstAnswerPending, viewModel.presetsByServerId]);
     const total = unfiltered.count;
     const searchable = total > SEARCH_THRESHOLD;
-    const teamServerIds = React.useMemo(() => Object.entries(viewModel.presetsByServerId ?? {})
-        .filter(([, presets]) => presets.some(preset => preset.owner.kind === 'team')).map(([serverId]) => serverId), [viewModel.presetsByServerId]);
-    const teams = useTeamsDirectory({ serverIds: teamServerIds, enabled: teamServerIds.length > 0, archived: 'all' });
-    const teamNamesByServerId = React.useMemo(() => {
-        const names: Record<string, Record<string, string>> = {};
-        for (const row of [...teams.rows, ...teams.archivedRows]) (names[row.address.serverId] ??= {})[row.team.id] = row.team.name;
-        return names;
-    }, [teams.rows, teams.archivedRows]);
     const collection = useMachineCollection({
         groups: viewModel.visibleMachineGroups,
         groupedByHome: viewModel.showMachinesGroupedByServer,
@@ -355,7 +328,6 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         query: searchable ? query : '',
         managedByServerId: viewModel.managedByServerId,
         presetsByServerId: viewModel.presetsByServerId,
-        teamNamesByServerId,
     });
 
     React.useEffect(() => {
@@ -481,10 +453,28 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
             default: return undefined;
         }
     };
-    const presetSections = viewModel.presetInventory ? collection.presetSections.map(section => <MachinePresetCollectionSectionView key={section.key}
-        section={section} state={viewModel.presetInventory?.statesByServerId[section.serverId]} rail={rail}
-        selectedKey={selectedKey} replacing={replaceConfiguration} query={searchable ? query : ''}
-        refresh={viewModel.presetInventory.refresh} />) : null;
+    // Presets open their own table (lab ideas-1118-platform scene 7): one row here, counting the active presets, as
+    // Updates and Activity open their pages. The page lists each Home's presets, their images and their notices.
+    const presetCount = collection.presetSections.reduce((sum, section) => sum + section.rows.length, 0);
+    const presetsRow = viewModel.presetInventory ? (
+        <Item
+            rowRole="catalogRow"
+            testID="settings.machines.presets"
+            title={t('machinePresets.short')}
+            detail={presetCount > 0 ? String(presetCount) : undefined}
+            icon={(
+                <HappierCollectionListMark rowRole="catalogRow">
+                    <Icon name="copy" size={20} color={theme.colors.text.secondary} />
+                </HappierCollectionListMark>
+            )}
+            selected={rail ? selectedKey === 'presets' || selectedKey?.startsWith('preset:') === true
+                || selectedKey?.startsWith('presetDraft:') === true : undefined}
+            density={rail ? 'compact' : undefined}
+            showChevron={!rail}
+            pressableStyle={rail ? collectionListStyles.row : undefined}
+            onPress={() => openFleetPage('presets')}
+        />
+    ) : null;
     const managedReadApprovals = viewModel.visibleMachineGroups.map(group => <ManagedMachineReadApprovalNotice
         key={group.serverId} serverId={group.serverId} entry={viewModel.managedInventory?.entries[group.serverId]}
         testID={`settings.machines.managed.approval.${group.serverId}`} />);
@@ -494,14 +484,13 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
             <>
                 {renderManagedReadFailures()}
                 {managedReadApprovals}
-                <ItemGroup>{defaultsRow}{updatesRow}{activityRow}{thisComputerRow}</ItemGroup>
+                <ItemGroup>{defaultsRow}{updatesRow}{activityRow}{presetsRow}{thisComputerRow}</ItemGroup>
                 {/* Retired created machines stay recoverable here; All machines lists only the active fleet. */}
                 {collection.sections.filter(section => section.archived).map(section => (
                     <ArchivedMachineSection key={section.key} section={section} rail={false}
                         selectedKey={selectedKey} query={searchable ? query : ''} renderRow={renderMachineRow} />
                 ))}
                 <MachinePoolsSection groups={viewModel.visibleMachineGroups} />
-                {presetSections}
             </>
         );
     }
@@ -518,7 +507,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                         placement="page"
                     />
                 ) : null}
-                <ItemGroup>{defaultsRow}{updatesRow}{activityRow}{thisComputerRow}</ItemGroup>
+                <ItemGroup>{defaultsRow}{updatesRow}{activityRow}{presetsRow}{thisComputerRow}</ItemGroup>
                 {renderManagedReadFailures()}
                 {managedReadApprovals}
                 {loading ? (
@@ -564,7 +553,6 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
                     </ItemGroup>
                 ))}
                 <MachinePoolsSection groups={viewModel.visibleMachineGroups} />
-                {presetSections}
             </>
         );
     }
@@ -597,7 +585,8 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
             </CollectionRowOrder>
             <CollectionRowOrder followed precedesSelected={selectedKey === 'updates'}>{defaultsRow}</CollectionRowOrder>
             <CollectionRowOrder followed precedesSelected={selectedKey === 'activity'}>{updatesRow}</CollectionRowOrder>
-            <CollectionRowOrder followed={false} precedesSelected={false}>{activityRow}</CollectionRowOrder>
+            <CollectionRowOrder followed={presetsRow !== null} precedesSelected={selectedKey === 'presets'}>{activityRow}</CollectionRowOrder>
+            {presetsRow ? <CollectionRowOrder followed={false} precedesSelected={false}>{presetsRow}</CollectionRowOrder> : null}
             {renderManagedReadFailures()}
             {managedReadApprovals}
             {/* The machines are one section (owner 11-11): the one being added, this computer, then the fleet. A first group
@@ -642,7 +631,6 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
             {selectedKey?.startsWith('poolDraft:') ? <MachinePoolDraftRow /> : null}
             {loading ? null : <>
                 <MachinePoolsSection groups={viewModel.visibleMachineGroups} variant="rail" selectedKey={selectedKey} query={searchable ? query : ''} />
-                {presetSections}
             </>}
         </CollectionList>
         </>
@@ -772,80 +760,6 @@ function MachineRowsFold<Row extends MachineCollectionTarget>(props: Readonly<{
         {props.rail ? <CollectionRows>{props.rows.map(props.renderRow)}</CollectionRows> : props.rows.map(props.renderRow)}
     </ExpandableItem>;
 }
-
-/**
- * Accessible presets remain separate from resources, with exact-Home read and approval custody. Memoized on its
- * (key-stable) section: a Machine arriving or opening redraws the rail, never this group's rows.
- */
-export const MachinePresetCollectionSectionView = React.memo(function MachinePresetCollectionSectionView(props: Readonly<{
-    section: MachinePresetCollectionSection;
-    state?: MachinePresetQueryState<readonly ManagedMachinePresetListEntryV1[]>;
-    rail: boolean;
-    selectedKey: string | null;
-    replacing: boolean;
-    query: string;
-    refresh?: () => void;
-}>) {
-    const router = useRouter();
-    const scopeKey = JSON.stringify([props.section.serverId, props.state?.approval]);
-    const approval = useActionApprovalContinuation({ scopeKey, serverId: props.section.serverId, onExecuted: () => {} });
-    React.useEffect(() => {
-        if (props.state?.approval) approval.requestApproval(props.state.approval);
-    }, [props.state?.approval, approval.requestApproval]);
-    const title = [t('machinePresets.short'), props.section.title].filter(Boolean).join(' · ');
-    const newHref = `/settings/machines/presets/new?serverId=${encodeURIComponent(props.section.serverId)}`;
-    // The group's own "+" creates a preset (lab `m-presets`); it waits until the list is readable.
-    // A re-read keeps the last answer on screen: "loading" is only the wait for the first one.
-    const awaiting = props.state?.loading === true && props.state.value == null;
-    const add = !awaiting && !props.state?.error ? <IconButton testID={`settings.machines.presets.new.${props.section.serverId}`}
-        iconName="plus" accessibilityLabel={t('machinePresets.newPreset')} variant="plain"
-        onPress={() => openHref(router, newHref, props.replacing, 'MachinePresetCollection.new')} /> : null;
-    const renderRow = (row: MachinePresetCollectionRow) => {
-            const render = (audience: string) => <Item key={machineCollectionRowKey(row)} testID={`settings.machines.preset.${row.serverId}.${row.presetId}`}
-            // The same rail anatomy as machine and pool rows: the name keeps its line, the fact yields (TH D2).
-            rowRole="catalogRow"
-            title={row.title}
-            // The rail is an index: the name keeps its line; a short fact (Yours) sits at its end, while a Team's
-            // name, which can be as long as the preset's, moves beneath it so neither truncates the other (TH D2).
-            // An archived preset is already under Archive, so its row never says "Archived" again (TH D-G).
-            {...(props.rail && row.preset.owner.kind !== 'team' ? { detail: audience || undefined } : { subtitle: audience || undefined })}
-            // The preset's provider mark, as the preset page draws it (lab m-presets rail).
-            icon={<HappierCollectionListMark rowRole="catalogRow"><ManagedPresetMark serverId={row.serverId} preset={row.preset}
-                size={props.rail ? MANAGED_PROVISIONER_MARK_SIZE.rail : MANAGED_PROVISIONER_MARK_SIZE.row} /></HappierCollectionListMark>}
-            density={props.rail ? 'compact' : undefined} selected={props.rail ? isMachineCollectionRowSelected(props.selectedKey, row) : undefined}
-            showChevron={!props.rail} pressableStyle={props.rail ? collectionListStyles.row : undefined}
-            onPress={() => { recordMachineCollectionVisit({ ...row, query: props.query });
-                openHref(router, machineCollectionHref(row), props.replacing, 'MachinePresetCollection.open'); }} />;
-            return row.preset.owner.kind === 'team' ? <MachinePresetTeamCollectionRow key={machineCollectionRowKey(row)}
-                serverId={row.serverId} teamId={row.preset.owner.teamId} knownName={row.teamName} render={render} /> : render(row.audience);
-    };
-    const rows = <>
-        {approval.approvalId ? <Item testID={`settings.machines.presets.approval.${props.section.serverId}`}
-            title={t('approvals.status.open')} density={props.rail ? 'compact' : undefined}
-            onPress={() => openHref(router, `/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.section.serverId)}`, false, 'MachinePresetCollection.approval')} /> : null}
-        {props.state?.error ? <SurfaceStateCard testID={`settings.machines.presets.error.${props.section.serverId}`}
-            size="line" kind={props.state.error === 'permission_denied' || props.state.error === 'signed_out' ? 'denied' : 'unavailable'}
-            title={props.state.error === 'permission_denied' || props.state.error === 'signed_out' ? t('machinePresets.accessLost') : t('machinePresets.loadFailed')}
-            diagnosticCode={props.state.error} action={props.refresh ? { label: t('common.retry'), onPress: props.refresh } : undefined} /> : null}
-        {props.section.rows.map(renderRow)}
-        {/* Archived presets fold under one Archive, as retired Machines do (TH D-G); a search or selection opens it. */}
-        {props.section.archivedRows.length > 0 ? <MachineRowsFold testID={`settings.machines.presets.archived.${props.section.serverId}`}
-            title={t('managedCleanup.archiveTitle')} rows={props.section.archivedRows} rail={props.rail}
-            selectedKey={props.selectedKey} query={props.query} renderRow={renderRow} /> : null}
-        {/* Loading and empty are one line on the rows' edge, so the section never shifts when the answer arrives. */}
-        {/* The first read reserves its row quietly (TH D12); empty is one line on the rows' edge. */}
-        {props.section.rows.length === 0 && props.section.archivedRows.length === 0 && !props.state?.error ? awaiting ? (
-            <ItemLoadStateRows state={FIRST_READ} rows={1} lines={1} shape={props.rail ? 'list' : undefined}
-                accessibilityLabel={t('machinePresets.short')} testID={`settings.machines.presets.loading.${props.section.serverId}`} />
-        ) : (
-            <EmptyState testID={`settings.machines.presets.empty.${props.section.serverId}`} layout="line"
-                title={props.query.trim() ? t('common.noMatches') : t('machinePresets.empty')}
-                />) : null}
-    </>;
-    if (!props.rail) return <ItemGroup title={title} action={add}>{rows}</ItemGroup>;
-    return <><CollectionListGroupLabel title={title} actions={add ?? undefined} />
-        {rows}</>;
-});
 
 /**
  * The machine being added (lab `add-flows` M4/M5), at the top of the rail while its form is open or its

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MachineIsolationPolicyV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 
-import { describeMachineIsolationNativeSupport, machineIsolationSandboxUsedWorkKinds, MACHINE_ISOLATION_WORK_KINDS, withMachineIsolationLifecycle,
+import { describeMachineIsolationNativeSupport, MACHINE_ISOLATION_WORK_KINDS, withMachineIsolationLifecycle,
     withMachineIsolationSandbox, withMachineIsolationWorkTarget, withoutMachineIsolationSandbox } from './machineIsolationChoices';
 
 const docker = { pluginId: 'happier.machine.docker-sandboxes', localId: 'docker-sandboxes' };
@@ -15,14 +15,6 @@ const policy: MachineIsolationPolicyV1 = {
 describe('machine isolation choices', () => {
     it('lists the work kinds in the policy owner’s order', () => {
         expect(MACHINE_ISOLATION_WORK_KINDS).toEqual(['sessions', 'botsChannels', 'automationsWorkflows']);
-    });
-
-    it('projects the kinds of work assigned to each saved sandbox, including unused ones', () => {
-        expect(machineIsolationSandboxUsedWorkKinds(policy, 'node')).toEqual(['sessions', 'botsChannels']);
-        expect(machineIsolationSandboxUsedWorkKinds(policy, 'py')).toEqual([]);
-        const moved = withMachineIsolationWorkTarget(policy, 'sessions', 'py');
-        expect(machineIsolationSandboxUsedWorkKinds(moved, 'node')).toEqual(['botsChannels']);
-        expect(machineIsolationSandboxUsedWorkKinds(moved, 'py')).toEqual(['sessions']);
     });
 
     it('keeps a kind’s lifecycle when it moves to another sandbox, and starts a new choice as new each time', () => {

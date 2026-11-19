@@ -1780,9 +1780,11 @@ function ListCells<Item>(props: Readonly<{
       </View>
       {metaOnRow ? <View pointerEvents={layer?.leaf} style={rowMetaColumnStyle}>{metaCell}</View> : null}
       {props.listColumns.map((field) => (
-        <View key={field.key} pointerEvents={layer?.leaf} style={listColumnCellStyle(field, textScale)}
+        // A control column (a row's next step) is its own press target, and a row without that control leaves the
+        // cell empty: a missing control is not a missing value, so it draws no dash.
+        <View key={field.key} pointerEvents={field.control === true ? layer?.control : layer?.leaf} style={listColumnCellStyle(field, textScale)}
           {...(anatomy.testID === undefined ? {} : { testID: `${anatomy.testID(item)}:column:${field.key}` })}>
-          <ListColumnValue value={field.render(item)} textStyle={secondLine} />
+          {field.control === true ? field.render(item) : <ListColumnValue value={field.render(item)} textStyle={secondLine} />}
         </View>
       ))}
       {props.rule || props.divided ? (
