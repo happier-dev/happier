@@ -180,6 +180,22 @@ describe('Project Open choices', () => {
     expect(buildProjectOpenInput(buildProjectOpenDraft({ ...state, branch: 'other-existing' }), [])).toMatchObject({
       materialization: { targetPath: '/elsewhere', checkout: { displayName: 'other-existing', branchMode: 'existing' } } });
   });
+
+  it('retains the attached workspace when the folder draft is opened and edited', () => {
+    const controller = { machineId: 'devbox', installationId: 'current-installation' };
+    const selection = OpenProjectDraftSelectionV1Schema.parse({
+      serverId: 'home', machineId: controller.machineId, source: { kind: 'folder', path: '/home/guest/repo' },
+      materialization: { kind: 'attach', targetManaged: { managedId: 'guest', controller } },
+    });
+    const restored = projectOpenChoiceStateFromDraft(selection, [], '/home/controller');
+    const edited = buildProjectOpenDraft({ ...restored, subject: { kind: 'folder', path: '/home/guest/other-repo' } });
+    expect(buildProjectOpenInput(edited, [])).toEqual({
+      ...selection, source: { kind: 'folder', path: '/home/guest/other-repo' },
+    });
+    const wrongController = buildProjectOpenDraft({ ...restored, machineId: 'another-machine' });
+    expect(buildProjectOpenInput(wrongController, [])).toBeNull();
+  });
+
   it('allows partial authoring while the full Open owner enforces Home and Workspace match', () => {
     expect(OpenProjectDraftSelectionV1Schema.safeParse({ serverId: 'home', editing: { destination: 'typing' } }).success).toBe(true);
     const selection = { serverId: 'home', machineId: 'devbox', source: { kind: 'workspace' as const,

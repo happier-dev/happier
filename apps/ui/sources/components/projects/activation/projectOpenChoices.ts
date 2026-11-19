@@ -185,7 +185,7 @@ export function buildProjectOpenDraft(state: ProjectOpenChoiceState): OpenProjec
       OpenProjectInputV1Schema.shape.source.def.options[1].shape.path.safeParse(subject.path).success ? subject.path : '' } : undefined;
   let materialization: OpenProjectDraftSelectionV1['materialization'];
   switch (state.use) {
-    case 'existing': materialization = { kind: 'attach' }; break;
+    case 'existing': materialization = state.materialization?.kind === 'attach' ? state.materialization : { kind: 'attach' }; break;
     case 'worktree': {
       const retained = state.materialization?.kind === 'worktree' ? state.materialization : null;
       const candidate = { ...retained, kind: 'worktree' as const, checkout: {
