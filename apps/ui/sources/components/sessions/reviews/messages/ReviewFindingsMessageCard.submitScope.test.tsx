@@ -8,6 +8,8 @@ import type { ReviewCommentV1} from '@happier-dev/protocol/reviews/comments/v1';
 import type { ReviewFindingsV2 } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 
 import { buildReviewCommentFixture, createDeferred, createRootLayoutFeaturesResponse, createSessionFixture, flushHookEffects, renderScreen, standardCleanup, storePlainReviewCommentFixture } from '@/dev/testkit';
+import { createMachineFixture, createPlainMachineRowFixture, createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -102,6 +104,9 @@ afterEach(async () => {
 
 async function setupHomes(focusReview: boolean, beforeReviewResponse?: (read: number) => void | Promise<void>) {
     let reviewReads = 0;
+    // Exercise actual recipient Account-pending custody; an owned Session sends through its Machine Action.
+    const sessionHttp = createSessionMetadataHttpBoundary(() => ({ [SESSION_ID]: createSessionFixture({ id: SESSION_ID, accessLevel: 'edit', active: true, pendingVersion: 2 }) }));
+    const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now() });
     const served = await serveActionHomes({
         homes: focusReview ? [
             { key: 'other', serverUrl: 'https://review-submit-other.test', accountId: 'other-account' },
@@ -112,6 +117,14 @@ async function setupHomes(focusReview: boolean, beforeReviewResponse?: (read: nu
         ],
         route: (request: ServedHomeRequest) => {
             if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (request.home === 'review') {
+                const init = { method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) };
+                const sessionResponse = sessionHttp.handle(request.url, init);
+                if (sessionResponse) return sessionResponse;
+                if (request.path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: machine.id, accountId: 'account-1', machine })]);
+                const machineResponse = createPlainMachineReadHttpResponseFixture(request.path, init, 'account-1', machine);
+                if (machineResponse) return machineResponse;
+            }
             if (request.path === '/v1/reviews/comments' && request.method === 'GET') {
                 return (async () => {
                     await beforeReviewResponse?.(++reviewReads);
@@ -130,7 +143,7 @@ async function setupHomes(focusReview: boolean, beforeReviewResponse?: (read: nu
     // The exact pane Session is loaded, while both Home lists contain its bare id. The legacy
     // bare-id resolver correctly refuses that ambiguity; the pane's explicit target must survive.
     storage.getState().applySessions([createSessionFixture({
-        id: SESSION_ID, serverId: served.homes.review!.id, active: true, pendingVersion: 2,
+        id: SESSION_ID, serverId: served.homes.review!.id, accessLevel: 'edit', active: true, pendingVersion: 2,
     })]);
     if (!focusReview) storage.setState({ ordinarySessionListMembershipByServerId: {
         [served.homes.review!.id]: [SESSION_ID], [served.homes.other!.id]: [SESSION_ID],
@@ -154,7 +167,9 @@ describe('ReviewFindingsMessageCard final submit Account custody', () => {
 
         await vi.waitFor(async () => {
             await flushHookEffects();
-            expect(await loadPendingOutboxForSession(SESSION_ID, scope)).toEqual([
+            const visibleText = screen.findAll(node => typeof node.type === 'string')
+                .flatMap(node => node.children.filter(child => typeof child === 'string')).join('\n');
+            expect(await loadPendingOutboxForSession(SESSION_ID, scope), `${visibleText}\n${JSON.stringify(requests.map(request => ({ home: request.home, path: request.path, method: request.method })))}`).toEqual([
                 expect.objectContaining({ text: expect.stringContaining('review-submit-comment'), operation: 'enqueue' }),
             ]);
         });
@@ -201,7 +216,7 @@ describe('ReviewFindingsMessageCard final submit Account custody', () => {
         }
     });
 
-    it('refuses Implement when the pane becomes read-only while its final review read is pending', async () => {
+    it('finishes an admitted Implement after the pane becomes read-only and refuses a new admission', async () => {
         const finalReadStarted = createDeferred<void>();
         const releaseFinalRead = createDeferred<void>();
         const { scope, screen, requests } = await setupHomes(true, (read) => {
@@ -209,7 +224,7 @@ describe('ReviewFindingsMessageCard final submit Account custody', () => {
             finalReadStarted.resolve();
             return releaseFinalRead.promise;
         });
-        const submit = vi.spyOn(sync, 'submitMessage');
+        const pressImplement = screen.findByTestId('review-findings-publish-accepted')!.props.onPress;
         await act(async () => { await screen.pressByTestIdAsync('review-findings-publish-accepted'); });
         await finalReadStarted.promise;
         await act(async () => {
@@ -218,10 +233,20 @@ describe('ReviewFindingsMessageCard final submit Account custody', () => {
             />);
         });
         await act(async () => { releaseFinalRead.resolve(); });
-        await flushHookEffects({ cycles: 12, turns: 4 });
+        await vi.waitFor(async () => {
+            await flushHookEffects({ cycles: 12, turns: 4 });
+            expect(await loadPendingOutboxForSession(SESSION_ID, scope)).toEqual([
+                expect.objectContaining({ text: expect.stringContaining('review-submit-comment'), operation: 'enqueue' }),
+            ]);
+        });
         expect(readReviewRunComments({ scope, sessionId: SESSION_ID, runId: RUN_ID }).comments[0]?.reviewTriageStatus).toBe('accept');
-        expect(submit).not.toHaveBeenCalled();
-        expect(await loadPendingOutboxForSession(SESSION_ID, scope)).toEqual([]);
-        expect(requests.filter((request) => request.path.endsWith('/pending') && request.method === 'POST')).toEqual([]);
+        expect(screen.findByTestId('review-findings-publish-accepted')).toBeNull();
+        const admittedReads = requests.filter(request => request.path === '/v1/reviews/comments' && request.method === 'GET');
+        const outbox = await loadPendingOutboxForSession(SESSION_ID, scope);
+        // A retained press handler must consult the pane's current admission state too.
+        await act(async () => { pressImplement(); });
+        await flushHookEffects({ cycles: 12, turns: 4 });
+        expect(requests.filter(request => request.path === '/v1/reviews/comments' && request.method === 'GET')).toEqual(admittedReads);
+        expect(await loadPendingOutboxForSession(SESSION_ID, scope)).toEqual(outbox);
     });
 });

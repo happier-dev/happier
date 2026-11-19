@@ -25,6 +25,7 @@ import type { ReviewFollowUpAvailability } from '@/components/sessions/reviews/f
 import { formatReviewFindingLocation, reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
 import { REVIEW_SEVERITY_COLUMN_WIDTH_PX, ReviewSeverityLabel } from '@/components/sessions/reviews/findings/ReviewSeverity';
 import { StructuredFindText } from '@/components/sessions/transcript/structured/structuredFindText';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 
 export type ReviewFindingDecision = 'accept' | 'reject' | 'defer';
 export const REVIEW_FINDING_DECISIONS: readonly ReviewFindingDecision[] = ['accept', 'reject', 'defer'];
@@ -74,6 +75,7 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
     /** The row's id within its review: what its controls and callbacks are keyed by. */
     rowId: string;
     finding: ReviewFinding;
+    currentBodyMarkdown?: string;
     /** Who found it, when the review has several reviewers ("Sonnet 5", "Both"); `null` for one. */
     attribution: Readonly<{ label: string; backendIds: readonly string[] }> | null;
     /** Every reviewer that reported it, first reporter first: the opened finding's conversation names them. */
@@ -98,8 +100,10 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
     expanded: boolean;
     onToggleExpanded: (rowId: string) => void;
     /** Who a question goes to and where it is composed. */
-    askContext: ReviewFindingAskContext;
+    askContext: ReviewFindingAskContext | null;
     onAsk: (rowId: string, messageMarkdown: string) => Promise<boolean>;
+    /** Opens the existing Tasks draft for this saved canonical finding. */
+    onCreateTask?: (rowId: string) => Promise<void>;
 }>) {
     const { theme } = useUnistyles();
     const { finding, rowId, onAsk, onDecide, onToggleExpanded } = props;
@@ -119,12 +123,17 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
             />
         </View>
     ) : null;
+    const taskControl = props.onCreateTask ? (
+        <TextLinkButton testID={`review-finding-task:${rowId}`} label={t('runPage.review.createTask')}
+            size="meta" onPress={() => props.onCreateTask?.(rowId)} />
+    ) : null;
 
     if (props.density === 'page') {
         return (
             <ReviewFindingPageRow
                 {...props}
                 decisionControl={decisionControl}
+                taskControl={taskControl}
                 ask={ask}
             />
         );
@@ -176,8 +185,9 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
                 <ReviewFindingUpdatedNotice rowId={rowId} finding={finding} original={props.original} findBlockPrefix={props.findBlockPrefix} />
                 {props.decision !== null && props.decisionNote ? <StructuredFindText blockId={`${props.findBlockPrefix}:decision-note`} text={props.decisionNote} style={styles.note} /> : null}
                 {threadToggle}
+                {taskControl}
                 {props.expanded && props.followUp !== null ? (
-                    props.followUp.available ? (
+                    props.followUp.available && props.askContext ? (
                         <ReviewFindingThread
                             rowId={rowId}
                             finding={finding}
@@ -229,6 +239,7 @@ function decisionGlyph(decision: ReviewFindingDecision | 'undecided' | null) {
  */
 function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof ReviewFindingRow> & {
     decisionControl: React.ReactNode;
+    taskControl: React.ReactNode;
     ask: (messageMarkdown: string) => Promise<boolean>;
 }>) {
     const { theme } = useUnistyles();
@@ -246,7 +257,7 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
     const decisionWord = props.decision === null ? null : reviewFindingDecisionLabel(props.decision);
     const followUp = props.followUp;
 
-    const conversation = followUp !== null && followUp.available ? (
+    const conversation = followUp !== null && followUp.available && props.askContext ? (
         <ReviewFindingThreadEntries
             rowId={rowId}
             entries={props.threadEntries}
@@ -303,6 +314,7 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
                     <ReviewFindingBody
                         rowId={rowId}
                         finding={finding}
+                        currentBodyMarkdown={props.currentBodyMarkdown}
                         reviewers={props.reviewers}
                         notice={(
                             <>
@@ -312,6 +324,7 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
                         )}
                         conversation={conversation}
                     />
+                    {props.taskControl}
                 </View>
             ) : null}
         </View>

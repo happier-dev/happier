@@ -13149,6 +13149,7 @@ const runPageTranslations = { ja: {
             reviewerAsks: 'レビュアーからの質問',
             answer: '回答',
             askAboutThis: 'これについて質問',
+            createTask: 'タスクを作成',
             fixesSelected: ({ count }) => `${count} 件の修正を選択`,
             noFixesSelected: '実装する修正を選んでください',
             implementFixes: ({ count }) => (count > 0 ? `${count} 件の修正を実装` : '修正を実装'),

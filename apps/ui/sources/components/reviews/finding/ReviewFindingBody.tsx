@@ -32,6 +32,8 @@ export function ReviewFindingBody(
   props: Readonly<{
     rowId: string;
     finding: ReviewFinding;
+    /** The canonical comment's current explanation; finding evidence remains its original snapshot. */
+    currentBodyMarkdown?: string;
     reviewers: readonly ReviewFindingReviewer[];
     /** A line between the cause and the code ("Updated after your question", why a decision can't be saved). */
     notice?: React.ReactNode;
@@ -49,9 +51,13 @@ export function ReviewFindingBody(
             {impact}
           </Text>
         ) : null}
-        <Text selectable style={impact ? styles.cause : styles.impact}>
-          {finding.summary}
-        </Text>
+        {props.currentBodyMarkdown !== undefined ? (
+          <MarkdownView markdown={props.currentBodyMarkdown} textStyle={impact ? styles.cause : styles.impact} />
+        ) : (
+          <Text selectable style={impact ? styles.cause : styles.impact}>
+            {finding.summary}
+          </Text>
+        )}
         {props.notice ?? null}
       </View>
       <ReviewFindingWhere finding={finding} rowId={props.rowId} />

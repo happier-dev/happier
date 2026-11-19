@@ -103,9 +103,9 @@ export function buildReviewFindingsMessageDisplay(payload: ReviewFindingsV1 | Re
 export function projectReviewFindingsFindText(payload: ReviewFindingsV1 | ReviewFindingsV2, options: ReviewFindingsMessageDisplayOptions = {}): readonly StructuredFindTextBlock[] {
     const display = buildReviewFindingsMessageDisplay(payload, options);
     const blocks: StructuredFindTextBlock[] = display.compact
-        ? [...(display.started ? [display.started] : []), display.finished, display.meta, ...(display.findings.length ? [display.count] : [])]
+        ? [...(display.started ? [display.started] : [])]
         : [display.summary];
-    blocks.push(...display.severitySummary);
+    if (!display.compact) blocks.push(...display.severitySummary);
     for (const item of display.findingDisplays) {
         blocks.push(item.severity, item.title);
         if (display.compact) blocks.push(item.reviewer);

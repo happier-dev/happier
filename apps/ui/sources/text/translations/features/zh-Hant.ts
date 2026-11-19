@@ -13089,6 +13089,7 @@ const runPageTranslations = { 'zh-Hant': {
             reviewerAsks: '審查者提問',
             answer: '回答',
             askAboutThis: '就此提問',
+            createTask: '建立任務',
             fixesSelected: ({ count }) => `已選 ${count} 個修正`,
             noFixesSelected: '選擇要實作的修正',
             implementFixes: ({ count }) => (count > 0 ? `實作 ${count} 個修正` : '實作修正'),

@@ -13089,6 +13089,7 @@ const runPageTranslations = { 'zh-Hans': {
             reviewerAsks: '审查者提问',
             answer: '回答',
             askAboutThis: '就此提问',
+            createTask: '创建任务',
             fixesSelected: ({ count }) => `已选 ${count} 个修复`,
             noFixesSelected: '选择要实施的修复',
             implementFixes: ({ count }) => (count > 0 ? `实施 ${count} 个修复` : '实施修复'),

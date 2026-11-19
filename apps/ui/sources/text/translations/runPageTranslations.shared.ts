@@ -63,6 +63,7 @@ export type RunPageTranslations = Readonly<{
         reviewerAsks: string;
         answer: string;
         askAboutThis: string;
+        createTask: string;
         fixesSelected: (params: Count) => string;
         noFixesSelected: string;
         implementFixes: (params: Count) => string;
@@ -189,6 +190,7 @@ export const runPageTranslationsEnglish = { en: {
             reviewerAsks: 'The reviewer asks',
             answer: 'Answer',
             askAboutThis: 'Ask about this',
+            createTask: 'Create task',
             fixesSelected: ({ count }) => (count === 1 ? '1 fix selected' : `${count} fixes selected`),
             noFixesSelected: 'Choose the fixes to implement',
             implementFixes: ({ count }) => (count === 1 ? 'Implement 1 fix' : count > 1 ? `Implement ${count} fixes` : 'Implement fixes'),

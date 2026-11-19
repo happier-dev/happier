@@ -24,6 +24,8 @@ export type ReviewSummaryRow = Readonly<{
   title: string;
   /** Who reported it, as the row's reviewer words ("Claude and Codex"). */
   reviewer: string;
+  /** The transcript Find owner supplies stable block identities when this row is embedded there. */
+  findBlockPrefix?: string;
 }>;
 
 export type ReviewSummaryProps = Readonly<{
@@ -103,6 +105,7 @@ export function ReviewSummary(props: ReviewSummaryProps): React.ReactElement {
               severity={row.severity}
               title={row.title}
               reviewer={row.reviewer}
+              findBlockPrefix={row.findBlockPrefix}
               {...(props.onOpenRow
                 ? { onPress: () => props.onOpenRow?.(row.rowId) }
                 : {})}

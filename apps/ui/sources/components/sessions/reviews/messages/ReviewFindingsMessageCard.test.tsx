@@ -25,6 +25,7 @@ import { currentPendingEnqueueAck } from '@/sync/engine/pending/pendingQueueV2.t
 import { sync } from '@/sync/sync';
 import * as serverScopedSend from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
+import { projectReviewFindingsFindText } from './reviewFindingsMessageDisplay';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -267,6 +268,44 @@ beforeAll(async () => {
 }, 600_000);
 
 describe('ReviewFindingsMessageCard', () => {
+    it('continues the comment window and retries its failed page before enabling the later finding decision', async () => {
+        const first = commentFor('first');
+        const second = commentFor('second');
+        const { transitions } = serveComments([first, second]);
+        const baseRoute = homeRoute.current!;
+        const cursors: Array<string | null> = [];
+        let continuationFailed = false;
+        homeRoute.current = async (request: ServedHomeRequest) => {
+            if (request.path !== '/v1/reviews/comments' || request.method !== 'GET') return baseRoute(request);
+            const cursor = request.url.searchParams.get('cursor');
+            cursors.push(cursor);
+            if (!cursor) return Response.json({ items: [storePlainReviewCommentFixture(first)], cursor: 'page-2' });
+            if (!continuationFailed) {
+                continuationFailed = true;
+                return Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
+            }
+            return Response.json({ items: [storePlainReviewCommentFixture(second)], cursor: null });
+        };
+        const screen = await renderWithSessionTranscriptSource(<ReviewFindingsMessageCard serverId={home.serverId}
+            payload={payloadFor([finding('first', 'high'), finding('second', 'low')])} sessionId="sess_1" canSendMessages />);
+        await vi.waitFor(() => expect(cursors).toEqual([null]));
+        await flush();
+        expect(screen.findByTestId('review-finding-triage:first:accept')?.props.disabled).toBe(false);
+        expect(screen.findByTestId('review-finding-triage:second:accept')?.props.disabled).toBe(true);
+        expect(screen.findAll(node => typeof node.type === 'string')
+            .flatMap(node => node.children.filter(child => typeof child === 'string'))).not.toContain(t('runPage.review.notSaved'));
+        await screen.pressByTestIdAsync('review-findings-load-more-comments');
+        await vi.waitFor(() => expect(cursors).toEqual([null, 'page-2']));
+        await flush();
+        expect(screen.findByTestId('review-finding-triage:first:accept')?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('review-findings-load-more-comments');
+        await vi.waitFor(() => expect(cursors).toEqual([null, 'page-2', 'page-2']));
+        await vi.waitFor(() => expect(screen.findByTestId('review-finding-triage:second:accept')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('review-finding-triage:second:accept');
+        await vi.waitFor(() => expect(transitions).toEqual([expect.objectContaining({ commentId: second.id, reviewTriageStatus: 'accept' })]));
+        await screen.unmount();
+    });
+
     it('uses follow-up findings from its transcript source instead of another loaded session view', async () => {
         const payload = payloadFor([finding('f1', 'low')]);
         const followUpMessage = (title: string) => ({ id: 'follow_up_1', kind: 'agent-text' as const, localId: null, createdAt: 2, text: '', meta: { happier: { kind: 'review_follow_up.v1', payload: {
@@ -464,7 +503,7 @@ describe('ReviewFindingsMessageCard', () => {
         await sendThroughComposer(screen, 'review-finding-ask-field:f1', 'Narrow it to iOS?');
         // The thread names who answers: the reviewer that found it.
         expect(screen.findByTestId('review-finding-ask-field:f1:recipient')!.props.accessibilityLabel)
-            .toBe(t('runPage.review.toReviewer', { reviewer: t('agentInput.agent.claude') }));
+            .toBe(t('runPage.review.toReviewer', { reviewer: 'Claude' }));
 
         expect(sessionExecutionRunActionSpy).toHaveBeenCalledWith('sess_1', {
             runId: 'run_1',
@@ -617,16 +656,18 @@ describe('ReviewFindingsMessageCard', () => {
         );
         await flush();
 
-        expect(card.findByTestId('review-findings-finished-header')).not.toBeNull();
-        expect(card.findByTestId('review-findings-severity-summary')).not.toBeNull();
+        expect(card.findByTestId('review-summary')).not.toBeNull();
         // One line per finding, most severe first, three shown and the rest counted.
-        expect(card.findByTestId('review-finding-compact:f2')).not.toBeNull();
-        expect(card.findByTestId('review-finding-compact:f4')).toBeNull();
-        expect(card.findByTestId('review-findings-more')).not.toBeNull();
+        expect(card.findByTestId('review-summary:row:f2')).not.toBeNull();
+        expect(card.findByTestId('review-summary:row:f4')).toBeNull();
+        expect(card.findByTestId('review-summary:more')).not.toBeNull();
         // Decisions, questions and fixes live on the review's own page, which Open findings opens.
         expect(card.findByTestId('review-finding-triage:f1:accept')).toBeNull();
         expect(card.findByTestId('review-findings-publish-accepted')).toBeNull();
-        await act(async () => { await card.pressByTestIdAsync('review-findings-open-result'); });
+        await card.pressByTestIdAsync('review-summary:more');
+        expect(navigate).toHaveBeenCalledWith(expect.stringContaining('run_1'));
+        navigate.mockClear();
+        await act(async () => { await card.pressByTestIdAsync('review-summary:open'); });
         expect(navigate).toHaveBeenCalledWith(expect.stringContaining('run_1'));
 
         const page = await renderScreen(
@@ -637,6 +678,39 @@ describe('ReviewFindingsMessageCard', () => {
         expect(page.findByTestId('review-finding-triage:f1:accept')).not.toBeNull();
         expect(page.findByTestId('review-finding-ask-field:f1')).not.toBeNull();
         expect(page.findByTestId('review-findings-publish-accepted')).not.toBeNull();
+    });
+
+    it('indexes only visible text in the shared compact Review summary', async () => {
+        serveComments([]);
+        const payload = payloadFor([finding('f1', 'high')]);
+        const source = createTestSessionTranscriptSource({ sessionId: 'sess_1', serverId: home.serverId, navigate: vi.fn() });
+        const card = await renderWithSessionTranscriptSource(
+            <ReviewFindingsMessageCard serverId={home.serverId} payload={payload} sessionId="sess_1" canSendMessages={false} />, source);
+        await flush();
+        const visible = card.getTextContent();
+        for (const block of projectReviewFindingsFindText(payload, { canNavigate: true })) {
+            expect(visible, `Find indexed hidden text: ${block.text}`).toContain(block.text);
+        }
+        await card.unmount();
+    });
+
+    it('highlights a finding title in the shared compact Review summary', async () => {
+        serveComments([]);
+        const store = createTranscriptFindRowStore();
+        const source = createTestSessionTranscriptSource({ sessionId: 'sess_1', serverId: home.serverId, navigate: vi.fn() });
+        const card = await renderWithSessionTranscriptSource(<TranscriptFindProvider store={store}>
+            <StructuredFindMessageProvider messageId="compact-review-message">
+                <ReviewFindingsMessageCard serverId={home.serverId} payload={payloadFor([finding('f1', 'high')])}
+                    sessionId="sess_1" canSendMessages={false} />
+            </StructuredFindMessageProvider>
+        </TranscriptFindProvider>, source);
+        await act(() => store.publish(new Map([['compact-review-message', {
+            blocks: [{ id: 'structured-review-finding:f1:title', sourceRanges: [{ start: 0, end: 3, current: true }] }],
+            reveal: { blockId: 'structured-review-finding:f1:title', requestId: 1 },
+        }]])));
+        expect(card.findByTestId('review-summary')).not.toBeNull();
+        expect(card.findByTestId('find-match-current')).not.toBeNull();
+        await card.unmount();
     });
 
     it('offers no decision, question or fix once the transcript is read-only', async () => {

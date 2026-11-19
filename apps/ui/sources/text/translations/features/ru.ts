@@ -13228,6 +13228,7 @@ const runPageTranslations = { ru: {
             reviewerAsks: 'Ревьюер спрашивает',
             answer: 'Ответить',
             askAboutThis: 'Спросить об этом',
+            createTask: 'Создать задачу',
             fixesSelected: ({ count }) => `Выбрано исправлений: ${count}`,
             noFixesSelected: 'Выберите исправления',
             implementFixes: ({ count }) => (count > 0 ? `Внести исправления (${count})` : 'Внести исправления'),

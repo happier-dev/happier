@@ -10,49 +10,30 @@ import type {
 import type {
     ReviewFindingsV2} from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import type {
-    ReviewQuestion} from '@happier-dev/protocol/reviews/ReviewQuestion';
-import type {
     ReviewTriageStatus,
 } from '@happier-dev/protocol/reviews/reviewTriageStatus';
-import { ReviewFollowUpFailureCodeSchema } from '@happier-dev/protocol/execution/runs/index';
 
-import { getAgentCore, hasAgentIconMark } from '@/agents/catalog/catalog';
+import { hasAgentIconMark } from '@/agents/catalog/catalog';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
-import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/navigation/buildSessionExecutionRunRouteHref';
 import { ReviewFindingRow, type ReviewFindingDecision } from '@/components/sessions/reviews/findings/ReviewFindingRow';
-import type {
-    ReviewFindingAskContext,
-    ReviewFindingThreadEntryView,
-} from '@/components/sessions/reviews/findings/ReviewFindingThread';
-import {
-    ReviewFollowUpComposer,
-    type ReviewFollowUpRecipient,
-} from '@/components/sessions/reviews/findings/ReviewFollowUpComposer';
+import { ReviewFollowUpComposer } from '@/components/sessions/reviews/findings/ReviewFollowUpComposer';
 import {
     formatReviewFindingsHeadline,
     isHighReviewSeverity,
 } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
-import {
-    formatReviewerSet,
-    mergeReviewFindings,
-    sortReviewFindingRows,
-    type ReviewFindingRowModel,
-    type ReviewFindingSource,
-    type ReviewMember,
-} from '@/components/sessions/reviews/findings/reviewFindingsMerge';
-import {
-    describeReviewFollowUpFailure,
-    resolveReviewFollowUpAvailability,
-    type ReviewFollowUpAvailability,
-} from '@/components/sessions/reviews/findings/reviewFollowUpAvailability';
+import { resolveReviewFollowUpAvailability } from '@/components/sessions/reviews/findings/reviewFollowUpAvailability';
+import { useReviewFindingsModel, type ReviewFindingsMember, type ReviewFindingDecisionTarget } from '@/components/reviews/finding/useReviewFindingsModel';
+import { ReviewSummary } from '@/components/reviews/summary/ReviewSummary';
+import { ReviewSummaryHost } from '@/components/reviews/summary/ReviewSummaryHost';
+import { artifactResourceRoute } from '@/utils/url/resourceRoute';
 import { useReviewGroupSiblings } from '@/components/sessions/reviews/findings/useReviewGroupSiblings';
 import { useReviewRunsComments } from '@/components/sessions/reviews/findings/useReviewRunComments';
 import { resolveEffectiveReviewFindings } from '@/components/sessions/reviews/messages/resolveEffectiveReviewFindings';
-import { findCommentForFinding, readReviewFindingDecision } from '@/components/sessions/reviews/findings/reviewFindingComment';
-import { REVIEW_SEVERITY_COLUMN_WIDTH_PX, ReviewFindingLine, ReviewSeveritySummary } from '@/components/sessions/reviews/findings/ReviewSeverity';
+import { findCommentForFinding } from '@/components/sessions/reviews/findings/reviewFindingComment';
+import { REVIEW_SEVERITY_COLUMN_WIDTH_PX, ReviewSeveritySummary } from '@/components/sessions/reviews/findings/ReviewSeverity';
 import { ReviewWalkMeThroughButton, ReviewWalkthroughEntryHint } from '@/components/sessions/reviews/walkthrough/ReviewWalkthroughEntry';
 import {
     ExecutionRunResultLayout,
@@ -66,8 +47,6 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useSessionMessages } from '@/sync/domains/state/storage';
 import {
-    decideReviewRunFinding,
-    loadReviewRunComments,
     reviewRunCommentsTargetFromFindings,
 } from '@/sync/domains/reviews/comments/reviewRunComments';
 import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -89,9 +68,6 @@ type NormalizedReviewPayload = ReturnType<typeof normalizeReviewFindingsMessageP
 
 /** The transcript card shows this many findings before "N more findings" (lab R2 `card`). */
 const CARD_VISIBLE_FINDINGS = REVIEW_CARD_VISIBLE_FINDINGS;
-const EMPTY_THREAD: readonly never[] = [];
-const EMPTY_REVIEWERS: readonly never[] = [];
-const EMPTY_PENDING: Readonly<Record<string, ReviewTriageStatus>> = Object.freeze({});
 /** A reviewer run that stopped in one of these has no result: it didn't finish its review. */
 const UNFINISHED_RUN_STATUSES: ReadonlySet<string> = new Set(['failed', 'cancelled', 'timeout']);
 
@@ -109,56 +85,9 @@ function useReviewAccountLifetime(sessionId: string, serverId: string | null): S
 }
 
 /** A reviewer of this result as the card shows it: its run, latest findings, decisions and threads. */
-type CardMember = ReviewMember & Readonly<{
-    runRef: ReviewFindingsV2['runRef'];
+type CardMember = ReviewFindingsMember & Readonly<{
     normalized: NormalizedReviewPayload;
-    followUp: ReviewFollowUpAvailability;
-    threadRefsByFindingId: Readonly<Record<string, readonly string[]>>;
-    pending: Readonly<Record<string, ReviewTriageStatus>>;
 }>;
-
-function reviewerLabelOf(runRef: ReviewFindingsV2['runRef']): string {
-    const core = getAgentCore(runRef.backendId);
-    if (core) return t(core.displayNameKey);
-    return resolveExecutionRunBackendLabel(runRef.backendTarget ?? { kind: 'backend', backendId: runRef.backendId }) ?? runRef.backendId;
-}
-
-function sourceDecision(source: ReviewFindingSource, pending: Readonly<Record<string, ReviewTriageStatus>>): ReviewFindingDecision | 'undecided' {
-    if (!source.comment) return 'undecided';
-    return readReviewFindingDecision(pending[source.comment.id] ?? source.comment.reviewTriageStatus);
-}
-
-/** A merged row's decision is its sources' decision when they agree; otherwise none is shown. */
-function rowDecision(row: ReviewFindingRowModel, pendingOf: (runId: string) => Readonly<Record<string, ReviewTriageStatus>>): ReviewFindingDecision | 'undecided' {
-    const decided = row.sources.filter((source) => source.comment !== null);
-    if (decided.length === 0) return 'undecided';
-    const first = sourceDecision(decided[0]!, pendingOf(decided[0]!.member.runId));
-    return decided.every((source) => sourceDecision(source, pendingOf(source.member.runId)) === first) ? first : 'undecided';
-}
-
-const FOLLOW_UP_AVAILABLE: ReviewFollowUpAvailability = Object.freeze({ available: true });
-
-/** Questions go to every reviewer named, so any of them that can't take one decides. */
-function followUpOf(members: readonly CardMember[]): ReviewFollowUpAvailability {
-    return members.find((member) => !member.followUp.available)?.followUp ?? FOLLOW_UP_AVAILABLE;
-}
-
-function recipientOf(members: readonly CardMember[]): ReviewFollowUpRecipient {
-    const labels = members.map((member) => member.reviewerLabel);
-    return {
-        label: formatReviewerSet(labels),
-        accessibilityLabel: labels.length === 1
-            ? t('runPage.review.toReviewer', { reviewer: labels[0]! })
-            : t('runPage.review.followUpsGoToAll', { count: labels.length }),
-        backendIds: members.map((member) => member.backendId),
-    };
-}
-
-function waitingLabelOf(members: readonly CardMember[]): string {
-    return members.length === 1
-        ? t('runPage.review.waitingForAnswer', { reviewer: members[0]!.reviewerLabel })
-        : t('runPage.review.waitingForAnswers');
-}
 
 /**
  * A review's result, result first (lab R1/R2): the summary, who reviewed, the findings most severe
@@ -226,7 +155,6 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
     const isPage = presentation === 'page';
     const { transcriptSource, scope, accountLifetime, sessionMessages, workspacePath } = props;
     const router = useRouter();
-    const followUpExecution = useMountedActionExecution(scope);
     const find = useStructuredFindState();
     const notifyLayout = useTranscriptRowLayoutMutation();
     const openFindingsHref = buildSessionExecutionRunRouteHref({ sessionId: props.sessionId, runId: props.payload.runRef.runId, serverId: props.serverId ?? null });
@@ -234,11 +162,6 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
     const sessionId = props.sessionId;
     const serverId = props.serverId ?? null;
     const canAct = props.canSendMessages === true;
-    const canActRef = React.useRef(canAct);
-    React.useLayoutEffect(() => {
-        canActRef.current = canAct;
-    }, [canAct]);
-
     const normalized = React.useMemo(() => normalizePayload(props.payload), [props.payload]);
     const runId = normalized.runRef.runId;
     const siblings = useReviewGroupSiblings({ sessionId, scope, groupId: isPage ? props.groupId ?? null : null, selfRunId: runId });
@@ -275,49 +198,43 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
         return {
             runId: member.runRef.runId,
             backendId: member.runRef.backendId,
-            reviewerLabel: reviewerLabelOf(member.runRef),
+            reviewerLabel: resolveExecutionRunBackendLabel(member.runRef.backendTarget ?? { kind: 'backend', backendId: member.runRef.backendId }) ?? member.runRef.backendId,
             findings: effective.findings,
             commentByFindingId,
             originalByFindingId: effective.originalByFindingId,
             threadsByFindingId: effective.threadsByFindingId,
             threadRefsByFindingId: effective.threadRefsByFindingId,
-            runRef: member.runRef,
+            sessionId,
+            questions: member.questions,
+            assumptions: member.assumptions,
             normalized: member,
             followUp: resolveReviewFollowUpAvailability(member.runRef),
-            pending: allPending,
         };
-    }), [allComments, allPending, resultMembers, sessionMessages]);
+    }), [allComments, resultMembers, sessionId, sessionMessages]);
     const reviewerCount = members.length + waitingSiblings.length;
     const multiReviewer = reviewerCount > 1;
-    const memberByRunId = React.useMemo(() => new Map(members.map((member) => [member.runId, member] as const)), [members]);
-    const pendingOf = React.useCallback(
-        (memberRunId: string) => memberByRunId.get(memberRunId)?.pending ?? EMPTY_PENDING,
-        [memberByRunId],
-    );
-    const rows = React.useMemo(() => sortReviewFindingRows(mergeReviewFindings(members)), [members]);
-    const rowById = React.useMemo(() => new Map(rows.map((row) => [row.rowId, row] as const)), [rows]);
+    const onDecideComment = React.useCallback((source: ReviewFindingDecisionTarget, decision: ReviewFindingDecision) => {
+        if (!source.runId) return Promise.resolve(false);
+        return commentSnapshots[memberRunIds.indexOf(source.runId)]?.decide(source.comment.id, decision) ?? Promise.resolve(false);
+    }, [commentSnapshots, memberRunIds]);
+    const model = useReviewFindingsModel({
+        members, reviewerCount, scope, accountLifetime, serverId, sessionId, draftRunId: runId,
+        canAct, pending: allPending, onDecideComment,
+    });
+    const { rows, followUp, implement, dockMembers, dockRecipient, error, approval } = model;
     const rowFindings = React.useMemo(() => rows.map((row) => row.finding), [rows]);
     const headline = React.useMemo(() => formatReviewFindingsHeadline(rowFindings), [rowFindings]);
     const highCount = React.useMemo(() => rowFindings.filter((finding) => isHighReviewSeverity(finding.severity)).length, [rowFindings]);
-    const commentsStatus = commentSnapshots[0]?.status ?? 'idle';
+    const commentsComplete = commentSnapshots.length > 0
+        && commentSnapshots.every(snapshot => snapshot.status === 'loaded' && snapshot.cursor === null);
     const decisionsFailed = commentSnapshots.some((snapshot) => snapshot.status === 'failed');
-    const acceptedRows = React.useMemo(
-        () => rows.filter((row) => rowDecision(row, pendingOf) === 'accept'),
-        [pendingOf, rows],
-    );
-    const hasPendingDecisions = Object.keys(allPending).length > 0;
-    const followUp = React.useMemo(() => followUpOf(members), [members]);
-
+    const continuingComments = commentSnapshots.filter(snapshot => snapshot.cursor !== null);
     const [showAllFindings, setShowAllFindings] = React.useState(false);
     const [openThreadRowId, setOpenThreadRowId] = React.useState<string | null>(null);
-    const [pendingQuestionByRowId, setPendingQuestionByRowId] = React.useState<Readonly<Record<string, string>>>({});
-    const [replyToQuestion, setReplyToQuestion] = React.useState<Readonly<{ runId: string; question: ReviewQuestion }> | null>(null);
-    const [error, setError] = React.useState<string | null>(null);
-    const [isApplying, setIsApplying] = React.useState(false);
     const findDisplay = React.useMemo(() => buildReviewFindingsMessageDisplay(props.payload, {
         canNavigate: compact, canSendMessages: canAct, hasWorkspacePath: Boolean(workspacePath), sessionMessages,
-        acceptedFindingsCount: acceptedRows.length,
-    }, members[0]), [props.payload, compact, canAct, workspacePath, sessionMessages, acceptedRows.length, members]);
+        acceptedFindingsCount: implement.count,
+    }, members[0]), [props.payload, compact, canAct, workspacePath, sessionMessages, implement.count, members]);
     React.useLayoutEffect(() => {
         if (isPage || compact || !find.revealBlockId?.startsWith('structured-review-finding:')) return;
         const row = [...rows].sort((left, right) => right.rowId.length - left.rowId.length)
@@ -330,218 +247,22 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
         if (revealThread) setOpenThreadRowId(row.rowId);
     }, [compact, find.revealBlockId, find.revealRequestId, isPage, notifyLayout, openThreadRowId, rows, showAllFindings]);
 
-    const threadEntriesByRowId = React.useMemo(() => {
-        const entriesByRowId = new Map<string, readonly ReviewFindingThreadEntryView[]>();
-        for (const row of rows) {
-            const entries = row.sources.flatMap((source) => (source.member.threadsByFindingId[source.finding.id] ?? [])
-                .map((entry) => ({ ...entry, reviewerLabel: source.member.reviewerLabel })));
-            if (entries.length > 0) entriesByRowId.set(row.rowId, entries.sort((left, right) => left.generatedAtMs - right.generatedAtMs));
-        }
-        return entriesByRowId;
-    }, [rows]);
-
-    // A question's pending echo gives way once its answer has arrived in the thread.
-    const threadCountByRowIdRef = React.useRef<Readonly<Record<string, number>>>({});
-    React.useEffect(() => {
-        const previous = threadCountByRowIdRef.current;
-        const answered = Object.keys(pendingQuestionByRowId).filter(
-            (rowId) => (threadEntriesByRowId.get(rowId)?.length ?? 0) > (previous[rowId] ?? 0),
-        );
-        threadCountByRowIdRef.current = Object.fromEntries(
-            Array.from(threadEntriesByRowId.entries()).map(([rowId, entries]) => [rowId, entries.length]),
-        );
-        if (answered.length === 0) return;
-        setPendingQuestionByRowId((current) => {
-            const next = { ...current };
-            for (const rowId of answered) delete next[rowId];
-            return next;
-        });
-    }, [pendingQuestionByRowId, threadEntriesByRowId]);
-
-    const decide = React.useCallback((rowId: string, decision: ReviewFindingDecision) => {
-        if (!canActRef.current || !scope) return;
-        const row = rowById.get(rowId);
-        if (!row) return;
-        setError(null);
-        // A merged row's decision is recorded on every reviewer's comment for it.
-        const decidedIds = new Set<string>();
-        for (const source of row.sources) {
-            if (!source.comment || sourceDecision(source, pendingOf(source.member.runId)) === decision) continue;
-            if (decidedIds.has(source.comment.id)) continue;
-            decidedIds.add(source.comment.id);
-            fireAndForget(
-                decideReviewRunFinding({ scope, sessionId, runId: source.member.runId,
-                    ...(source.comment.reviewId ? { reviewId: source.comment.reviewId } : {}), commentId: source.comment.id, decision }).then((saved) => {
-                    if (!saved) setError(t('runPage.review.couldNotSaveChoice'));
-                }),
-                { tag: 'ReviewFindingsMessageCard.decide' },
-            );
-        }
-    }, [pendingOf, rowById, scope, sessionId]);
-
-    const sendFollowUp = React.useCallback(async (params: Readonly<{
-        runId: string;
-        findingIds: readonly string[];
-        messageMarkdown: string;
-        threadId?: string;
-        replyToQuestionId?: string;
-    }>): Promise<boolean> => {
-        if (!scope || !accountLifetime?.isCurrent()) return false;
-        try {
-            // The question goes to the review run that reported the finding.
-            const result = await followUpExecution.execute('execution.run.action', {
-                sessionId,
-                runId: params.runId,
-                actionId: 'review.follow_up',
-                input: {
-                    findingIds: [...params.findingIds],
-                    ...(params.threadId ? { threadId: params.threadId } : {}),
-                    ...(params.replyToQuestionId ? { replyToQuestionId: params.replyToQuestionId } : {}),
-                    messageMarkdown: params.messageMarkdown,
-                },
-            }, { retainEffectResult: true });
-            // Preserve the admission receipt; the draft owner settles its captured
-            // fields against the Account lifetime even after this view closes.
-            if (result.ok) return true;
-            if (!accountLifetime.isCurrent() || !followUpExecution.isCurrent()) return false;
-            const code = ReviewFollowUpFailureCodeSchema.safeParse('errorCode' in result ? result.errorCode : undefined);
-            setError(describeReviewFollowUpFailure(code.success ? code.data : undefined));
-            return false;
-        } catch {
-            if (!accountLifetime.isCurrent() || !followUpExecution.isCurrent()) return false;
-            setError(describeReviewFollowUpFailure(undefined));
-            return false;
-        }
-    }, [accountLifetime, followUpExecution.execute, followUpExecution.isCurrent, sessionId, scope]);
-
-    /** Sends to each target; accepted when at least one reviewer took it (the others say why not). */
-    const sendToEach = React.useCallback(async (targets: readonly Parameters<typeof sendFollowUp>[0][]) => {
-        if (!canActRef.current || targets.length === 0) return false;
-        setError(null);
-        const sent = await Promise.all(targets.map((target) => sendFollowUp(target)));
-        return sent.some(Boolean);
-    }, [sendFollowUp]);
-
-    const askAboutRow = React.useCallback(async (rowId: string, messageMarkdown: string) => {
-        const row = rowById.get(rowId);
-        if (!row) return false;
-        // One thread per finding and reviewer: a merged row asks each reviewer in its own thread.
-        const sent = await sendToEach(row.sources.map((source) => {
-            const threadId = source.member.threadsByFindingId[source.finding.id]?.at(-1)?.threadId;
-            return { runId: source.member.runId, findingIds: [source.finding.id], messageMarkdown, ...(threadId ? { threadId } : {}) };
-        }));
-        if (sent) setPendingQuestionByRowId((current) => ({ ...current, [rowId]: messageMarkdown }));
-        return sent;
-    }, [rowById, sendToEach]);
-
-    const askReviewers = React.useCallback(async (messageMarkdown: string) => {
-        const targets = replyToQuestion
-            ? [{
-                runId: replyToQuestion.runId,
-                findingIds: replyToQuestion.question.findingIds ?? [],
-                messageMarkdown,
-                replyToQuestionId: replyToQuestion.question.id,
-            }]
-            : members.map((member) => ({ runId: member.runId, findingIds: [], messageMarkdown }));
-        const sent = await sendToEach(targets);
-        if (sent) setReplyToQuestion(null);
-        return sent;
-    }, [members, replyToQuestion, sendToEach]);
-
     const toggleThread = React.useCallback((rowId: string) => {
         setOpenThreadRowId((current) => (current === rowId ? null : rowId));
     }, []);
 
-    const implementFixes = React.useCallback(() => {
-        const capturedLifetime = accountLifetime;
-        if (!canActRef.current || !scope || !capturedLifetime?.isCurrent() || hasPendingDecisions || acceptedRows.length === 0) return;
-        fireAndForget((async () => {
-            setError(null);
-            setIsApplying(true);
-            try {
-                if (!canActRef.current || !capturedLifetime.isCurrent()) return;
-                const reviewIds = [...new Set(members.flatMap(member => [...member.commentByFindingId.values()]
-                    .map(comment => comment.reviewId).filter((reviewId): reviewId is string => Boolean(reviewId))))];
-                if (reviewIds.length > 0) {
-                    await Promise.all(reviewIds.map(reviewId => followUpExecution.executeValue('review.apply',
-                        { sessionId, reviewId }, { sessionMessageDisplayText: t('session.reviewFindings.actions.applyAcceptedFindings') })));
-                } else {
-                    // Legacy unbound runs have no Review resource yet; retain their admitted
-                    // run-scoped input until the producer materializes a Review identity.
-                    await followUpExecution.executeValue('review.apply', { sessionId, reviews: members.map(member => ({
-                        runId: member.runId,
-                        findings: member.findings.map(finding => {
-                            const comment = member.commentByFindingId.get(finding.id);
-                            return { ...finding,
-                                ...(comment ? { comment: { id: comment.id, state: comment.state, serverRevision: comment.serverRevision,
-                                    ...(comment.projectId ? { projectId: comment.projectId } : {}),
-                                    ...(comment.workspace ? { workspace: comment.workspace } : {}),
-                                    ...(comment.sessionId ? { sessionId: comment.sessionId } : {}),
-                                    ...(comment.runId ? { runId: comment.runId } : {}),
-                                } } : {}),
-                                threadRefs: member.threadRefsByFindingId[finding.id] ?? [],
-                            };
-                        }),
-                    })) }, { sessionMessageDisplayText: t('session.reviewFindings.actions.applyAcceptedFindings') });
-                }
-            } catch (e) {
-                setError(e instanceof Error ? e.message : t('session.reviewFindings.errors.applyAcceptedFailed'));
-            } finally {
-                setIsApplying(false);
-            }
-        })(), { tag: 'ReviewFindingsMessageCard.implementFixes' });
-    }, [acceptedRows.length, accountLifetime, followUpExecution.executeValue, hasPendingDecisions, members, scope, sessionId]);
-
     const visibleRows = !isPage && !showAllFindings ? rows.slice(0, CARD_VISIBLE_FINDINGS) : rows;
     const hiddenCount = rows.length - visibleRows.length;
-    const openQuestions = members.flatMap((member) => member.normalized.questions
-        .filter((question) => question.status !== 'superseded')
-        .map((question) => ({ member, question })));
-    const dockMembers = replyToQuestion
-        ? members.filter((member) => member.runId === replyToQuestion.runId)
-        : members;
-    const dockRecipient = React.useMemo(() => recipientOf(dockMembers), [dockMembers]);
-    const askContextByRowId = React.useMemo(() => {
-        const contexts = new Map<string, ReviewFindingAskContext>();
-        for (const row of rows) {
-            const rowMembers = row.sources.map((source) => memberByRunId.get(source.member.runId)!).filter(Boolean);
-            contexts.set(row.rowId, {
-                sessionId,
-                serverId,
-                accountLifetime,
-                draftRunId: runId,
-                recipient: recipientOf(rowMembers),
-                waitingLabel: waitingLabelOf(rowMembers),
-            });
-        }
-        return contexts;
-    }, [memberByRunId, rows, runId, serverId, sessionId]);
-    const reviewersByRowId = React.useMemo(() => new Map(rows.map((row) => [row.rowId, row.sources.map((source) => ({
-        label: source.member.reviewerLabel,
-        backendId: source.member.backendId,
-    }))] as const)), [rows]);
-    const attributionByRowId = React.useMemo(() => {
-        const attributions = new Map<string, Readonly<{ label: string; backendIds: readonly string[] }>>();
-        if (!multiReviewer) return attributions;
-        for (const row of rows) {
-            attributions.set(row.rowId, {
-                label: formatReviewerSet(row.sources.map((source) => source.member.reviewerLabel)),
-                backendIds: row.sources.map((source) => source.member.backendId),
-            });
-        }
-        return attributions;
-    }, [multiReviewer, rows]);
-
     const implementButton = canAct && rows.length > 0 ? (
         <RoundButton
             testID="review-findings-publish-accepted"
             size="small"
             display={isPage ? 'default' : 'secondary'}
-            title={isPage ? t('runPage.review.implementFixes', { count: acceptedRows.length }) : <StructuredFindText blockId="structured-review:implement" text={findDisplay.implement?.text ?? t('runPage.review.implementFixes', { count: acceptedRows.length })} useDefaultTypography={false} />}
+            title={isPage ? t('runPage.review.implementFixes', { count: implement.count }) : <StructuredFindText blockId="structured-review:implement" text={findDisplay.implement?.text ?? t('runPage.review.implementFixes', { count: implement.count })} useDefaultTypography={false} />}
             titleNumberOfLines={find.revealBlockId === 'structured-review:implement' ? 'complete' : 1}
-            disabled={acceptedRows.length === 0 || hasPendingDecisions || isApplying}
-            loading={isApplying}
-            onPress={implementFixes}
+            disabled={implement.disabled}
+            loading={implement.busy}
+            onPress={implement.run}
         />
     ) : null;
 
@@ -559,7 +280,7 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                             ? t('runPage.review.askReviewersPlaceholder')
                             : t('runPage.review.askReviewerPlaceholder')}
                         recipient={dockRecipient}
-                        onSend={askReviewers}
+                        onSend={model.askReviewers}
                     />
                     <Text style={styles.caption}>
                         {dockMembers.length > 1
@@ -581,6 +302,18 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
     // press away: decisions, questions and Implement fixes live there. Without that page, the full card stays.
     if (compact) {
         const compactRows = rows.slice(0, CARD_VISIBLE_FINDINGS);
+        const reviewId = reviewRunCommentsTargetFromFindings(normalized).reviewId;
+        const href = reviewId ? artifactResourceRoute({ kind: 'artifact', artifactId: reviewId }, serverId) : openFindingsHref;
+        const open = () => { if (href) transcriptSource?.navigate?.(href); };
+        const summaryProps = {
+            subject: null,
+            rows: compactRows.map(row => ({ rowId: row.rowId, severity: row.finding.severity, title: row.finding.title,
+                findBlockPrefix: `structured-review-finding:${row.rowId}`,
+                reviewer: row.reviewers.map(reviewer => reviewer.label).join(t('reviewWalkthrough.and')) })),
+            more: rows.length > compactRows.length ? { label: findDisplay.more?.text ?? '', onPress: open } : null,
+            reviewers: members.map(member => ({ label: member.reviewerLabel, backendId: member.backendId })),
+            onOpenReview: open,
+        };
         return (
             <>
             {normalized.fileCount !== null ? (
@@ -591,7 +324,6 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                 testID="review-findings"
                 footActions={(
                     <>
-                        <ReviewOpenResultButton sessionId={sessionId} runId={runId} serverId={serverId} />
                         {canAct ? (
                             <ReviewWalkMeThroughButton sessionId={sessionId} serverId={serverId} runId={runId}
                                 reviewRunIds={memberRunIds} comparisonId={normalized.comparisonId} />
@@ -602,32 +334,8 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                     <ReviewWalkthroughEntryHint continues={members.some((member) => member.followUp.available)} findingsCount={rows.length} />
                 ) : null}
             >
-                <View testID="review-findings-finished-header" style={styles.finishedHead}>
-                    <Icon name="shield-check" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
-                    <StructuredFindText blockId={findDisplay.finished.id} text={findDisplay.finished.text} style={styles.finishedTitle} numberOfLines={1} />
-                    <StructuredFindText blockId={findDisplay.meta.id} text={findDisplay.meta.text} style={styles.finishedMeta} numberOfLines={1} />
-                    <View style={styles.grow} />
-                    {rows.length > 0 ? <StructuredFindText blockId={findDisplay.count.id} text={findDisplay.count.text} style={styles.finishedCount} numberOfLines={1} /> : null}
-                </View>
-                {rows.length > 0 ? <ReviewSeveritySummary testID="review-findings-severity-summary" findings={rowFindings} findBlockPrefix="structured-review:count" /> : null}
-                {compactRows.length > 0 ? (
-                    <View style={styles.compactRows}>
-                        {compactRows.map((row) => (
-                            <ReviewFindingLine
-                                key={row.rowId}
-                                testID={`review-finding-compact:${row.rowId}`}
-                                severity={row.finding.severity}
-                                title={row.finding.title}
-                                reviewer={row.sources.map((source) => source.member.reviewerLabel).join(t('reviewWalkthrough.and'))}
-                                findBlockPrefix={`structured-review-finding:${row.rowId}`}
-                            />
-                        ))}
-                        {rows.length > compactRows.length ? (
-                            <StructuredFindText blockId="structured-review:more" text={findDisplay.more?.text ?? ''} testID="review-findings-more" style={styles.compactMore} />
-                        ) : null}
-                    </View>
-                ) : null}
-                <View style={styles.compactDivider} />
+                {reviewId ? <ReviewSummaryHost {...summaryProps} reviewId={reviewId} scope={scope} />
+                    : <ReviewSummary {...summaryProps} glance={{ sentence: headline, tone: highCount > 0 ? 'attention' : 'quiet', facts: [] }} />}
             </ExecutionRunResultLayout>
             </>
         );
@@ -640,12 +348,12 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
             after={props.after}
             footNote={isPage
                 ? (canAct && rows.length > 0
-                    ? (acceptedRows.length > 0
-                        ? t('runPage.review.fixesToImplement', { count: acceptedRows.length })
+                    ? (implement.count > 0
+                        ? t('runPage.review.fixesToImplement', { count: implement.count })
                         : t('runPage.review.noFixesSelected'))
                     : null)
                 : (rows.length > 0 ? <StructuredFindText blockId={findDisplay.count.id} text={findDisplay.count.text} useDefaultTypography={false} /> : null)}
-            footDetail={isPage && canAct && acceptedRows.length > 0 ? t('runPage.review.verifiedFirst') : null}
+            footDetail={isPage && canAct && implement.count > 0 ? t('runPage.review.verifiedFirst') : null}
             footActions={isPage ? implementButton : (
                 rows.length > 0 || canAct ? (
                     <>
@@ -723,30 +431,30 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                     ) : null}
                     <View style={isPage ? styles.sheet : null}>
                         {visibleRows.map((row, index) => {
-                            const decidable = row.sources.some((source) => source.comment !== null);
-                            const rowMembers = row.sources.map((source) => memberByRunId.get(source.member.runId)!);
                             return (
                                 <ReviewFindingRow
                                     key={row.rowId}
                                     rowId={row.rowId}
                                     finding={row.finding}
-                                    attribution={attributionByRowId.get(row.rowId) ?? null}
-                                    reviewers={reviewersByRowId.get(row.rowId) ?? EMPTY_REVIEWERS}
-                                    original={row.sources.find((source) => source.finding === row.finding)?.member.originalByFindingId[row.finding.id] ?? null}
+                                    currentBodyMarkdown={row.currentBodyMarkdown}
+                                    attribution={row.attribution}
+                                    reviewers={row.reviewers}
+                                    original={row.original}
                                     density={isPage ? 'page' : 'card'}
                                     findBlockPrefix={isPage ? undefined : `structured-review-finding:${row.rowId}`}
                                     divided={index > 0}
-                                    decision={canAct ? rowDecision(row, pendingOf) : null}
-                                    decisionDisabled={!decidable}
-                                    decisionNote={commentsStatus === 'loaded' && !decidable ? t('runPage.review.notSaved') : null}
-                                    onDecide={decide}
-                                    followUp={canAct ? followUpOf(rowMembers) : null}
-                                    threadEntries={threadEntriesByRowId.get(row.rowId) ?? EMPTY_THREAD}
-                                    pendingQuestion={pendingQuestionByRowId[row.rowId] ?? null}
+                                    decision={canAct ? row.decision : null}
+                                    decisionDisabled={!row.decidable}
+                                    decisionNote={commentsComplete && !row.decidable ? t('runPage.review.notSaved') : null}
+                                    onDecide={model.onDecide}
+                                    followUp={canAct ? row.followUp : null}
+                                    threadEntries={row.threadEntries}
+                                    pendingQuestion={model.pendingQuestionByRowId[row.rowId] ?? null}
                                     expanded={openThreadRowId === row.rowId}
                                     onToggleExpanded={toggleThread}
-                                    askContext={askContextByRowId.get(row.rowId)!}
-                                    onAsk={askAboutRow}
+                                    askContext={row.askContext!}
+                                    onAsk={model.onAsk}
+                                    onCreateTask={canAct && row.taskOrigin ? model.onCreateTask : undefined}
                                 />
                             );
                         })}
@@ -768,11 +476,8 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                                 testID="review-findings-reload-decisions"
                                 accessibilityRole="button"
                                 onPress={() => {
-                                    for (const memberRunId of memberRunIds) {
-                                        if (!scope) continue;
-                                        fireAndForget(loadReviewRunComments({ scope, sessionId, runId: memberRunId,
-                                            ...(reviewIdsByRunId[memberRunId] ? { reviewId: reviewIdsByRunId[memberRunId] } : {}),
-                                            commentIds: commentIdsByRunId[memberRunId] }).catch(() => undefined), { tag: 'ReviewFindingsMessageCard.reload' });
+                                    for (const snapshot of commentSnapshots) {
+                                        fireAndForget(snapshot.refresh(), { tag: 'ReviewFindingsMessageCard.reload' });
                                     }
                                 }}
                             >
@@ -786,7 +491,16 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                 </View>
             ) : null}
 
-            {isPage ? openQuestions.map(({ member, question }) => (
+            {continuingComments.length > 0 ? (
+                <RoundButton testID="review-findings-load-more-comments" size="small" display="secondary"
+                    title={continuingComments.some(snapshot => snapshot.loadMoreFailed) ? t('common.retry') : t('files.reviewComments.durable.showMore')}
+                    loading={continuingComments.some(snapshot => snapshot.loadingMore)}
+                    disabled={continuingComments.some(snapshot => snapshot.loadingMore)}
+                    onPress={() => { fireAndForget(Promise.all(continuingComments.map(snapshot => snapshot.loadMore())),
+                        { tag: 'ReviewFindingsMessageCard.loadMore' }); }} />
+            ) : null}
+
+            {isPage ? model.questions.map(({ member, question }) => (
                 <View key={`${member.runId}:${question.id}`} testID={`review-question:${question.id}`} style={styles.question}>
                     <Icon name="question" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
                     <View style={styles.questionBody}>
@@ -801,7 +515,7 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                                     <Text
                                         testID={`review-question-answer:${question.id}`}
                                         accessibilityRole="button"
-                                        onPress={() => setReplyToQuestion({ runId: member.runId, question })}
+                                        onPress={() => model.setReplyToQuestion({ member, question })}
                                         style={styles.inlineLinkText}
                                     >
                                         {t('runPage.review.answer')}
@@ -826,10 +540,10 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                 </View>
             )) : null}
 
-            {followUpExecution.approval.approvalPending && followUpExecution.approval.approvalId && scope ? (
+            {approval.approvalPending && approval.approvalId && scope ? (
                 <ActionApprovalPendingNotice testID="review-findings-follow-up-approval"
                     message={t('approvals.title')}
-                    onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(followUpExecution.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} />
+                    onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} />
             ) : null}
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </ExecutionRunResultLayout>
@@ -857,15 +571,6 @@ function ReviewOpenResultButton(props: Readonly<{ sessionId: string; runId: stri
 const stylesheet = StyleSheet.create((theme) => ({
     startedReview: {  color: theme.colors.text.tertiary, ...Typography.variant('body'),  marginBottom: theme.space.s8 },
     grow: { flex: 1 },
-    finishedHead: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 },
-    // One line at every width (lab WT5-R8p): the title and the count keep their words; only the meta truncates.
-    finishedTitle: {  flexShrink: 0, color: theme.colors.text.primary, ...Typography.variant('heading') },
-    finishedMeta: { ...Typography.default(), flexShrink: 1, color: theme.colors.text.tertiary, fontSize: 14 },
-    finishedCount: { ...Typography.default(), flexShrink: 0, color: theme.colors.text.tertiary, fontSize: 14, fontVariant: ['tabular-nums'] },
-    compactRows: { gap: theme.space.s2 },
-    // Under the titles, on their shared edge (severity column + the line's gap).
-    compactMore: {  paddingLeft: REVIEW_SEVERITY_COLUMN_WIDTH_PX + 12, paddingTop: theme.space.s2, color: theme.colors.text.tertiary, ...Typography.variant('body') },
-    compactDivider: { height: StyleSheet.hairlineWidth, backgroundColor: theme.colors.border.default },
     lead: {
         ...Typography.default(),
         color: theme.colors.text.primary,

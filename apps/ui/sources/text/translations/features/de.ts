@@ -13206,6 +13206,7 @@ const runPageTranslations = { de: {
             reviewerAsks: 'Der Reviewer fragt',
             answer: 'Antworten',
             askAboutThis: 'Dazu nachfragen',
+            createTask: 'Aufgabe erstellen',
             fixesSelected: ({ count }) => (count === 1 ? '1 Korrektur ausgewählt' : `${count} Korrekturen ausgewählt`),
             noFixesSelected: 'Wähle die Korrekturen aus',
             implementFixes: ({ count }) => (count === 1 ? '1 Korrektur umsetzen' : count > 1 ? `${count} Korrekturen umsetzen` : 'Korrekturen umsetzen'),

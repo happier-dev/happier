@@ -13228,6 +13228,7 @@ const runPageTranslations = { pl: {
             reviewerAsks: 'Recenzent pyta',
             answer: 'Odpowiedz',
             askAboutThis: 'Zapytaj o to',
+            createTask: 'Utwórz zadanie',
             fixesSelected: ({ count }) => (count === 1 ? 'Wybrano 1 poprawkę' : `Wybrane poprawki: ${count}`),
             noFixesSelected: 'Wybierz poprawki do wdrożenia',
             implementFixes: ({ count }) => (count === 1 ? 'Wdróż 1 poprawkę' : count > 1 ? `Wdróż poprawki (${count})` : 'Wdróż poprawki'),
