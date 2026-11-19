@@ -16,9 +16,10 @@ import { getLocalServiceLauncherState, subscribeLocalServiceLauncherStore,
 import { selectLocalServiceLaunchTargets } from '@/sync/domains/local/services/launch/store';
 import { buildLocalServiceRows, selectLocalServiceRunningCount, type ServiceRowStatus } from '@/sync/domains/local/services/serviceRow';
 import { readLocalServiceDiagnostics } from '@/sync/domains/local/services/presentation';
+import { describeMachinePresenceSummary } from '@/utils/sessions/machinePresenceLine';
 import { resolveLocalServicesGlanceRows, type LocalServicesGlanceRow } from './glanceModels';
 
-export type AppLocalServicesDegradedFact = Readonly<{ kind: 'offline'; machineId: string; machineName: string }>
+export type AppLocalServicesDegradedFact = Readonly<{ kind: 'offline'; machineId: string; machineName: string; nativeWord?: string | null }>
     | Readonly<{ kind: 'unavailable'; machineId: string; machineName: string; reasonCode: string }>;
 export type AppLocalServicesGlanceState = Readonly<{
     kind: 'loading' | 'ready';
@@ -58,7 +59,7 @@ export function useAppLocalServicesGlance(inputServerId: string): AppLocalServic
             const fact = presence[index];
             const machineName = fact?.name ?? machineId;
             if (fact?.reachability === 'unreachable') {
-                degraded.push({ kind: 'offline', machineId, machineName });
+                degraded.push({ kind: 'offline', machineId, machineName, nativeWord: describeMachinePresenceSummary(fact).nativeWord });
                 continue;
             }
             const feed = feedsByMachine.get(machineId);

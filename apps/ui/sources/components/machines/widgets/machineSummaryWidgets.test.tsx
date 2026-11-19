@@ -1002,6 +1002,27 @@ describe('Vitals attention block', () => {
 });
 
 describe('Machines widget presentation', () => {
+  it('uses the stopped guest’s native presence word in the fleet summary', async () => {
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { describeMachineRuntimePresence } = await import('@/utils/sessions/machinePresenceLine');
+    const serverId = getActiveServerSnapshot().serverId;
+    const at = Date.now();
+    const guest = createMachineFixture({ id: 'guest', active: false, activeAt: at - 86_400_000,
+      managedInputRuntime: { nativeReady: false, wakeState: null, state: 'asleep' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
+      createMachineFixture({ id: 'controller', active: true, activeAt: at }), guest,
+    ]);
+    const presence = describeMachineRuntimePresence(guest, at, null, { serverId, accountId: 'owner' });
+    expect(presence.nativeWord).toBe('managedPower.asleep');
+    const screen = await renderScreen(<WidgetPresentationProvider value={{ size: 'medium', footprint: getWidgetSizeFootprintV1('home', 'medium')! }}>
+      <MachineFleetWidget input={{ metrics: [] }} serverId={serverId} testID="fleet" />
+    </WidgetPresentationProvider>);
+    try {
+      await vi.waitFor(() => expect(screen.getTextContent()).toContain(presence.nativeWord));
+      expect(screen.getTextContent()).not.toContain('machines.widgets.body.fleet.oneOffline');
+    } finally { await screen.unmount(); }
+  });
+
   it.each(['medium', 'large'] as const)('keeps local and remote Linux machine glyphs in the %s fleet', async size => {
     const serverId = getActiveServerSnapshot().serverId;
     const { getSystemTasksRunner } = await import('@/components/systemTasks/systemTasksRuntime');

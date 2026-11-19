@@ -49,6 +49,7 @@ export const MachineUsingTheMost = React.memo(function MachineUsingTheMost(
     processesStatus: MachineProcessesState['status'];
     /** An offline machine has no census to read; say that once, in the Processes tab's own words. */
     offline: boolean;
+    nativePresenceWord?: string | null;
     sample: MachineVitalsSampleV1;
     cpuCapacityCores: number | null;
     onOpenProcesses: () => void;
@@ -136,7 +137,9 @@ export const MachineUsingTheMost = React.memo(function MachineUsingTheMost(
   const quiet = items.length > 0 ? null : answer !== null
     ? { id: 'empty', kind: 'empty' as const, title: t('machineVitals.usingTheMost.empty', { machine: props.machineName }) }
     : props.offline
-      ? { id: 'offline', kind: 'unavailable' as const, title: t('machineProcesses.states.offlineTitle', { machine: props.machineName }), reason: t('machineProcesses.states.offlineReason') }
+      ? { id: 'offline', kind: 'unavailable' as const,
+          title: props.nativePresenceWord ? `${props.machineName} · ${props.nativePresenceWord}` : t('machineProcesses.states.offlineTitle', { machine: props.machineName }),
+          reason: t('machineProcesses.states.offlineReason') }
     : props.processes === null && props.processesStatus === 'loading'
       ? { id: 'reading', kind: 'loading' as const, title: t('machineVitals.usingTheMost.reading') }
       : { id: 'unavailable', kind: 'unavailable' as const, title: t('machineVitals.usingTheMost.unavailable') };

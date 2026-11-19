@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { resolveManagedConfigurationCost } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import {
@@ -132,7 +133,7 @@ function buildInterruptedBadge(
     const machineName = readManagedMachineSelectionName(selection) ?? t('common.machine');
     const home = managedCreationHomeName(selection.selection.homeId);
     const origin = managedCreationOrigin(receipt);
-    const mayBill = receipt?.billing.location !== 'local';
+    const mayBill = resolveManagedConfigurationCost({ ...(receipt ?? retained.machine.reviewedFacts), provider: null }).kind !== 'local';
     return buildManagedProgressStatusBadge({
         machineName, mark: React.createElement(ManagedPresetMark, { serverId: selection.selection.homeId,
             preset: { controller: receipt?.controller, launch: receipt?.launch }, size: 16 }),

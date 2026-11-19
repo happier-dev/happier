@@ -178,16 +178,18 @@ function readAppDegradedLine(degraded: AppLocalServicesGlanceState['degraded']):
     const first = degraded[0];
     if (!first) return null;
     if (degraded.length > 1) return t('widgetGlances.machinesNotListed', { count: degraded.length });
-    return first.kind === 'offline' ? t('widgetGlances.machineOffline', { machine: first.machineName })
-        : t('widgetGlances.machineUnreadable', { machine: first.machineName });
+    if (first.kind !== 'offline') return t('widgetGlances.machineUnreadable', { machine: first.machineName });
+    return first.nativeWord ? [first.machineName, first.nativeWord, t('widgetGlances.appUnlistedTitle')].join(' · ')
+        : t('widgetGlances.machineOffline', { machine: first.machineName });
 }
 
 /** Why no machine's services are listed, under the title that already says so. */
 function readAppUnlistedReason(degraded: AppLocalServicesGlanceState['degraded']): string {
     const first = degraded[0]!;
     if (degraded.length > 1) return t('widgetGlances.appUnlistedMany', { count: degraded.length });
-    return first.kind === 'offline' ? t('widgetGlances.appUnlistedOffline', { machine: first.machineName })
-        : t('widgetGlances.machineUnreadable', { machine: first.machineName });
+    if (first.kind !== 'offline') return t('widgetGlances.machineUnreadable', { machine: first.machineName });
+    return first.nativeWord ? `${first.machineName} · ${first.nativeWord}`
+        : t('widgetGlances.appUnlistedOffline', { machine: first.machineName });
 }
 
 type LocalServicesGlanceProps = Readonly<{

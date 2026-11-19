@@ -68,6 +68,7 @@ import { buildRemoteMachineUpdateFacts } from '@/updates/remoteCliUpdateItems';
 import { useThisComputerCliUpdate } from '@/updates/useThisComputerCliUpdate';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { describeMachineRuntimePresence, projectMachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
 import { resolveMachineFleetPresence, partitionMachineFleetPresence, type MachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
@@ -94,6 +95,7 @@ export type FleetMachine = Readonly<{
   name: string;
   online: boolean | null;
   fleetPresence: MachineFleetPresence;
+  nativeWord?: string | null;
   thisComputer: boolean;
 }>;
 
@@ -186,10 +188,14 @@ export function useMachineFleetModel(owningServerId?: string) {
     const visible = enrolled.map(machine => ({ machine, fleetPresence: resolveMachineFleetPresence(accountScope, machine, nowMs) }));
     const names = resolveMachineDisplayNames(visible.map(entry => entry.machine));
     return orderFleetMachines(visible.map(({ machine, fleetPresence }) => {
+      const managedPresence = projectMachineManagedPresence(machine, membership?.managedByMachineId.get(machine.id));
+      const nativeWord = managedPresence && describeMachineRuntimePresence(
+        machine, nowMs, managedPresence, accountScope, fleetPresence.reachability,
+      ).nativeWord;
       return { key: JSON.stringify([serverId, machine.id]), serverId, machine,
-        name: names.get(machine.id) ?? machine.id, fleetPresence, online: fleetPresence.online, thisComputer: machine.id === thisComputerMachineId };
+        name: names.get(machine.id) ?? machine.id, fleetPresence, nativeWord, online: fleetPresence.online, thisComputer: machine.id === thisComputerMachineId };
     }));
-  }, [accountScope, enrolled, nowMs, reachabilityRevision, serverId, thisComputerMachineId]);
+  }, [accountScope, enrolled, membership, nowMs, reachabilityRevision, serverId, thisComputerMachineId]);
   const attention = useMachineAttention([{ serverId, accountScope, serverName: '', status,
     machines: fleet.map((entry) => entry.machine) }]);
   const needs = React.useMemo(() => selectAttentionSubjects(attention.entries), [attention.entries]);
@@ -281,10 +287,10 @@ function FleetBody(props: MachineWidgetBodyProps) {
   const online = ordered.filter((entry) => entry.online !== false);
   // Medium and Full are two rows high: offline machines are one quiet line at the end ("studio is offline",
   // "8 are offline", lab FL Medium), so a long offline list never runs past the card. Tall lists them.
-  const offlineLine = describeRest([], offline, online.length);
+  const offlineLine = size === 'tall' ? null : describeRest([], offline, online.length);
   const offlineEnd = size === 'tall' ? (offline.length > 0 ? (
     <>
-      <Text style={styles.label}>{t('machines.widgets.body.fleet.offlineGroup', { count: offline.length })}</Text>
+      <Text style={styles.label}>{describeFleetUnreachable(offline, (count) => t('machines.widgets.body.fleet.offlineGroup', { count }), false)}</Text>
       {rows(offline, false)}
     </>
   ) : null) : offlineLine ? <Text testID={`${props.testID}.rest`} numberOfLines={2} style={styles.rest}>{offlineLine}</Text> : null;
@@ -326,12 +332,28 @@ function useFleetRowOrder(fleet: readonly FleetMachine[], needs: readonly Machin
 export function describeRest(calm: readonly FleetMachine[], offline: readonly FleetMachine[], listed: number): string | null {
   const parts: string[] = [];
   if (calm.length > 0) parts.push(listed > 0 ? t('machines.widgets.body.fleet.othersCalm', { count: calm.length }) : t('machines.widgets.body.fleet.allCalm', { count: calm.length }));
-  if (offline.length === 1) parts.push(t('machines.widgets.body.fleet.oneOffline', { machine: offline[0]!.name }));
-  // After "4 others are calm" the count reads on ("· 8 are offline"); standing alone it names what it counts,
-  // as the All machines list does ("8 machines are offline").
-  else if (offline.length > 1) parts.push(parts.length > 0 ? t('machines.widgets.body.fleet.manyOffline', { count: offline.length })
-    : t('allMachines.offlineHidden', { count: offline.length }));
+  const unreachable = describeFleetUnreachable(offline, (count, name) => count === 1
+    ? t('machines.widgets.body.fleet.oneOffline', { machine: name })
+    : parts.length > 0 ? t('machines.widgets.body.fleet.manyOffline', { count }) : t('allMachines.offlineHidden', { count }), true);
+  if (unreachable) parts.push(unreachable);
   return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/** Keep the existing folded line while counting Machines under their own status words. */
+function describeFleetUnreachable(
+  entries: readonly FleetMachine[],
+  formatOffline: (count: number, name: string) => string,
+  showSingleName: boolean,
+): string {
+  const groups = new Map<string | null, { name: string; count: number }>();
+  for (const entry of entries) {
+    const word = entry.nativeWord ?? null;
+    const group = groups.get(word);
+    if (group) group.count += 1;
+    else groups.set(word, { name: entry.name, count: 1 });
+  }
+  return Array.from(groups, ([word, { name, count }]) => word === null ? formatOffline(count, name)
+    : showSingleName && count === 1 ? `${name} · ${word}` : `${word} · ${count}`).join(' · ');
 }
 
 /**
@@ -359,9 +381,9 @@ const FleetMachineRow = React.memo(function FleetMachineRow(props: Readonly<{
   const reason = need ? selectHeadlineReason(need.attention) : null;
   const tone = reason ? resolveMachineAttentionWordColor(theme.colors) : null;
   const word = reason ? describeMachineAttentionWord(reason) : null;
-  const subtitle = entry.online === null ? t('common.unknown') : !entry.online
+  const subtitle = entry.nativeWord ?? (entry.online === null ? t('common.unknown') : !entry.online
     ? t('settingsOverview.machineLastSeen', { lastSeen: formatLastSeen(activity?.activeAt ?? 0) })
-    : working > 0 ? t('machineDetailPage.work.working', { count: working }) : t('machineDetailPage.work.none');
+    : working > 0 ? t('machineDetailPage.work.working', { count: working }) : t('machineDetailPage.work.none'));
   const strip = entry.online && props.metrics.length > 0 && availability?.kind !== 'not_reported'
     ? <MachineSummaryStrip availability={availability} style={props.style} metrics={props.metrics} layout="under" testID={`${props.testID}.strip`} />
     : undefined;
@@ -503,11 +525,11 @@ const FleetMachineCard = React.memo(function FleetMachineCard(
     serverId: entry.serverId,
     machineId: entry.machine.id,
   });
-  const line = entry.online === null ? t('common.unknown') : entry.online
+  const line = (props.metrics.length === 0 ? entry.nativeWord : null) ?? (entry.online === null ? t('common.unknown') : entry.online
     ? t('systemStatus.machine.online')
     : t('settingsOverview.machineLastSeen', {
         lastSeen: formatLastSeen(activity?.activeAt ?? 0),
-      });
+      }));
   const tiles =
     props.metrics.length === 0 ? undefined : entry.online &&
       availability?.kind !== 'not_reported' ? (
@@ -521,7 +543,7 @@ const FleetMachineCard = React.memo(function FleetMachineCard(
       <Text numberOfLines={2} style={styles.cardQuiet}>
         {entry.online === null ? t('common.unknown') : entry.online
           ? t('machineSummary.olderHappier')
-          : t('machines.widgets.body.common.offline')}
+          : entry.nativeWord ?? t('machines.widgets.body.common.offline')}
       </Text>
     );
   const facts =

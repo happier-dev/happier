@@ -398,7 +398,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const credentialAccount = credentialTargets.length === 1 ? credentialAccounts.presentationsByKey[credentialTargets[0]!.key]?.primaryLabel : undefined;
     // Managed from names the controller once, above; here it is the managing computer.
     const managingComputer = t('managedMachines.receipt.managingComputer');
-    const memberCreateHelp = presentation.billing?.location === 'local'
+    const memberCreateHelp = receipt.cost?.kind === 'local'
         ? t('machinePresets.memberCreateHelpLocal', { controller: managingComputer })
         : credentialAccount ? t('machinePresets.memberCreateHelpAccount', { controller: managingComputer, account: credentialAccount })
             : t('machinePresets.memberCreateHelp', { controller: managingComputer });
@@ -420,7 +420,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
                 : memberCreateOn ? t('machinePresets.memberCreateWithdraw') : undefined,
             onChange: (next: boolean) => edit({ teamAcquireDelegated: next }) } } : {}),
         // A local machine runs on its controller and bills nobody, so the billing caveat only speaks for a cloud one.
-        ...(sessionSandbox ? {} : { limit: { ...(presentation.billing?.location === 'local' ? {} : { description: t('machinePresets.limitHelp') }), row: canManage
+        ...(sessionSandbox ? {} : { limit: { ...(receipt.cost?.kind === 'local' ? {} : { description: t('machinePresets.limitHelp') }), row: canManage
             ? managedPresetLimitRow({ limit: desiredLimit?.maximum, disabled: approval.approvalPending,
                 onChange: next => edit({ simultaneousLimit: next ? { maximum: next } : null }) })
             : { title: visiblePreset.simultaneousLimit

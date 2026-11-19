@@ -12,7 +12,7 @@ type PresetMutationResultV1 = OpenedMachinePresetActionOutputV1<'machines.preset
 import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { machinePresetEditContinuationDraft, type MachinePresetEditContinuation, type MachinePresetEditDraft } from './machinePresetEditDraft';
 import { createManagedCredentialSelectionV1, readManagedCredentialSelectionValueV1, type ManagedControllerV1, type ManagedCredentialSelectionV1, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { resolveManagedConfigurationCost, type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ExternalActionManagedAdmissionReceiptV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { resolveManagedAcquireReviewV1, type ManagedAcquireInputV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectManagedProvisionerFailure, type ManagedProvisionerFailure } from './managedProvisionerClient';
@@ -928,6 +928,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     };
     // A preset describes every machine made from it, not one about to exist.
     const receiptCaption = props.presetOnly ? t('machinePresets.receiptCaption') : undefined;
+    const draftCost = resolveManagedConfigurationCost({ billing: billing ?? presentation.billing, provider: title });
     const receipt: ManagedReceiptModel = {
         ...(receiptFacts ? buildManagedConfigurationReceipt({ caption: receiptCaption, launch: receiptFacts.launch, reviewedFacts: receiptFacts, providerTitle: title, controllerName: delegatedPreset || pooledDraft ? controllerName : knownControllerName, homeName, mark: receiptMark, localized,
             ...(draft?.preset && presentation.descriptor ? { savedLaunchPresentation: {
@@ -945,9 +946,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             })
             : { caption: receiptCaption ?? t('managedMachines.receipt.yourNewMachine'), mark: receiptMark, name: draft?.name ?? title,
                 spec: (draft?.name ?? title) === title ? presentation.kindTitle ?? '' : title, facts: managedAgentSignInReceiptFacts(agentSignIn),
-                cost: billing?.location === 'local' && (pooledDraft || knownControllerName)
-                    ? { kind: 'local' as const, computer: pooledDraft ? controllerSentence : knownControllerName!, meters: [] }
-                    : { kind: 'unpriced' as const, provider: title } }),
+                cost: draftCost.kind === 'local'
+                    ? { ...draftCost, computer: pooledDraft ? controllerSentence : controllerName, meters: [] }
+                    : draftCost }),
         onRename: () => { void rename(); },
         keep: keepPolicy && defaultPolicy ? { policy: keepPolicy, defaultPolicy, inherited: !draft?.override && (!props.presetOnly || !draft?.preset?.retention && draft?.preset?.wakeOnAcceptedMessage === undefined),
             finiteOnly, deadline: !props.presetOnly,
@@ -1384,7 +1385,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                     value={draft.preparation?.enabled === true} disabled={busy || !teamWritable}
                     onValueChange={enabled => setDraft(current => current ? { ...current, preparation: { ...current.preparation, enabled } } : current)} />} />
         </ItemGroup> : null}
-        {draft && props.presetOnly && props.presetFor !== 'isolation' ? <ItemGroup title={t('machinePresets.runningAtOnce')} description={presentation.billing?.location === 'local' ? undefined : t('machinePresets.limitHelp')}>
+        {draft && props.presetOnly && props.presetFor !== 'isolation' ? <ItemGroup title={t('machinePresets.runningAtOnce')} description={receipt.cost?.kind === 'local' ? undefined : t('machinePresets.limitHelp')}>
             <ManagedFieldRow testID="managed-config.limit" row={managedPresetLimitRow({ limit, disabled: busy,
                 onChange: next => { if (activeBinding?.isCurrent()) setLimit(next); } })} />
         </ItemGroup> : null}

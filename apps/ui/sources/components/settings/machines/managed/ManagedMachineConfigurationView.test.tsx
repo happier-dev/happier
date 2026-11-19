@@ -5047,6 +5047,35 @@ describe('mounted managed configurator', () => {
     expect(onUse.mock.calls[0]).toHaveLength(startsSession ? 2 : 1);
     await screen.unmount();
   });
+  it('shows the declared Docker cost for a fresh preset without an available controller', async () => {
+    const { DEVCONTAINER_PLUGIN } = await import('../../../../../../../packages/plugins/devcontainer/src/manifest');
+    const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const { t } = await import('@/text');
+    const manifest = PluginPortableReleaseManifestV1Schema.parse(DEVCONTAINER_PLUGIN.manifest);
+    const serverId = await addPresetHome({ name: 'Docker presets', serverUrl: 'https://local-docker-receipt.example.test',
+      serverIdentityId: 'srv_local_docker_receipt', accountId: 'owner', currentAccount: true, accountEncryptionMode: 'plain' });
+    await publishPresetEditorDeclaration(serverId, manifest);
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
+    const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1440, height: 844, scale: 1, fontScale: 1 });
+    restoreViewport = () => viewport.mockRestore();
+    const view = <ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey({
+      pluginId: manifest.id, localId: manifest.contributes!.machineProvisioners![0]!.id,
+    })} presetOnly />;
+    const desktop = await renderScreen(view);
+    try {
+      await waitForHomeGovernance(() => expect(desktop.findByTestId('managed-config.receipt')).not.toBeNull());
+      expect(desktop.getTextContent()).toContain(t('managedMachines.price.noBill'));
+    } finally { await desktop.unmount(); }
+
+    viewport.mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+    const phone = await renderScreen(view);
+    try {
+      await waitForHomeGovernance(() => expect(phone.findByTestId('managed-config.summary')?.props.accessibilityLabel)
+        .toContain(t('managedMachines.price.noBill')));
+    } finally { await phone.unmount(); }
+  });
+
   it('keeps a local VM receipt free of a bill before any choice exists (UIR5c)', async () => {
     const serverId = await addPresetHome({
       name: 'Compute',
