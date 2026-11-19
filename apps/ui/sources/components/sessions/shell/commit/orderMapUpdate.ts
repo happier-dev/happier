@@ -42,14 +42,16 @@ function insertOrderKey(params: Readonly<{
     return [params.movedKey, ...withoutMoved];
 }
 
-function copyOrderMapWithoutMovedKey(currentMap: OrderMap, movedKey: string): Record<string, string[]> {
-    const out: Record<string, string[]> = {};
-    for (const [scopeKey, keys] of Object.entries(currentMap)) {
-        if (!Array.isArray(keys)) continue;
-        const nextKeys = keys.filter((key) => key !== movedKey);
-        if (nextKeys.length > 0) out[scopeKey] = nextKeys;
-    }
-    return out;
+/** Order writes replace entire scopes. Send only scopes whose stored order changed. */
+export function changedOrderScopes(
+    currentMap: OrderMap,
+    next: Record<string, string[]>,
+    readImplicitOrder?: (scopeKey: string) => readonly string[] | undefined,
+): Record<string, string[]> {
+    return Object.fromEntries(Object.entries(next).filter(([scopeKey, keys]) => {
+        const current = currentMap[scopeKey] ?? readImplicitOrder?.(scopeKey) ?? [];
+        return current.length !== keys.length || keys.some((key, index) => key !== current[index]);
+    }));
 }
 
 /**
@@ -69,13 +71,13 @@ function copyOrderMapWithoutMovedKey(currentMap: OrderMap, movedKey: string): Re
 export function buildOrderMapAfterMove(params: Readonly<{
     currentMap: OrderMap;
     scopeKey: string;
+    sourceScopeKey?: string;
     movedKey: string;
     directKeys: ReadonlyArray<string>;
     beforeKey?: string | null;
     afterKey?: string | null;
 }>): Record<string, string[]> {
-    const currentMap = copyOrderMapWithoutMovedKey(params.currentMap, params.movedKey);
-    const existingKeys = currentMap[params.scopeKey] ?? [];
+    const existingKeys = params.currentMap[params.scopeKey] ?? [];
     const existingKeySet = new Set(dedupeOrderKeys(existingKeys));
     const newlyVisibleKeys = dedupeOrderKeys(params.directKeys)
         .filter((key) => key !== params.movedKey && !existingKeySet.has(key));
@@ -87,8 +89,13 @@ export function buildOrderMapAfterMove(params: Readonly<{
         afterKey: params.afterKey,
     });
 
-    return {
-        ...currentMap,
-        [params.scopeKey]: nextKeys,
-    };
+    const next = { [params.scopeKey]: nextKeys };
+    const sourceScopeKey = params.sourceScopeKey;
+    if (sourceScopeKey !== undefined && sourceScopeKey !== params.scopeKey) {
+        const sourceKeys = params.currentMap[sourceScopeKey];
+        if (sourceKeys?.includes(params.movedKey)) {
+            next[sourceScopeKey] = sourceKeys.filter(key => key !== params.movedKey);
+        }
+    }
+    return next;
 }

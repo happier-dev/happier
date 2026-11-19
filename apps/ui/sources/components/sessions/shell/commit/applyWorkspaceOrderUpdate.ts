@@ -1,5 +1,5 @@
 import type { SessionListTreeModel } from '../drop-resolution/sessionListTreeTypes';
-import { buildOrderMapAfterMove } from './orderMapUpdate';
+import { buildOrderMapAfterMove, changedOrderScopes } from './orderMapUpdate';
 
 type WorkspaceOrderMap = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
 
@@ -66,6 +66,8 @@ export async function applyWorkspaceOrderUpdate(params: Readonly<{
 }>): Promise<boolean> {
     const next = buildSessionWorkspaceOrderAfterTreeDrop(params);
     if (!next) return false;
-    await params.setSessionWorkspaceOrderV1(next);
+    const changed = changedOrderScopes(params.currentMap, next);
+    if (Object.keys(changed).length === 0) return false;
+    await params.setSessionWorkspaceOrderV1(changed);
     return true;
 }

@@ -35,6 +35,19 @@ describe('supplemental attention never becomes incidental personal order', () =>
             .toMatchObject({ canReorderSiblings: false, canMoveBetweenFolders: true, canDrag: true });
     });
 
+    it('clears the source scope on a move and leaves independent orderings untouched', () => {
+        const tree = buildSessionListTreeRows({ items });
+        const source = [...tree.rowMetadataById.values()].find(row => row.sessionId === 'b')!;
+        const destination = [...tree.rowMetadataById.values()].find(row => row.sessionId === 'a')!;
+        const sourceScope = tree.containerMetadataById.get(source.containerId)!.groupKey;
+        const destinationScope = tree.containerMetadataById.get(destination.containerId)!.groupKey;
+
+        expect(buildSessionListGroupOrderAfterTreeDrop({
+            tree, movedRowId: source.rowId, containerId: destination.containerId, afterRowId: destination.rowId,
+            currentMap: { [sourceScope]: [key('b')], [destinationScope]: [key('a')], pinned: [key('b')] },
+        })).toEqual({ [sourceScope]: [], [destinationScope]: [key('a'), key('b')] });
+    });
+
     it('excludes outside-only groups while preserving mixed groups and unseen saved group order', () => {
         const tree = buildSessionListTreeRows({ items });
         const groups = [...tree.rowMetadataById.values()].filter(row => row.kind === 'workspace-root');
@@ -42,10 +55,10 @@ describe('supplemental attention never becomes incidental personal order', () =>
         const b = groups.find(row => row.item.groupKey === 'own-b')!;
         const outside = groups.find(row => row.item.groupKey === 'outside')!;
         const scopeKey = tree.containerMetadataById.get(b.containerId)!.groupKey;
-        const currentMap = { [scopeKey]: ['previously-saved-unseen', a.orderKey!, b.orderKey!] };
+        const currentMap = { [scopeKey]: ['previously-saved-unseen', a.orderKey!, b.orderKey!], independent: [b.orderKey!] };
         const next = buildSessionWorkspaceOrderAfterTreeDrop({ tree, movedRowId: b.rowId, containerId: b.containerId,
             beforeRowId: a.rowId, currentMap });
-        expect(next?.[scopeKey]).toEqual(['previously-saved-unseen', b.orderKey, a.orderKey]);
+        expect(next).toEqual({ [scopeKey]: ['previously-saved-unseen', b.orderKey, a.orderKey] });
         expect(buildSessionWorkspaceOrderAfterTreeDrop({ tree, movedRowId: outside.rowId, containerId: outside.containerId, currentMap })).toBeNull();
         expect(buildSessionWorkspaceOrderAfterTreeDrop({ tree, movedRowId: b.rowId, containerId: b.containerId,
             beforeRowId: outside.rowId, currentMap })).toBeNull();

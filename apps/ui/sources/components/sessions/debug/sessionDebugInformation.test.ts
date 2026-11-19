@@ -19,6 +19,7 @@ describe('sessionDebugInformation', () => {
             session: {
                 id: 'happy-session-1',
                 metadata: {
+                    name: 'Invoice parser',
                     sessionLogPath: ' /tmp/happier/session.log ',
                 },
             },
@@ -27,6 +28,7 @@ describe('sessionDebugInformation', () => {
         });
 
         expect(result.text).toBe([
+            'Happier session name: Invoice parser',
             'Happier session ID: happy-session-1',
             'Claude session ID: claude-session-1',
             'Happier logs: /tmp/happier/session.log',
@@ -47,7 +49,7 @@ describe('sessionDebugInformation', () => {
             providerSessionId: null,
         });
 
-        expect(result.text).toBe('Happier session ID: happy-session-2');
+        expect(result.text).toContain('Happier session ID: happy-session-2');
         expect(result.text).not.toContain('Not available');
         expect(result.text).not.toContain('Claude session ID');
         expect(result.text).not.toContain('Happier logs');
@@ -156,6 +158,7 @@ describe('sessionDebugInformation', () => {
         });
 
         expect(withArtifact.text).toBe([
+            'Happier session name: Untitled session',
             'Happier session ID: happy-session-3',
             'Claude session ID: claude-session-3',
             'Claude session logs: /tmp/claude/session.jsonl',
@@ -173,6 +176,7 @@ describe('sessionDebugInformation', () => {
         });
 
         expect(withoutArtifact.text).toBe([
+            'Happier session name: Untitled session',
             'Happier session ID: happy-session-4',
             'Codex session ID: codex-session-4',
         ].join('\n'));

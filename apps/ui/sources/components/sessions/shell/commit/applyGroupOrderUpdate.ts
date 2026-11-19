@@ -1,5 +1,5 @@
 import type { SessionListTreeModel } from '../drop-resolution/sessionListTreeTypes';
-import { buildOrderMapAfterMove } from './orderMapUpdate';
+import { buildOrderMapAfterMove, changedOrderScopes } from './orderMapUpdate';
 
 type GroupOrderMap = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
 export function collectDirectChildOrderKeys(
@@ -50,6 +50,7 @@ export function buildSessionListGroupOrderAfterTreeDrop(params: Readonly<{
     return buildOrderMapAfterMove({
         currentMap: params.currentMap,
         scopeKey: container.groupKey,
+        sourceScopeKey: params.tree.containerMetadataById.get(moved.containerId)?.groupKey,
         movedKey: moved.orderKey,
         directKeys: directChildKeys,
         beforeKey,
@@ -68,6 +69,8 @@ export async function applyGroupOrderUpdate(params: Readonly<{
 }>): Promise<boolean> {
     const next = buildSessionListGroupOrderAfterTreeDrop(params);
     if (!next) return false;
-    await params.setSessionListGroupOrderV1(next);
+    const changed = changedOrderScopes(params.currentMap, next);
+    if (Object.keys(changed).length === 0) return false;
+    await params.setSessionListGroupOrderV1(changed);
     return true;
 }

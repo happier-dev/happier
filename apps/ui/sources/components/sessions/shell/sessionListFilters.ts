@@ -255,6 +255,13 @@ export function projectSessionListItemsForHeaderControls(
             continue;
         }
 
+        // Folder projection emits child folders before rows filed directly in their parent.
+        // Close those folders on every row, including rows the filter will skip.
+        while (pendingHeaders.length > 0) {
+            const header = pendingHeaders[pendingHeaders.length - 1]!;
+            if (header.headerKind !== 'folder' || header.groupKey === item.groupKey) break;
+            pendingHeaders.pop();
+        }
         if (!selected.has(item)) continue;
 
         if (pendingHeaders.length > 0) {

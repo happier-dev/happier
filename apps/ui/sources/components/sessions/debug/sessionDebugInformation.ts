@@ -4,6 +4,7 @@ import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdF
 import { AgentNativeResumeIdentityV1Schema } from '@happier-dev/protocol/agents/nativeResumeIdentityV1';
 import type { Metadata } from '@happier-dev/session-core/state';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 type SessionDebugMetadata = unknown;
 
@@ -88,7 +89,8 @@ export function buildSessionDebugInformation(params: Readonly<{
     const metadata = asRecord(ownerMetadata);
     const happierSessionLogPath = normalizeString(metadata?.sessionLogPath);
     const providerSessionArtifactPath = resolveProviderSessionArtifactPath(ownerMetadata);
-    const lines = [`Happier session ID: ${params.session.id}`];
+    const name = getSessionName({ ...params.session, metadata: params.session.metadata ?? null }, undefined, { snapshotOnly: true });
+    const lines = [`Happier session name: ${name}`, `Happier session ID: ${params.session.id}`];
 
     if (providerDisplayName && providerSessionId) {
         lines.push(`${providerDisplayName} session ID: ${providerSessionId}`);

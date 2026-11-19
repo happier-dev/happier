@@ -59,6 +59,7 @@ import {
 } from '../commit/applySessionListTreeDropOperation';
 import { buildSessionListGroupOrderAfterTreeDrop, collectDirectChildOrderKeys } from '../commit/applyGroupOrderUpdate';
 import { buildSessionWorkspaceOrderAfterTreeDrop } from '../commit/applyWorkspaceOrderUpdate';
+import { changedOrderScopes } from '../commit/orderMapUpdate';
 import { buildSessionListDragSource } from '../drop-resolution/buildSessionListDragSource';
 import { buildSessionListTreeRows } from '../drop-resolution/buildSessionListTreeRows';
 import { isSessionTreeRowId, isWorkspaceRootTreeRowId } from '../drop-resolution/treeRowId';
@@ -287,7 +288,7 @@ function isNoChangeCommit(params: Readonly<{
     source: SessionListTreeDragSource;
     context: CommitSessionListDragIntentContext;
     destination: SessionListTreeDropDestination;
-    nextOrder: Readonly<Record<string, readonly string[]>> | null;
+    nextOrder: Record<string, string[]> | null;
 }>): boolean {
     const { tree, source, context, destination, nextOrder } = params;
     if (source.metadata.kind === 'folder' && destination.container.destinationKind === 'section-order') {
@@ -303,31 +304,17 @@ function isNoChangeCommit(params: Readonly<{
     if (!nextOrder) return false;
 
     if (source.metadata.kind === 'workspace-root') {
-        return isOrderMapScopeUnchanged({ currentMap: context.sessionWorkspaceOrderV1 ?? {}, next: nextOrder });
+        return Object.keys(changedOrderScopes(context.sessionWorkspaceOrderV1 ?? {}, nextOrder)).length === 0;
     }
 
-    return isOrderMapScopeUnchanged({
-        // An absent explicit map still has the list's real rendered order. Materializing that
-        // unchanged order is not a move (including root-edge pointer drops at the own place).
-        currentMap: { ...context.sessionListGroupOrderV1,
-            [destination.container.groupKey]: context.sessionListGroupOrderV1[destination.container.groupKey]
-                ?? collectDirectChildOrderKeys(tree, destination.container.containerId) },
-        next: nextOrder,
-    });
-}
-
-function isOrderMapScopeUnchanged(params: Readonly<{
-    currentMap: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
-    next: Readonly<Record<string, ReadonlyArray<string>>>;
-}>): boolean {
-    for (const [scopeKey, nextKeys] of Object.entries(params.next)) {
-        const currentKeys = params.currentMap[scopeKey] ?? [];
-        if (currentKeys.length !== nextKeys.length) return false;
-        for (let index = 0; index < nextKeys.length; index += 1) {
-            if (currentKeys[index] !== nextKeys[index]) return false;
-        }
-    }
-    return true;
+    // An absent explicit order still has the list's rendered order at the destination.
+    return Object.keys(changedOrderScopes(
+        context.sessionListGroupOrderV1,
+        nextOrder,
+        scopeKey => scopeKey === destination.container.groupKey
+            ? collectDirectChildOrderKeys(tree, destination.container.containerId)
+            : undefined,
+    )).length === 0;
 }
 
 function isSessionSiblingReorderBlockedByOrderingMode(params: Readonly<{

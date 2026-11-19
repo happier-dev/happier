@@ -160,7 +160,10 @@ describe('filterSessionListItemsForHeaderControls', () => {
         ]);
     });
 
-    it('keeps the whole ancestor chain from primary section through server and folder headers', () => {
+    it.each([
+        ['invoices-a', ['Active', 'Home A', 'Billing', 'Invoices', 'invoices-a']],
+        ['billing-a', ['Active', 'Home A', 'Billing', 'billing-a']],
+    ] as const)('keeps only the ancestor headings of the matched %s session', (sessionId, expected) => {
         const serverHeader: Extract<SessionListIndexItem, { type: 'header' }> = {
             type: 'header',
             title: 'Home A',
@@ -185,25 +188,19 @@ describe('filterSessionListItemsForHeaderControls', () => {
             activeHeader,
             serverHeader,
             folderHeader('Billing', 'folder:billing', 0),
-            sessionItem('billing-a', { groupKey: 'folder:billing', groupKind: 'folder' }),
             folderHeader('Invoices', 'folder:billing/invoices', 1),
-            sessionItem('invoices-a', { groupKey: 'folder:billing/invoices', groupKind: 'folder' }),
+            sessionItem('invoices-a', { groupKey: 'folder:billing/invoices', groupKind: 'folder', folderDepth: 2 }),
+            sessionItem('billing-a', { groupKey: 'folder:billing', groupKind: 'folder', folderDepth: 1 }),
         ], {
             searchQuery: 'invoice parser',
             selectedTagIds: [],
             sessionTagIdsBySessionKey: {},
             searchableTextBySessionKey: {
-                [key('invoices-a')]: 'Please repair the invoice parser regression.',
+                [key(sessionId)]: 'Please repair the invoice parser regression.',
             },
         });
 
-        expect(result.map((item) => item.type === 'session' ? item.sessionId : item.type === 'header' ? item.title : item.runId)).toEqual([
-            'Active',
-            'Home A',
-            'Billing',
-            'Invoices',
-            'invoices-a',
-        ]);
+        expect(result.map((item) => item.type === 'session' ? item.sessionId : item.type === 'header' ? item.title : item.runId)).toEqual(expected);
     });
 
     it('keeps a memory-matched session when local searchable text does not match', () => {
