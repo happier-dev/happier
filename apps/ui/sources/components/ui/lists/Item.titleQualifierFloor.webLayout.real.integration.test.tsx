@@ -35,6 +35,7 @@ vi.mock('react-native-reanimated', async () => {
 
 installWebLayoutBridge();
 const { Item } = await import('./Item');
+const { ListPresentationProvider } = await import('./listPresentation');
 
 const TITLE = 'sweep-a1-preview148-starter-app';
 const QUALIFIER = 'NLDW3-5-36-33 · eadc';
@@ -126,6 +127,39 @@ it('keeps the floor in a split row, the end fact starting after the name', async
         const end = layout.textRects(fact)[0]!;
         expect(title.width).toBeGreaterThanOrEqual(119);
         expect(end.left).toBeGreaterThanOrEqual(title.right);
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
+
+it('aligns read-only field values on the right when a long value wraps', async () => {
+    const repository = 'From the folder';
+    const branch = 'feature/automaticallygeneratedbranchnamewithoutspacesandreallylong';
+    const description = 'The agent works on a new branch from it, ready for a pull request.';
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+        await act(async () => root.render(
+            <View style={{ width: 356 }}>
+                <ListPresentationProvider value="page">
+                    <Item title="Repository" subtitle="The repository for this session" mode="info" detail={repository} wrapDetail />
+                    <Item title="Branch" subtitle={description} mode="info" detail={branch} wrapDetail />
+                </ListPresentationProvider>
+            </View>,
+        ));
+        const layout = await measureWebLayout(host, {
+            viewport: { width: 390, height: 400 },
+            texts: [repository, branch, description],
+            settle: (replay) => act(replay),
+        });
+        const branchBox = layout.textRects(branch)[0]!;
+        const descriptionBox = layout.textRects(description)[0]!;
+        expect(branchBox.left).toBeGreaterThanOrEqual(descriptionBox.right);
+        expect(branchBox.right).toBeCloseTo(layout.textRects(repository)[0]!.right);
+        expect(branchBox.height).toBeGreaterThan(branchBox.lineHeight!);
+        expect(branchBox.scrollWidth).toBeLessThanOrEqual(branchBox.width + 1);
     } finally {
         await act(async () => root.unmount());
         host.remove();
