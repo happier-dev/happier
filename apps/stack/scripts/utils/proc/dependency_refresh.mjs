@@ -514,8 +514,9 @@ export async function markDependencyMutation({ installDir, env = process.env, ou
   const writer = dependencyWriters.getStore()?.get(lockPath);
   // New readers wait from the first mutation on; readers already in keep going.
   if (writer?.active) closeDependencyReaderAdmission(lockPath);
-  const outputsChanged = writer?.active && (previous?.generation ?? null) !== writer.beforeGeneration
-    ? previous?.outputsChanged ?? ['install'] : [];
+  // A later repair cannot hide consumed outputs left incomplete by a previous writer.
+  const hasUnfinishedOutputs = previous?.generation != null && previous.generation !== previous.completedGeneration;
+  const outputsChanged = hasUnfinishedOutputs ? previous.outputsChanged ?? ['install'] : [];
   await writeJsonAtomic(generationPath, { generation: randomUUID(), completedGeneration: previous?.completedGeneration ?? null,
     completedExpoGeneration: readCompletedExpoGeneration(previous),
     ...(output !== 'install' && previous?.installationFailure
@@ -845,19 +846,24 @@ export function retainDependencyGenerationForProcess({ installDir, pid = process
   return generation;
 }
 
-export async function readDependencyPublicationState({ installDir, env = process.env }) {
+export async function readDependencyPublicationState({ installDir, env = process.env, component = 'server' }) {
   const marker = await readJsonIfExists(resolveDependencyRefreshMarkerPath(installDir));
   const generation = await readJsonIfExists(`${resolveDependencyRefreshLockPath(installDir, env)}.generation`);
   // The supported Yarn source checkout retains its own installer. It holds
   // this gate during installation but does not publish mutation generations.
   const predecessorWriter = isYarnWorkspace(await readJsonIfExists(join(installDir, 'package.json')));
+  const outputsChanged = generation?.outputsChanged ?? (generation?.generation ? ['install'] : []);
+  const unfinished = generation?.generation != null && generation.generation !== generation.completedGeneration;
+  const unfinishedConsumedOutputs = unfinished && (component === 'server'
+    || outputsChanged.some(output => dependencyOutputAffectsComponent(output, component)));
+  const completedExpoGeneration = readCompletedExpoGeneration(generation);
+  const completedGeneration = component === 'server' ? generation?.completedGeneration ?? null : completedExpoGeneration;
   return { identity: typeof marker?.identity === 'string' ? marker.identity : null,
-    generation: generation?.generation ?? null, completedGeneration: generation?.completedGeneration ?? null,
-    completedExpoGeneration: readCompletedExpoGeneration(generation),
-    outputsChanged: generation?.outputsChanged ?? (generation?.generation ? ['install'] : []),
+    generation: unfinishedConsumedOutputs ? generation.generation : completedGeneration,
+    completedGeneration, completedExpoGeneration, outputsChanged,
     patchHashRelock: generation?.patchHashRelock ?? null,
-    // Current readiness gates may only drain readers; marked unfinished
-    // attempts mutate bytes. The predecessor installer has no generations.
-    writerActive: (predecessorWriter || (generation?.generation != null && generation.generation !== generation.completedGeneration))
+    // A failed mutation still changed the attempt identity. Only a writer
+    // actively changing consumed outputs prevents a concurrent publication.
+    writerActive: (predecessorWriter || unfinishedConsumedOutputs)
       && isDependencyRefreshMutationActive({ installDir, env }) };
 }

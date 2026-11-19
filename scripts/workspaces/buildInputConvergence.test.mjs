@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { captureBuildInputFiles } from './buildInputConvergence.mjs';
 import * as convergence from './buildInputConvergence.mjs';
-import { readDependencyPublicationState, resolveDependencyRefreshLockPath, withDependencyRefresh, withDependencyRefreshLock } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
+import { markDependencyMutation, readDependencyPublicationState, resolveDependencyRefreshLockPath, withDependencyRefresh, withDependencyRefreshLock } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
 import { createTempFixture } from '../../apps/stack/scripts/testkit/core/temp_fixture.mjs';
 import { withPatchedProcessEnv } from '../../apps/stack/scripts/testkit/core/env_scope.mjs';
 import { ensureWorkspacePackagesBuiltForComponent } from './ensureWorkspacePackagesBuilt.mjs';
@@ -47,6 +47,65 @@ for (const boundary of ['during', 'after']) test(`dependency publication preserv
       await writeFile(fixture.path('node_modules', 'installed.js'), 'changed dependency bytes');
     });
     return value;
+  }), { code: 'BUILD_INPUTS_CHANGED' });
+});
+
+test('shared dependency preparation publishes across a Prisma-only repair', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-finite-prisma-repair-' });
+  const sourceDir = fixture.root;
+  const install = { installDir: sourceDir, env: { ...process.env, HAPPIER_STACK_HOME_DIR: sourceDir } };
+  await writeFile(fixture.path('package.json'), JSON.stringify({ private: true, workspaces: ['apps/*', 'packages/*'] }));
+  await writeFile(fixture.path('pnpm-lock.yaml'), '# fixture\n');
+  await writeFile(fixture.path('pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n');
+  const packageDir = fixture.path('packages', 'example');
+  const name = '@happier-dev/example';
+  await mkdir(join(packageDir, 'src'), { recursive: true });
+  await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name, main: './dist/index.js', scripts: { build: 'fixture-build' } }));
+  await writeFile(join(packageDir, 'src/index.ts'), 'export const ready = true;');
+  for (const component of ['cli', 'server', 'ui']) {
+    const dir = fixture.path('apps', component);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'package.json'), JSON.stringify({ name: `@fixture/${component}`,
+      dependencies: { [name]: 'workspace:*' } }));
+  }
+  const result = await ensureWorkspacePackagesBuiltForComponent(fixture.path('apps', 'server'), {
+    env: install.env, workspaceBuildBoundary: {
+      prepareEnv: async (_dir, env) => env,
+      // Replace the compiler, leaving the real dependency writer and package publisher in the path.
+      runPackageBuild: async (_dir, { env }) => {
+        await withDependencyRefreshLock(install,
+          () => markDependencyMutation({ ...install, output: 'server-generated-client:prisma' }));
+        await writeFile(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), 'export const ready = true;\n');
+      },
+    },
+  });
+  assert.deepEqual(result.built, [name]);
+  assert.equal(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), 'export const ready = true;\n');
+});
+
+test('workspace dependency publication keeps guarding unfinished installed outputs', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-unfinished-build-inputs-' });
+  const sourceDir = fixture.root;
+  const install = { installDir: sourceDir, env: { ...process.env, HAPPIER_STACK_HOME_DIR: sourceDir } };
+  const inputs = { sourceDir, env: install.env, component: 'workspace-package' };
+  const publish = output => withDependencyRefreshLock(install,
+    () => markDependencyMutation({ ...install, output }));
+  await publish('install');
+
+  await convergence.withBuildInputDependencies(inputs, async (_env, publication) => {
+    await withDependencyRefreshLock(install, async () => {
+      await markDependencyMutation({ ...install, output: 'server-generated-client:prisma' });
+      await publication.assertCurrent();
+    });
+  });
+
+  await assert.rejects(convergence.withBuildInputDependencies(inputs, async () => {
+    const failed = new Error('UI outputs were interrupted');
+    await assert.rejects(withDependencyRefreshLock(install, async () => {
+      await markDependencyMutation({ ...install, output: 'ui-dependency-outputs' });
+      throw failed;
+    }), error => error === failed);
+    await publish('server-generated-client:prisma');
   }), { code: 'BUILD_INPUTS_CHANGED' });
 });
 
@@ -419,6 +478,7 @@ test('component dependency consumption waits for the writer before compiling or 
   const held = new Promise(resolve => { releaseWriter = resolve; });
   const started = new Promise(resolve => { writerEntered = resolve; });
   const writer = withDependencyRefreshLock({ installDir: sourceDir, env }, async () => {
+    await markDependencyMutation({ installDir: sourceDir, env });
     writerEntered();
     await held;
   });

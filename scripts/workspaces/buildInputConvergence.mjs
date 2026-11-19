@@ -8,13 +8,13 @@ import cliDistBuildManifest from '../../packages/cli-common/cliDistBuildManifest
 import { packageNameOfSpecifier, readWorkspacePackages } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
 export { buildInputDependencyIdentityMatches } from '../../packages/cli-common/sourceRuntimeDependencies.mjs';
 
-export async function readBuildInputDependencies({ sourceDir, env = process.env }) {
-  return await readDependencyPublicationState({ installDir: resolveDependencyInstallRoot(sourceDir), env });
+export async function readBuildInputDependencies({ sourceDir, env = process.env, component }) {
+  return await readDependencyPublicationState({ installDir: resolveDependencyInstallRoot(sourceDir), env, component });
 }
 
 /** Reject a result that consumed an install while its writer was running. */
-export async function assertBuildInputDependencies({ sourceDir, env = process.env, state }) {
-  const current = await readBuildInputDependencies({ sourceDir, env });
+export async function assertBuildInputDependencies({ sourceDir, env = process.env, state, component }) {
+  const current = await readBuildInputDependencies({ sourceDir, env, component });
   if (!buildInputDependencyIdentityMatches(state, current) || state.generation !== current.generation) {
     throw new BuildInputDriftError('[build] dependencies changed while producing the artifact; discard it and rerun the phase');
   }
@@ -24,16 +24,16 @@ export async function assertBuildInputDependencies({ sourceDir, env = process.en
  * Captures link external packages to the installed tree. Wait for an active
  * writer at startup, then check dependency publication without holding readers.
  * @template T
- * @param {{ sourceDir: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal }} input
+ * @param {{ sourceDir: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal, component?: string }} input
  * @param {(env: NodeJS.ProcessEnv, publication: { state: Awaited<ReturnType<typeof readDependencyPublicationState>>, assertCurrent: () => Promise<void> }) => Promise<T>} consume
  */
-export async function withBuildInputDependencies({ sourceDir, env = process.env, signal }, consume) {
+export async function withBuildInputDependencies({ sourceDir, env = process.env, signal, component }, consume) {
   const installDir = resolveDependencyInstallRoot(sourceDir);
   await waitForDependencyRefresh({ installDir, env, signal });
-  const state = await readBuildInputDependencies({ sourceDir, env });
+  const state = await readBuildInputDependencies({ sourceDir, env, component });
   let checkedAtPublication = false;
   const assertCurrent = async () => {
-    await assertBuildInputDependencies({ sourceDir, env, state });
+    await assertBuildInputDependencies({ sourceDir, env, state, component });
     checkedAtPublication = true;
   };
   const result = await consume(env, { state, assertCurrent });

@@ -1330,7 +1330,10 @@ async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDir
 
 
 async function ensureWorkspacePackageBuiltUnderLock(options) {
-  return await withBuildInputDependencies({ sourceDir: options.monorepoRoot, env: options.env, signal: options.signal },
+  const { monorepoRoot: sourceDir, packageDir, env: buildEnv, signal } = options;
+  // Shared packages do not compile against the generated server Prisma client.
+  const component = relative(sourceDir, packageDir).split(sep)[0] === 'packages' ? 'workspace-package' : undefined;
+  return await withBuildInputDependencies({ sourceDir, env: buildEnv, signal, component },
     (env, publication) => consumeWorkspacePackageBuildInputs({ ...options, env, dependencyPublication: publication }));
 }
 
