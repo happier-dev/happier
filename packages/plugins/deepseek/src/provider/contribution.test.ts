@@ -38,7 +38,10 @@ describe('DEEPSEEK_PROVIDER_CONTRIBUTION', () => {
     expect(new Set(catalog.staticModels.map(model => model.id)).size).toBe(catalog.staticModels.length);
     expect(catalog.staticModels.find(model => model.id === 'deepseek-v4-flash')).toMatchObject({ aliases: ['deepseek-chat', 'deepseek-reasoner'] });
     const fim = catalog.staticModels.find(model => model.id === 'deepseek-v4-pro');
-    expect(fim).toMatchObject({ inlineCompletion: { outputTokens: 4096 } });
+    expect(fim).toMatchObject({
+      upstreamRef: { vendor: 'deepseek', vendorModelId: 'deepseek-v4-pro' },
+      inlineCompletion: { outputTokens: 4096 },
+    });
     expect(fim && budgetInlineCompletionContext(fim, { prefix: '', suffix: '' })).not.toBeNull();
   });
 

@@ -62,6 +62,7 @@ export const DEEPSEEK_PROVIDER_CONTRIBUTION = {
       // FIM's documented ceiling is a usable allowance, not the chat limit:
       // https://api-docs.deepseek.com/guides/fim_completion/ (maximum 4K tokens).
       { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', contextWindowTokens: 1_000_000,
+        upstreamRef: { vendor: 'deepseek', vendorModelId: 'deepseek-v4-pro' },
         inlineCompletion: { operationId: 'native-fim', tokenAccounting: 'utf8-bytes', promptOverheadTokens: 3, outputTokens: 4096, maxOutputTokens: 4096 } },
     ],
     probes: [{ endpointTemplateId: 'deepseek-openai-chat', path: '/v1/models', parser: 'openai-models' }],
