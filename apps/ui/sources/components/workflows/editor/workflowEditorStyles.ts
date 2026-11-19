@@ -796,6 +796,18 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         ...Typography.variant('label', 'regular'),
         color: theme.colors.text.secondary,
     },
+    /** A row's helper: its own line under the label and control, from the label's edge to the row's (`WorkflowFieldPair` `note`). */
+    actionFieldNoteLine: {
+        flexBasis: '100%',
+        gap: theme.space.s2,
+        paddingTop: theme.space.s4,
+        minWidth: 0,
+    },
+    /** The helper's words: quiet, at the meta size. */
+    actionFieldNote: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.tertiary,
+    },
     /** "Required" on an unset field: a quiet marker on the label's line, not a second label. */
     actionFieldMarker: {
         ...Typography.variant('meta'),

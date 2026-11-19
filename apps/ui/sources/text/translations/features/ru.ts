@@ -19035,7 +19035,6 @@ const ru: WorkflowEditorPageTranslations = {
     discardChangesBody: 'Возвращает последнюю сохранённую версию. Отмена вернёт ваши изменения.',
     deleteFailedTitle: 'Не удалось удалить сценарий',
     changedForStep: 'Изменено для этого шага',
-    fromTheWorkflow: 'Из рабочего процесса',
     useWorkflowsValue: 'Использовать значение процесса',
     stepSettingsSubtitle: 'Настройки этого шага. Остальное берётся из рабочего процесса.',
     issuesToFix: ({ count }: { count: number }) => `${count} ${pluralRu(count, 'пункт', 'пункта', 'пунктов')} нужно исправить перед запуском`,

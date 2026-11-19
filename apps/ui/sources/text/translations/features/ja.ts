@@ -18944,7 +18944,6 @@ const ja: WorkflowEditorPageTranslations = {
     discardChangesBody: '最後に保存したバージョンに戻ります。元に戻すで変更を復元できます。',
     deleteFailedTitle: 'ワークフローを削除できませんでした',
     changedForStep: 'このステップで変更',
-    fromTheWorkflow: 'ワークフローから',
     useWorkflowsValue: 'ワークフローの設定を使う',
     stepSettingsSubtitle: 'このステップの設定です。その他はワークフローから引き継ぎます。',
     issuesToFix: ({ count }: { count: number }) => (count === 1 ? '実行の前に直す点が 1 件あります' : `実行の前に直す点が ${count} 件あります`),

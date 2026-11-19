@@ -41,7 +41,8 @@ export function WorkflowRunWhenOption(props: Readonly<{
         : id === 'always' ? t('workflows.runWhen.always') : t('workflows.runWhen.success') }));
     if (props.layout === 'track') return (
         <View style={workflowEditorStyles.actionFieldRow}>
-            <WorkflowFieldPair label={t('workflows.runWhen.title')} trackKey="run-when">
+            <WorkflowFieldPair label={t('workflows.runWhen.title')} trackKey="run-when" labelAlign="control"
+                note={<Text testID={`${props.testIDPrefix}-note`} style={workflowEditorStyles.actionFieldNote}>{t('workflows.runWhen.previousStep')}</Text>}>
                 <SegmentedTabBar<WorkflowRunWhenV1>
                     tabs={options}
                     activeTabId={props.value ?? 'success'}
@@ -51,7 +52,6 @@ export function WorkflowRunWhenOption(props: Readonly<{
                     role="radiogroup"
                     testIDPrefix={props.testIDPrefix}
                 />
-                <Text style={workflowEditorStyles.metaText}>{t('workflows.runWhen.previousStep')}</Text>
             </WorkflowFieldPair>
         </View>
     );

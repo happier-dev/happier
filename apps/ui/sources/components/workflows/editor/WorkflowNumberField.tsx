@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -50,8 +51,9 @@ export function WorkflowNumberField(props: Readonly<{
     /** The field's spoken name when the visible label is only the start of that sentence. */
     accessibilityLabel?: string;
     /**
-     * `track`: the host's label track names the field beside it, so the field draws only its box (its placeholder
-     * says what empty means, once) and the unit after a set value (WF-ACCEPT-1118B item 1).
+     * `track`: the host's label track names the field beside it, so the field is the shared bordered field box (its
+     * placeholder says what empty means, once; the unit after a set value; its repair beneath it), one control
+     * line tall like the selects on that track (WF-ACCEPT-1118B item 1, WF-ACCEPT-1119 item 1).
      */
     presentation?: 'inline' | 'track';
     /** What the number means, for assistive technology (the unit and what empty means). */
@@ -80,11 +82,29 @@ export function WorkflowNumberField(props: Readonly<{
     const invalidMessage = t('workflows.editor.wholeNumberRequired');
     const track = props.presentation === 'track';
     const hint = invalid ? invalidMessage : props.accessibilityHint;
+    const changeText = (next: string) => {
+        setText(next);
+        onChange(valueMeant(next));
+    };
+
+    if (track) return (
+        <FieldTextInput
+            testID={props.testID}
+            value={text}
+            onChangeText={changeText}
+            keyboardType="number-pad"
+            accessibilityLabel={props.accessibilityLabel ?? props.label}
+            {...(props.accessibilityHint === undefined ? {} : { accessibilityHint: props.accessibilityHint })}
+            {...(props.placeholder === undefined ? {} : { placeholder: props.placeholder })}
+            {...(invalid ? { error: invalidMessage } : {})}
+            {...(props.suffix === undefined ? {} : { trailing: <Text style={workflowEditorStyles.metaText}>{props.suffix}</Text> })}
+        />
+    );
 
     return (
         <View>
             <View style={workflowEditorStyles.inlineControl}>
-                {track ? null : <Text style={workflowEditorStyles.metaText}>{props.label}</Text>}
+                <Text style={workflowEditorStyles.metaText}>{props.label}</Text>
                 <TextInput
                     testID={props.testID}
                     style={[workflowEditorStyles.inlineValue, workflowEditorStyles.numberValue]}
@@ -95,15 +115,12 @@ export function WorkflowNumberField(props: Readonly<{
                     // not only as nearby text.
                     {...(hint === undefined ? {} : { accessibilityHint: hint })}
                     {...(props.placeholder === undefined ? {} : { placeholder: props.placeholder })}
-                    onChangeText={(next) => {
-                        setText(next);
-                        onChange(valueMeant(next));
-                    }}
+                    onChangeText={changeText}
                 />
                 {props.suffix !== undefined ? (
                     <Text style={workflowEditorStyles.metaText}>{props.suffix}</Text>
                 ) : null}
-                {!track && value === undefined && props.placeholder !== undefined ? (
+                {value === undefined && props.placeholder !== undefined ? (
                     <Text testID={`${props.testID}-omitted`} style={workflowEditorStyles.groupSummary}>
                         {props.placeholder}
                     </Text>

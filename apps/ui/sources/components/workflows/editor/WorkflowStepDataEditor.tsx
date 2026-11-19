@@ -308,6 +308,11 @@ export function WorkflowFieldPair(props: Readonly<{
      * box's first line rather than centred on the whole value (WF-ACCEPT-1118 item 9). Default: centred on the value.
      */
     labelAlign?: 'center' | 'control';
+    /**
+     * What the row's choice means, as quiet copy beneath the whole row (label edge to row edge), never inside the label
+     * or the control column, so the label stays level with its control (WF-ACCEPT-1119 item 1).
+     */
+    note?: React.ReactNode;
     children: React.ReactNode;
 }>): React.ReactElement {
     const track = React.useContext(WorkflowKindCardLabelTrack);
@@ -330,6 +335,7 @@ export function WorkflowFieldPair(props: Readonly<{
                     rather than holding a page field's inline minimum past a narrow card's edge. */}
                 <HappierPageRowFieldLayoutContext.Provider value={VALUE_TRACK_FIELD_LAYOUT}>{props.children}</HappierPageRowFieldLayoutContext.Provider>
             </View>
+            {props.note == null ? null : <View style={workflowEditorStyles.actionFieldNoteLine}>{props.note}</View>}
         </>
     );
 }

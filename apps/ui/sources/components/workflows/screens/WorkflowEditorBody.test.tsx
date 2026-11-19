@@ -2665,7 +2665,7 @@ describe('workflow editor body', () => {
 
         await screen.pressByTestIdAsync('workflow-editor-inspector-runs-in:detached_run');
         expect(draft.blocks[0]).toMatchObject({ execution: { executionTarget: { kind: 'detached_run' } } });
-        await screen.pressByTestIdAsync('workflow-editor-inspector-runs-in:default');
+        await screen.pressByTestIdAsync('workflow-editor-inspector-runs-in-reset');
         expect(draft.blocks[0]).not.toHaveProperty('execution');
 
         await act(async () => { screen.findByTestId('workflow-editor-inspector-review-switch')?.props.onValueChange(true); });
@@ -2689,6 +2689,55 @@ describe('workflow editor body', () => {
         expect(screen.findByTestId('workflow-editor-step-analyze-only-when')).not.toBeNull();
         await screen.pressByTestIdAsync('workflow-editor-inspector-condition-remove');
         expect(draft.blocks[0]).not.toHaveProperty('onlyWhen');
+    });
+
+    it('reads each Step options row as label and control on one line, its helper beneath the whole row (WF-ACCEPT-1119 item 1)', async () => {
+        const harness = await loadHarness();
+        const { WorkflowFieldPair } = await import('@/components/workflows/editor/WorkflowStepDataEditor');
+        let draft: WorkflowEditorDraft = buildDraft(harness);
+        function Controlled(): React.ReactElement {
+            const [current, setCurrent] = React.useState(draft);
+            draft = current;
+            return React.createElement(harness.WorkflowEditorBody, {
+                draft: current, onChange: setCurrent, machineName: 'Mac Studio', composerScope: MACHINE_COMPOSER_SCOPE,
+                selectedBlockId: 'analyze', onSelectBlock: () => {}, onCustomizeBlock: () => {},
+                view: 'steps', onChangeView: () => {}, executionTarget: 'session',
+            } as never);
+        }
+        const screen = await renderScreen(React.createElement(Controlled));
+        await screen.pressByTestIdAsync('workflow-editor-step-analyze-customize');
+        // The label column and the control column of a Step options row (the How card has its own Conversation row); a
+        // helper is in neither.
+        const columnsOf = (trackKey: string) => {
+            const options = screen.findByTestId('workflow-editor-inspector-options');
+            expect(options).not.toBeNull();
+            const pair = options!.findAllByType(WorkflowFieldPair).find((node) => node.props.trackKey === trackKey);
+            expect(pair).toBeDefined();
+            const [label, control] = pair!.children as [ReactTestInstance, ReactTestInstance];
+            return { pair: pair!, label, control };
+        };
+        const inside = (node: ReactTestInstance, testID: string) => node.findAll((child) => child.props.testID === testID).length > 0;
+
+        for (const [trackKey, helper] of [
+            ['review', 'workflow-editor-inspector-review-note'],
+            ['conversation', 'workflow-editor-inspector-continuity-conversation-consequence'],
+        ] as const) {
+            const { pair, label, control } = columnsOf(trackKey);
+            expect(inside(pair, helper)).toBe(true);
+            expect(inside(label, helper)).toBe(false);
+            expect(inside(control, helper)).toBe(false);
+        }
+
+        // Runs in shows where its value comes from in its control, as the chips do: nothing while it follows the
+        // workflow, and the way back beside the choice once the step changes it.
+        expect(screen.findByTestId('workflow-editor-inspector-runs-in-state')).toBeNull();
+        expect(screen.findByTestId('workflow-editor-inspector-runs-in-reset')).toBeNull();
+        await screen.pressByTestIdAsync('workflow-editor-inspector-runs-in:detached_run');
+        const runsIn = columnsOf('runs-in');
+        expect(inside(runsIn.label, 'workflow-editor-inspector-runs-in-reset')).toBe(false);
+        expect(inside(runsIn.control, 'workflow-editor-inspector-runs-in-reset')).toBe(true);
+        await screen.pressByTestIdAsync('workflow-editor-inspector-runs-in-reset');
+        expect(draft.blocks[0]).not.toHaveProperty('execution');
     });
 
     it('offers Workflow default first in a step Conversation and deletes the step choice when it is picked', async () => {

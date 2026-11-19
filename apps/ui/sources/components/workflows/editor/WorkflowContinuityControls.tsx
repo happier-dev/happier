@@ -453,7 +453,11 @@ export function WorkflowContinuityControls(props: Readonly<{
     );
     const conversation = props.layout === 'track' ? (
         <View style={workflowEditorStyles.actionFieldRow}>
-            <WorkflowFieldPair label={t('workflows.conversation.title')} trackKey="conversation">
+            <WorkflowFieldPair label={t('workflows.conversation.title')} trackKey="conversation" labelAlign="control"
+                // A step following its workflow says what Default means here (the item layout's subtitle), under the row.
+                note={props.conversation === undefined && inherits ? (
+                    <Text testID={`${testIDPrefix}-conversation-consequence`} style={workflowEditorStyles.actionFieldNote}>{conversationConsequence}</Text>
+                ) : null}>
                 <SegmentedTabBar<ConversationSegment>
                     tabs={conversationSegments}
                     activeTabId={conversationSegment}
@@ -463,10 +467,6 @@ export function WorkflowContinuityControls(props: Readonly<{
                     role="radiogroup"
                     testIDPrefix={`${testIDPrefix}-conversation`}
                 />
-                {/* A step following its workflow says what Default means here (the item layout's subtitle). */}
-                {props.conversation === undefined && inherits ? (
-                    <Text testID={`${testIDPrefix}-conversation-consequence`} style={workflowEditorStyles.metaText}>{conversationConsequence}</Text>
-                ) : null}
                 {conversationDetails}
             </WorkflowFieldPair>
         </View>

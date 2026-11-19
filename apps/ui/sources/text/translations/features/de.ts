@@ -18504,7 +18504,6 @@ const de: WorkflowEditorPageTranslations = {
     discardChangesBody: 'Kehrt zur zuletzt gespeicherten Version zurück. Rückgängig holt deine Änderungen zurück.',
     deleteFailedTitle: 'Workflow konnte nicht gelöscht werden',
     changedForStep: 'Für diesen Schritt geändert',
-    fromTheWorkflow: 'Aus dem Workflow',
     useWorkflowsValue: 'Workflow-Wert verwenden',
     stepSettingsSubtitle: 'Einstellungen für diesen Schritt. Der Rest kommt aus dem Workflow.',
     issuesToFix: ({ count }: { count: number }) => (count === 1 ? '1 Punkt ist zu beheben, bevor er laufen kann' : `${count} Punkte sind zu beheben, bevor er laufen kann`),

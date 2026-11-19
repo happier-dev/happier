@@ -19034,7 +19034,6 @@ const pl: WorkflowEditorPageTranslations = {
     discardChangesBody: 'Przywraca ostatnią zapisaną wersję. Cofnij przywraca zmiany.',
     deleteFailedTitle: 'Nie udało się usunąć przepływu',
     changedForStep: 'Zmienione dla tego kroku',
-    fromTheWorkflow: 'Z przepływu pracy',
     useWorkflowsValue: 'Użyj ustawienia przepływu',
     stepSettingsSubtitle: 'Ustawienia tego kroku. Reszta pochodzi z przepływu pracy.',
     issuesToFix: ({ count }: { count: number }) => `${count} ${pluralPl(count, 'rzecz', 'rzeczy', 'rzeczy')} do poprawienia przed uruchomieniem`,

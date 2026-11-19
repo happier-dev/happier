@@ -1,6 +1,5 @@
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
-import { View } from 'react-native';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import { Text } from '@/components/ui/text/Text';
@@ -18,30 +17,15 @@ import { withoutWorkflowAuthoringEngine } from '@/sync/domains/workflows/workflo
 import type { SessionAuthoringFieldId } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 
 import { WorkflowNumberField } from './WorkflowNumberField';
-import { WorkflowFieldPair } from './WorkflowStepDataEditor';
+import { renderWorkflowCardFieldRow } from './workflowCardFieldRow';
 import { workflowEditorStyles } from './workflowEditorStyles';
 
 /**
  * A step's own options beside the workflow's: which Session fields form its engine, whether the step
- * chooses its own, the way back to the workflow's, the inheritance line a row shows, and its deadline.
+ * chooses its own, the way back to the workflow's, and its deadline.
  */
 
 const styles = StyleSheet.create((theme) => ({
-    inheritance: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        alignItems: 'center',
-        justifyContent: 'flex-end',
-        columnGap: theme.space.s8,
-    },
-    inheritedBadge: {
-        ...Typography.variant('micro'),
-        color: theme.colors.text.tertiary,
-    },
-    overrideBadge: {
-        ...Typography.variant('micro', 'semiBold'),
-        color: theme.colors.text.secondary,
-    },
     resetAction: {
         ...Typography.variant('meta', 'semiBold'),
         color: theme.colors.button.secondary.tint,
@@ -57,24 +41,21 @@ export function WorkflowStepTimeoutField(props: Readonly<{
     onChange: (timeoutMs: number | undefined) => void;
     testIDPrefix: string;
 }>): React.ReactElement {
-    // One row on the options' label track: the field on the control column, its placeholder the one "No deadline",
-    // the unit after a set number; what it means is the field's hint, not a paragraph in the row (WF-ACCEPT-1118B item 1).
-    return (
-        <View style={workflowEditorStyles.actionFieldRow}>
-            <WorkflowFieldPair label={t('workflows.editor.timeoutTitle')} trackKey="timeout">
-                <WorkflowNumberField
-                    presentation="track"
-                    label={t('workflows.editor.timeoutTitle')}
-                    value={props.timeoutMs}
-                    onChange={props.onChange}
-                    placeholder={t('workflows.editor.noDeadline')}
-                    {...(props.timeoutMs === undefined ? {} : { suffix: t('workflows.editor.timeoutUnit') })}
-                    accessibilityHint={t('workflows.editor.timeoutExplain')}
-                    testID={`${props.testIDPrefix}-timeout`}
-                />
-            </WorkflowFieldPair>
-        </View>
-    );
+    // One row on the options' label track: the field on the control column at the shared field width (the same row as
+    // Workspace beside it), its placeholder the one "No deadline", the unit after a set number; what it means is the
+    // field's hint, not a paragraph in the row (WF-ACCEPT-1118B item 1, WF-ACCEPT-1119 item 1).
+    return renderWorkflowCardFieldRow('timeout', t('workflows.editor.timeoutTitle'), (
+        <WorkflowNumberField
+            presentation="track"
+            label={t('workflows.editor.timeoutTitle')}
+            value={props.timeoutMs}
+            onChange={props.onChange}
+            placeholder={t('workflows.editor.noDeadline')}
+            {...(props.timeoutMs === undefined ? {} : { suffix: t('workflows.editor.timeoutUnit') })}
+            accessibilityHint={t('workflows.editor.timeoutExplain')}
+            testID={`${props.testIDPrefix}-timeout`}
+        />
+    ));
 }
 
 /** The Agent and model arm, set as one choice (the engine); the step's other Session fields sit beside it. */
@@ -93,39 +74,24 @@ export function withoutWorkflowStepEngine(execution: WorkflowStep['execution']):
     return withoutWorkflowAuthoringEngine(execution);
 }
 
-/** A row's inheritance state ("From the workflow" / "Changed for this step · Use workflow's"). */
-export function WorkflowFieldInheritance(props: Readonly<{
-    fieldId: string;
-    inheritance: 'inherited' | 'override';
-    onReset: () => void;
-}>): React.ReactElement | null {
+/**
+ * The way back to the workflow's value on a step row whose own control shows that it is changed (a segmented bar's set
+ * state), beside that control, as a changed chip offers it in its menu.
+ */
+export function WorkflowFieldReset(props: Readonly<{ testID: string; onReset: () => void }>): React.ReactElement {
     const { theme } = useUnistyles();
-    // Every row of the step scope says where its value comes from (owner 2026-11-15, lab r1 settings popover).
-    if (props.inheritance === 'inherited') {
-        return <Text testID={`${props.fieldId}-state`} style={styles.inheritedBadge}>{t('workflows.page.fromTheWorkflow')}</Text>;
-    }
     return (
-        <View style={styles.inheritance}>
-            <Text
-                testID={`${props.fieldId}-state`}
-                style={styles.overrideBadge}
-            >
-                {t('workflows.page.changedForStep')}
-            </Text>
-            <HappierPressable
-                testID={`${props.fieldId}-reset`}
-                accessibilityRole="button"
-                accessibilityLabel={t('workflows.editor.useWorkflowDefault')}
-                onPress={props.onReset}
-                style={(state) => [
-                    workflowEditorStyles.actionTarget,
-                    state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
-                ]}
-            >
-                <Text style={styles.resetAction}>
-                    {t('workflows.page.useWorkflowsValue')}
-                </Text>
-            </HappierPressable>
-        </View>
+        <HappierPressable
+            testID={props.testID}
+            accessibilityRole="button"
+            accessibilityLabel={t('workflows.editor.useWorkflowDefault')}
+            onPress={props.onReset}
+            style={(state) => [
+                workflowEditorStyles.actionTarget,
+                state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
+            ]}
+        >
+            <Text style={styles.resetAction}>{t('workflows.page.useWorkflowsValue')}</Text>
+        </HappierPressable>
     );
 }

@@ -92,7 +92,6 @@ export const en = {
     discardChangesBody: 'Goes back to the last saved version. Undo brings your edits back.',
     deleteFailedTitle: 'Could not delete workflow',
     changedForStep: 'Changed for this step',
-    fromTheWorkflow: 'From the workflow',
     useWorkflowsValue: "Use workflow's",
     stepSettingsSubtitle: 'Settings for this step. The rest come from the workflow.',
     issuesToFix: ({ count }: { count: number }) => (count === 1 ? '1 thing to fix before this can run' : `${count} things to fix before this can run`),

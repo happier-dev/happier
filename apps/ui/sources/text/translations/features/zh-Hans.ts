@@ -18884,7 +18884,6 @@ const zhHans: WorkflowEditorPageTranslations = {
     discardChangesBody: '回到上次保存的版本。撤销可恢复你的更改。',
     deleteFailedTitle: '无法删除工作流',
     changedForStep: '已为此步骤更改',
-    fromTheWorkflow: '来自工作流',
     useWorkflowsValue: '使用工作流的设置',
     stepSettingsSubtitle: '此步骤的设置。其余来自工作流。',
     issuesToFix: ({ count }: { count: number }) => (count === 1 ? '运行前还有 1 处需要修正' : `运行前还有 ${count} 处需要修正`),

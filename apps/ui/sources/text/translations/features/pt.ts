@@ -18996,7 +18996,6 @@ const pt: WorkflowEditorPageTranslations = {
     discardChangesBody: 'Volta à última versão guardada. Anular recupera as suas alterações.',
     deleteFailedTitle: 'Não foi possível eliminar o workflow',
     changedForStep: 'Alterado para este passo',
-    fromTheWorkflow: 'Do fluxo de trabalho',
     useWorkflowsValue: 'Usar o do fluxo',
     stepSettingsSubtitle: 'Definições deste passo. O resto vem do fluxo de trabalho.',
     issuesToFix: ({ count }: { count: number }) => (count === 1 ? '1 coisa a corrigir antes de poder executar' : `${count} coisas a corrigir antes de poder executar`),

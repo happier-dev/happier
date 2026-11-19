@@ -19024,7 +19024,6 @@ const ca: WorkflowEditorPageTranslations = {
     discardChangesBody: 'Torna a la darrera versió desada. Desfés recupera els canvis.',
     deleteFailedTitle: 'No s’ha pogut suprimir el flux',
     changedForStep: 'Canviat per a aquest pas',
-    fromTheWorkflow: 'Del flux de treball',
     useWorkflowsValue: 'Usa el del flux',
     stepSettingsSubtitle: "Configuració d'aquest pas. La resta ve del flux de treball.",
     issuesToFix: ({ count }: { count: number }) => (count === 1 ? '1 cosa per corregir abans de poder executar' : `${count} coses per corregir abans de poder executar`),

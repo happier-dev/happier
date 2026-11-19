@@ -19010,7 +19010,6 @@ const it: WorkflowEditorPageTranslations = {
     discardChangesBody: 'Torna all’ultima versione salvata. Annulla ripristina le modifiche.',
     deleteFailedTitle: 'Impossibile eliminare il workflow',
     changedForStep: 'Modificato per questo passaggio',
-    fromTheWorkflow: 'Dal flusso di lavoro',
     useWorkflowsValue: 'Usa quello del flusso',
     stepSettingsSubtitle: 'Impostazioni di questo passaggio. Il resto viene dal flusso di lavoro.',
     issuesToFix: ({ count }: { count: number }) => (count === 1 ? '1 cosa da correggere prima di eseguire' : `${count} cose da correggere prima di eseguire`),

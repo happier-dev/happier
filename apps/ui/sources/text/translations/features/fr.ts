@@ -19067,7 +19067,6 @@ const fr: WorkflowEditorPageTranslations = {
     discardChangesBody: 'Revient à la dernière version enregistrée. Annuler rétablit tes modifications.',
     deleteFailedTitle: 'Impossible de supprimer le workflow',
     changedForStep: 'Modifié pour cette étape',
-    fromTheWorkflow: 'Du workflow',
     useWorkflowsValue: 'Utiliser celui du workflow',
     stepSettingsSubtitle: 'Réglages de cette étape. Le reste vient du workflow.',
     issuesToFix: ({ count }: { count: number }) => (count === 1 ? '1 point à corriger avant de pouvoir exécuter' : `${count} points à corriger avant de pouvoir exécuter`),
