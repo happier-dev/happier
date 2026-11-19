@@ -7,6 +7,7 @@ import {
   ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1,
   FeaturesResponseSchema,
   SessionAgentSpawnPolicyV1Schema,
+  SessionInputAdmissionResultV1Schema,
   sealSessionOwnerMetadataEnvelopeV1,
   signExternalActionApprovalInputV1,
   ApprovalRequestV2Schema,
@@ -18,6 +19,7 @@ import {
 } from '@happier-dev/protocol';
 import { buildApprovalExecutionOriginV1, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { createActionAutomationHttpPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -112,6 +114,7 @@ describe('daemon approval execution-origin currentness', () => {
     expect(await originIsCurrent({ origin: executionOrigin, request })).toBe(true);
     const effects: unknown[] = [];
     const approved: unknown[] = [];
+    const publications: string[] = [];
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsGet: async () => request,
       approvalsUpdate: async ({ request: value }) => {
         const transition = decideApprovalRequestTransition(request, value);
@@ -121,22 +124,34 @@ describe('daemon approval execution-origin currentness', () => {
         return { ok: true };
       },
       isApprovalExecutionOriginCurrent: originIsCurrent,
+      // The Account index and Session input delivery are network boundaries;
+      // real automation selection and approval settlement consume their answers.
+      actionAutomations: createActionAutomationHttpPortV1({ accountId: 'account-1',
+        request: async () => ({ v: 1, rows: [] }),
+      }),
+      sessionSendMessage: async ({ sessionId, localId }) => {
+        publications.push(sessionId);
+        return SessionInputAdmissionResultV1Schema.parse({ status: 'accepted', localId });
+      },
       machineProcessesAction: async ({ input }) => {
         effects.push(input);
         return { status: 'ended', outcomes: [{ ref: process.ref, outcome: 'ended', freedBytes: 4096 }] };
       },
     });
     const result = await executor.execute('approval.request.decide', { artifactId: 'signed-choice', decision: 'approve', narrowedInput },
-      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        runtimeAccountId: 'account-1', serverId: 'profile', serverIdentityId: 'home-1' });
     if (widening) {
       expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
       expect(effects).toEqual([]);
       expect(request.status).toBe('open');
       expect(request.actionArgs).toEqual(actionArgs);
+      expect(publications).toEqual([]);
       return;
     }
-    expect(result).toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed' } });
     expect(effects).toEqual([narrowedInput]);
+    expect(publications).toEqual(kind === 'session' ? [caller.sessionId] : []);
     expect(approved).toEqual([expect.objectContaining({ actionArgs, executionOriginV1: executionOrigin,
       decision: expect.objectContaining({ authority: 'present_user', narrowedInput }) })]);
     expect(request.actionArgs).toEqual(actionArgs);
@@ -228,7 +243,9 @@ describe('daemon approval execution-origin currentness', () => {
       await expect(check!({ origin: sessionOrigin })).resolves.toBe(false);
       rawSession = { ...rawSession, id: 'c222222222222222222222222', ownerMetadata: ownerEnvelope('default') };
       await expect(check!({ origin: sessionOrigin })).resolves.toBe(false);
-      await expect(resolveTarget({ actionId: 'session.open', target, currentMachineId: 'machine-1' })).resolves.toBeNull();
+      await expect(resolveTarget({ actionId: 'session.open', target, currentMachineId: 'machine-1' }))
+        .rejects.toMatchObject({ code: 'session_detail_invalid_response', schema: 'v2_session_detail',
+          issues: [expect.objectContaining({ path: ['session', 'id'] })] });
       rawSession = { ...rawSession, id: sessionId, ownerMetadata: { t: 'plain', v: { v: 1,
         workspace: { path: '/wrong-mode', machineId: 'machine-1' }, runtime: { permissionMode: 'default' } } } };
       await expect(check!({ origin: sessionOrigin })).resolves.toBe(false);
