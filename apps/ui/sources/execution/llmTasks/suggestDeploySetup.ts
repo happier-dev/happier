@@ -14,7 +14,7 @@ import {
 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import type { LlmTaskRunnerResolutionV1, LlmTaskRunnerUnavailableAgentV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection';
-import type { InteractionTransientQuestionAnswerV1, InteractionTransientQuestionsAuthorRequestV1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
+import { normalizeInteractionTransientQuestionsV1, type InteractionTransientQuestionAnswerV1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
 
 import { projectCheckoutParentPath } from '@/components/projects/activation/projectOpenChoices';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -43,7 +43,8 @@ export type DeploySuggestionUnavailableMachine = Readonly<{
 export type DeploySuggestionOutcome =
     | Readonly<{ kind: 'recommendations'; catalog: DeploySuggestionCatalogV1;
         recommendations: DeploySuggestionCheckResultV1['recommendations']; dropped: DeploySuggestionCheckResultV1['dropped'] }>
-    | Readonly<{ kind: 'questions'; catalog: DeploySuggestionCatalogV1; questions: InteractionTransientQuestionsAuthorRequestV1 }>
+    // Canonical questions (author defaults filled once), the form the step presents.
+    | Readonly<{ kind: 'questions'; catalog: DeploySuggestionCatalogV1; questions: ReturnType<typeof normalizeInteractionTransientQuestionsV1> }>
     | Readonly<{ kind: 'nothing'; catalog: DeploySuggestionCatalogV1; dropped: DeploySuggestionCheckResultV1['dropped'] }>
     | Readonly<{ kind: 'noAgent'; machines: readonly DeploySuggestionUnavailableMachine[] }>
     | Readonly<{ kind: 'failed'; code: string }>
@@ -130,7 +131,7 @@ export async function suggestDeploySetup(params: Readonly<{
             if (!result.success) return { kind: 'failed', code: 'invalid_action_output' };
             if (result.data.recommendations.length) return { kind: 'recommendations', catalog,
                 recommendations: result.data.recommendations, dropped: result.data.dropped };
-            if (result.data.questions) return { kind: 'questions', catalog, questions: result.data.questions };
+            if (result.data.questions) return { kind: 'questions', catalog, questions: normalizeInteractionTransientQuestionsV1(result.data.questions) };
             return { kind: 'nothing', catalog, dropped: result.data.dropped };
         }
         return { kind: 'noAgent', machines: unavailable };

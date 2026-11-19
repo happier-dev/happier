@@ -60,7 +60,8 @@ it('uses the first ready online Machine once and checks model output against the
 });
 
 it('reads one catalog for a question round and reuses it for the answered run', async () => {
-    const questions = { kind: 'questions', questions: [{ id: 'purpose', type: 'text', prompt: 'What should visitors do?' }] };
+    const questions = { kind: 'questions', questions: [{ id: 'purpose', type: 'text', prompt: 'What should visitors do?' },
+        { id: 'size', type: 'singleChoice', prompt: 'How big?', choices: [{ id: 'small' }] }] };
     const answers = { purpose: { kind: 'text' as const, value: 'Order bread' } };
     const catalogRecommendation = { ...recommendation, source: { kind: 'starter', starterId: JSON.stringify(['starter', 'website']) } };
     let round = 0;
@@ -87,6 +88,12 @@ it('reads one catalog for a question round and reuses it for the answered run', 
     const first = await suggestDeploySetup({ serverId: 'home', description: 'Bakery' });
     expect(first).toMatchObject({ kind: 'questions', questions });
     if (first.kind !== 'questions') throw new Error(JSON.stringify(first));
+    // The step presents canonical questions: author defaults are filled once, and an unlabelled choice reads as its id.
+    expect(first.questions.questions).toEqual([
+        { id: 'purpose', type: 'text', prompt: 'What should visitors do?', required: false },
+        { id: 'size', type: 'singleChoice', prompt: 'How big?', required: false, allowCustom: false,
+            choices: [{ id: 'small', label: 'small' }] },
+    ]);
     expect(await suggestDeploySetup({ serverId: 'home', description: 'Bakery', catalog: first.catalog, answers, note: 'Keep it simple' }))
         .toMatchObject({ kind: 'recommendations', recommendations: [catalogRecommendation] });
     expect(execute.mock.calls.filter(row => row[0] === 'deployments.suggestions.catalog')).toHaveLength(1);
