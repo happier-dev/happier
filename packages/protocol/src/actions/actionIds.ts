@@ -320,6 +320,19 @@ export function isSessionClientControlActionId(value: string): boolean {
 /** Ordered host Actions promoted in the Workflow step picker. */
 export const WORKFLOW_STEP_PROMOTED_ACTION_IDS_V1: readonly string[] = [NOTIFICATION_NOTIFY_ME_ACTION_ID, 'review.start'];
 
+/** Comment mutations that persist a Review comment event. */
+export const REVIEW_COMMENT_MUTATION_ACTION_IDS_V1 = Object.freeze([
+  'reviews.comments.create',
+  'reviews.comments.transition',
+  'reviews.comments.edit',
+  'reviews.comments.reply',
+  'reviews.comments.redact',
+  'reviews.comments.setDisposition',
+  'reviews.comments.attachEvidence',
+  'reviews.comments.bulkTransition',
+] as const);
+const [createReviewCommentActionId, ...otherReviewCommentMutationActionIds] = REVIEW_COMMENT_MUTATION_ACTION_IDS_V1;
+
 export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   plugin_collection_sharing: PLUGIN_COLLECTION_SHARING_ACTION_IDS_V1,
   deployments: DEPLOYMENT_ACTION_IDS_V1,
@@ -577,16 +590,10 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   ],
   review_reads: ['reviews.list', 'review.get', 'review.history.list'],
   review_comments: [
-    'reviews.comments.create',
+    createReviewCommentActionId,
     'reviews.comments.list',
     'reviews.comments.get',
-    'reviews.comments.transition',
-    'reviews.comments.edit',
-    'reviews.comments.reply',
-    'reviews.comments.redact',
-    'reviews.comments.setDisposition',
-    'reviews.comments.attachEvidence',
-    'reviews.comments.bulkTransition',
+    ...otherReviewCommentMutationActionIds,
     'reviews.comments.claimPublicationDispatch',
   ],
   subagent_registry: [

@@ -20,7 +20,7 @@ import {
 } from './identity.js';
 import { TriageSourceInstanceDraftV1Schema } from './instances.js';
 import { TriageSourceInstanceIdV1Schema } from './identity.js';
-import { defineTriageSingleLineStringV1 } from './strings.js';
+import { defineTriageStringUnionV1, defineTriageSingleLineStringV1 } from './strings.js';
 import { TriageTaskCapabilitiesV1Schema } from './observations.js';
 import { TriageSourceScopeUnitDescriptorV1Schema } from './scopeSelection.js';
 import { TriageListSortFieldsV1Schema } from './sorting.js';
@@ -53,12 +53,7 @@ export type TriageDetailPanelScrollOwnerV1 = ReturnType<typeof TriageDetailPanel
 export const TriageSourceDetailTabV1Schema = defineProtocolUnion([
     defineProtocolObject({
         kind: defineProtocolLiteral('shared'),
-        id: defineProtocolUnion([
-            defineProtocolLiteral(TRIAGE_DETAIL_SHARED_TABS_V1[0]),
-            defineProtocolLiteral(TRIAGE_DETAIL_SHARED_TABS_V1[1]),
-            defineProtocolLiteral(TRIAGE_DETAIL_SHARED_TABS_V1[2]),
-            defineProtocolLiteral(TRIAGE_DETAIL_SHARED_TABS_V1[3]),
-        ]),
+        id: defineTriageStringUnionV1(TRIAGE_DETAIL_SHARED_TABS_V1),
         summaryFact: triageDetailTabSummaryFactV1,
         scrollOwner: TriageDetailPanelScrollOwnerV1Schema.optional(),
     }, { policy: 'closed' }),

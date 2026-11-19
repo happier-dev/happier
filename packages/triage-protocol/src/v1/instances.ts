@@ -23,6 +23,7 @@ import {
 import {
     defineTriageCompositeIdentifierStringV1,
     defineTriageSingleLineStringV1,
+    defineTriageStringUnionV1,
 } from './strings.js';
 
 /**
@@ -136,10 +137,9 @@ export const TriageLocalInstanceKeyV1ProtocolSchema = defineTriageCompositeIdent
 );
 
 /** @internal Relative-only declared stability of one source-native instance key. */
-export const TriageSourceInstanceKeyStabilityV1ProtocolSchema = defineProtocolUnion([
-    defineProtocolLiteral(TRIAGE_SOURCE_INSTANCE_KEY_STABILITY_V1[0]),
-    defineProtocolLiteral(TRIAGE_SOURCE_INSTANCE_KEY_STABILITY_V1[1]),
-]);
+export const TriageSourceInstanceKeyStabilityV1ProtocolSchema = defineTriageStringUnionV1(
+    TRIAGE_SOURCE_INSTANCE_KEY_STABILITY_V1,
+);
 
 /**
  * One discovery candidate: the exact login binding plus the provider-native

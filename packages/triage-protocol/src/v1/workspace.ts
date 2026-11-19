@@ -1,3 +1,4 @@
+import { defineTriageStringUnionV1 } from './strings.js';
 import { triageListSourceSchemasV1 } from './listSourceSchemaInstances.js';
 import { TriageSourceFailureV1Schema } from './diagnostics.js';
 import { ScmComparisonSourceProtocolSchema } from '@happier-dev/plugin-sdk/scm';
@@ -92,11 +93,7 @@ export const TriageReviewWorkspaceCurrentnessV1Schema = defineProtocolUnion([
         kind: defineProtocolLiteral('preservedStale'),
         resolvedHeadSha: TriageIdentifierV1ProtocolSchema,
         observedHeadSha: TriageIdentifierV1ProtocolSchema,
-        reason: defineProtocolUnion([
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_STALE_REASONS_V1[0]),
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_STALE_REASONS_V1[1]),
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_STALE_REASONS_V1[2]),
-        ]),
+        reason: defineTriageStringUnionV1(TRIAGE_REVIEW_WORKSPACE_STALE_REASONS_V1),
     }, { policy: 'closed' }),
 ]);
 export type TriageReviewWorkspaceCurrentnessV1 = ReturnType<
@@ -209,20 +206,12 @@ export const TriagePrepareReviewWorkspaceResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
         kind: defineProtocolLiteral('unavailable'),
         failure: TriageSourceFailureV1Schema.optional(),
-        reason: defineProtocolUnion([
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1[0]),
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1[1]),
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1[2]),
-        ]),
+        reason: defineTriageStringUnionV1(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('refused'),
         failure: TriageSourceFailureV1Schema.optional(),
-        reason: defineProtocolUnion([
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1[0]),
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1[1]),
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1[2]),
-        ]),
+        reason: defineTriageStringUnionV1(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1),
     }, { policy: 'closed' }),
 ]);
 export type TriagePrepareReviewWorkspaceResultV1 = ReturnType<
@@ -288,20 +277,12 @@ export const TriageVerifyReviewWorkspaceResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
         kind: defineProtocolLiteral('unavailable'),
         failure: TriageSourceFailureV1Schema.optional(),
-        reason: defineProtocolUnion([
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1[0]),
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1[1]),
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1[2]),
-        ]),
+        reason: defineTriageStringUnionV1(TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('refused'),
         failure: TriageSourceFailureV1Schema.optional(),
-        reason: defineProtocolUnion([
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1[0]),
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1[1]),
-            defineProtocolLiteral(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1[2]),
-        ]),
+        reason: defineTriageStringUnionV1(TRIAGE_REVIEW_WORKSPACE_REFUSED_REASONS_V1),
     }, { policy: 'closed' }),
 ]);
 export type TriageVerifyReviewWorkspaceResultV1 = ReturnType<

@@ -30,7 +30,7 @@ import {
     TRIAGE_SOURCE_ATTENTION_LEVELS_V1,
     TRIAGE_VIEWER_INVOLVEMENTS_V1,
 } from './constants.js';
-import { defineTriageSingleLineStringV1 } from './strings.js';
+import { defineTriageStringUnionV1, defineTriageSingleLineStringV1 } from './strings.js';
 import { MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1, TRIAGE_SOURCE_FAILURE_CLASSES_V1 } from './constants.js';
 
 export type TriageEntryRepositoryRefV1 = Readonly<{
@@ -70,14 +70,7 @@ export function createTriageListSourceSchemasV1(fieldBytes: number) {
         ).optional(),
     }, { policy: 'closed' });
 
-    const TriageSourceFailureClassV1ProtocolSchema = defineProtocolUnion([
-        defineProtocolLiteral(TRIAGE_SOURCE_FAILURE_CLASSES_V1[0]),
-        defineProtocolLiteral(TRIAGE_SOURCE_FAILURE_CLASSES_V1[1]),
-        defineProtocolLiteral(TRIAGE_SOURCE_FAILURE_CLASSES_V1[2]),
-        defineProtocolLiteral(TRIAGE_SOURCE_FAILURE_CLASSES_V1[3]),
-        defineProtocolLiteral(TRIAGE_SOURCE_FAILURE_CLASSES_V1[4]),
-        defineProtocolLiteral(TRIAGE_SOURCE_FAILURE_CLASSES_V1[5]),
-    ]);
+    const TriageSourceFailureClassV1ProtocolSchema = defineTriageStringUnionV1(TRIAGE_SOURCE_FAILURE_CLASSES_V1);
 
 
     const TriageSourceFailureV1Schema = defineProtocolObject({
@@ -136,18 +129,12 @@ export function createTriageListSourceSchemasV1(fieldBytes: number) {
         defineProtocolObject({
             kind: defineProtocolLiteral('timestamp'),
             atMs: defineProtocolNumber({ integer: true }),
-            format: defineProtocolUnion([
-                defineProtocolLiteral(TRIAGE_ROW_FACT_TIMESTAMP_FORMATS_V1[0]),
-                defineProtocolLiteral(TRIAGE_ROW_FACT_TIMESTAMP_FORMATS_V1[1]),
-            ]),
+            format: defineTriageStringUnionV1(TRIAGE_ROW_FACT_TIMESTAMP_FORMATS_V1),
         }, { policy: 'closed' }),
         defineProtocolObject({
             kind: defineProtocolLiteral('number'),
             value: defineProtocolNumber(),
-            format: defineProtocolUnion([
-                defineProtocolLiteral(TRIAGE_ROW_FACT_NUMBER_FORMATS_V1[0]),
-                defineProtocolLiteral(TRIAGE_ROW_FACT_NUMBER_FORMATS_V1[1]),
-            ]),
+            format: defineTriageStringUnionV1(TRIAGE_ROW_FACT_NUMBER_FORMATS_V1),
             /**
              * A provider count measured over a retention or sampling window is not
              * the number of times something happened. Sources that cannot promise
@@ -159,13 +146,7 @@ export function createTriageListSourceSchemasV1(fieldBytes: number) {
         defineProtocolObject({
             kind: defineProtocolLiteral('status'),
             value: triageRowFactTextV1,
-            tone: defineProtocolUnion([
-                defineProtocolLiteral(TRIAGE_ROW_FACT_STATUS_TONES_V1[0]),
-                defineProtocolLiteral(TRIAGE_ROW_FACT_STATUS_TONES_V1[1]),
-                defineProtocolLiteral(TRIAGE_ROW_FACT_STATUS_TONES_V1[2]),
-                defineProtocolLiteral(TRIAGE_ROW_FACT_STATUS_TONES_V1[3]),
-                defineProtocolLiteral(TRIAGE_ROW_FACT_STATUS_TONES_V1[4]),
-            ]),
+            tone: defineTriageStringUnionV1(TRIAGE_ROW_FACT_STATUS_TONES_V1),
         }, { policy: 'closed' }),
         defineProtocolObject({
             kind: defineProtocolLiteral('detailOnly'),
@@ -183,11 +164,7 @@ export function createTriageListSourceSchemasV1(fieldBytes: number) {
         // row-fact string rather than as a provider identifier.
         id: triageRowFactTextV1,
         label: triageRowFactTextV1.optional(),
-        importance: defineProtocolUnion([
-            defineProtocolLiteral(TRIAGE_ROW_FACT_IMPORTANCES_V1[0]),
-            defineProtocolLiteral(TRIAGE_ROW_FACT_IMPORTANCES_V1[1]),
-            defineProtocolLiteral(TRIAGE_ROW_FACT_IMPORTANCES_V1[2]),
-        ]),
+        importance: defineTriageStringUnionV1(TRIAGE_ROW_FACT_IMPORTANCES_V1),
         value: TriageRowFactValueV1Schema,
     }, { policy: 'closed' });
 
@@ -197,13 +174,7 @@ export function createTriageListSourceSchemasV1(fieldBytes: number) {
      * nonterminal (`CONTRACT.md` §4).
      */
     const TriageEntryStateV1ProtocolSchema = defineProtocolObject({
-        presentation: defineProtocolUnion([
-            defineProtocolLiteral(TRIAGE_ENTRY_PRESENTATION_STATES_V1[0]),
-            defineProtocolLiteral(TRIAGE_ENTRY_PRESENTATION_STATES_V1[1]),
-            defineProtocolLiteral(TRIAGE_ENTRY_PRESENTATION_STATES_V1[2]),
-            defineProtocolLiteral(TRIAGE_ENTRY_PRESENTATION_STATES_V1[3]),
-            defineProtocolLiteral(TRIAGE_ENTRY_PRESENTATION_STATES_V1[4]),
-        ]),
+        presentation: defineTriageStringUnionV1(TRIAGE_ENTRY_PRESENTATION_STATES_V1),
         /** The provider's own word, preserved because the enum is a lossy projection. */
         nativeLabel: TriageTextV1ProtocolSchema.optional(),
         stage: defineProtocolUnion([
@@ -372,23 +343,13 @@ export function createTriageListSourceSchemasV1(fieldBytes: number) {
      * declaration from becoming a zero-score display winner.
      */
     const TriageSourceViewerFactsV1Schema = defineProtocolObject({
-        involvement: defineProtocolUniqueArray(defineProtocolUnion([
-            defineProtocolLiteral(TRIAGE_VIEWER_INVOLVEMENTS_V1[0]),
-            defineProtocolLiteral(TRIAGE_VIEWER_INVOLVEMENTS_V1[1]),
-            defineProtocolLiteral(TRIAGE_VIEWER_INVOLVEMENTS_V1[2]),
-            defineProtocolLiteral(TRIAGE_VIEWER_INVOLVEMENTS_V1[3]),
-            defineProtocolLiteral(TRIAGE_VIEWER_INVOLVEMENTS_V1[4]),
-            defineProtocolLiteral(TRIAGE_VIEWER_INVOLVEMENTS_V1[5]),
-        ]), { maxItems: TRIAGE_VIEWER_INVOLVEMENTS_V1.length }),
+        involvement: defineProtocolUniqueArray(defineTriageStringUnionV1(TRIAGE_VIEWER_INVOLVEMENTS_V1), { maxItems: TRIAGE_VIEWER_INVOLVEMENTS_V1.length }),
         sourceAttention: defineProtocolUnion([
             defineProtocolObject({
                 level: defineProtocolLiteral('none'),
             }, { policy: 'closed' }),
             defineProtocolObject({
-                level: defineProtocolUnion([
-                    defineProtocolLiteral(TRIAGE_SOURCE_ATTENTION_LEVELS_V1[0]),
-                    defineProtocolLiteral(TRIAGE_SOURCE_ATTENTION_LEVELS_V1[1]),
-                ]),
+                level: defineTriageStringUnionV1(TRIAGE_SOURCE_ATTENTION_LEVELS_V1),
                 reasonId: TriageIdentifierV1ProtocolSchema,
                 reasonLabel: TriageTextV1ProtocolSchema,
             }, { policy: 'closed' }),

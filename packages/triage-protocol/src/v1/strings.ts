@@ -1,3 +1,5 @@
+import { defineProtocolLiteral, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+
 /**
  * @internal The one constructor for bounded V1 row-display and identifier strings.
  *
@@ -30,3 +32,14 @@ export { defineTriageSingleLineStringV1 } from '@happier-dev/plugin-sdk/protocol
  * similar-but-different grammar.
  */
 export { defineTriageCompositeIdentifierStringV1 } from '@happier-dev/plugin-sdk/protocol';
+
+/** Projects the entire owner vocabulary using contribution-compatible literals. */
+export function defineTriageStringUnionV1<const T extends string>(
+    [first, second, ...rest]: readonly [T, T, ...T[]],
+) {
+    return defineProtocolUnion([
+        defineProtocolLiteral(first),
+        defineProtocolLiteral(second),
+        ...rest.map(value => defineProtocolLiteral(value)),
+    ]);
+}

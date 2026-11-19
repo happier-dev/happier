@@ -1,3 +1,4 @@
+import { defineTriageStringUnionV1 } from './strings.js';
 import {
     defineProtocolLiteral,
     defineProtocolObject,
@@ -25,10 +26,7 @@ export const TriageListSortFieldV1Schema = defineProtocolUnion([
 ]);
 export type TriageListSortFieldV1 = (typeof TRIAGE_LIST_SORT_FIELDS_V1)[number];
 
-export const TriageListSortDirectionV1Schema = defineProtocolUnion([
-    defineProtocolLiteral(TRIAGE_LIST_SORT_DIRECTIONS_V1[0]),
-    defineProtocolLiteral(TRIAGE_LIST_SORT_DIRECTIONS_V1[1]),
-]);
+export const TriageListSortDirectionV1Schema = defineTriageStringUnionV1(TRIAGE_LIST_SORT_DIRECTIONS_V1);
 export type TriageListSortDirectionV1 = (typeof TRIAGE_LIST_SORT_DIRECTIONS_V1)[number];
 
 /** One closed source order. A source must apply it before returning a page. */

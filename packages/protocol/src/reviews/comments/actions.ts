@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { ACTION_ID_FAMILIES_V1 } from '../../actions/actionIds.js';
 
 import {
   ReviewCommentAttachEvidenceRequestV1Schema,
@@ -27,19 +28,7 @@ import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.
 import { WorkflowSessionScopeV1Schema, type WorkflowSessionScopeV1 } from '../../workflows/workflowSessionScopeV1.js';
 export { isWorkflowSessionScopeTargetV1, readWorkflowActionInvocationV1 } from '../../workflows/workflowSessionScopeV1.js';
 
-export const REVIEW_COMMENT_ACTION_IDS_V1 = Object.freeze([
-  'reviews.comments.create',
-  'reviews.comments.list',
-  'reviews.comments.get',
-  'reviews.comments.transition',
-  'reviews.comments.edit',
-  'reviews.comments.reply',
-  'reviews.comments.redact',
-  'reviews.comments.setDisposition',
-  'reviews.comments.attachEvidence',
-  'reviews.comments.bulkTransition',
-  'reviews.comments.claimPublicationDispatch',
-] as const);
+export const REVIEW_COMMENT_ACTION_IDS_V1 = Object.freeze(ACTION_ID_FAMILIES_V1.review_comments);
 
 export const REVIEW_COMMENT_PRINCIPAL_HEADER_V1 = 'x-happier-review-comment-principal' as const;
 

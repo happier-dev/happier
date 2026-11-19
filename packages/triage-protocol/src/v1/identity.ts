@@ -1,9 +1,7 @@
 import { triageListSourceSchemasV1 } from './listSourceSchemaInstances.js';
 import {
-    defineProtocolLiteral,
     defineProtocolObject,
     defineProtocolString,
-    defineProtocolUnion,
     TriageIdentifierV1ProtocolSchema,
     TriageSourceInstanceIdV1Schema,
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
@@ -17,7 +15,7 @@ import {
     TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1,
     TRIAGE_ACTION_SUBJECTS_V1,
 } from './bounds.js';
-import { defineTriageSingleLineStringV1 } from './strings.js';
+import { defineTriageStringUnionV1, defineTriageSingleLineStringV1 } from './strings.js';
 
 // Preserve the feature ABI while Protocol consumers use the dependency-safe
 // owner directly. The SDK facade publishes these exact parser instances.
@@ -70,22 +68,13 @@ export const TriageLocationV1ProtocolSchema = defineTriageSingleLineStringV1(
  * The source-neutral workflow subject of one declared kind. `CONTRACT.md` §5.3
  * admits optional review-workspace preparation only for `pullRequest`.
  */
-export const TriageSourceWorkflowSubjectV1Schema = defineProtocolUnion([
-    defineProtocolLiteral(TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1[0]),
-    defineProtocolLiteral(TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1[1]),
-    defineProtocolLiteral(TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1[2]),
-    defineProtocolLiteral(TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1[3]),
-]);
+export const TriageSourceWorkflowSubjectV1Schema = defineTriageStringUnionV1(TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1);
 export type TriageSourceWorkflowSubjectV1 = ReturnType<
     typeof TriageSourceWorkflowSubjectV1Schema.parse
 >;
 
 /** A configured action's `appliesTo` member: a source subject or a declared native subject. */
-export const TriageActionSubjectV1Schema = defineProtocolUnion([
-    defineProtocolLiteral(TRIAGE_ACTION_SUBJECTS_V1[0]),
-    defineProtocolLiteral(TRIAGE_ACTION_SUBJECTS_V1[1]),
-    ...TRIAGE_ACTION_SUBJECTS_V1.slice(2).map(subject => defineProtocolLiteral(subject)),
-]);
+export const TriageActionSubjectV1Schema = defineTriageStringUnionV1(TRIAGE_ACTION_SUBJECTS_V1);
 export type TriageActionSubjectV1 = (typeof TRIAGE_ACTION_SUBJECTS_V1)[number];
 
 /**

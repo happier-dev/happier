@@ -1,6 +1,7 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { WidgetInstanceActionInputSchemasV1, WidgetInstanceActionOutputSchemasV1 } from '../../widgets/actionsV1.js';
+import { WIDGET_INPUTS_GET_ACTION_ID_V1, WIDGET_INPUTS_RESET_ACTION_ID_V1, WIDGET_REFRESH_ACTION_ID_V1, WIDGET_REMOVE_ACTION_ID_V1 } from '../../widgets/instanceIdsV1.js';
 import type { WidgetSurfaceRefV1 } from '../../widgets/widgetInstanceV1.js';
 import { WidgetProjectAreaV1Schema } from '../../widgets/widgetPresentationV1.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
@@ -33,7 +34,8 @@ export const PluginUiWidgetAreaOperationV1Schema = z.union([
     z.strictObject({ actionId: z.literal('widgets.group.ungroup'), instanceId }),
     z.strictObject(z.extend(z.omit(input['widgets.group.set'], { ref: true }), { actionId: z.literal('widgets.group.set'), instanceId }).shape),
     z.strictObject(z.extend(z.omit(input['widgets.group.inputs.set'], { ref: true }), { actionId: z.literal('widgets.group.inputs.set'), instanceId }).shape),
-    ...(['widgets.item.remove', 'widgets.item.inputs.get', 'widgets.item.inputs.reset', 'widgets.item.refresh'] as const).map(actionId => z.strictObject({ actionId: z.literal(actionId), instanceId })),
+    ...([WIDGET_REMOVE_ACTION_ID_V1, WIDGET_INPUTS_GET_ACTION_ID_V1, WIDGET_INPUTS_RESET_ACTION_ID_V1, WIDGET_REFRESH_ACTION_ID_V1] as const)
+        .map(actionId => z.strictObject({ actionId: z.literal(actionId), instanceId })),
     z.strictObject({ actionId: z.literal('widgets.item.move'), instanceId, toIndex: z.number().check(z.int(), z.nonnegative(), z.int()), area: z.optional(WidgetProjectAreaV1Schema), groupId: z.optional(z.nullable(instanceId)) }),
     z.strictObject(z.extend(z.omit(input['widgets.item.rename'], { ref: true }), { actionId: z.literal('widgets.item.rename'), instanceId }).shape),
     z.strictObject(z.extend(z.omit(widgetSizeInput, { ref: true }), { actionId: z.literal('widgets.item.size.set'), instanceId }).shape),
