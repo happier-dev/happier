@@ -1614,8 +1614,10 @@ that child returns a known outcome and before any later stage starts. An uncerta
 outcome remains `outcome_unknown`; cancellation does not assert container removal
 or change the last uniform deployment.
 
-In development, the next native preparation or admission reconciles an unfinished
-receipt on its captured controller installation for the same requester. The
+In development, preparation or admission for a different native request
+reconciles an unfinished receipt on its captured controller installation for the
+same requester. A retry of that receipt intent leaves its revision to the original
+operation or its observer. The
 existing operation owner decides whether work remains live. A missing or succeeded
 operation settles as `outcome_unknown`; a retained failed or cancelled
 operation settles in that state. For an unknown outcome without an existing failure,
@@ -1624,8 +1626,8 @@ in the existing private failure schema with phase `observe`, preserving the rema
 content and active deployment. The UI explains that interruption prevented confirmation.
 A fresh signed root for the same requester and captured controller can perform this
 terminal settlement, including its existing receipt Artifact update, but cannot stage,
-activate or replace that Artifact. Receipt reads remain reads; recovery precedes the next
-preparation or admission and never replays interrupted native work.
+activate or replace that Artifact. Receipt reads remain reads, and recovery never
+replays interrupted native work.
 
 Native failure/settlement writers snapshot only the existing already-masked
 stage-output sink into the same protected receipt Artifact. The excerpt reuses

@@ -6,6 +6,7 @@ import type { DeploymentTransitionResultForHost } from './deploymentTransitionRe
  * Operation success alone cannot prove native activation or uniform settlement. */
 export async function settleInterruptedDeploymentReceiptForHost(request: Readonly<{
     environmentId: string; accountId: string; machineId: string; installationId: string; context: ActionExecutorContext;
+    operation: DeploymentReceiptHeaderV1['operation']; requestKey?: string;
 }>, host: Readonly<{
     readInProgress(): Promise<readonly DeploymentReceiptHeaderV1[]>;
     readOperation(operationId: string, context: ActionExecutorContext): Promise<ActionOperationSnapshotV1 | null>;
@@ -22,6 +23,9 @@ export async function settleInterruptedDeploymentReceiptForHost(request: Readonl
         if (header.requestedByAccountId !== request.accountId || controller?.machineId !== request.machineId
             || controller.installationId !== request.installationId
             || header.actionOperationId === request.context.operationAcceptance?.operationId) continue;
+        // Ask preparation can run before the operation runner matches a retry.
+        // The same receipt intent can only rejoin or conflict at that owner.
+        if (header.operation === request.operation && header.requestKey === request.requestKey) continue;
         const operation = await host.readOperation(header.actionOperationId, request.context);
         if (operation && operation.state !== 'failed' && operation.state !== 'cancelled' && operation.state !== 'succeeded') continue;
         const state = operation?.state === 'failed' ? 'failed' : operation?.state === 'cancelled' ? 'cancelled' : 'outcome_unknown';

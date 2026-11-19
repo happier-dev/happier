@@ -700,9 +700,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         },
     };
     const recoverInterruptedReceipt = async (actionId: string,
-        input: Readonly<{ serverId: string; environmentId?: string }>, context: ActionExecutorContext): Promise<ActionExecuteFailure | null> => {
-        const environmentId = 'environmentId' in input ? input.environmentId : undefined;
-        if (host.readOperation && deploymentOperationForRootActionV1(actionId) !== undefined && environmentId !== undefined) {
+        input: Readonly<{ serverId: string; environmentId?: string; requestKey?: string }>,
+        context: ActionExecutorContext): Promise<ActionExecuteFailure | null> => {
+        const environmentId = input.environmentId;
+        const operation = deploymentOperationForRootActionV1(actionId);
+        if (host.readOperation && operation !== undefined && environmentId !== undefined) {
             try {
                 if (input.serverId !== host.serverId) return failure('server_scope_mismatch');
                 const identity = readInstallationIdentityIfExistsSync();
@@ -710,7 +712,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     ?? context.runtimeAccountId ?? readAccountIdFromToken(host.credentials.token);
                 if (identity && accountId) {
                     const recovered = await settleInterruptedDeploymentReceiptForHost({ environmentId,
-                        accountId, machineId: host.machineId, installationId: identity.installationId, context }, {
+                        accountId, machineId: host.machineId, installationId: identity.installationId, context,
+                        operation, requestKey: input.requestKey }, {
                         readOperation: host.readOperation,
                         readReceipt: (header, context) => openDeploymentReceiptForHost(header, context, { open, assertCurrent }),
                         writeTransition: targetHost.writeTransition,

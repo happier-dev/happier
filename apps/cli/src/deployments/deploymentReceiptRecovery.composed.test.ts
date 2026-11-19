@@ -22,10 +22,13 @@ afterEach(() => vi.restoreAllMocks());
 // scoped operation custody, admission transport and signed settlement stay real.
 const cases = (['plain', 'e2ee'] as const).flatMap(mode =>
     ([['missing', false], ['missing', true], ['succeeded', false], ['failed', false], ['running', false]] as const)
-        .map(([operationState, existingFailure]) => ({ mode, operationState, existingFailure, providerHandoff: false }))
-        .concat([{ mode, operationState: 'succeeded' as const, existingFailure: false, providerHandoff: true }]));
+        .map(([operationState, existingFailure]) => ({ mode, operationState, existingFailure, providerHandoff: false, retry: false }))
+        .concat([
+            { mode, operationState: 'succeeded' as const, existingFailure: false, providerHandoff: true, retry: false },
+            { mode, operationState: 'succeeded' as const, existingFailure: false, providerHandoff: false, retry: true },
+        ]));
 it.each(cases)(
-    'settles interrupted native execution while retaining provider handoff ($mode / $operationState / existing reason: $existingFailure / provider: $providerHandoff)', async ({ mode, operationState, existingFailure, providerHandoff }) => {
+    'settles interrupted native execution while retaining provider handoff ($mode / $operationState / existing reason: $existingFailure / provider: $providerHandoff / identical Promote retry: $retry)', async ({ mode, operationState, existingFailure, providerHandoff, retry }) => {
     const token = `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`;
     const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null
         : { type: 'legacy', secret: new Uint8Array(32).fill(23) } };
@@ -47,14 +50,15 @@ it.each(cases)(
             observation: { v: 1, state: 'running', observedAtMs: 1, providerDeploymentId: 'provider-deployment' },
         } });
     if (existingFailure) receipt.content.failure = { code: 'deployment_build_failed', phase: 'build' };
-    Object.assign(receipt.deployment, { operation: 'rollback', state: 'running', revision: 2, requestedByAccountId: 'owner',
+    Object.assign(receipt.deployment, { operation: retry ? 'promote' : 'rollback', state: 'running', revision: 2, requestedByAccountId: 'owner',
         actionOperationId: 'old-operation', acceptedExecution: { v: 1,
             controller: { machineId: 'machine-a', installationId: identity.installationId },
             builder: { machineId: 'machine-a', installationId: identity.installationId } } });
+    let nextOperationId = retry ? 'old-operation' : 'fresh-operation';
     const operations = createHostActionOperationRuntime({ machineId: 'machine-a', resolveAccountId: async () => 'owner',
-        generateOperationId: () => 'fresh-operation' });
+        generateOperationId: () => nextOperationId });
     const scope = { accountId: 'owner', machineId: 'machine-a' };
-    if (operationState !== 'missing') {
+    if (!retry && operationState !== 'missing') {
         operations.store.create({ operationId: 'old-operation', scope, actionId: 'deployments.rollback',
             title: 'Rollback', cancellation: 'supported', inputIdentity: '{}' });
         if (operationState === 'failed') operations.store.fail('old-operation', { errorCode: 'action_forbidden', error: 'action_forbidden' });
@@ -106,6 +110,25 @@ it.each(cases)(
         readOperation: (operationId, context) => operations.readRestorePreparation({ operationId, context }),
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
         runtime: { async acquire() { throw new Error('Recovery must not execute an old receipt'); } } });
+    if (retry) {
+        const intent = { serverId: 'home', environmentId: receipt.deployment.environmentId,
+            sourceEnvironmentId: 'preview', sourceDeploymentId: 'retained-code', artifact: 'image' as const,
+            requestKey: receipt.deployment.requestKey };
+        const actionId = 'deployments.promote' as const;
+        const accepted = { ok: true as const, result: { ok: true, environmentId: intent.environmentId, revision: 11,
+            deploymentId: receipt.deployment.id, deploymentRevision: 2, state: 'running' } };
+        expect(await operations.observeExecution({ actionId, input: intent, execute: async () => accepted })).toEqual(accepted);
+        nextOperationId = 'fresh-operation';
+
+        // A terminal request prepares its Ask before the runner can join the retained operation.
+        // This fixture only needs Home's recovery routes; later candidate lookup is allowed to refuse.
+        await deps.prepareDeploymentAction({ actionId, input: intent, context: { runtimeAccountId: 'owner' } });
+        const repeated = await operations.observeExecution({ actionId, input: intent,
+            execute: async () => { throw new Error('Identical Promote must not execute twice'); } });
+        expect(repeated).toEqual(accepted);
+        expect(receipt.deployment).toMatchObject({ state: 'running', revision: 2 });
+        expect(writtenContent).toBeUndefined();
+    }
     const input = { serverId: 'home', environmentId: receipt.deployment.environmentId, targetLinkId: receipt.deployment.targetLinkId,
         deploymentId: 'retained-code', requestKey: 'fresh-request', expectedRevision: 1, expectedTargetLinkRevision: 1,
         contentArtifactId: 'fresh-candidate', contentHeaderVersion: 1, contentBodyVersion: 1 };
