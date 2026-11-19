@@ -95,8 +95,8 @@ async function mountOverview(
   let digest = `sha256:${'1'.repeat(64)}`;
   const opened: unknown[] = [];
   const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
-    if (typeof action === 'string' || action.localId !== GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus)
-      throw new Error('Expected the declared Preview publication Action');
+    if (typeof action === 'string' || action.localId !== GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus || input === undefined)
+      throw new Error('Expected the declared Preview publication Action with prepared input');
     return settlement ?? { ok: true, result: await plugin.invokeAction(action.localId, input, { surface: 'ui' }) };
   });
   let detail!: PluginUiTestkit;
@@ -123,7 +123,12 @@ async function mountOverview(
           resourceReads.push(resource);
           return { contentType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify({ digest })), digest };
         },
-        watchResource: async ({ resource }) => { resourceReference = resource; return { digest }; },
+        watchResource: async ({ resource }) => {
+          if (typeof resource !== 'string' && 'readAuthority' in resource)
+            throw new Error('Expected the Preview receipt Resource watch');
+          resourceReference = resource;
+          return { digest };
+        },
         openDeployment: ({ request }) => { opened.push(request); },
         executeAction: async ({ action, input: actionInput, signal, requestId }) => {
           if (typeof action === 'string' || actionInput === undefined)
