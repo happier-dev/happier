@@ -7,6 +7,7 @@ import { SessionAuthoringCheckoutCreationDraftV1Schema } from '../authoring/crea
 import { SessionExecutionTargetV1Schema } from './sessionExecutionTargetV1.js';
 import { SessionDirectoryIntentV1Schema, refineSessionDirectoryIntentCheckoutV1 } from './sessionDirectoryIntentV1.js';
 import { SessionCreationTagV1Schema } from './sessionCreationIdentityV1.js';
+import { SessionSpawnLaunchErrorV1Schema } from './sessionSpawnLaunchErrorV1.js';
 import type { SessionSpawnNewInputV2 } from './sessionSpawnNewInputV2.js';
 import type { SessionSpawnNewResultV1 } from './sessionSpawnNewResultV1.js';
 import type { SessionExecutionTargetV1 } from './sessionExecutionTargetV1.js';
@@ -75,7 +76,10 @@ export const SessionCreationTargetPreparationResultV1Schema = lazyZodSchema(() =
       'invalid_directory',
       'checkout_unavailable',
       'checkout_failed',
+      'agent_isolation_unavailable',
     ]),
+    /** The requester's typed isolation refusal and remedy; PluginError RPC replies drop details. */
+    launchError: z.optional(SessionSpawnLaunchErrorV1Schema),
   }),
 ]));
 export type SessionCreationTargetPreparationResultV1 = z.infer<
@@ -144,6 +148,10 @@ export function projectSessionCreationTargetPreparationFailureV1(
     case 'checkout_failed':
       return { type: 'error', code: 'spawn_failed', retryable: true,
         launchError: { kind: 'launch_error', code: failure.code, message: failure.code } };
+    case 'agent_isolation_unavailable':
+      return { type: 'error', code: 'spawn_failed', retryable: false,
+        launchError: failure.launchError?.code === failure.code ? failure.launchError
+          : { kind: 'launch_error', code: failure.code, message: failure.code } };
   }
 }
 

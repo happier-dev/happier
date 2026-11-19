@@ -14,7 +14,6 @@ import {
 } from '@/session/actions/sessionLifecycleActions';
 import { registerSessionCreationTargetPreparationRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { createFilesystemEffectRpcRegistrar } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { readStoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -59,8 +58,7 @@ export function registerMachineSessionRpcHandlers(params: MachineSessionRpcFamil
   registerSessionCreationTargetPreparationRpc({
     rpcHandlerManager: params.rpcHandlerManager,
     ...(params.deps?.filesystemEffectAdmission ? {
-      directoryPreflightRpcHandlerManager: createFilesystemEffectRpcRegistrar(
-        params.rpcHandlerManager, params.deps.filesystemEffectAdmission),
+      directoryPreflightAdmission: params.deps.filesystemEffectAdmission,
     } : {}),
   });
   registerPrivateSpawnSessionRpcHandlers({

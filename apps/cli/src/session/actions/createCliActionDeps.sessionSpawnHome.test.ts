@@ -9,12 +9,13 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { registerSessionCreationTargetPreparationRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
 import { createCliActionDeps } from './createCliActionDeps';
-import { createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import nacl from 'tweetnacl';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 describe('Session spawn Home admission', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -127,8 +128,7 @@ describe('Session spawn Home admission', () => {
       resolveHostIdentity: async () => ({ custodianAccountId: 'owner', machineId: 'target-machine', installationId: 'installation' }),
     });
     const registrar = boundary === 'controller' ? rpc : nativeRpc;
-    registerSessionCreationTargetPreparationRpc({ rpcHandlerManager: registrar,
-      directoryPreflightRpcHandlerManager: createFilesystemEffectRpcRegistrar(registrar, admission) });
+    registerSessionCreationTargetPreparationRpc({ rpcHandlerManager: registrar, directoryPreflightAdmission: admission });
     const signal = new AbortController().signal;
     // Only Home's authenticated RPC transport is substituted; Workflow context,
     // startup preflight, receiving custody and filesystem preparation stay real.
@@ -151,6 +151,43 @@ describe('Session spawn Home admission', () => {
       executionTarget: { serverId: 'portable-home', machineId: 'target-machine' }, directory: { kind: 'path', path: tmpdir() },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
     await expect(deps.sessionSpawnNewDirectoryApprovalPreflight!({ input, context, signal })).resolves.toMatchObject({ type: 'not_required' });
+  });
+  it('keeps a member requester\'s isolation refusal and Security remedy through the directory preflight', async () => {
+    // C54: a failed Separate users Apply left member preparation refusing. The
+    // refusal reached New Session as a bare code with no reason or Security action.
+    const rpc = new RpcHandlerManager({ scopePrefix: 'target-machine', encryptionMode: 'plain', logger() {},
+      authorizeRequest: async () => ({ ok: true }) });
+    const remedy = { kind: 'open_machine_security', target: { serverId: 'portable-home', machineId: 'target-machine' } } as const;
+    const admission = createFilesystemEffectAdmission({
+      resolveHomeServerIdentityId: async () => 'portable-home',
+      resolveHostIdentity: async () => ({ custodianAccountId: 'owner', machineId: 'target-machine', installationId: 'installation' }),
+      // Native member preparation is the OS boundary; it refuses exactly as the daemon's member provisioner does.
+      executeNativeRpc: async () => { throw new PluginError({ code: 'agent_isolation_unavailable',
+        message: 'Member execution requires owner setup', retryable: false, details: {
+          reason: 'member_setup_required', phase: 'native_execution_preparation', reasonCode: 'native_check_unavailable',
+          nativeFailure: { kind: 'native_check_unavailable', reason: 'foreign_effect_conflict', requiredFact: 'member-workspaces' },
+          remedy } }); },
+    });
+    registerSessionCreationTargetPreparationRpc({ rpcHandlerManager: rpc, directoryPreflightAdmission: admission });
+    const signal = new AbortController().signal;
+    // Only Home's authenticated RPC transport is substituted.
+    vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => rpc.invokeLocal(request.method, request.request, {
+      signal, rpcContext: { machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'owner',
+        machineId: 'target-machine', installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+      verifyMachineAdmissionCurrent: async () => !signal.aborted },
+    }));
+    const deps = createCliActionDeps({ credentials: { token: 'fixture-requester', encryption: null }, token: 'fixture-requester',
+      sessionId: 'cli', mode: 'plain', ctx: null, serverId: 'local-profile', serverIdentityId: 'portable-home',
+      serverHttpBaseUrl: 'https://home.test' });
+    const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'member-start',
+      executionTarget: { serverId: 'portable-home', machineId: 'target-machine' }, directory: { kind: 'path', path: tmpdir() },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
+    await expect(deps.sessionSpawnNewDirectoryApprovalPreflight!({ input, signal })).resolves.toEqual({ type: 'error',
+      result: { type: 'error', code: 'spawn_failed', retryable: false, launchError: { kind: 'launch_error',
+        code: 'agent_isolation_unavailable', message: 'Member execution setup is unavailable.',
+        agentIsolationRefusal: { reason: 'member_setup_required', phase: 'native_execution_preparation',
+          reasonCode: 'native_check_unavailable',
+          nativeFailure: { kind: 'native_check_unavailable', reason: 'foreign_effect_conflict' }, remedy } } } });
   });
   it.each(['checkout_failed', 'checkout_unavailable', 'agent_isolation_unavailable'] as const)('preserves %s from target preparation at the CLI preflight sink', async code => {
     const input = SessionSpawnNewInputV2Schema.parse({

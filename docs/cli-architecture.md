@@ -2894,6 +2894,20 @@ CHECK owner as enabling. If identity or elevation is unavailable, Off stays read
 with uninspected resources retained and no native removal; the policy can still
 be disabled. This is an unreleased 0.3 development contract.
 
+A failed or partial Apply keeps the desired policy and publishes the typed
+unavailable status with its setup failure; it does not roll back or replay host
+effects. Under Linux member provisioning the owner's Sessions also run as the
+owner's member, so they refuse with `agent_isolation_unavailable` rather than
+running unisolated. The refusal carries its closed reason, native cause and
+`open_machine_security` remedy through Session spawn and through the creation
+directory preflight: the preflight's filesystem admission prepares the member
+before the read, so its registration settles that refusal as the
+`agent_isolation_unavailable` preparation result with the same launch
+diagnostic, instead of a PluginError reply that carries only its code. New
+Session then offers Security, where the person reviews and reapplies Separate
+users or turns it off. Older strict 0.3 readers report that result as
+`target_preparation_invalid_result`.
+
 An unavailable preview may include `setup`, the existing elevation owner's typed
 `not_applied` result and recovery. Preparation preserves that result instead of
 collapsing it to a missing plan. The sharing offer names its prerequisite and

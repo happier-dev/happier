@@ -3,6 +3,8 @@ import type { SessionCreationTargetPreparationResultV1 } from '@happier-dev/prot
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
+import { projectAgentIsolationLaunchRefusal } from '@/daemon/agentIsolation/agentIsolationLaunchRefusal';
+import { createFilesystemEffectRpcRegistrar, type FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 
 import { prepareSessionCreationTarget } from './prepareSessionCreationTarget';
 import type { DirectoryPreflightRefusal } from './directoryPreflightDiagnostic';
@@ -38,11 +40,29 @@ export function registerSessionCreationDirectoryPreflightRpc(input: TargetPrepar
     createPreparationHandler(input, true));
 }
 
+/** Requester preparation for the native folder read runs in the filesystem
+ * admission, outside the preparation handler. Its isolation refusal settles as
+ * a typed preparation result so the caller keeps the reason and Security
+ * remedy; a PluginError RPC reply carries only its code. */
+function settleAgentIsolationRefusal(registrar: RpcHandlerRegistrar): RpcHandlerRegistrar {
+  return { registerHandler(method, handler) {
+    registrar.registerHandler(method, async (request, context) => {
+      try { return await handler(request, context); } catch (error) {
+        const launchError = projectAgentIsolationLaunchRefusal(error);
+        if (!launchError) throw error;
+        return { ok: false, code: 'agent_isolation_unavailable', launchError } satisfies SessionCreationTargetPreparationResultV1;
+      }
+    });
+  } };
+}
+
 export function registerSessionCreationTargetPreparationRpc(input: TargetPreparationRpcInput & Readonly<{
-  directoryPreflightRpcHandlerManager?: RpcHandlerRegistrar;
+  directoryPreflightAdmission?: FilesystemEffectAdmission;
 }>): void {
   input.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE,
     createPreparationHandler(input, false));
   registerSessionCreationDirectoryPreflightRpc({ ...input,
-    rpcHandlerManager: input.directoryPreflightRpcHandlerManager ?? input.rpcHandlerManager });
+    rpcHandlerManager: input.directoryPreflightAdmission
+      ? createFilesystemEffectRpcRegistrar(settleAgentIsolationRefusal(input.rpcHandlerManager), input.directoryPreflightAdmission)
+      : input.rpcHandlerManager });
 }

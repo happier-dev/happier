@@ -2153,6 +2153,29 @@ owner. Setup, administrator-policy transitions, Updates, reachability and
 self-hosted deployment effects share this resolver; native executable
 availability is still checked before sudo.
 
+Agent isolation (Separate users) is the exception: its root interpreter and its
+member `agent-launch` both run the identity's installed managed CLI
+(`<install home>/cli/current/happier`), because member users execute that exact
+path through their sudoers rule and cannot read the source runtime. A missing
+binary settles as `managed_cli_unavailable` with its install remedy; an older
+installed payload runs older isolation code under a newer daemon. A source Stack
+does not install that binary. Each source daemon bundle carries a revision-matched native payload at
+`source-runtime/tree-daemon-*/guest-payload`, but a reload neither promotes it
+into an identity's CLI home nor refreshes an earlier hand-installed one; the
+reload verdict only checks that a managed CLI is present at an unchanged path.
+Before a Separate users Agent turn on a source Stack, install that payload for the
+identity with the first-party installer (it consumes its `--payload-root`, so
+pass a fresh copy, never an installed version directory):
+
+```bash
+stage=$(mktemp -d "<identity CLI home>/payload-stage.XXXXXX")
+cp -a <stack-state>/source-runtime/<selected tree-daemon>/guest-payload "$stage/payload"
+node apps/stack/bin/hstack.mjs stack happier <stack> --identity=<name> -- self __install-payload \
+  --component happier-cli --channel <identity channel> --payload-root "$stage/payload" \
+  --version local-<guest payload identity> --managed-guest
+```
+
+
 Controller CLI/auth uses its own retained
 source bundle without replacing the remote role identities. Built QA uses `--runtime=built` and the
 existing target-compatible selection instead. New `--qa`/`agent-qa-*` stacks request linux3, linux2 and linux1 through
