@@ -54,6 +54,7 @@ import { TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
 import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 } from '../actions/resolveResourceProtocol.js';
 import { TriageEditTaskActionInputV1Schema, TriageTaskDraftV1Schema } from '../actions/tasksProtocol.js';
 import { TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, type TriageTaskOriginErrorV1Schema } from '../actions/taskOriginProtocol.js';
+import { TRIAGE_TASKS_READ_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1 } from '../actions/taskReviewProtocol.js';
 import { unlinkEntryFromSession } from '../sessions/entrySessionLinks.js';
 import { TriageUnlinkEntryFromSessionActionInputV1Schema, TriageUnlinkEntryFromSessionActionResultV1Schema } from '../actions/entrySessionProtocol.js';
 import { invokeTriageMountedUiAction } from './mountedActions.js';
@@ -1103,6 +1104,9 @@ async function mountShell(
                     // The persisted relationship Action is the genuine host transport boundary.
                     if (action === TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1 && options.taskOrigin !== undefined) {
                         return { v: 1, originError: options.taskOrigin };
+                    }
+                    if (action === TRIAGE_TASKS_READ_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1 && options.taskOrigin !== undefined) {
+                        return { v: 1, originReview: null };
                     }
                     if (action === 'tasks/open-create-v1' && options.onTaskDraft !== undefined) {
                         options.onTaskDraft(input);
