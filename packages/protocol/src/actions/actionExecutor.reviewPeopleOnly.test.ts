@@ -8,6 +8,7 @@ import { readReviewStartActionResultV1 } from './specs/executionRunCompletion.js
 import { createActionExecutor } from './actionExecutor.js';
 import { ReviewNewRoundResultV1Schema } from '../reviews/reviewRoundActionsV1.js';
 import { getActionSpec } from './actionSpecs.js';
+import { prepareActionCompletionV1 } from './actionCompletion.js';
 
 describe('person-only Review admission', () => {
   it.each([{ comparison: false, unfinished: false }, { comparison: true, unfinished: false },
@@ -51,10 +52,11 @@ describe('person-only Review admission', () => {
       expect((await records.read(first.reviewId))?.rounds).toHaveLength(2);
     }
   });
-  it.each([false, true])('requests people without creating executable work (stages: %s)', async staged => {
+  it.each([{ staged: false, detached: false }, { staged: true, detached: false }, { staged: false, detached: true }])(
+    'completes requested people without creating executable work (stages: $staged, detached: $detached)', async ({ staged, detached }) => {
     const records = createInMemoryReviewRecordPortV1();
     const person = { kind: 'person' as const, principal: { kind: 'account' as const, accountId: 'reviewer' }, required: true };
-    const data = ReviewStartInputSchema.parse({ sessionId: 'origin', scope: 'repository',
+    const data = ReviewStartInputSchema.parse({ ...(detached ? { target: { kind: 'detached' }, cwd: '/qa/repository' } : { sessionId: 'origin' }), scope: 'repository',
       reviewers: [person], instructions: 'Please review this repository.',
       ...(staged ? { steps: [{ kind: 'review', reviewers: [person], instructions: 'Please review.' }] } : {}),
     });
@@ -77,11 +79,15 @@ describe('person-only Review admission', () => {
       },
       startExecutionRunWithSelection: async () => { throw new Error('Person requests do not launch an Agent'); },
     });
+    if (!result) throw new Error('Expected Review dispatch result');
     expect(request?.reviewers).toEqual([{ principal: person.principal, required: true }]);
-    expect(result).toMatchObject({ ok: true, result: { intent: 'review', sessionId: 'origin',
+    expect(result).toMatchObject({ ok: true, result: { intent: 'review', sessionId: detached ? null : 'origin',
       reviewRound: { reviewId: request?.reviewId, roundOrdinal: 1 }, results: [] } });
     expect(readReviewStartActionResultV1(result, data)).toMatchObject({ kind: 'native', runs: [], failed: [],
       reviewRound: { reviewId: request?.reviewId, roundOrdinal: 1 } });
+    const completion = getActionSpec('review.start').completion;
+    expect(prepareActionCompletionV1(completion, result, { input: data }))
+      .toEqual({ kind: 'completed', value: result.ok ? result.result : undefined });
     expect((await records.read(request!.reviewId))?.rounds).toEqual([
       expect.objectContaining({ state: 'completed', runs: [], reviewerIds: [], finishedAt: expect.any(Number) }),
     ]);
