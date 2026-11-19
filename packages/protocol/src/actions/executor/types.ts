@@ -186,7 +186,7 @@ import type {
   StoredApprovalRequestV2,
 } from '../../approvals/approvalRequestV1.js';
 import type { PluginSourceCustodyV1 } from '../../plugins/runtime/sourceCustody.js';
-import type { DaemonPluginStructuredMessageActionMountedBinding } from '../../plugins/actions/daemonInvocationV1.js';
+import type { DaemonPluginMountedInvocationV1, DaemonPluginStructuredMessageActionMountedBinding } from '../../plugins/actions/daemonInvocationV1.js';
 import type {
 } from '../../prompts/library/promptAssetsV1.js';
 import type { ProviderConnectionId } from '../../providers/ids.js';
@@ -471,6 +471,8 @@ export type ActionPluginCaller = Readonly<{
   originSurface?: Exclude<keyof ActionSurfaces, 'plugin' | 'rpc'> | 'background';
   /** Exact host-stamped process-local plugin occurrence. */
   occurrenceId?: string;
+  /** Transport family stamped by the host alongside live occurrence provenance. */
+  mountedInvocationKind?: DaemonPluginMountedInvocationV1['kind'];
   /** Durable source custody for owners that freeze replay provenance. */
   sourceCustody?: PluginSourceCustodyV1;
   /** Live Account declaration correspondence; durable approvals project their own closed caller shape. */

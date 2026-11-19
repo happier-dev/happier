@@ -341,12 +341,15 @@ export function resolveOriginalAccountPluginInvocation(caller: ActionExecutorCon
     if (!caller.contributionLocalId || !caller.occurrenceId || !caller.sourceCustody) {
         return failure('plugin_mounted_caller_unavailable');
     }
-    return { ok: true, pluginInvocation: { kind: 'mountedPluginSurface', mountedBinding: {
+    const binding = {
         pluginId: caller.pluginId, contributionLocalId: caller.contributionLocalId, occurrenceId: caller.occurrenceId,
         sourceCustody: caller.sourceCustody,
         ...(caller.pluginVersion === undefined ? {} : { pluginVersion: caller.pluginVersion }),
         ...(caller.materialization ? { materializationRef: caller.materialization } : {}),
-    } } };
+    };
+    return { ok: true, pluginInvocation: caller.mountedInvocationKind === 'clientPluginAction'
+        ? { kind: 'clientPluginAction', clientActionBinding: binding }
+        : { kind: 'mountedPluginSurface', mountedBinding: binding } };
 }
 
 export function executeOriginalAccountMachineAction(params: OriginalAccountMachineActionParams & Readonly<{ foreignTargetOnly: true }>): Promise<ActionExecuteResult | null>;

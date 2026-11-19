@@ -78,10 +78,10 @@ export async function deriveMountedPluginInvocationCaller(input: Readonly<{
             if (selection.kind !== 'available' || selection.manifest.id !== binding.pluginId
                 || (binding.pluginVersion !== undefined && binding.pluginVersion !== selection.manifest.version)) return false;
             const contributions = selection.manifest.contributes;
-            // A client caller is an Account Action or the plugin's Work Items registration, whose
-            // callback reaches source Actions through context.services.actions.
+            // Account custody can supply a client Action, an Account Action, or a Work Items callback.
             const declaredCaller = invocation?.kind === 'clientPluginAction'
-                ? contributions.actions?.some(action => action.id === binding.contributionLocalId && action.execution.target === 'account')
+                ? contributions.actions?.some(action => matchesCallerContributionId(action.id)
+                    && (action.execution.target === 'account' || action.execution.target === 'client'))
                     || contributions.workItems?.some(entry => entry.id === binding.contributionLocalId) === true
                 : invocation?.kind === 'mountedPluginSurface' && [
                     ...contributions.ui.views, ...contributions.ui.settingsPages,

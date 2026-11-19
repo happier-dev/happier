@@ -60,8 +60,8 @@ import {
     type PluginActionCurrentIntentResult} from '@happier-dev/protocol/plugins/actions/invocation';
 import {
     type PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
-import {
-    type PluginMachineExecutionOriginV1} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { getPluginMachineExecutionOriginRef,
+    type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionHandler, PluginAccountActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -541,6 +541,8 @@ function createClientActionActivation(input: Readonly<{
     accountActionDeclaration?: import('@happier-dev/protocol/plugins/actions/v2').PluginActionContributionV2;
     omitProjectedAccountDeclaration?: boolean;
     accountSourceCustody?: Extract<PluginSourceCustodyV1, { kind: 'account_release' | 'bundled_first_party' }>;
+    machineSourceCustody?: PluginSourceCustodyV1;
+    machineExecutionOrigin?: PluginMachineExecutionOriginV1;
     authoredAccount?: boolean;
     accountManifest?: typeof authoredAccountManifest;
     accountAvailability?: { when: { fact: 'session.exists'; operator: 'equals'; value: boolean } };
@@ -549,10 +551,10 @@ function createClientActionActivation(input: Readonly<{
     const pluginId = input.authoredAccount ? authoredAccountManifest.id : input.pluginId ?? CALLER_PLUGIN_ID;
     const pluginVersion = input.accountManifest?.version ?? (input.authoredAccount ? authoredAccountManifest.version : '1.2.3');
     const localId = input.localId ?? 'refresh-index';
-    const executionOrigin = clientActionExecutionOrigin(pluginId);
+    const executionOrigin = input.machineExecutionOrigin ?? clientActionExecutionOrigin(pluginId);
     const hostOrigin = Object.freeze({
         ...CLIENT_ACTION_HOST_ORIGIN,
-        machineId: executionOrigin.materializationRef.machineId,
+        machineId: getPluginMachineExecutionOriginRef(executionOrigin).machineId,
         executionOrigin,
     });
     const baseAction = createClientTargetAction({
@@ -657,6 +659,8 @@ function createClientActionActivation(input: Readonly<{
                 version: pluginVersion,
                 enabled: true,
                 source: { kind: 'localPath', locator: pluginId },
+                ...(input.machineSourceCustody ? { occurrenceId: projectedAction.occurrenceId, executionOrigin,
+                    sourceCustody: input.machineSourceCustody } : {}),
             }),
         }),
         actionsById: Object.freeze(projectedActions),
@@ -3351,24 +3355,57 @@ describe('Account Action placement through the executable dispatcher', () => {
         } finally { await activation.composition.unload(); accountLifetime.retire(); }
     });
 
-    it('carries the host health Notice origin to the native failure Action catalog', async () => {
+    it.each(['health Notice', 'failed Receipt'] as const)('carries the %s investigation origin to the native failure Action catalog', async scenario => {
         const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
         const { handleTriageNativeFailure } = await import('../../../../../../packages/plugins/triage/src/actions/nativeFailure');
         const { createAccountNoticeInvestigation } = await import('@/hooks/inbox/accountNoticeInvestigation');
         const { createServiceHealthNoticeArtifactFixture } = await import('@/dev/testkit/fixtures/usageNoticeFixtures');
         const { readAccountNoticeArtifactHeader } = await import('@/sync/domains/artifacts/usageNoticeArtifacts');
         const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+        const { resolveOriginalAccountPluginInvocation } = await import('@/sync/api/externalActionAccountTransport');
+        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+        const { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, TriageRunConfiguredActionInputV1Schema } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol');
+        await prepareSessionDraftPersistenceStorage();
         const lifetime = clientAccountLifetime();
         const scope = lifetime.scope;
         const pluginId = 'acme.notice-origin';
         const catalogId = 'actions/read-v1';
-        const catalogAnswer = { v: 1, kind: 'choices' as const, defaultActionId: null, actions: [] };
-        const catalog = createClientActionActivation({ pluginId, localId: catalogId, accountPlacement: true,
-            accountLifetime: lifetime, surfaces: ['ui', 'plugin'], readOnly: true, accountHandler: () => catalogAnswer,
-            artifactGraph: PluginUiArtifactsManifestEntryV2Schema.parse({ ...CLIENT_ACTION_ARTIFACT_GRAPH,
-                digest: `sha256:${'b'.repeat(64)}` }) });
+        const receipt = scenario === 'failed Receipt';
+        const custody = { kind: 'managed', immutableGenerationId: 'triage-generation', installSource: 'localPath' } as const;
+        const choice = { configuredActionId: 'deployments.investigate', sessionChoice: { kind: 'new' },
+            agentChoice: { kind: 'configured' }, delivery: 'compose' } as const;
+        const catalogAnswer = { v: 1, kind: 'choices' as const, defaultActionId: receipt ? choice.configuredActionId : null,
+            actions: receipt ? [{ label: 'Investigate', selection: choice }] : [] };
         const parent = createClientActionActivation({ pluginId, localId: 'native-failure/handle-v1', accountLifetime: lifetime,
-            handler: handleTriageNativeFailure });
+            machineSourceCustody: custody, handler: handleTriageNativeFailure });
+        const accountDeclaration = (id: string, invokingUi?: true): import('@happier-dev/protocol/plugins/actions/v2').PluginActionContributionV2 => ({
+            id, title: id, scopes: ['global'], surfaces: ['ui', 'plugin'], placementBindings: [], dangerLevel: 'safe', inputSchema: {},
+            execution: { target: 'account', ...(invokingUi ? { invokingUi } : {}), account: {
+                artifactId: CLIENT_ACTION_TARGET.artifactId, exportName: CLIENT_ACTION_TARGET.exportName,
+            } },
+        });
+        const catalog = createClientActionActivation({ pluginId, localId: catalogId, accountPlacement: true,
+            accountLifetime: lifetime, surfaces: ['ui', 'plugin'], readOnly: true,
+            artifactGraph: PluginUiArtifactsManifestEntryV2Schema.parse({ ...CLIENT_ACTION_ARTIFACT_GRAPH,
+                digest: `sha256:${'b'.repeat(64)}` }),
+            ...(receipt ? {
+                accountManifest: { ...authoredAccountManifest, id: pluginId, contributes: { actions: [
+                    { ...accountDeclaration(catalogId), readOnly: true },
+                    accountDeclaration(TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, true),
+                ] } },
+                accountActivate: api => {
+                    api.actions.register(catalogId, () => catalogAnswer);
+                    api.actions.register(TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, async (input, context) => {
+                        const launch = TriageRunConfiguredActionInputV1Schema.parse(input);
+                        if (launch.handoff.context.kind !== 'failure' || launch.handoff.context.subject.kind !== 'deploymentReceipt') {
+                            throw new Error('Expected the failed Receipt to reach the configured Action');
+                        }
+                        await context.ui!.openNewSession({ prompt: `Investigate Receipt ${launch.handoff.context.subject.deploymentId}.` });
+                        return { v: 1, handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } };
+                    });
+                },
+            } : { accountHandler: () => catalogAnswer }),
+        });
         const projection = { ...parent.projection,
             actionsById: { ...parent.projection.actionsById, ...catalog.projection.actionsById },
             reactNativeBundlesById: { ...parent.projection.reactNativeBundlesById, ...catalog.projection.reactNativeBundlesById },
@@ -3387,6 +3424,11 @@ describe('Account Action placement through the executable dispatcher', () => {
                     catalogCaller = request.context.actionCaller;
                     catalogAuthority = request.context.authority;
                 }
+                // Admission at the Machine Action transport is the boundary where the launch can refuse.
+                if (receipt && request.action.localId === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1) {
+                    const invocation = resolveOriginalAccountPluginInvocation(request.context.actionCaller);
+                    if (!invocation.ok) return Promise.resolve(invocation);
+                }
                 return executeCurrentUiContextContributedAction(request, {
                     execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
                 });
@@ -3396,7 +3438,9 @@ describe('Account Action placement through the executable dispatcher', () => {
         const unregister = registerCurrentUiContextActionPort(createPort);
         const withdrawProjection = publishCommittedAppShellPluginUiProjection(() => projection);
         const artifact = createServiceHealthNoticeArtifactFixture(scope.serverId, { ownerAccountId: scope.accountId });
-        const entry = { artifact, header: readAccountNoticeArtifactHeader(artifact, scope.accountId)! };
+        const entry = receipt ? { kind: 'deploymentReceipt' as const, serverId: scope.serverId,
+            environmentId: 'receipt-environment', deploymentId: 'failed-receipt' }
+            : { artifact, header: readAccountNoticeArtifactHeader(artifact, scope.accountId)! };
         const investigation = createAccountNoticeInvestigation({ scope, execute, isCurrent: () => lifetime.isCurrent(),
             binding: { pluginId, action: parent.action.id } });
         await parent.composition.unload();
@@ -3406,9 +3450,20 @@ describe('Account Action placement through the executable dispatcher', () => {
             await expect(execute('action.invoke', { action: { pluginId, localId: catalogId }, input: {} },
                 { surface: 'ui', serverId: scope.serverId })).resolves.toMatchObject({ ok: true, result: catalogAnswer });
             expect(investigation.isEligible(entry)).toBe(true);
-            await expect(investigation.launch(entry, {})).resolves.toMatchObject({
-                kind: 'unavailable', code: 'configuredActionUnavailable', recovery: 'configure',
-            });
+            newSessionNavigation.mockClear();
+            const outcome = await investigation.launch(entry, receipt ? { delivery: 'compose' } : {});
+            if (receipt) {
+                expect(outcome, JSON.stringify(outcome)).toMatchObject({ kind: 'started', handoff: { kind: 'composed' } });
+                const route = newSessionNavigation.mock.calls[0]?.[0] as { pathname: string; params: { draftId: string } } | undefined;
+                expect(route?.pathname).toBe('/new');
+                const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+                expect(readNewSessionDraftFromRepository({ scope, draftId: route!.params.draftId }))
+                    .toMatchObject({ input: 'Investigate Receipt failed-receipt.' });
+                expect(catalogCaller).toMatchObject({ contributionLocalId: parent.action.id,
+                    occurrenceId: parent.action.occurrenceId, sourceCustody: custody });
+            } else {
+                expect(outcome).toMatchObject({ kind: 'unavailable', code: 'configuredActionUnavailable', recovery: 'configure' });
+            }
             expect(catalogCaller).toMatchObject({ kind: 'plugin', pluginId, originSurface: 'ui' });
             expect(catalogAuthority).toBe('account_automation');
             await expect(createPort('plugin').invokeAction!({ action: { pluginId, localId: catalogId }, input: {} }))
@@ -3555,34 +3610,36 @@ describe('Account Action placement through the executable dispatcher', () => {
         } finally { nestedActionConfirmation.onShow = null; await activation.composition.unload(); accountLifetime.retire(); }
     });
 
-    it('retains Account Action custody through the real nested host transport', async () => {
-        const [{ captureLazyActionAccountContext }, { resolveOriginalAccountPluginInvocation }] = await Promise.all([
-            import('@/sync/ops/actions/actionAccountContext'), import('@/sync/api/externalActionAccountTransport'),
+    it.each(['account', 'materialized Machine', 'source-backed Machine'] as const)('retains %s client-executable custody through the nested Account host transport', async placement => {
+        const [{ projectExternalActionRequesterInvocationContextV1 }, { resolveOriginalAccountPluginInvocation }] = await Promise.all([
+            import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1'), import('@/sync/api/externalActionAccountTransport'),
         ]);
         const accountLifetime = clientAccountLifetime(rpcHomes.get('server-client-action')!.id);
-        const account = await captureLazyActionAccountContext(accountLifetime.scope.serverId);
-        const sourceCustody = { kind: 'account_release' as const, pluginId: CALLER_PLUGIN_ID,
+        const accountSourceCustody = { kind: 'account_release' as const, pluginId: CALLER_PLUGIN_ID,
             version: '1.2.3', archiveDigestSha256: `sha256:${'a'.repeat(64)}` };
+        const developmentSource = { kind: 'development' as const, registeredRootId: 'client-action-root' };
+        const materializedSource = { kind: 'managed' as const, immutableGenerationId: 'client-generation', installSource: 'localPath' as const };
+        const sourceCustody = placement === 'account' ? accountSourceCustody
+            : placement === 'materialized Machine' ? materializedSource : developmentSource;
         const issued: unknown[] = [];
-        // The real requester/caller transport validates custody before this
-        // daemon HTTP boundary receives the notification effect.
-        const relay = createUiAccountActionTransport({ account,
-            resolveFallbackMachineId: () => 'machine-plugin', transport: async request => {
-                issued.push(request.invocation);
-                return { attemptedChannels: 1, deliveredChannels: 1 };
-            } });
+        const callers: unknown[] = [];
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
-            notificationsNotifyMe: async (input, context) => {
+            notificationsNotifyMe: async (_input, context) => {
                 const caller = resolveOriginalAccountPluginInvocation(context.actionCaller);
                 if (!caller.ok) return caller;
-                const result = await relay({ actionId: 'notifications.notify_me', input, context });
-                const refusal = ActionExecuteFailureSchema.safeParse(result);
-                return refusal.success ? refusal.data : NotificationsNotifyMeResultV1Schema.parse(result);
+                callers.push(caller.pluginInvocation);
+                issued.push(projectExternalActionRequesterInvocationContextV1(context));
+                return { attemptedChannels: 1, deliveredChannels: 1 };
             },
         }));
-        const activation = createClientActionActivation({ accountPlacement: true, accountLifetime,
-            accountSourceCustody: sourceCustody,
-            accountHandler: async (_input, context) => context.ui!.executeAction('notifications.notify_me', { message: 'Review ready' }) });
+        const activation = createClientActionActivation({ accountLifetime, ...(placement === 'account'
+            ? { accountPlacement: true, accountSourceCustody,
+                accountHandler: async (_input, context) => context.ui!.executeAction('notifications.notify_me', { message: 'Review ready' }) }
+            : { ...(placement === 'materialized Machine' ? { machineSourceCustody: materializedSource }
+                : { machineExecutionOrigin: { serverIdentityId: CLIENT_ACTION_ORIGIN.serverIdentityId, sourceRef: {
+                    machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId, pluginId: CALLER_PLUGIN_ID, sourceCustody: developmentSource,
+                } } }),
+                handler: async (_input, context) => context.ui.executeAction('notifications.notify_me', { message: 'Review ready' }) }) });
         await activation.composition.unload();
         try {
             expect((await activation.composition.reconcile([activation.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
@@ -3591,14 +3648,20 @@ describe('Account Action placement through the executable dispatcher', () => {
                 invocationSurface: 'ui', originSurface: 'ui', clientAction: {},
                 pluginUiProjection: activation.projection, resolveContributedAction: resolveExactClientAction(activation.action),
                 hostAction: { execute: executor.execute, context: {
-                    serverId: account.serverId, runtimeAccountId: account.accountId, authority: 'present_user',
+                    serverId: accountLifetime.scope.serverId, runtimeAccountId: accountLifetime.scope.accountId, authority: 'present_user',
                 } },
             });
             expect(outcome, JSON.stringify(outcome)).toEqual({ ok: true, result: { attemptedChannels: 1, deliveredChannels: 1 } });
+            expect(callers).toEqual([{ kind: 'clientPluginAction', clientActionBinding: {
+                pluginId: CALLER_PLUGIN_ID, contributionLocalId: activation.action.id, occurrenceId: activation.action.occurrenceId,
+                sourceCustody,
+                ...(placement === 'account' ? { pluginVersion: accountSourceCustody.version }
+                    : placement === 'materialized Machine' ? { materializationRef: CLIENT_ACTION_ORIGIN.materializationRef } : {}),
+            } }]);
             expect(issued).toEqual([expect.objectContaining({ surface: 'plugin', authority: 'account_automation',
                 caller: expect.objectContaining({ kind: 'plugin', pluginId: CALLER_PLUGIN_ID,
                     contributionLocalId: activation.action.id, occurrenceId: activation.action.occurrenceId, sourceCustody }) })]);
-        } finally { await activation.composition.unload(); accountLifetime.retire(); account.dispose(); }
+        } finally { await activation.composition.unload(); accountLifetime.retire(); }
     });
 
     it('keeps Account execution local when an optional Machine transport is present', async () => {

@@ -81,7 +81,9 @@ describe('Account nested Action caller provenance', () => {
             targetedPluginContributions: [{ id: 'source', target: { pluginId: 'com.acme.detail-host', pointId: 'details' },
                 protocol: { id: 'detail', version: 1 }, operations: {}, surfaces: { detail: { renderer: 'panel' } } }],
             actions: [{ id: 'aggregate', title: 'Aggregate', scopes: ['global'], surfaces: ['cli'], dangerLevel: 'safe',
-                placementBindings: [], execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } } }],
+                placementBindings: [], execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } } },
+            { id: 'investigate', title: 'Investigate', scopes: ['global'], surfaces: ['ui'], dangerLevel: 'safe',
+                placementBindings: [], execution: { target: 'client', client: { artifactId: 'portable', exportName: 'activate' }, platforms: ['web'] } }],
         } }));
         let enabled = true;
         let bundled = false;
@@ -139,6 +141,11 @@ describe('Account nested Action caller provenance', () => {
             expect(pageCaller.caller).not.toHaveProperty('executionOrigin');
             expect(await pageCaller.isMountedCallerCurrent()).toBe(true);
             expect((await deriveSurface(binding, 'source')).status).toBe('available');
+            expect(await derive('investigate')).toMatchObject({ status: 'available', caller: {
+                contribution: { id: 'investigate', qualifiedId: `${pluginId}/investigate` },
+                occurrenceId: binding.occurrenceId, sourceCustody: binding.sourceCustody,
+            } });
+            expect(await deriveSurface(binding, 'investigate')).toEqual({ status: 'unavailable' });
             expect(await deriveSurface(binding, 'undeclared-source')).toEqual({ status: 'unavailable' });
             expect(await derive('aggregate', binding, 'different-machine')).toEqual({ status: 'unavailable' });
             receivingMachineId = 'replacement-machine';

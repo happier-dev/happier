@@ -10,6 +10,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { evaluateContributionAvailability, resolveInvocationContributionPolicyFacts } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { pluginSourceCustodyV1Equal, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { projectActionFailureCauseV1, withActionAutomationNoticesV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
 import { createActionAutomationInvocationV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
@@ -96,7 +97,7 @@ import {
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { readPluginUiAccountExecutableOrigin } from '@/components/plugins/reactNative/executableModuleHost';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
-import { readPluginUiContributionOrigin, resolvePluginUiExecutionDeclaration } from '@/sync/domains/plugins/ui/projectionUnion';
+import { readPluginUiContributionOrigin, readPluginUiContributionSupplies, resolvePluginUiExecutionDeclaration } from '@/sync/domains/plugins/ui/projectionUnion';
 import { acquirePluginSurfaceContributedAction, resolveProjectedContributedAction } from './pluginSurfaceActionAcquisition';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import {
@@ -582,20 +583,36 @@ export function createPluginSurfaceAccountActionContext(
     return { ...input, invokedAtMs: Date.now() };
 }
 
-function clientActionInvocation(selection: ClientContributedActionSelection): Extract<
+function clientActionInvocation(selection: ClientContributedActionSelection, projection: PluginUiProjectionModel | null | undefined): Extract<
     DaemonPluginStructuredMessageActionInvocationV1, { kind: 'clientPluginAction' }
 > {
-    const accountOrigin = readPluginUiAccountExecutableOrigin(selection.action);
+    const { action, registration } = selection;
+    const { executionOrigin, occurrenceId } = registration;
+    const accountOrigin = readPluginUiAccountExecutableOrigin(action);
+    let sourceCustody: PluginSourceCustodyV1 | undefined = accountOrigin?.sourceCustody;
+    if (!accountOrigin && executionOrigin) {
+        if ('sourceRef' in executionOrigin) {
+            sourceCustody = executionOrigin.sourceRef.sourceCustody;
+        } else {
+            const supply = readPluginUiContributionSupplies(action).find(candidate => candidate.occurrenceId === occurrenceId
+                && candidate.executionOrigin && arePluginMachineExecutionOriginsEqual(candidate.executionOrigin, executionOrigin));
+            const installed = projection?.installedPackagesById[action.pluginId];
+            // A scoped Machine projection can carry the same facts on its installed package.
+            // Bind to the registering occurrence and origin, even when other Machines supply this Action.
+            sourceCustody = supply?.sourceCustody ?? (installed?.occurrenceId === occurrenceId && installed.executionOrigin
+                && arePluginMachineExecutionOriginsEqual(installed.executionOrigin, executionOrigin) ? installed.sourceCustody : undefined);
+        }
+    }
     return {
         kind: 'clientPluginAction',
         clientActionBinding: {
-            pluginId: selection.action.pluginId,
-            contributionLocalId: selection.action.id,
-            occurrenceId: selection.registration.occurrenceId,
-            ...(accountOrigin ? { sourceCustody: accountOrigin.sourceCustody, pluginVersion: selection.pluginVersion } : {}),
+            pluginId: registration.contribution.pluginId,
+            contributionLocalId: registration.contribution.localId,
+            occurrenceId,
+            ...(sourceCustody === undefined ? {} : { sourceCustody }),
+            ...(accountOrigin ? { pluginVersion: selection.pluginVersion } : {}),
             // Source-backed development occurrences have no materialization.
-            ...(selection.registration.executionOrigin && 'materializationRef' in selection.registration.executionOrigin
-                ? { materializationRef: selection.registration.executionOrigin.materializationRef } : {}),
+            ...(executionOrigin && 'materializationRef' in executionOrigin ? { materializationRef: executionOrigin.materializationRef } : {}),
         },
     };
 }
@@ -737,7 +754,7 @@ function clientActionExecuteAction(
                 ...(selection.binding.sessionId ? { sessionId: selection.binding.sessionId } : {}),
                 ...(execute ? { execute } : {}),
             } : input.contributedAction;
-            const invocation = clientActionInvocation(selection);
+            const invocation = clientActionInvocation(selection, input.pluginUiProjection);
             const hostAction = nestedClientHostAction(input.hostAction,
                 typeof action === 'string' && PluginInvocableActionIdSchema.safeParse(action).success,
                 sourceLifetime?.scope.accountId);
@@ -1763,7 +1780,7 @@ async function executeClientContributedAction(
                             ...(input.settleContributedAction ? { settleContributedAction: input.settleContributedAction } : {}),
                             clientAction: current.binding, pluginUiProjection: input.pluginUiProjection,
                             resolveContributedAction: input.resolveContributedAction,
-                            invocationSurface: 'plugin', originSurface, invocation: clientActionInvocation(current),
+                            invocationSurface: 'plugin', originSurface, invocation: clientActionInvocation(current, input.pluginUiProjection),
                             signal: options.signal,
                             ...(options.requiredReadOnly ? { requiredReadOnly: true } : {}),
                             ...(options.readObservation ? { readObservation: options.readObservation } : {}),
@@ -2036,7 +2053,7 @@ async function executeClientContributedAction(
             const accountOrigin = readPluginUiAccountExecutableOrigin(current.action);
             const messageInvocation = input.invocation?.kind === 'hostPresentedMessage' ? input.invocation
                 : invocationSurface === 'cli' || invocationSurface === 'agent' || invocationSurface === 'mcp'
-                    ? clientActionInvocation(current) : null;
+                    ? clientActionInvocation(current, input.pluginUiProjection) : null;
             const unavailable = () => createPluginActionHandlerNotStartedError({
                 code: 'plugin_message_action_unavailable', message: 'The selected Message Action is unavailable',
             });
@@ -2366,6 +2383,7 @@ function mountedHostActionContext(input: DispatchPluginSurfaceActionInput, calle
                     pluginId: caller?.pluginId ?? clientCaller!.pluginId,
                     contributionLocalId: caller?.contributionLocalId ?? clientCaller!.contributionLocalId,
                     occurrenceId: caller?.occurrenceId ?? clientCaller!.occurrenceId,
+                    ...(clientCaller && !caller ? { mountedInvocationKind: 'clientPluginAction' as const } : {}),
                     ...(declarationBinding?.pluginVersion === undefined ? {} : { pluginVersion: declarationBinding.pluginVersion }),
                     ...(sourceCustody === undefined
                         ? {}
