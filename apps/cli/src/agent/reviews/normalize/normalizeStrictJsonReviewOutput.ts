@@ -2,6 +2,7 @@ import type { BackendTargetRefV1, ExecutionRunRetentionPolicy, ReviewFinding } f
 import { ReviewAssumptionSchema } from '@happier-dev/protocol/reviews/ReviewAssumption';
 import { ReviewFindingSchema } from '@happier-dev/protocol/reviews/ReviewFinding';
 import { ReviewQuestionSchema } from '@happier-dev/protocol/reviews/ReviewQuestion';
+import { ReviewQualityV1Schema } from '@happier-dev/protocol/reviews/reviewPublicationEvidence';
 import { ReviewCommentProposalsV1Schema } from '@happier-dev/protocol/reviews/comments/proposals';
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import { firstMarkdownProse } from '@happier-dev/protocol/messages/markdownPlainText';
@@ -110,11 +111,14 @@ export function normalizeParsedReviewContent(params: Readonly<{
   const { triage: _triage, publication: _publication, commentIds: _commentIds,
     materialization: _materialization, materializationFailures: _materializationFailures,
     perEngineOutcome: _perEngineOutcome, reviewedFingerprint: _reviewedFingerprint,
-    engineId: _engineId, runRef: _runRef, updatedFindings: _updatedFindings, fileCount: _fileCount, ...modelContent } = parsedRecord;
+    engineId: _engineId, runRef: _runRef, updatedFindings: _updatedFindings, fileCount: _fileCount,
+    quality: rawQuality, ...modelContent } = parsedRecord;
+  const quality = ReviewQualityV1Schema.safeParse(rawQuality);
   const fileCount = admittedComparison?.inventory.files.length;
   const content = ReviewFindingsContentV2Schema.safeParse({
     ...modelContent,
     reviewOutcome,
+    ...(quality.success ? { quality: quality.data } : {}),
     ...(fileCount !== undefined ? { fileCount } : {}),
     // The comparison binding is captured by the host, never by model JSON.
     comparisonId: params.intentInput && typeof params.intentInput === 'object'

@@ -117,7 +117,7 @@ export function createReviewRunCommentService(deps: Readonly<{
       await deps.reviewRecords.settle({ ...binding.data,
         outcome,
         reviewerOutcomes: typeof input.reviewReviewerId === 'string' ? [{ key: input.reviewReviewerId, runId: run.runId,
-          outcome, reviewOutcome: evidence.reviewOutcome, materialization: evidence.materialization }] : [],
+          outcome, reviewOutcome: evidence.reviewOutcome, quality: evidence.quality, materialization: evidence.materialization }] : [],
         finishedAt: run.finishedAtMs ?? Date.now(), summary: run.summary,
         runs: [{ kind: 'execution', runId: run.runId, machineId: deps.scope.workspace.machineId,
           ...(run.sessionId ? { sessionId: run.sessionId } : {}) }],

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createReviewRecordPortV1, ReviewRoundComparisonCaptureV1Schema, type ReviewArtifactTransportV1 } from './reviewArtifactV1.js';
+import { createReviewRecordPortV1, projectReviewRoundQualityV1, ReviewRoundComparisonCaptureV1Schema, type ReviewArtifactTransportV1 } from './reviewArtifactV1.js';
 import { ReviewReviewerOutcomeV1Schema } from './reviewPublicationEvidence.js';
 
 function fixture() {
@@ -99,6 +99,31 @@ describe('durable Review rounds', () => {
       sourceKind: 'workflow', reviewerIds: ['one'], startedAt: 10 });
     await f.records.settle({ ...binding, outcome: 'completed', finishedAt: 20, runs: [] });
     expect((await f.records.read(binding.reviewId))?.rounds[0]?.state).toBe('failed');
+  });
+
+  it('opens settled quality for each admitted reviewer without inventing scores for old or missing evidence', async () => {
+    const f = fixture();
+    const start = { reviewId: 'quality-review', title: 'Review', subjectKind: 'repository' as const,
+      sourceKind: 'workflow' as const, reviewerIds: ['one', 'two', 'legacy'], startedAt: 1 };
+    const binding = await f.records.start(start);
+    const one = { score: 2, rationale: 'A regression remains.' };
+    const two = { score: 5, rationale: 'The change has complete coverage.' };
+    const outcomes = [
+      { key: 'one', quality: one }, { key: 'unadmitted', quality: { score: 1, rationale: 'Outside the roster.' } },
+      { key: 'two', quality: two }, { key: 'legacy' },
+    ].map(outcome => ReviewReviewerOutcomeV1Schema.parse({ ...outcome, outcome: 'completed',
+      reviewOutcome: 'complete', materialization: { kind: 'complete' } }));
+    await f.records.settle({ ...binding, outcome: 'completed', finishedAt: 2, runs: [],
+      reviewerOutcomes: outcomes });
+    await f.records.start({ ...start, startedAt: 3, newRound: true });
+    const rounds = (await f.records.read(binding.reviewId))?.rounds;
+    expect(rounds).toMatchObject([
+      { ordinal: 1, state: 'completed', reviewerQuality: [{ reviewerId: 'one', ...one }, { reviewerId: 'two', ...two }] },
+      { ordinal: 2, state: 'running' },
+    ]);
+    expect(projectReviewRoundQualityV1(rounds?.[0], 'lowest')?.score).toBe(2);
+    expect(projectReviewRoundQualityV1(rounds?.[0], 'median')?.score).toBe(3.5);
+    expect(projectReviewRoundQualityV1(rounds?.[1], 'lowest')).toBeNull();
   });
 
   it('retains an addressable completed Review with zero findings and does not republish a terminal retry', async () => {

@@ -19,6 +19,7 @@ export function buildReviewGuidanceBlock(): string {
     '- Do NOT wrap it in markdown code fences.',
     '- Do NOT include any extra text after the JSON.',
     '- Put the reviewer narrative in overviewMarkdown.',
+    '- For a complete review, include quality with an integer score from 1 (serious issues) to 5 (ready to ship) and a one-line rationale grounded in the review. Omit the score when the available evidence does not support one.',
     '- Only emit findings you can support with evidence.',
     '- Set reviewOutcome to complete only after inspecting the requested scope; an empty findings array does not prove a clean review.',
     '- If inspection is unavailable, set reviewOutcome to failed and explain the missing evidence in overviewMarkdown. If only part of the scope could be inspected, use partial and preserve supported findings.',

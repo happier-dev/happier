@@ -227,6 +227,7 @@ export const reviewStartExecutionRunCompletion: ExecutionRunCompletionDeclaratio
             ...perRunOutcome(run),
             ...(reviewOutcome ? { reviewOutcome } : {}),
             ...(run.outcome.kind === 'completed' ? {
+              ...(run.outcome.quality ? { quality: run.outcome.quality } : {}),
               materialization: run.outcome.materialization && run.outcome.commentIds
                 ? run.outcome.materialization
                 : { kind: 'failed', errorCode: 'review_materialization_unavailable' },

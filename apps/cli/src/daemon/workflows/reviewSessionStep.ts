@@ -52,6 +52,6 @@ export async function materializeWorkflowSessionReview(input: WorkflowSessionRev
   return { kind: 'completed', resultEncoding: 'typed', result: projectNativeJsonValueForTransport({
     reviewRound, reviewedFingerprint: null, commentIds: [...materialized.commentIds],
     perEngineOutcome: [{ key: selection.data.reviewerId, outcome: content.reviewOutcome === 'failed' ? 'failed' : 'completed',
-      reviewOutcome: content.reviewOutcome, materialization }],
+      reviewOutcome: content.reviewOutcome, quality: content.quality, materialization }],
   } satisfies z.infer<typeof ReviewStartTerminalValueV1Schema>) };
 }

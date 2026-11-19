@@ -4,6 +4,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { ReviewAssumptionSchema } from '../../reviews/ReviewAssumption.js';
 import { ReviewFindingSchema } from '../../reviews/ReviewFinding.js';
 import { ReviewQuestionSchema } from '../../reviews/ReviewQuestion.js';
+import { ReviewQualityV1Schema } from '../../reviews/reviewPublicationEvidence.js';
 import { ReviewTriageOverlaySchema } from './reviewFindingsV1.js';
 import { ExecutionRunStructuredRunRefSchema } from './executionRunStructuredRunRef.js';
 import { ReviewCommentProposalsV1Schema } from '../../reviews/comments/proposals.js';
@@ -24,6 +25,7 @@ export const ReviewFindingsV2Schema = lazyZodSchema(() => z.looseObject({
   /** Number of files in the host's verified captured comparison inventory, when known. */
   fileCount: z.optional(z.number().check(z.int(), z.nonnegative())),
   reviewOutcome: z.optional(z.enum(['complete', 'partial', 'failed'])),
+  quality: z.optional(ReviewQualityV1Schema),
   summary: z.string().check(z.minLength(1)),
   overviewMarkdown: z.string().check(z.minLength(1)),
   findings: z.array(ReviewFindingSchema),

@@ -1,6 +1,11 @@
 import { z } from '../zodRuntimePolicy.js';
 import { REVIEW_ARTIFACT_KIND_V1 } from '../artifacts/artifactKindV1.js';
-import { projectReviewRoundOutcomeV1, type ReviewReviewerOutcomeV1 } from './reviewPublicationEvidence.js';
+import {
+  projectReviewRoundOutcomeV1,
+  ReviewQualityV1Schema,
+  type ReviewQualityAggregationV1,
+  type ReviewReviewerOutcomeV1,
+} from './reviewPublicationEvidence.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ExternalActionTargetV1Schema } from '../actions/externalActionApi.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
@@ -52,15 +57,36 @@ export const ReviewMetadataWriteV1Schema = z.union([ReviewRoundStartMetadataV1Sc
 export type ReviewMetadataWriteV1 = z.infer<typeof ReviewMetadataWriteV1Schema>;
 export const ReviewArtifactHeaderV1Schema = z.strictObject({ kind: z.literal(REVIEW_ARTIFACT_KIND_V1), v: z.literal(1),
   reviewId: z.string(), title: z.string() });
+const ReviewRoundReviewerQualityV1Schema = lazyZodSchema(() => z.strictObject({
+  reviewerId: z.string().check(z.minLength(1)), ...ReviewQualityV1Schema.shape,
+}));
 export const ReviewArtifactBodyV1Schema = z.strictObject({ v: z.literal(1), rounds: z.array(z.strictObject({
   ordinal: z.number().check(z.int(), z.minimum(1)), comparisonId: z.optional(z.string()),
   comparisonCapture: z.optional(ReviewRoundComparisonCaptureV1Schema),
   state: ReviewRoundStateV1Schema, startedAt: z.number(), finishedAt: z.nullable(z.number()),
   reviewerIds: z.array(z.string()), runs: z.array(ReviewRunReferenceV1Schema),
+  reviewerQuality: z.optional(z.array(ReviewRoundReviewerQualityV1Schema)),
   summary: z.optional(z.string()),
 })) });
 export type ReviewArtifactBodyV1 = z.infer<typeof ReviewArtifactBodyV1Schema>;
 export type ReviewArtifactV1 = Readonly<z.infer<typeof ReviewArtifactHeaderV1Schema> & ReviewArtifactBodyV1>;
+export type ReviewRoundQualityV1 = Readonly<{
+  aggregation: ReviewQualityAggregationV1;
+  score: number;
+  reviewers: readonly z.infer<typeof ReviewRoundReviewerQualityV1Schema>[];
+}>;
+
+export function projectReviewRoundQualityV1(
+  round: ReviewArtifactV1['rounds'][number] | undefined, aggregation: ReviewQualityAggregationV1,
+): ReviewRoundQualityV1 | null {
+  const reviewers = round?.reviewerQuality;
+  if (!reviewers?.length) return null;
+  const scores = reviewers.map(reviewer => reviewer.score).sort((left, right) => left - right);
+  const midpoint = Math.floor(scores.length / 2);
+  const score = aggregation === 'lowest' ? scores[0]
+    : scores.length % 2 === 0 ? (scores[midpoint - 1] + scores[midpoint]) / 2 : scores[midpoint];
+  return { aggregation, score, reviewers };
+}
 
 type Revision = Readonly<{ headerVersion: number; bodyVersion: number }>;
 type Opened = Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; body: unknown; revision: Revision }>;
@@ -133,7 +159,15 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
       if (round.state !== 'running') return;
       const outcome = input.outcome !== 'cancelled' && input.outcome !== 'failed'
         ? projectReviewRoundOutcomeV1(round.reviewerIds, input.reviewerOutcomes ?? []) : input.outcome;
+      const byReviewer = new Map((input.reviewerOutcomes ?? []).flatMap(reviewer =>
+        reviewer.outcome === 'completed' && reviewer.quality
+          ? [[reviewer.key, reviewer.quality] as const] : []));
+      const reviewerQuality = round.reviewerIds.flatMap(reviewerId => {
+        const quality = byReviewer.get(reviewerId);
+        return quality ? [{ reviewerId, ...quality }] : [];
+      });
       const nextRound = { ...round, state: outcome, finishedAt: input.finishedAt, runs: [...input.runs],
+        ...(reviewerQuality.length ? { reviewerQuality } : {}),
         ...(input.summary === undefined ? {} : { summary: input.summary }) };
       const next = { ...current, rounds: current.rounds.map(item => item === round ? nextRound : item) };
       const reviewMetadata: ReviewMetadataWriteV1 = { currentRoundOrdinal: input.roundOrdinal, state: outcome, finishedAt: input.finishedAt };

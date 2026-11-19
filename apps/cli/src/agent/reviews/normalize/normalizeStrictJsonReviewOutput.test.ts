@@ -26,6 +26,17 @@ describe('normalizeParsedReviewContent', () => {
       expect(normalizeParsedReviewContent({ value, generatedAtMs: 1 })).toBeNull();
     },
   );
+
+  it('retains an admitted model score and drops malformed scores without losing findings', () => {
+    const value = { summary: 'Reviewed.', reviewOutcome: 'complete', findings: [] };
+    const read = (quality: unknown) => normalizeParsedReviewContent({ value: { ...value, quality }, generatedAtMs: 1 });
+    expect(read({ score: 4, rationale: ' The change has focused tests. ' })?.quality)
+      .toEqual({ score: 4, rationale: 'The change has focused tests.' });
+    for (const quality of [{ score: 6, rationale: 'Out of range' }, { score: 3, rationale: 'Two\nlines' }, { score: 4, rationale: '' }]) {
+      expect(read(quality)).toMatchObject({ reviewOutcome: 'complete', findings: [] });
+      expect(read(quality)?.quality).toBeUndefined();
+    }
+  });
 });
 
 describe('normalizeStrictJsonReviewOutput', () => {

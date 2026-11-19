@@ -630,7 +630,10 @@ export function renderWorkflowSessionStepInput(params: Readonly<{
     ? { kind: 'json', schema: zodSchemaToJsonSchemaObject(ReviewModelOutputV1Schema) }
     : params.result);
   const text = withWorkflowRoleInstructions(params.input.text, params.roleInstructions);
-  return instruction ? `${text}\n\n${instruction}` : text;
+  const reviewGuidance = isReview
+    ? '\n\nRate the quality of the reviewed changes from 1 to 5 in quality.score, with a one-line rationale in quality.rationale.'
+    : '';
+  return instruction ? `${text}${reviewGuidance}\n\n${instruction}` : text;
 }
 
 /** Session-first leaf adapter. Conversation selection/creation stays in its injected Session owner. */

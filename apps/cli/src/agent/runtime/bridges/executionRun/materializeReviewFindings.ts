@@ -66,6 +66,7 @@ export async function materializeReviewFindings(args: Readonly<{
         ? 'partial' as const : 'complete' as const;
   const projection = {
     engineId: args.run.backendId, reviewedFingerprint, commentIds: materialization.commentIds, reviewOutcome,
+    ...('quality' in parsed.data && parsed.data.quality ? { quality: parsed.data.quality } : {}),
     materialization: materialization.status === 'materialized' ? { kind: 'complete' as const }
       : { kind: materialization.status, errorCode: 'review_comment_materialization_failed' },
     ...(materialization.failures.length ? { materializationFailures: materialization.failures } : {}),

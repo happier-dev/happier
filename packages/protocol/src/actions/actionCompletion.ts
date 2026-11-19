@@ -35,6 +35,7 @@ export type ExecutionRunTerminalObservation =
     commentIds?: readonly string[];
     materialization?: ReviewRunMaterialization;
     reviewOutcome?: ReviewReviewerOutcomeV1['reviewOutcome'];
+    quality?: ReviewReviewerOutcomeV1['quality'];
   }>
   | Readonly<{ kind: 'failed'; code: string; runtimeIssueV1?: SessionRuntimeIssueV1; reviewedRuns?: readonly ScmDiffSummaryReviewRun[] }>
   | Readonly<{ kind: 'cancelled'; code?: string; reviewedRuns?: readonly ScmDiffSummaryReviewRun[] }>
