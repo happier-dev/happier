@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
-import { connectUiTriageActionClient } from '@happier-tests/ui-action-client';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { GITHUB_PLUGIN_ID } from '../../../plugins/scm-github/src/observations/githubProviderContracts';
 import { GITHUB_TRIAGE_ACTION_IDS_V1 } from '../../../plugins/scm-github/src/triage/contribution';
@@ -25,10 +24,8 @@ const testDir = run.testDir(randomUUID());
 const homeDir = join(testDir, 'daemon-home');
 let env: NodeJS.ProcessEnv;
 let machineId: string;
-let accountSecret: Uint8Array;
 let server: Awaited<ReturnType<typeof startServerLight>> | undefined;
 let daemon: Awaited<ReturnType<typeof startTestDaemon>> | undefined;
-let client: Awaited<ReturnType<typeof connectUiTriageActionClient>> | undefined;
 let github: Awaited<ReturnType<typeof startConnectedAccountTlsRecordingProxy>> | undefined;
 let caller: ReturnType<typeof spawnLoggedProcess> | undefined;
 const held = Promise.withResolvers<void>();
@@ -38,7 +35,7 @@ let released = false;
 afterAll(async () => {
   held.resolve();
   const failures: unknown[] = [];
-  for (const close of [() => caller?.stop(), () => client?.close(), () => daemon?.stop(), () => server?.stop(), () => github?.stop()]) {
+  for (const close of [() => caller?.stop(), () => daemon?.stop(), () => server?.stop(), () => github?.stop()]) {
     try { await close(); } catch (error) { failures.push(error); }
   }
   if (failures.length) throw new AggregateError(failures, 'Cancellation journey cleanup failed');
@@ -67,7 +64,6 @@ beforeAll(async () => {
   const auth = await createTestAuth(server.baseUrl);
   const seeded = await seedCliAuthForTestAccount({ cliHome: homeDir, serverUrl: server.baseUrl, auth, mode: 'dataKey' });
   machineId = seeded.machineId;
-  accountSecret = auth.accountSigningSeed;
   env = { ...sanitizeCliTestEnv(process.env), CI: '1', HAPPIER_VARIANT: 'dev', HAPPIER_HOME_DIR: homeDir,
     HAPPIER_SERVER_URL: server.baseUrl, HAPPIER_WEBAPP_URL: server.baseUrl, HAPPIER_DISABLE_CAFFEINATE: '1',
     HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
@@ -82,11 +78,6 @@ beforeAll(async () => {
 
 beforeAll(async () => {
   daemon = await startTestDaemon({ testDir, happyHomeDir: homeDir, env, requireMachineControlReady: true });
-});
-
-beforeEach(async () => {
-  client = await connectUiTriageActionClient({ serverUrl: server!.baseUrl, accountSecret });
-  await waitFor(() => client!.isMachineControlReady(machineId), { timeoutMs: 60_000 });
 });
 
 // Node's Windows kill('SIGINT') forcibly terminates the child rather than
