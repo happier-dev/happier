@@ -11,7 +11,9 @@ describe('admitted Review attention inventory', () => {
             eligibleAccounts: [{ accountId: 'person' }] }));
         const verdicts = [{ reviewId: 'submitted', accountId: 'person', roundOrdinal: 2, verdict: 'approve',
             content: null, revision: 1, submittedAt: new Date(2) }];
-        const matches = (where: { reviewId?: string | { in: readonly string[] }; artifactId?: string | { in: readonly string[] } }, id: string) => {
+        type Where = { reviewId?: string | { in: readonly string[] }; artifactId?: string | { in: readonly string[] }; OR?: readonly Where[] };
+        const matches = (where: Where, id: string): boolean => {
+            if (where.OR) return where.OR.some(arm => matches(arm, id));
             const selected = where.reviewId ?? where.artifactId;
             return typeof selected === 'string' ? selected === id : selected?.in.includes(id);
         };
@@ -47,6 +49,6 @@ describe('admitted Review attention inventory', () => {
             { reviewId: 'submitted', requestedVerdict: false, pendingDecisions: false, needsYou: false },
             { reviewId: 'findings', requestedVerdict: false, pendingDecisions: true, needsYou: true },
         ]);
-        expect(reads.sort()).toEqual(['audiences', 'counts', 'metadata', 'requests', 'verdicts']);
+        expect(reads.sort()).toEqual(['counts', 'metadata', 'requests', 'verdicts']);
     });
 });

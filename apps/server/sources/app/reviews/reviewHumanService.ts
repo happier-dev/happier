@@ -131,7 +131,40 @@ export async function readAdmittedReviewHumanStateInTx(tx: Tx, input: Readonly<{
 
 /** Batch projection used by list and Inbox consumers; it performs no per-review access lookup. */
 export async function readAdmittedReviewNeedsYouInTx(tx: Tx, input: HumanReadInput): Promise<ReadonlyMap<string, ReviewNeedsYouV1>> {
-    return new Map([...(await readHumanRowsInTx(tx, input))].map(([reviewId, rows]) => [reviewId, rows.needsYou]));
+    const result = new Map<string, ReviewNeedsYouV1>();
+    if (input.reviews.length === 0) return result;
+    const counts = input.facts === undefined ? await readAdmittedReviewCountsInTx(tx, input.reviews.map(row => row.reviewId)) : undefined;
+    for (const accesses of portableQueryChunks({ values: input.reviews, bindingsPerValue: 2, fixedBindings: 1 })) {
+        const metadataRows = input.facts === undefined
+            ? await tx.reviewMetadata.findMany({ where: { artifactId: { in: accesses.map(access => access.reviewId) } },
+                select: { artifactId: true, currentRoundOrdinal: true } })
+            : accesses.map(access => ({ artifactId: access.reviewId, currentRoundOrdinal: input.facts!.get(access.reviewId)!.currentRoundOrdinal }));
+        const currentRounds = metadataRows.map(row => ({ reviewId: row.artifactId, roundOrdinal: row.currentRoundOrdinal }));
+        const [requestRows, verdictRows] = currentRounds.length === 0 ? [[], []] : await Promise.all([
+            tx.reviewRequestedReviewer.findMany({
+                where: { OR: currentRounds, eligibleAccounts: { some: { accountId: input.actorAccountId } } },
+                select: { reviewId: true, roundOrdinal: true, eligibleAccounts: { select: { accountId: true } } },
+            }),
+            tx.reviewVerdict.findMany({ where: { OR: currentRounds },
+                select: { reviewId: true, accountId: true, roundOrdinal: true } }),
+        ]);
+        const metadataById = new Map(metadataRows.map(row => [row.artifactId, row]));
+        const requestsById = groupByReview(requestRows);
+        const verdictsById = groupByReview(verdictRows);
+        for (const access of accesses) {
+            const metadata = metadataById.get(access.reviewId);
+            if (!metadata) throw Object.assign(new Error('review_not_found'), { code: 'review_not_found' });
+            result.set(access.reviewId, projectReviewNeedsYouV1({ reviewId: access.reviewId,
+                roundOrdinal: metadata.currentRoundOrdinal, actorAccountId: input.actorAccountId,
+                canRead: true, canDecide: access.level !== 'view',
+                pendingDecisionCount: input.facts?.get(access.reviewId)?.pendingDecisionCount ?? counts?.get(access.reviewId)?.needsDecision ?? 0,
+                requests: (requestsById.get(access.reviewId) ?? []).map(row => ({ roundOrdinal: row.roundOrdinal,
+                    eligibleAccountIds: row.eligibleAccounts.map(account => account.accountId) })),
+                verdicts: verdictsById.get(access.reviewId) ?? [],
+            }));
+        }
+    }
+    return result;
 }
 
 export async function setAdmittedReviewersInTx(tx: Tx, input: Readonly<{
