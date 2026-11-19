@@ -412,7 +412,7 @@ describe('projectGithubMutationOutcomeV1', () => {
       title: 'Outcome unknown', description: 'Read the current provider state before another change.', tone: 'warning' as const,
     } };
     const result = { kind: 'uncertain' as const, outcome };
-    expect(projectGithubMutationOutcomeV1({ status: 'success', result }, result)).toBe(outcome);
+    expect(projectGithubMutationOutcomeV1({ status: 'success', result }, result)).toEqual(outcome);
   });
 
   it('settles nothing while the control is at rest or in flight', () => {
@@ -496,6 +496,14 @@ describe('projectGithubMutationOutcomeV1', () => {
     )).toEqual({ kind: 'failed', failure });
   });
 
+  it('preserves a native review rejection in the mounted Action failure contract', () => {
+    const result = { kind: 'rejected', reason: 'head_advanced' } as const;
+    expect(projectGithubMutationOutcomeV1({ status: 'success', result }, result)).toEqual({
+      kind: 'rejected',
+      failure: { ok: false, errorCode: 'head_advanced' },
+    });
+  });
+
   it('does not read an unparseable result as an applied write', () => {
     // The action settled successfully at the transport, but this build could not
     // understand what it settled AS. Claiming the write landed would be an invention.
@@ -512,7 +520,10 @@ describe('projectGithubMutationOutcomeV1', () => {
     }, null)).toBeNull();
     expect(projectGithubMutationOutcomeV1({
       status: 'error', code: 'permission_denied', message: 'Permission denied.', retryable: false,
-    }, null)).toEqual({ kind: 'rejected', code: 'permission_denied', message: 'Permission denied.' });
+    }, null)).toEqual({
+      kind: 'rejected',
+      failure: { ok: false, errorCode: 'permission_denied', message: 'Permission denied.' },
+    });
   });
 
   it('reports an unknown dispatch outcome as uncertain, never as a rejection', () => {
@@ -552,8 +563,7 @@ describe('GitHub post-mutation provider semantics', () => {
     })).toBe(false);
     expect(githubMutationMayHaveChangedProviderStateV1({
       kind: 'rejected',
-      code: 'plugin_action_current_intent_rejected',
-      message: 'The confirmation was declined.',
+      failure: { ok: false, errorCode: 'plugin_action_current_intent_rejected' },
     })).toBe(false);
   });
 });

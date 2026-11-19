@@ -215,8 +215,7 @@ export function projectGithubMutationOutcomeV1(
   if (parsed.kind === 'rejected') {
     return Object.freeze({
       kind: 'rejected' as const,
-      code: parsed.reason,
-      message: parsed.reason,
+      failure: { ok: false as const, errorCode: parsed.reason },
     });
   }
   return Object.freeze({ kind: 'failed' as const, failure: parsed.failure });

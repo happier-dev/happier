@@ -150,7 +150,6 @@ import {
   formatTriageTimestampV1 as formatTimestamp,
   projectTriageDetailFieldTextV1 as fieldValueText,
   type TriagePullRequestOperationOfferV1,
-  type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { GithubFilesList } from './detail/filesList.js';
