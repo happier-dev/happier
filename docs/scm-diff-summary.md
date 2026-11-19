@@ -906,8 +906,9 @@ The Triage PR-detail Walk entrance reads a source-owned PR comparison locator
 from the transient `get` result, not from the persisted entry snapshot. It opens
 the canonical comparison destination through typed `session.open` navigation.
 That development destination supports `files`, `walkthrough` and `commits`.
-`commits` requires a `workingTree` comparison; Session, turn, branch, commit and
-PR sources return `commits_require_working_tree` before navigation. Opening the
+`commits` requires a whole-worktree `workingTree` comparison; included-only,
+pending-only, Session, turn, branch, commit and PR sources return
+`commits_require_working_tree` before navigation. Opening the
 view grants no commit authority; acceptance remains a separate SCM Action.
 The same unreleased `scmReview` destination accepts `explain: true|false` for
 Files. UI toggles and Action callers update that shared pane target; the choice

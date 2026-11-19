@@ -583,10 +583,14 @@ describe('exact workspace commit plans', () => {
         expect(boundary.requests.some(request => request.method === 'scm.diffSummary.commitPlan.cancel')).toBe(false);
     }, 120_000);
 
-    it('does not substitute pending changes or their application controls after selecting committed evidence', async () => {
+    it.each([
+        { kind: 'commit', commit: 'b'.repeat(40) },
+        { kind: 'workingTree', area: 'included' },
+        { kind: 'workingTree', area: 'pending' },
+    ] as const)('does not substitute whole-worktree application controls after selecting $kind $area evidence', async comparison => {
         const { latest, target } = await mountWorkspaceProposal();
         await vi.waitFor(() => expect(latest.current?.proposal?.outcome?.kind).toBe('unknown'));
-        await act(async () => target.setComparison?.({ kind: 'commit', commit: 'b'.repeat(40) }));
+        await act(async () => target.setComparison?.(comparison));
         expect(latest.current?.supportedComparison).toBe(false);
         expect(latest.current?.proposal).toBeNull();
         expect(latest.current?.actions.onCreate).toBeUndefined();

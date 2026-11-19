@@ -2,12 +2,23 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ScmDiffSummaryResultSchema } from '@happier-dev/protocol/scm';
 import { getScmDiffSummaryState, loadSavedScmDiffSummaryResult, retireScmDiffSummaryScope } from '@/sync/ops/scmDiffSummary/generate';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
-import { scmComparisonSourceOf, scmReviewComparisonMatchesSource, selectSessionScmWalkthroughKey } from './selection';
+import { scmComparisonSourceOf, scmReviewComparisonOfSource, scmReviewComparisonMatchesSource, scmReviewViewUnavailableReason, selectSessionScmWalkthroughKey } from './selection';
 import { applyScmDiffSummaryEvent, createInitialScmDiffSummaryState, SCM_DIFF_SUMMARY_GENERATE_ACTION_ID } from './state';
 
 const scope = { serverId: 'selection-home', accountId: 'selection-account' };
 afterEach(() => retireScmDiffSummaryScope(scope));
 describe('captured comparison result selection', () => {
+    it.each(['included', 'pending'] as const)('retains %s capture selection without offering whole-worktree commits', area => {
+        const source = { kind: 'workingTree' as const, area };
+        const selector = scmReviewComparisonOfSource(source, 'captured');
+        expect(selector).not.toBeNull();
+        expect(scmComparisonSourceOf(selector!, 'session')).toEqual(source);
+        expect(scmReviewComparisonMatchesSource(selector!, source)).toBe(true);
+        expect(scmReviewComparisonMatchesSource(selector!, { kind: 'workingTree' })).toBe(false);
+        expect(scmReviewViewUnavailableReason('commits', selector)).toBe('commits_require_working_tree');
+        expect(scmReviewViewUnavailableReason('files', selector)).toBeNull();
+        expect(scmReviewViewUnavailableReason('commits', { kind: 'workingTree' })).toBeNull();
+    });
     it('selects each saved output by inventory recency rather than the order its consumers restored it', () => {
         const save = (resultId: string, savedAtMs: number, failedReading: boolean) => {
             const input = { sessionId: 's', scope, savedAtMs,

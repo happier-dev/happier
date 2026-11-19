@@ -56,7 +56,7 @@ export type SessionPaneUrlDetailsTarget =
  */
 export const SESSION_PANE_URL_PARAM_KEYS = [
     'right', 'bottom', 'details', 'path', 'sha', 'terminalInstanceId', 'discussionId', 'machineId', 'boardItemId',
-    'comparison', 'comparisonId', 'scmResultId', 'scmResultCwd', 'turnId', 'checkpointReceiptId', 'evidence', 'head', 'base', 'baseOid', 'headOid', 'commit', 'parent', 'view', 'explain', 'pullRequest', 'evidenceSessionId',
+    'comparison', 'area', 'comparisonId', 'scmResultId', 'scmResultCwd', 'turnId', 'checkpointReceiptId', 'evidence', 'head', 'base', 'baseOid', 'headOid', 'commit', 'parent', 'view', 'explain', 'pullRequest', 'evidenceSessionId',
     'fileView', 'blame', 'fileOpenAs', 'rootPath',
     ...FILE_TARGET_ANCHOR_PARAM_KEYS,
 ] as const;
@@ -92,9 +92,11 @@ function parseScmReviewTarget(params: Readonly<Record<string, unknown>>): Sessio
     const read = (key: string) => readSingleStringParam(params, key)?.trim() || null;
     let comparison: SessionScmReviewComparison | null = null;
     switch (read('comparison')) {
-        case 'workingTree':
-            comparison = { kind: 'workingTree' };
+        case 'workingTree': {
+            const source = ScmComparisonSourceSchema.safeParse({ kind: 'workingTree', ...(read('area') ? { area: read('area') } : {}) });
+            if (source.success && source.data.kind === 'workingTree') comparison = source.data;
             break;
+        }
         case 'session':
             comparison = { kind: 'session' };
             break;

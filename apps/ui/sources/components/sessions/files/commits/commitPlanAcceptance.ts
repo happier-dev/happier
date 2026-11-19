@@ -1,5 +1,5 @@
 import { isScmCommitPlanApplicationLocked, type ScmCommitPlanAcceptance, type ScmCommitPlanApplication } from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
-import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
+import { scmComparisonSourceSupportsCommitPlan, type ScmComparison } from '@happier-dev/protocol/scm/comparison';
 import type { ScmDiffSummaryCommitPlan } from '@happier-dev/protocol/scm/diffSummary';
 
 /** Bind explicit acceptance to captured mutation authority and the verified remaining suffix. */
@@ -9,7 +9,7 @@ export function buildCommitPlanAcceptance(input: Readonly<{
     application: ScmCommitPlanApplication | null;
 }>): ScmCommitPlanAcceptance | null {
     const { comparison, plan, application } = input;
-    if (comparison.source.kind !== 'workingTree' || !comparison.commitTarget) return null;
+    if (!scmComparisonSourceSupportsCommitPlan(comparison.source) || !comparison.commitTarget) return null;
     if (isScmCommitPlanApplicationLocked(application ?? undefined)) return null;
     const landed = new Map<string, string>();
     for (const step of application?.steps ?? []) {

@@ -3,6 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { applySessionPaneUrlState, buildActiveDetailsRouteParams, createSessionPaneDetailsTab, deriveSessionPaneUrlStateFromScopeState, parseSessionPaneUrlState, reconcileSessionPaneScopeFromUrlState, serializeSessionPaneUrlState } from './sessionPaneUrlState';
 
 describe('sessionPaneUrlState', () => {
+    it.each(['included', 'pending'] as const)('preserves a captured %s review across tab restore and URL reload', area => {
+        const target = { kind: 'scmReview' as const,
+            comparison: { kind: 'workingTree' as const, area, comparisonId: 'captured' }, view: 'files' as const };
+        expect(parseSessionPaneUrlState(serializeSessionPaneUrlState({ details: target }))?.details).toEqual(target);
+        const tab = createSessionPaneDetailsTab(target)!;
+        expect(parseSessionPaneUrlState(buildActiveDetailsRouteParams([tab], tab.key))?.details).toEqual(target);
+    });
     it.each(['/repo', 'C:\\Users\\Zoë\\repo', '\\\\server\\share\\repo'])('retains captured base %s through View/Edit, scope changes and URL reload without merging cwd-relative tabs', (rootPath) => {
         const target = { kind: 'file' as const, path: 'nested/a.ts', rootPath, view: 'changes' as const,
             changes: { kind: 'turnCheckpoint' as const, turnId: 'turn-4' } };

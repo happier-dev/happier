@@ -5,6 +5,9 @@ import { projectScmCommitPlanGroupSelection, reconcileScmCommitPlanGroupSelectio
 const comparison: ScmComparison = { id: 'pending', source: { kind: 'workingTree' }, repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [{ path: 'src/a.ts', changeKind: 'modified', binary: false, generated: false, lockfile: false, evidence: { state: 'available', unifiedDiff: '' }, occurrences: ['first', 'second'].map((id, position) => ({ id, alias: `alias-${id}`, path: 'src/a.ts', before: { startLine: 1, lineCount: 1 }, after: { startLine: 1, lineCount: 1 }, position })) }] } };
 const plan: ScmDiffSummaryCommitPlan = { groups: [{ id: 'one', message: 'First', rationale: '', changeRefs: ['second'] }, { id: 'two', message: 'Second', rationale: '', changeRefs: ['first'] }], leftOutChangeRefs: [] };
 describe('compact commit proposal selection', () => {
+  it.each(['included', 'pending'] as const)('does not project a commit selection from a captured %s subset', area => {
+    expect(projectScmCommitPlanGroupSelection({ resultId: 'saved', comparison: { ...comparison, source: { kind: 'workingTree', area } }, plan, groupId: 'one' })).toBeNull();
+  });
   it('selects exact occurrences first and opens only on the selected group second tap', () => {
     const first = selectScmCommitPlanGroupIntent(null, { resultId: 'saved', comparison, plan, groupId: 'one' });
     expect(first).toEqual({ kind: 'select', selection: { resultId: 'saved', comparisonId: 'pending', groupId: 'one', changeRefs: ['second'], paths: ['src/a.ts'] } });

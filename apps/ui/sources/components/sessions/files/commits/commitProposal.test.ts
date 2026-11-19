@@ -179,6 +179,9 @@ describe('buildCommitPlanAcceptance', () => {
         expect(buildCommitPlanAcceptance({ comparison: COMPARISON, application: null,
             plan: { ...PLAN, groups: [...PLAN.groups, { id: 'g3', message: 'Empty', rationale: '', changeRefs: [] }] } })).toBeNull();
         expect(buildCommitPlanAcceptance({ comparison: { ...COMPARISON, source: { kind: 'session', sessionId: 's' } }, plan: PLAN, application: null })).toBeNull();
+        for (const area of ['included', 'pending'] as const) {
+            expect(buildCommitPlanAcceptance({ comparison: { ...COMPARISON, source: { kind: 'workingTree', area } }, plan: PLAN, application: null })).toBeNull();
+        }
         expect(buildCommitPlanAcceptance({ comparison: COMPARISON, plan: PLAN, application: application({}) })).toBeNull();
     });
 });

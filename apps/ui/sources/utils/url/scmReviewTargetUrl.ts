@@ -7,6 +7,7 @@ export function serializeScmReviewTarget(target: SessionScmReviewTarget): Record
     const comparison = target.comparison;
     if (comparison) {
         out.comparison = comparison.kind;
+        if (comparison.kind === 'workingTree' && comparison.area) out.area = comparison.area;
         if (comparison.comparisonId) out.comparisonId = comparison.comparisonId;
         if (comparison.savedResult) {
             out.scmResultId = comparison.savedResult.resultId;

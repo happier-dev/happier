@@ -1,5 +1,6 @@
 import type { ScmComparison, ScmDiffSummaryCommitPlan } from '@happier-dev/protocol/scm';
 import { selectScmCommitPlanGroup } from '@happier-dev/protocol/scm';
+import { scmComparisonSourceSupportsCommitPlan } from '@happier-dev/protocol/scm/comparison';
 
 export type ScmCommitPlanGroupSelection = Readonly<{
   resultId: string; comparisonId: string; groupId: string;
@@ -7,7 +8,7 @@ export type ScmCommitPlanGroupSelection = Readonly<{
 }>;
 type Proposal = Readonly<{ resultId: string; comparison: ScmComparison; plan: ScmDiffSummaryCommitPlan }>;
 export function projectScmCommitPlanGroupSelection(proposal: Proposal & Readonly<{ groupId: string }>): ScmCommitPlanGroupSelection | null {
-  if (proposal.comparison.source.kind !== 'workingTree') return null;
+  if (!scmComparisonSourceSupportsCommitPlan(proposal.comparison.source)) return null;
   const group = selectScmCommitPlanGroup(proposal.plan, proposal.groupId);
   if (!group) return null;
   const pathsByRef = new Map(proposal.comparison.inventory.files.flatMap((file) => file.occurrences.map((occurrence) => [occurrence.id, file.path] as const)));

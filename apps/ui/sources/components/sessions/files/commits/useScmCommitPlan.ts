@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ScmDiffSummaryResult, ScmDiffSummaryResultEdit } from '@happier-dev/protocol/scm/diffSummaryResult';
+import { scmComparisonSourceSupportsCommitPlan } from '@happier-dev/protocol/scm/comparison';
 
 import type { useScmDiffSummaryBinding } from '@/components/sessions/files/comparison/useScmDiffSummaryBinding';
 import { useScmWalkthrough } from '@/components/sessions/files/walkthrough/useSessionScmWalkthrough';
@@ -34,13 +35,13 @@ export function useScmCommitPlan(params: Readonly<{
 }>) {
     const bound = params.bound;
     const { viewModel, operations, cwd, setError } = bound;
-    const supportedComparison = bound.comparison?.kind === 'workingTree';
+    const supportedComparison = bound.comparison ? scmComparisonSourceSupportsCommitPlan(bound.comparison) : false;
     const saved = viewModel?.savedResult ?? null;
     const comparison = viewModel?.comparison ?? null;
     const planOutput = viewModel?.outputs?.commitPlan ?? null;
     const plan = planOutput?.value ?? null;
     const application = saved?.application ?? null;
-    const proposal = React.useMemo<CommitProposal | null>(() => (supportedComparison && comparison && plan && comparison.source.kind === 'workingTree'
+    const proposal = React.useMemo<CommitProposal | null>(() => (supportedComparison && comparison && plan && scmComparisonSourceSupportsCommitPlan(comparison.source)
         ? buildCommitProposal({ comparison, plan, application })
         : null), [application, comparison, plan, supportedComparison]);
     const isGenerating = supportedComparison && (viewModel?.status === 'starting'

@@ -1,6 +1,6 @@
 import type { ScmComparison, ScmComparisonSource, ScmComparisonView, ScmDiffSummaryOutputKind, ScmDiffSummaryOutputs, ScmDiffSummaryResultReadInput } from '@happier-dev/protocol/scm';
 import type { ScmDiffSummaryState } from './state';
-import { ScmComparisonSourceSchema, scmComparisonSourceMatches } from '@happier-dev/protocol/scm/comparison';
+import { ScmComparisonSourceSchema, scmComparisonSourceMatches, scmComparisonSourceSupportsCommitPlan } from '@happier-dev/protocol/scm/comparison';
 import { ScmDiffSummaryResultReadInputSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { z } from 'zod/mini';
 
@@ -8,8 +8,8 @@ type SourceSelector = (ScmComparisonSource | ScmReviewComparisonSelector) & Read
 
 /** Shared by semantic navigation and the comparison surface's reading-view fallback. */
 export function scmReviewViewUnavailableReason(view: ScmComparisonView,
-    comparison: Pick<ScmReviewComparisonSelector, 'kind'> | null | undefined): 'commits_require_working_tree' | null {
-    return view === 'commits' && comparison?.kind !== 'workingTree' ? 'commits_require_working_tree' : null;
+    comparison: ScmReviewComparisonSelector | null | undefined): 'commits_require_working_tree' | null {
+    return view === 'commits' && (!comparison || !scmComparisonSourceSupportsCommitPlan(comparison)) ? 'commits_require_working_tree' : null;
 }
 
 /** Only a terminal attempt with no published value needs an older saved output. */
@@ -19,7 +19,7 @@ export function scmDiffSummaryOutputNeedsPublishedFallback(output: ScmDiffSummar
 
 /** The selector a comparison view names, before the Session it belongs to is attached. */
 export type ScmReviewComparisonSelector = (
-    | Readonly<{ kind: 'workingTree' }>
+    | Extract<ScmComparisonSource, { kind: 'workingTree' }>
     | Readonly<{ kind: 'session' }>
     | Readonly<{ kind: 'turnCheckpoint'; turnId?: string; checkpointReceiptId?: string; evidence?: 'agent_reported' | 'checkpoint' }>
     | Readonly<{ kind: 'branch'; head: string; base: string }>
@@ -48,7 +48,7 @@ export function scmComparisonSourceOf(comparison: ScmReviewComparisonSelector, s
         case 'turnCheckpoint': return { kind: 'turnCheckpoint', ...(comparison.turnId ? { turnId: comparison.turnId } : {}),
             ...(comparison.checkpointReceiptId ? { checkpointReceiptId: comparison.checkpointReceiptId } : {}), evidenceMode: comparison.evidence ?? 'reconciled' };
         case 'session': return { kind: 'session', sessionId };
-        case 'workingTree': return { kind: 'workingTree' };
+        case 'workingTree': return { kind: 'workingTree', ...(comparison.area ? { area: comparison.area } : {}) };
         case 'branch': return { kind: 'branch', head: comparison.head, base: comparison.base };
         case 'commit': return { kind: 'commit', commit: comparison.commit, ...(comparison.parent ? { parent: comparison.parent } : {}) };
         case 'revisionRange': return { kind: 'revisionRange', baseOid: comparison.baseOid, headOid: comparison.headOid };
