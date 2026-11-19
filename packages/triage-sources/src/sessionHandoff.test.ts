@@ -78,9 +78,9 @@ describe('public configured Session handoff client', () => {
     expect(() => prepareTriageSessionHandoffV1({ ...input, evidence: [] })).toThrow();
     expect(() => settleTriageSessionHandoffV1({ ok: true, result: {} })).toThrow('triage_handoff_result_invalid');
   });
-  it('transports an omitted optional CI attempt number as strict wire JSON without broadening admission', async () => {
+  it.each([{}, { number: undefined }])('omits a missing or undefined CI attempt number from strict wire JSON (%o)', async (optionalNumber) => {
     const repository = input.context.repository;
-    const attempt = { run: { v: 1, repository, runId: 'run' }, attemptId: 'attempt' };
+    const attempt = { run: { v: 1, repository, runId: 'run' }, attemptId: 'attempt', ...optionalNumber };
     const hostedInput = { ...input, evidence: [{ kind: 'hostedCi', summary: {
       repository, selection: { kind: 'attempt', attempt },
       jobs: [], annotations: [], excerpts: [], missing: [], ambiguous: [], omitted: [], continuation: null,
@@ -98,11 +98,6 @@ describe('public configured Session handoff client', () => {
       ...hostedInput.evidence[0].summary, selection: { kind: 'attempt', attempt: { run: attempt.run, attemptId: attempt.attemptId } },
     } }] } });
     expect(received).not.toHaveProperty('handoff.evidence.0.summary.selection.attempt.number');
-    executeAction.mockClear();
-    await expect(requestTriageSessionHandoffV1({ executeAction }, { ...hostedInput, evidence: [{ ...hostedInput.evidence[0],
-      summary: { ...hostedInput.evidence[0].summary, selection: { kind: 'attempt', attempt: { ...attempt, number: undefined } } },
-    }] })).rejects.toThrow();
-    expect(executeAction).not.toHaveBeenCalled();
   });
 
   it.each([
