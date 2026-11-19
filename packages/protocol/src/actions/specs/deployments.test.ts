@@ -417,6 +417,78 @@ describe('Deployment Action front door', () => {
     }
   });
 
+  it('completes an app-approved repository template Apply inside its Action operation', async () => {
+    const destination = { kind: 'repositoryPullRequest', workspace: { kind: 'workspace-ref', serverId: 'home', id: 'checkout' },
+      sourceRevision: 1, repository: { kind: 'github', deployment: 'https://github.com', repository: 'fixture/app' },
+      baseCommit: 'a'.repeat(40), baseBranch: 'main', branchName: 'add-postgresql', composePath: 'compose.yaml', title: 'Add PostgreSQL' } as const;
+    const input = DeploymentTemplateInstantiateInputV1Schema.parse({ mode: 'apply', intent: 'add',
+      serverId: 'home', machineId: 'target', projectSourceId: 'source',
+      templateRef: { sourceId: 'apps', itemId: 'postgresql', version: '1', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+      environment: { kind: 'existing', environmentId: 'environment', expectedRevision: 2 },
+      target: { kind: 'existing', targetLinkId: 'runtime', expectedRevision: 1, installationId: 'installed' }, destination, bindings: [] });
+    const baseUrl = destination.repository.deployment;
+    const repositoryWebUrl = `${baseUrl}/${destination.repository.repository}`;
+    const pullRequest = { provider: { id: 'github', kind: 'github' as const, displayName: 'GitHub', baseUrl,
+      nameWithOwner: destination.repository.repository, repositoryWebUrl, remoteName: 'origin', urlSafety: { allowedSchemes: ['https:'] } },
+      number: 4, providerNativeId: '4', title: destination.title, url: `${repositoryWebUrl}/pull/4`,
+      baseBranch: destination.baseBranch, headBranch: destination.branchName, state: 'open' as const, isDraft: false,
+      headSha: 'b'.repeat(40), baseSha: destination.baseCommit, createdAtMs: 1 };
+    let stored: ApprovalRequestV2 | null = null;
+    let pullRequests = 0;
+    const operationId = 'template-apply-operation';
+    const executor = createActionExecutor({
+      resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => { throw new Error('Metadata reader owns this query'); },
+        async ({ environmentId }) => ({ ok: true, environment: { id: environmentId, projectSourceId: 'source', purpose: 'standard' } })),
+      // The installed template effect requires the runner's context for checkout cleanup after opening its PR.
+      prepareDeploymentTemplateInstantiation: async ({ input: admitted }) => ({
+        input: admitted,
+        preview: { templateRef: admitted.templateRef, profiles: [], services: ['db'], bindings: [], generatedSecrets: [], domains: [],
+          repositoryChange: { ...destination, files: [] } },
+        hostReviewedChildren: { children: [], async executeAdmittedAction({ actionId, context }) {
+          pullRequests += 1;
+          if (context.operationAcceptance?.actionId !== actionId || context.operationAcceptance.operationId !== operationId
+            || !context.operationProgress || !context.operationOwnerUpdate || !context.signal) {
+            return { ok: false, errorCode: 'project_setup_operation_unavailable', error: 'project_setup_operation_unavailable', effectAttempted: true };
+          }
+          return { ok: true, result: { kind: 'pullRequest', environmentId: 'environment', revision: 3,
+            pullRequest, headCommit: pullRequest.headSha, branchName: destination.branchName, savedSecrets: [] } };
+        } },
+      }),
+      runActionOperation: async ({ execute, context, actionId }) => execute({ ...context,
+        signal: new AbortController().signal, operationAcceptance: { actionId, operationId, accept() {} },
+        operationProgress: { update() {} }, operationOwnerUpdate: { update() {} },
+      }),
+      approvalsCreate: async ({ request }) => {
+        stored = ApprovalRequestV2Schema.parse(structuredClone(request));
+        return { artifactId: 'repository-template-review' };
+      },
+      approvalsGet: async () => structuredClone(stored),
+      approvalsUpdate: async ({ request, expectedStatus }) => {
+        if (!stored) throw new Error('Missing template review');
+        const next = ApprovalRequestV2Schema.parse(request);
+        const transition = decideApprovalRequestTransition(stored, next, { expectedStatus });
+        if (!transition.ok) return transition;
+        stored = structuredClone(next);
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+    });
+    const context = { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
+      serverId: 'home', serverIdentityId: 'srv_home', runtimeAccountId: 'account', actionRequestId: 'add-postgresql',
+      executionRunTargetMachineId: 'target' } as const;
+    expect(await executor.execute('deployments.templates.instantiate', input, context)).toMatchObject({
+      ok: true, result: { kind: 'approval_request_created' },
+    });
+    expect(pullRequests).toBe(0);
+
+    const decided = await executor.execute('approval.request.decide', { artifactId: 'repository-template-review', decision: 'approve' },
+      { ...context, surface: 'ui', authority: 'present_user' });
+    expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true,
+      result: { kind: 'pullRequest', revision: 3, pullRequest: { number: 4 } },
+    } } });
+    expect(pullRequests).toBe(1);
+  });
+
   it('retains acknowledged template effects and an unknown secret candidate in an Action failure', async () => {
     const input = { mode: 'apply', serverId: 'home', machineId: 'target', projectSourceId: 'source',
       templateRef: { sourceId: 'apps', itemId: 'database', version: '1', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },

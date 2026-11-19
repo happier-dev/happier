@@ -731,6 +731,10 @@ step's recovery, including an uncertain child deploy. The UI deployment API foll
 a missing root outcome through its retained operation. Store uses that shared
 recovery and keeps the open install result across modal remounts and pane resize.
 
+Repository template Apply runs its prepared write and temporary checkout cleanup
+in the existing Action operation. Environment bindings and template metadata
+advance after the repository steps succeed.
+
 ## Redeploy after teardown (0.3 development)
 
 Native removal releases unused Compose project networks after removing the

@@ -79,7 +79,7 @@ import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreview
 export { buildApprovalPreviewSummary, projectPreparedActionOperation } from './executor/approvalPreparation.js';
 import { resolveApprovalOriginForRequest, projectActionApprovalOrigin, projectActionObservationContext, resolveApprovalRequestingSessionId, projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1, isApprovalActionId, isApprovalRequestActionReplayAdmitted, isBlockingApprovalRequest } from './executor/approvalOrigins.js';
 import { isPresentUserApprovalDecisionForOrigin, resolveMachineServiceLogsApprovalLifetime } from './executor/approvalOrigins.js';
-import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { prepareApprovalReplayAuthorization, resolveRetainedLogsReplayContext } from './executor/approvalReplayAuthorization.js';
 import { observeApprovalReplayOutcome, settleApprovalDecisionFailure } from './executor/approvalDecisionFailure.js';
 import { createConfidentialApprovalContinuation } from './executor/confidentialContinuation.js';
@@ -4228,7 +4228,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         semanticInput,
         ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
       };
-      if (executeAdmittedAction && !existingAdmission?.admittedExecutionContinued) {
+      const startActionOperation = spec.operation && !existingAdmission?.operationObserved
+        && ctx.operationAcceptance?.actionId !== actionId ? ctx.runActionOperation ?? deps.runActionOperation : undefined;
+      // The repository template continuation performs the write itself and
+      // its checkout lifecycle consumes the containing Action operation.
+      const repositoryTemplateApply = actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
+        && readRecord(admittedInput).mode === 'apply' && readRecord(readRecord(admittedInput).destination).kind === 'repositoryPullRequest';
+      if (executeAdmittedAction && !existingAdmission?.admittedExecutionContinued && !(startActionOperation && repositoryTemplateApply)) {
         return await executeAdmittedAction({ actionId, input: admittedInput, context: ctx,
           execute: (executionContext, target) => {
             const originalContext = target ? { ...executionContext, admittedMachineTarget: {
@@ -4239,9 +4245,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               options?.approvalReplay === true, undefined, options?.sessionTargetLeaf === true);
           } });
       }
-      const runActionOperation = ctx.runActionOperation ?? deps.runActionOperation;
-      if (spec.operation && runActionOperation && !existingAdmission?.operationObserved
-        && ctx.operationAcceptance?.actionId !== actionId) {
+      if (startActionOperation) {
         const retainReviewedChild = retainHostReviewedChildOperationContextV1(ctx, actionId, admittedInput);
         const execute = (ownedContext: ActionExecutorContext) => {
           const operationContext = retainReviewedChild?.(ownedContext) ?? ownedContext;
@@ -4251,7 +4255,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             { ...dispatchAdmission, context: { ...operationContext, hostReviewedChild: undefined }, operationObserved: true },
             options?.approvalReplay === true, undefined, options?.sessionTargetLeaf === true);
         };
-        return await runActionOperation({ actionId, input: admittedInput, context: ctx, execute,
+        return await startActionOperation({ actionId, input: admittedInput, context: ctx, execute,
           ...(deploymentReview !== undefined && isDeploymentActionIdV1(actionId) && semanticInput !== admittedInput
             ? { semanticInput } : {}),
           ...(actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 ? { resume: async (operationContext: ActionExecutorContext): Promise<ActionExecuteResult> => {
