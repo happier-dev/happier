@@ -883,9 +883,10 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       '@/api/machine/resolveCurrentAccountMachineTarget',
     );
     resolveCurrentAccountMachineTarget.mockImplementation(actual.resolveCurrentAccountMachineTarget);
+    const acceptedBody = 'Current accepted explanation';
     const comment = ReviewCommentV1Schema.parse({ v: 1, id: 'accepted', accountId: 'account', reviewId: 'review',
       workspace: { machineId: 'source-machine', path: '/repo' }, runId: 'review-run', findingId: 'finding',
-      findingIdentity: 'a'.repeat(64), body: 'Current accepted explanation', bodyVersion: 1,
+      findingIdentity: 'a'.repeat(64), body: acceptedBody, bodyVersion: 1,
       edits: [], flags: {}, dispositions: {}, threadId: 'accepted', transitions: [],
       anchor: { kind: 'file', filePath: 'reader.ts' }, snapshot: { kind: 'none', capturedAt: 1 },
       author: { kind: 'workflow', runId: 'workflow' }, state: 'open', reviewTriageStatus: 'accept',
@@ -911,7 +912,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     });
     await expect(executor.execute('review.apply', { reviewId: 'review', destination: 'prompt' },
       { surface: 'cli', defaultSessionId: exactSessionId })).resolves.toMatchObject({ ok: true,
-      result: { status: 'prepared', commentIds: ['accepted'], prompt: expect.stringContaining(comment.body) },
+      result: { status: 'prepared', commentIds: ['accepted'], prompt: expect.stringContaining(acceptedBody) },
     });
   });
 
