@@ -20,7 +20,7 @@ import { formatDaemonAuthScopeDiagnostic, formatDaemonCredentialsTokenSubChanged
 import { applyStackActiveServerScopeEnv, applyStackDaemonLifecycleScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { resolveReusableAuthSeedCandidates, resolveReusableAuthSeedSource } from './utils/auth/sources.mjs';
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
-import { chmod, copyFile, mkdir } from 'node:fs/promises';
+import { appendFile, chmod, copyFile, mkdir } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { getComponentDir, getRootDir, resolveStackBaseDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
@@ -714,6 +714,12 @@ async function readDaemonEnvMatch({ pid, cliHomeDir, internalServerUrl, publicSe
 async function daemonEnvMatches({ pid, cliHomeDir, internalServerUrl, publicServerUrl }) {
   const match = await readDaemonEnvMatch({ pid, cliHomeDir, internalServerUrl, publicServerUrl });
   return match ? match.matches === true : null;
+}
+
+async function prepareDaemonStartAttemptLog(cliHomeDir) {
+  const path = join(cliHomeDir, 'logs', `${Date.now()}-pid-${process.pid}-daemon-start-attempt.log`);
+  await mkdir(dirname(path), { recursive: true }).catch(() => {});
+  return path;
 }
 
 function listDaemonLogPaths(homeDir) {
@@ -1975,6 +1981,7 @@ export async function startLocalDaemonWithAuth({
   runtimeStatePath = null,
   isShuttingDown,
   forceRestart = false,
+  ensureRunningOnly = false,
   preserveExistingRunning = false,
   includeStatus = false,
   env = process.env,
@@ -2232,7 +2239,21 @@ export async function startLocalDaemonWithAuth({
   if (runtimeStatePath && readStackRuntimeDaemonDesiredState(
     await readStackRuntimeStateFile(runtimeStatePath), { cliIdentity },
   ) === 'stopped') return { ok: true, started: false, reason: 'daemon-stopped-by-owner' };
-  if (preserveSessionsOnRestart) {
+  // Passthrough is only an availability request. A live PID or startup lock is
+  // enough to keep the incumbent, even if its control endpoint cannot answer.
+  const preflightState = ensureRunningOnly
+    ? checkDaemonState(cliHomeDir, { serverUrl: internalServerUrl, env: daemonEnv })
+    : null;
+  const preflightAttemptLog = preflightState ? await prepareDaemonStartAttemptLog(cliHomeDir) : null;
+  if (preflightState) {
+    const { status } = preflightState;
+    const keep = status === 'running' || status === 'starting';
+    const decision = keep ? 'keep reason=live-daemon' : 'start reason=no-live-daemon';
+    await appendFile(preflightAttemptLog, `[daemon] caller=stack-happier-preflight status=${status} decision=${decision}\n`)
+      .catch(error => console.warn(`[local] failed to retain daemon preflight decision (${error.code ?? 'write-failed'})`));
+    if (keep) return { started: false };
+  }
+  if (!ensureRunningOnly && preserveSessionsOnRestart) {
     if (!forceRestart || !sourceRuntimeLaunchUpdate || !runtimeStatePath) {
       throw new Error('[stack] session-preserving source restart requires a prepared source daemon launch and runtime state.');
     }
@@ -2601,7 +2622,7 @@ export async function startLocalDaemonWithAuth({
     // best-effort only
   }
 
-  const existing = await checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env: daemonEnv });
+  const existing = preflightState ?? await checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env: daemonEnv });
   if (
     preserveExistingRunning &&
     !forceRestart &&
@@ -2720,8 +2741,10 @@ export async function startLocalDaemonWithAuth({
 
   // The same retirement owner serves explicit stop and replacement admission.
   // Never clear retained PID custody or spawn new code before it confirms stop.
-  await stopLocalDaemon({ cliBin, cliCommand: daemonCommand.command, cliCommandArgs: daemonCommand.argsPrefix,
-    cliHomeDir, internalServerUrl, publicServerUrl, runtimeStatePath, env: daemonEnv, stackName, cliIdentity });
+  if (!ensureRunningOnly) {
+    await stopLocalDaemon({ cliBin, cliCommand: daemonCommand.command, cliCommandArgs: daemonCommand.argsPrefix,
+      cliHomeDir, internalServerUrl, publicServerUrl, runtimeStatePath, env: daemonEnv, stackName, cliIdentity });
+  }
 
   if (sourceRuntimeLaunchUpdate && runtimeStatePath) {
     // Retirement above still consumes the incumbent's retained launch. Only
@@ -2735,12 +2758,11 @@ export async function startLocalDaemonWithAuth({
 
   await recordStackRuntimeDaemonPid(runtimeStatePath, null, { daemonDistFingerprint: null }).catch(() => {});
 
-  const runStartOnce = async () => {
+  const runStartOnce = async (attemptLog) => {
     let resolvedExitCode = null;
     let failureReason = null;
     let startOutput = '';
-    const startOutputTeePath = join(cliHomeDir, 'logs', `${Date.now()}-pid-${process.pid}-daemon-start-attempt.log`);
-    await mkdir(dirname(startOutputTeePath), { recursive: true }).catch(() => {});
+    const startOutputTeePath = attemptLog ?? await prepareDaemonStartAttemptLog(cliHomeDir);
     const daemonLogsBeforeStart = new Set(listDaemonLogPaths(cliHomeDir));
     const appendStartOutput = (chunk) => {
       if (!chunk) return;
@@ -2868,9 +2890,9 @@ export async function startLocalDaemonWithAuth({
     };
   };
 
-  const startOnce = async () => await withSourcePublicationLease(runStartOnce);
+  const startOnce = async (attemptLog) => await withSourcePublicationLease(() => runStartOnce(attemptLog));
 
-  const first = await startOnce();
+  const first = await startOnce(preflightAttemptLog);
   if (!first.ok) {
     if (first.reason?.startsWith('NOT_READY')) {
       console.error(`[local] ${first.reason}`);

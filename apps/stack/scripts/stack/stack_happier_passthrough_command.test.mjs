@@ -342,14 +342,27 @@ for (const fails of [false, true]) {
     const fixture = await createStackHappierCliCommandFixture(t, { prefix: 'hstack-create-local-', distIndexScript: script });
     statePath = await prepareSessionCreateFixture(fixture);
     assert.equal(existsSync(statePath), false);
-    const result = await runNodeCapture([fileURLToPath(new URL('../../bin/hstack.mjs', import.meta.url)),
+    const runCreate = () => runNodeCapture([fileURLToPath(new URL('../../bin/hstack.mjs', import.meta.url)),
       'stack', 'happier', fixture.stackName, '--', 'session', 'create', '--machine-id=local-machine', '--path', '/workspace', '--json'], {
       cwd: fixture.root, env: { ...fixture.baseEnv, HAPPIER_STACK_MIGRATE_CREDENTIALS: '0', HAPPIER_STACK_AUTO_AUTH_SEED: '0' },
     });
+    const result = await runCreate();
     assert.equal(result.code, fails ? 1 : 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout.trim()), fails
       ? { v: 1, ok: false, kind: 'session_create', error: { code: 'machine_offline' } } : expected);
-    assert.match(await readFile(join(fixture.stackCliHome, 'runtime-daemon.log'), 'utf8'), /start/);
+    const lifecycleLog = join(fixture.stackCliHome, 'runtime-daemon.log');
+    assert.match(await readFile(lifecycleLog, 'utf8'), /start/);
+    if (fails) return;
+
+    const incumbent = JSON.parse(await readFile(statePath, 'utf8'));
+    // A temporarily unavailable control endpoint does not make a live PID replaceable.
+    await writeFile(statePath, JSON.stringify({ ...incumbent, httpPort: 0 }));
+    const repeatedCreate = await runCreate();
+    assert.equal((JSON.parse(await readFile(statePath, 'utf8'))).pid, incumbent.pid,
+      'a repeated session create must keep the live incumbent when control is unavailable');
+    assert.doesNotMatch(await readFile(lifecycleLog, 'utf8'), /^stop$/m);
+    assert.equal(repeatedCreate.code, 0, repeatedCreate.stderr);
+    assert.deepEqual(JSON.parse(repeatedCreate.stdout.trim()), expected);
   });
 }
 

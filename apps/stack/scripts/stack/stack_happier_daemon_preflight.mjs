@@ -51,7 +51,7 @@ export async function ensureStackDaemonPreflight({
       internalServerUrl: daemonContext.internalServerUrl,
       publicServerUrl: daemonContext.publicServerUrl,
       runtimeStatePath: daemonContext.runtimePath,
-      forceRestart: false,
+      ensureRunningOnly: true,
       stackName,
       cliIdentity,
       ...daemonContext.runtimeProvenance,
