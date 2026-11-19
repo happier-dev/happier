@@ -2308,16 +2308,16 @@ selects configuration demand below. Source custody, exact occurrence checks and 
 continue to govern both bundled and installed plugins.
 
 In 0.3 development source, optional `activation.configuration` selects positive
-startup demand from `accountCollections: [{ pluginId, collectionId }]` or
-`automationEventSources: true` for the declaring plugin's enrolled Event sources.
-Either source suffices. The bundled Sentry and PostHog issue observers use
+startup demand from `accountCollections: [{ pluginId, collectionId }]`,
+`artifactKinds: [kind]`, or `automationEventSources: true` for the declaring plugin's enrolled Event sources.
+Any source suffices. The bundled Sentry and PostHog issue observers use
 `automationEventSources`, and Triage source attention uses its `source-instances`
-Collection, so a daemon with no configured source activates none of them at
+Collection or built-in Review Artifact presence, so a daemon with neither configured sources nor Reviews activates none of them at
 start (owner ruling D1, LEAN-DAEMON). The host reads only physical Collection presence across
 retained schema versions or the existing exact publisher/materialization source
 census; it does not load the plugin to discover configuration. Existing Account
-Collection and Automation source invalidations wake the same contribution-demand
-owner immediately. Read failures retain eager activation and the plugin's existing
+Collection, Artifact-kind and Automation source invalidations wake the same contribution-demand
+owner immediately. Artifact presence uses the existing authorized census with one header row and no content decryption or body read; unrelated kind hints cause no read. Reconnect uses the incumbent host invalidation. Unclassified retained Artifacts do not establish positive kind presence. Read failures retain eager activation and the plugin's existing
 recovery behavior. Presence grants no Collection read/write or effect authority;
 enabled state, credentials and currentness remain with the activated domain owner.
 Declared Event subscriptions may bind an admitted dormant publisher; actual
