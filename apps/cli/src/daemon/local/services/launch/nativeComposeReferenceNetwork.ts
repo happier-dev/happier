@@ -20,7 +20,7 @@ export type NativeComposeLocalReferenceNetwork = Readonly<{
 export type NativeComposeReferenceNetworkRequest = Readonly<{
     docker: ProjectNativeDockerPort;
     engine: NativeDockerEngineFacts;
-    /** Only host-backed Iroh/telemetry routes need a consumer gateway. */
+    /** Only host-backed Iroh/telemetry routes need a relay on the consumer network. */
     networkId?: string;
     localReferences?: readonly DeploymentReferenceAddressV1[];
     signal?: AbortSignal;

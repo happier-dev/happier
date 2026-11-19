@@ -161,6 +161,8 @@ export type ProjectNativeContainerObservation = Readonly<{
 export type ProjectNativeDockerPort = Readonly<{
     engineId: string;
     engineKind?: NativeDockerEngineFacts['kind'];
+    /** Removes an exact container ID owned by the caller after the native loan ends. */
+    removeOwnedContainer?(id: string): Promise<Readonly<{ exitCode: number }>>;
     openStream?(args: readonly string[], signal?: AbortSignal): Promise<Readonly<{
         stream: import('node:stream').Duplex; close(): Promise<void>;
     }>>;

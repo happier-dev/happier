@@ -40,7 +40,7 @@ export function createDeploymentTelemetryHost(options: DeploymentTelemetryHostOp
     closeDomainEndpoints(): Promise<void>;
 }> {
     let readEndpoint: (() => string | null) | null = null;
-    const domains = createCollectorDomainBridges({ readEndpoint: () => readEndpoint?.() ?? null,
+    const domains = createCollectorDomainBridges({ machineId: options.machineId, readEndpoint: () => readEndpoint?.() ?? null,
         readInstalledCaddy: options.readInstalledCollectorCaddy });
     const path = `/v1/deployments/machines/${encodeURIComponent(options.machineId)}/telemetry-assignments`;
     return {

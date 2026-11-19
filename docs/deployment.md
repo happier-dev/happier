@@ -1870,11 +1870,16 @@ reconnect leaves the Iroh carrier running; cold observation recovery rebinds the
 address recorded in the receipt. A port conflict is visible and requires retry or
 redeployment rather than silently changing a running container's environment.
 
-For Iroh references and host telemetry on native Linux Docker, the existing
-admitted Compose lifecycle creates its consumer network before runtime binding
-materialization. A Node bridge binds that
-network's host gateway only and admits its subnet; it never binds all host
-interfaces.
+In unreleased 0.3, Iroh references and host telemetry on native Linux Docker
+use a pinned TCP relay on the admitted consumer network. The Compose lifecycle
+prepares that network before it materializes runtime bindings. The consumer
+dials the relay's Docker DNS alias. The relay accepts the inspected consumer
+subnet except for the bridge gateway address, which Docker can use as the
+source for traffic from another bridge. It connects to a route-specific Unix
+socket in a daemon-owned directory.
+The Caddy upstream for a host-backed telemetry Domain uses the same relay
+on Caddy's selected network. These connections require no host TCP publication
+or host INPUT allowance.
 A same-Machine private share from another Environment instead attaches its
 consuming Compose service to the source container's existing Docker network and
 uses that container's native DNS name and container port. This `local` route
@@ -1884,18 +1889,20 @@ engine and retains each consumer's existing network membership. Separate host
 and port bindings use the same selected source address. Same-Environment
 references use Compose service DNS; host-network and build consumers retain
 the original host endpoint.
-Compose owns host-bridge network creation and labels, using a zero-replica
-projection without starting a helper container. For those host listeners, Docker Desktop, remote/rootless
-gateways outside the daemon's host namespace, unsupported network drivers and
-consumers without a common network return typed unavailability. Local source
-attachment requires a user-defined bridge with Docker DNS; a built-in bridge
-or a different Docker engine returns typed unavailability.
+Compose owns consumer network creation through its zero-replica projection.
+The relay requires the local Linux engine and a common bridge network with
+an IPv4 subnet and gateway in IPAM. Docker Desktop, remote engines, unavailable relay images and
+unsupported network facts produce typed failures. Rootless operation is
+unverified. Local source attachment requires a user-defined bridge with Docker
+DNS on the same engine.
 Receipt reference addresses retain `route.kind: 'iroh'`, the acquisition's
-observed direct/relay/unknown path and, for containers, the actual network id.
-Local container receipts retain `route.kind: 'local'` and the source network id;
-Docker retains that attachment across daemon restarts, without a host listener
-to reconstruct. Older development containers embedding gateway addresses need
-redeployment; there is no gateway fallback for new local container references.
+observed direct/relay/unknown path, and the relay alias and network ID for
+container consumers. Cold Iroh recovery and installed Caddy route recovery
+reacquire their recorded aliases. Local container receipts retain
+`route.kind: 'local'` and the source network ID. Docker preserves those
+attachments across daemon restarts. Redeploy older development workloads to
+replace embedded gateway addresses. Reapply existing host-backed telemetry
+Domains to replace their gateway upstreams.
 Admission, destination connection and carrier failures use existing deployment
 recovery and service diagnostics. A later successful new connection clears a
 destination failure; an older connection's traffic does not prove recovery.

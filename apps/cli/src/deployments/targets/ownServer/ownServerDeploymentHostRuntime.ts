@@ -212,6 +212,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 const retainedLease = lease;
                 let referenceContainerNetwork: Parameters<NonNullable<OwnServerDeploymentRuntimeAcquisition['prepareReferenceContainerNetwork']>>[0] | undefined;
                 const referenceBridges = new Map<ServiceExportMachineForward, {
+                    routeKey: string;
                     bridge?: ReturnType<typeof acquirePrivateServiceContainerBridge>;
                     local?: Extract<import('./privateServiceReference').PrivateServiceExportAdmissionForHost, { kind: 'local' }>;
                     address?: Awaited<ReturnType<typeof resolvePrivateServiceLocalContainerAddress>>;
@@ -224,7 +225,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     let bridge = retained.bridge;
                     if (!bridge) {
                         bridge = acquirePrivateServiceContainerBridge({ ...referenceContainerNetwork,
-                            networkId: referenceContainerNetwork.networkId, forward, signal: hostSignal });
+                            networkId: referenceContainerNetwork.networkId, forward, route: { key: retained.routeKey }, signal: hostSignal });
                         retained.bridge = bridge;
                     }
                     try { return await bridge; }
@@ -259,7 +260,9 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                         try { await (await referenceBridges.get(forward)?.bridge)?.close(); }
                         finally { referenceBridges.delete(forward); await nativeForward.close(); }
                     } };
-                    referenceBridges.set(forward, selected.kind === 'local' ? { local: selected } : {});
+                    const routeKey = JSON.stringify([environmentInstanceId, materializationId, 'service',
+                        selected.serviceExport.service.environmentId, selected.serviceExport.exportKey]);
+                    referenceBridges.set(forward, { routeKey, ...(selected.kind === 'local' ? { local: selected } : {}) });
                     return forward;
                 } });
                 const selectedArchives = structuredClone(content?.ownServer?.imageArchives ?? []);
@@ -309,7 +312,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                                             try { await (await referenceBridges.get(forward)?.bridge)?.close(); }
                                             finally { referenceBridges.delete(forward); }
                                         } };
-                                    referenceBridges.set(forward, {});
+                                    referenceBridges.set(forward, { routeKey: JSON.stringify([environmentInstanceId, materializationId, 'telemetry']) });
                                     telemetryForward = referenceForwards.adopt(forward);
                                 }
                                 const address = await materializeBridge(telemetryForward);
@@ -344,9 +347,8 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     }),
                     async prepareReferenceContainerNetwork(network) {
                         referenceContainerNetwork = network;
-                        // The native owner lends Docker for this callback only.
-                        // Local exports borrow their source network; remote
-                        // carriers and host telemetry retain their host bridge.
+                        // Local exports borrow their source network. Remote
+                        // carriers and host telemetry receive a private relay.
                         await Promise.all([...referenceBridges].map(async ([forward, retained]) => {
                             const local = retained.local;
                             if (local && network.localReferences?.some(reference => reference.source.environmentId === local.serviceExport.service.environmentId

@@ -26,7 +26,7 @@ import type { ProjectNativeDockerPort } from '@/plugins/runtime/invocation/servi
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 import { createProjectNativeInvocationCustody } from '@/workspaces/projectSetup/projectSetupExecution';
 import { presentMachineAuthorityV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
-import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
+import { readNativeComposeEngine, retainNativeDockerContainerRemoval } from '@/daemon/local/services/launch/nativeComposeEngine';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { readNativeCaddyHostListeners } from '@/machines/reachability/nativeCaddyHostListeners';
 import { readNativeCaddyDnsReadiness, nativeCaddyDnsResult } from '@/machines/reachability/nativeCaddyDnsReadiness';
@@ -239,7 +239,7 @@ export function createOwnServerDomainNative(host: Readonly<{
                 const io = createProjectNativeIo().environmentIo.createInvocation({ signal, retainCapture: custody.retain });
                 const profile = { io, command: 'docker', prefix: [], cwd: homedir(), env, signal };
                 const engine = await readNativeComposeEngine(profile);
-                docker = { engineId: engine.id, engineKind: engine.kind, run: (args, nativeSignal, inputBytes) => io.run({ command: profile.command,
+                docker = { engineId: engine.id, engineKind: engine.kind, removeOwnedContainer: retainNativeDockerContainerRemoval(profile), run: (args, nativeSignal, inputBytes) => io.run({ command: profile.command,
                     args, cwd: profile.cwd, env: profile.env, signal: nativeSignal ?? signal,
                     ...(inputBytes ? { stdin: inputBytes } : {}) }) };
             }

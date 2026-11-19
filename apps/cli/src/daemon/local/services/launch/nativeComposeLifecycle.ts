@@ -36,7 +36,7 @@ import { removeUnusedNativeComposeNetworks } from './nativeComposeNetworks';
 import { assertNativeComposeSharedDataPaths, createNativeComposeIncumbentBindReader, projectNativeComposeSharedData, seedNativeComposeSharedData,
     type NativeComposeSharedDataInput, type NativeComposeSharedDataPlan } from './nativeComposeSharedData';
 import { isDeploymentSourceUnchangedManifestInput } from '@/deployments/targets/ownServer/exactCommitRelease';
-import { readNativeComposeEngine, assertNativeComposeAvailable, type NativeComposeEngineFacts } from './nativeComposeEngine';
+import { readNativeComposeEngine, assertNativeComposeAvailable, retainNativeDockerContainerRemoval, type NativeComposeEngineFacts } from './nativeComposeEngine';
 import { createNativeComposeGenerationProof, nativeComposeCompletedServices } from './nativeComposeGeneration';
 import { observeDockerEngine, openDockerEngineEvents, type DockerEngineEventSource } from './dockerEngineObservation';
 import { openNativeDockerStream } from './nativeDockerStream';
@@ -1324,6 +1324,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             const tuple = authorizedPrefixes.get(launch)!;
             const cwd = launch.cwd!;
             return { engineId: request.render.engineId, dispose: async () => { await launch.release(); },
+                removeOwnedContainer: retainNativeDockerContainerRemoval({ command: launch.command, prefix: tuple.prefix, cwd, env: tuple.env }),
                 openStream: (args, signal) => {
                     const effectiveSignal = signal ?? request.signal;
                     assertOpen(effectiveSignal);

@@ -25,6 +25,7 @@ import { once } from 'node:events';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
+import { createRelayDockerFixture, readRelayHttpBody } from './privateServiceContainerBridge.testkit';
 import { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
 import { sealMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
@@ -151,14 +152,15 @@ it.skipIf(process.platform !== 'linux')('reaches its own collector through the r
         content: { ...receipt.content, sourceIntent: definition },
     });
     try {
-        await acquired.prepareReferenceContainerNetwork!({ engine: { id: 'local', kind: 'native' }, networkId: 'consumer',
-            // Docker transport is external; the bridge and HTTP remain real.
-            docker: { engineId: 'local', async run() { return { exitCode: 0, stdout: JSON.stringify([{ Id: 'consumer', Driver: 'bridge',
-                Scope: 'local', IPAM: { Config: [{ Subnet: '127.0.0.0/8', Gateway: '127.0.0.1' }] } }]) }; } } });
+        const fixture = createRelayDockerFixture('consumer');
+        await acquired.prepareReferenceContainerNetwork!({ engine: { id: 'local', kind: 'native' },
+            networkId: 'consumer', docker: fixture.docker });
         const endpoint = await acquired.secrets.resolveNonSecret!({ kind: 'deploymentFact', fact: 'telemetryEndpoint' });
         expect(typeof endpoint).toBe('string');
-        expect(new URL(endpoint as string).port).not.toBe(String(address.port));
-        expect(await (await fetch(endpoint as string)).text()).toBe('collector');
+        const route = new URL(String(endpoint));
+        expect(route.hostname).toMatch(/^happier-relay-/u);
+        expect(route.port).toBe('8080');
+        expect(await readRelayHttpBody(fixture.socketPath(route.hostname))).toBe('collector');
         const replacement = createServer((_request, response) => response.end('restarted collector'));
         context.onTestFinished(() => new Promise<void>(resolve => replacement.close(() => resolve())));
         replacement.listen(0, '127.0.0.1');
@@ -167,7 +169,7 @@ it.skipIf(process.platform !== 'linux')('reaches its own collector through the r
         if (!next || typeof next === 'string') throw new Error('Replacement socket unavailable');
         receiverEndpoint = `http://127.0.0.1:${next.port}`;
         await new Promise<void>(resolve => receiver.close(() => resolve()));
-        expect(await (await fetch(endpoint as string)).text()).toBe('restarted collector');
+        expect(await readRelayHttpBody(fixture.socketPath(route.hostname))).toBe('restarted collector');
     } finally {
         await acquired.release();
     }

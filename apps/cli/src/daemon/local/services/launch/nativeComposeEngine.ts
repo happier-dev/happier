@@ -1,6 +1,7 @@
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
+import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as nativeFs from 'node:fs/promises';
@@ -208,6 +209,16 @@ type EngineReadInput = Readonly<{
     env: Readonly<Record<string, string>>;
     signal?: AbortSignal;
 }>;
+
+/** Cleanup keeps the exact Docker invocation profile after the finite loan retires. */
+export function retainNativeDockerContainerRemoval(profile: Omit<EngineReadInput, 'io' | 'signal'>) {
+    const { command, prefix, cwd, env } = profile;
+    const { environmentIo } = createProjectNativeIo();
+    return (id: string) => {
+        if (!/^[a-f0-9]{64}$/u.test(id)) throw new Error('Docker cleanup requires an immutable container ID');
+        return environmentIo.run({ command, args: [...prefix, 'container', 'rm', '--force', id], cwd, env });
+    };
+}
 
 /** One current native read supplies both admission identity and target disclosure. */
 export async function readNativeComposeEngine(input: EngineReadInput): Promise<NativeComposeEngineFacts> {

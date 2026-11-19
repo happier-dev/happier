@@ -3,8 +3,8 @@ import { observeNativeCaddyContainer, createNativeCaddyAdminExchange, type Nativ
 import type { ProjectNativeDockerPort } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 import { createProjectNativeInvocationCustody } from '@/workspaces/projectSetup/projectSetupExecution';
-import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
-import { acquirePrivateServiceContainerBridge, type PrivateServiceContainerBridge } from '../targets/ownServer/privateServiceContainerBridge';
+import { readNativeComposeEngine, retainNativeDockerContainerRemoval } from '@/daemon/local/services/launch/nativeComposeEngine';
+import { acquirePrivateServiceContainerBridge, readPrivateServiceContainerRelayHost, type PrivateServiceContainerBridge } from '../targets/ownServer/privateServiceContainerBridge';
 import { readCaddyTelemetryCollectorBridges } from '../targets/ownServer/caddyRouteMaterialization';
 
 export type CollectorDomainNative = Readonly<{
@@ -14,7 +14,7 @@ export type CollectorDomainNative = Readonly<{
 export type InstalledCollectorCaddy = CollectorDomainNative & Readonly<{ configuration: unknown; release(): Promise<void> }>;
 
 /** Reads the installed Domain routes through the existing native Caddy owner.
- * The persisted route already contains the gateway port required after restart.
+ * The persisted route contains the relay alias required after restart.
  */
 export async function readInstalledCollectorCaddy(signal: AbortSignal): Promise<InstalledCollectorCaddy | null> {
     const custody = createProjectNativeInvocationCustody({ signal });
@@ -25,6 +25,7 @@ export async function readInstalledCollectorCaddy(signal: AbortSignal): Promise<
         const profile = { io, command: 'docker', prefix: [], cwd: homedir(), env, signal };
         const engine = await readNativeComposeEngine(profile);
         const docker: ProjectNativeDockerPort = { engineId: engine.id, engineKind: engine.kind,
+            removeOwnedContainer: retainNativeDockerContainerRemoval(profile),
             run: (args, nativeSignal, inputBytes) => io.run({ command: profile.command, args, cwd: profile.cwd,
                 env, signal: nativeSignal ?? signal, ...(inputBytes ? { stdin: inputBytes } : {}) }) };
         const caddy = await observeNativeCaddyContainer({ privateNetworks: [] }, { signal, run: async command => {
@@ -42,6 +43,7 @@ export async function readInstalledCollectorCaddy(signal: AbortSignal): Promise<
  * Endpoint withdrawal closes all listeners; publication replays installed routes.
  */
 export function createCollectorDomainBridges(options: Readonly<{
+    machineId: string;
     readEndpoint(): string | null;
     readInstalledCaddy?: (signal: AbortSignal) => Promise<InstalledCollectorCaddy | null>;
 }>) {
@@ -49,13 +51,21 @@ export function createCollectorDomainBridges(options: Readonly<{
     let lifetime: AbortSignal | undefined;
     const forward = { get host() { const endpoint = options.readEndpoint(); return endpoint ? new URL(endpoint).hostname : '127.0.0.1'; },
         get port() { const endpoint = options.readEndpoint(); return endpoint ? Number(new URL(endpoint).port) : 0; } };
-    async function acquire(input: CollectorDomainNative & Readonly<{ networkId: string; preferredListenPort?: number }>) {
+    async function acquire(input: CollectorDomainNative & Readonly<{ networkId: string; restoredHost?: string }>) {
         if (!lifetime || lifetime.aborted || !options.readEndpoint()) throw new Error('collector_unavailable');
         lifetime.throwIfAborted();
-        const key = `${input.engine.id}:${input.networkId}:${input.preferredListenPort ?? ''}`;
+        const key = `${input.engine.id}:${input.networkId}`;
         const existing = bridges.get(key);
         if (existing) return existing;
-        const acquisition = acquirePrivateServiceContainerBridge({ ...input, forward, signal: lifetime });
+        const active = [...bridges.entries()].filter(([key]) => key.startsWith(`${input.engine.id}:`)).map(([, bridge]) => bridge);
+        const acquisition = (async () => {
+            for (const pending of active) {
+                const bridge = await pending.catch(() => null);
+                if (bridge && (bridge.networkName === input.networkId || bridge.networkId === input.networkId)) return bridge;
+            }
+            const route = input.restoredHost ? { restoredHost: input.restoredHost } : { key: JSON.stringify(['collector-domain', options.machineId]) };
+            return acquirePrivateServiceContainerBridge({ ...input, route, forward, signal: lifetime });
+        })();
         bridges.set(key, acquisition);
         try { return await acquisition; }
         catch (error) { if (bridges.get(key) === acquisition) bridges.delete(key); throw error; }
@@ -63,7 +73,8 @@ export function createCollectorDomainBridges(options: Readonly<{
     async function close() {
         const retained = [...bridges.values()];
         bridges.clear();
-        await Promise.all(retained.map(async pending => { const bridge = await pending.catch(() => null); await bridge?.close(); }));
+        const live = await Promise.all(retained.map(pending => pending.catch(() => null)));
+        await Promise.all([...new Set(live)].map(bridge => bridge?.close()));
     }
     async function restore() {
         const signal = lifetime;
@@ -73,11 +84,10 @@ export function createCollectorDomainBridges(options: Readonly<{
         try {
             for (const bridge of readCaddyTelemetryCollectorBridges(installed.configuration)) {
                 signal.throwIfAborted();
-                // The existing route's port is the restart contract. Reusing a
-                // live network bridge also handles several Domains on one origin.
-                const live = await Promise.all(bridges.values());
-                if (live.some(item => item.networkId === bridge.networkId && item.port === bridge.port)) continue;
-                await acquire({ docker: installed.docker, engine: installed.engine, networkId: bridge.networkId, preferredListenPort: bridge.port });
+                const restoredHost = readPrivateServiceContainerRelayHost(bridge);
+                if (!restoredHost) continue;
+                // Each installed route keeps its alias; Domains on one origin reuse the relay.
+                await acquire({ docker: installed.docker, engine: installed.engine, networkId: bridge.networkId, restoredHost });
             }
         } finally { await installed.release(); }
     }

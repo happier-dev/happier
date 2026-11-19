@@ -49,7 +49,7 @@ export type CaddyRoute = {
     terminal?: boolean;
 };
 
-/** Only collector routes retain gateway bridges. Ordinary Domain upstreams
+/** Only collector routes retain private relays. Ordinary Domain upstreams
  * are never rebound by the receiver on daemon startup. */
 export function readCaddyTelemetryCollectorBridges(configuration: unknown): readonly Readonly<{
     networkId: string; host: string; port: number;

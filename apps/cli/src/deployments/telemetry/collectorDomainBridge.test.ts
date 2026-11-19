@@ -5,6 +5,8 @@ import { DeploymentDomainContentV1Schema } from '@happier-dev/deployment-protoco
 import { createDeploymentTelemetryHost } from './collectorHost';
 import { materializeCaddyDomainRouteV1 } from '../targets/ownServer/caddyRouteMaterialization';
 
+import { createRelayDockerFixture, readRelayHttpBody } from '../targets/ownServer/privateServiceContainerBridge.testkit';
+
 it.skipIf(process.platform !== 'linux')('keeps a collector Domain reachable after its native job ends and reopens its installed upstream after a daemon restart', async context => {
     const domain = DeploymentDomainContentV1Schema.parse({ hostname: 'collector.example.test', target: { kind: 'telemetry' } });
     let body = 'first receiver';
@@ -21,13 +23,8 @@ it.skipIf(process.platform !== 'linux')('keeps a collector Domain reachable afte
     context.onTestFinished(() => new Promise<void>(resolve => caddy.close(() => resolve())));
     const admin = caddy.address();
     if (!admin || typeof admin === 'string') throw new Error('Caddy admin unavailable');
-    // Docker is the OS boundary. The real bridge inspects this network and
-    // binds a real host-local socket; Caddy configuration crosses real HTTP.
-    const docker = { engineId: 'local', engineKind: 'native' as const, async run(args: readonly string[]) {
-        expect(args).toEqual(['network', 'inspect', 'collector-network']);
-        return { exitCode: 0, stdout: JSON.stringify([{ Id: 'collector-network', Driver: 'bridge', Scope: 'local',
-            IPAM: { Config: [{ Subnet: '127.0.0.0/8', Gateway: '127.0.0.1' }] } }]) };
-    } };
+    const fixture = createRelayDockerFixture('collector-network-id', 'collector-network');
+    const { docker } = fixture;
     const failures: unknown[] = [];
     const options = { serverBaseUrl: 'https://home.test', token: 'fixture', machineId: 'collector',
         subscribeMachineChanges: () => () => {}, onRefreshError: (error: unknown) => { failures.push(error); },
@@ -39,18 +36,19 @@ it.skipIf(process.platform !== 'linux')('keeps a collector Domain reachable afte
     const first = createDeploymentTelemetryHost(options);
     const withdraw = first.bind(firstLifetime.signal).exposeEndpoint(() => `http://127.0.0.1:${address.port}`);
     const bridge = await first.acquireDomainEndpoint({ docker, engine: { id: 'local', kind: 'native' }, networkId: 'collector-network' });
-    const endpoint = `http://${bridge.host}:${bridge.port}`;
-    expect(await (await fetch(endpoint)).text()).toBe('first receiver');
+    const readEndpoint = () => readRelayHttpBody(fixture.socketPath(bridge.host));
+    const firstSocket = fixture.socketPath(bridge.host);
+    expect(await readEndpoint()).toBe('first receiver');
     const material = materializeCaddyDomainRouteV1({ domainId: 'collector-domain', domain, listener: 'privateOrigin',
         privateSourceRanges: ['127.0.0.0/8'], upstreams: { kind: 'privateOrigins', endpoints: [`${bridge.host}:${bridge.port}`] },
         telemetryBridgeNetworkId: bridge.networkId });
     configuration = { apps: { http: { servers: { private: { routes: [material.route] } } } } };
     withdraw();
     await first.closeDomainEndpoints();
-    await expect(fetch(endpoint)).rejects.toThrow();
+    await expect(readRelayHttpBody(firstSocket)).rejects.toThrow();
     first.bind(firstLifetime.signal).exposeEndpoint(() => `http://127.0.0.1:${address.port}`);
     await first.restoreDomainEndpoints();
-    expect(await (await fetch(endpoint)).text()).toBe('first receiver');
+    expect(await readEndpoint()).toBe('first receiver');
     firstLifetime.abort();
     await first.closeDomainEndpoints();
     body = 'receiver after restart';
@@ -59,7 +57,10 @@ it.skipIf(process.platform !== 'linux')('keeps a collector Domain reachable afte
     const second = createDeploymentTelemetryHost(options);
     second.bind(secondLifetime.signal).exposeEndpoint(() => `http://127.0.0.1:${address.port}`);
     await second.restoreDomainEndpoints();
-    expect(await (await fetch(endpoint)).text()).toBe('receiver after restart');
+    const reacquired = await second.acquireDomainEndpoint({ docker, engine: { id: 'local', kind: 'native' }, networkId: 'collector-network' });
+    expect(reacquired.host).toBe(bridge.host);
+    expect(reacquired.port).toBe(bridge.port);
+    expect(await readEndpoint()).toBe('receiver after restart');
     expect(failures).toEqual([]);
     await second.closeDomainEndpoints();
 });

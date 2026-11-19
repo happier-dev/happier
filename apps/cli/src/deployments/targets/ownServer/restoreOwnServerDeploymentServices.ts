@@ -6,7 +6,7 @@ import { configuration } from '@/configuration';
 import { authorizePluginExecLaunchForHost, readPluginExecProcessCustodyForHost } from '@/plugins/runtime/invocation/services/exec';
 import { produceEnvironmentProjectServices } from '@/daemon/local/services/launch/projectDeclarations';
 import { readColdNativeComposeTargetsForHost } from '@/daemon/local/services/launch/nativeComposeDiscovery';
-import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
+import { readNativeComposeEngine, retainNativeDockerContainerRemoval } from '@/daemon/local/services/launch/nativeComposeEngine';
 import { resolveNativeComposeCandidateProjectName } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { createOwnServerNativeRuntime } from './nativeRuntime';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
@@ -116,7 +116,9 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
         serviceReferences = await input.restoreServiceReferences?.({ engine,
             onFailure(failure) { referenceFailure = failure ?? undefined; for (const consumer of consumers) consumer.reportDependencyFailure?.(failure); },
             docker: { engineId: engine.id,
-            async run(args) { const result = await run(args); return { ...result, exitCode: result.exitCode ?? -1 }; } } });
+                removeOwnedContainer: retainNativeDockerContainerRemoval({ command: tuple.command, prefix: tuple.args,
+                    cwd: tuple.cwd!, env: tuple.env }),
+                async run(args) { const result = await run(args); return { ...result, exitCode: result.exitCode ?? -1 }; } } });
         const { projectName, targets } = generation;
         // Compose may retain an unchanged service from an earlier source while
         // creating another service from the current one. Each source is proven

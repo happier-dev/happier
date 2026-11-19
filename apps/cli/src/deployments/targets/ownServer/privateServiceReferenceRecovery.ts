@@ -2,7 +2,7 @@ import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/a
 import type { DeploymentReferenceAddressV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import type { NativeDockerEngineFacts } from '@happier-dev/cli-common/machineSetup';
 import type { ProjectNativeDockerPort } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
-import { acquirePrivateServiceContainerBridge } from './privateServiceContainerBridge';
+import { acquirePrivateServiceContainerBridge, readPrivateServiceContainerRelayHost } from './privateServiceContainerBridge';
 import { acquirePrivateServiceReferenceForwardForHost, resolvePrivateServiceExportAdmissionForHost, type PrivateServiceReferenceHostInput } from './privateServiceReference';
 import { privateServiceForwardAcquisitionError } from '../../deploymentFailure';
 import { projectDeploymentFailure } from '../../deploymentFailure';
@@ -51,6 +51,8 @@ export async function restorePrivateServiceReferencesForHost(input: Omit<Private
             const port = Number(saved.port);
             if (!port || saved.protocol !== `${admission.scheme}:`) return unavailable();
             const networkId = route.containerNetworkId;
+            const relayHost = networkId ? readPrivateServiceContainerRelayHost({ host: saved.hostname, port }) : null;
+            if (networkId && !relayHost) return unavailable();
             if (!networkId && saved.hostname !== '127.0.0.1') return unavailable();
             const forward = await acquirePrivateServiceReferenceForwardForHost(admission, remote => input.host.acquireServiceExportForward!({ targetMachineId: remote.machineId,
                 serviceExport: remote.serviceExport, context: input.context, signal: input.signal,
@@ -65,12 +67,11 @@ export async function restorePrivateServiceReferencesForHost(input: Omit<Private
                 },
                 ...(!networkId ? { preferredListenPort: port } : {}) })).catch(error => { throw privateServiceForwardAcquisitionError(error); });
             resources.push(forward);
-            if (networkId) {
+            if (networkId && relayHost) {
                 if (!input.docker || !input.engine) return unavailable();
                 const bridge = await acquirePrivateServiceContainerBridge({ docker: input.docker, engine: input.engine,
-                    networkId, forward, preferredListenPort: port, signal: input.signal });
+                    networkId, forward, route: { restoredHost: relayHost }, signal: input.signal });
                 resources.push(bridge);
-                if (bridge.host !== saved.hostname) return unavailable();
             }
         }
         return { close };
