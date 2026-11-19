@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { WorkflowEventsListOutputV1Schema } from '@happier-dev/protocol/actions/specs/workflowEvents';
 import { DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -67,9 +68,27 @@ describe('Automations everywhere: qualified plugin subjects', () => {
       const inputs = entry.inputs;
       const catalog = acquireDaemonMergedWorkflowActionCatalog(entry);
       try {
+        const discovery = await catalog.promise;
         const specs = listWorkflowStepActionSpecs(inputs.pluginProjectionV2, inputs.pluginUiProjection,
-          undefined, await catalog.promise, 'after');
-        expect(specs.find(spec => spec.id === formatQualifiedPluginActionId({ pluginId: pluginIds[0], localId: 'close-ticket' })))
+          undefined, discovery, 'after');
+        const actionId = formatQualifiedPluginActionId({ pluginId: pluginIds[0], localId: 'close-ticket' });
+        const contributionKey = buildQualifiedPluginContributionKey({ pluginId: pluginIds[0], localId: 'close-ticket' });
+        const projectAction = (action: typeof inputs.pluginUiProjection.actionsById[string] | undefined) => action ? {
+          pluginId: action.pluginId, id: action.id,
+          available: action.available, readOnly: action.readOnly, dangerLevel: action.dangerLevel,
+          surfaces: action.surfaces, target: action.execution.target,
+          approvalScope: action.approvalScope,
+        } : null;
+        const rawAction = inputs.pluginProjectionV2?.actionsById[contributionKey];
+        const uiAction = inputs.pluginUiProjection.actionsById[contributionKey];
+        const discoveredAction = discovery.find(action => action.id === actionId);
+        expect(specs.find(spec => spec.id === actionId), JSON.stringify({
+          rawAction: projectAction(rawAction), uiAction: projectAction(uiAction),
+          discovery: discoveredAction ? { automation: discoveredAction.automation,
+            approvalScope: discoveredAction.approvalScope } : null,
+          subjectKinds: Object.values(inputs.pluginUiProjection.subjectKindsById)
+            .filter(kind => kind.pluginId === pluginIds[0]).length,
+        }))
           .toMatchObject({ subjectKind: { ok: true, subjectKind: {
             kind: 'plugin', pluginId: pluginIds[0], subjectKindId: 'ticket', definition: { listAction: 'list-tickets' },
           } } });
