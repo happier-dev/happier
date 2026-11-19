@@ -18,6 +18,8 @@ const { LookPopover } = await import('@/components/atmosphere/look/LookChip');
 const { DropdownMenu } =
   await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { t } = await import('@/text');
+const { actionOperationStore } =
+  await import('@/sync/domains/actionOperations/actionOperationStore');
 
 const checkout = {
   machineName: 'NLDW3-5-36-33 · 58f6',
@@ -29,7 +31,10 @@ const checkout = {
 };
 
 describe('Project phone head (owner P1 11-15)', () => {
-  afterEach(standardCleanup);
+  afterEach(() => {
+    standardCleanup();
+    actionOperationStore.reset();
+  });
 
   it("carries the Machine chip, the launchers and ⋯ on the bar, and the ⋯ opens the Project's Look", async () => {
     const screen = await renderScreen(
@@ -91,6 +96,36 @@ describe('Project phone head (owner P1 11-15)', () => {
         add!.props.onPress();
       });
       expect(onNewSession).toHaveBeenCalledTimes(1);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('carries Activity on the bar while background work is running, as the wide title strip does', async () => {
+    actionOperationStore.mergeSnapshots({
+      serverId: 'server-1',
+      snapshots: [{
+        version: 1,
+        operationId: 'operation-1',
+        revision: 1,
+        actionId: 'session.fork',
+        state: 'running',
+        scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'session-1' },
+        title: 'Fork session',
+        createdAt: 100,
+        startedAt: 110,
+        cancellation: 'unsupported',
+      }],
+    });
+    const screen = await renderScreen(
+      <ProjectPhoneHeadView
+        checkout={checkout}
+        project={{ serverId: 'home', projectKey: 'project' }}
+        launchers={{ testIdPrefix: 'project-header', showWorktreesButton: false }}
+      />,
+    );
+    try {
+      expect(screen.findHostByTestId('project-phone-head.activity')).not.toBeNull();
     } finally {
       await screen.unmount();
     }
