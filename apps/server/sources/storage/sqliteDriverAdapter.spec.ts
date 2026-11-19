@@ -111,6 +111,28 @@ describe("SQLite driver adapter", () => {
         await blocker.rollback();
     });
 
+    it("starts query-only transactions without acquiring a writer lock and still rejects writes", async () => {
+        const { adapter, path } = await open();
+        const writer = await new SqliteDriverAdapterFactory({ path, connectionLimit: 1, busyTimeoutMs: 0 }).connect();
+        cleanups.push(() => writer.dispose());
+        await adapter.executeScript("PRAGMA query_only=ON");
+        const heldWriter = await writer.startTransaction();
+        try {
+            const read = await adapter.startTransaction();
+            try {
+                expect((await read.queryRaw(query('SELECT count(*) AS n FROM "Row"'))).rows).toEqual([[0]]);
+                await expect(read.executeRaw(query('INSERT INTO "Row" ("id") VALUES (?)', ["forbidden"])))
+                    .rejects.toMatchObject({ cause: { originalCode: "8" } });
+            } finally {
+                await read.executeRaw(query("ROLLBACK"));
+                await read.rollback();
+            }
+        } finally {
+            await heldWriter.executeRaw(query("ROLLBACK"));
+            await heldWriter.rollback();
+        }
+    });
+
     it("holds the connection for an interactive transaction; other statements wait for it", async () => {
         const { adapter, factory } = await open();
         const transaction = await adapter.startTransaction();

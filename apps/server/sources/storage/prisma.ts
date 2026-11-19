@@ -9,6 +9,7 @@ import { log, warn } from "@/utils/logging/log";
 import { AsyncLock } from "@/utils/runtime/lock";
 import { databaseQueryDurationHistogram, registerDatabasePoolStatsReader } from "@/app/monitoring/metrics/databaseDriverMetrics";
 import { readMetricsServerConfigFromEnv } from "@/config/monitoring";
+import { readDatabaseTransactionConfigFromEnv } from "@/config/databaseTransactions";
 import { isSharedDatabaseConsumer } from "@/config/sharedDatabaseConsumer";
 import {
     createDefaultPrismaClient,
@@ -249,9 +250,8 @@ export async function initDbSqlite(): Promise<void> {
 }
 
 /**
- * Prisma's SQLite interactive transactions begin IMMEDIATE, even for reads.
  * Keep snapshot reads off the write pool with one storage-owned connection.
- * The existing lock serializes BEGIN/read/ROLLBACK on that single connection;
+ * The existing lock serializes transactions on that single connection;
  * query_only prevents a read callback from accidentally becoming a writer.
  */
 export async function withSqliteReadSnapshot<T>(
@@ -281,20 +281,13 @@ export async function withSqliteReadSnapshot<T>(
         // An autocommit statement is atomic and sees one committed state; the read-only
         // connection keeps it off the writer queue either way.
         if (options.singleStatement) return await read(client);
-        await client.$executeRawUnsafe("BEGIN DEFERRED;");
-        try {
-            return await read(client);
-        } finally {
-            try {
-                // No writes are permitted, so rollback also ends successful reads.
-                await client.$executeRawUnsafe("ROLLBACK;");
-            } catch (error) {
-                // Never reuse a connection whose transaction state is unknown.
-                state.client = null;
-                await client.$disconnect();
-                throw error;
-            }
-        }
+        // Give Prisma the transaction context so internally chunked relation reads
+        // share this snapshot rather than attempting a second BEGIN on the connection.
+        // Reuse the transaction owner's budgets instead of Prisma's shorter defaults.
+        const config = readDatabaseTransactionConfigFromEnv(process.env, "sqlite");
+        return await client.$transaction(read, {
+            isolationLevel: "Serializable", maxWait: config.maxWaitMs, timeout: config.timeoutMs,
+        });
     }, options);
 }
 

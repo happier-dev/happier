@@ -408,12 +408,16 @@ class SqliteConnectionPool {
         });
     }
 
-    /** Takes a connection whose `BEGIN IMMEDIATE` succeeded; it stays held until the transaction ends. */
-    beginImmediate(): Promise<PooledConnection> {
+    /** Takes a connection whose BEGIN succeeded; it stays held until the transaction ends. */
+    beginTransaction(): Promise<PooledConnection> {
         return retryWhileBusy(this.options.busyTimeoutMs, async () => {
             const held = await this.acquire();
             try {
-                held.connection.db.exec("BEGIN IMMEDIATE");
+                const db = held.connection.db;
+                // The snapshot owner sets query_only once on its dedicated connection.
+                // Its reads cannot acquire a writer lock; ordinary writers retain IMMEDIATE.
+                const [[queryOnly]] = db.prepare("PRAGMA query_only").values([]);
+                db.exec(Number(queryOnly) === 1 ? "BEGIN DEFERRED" : "BEGIN IMMEDIATE");
                 return held;
             } catch (error) {
                 held.release();
@@ -538,7 +542,7 @@ class SqliteDriverAdapter implements SqlDriverAdapter {
         }
         // IMMEDIATE takes the write lock up front, as the Rust engine's SQLite transactions did,
         // so a transaction never fails mid-way upgrading a read lock.
-        const { connection, release } = await this.pool.beginImmediate();
+        const { connection, release } = await this.pool.beginTransaction();
         return new SqliteTransaction(connection, release);
     }
 

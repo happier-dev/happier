@@ -4807,9 +4807,13 @@ changes feed use `inTx(..., { readOnly: true })`. The storage client owner in
 `apps/server/sources/storage/prisma.ts` keeps one lazy, single-connection reader
 beside the write pool and serializes deferred read transactions through the
 existing `AsyncLock`. SQLite's `query_only` pragma rejects accidental writes;
-rollback ends each snapshot, and database shutdown drains and disconnects the reader.
-This preserves row/cursor and access snapshots without Prisma's SQLite
-`BEGIN IMMEDIATE` writer lock. Other database providers retain their existing
+Prisma owns each snapshot transaction and its commit/rollback, so internally
+chunked relation reads share the same snapshot. The adapter reads `query_only`
+once when starting a transaction and chooses `BEGIN DEFERRED` for that connection;
+writes retain `BEGIN IMMEDIATE`. Snapshot transactions reuse the existing
+database transaction execution/acquisition budgets. Database shutdown drains and
+disconnects the reader. This preserves row/cursor and access snapshots without a
+writer lock. Other database providers retain their existing
 transaction path. Write transactions continue to use `inTx` and `afterTx`.
 On PostgreSQL and MySQL, a read declared `singleStatementRead` runs without a
 transaction at all; SQLite still serves it from this read snapshot.

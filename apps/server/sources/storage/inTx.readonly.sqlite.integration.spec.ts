@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
-import { db, initDbSqlite, shutdownDbClient } from "@/storage/db";
+import { db, initDbSqlite, shutdownDbClient, withSqliteReadSnapshot } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { holdSqliteWriteLock } from "@/testkit/sqliteWriteLock";
@@ -60,11 +60,19 @@ describe("SQLite read snapshots", () => {
     it("keeps one snapshot across a committed writer, rejects writes, and recovers after callback failure", async () => {
         await db.account.update({ where: { id: "snapshot-account" }, data: { seq: 3 } });
         await inTx(async tx => {
-            const read = () => tx.account.findUniqueOrThrow({ where: { id: "snapshot-account" }, select: { seq: true } });
-            expect(await read()).toEqual({ seq: 3 });
+            // Prisma splits the relation's parent lookup at its SQLite parameter boundary.
+            const ids = ["snapshot-account", ...Array.from({ length: 1_000 }, (_, index) => `missing-${index}`)];
+            const read = () => tx.account.findMany({ where: { id: { in: ids } },
+                select: { seq: true, AccountEmail: { select: { address: true } } } });
+            expect(await read()).toEqual([{ seq: 3, AccountEmail: [] }]);
             await db.account.update({ where: { id: "snapshot-account" }, data: { seq: 4 } });
-            expect(await read()).toEqual({ seq: 3 });
+            expect(await read()).toEqual([{ seq: 3, AccountEmail: [] }]);
         }, { readOnly: true });
+        // An autocommit reader can also encounter Prisma's internal chunk transaction.
+        expect(await withSqliteReadSnapshot(tx => tx.account.findMany({
+            where: { id: { in: ["snapshot-account", ...Array.from({ length: 1_000 }, (_, index) => `missing-${index}`)] } },
+            select: { seq: true, AccountEmail: { select: { address: true } } },
+        }), { singleStatement: true })).toEqual([{ seq: 4, AccountEmail: [] }]);
         const failure = new Error("read failed");
         await expect(inTx(async () => { throw failure; }, { readOnly: true })).rejects.toBe(failure);
         await expect(inTx(tx => tx.account.update({ where: { id: "snapshot-account" }, data: { seq: 5 } }),
