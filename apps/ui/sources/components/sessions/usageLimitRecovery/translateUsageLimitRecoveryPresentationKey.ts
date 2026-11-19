@@ -17,11 +17,5 @@ export const translateUsageLimitRecoveryPresentationKey: SessionUsageLimitRecove
         resetCreditSummaryParams,
       );
     }
-    if (key === 'session.usageLimitRecovery.banner.retryAt') {
-      const [retryAtParams] = params as [
-        SessionUsageLimitRecoveryTranslationParams['session.usageLimitRecovery.banner.retryAt'],
-      ];
-      return t('session.usageLimitRecovery.banner.retryAt', retryAtParams);
-    }
     return tLoose(key);
   };

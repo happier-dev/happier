@@ -5,7 +5,10 @@ import type { UsageMeterSize } from '@happier-dev/plugin-ui/presentation';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 
 import type { MeterTone } from '@/components/ui/lists/MeterBar';
-import { formatResetCountdown, formatResetCountdownPhrase } from '@/sync/domains/connectedServices/formatResetCountdown';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { formatResetCountdown, formatResetCountdownPhrase, readResetCountdownWakeAtMs } from '@/sync/domains/connectedServices/formatResetCountdown';
 import { t } from '@/text';
 import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
 
@@ -21,7 +24,8 @@ export type UsageMeterRowProps = Readonly<{
     resetsAt: number | null;
     /** From `resolveQuotaTone`/`resolveQuotaMeterTone`, the one threshold owner. */
     tone: MeterTone;
-    now: number;
+    /** A fixed time for specimens and snapshots. Visible live meters use the shared clock. */
+    now?: number;
     /** The value is still being read: the row keeps its place with a quiet placeholder. */
     loading?: boolean;
     /**
@@ -67,14 +71,21 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
     const value = reported === null
         ? t('common.unavailable')
         : props.estimated ? t('connectedServicesCollection.meterEstimated', { value: reported }) : reported;
-    const countdown = formatResetCountdown(props.now, props.resetsAt, ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER);
-    const relative = formatResetCountdownPhrase(props.now, props.resetsAt, ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER, (time) =>
+    const viewed = useHostActivelyViewed();
+    const presented = useLayoutPresentationActive();
+    const deadline = props.loading || props.resetText !== undefined ? null : props.resetsAt;
+    const readNextWake = React.useCallback((nowMs: number) => readResetCountdownWakeAtMs(nowMs, deadline), [deadline]);
+    const clockNow = useSessionListRuntimeDeadlineNowMs(readNextWake,
+        props.now === undefined && viewed && presented && deadline !== null && deadline >= Date.now());
+    const now = props.now ?? clockNow;
+    const countdown = formatResetCountdown(now, props.resetsAt, ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER);
+    const relative = formatResetCountdownPhrase(now, props.resetsAt, ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER, (time) =>
         props.resetPrefix === 'next'
             ? t('connectedServicesCollection.meterNextResetIn', { time })
             : t('connectedServicesCollection.meterResetsIn', { time }));
     const resetAt = props.resetText ?? relative ?? '';
     const wideResetAt = props.resetText ?? (props.size === 'wide' && relative !== null && props.resetsAt !== null
-        ? t('connectedServicesCollection.meterResetsAt', { countdown: relative, time: formatResetAtTime(props.resetsAt, props.now) })
+        ? t('connectedServicesCollection.meterResetsAt', { countdown: relative, time: formatResetAtTime(props.resetsAt, now) })
         : resetAt);
     const paceLabel = props.pace && remaining !== null ? t('usage.board.plans.meterPaceAccessibility', {
         even: `${Math.round(props.pace.evenPaceRemainingFraction * 100)}%`,

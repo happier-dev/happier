@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { sessionListRuntimeClock } from '@/hooks/session/sessionListRuntimeClock';
 import { createReactNativeAppStateEmitter } from '@/dev/testkit/mocks/reactNative';
 import { AppState } from 'react-native';
 import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -99,9 +100,22 @@ describe('overload recovery countdown', () => {
         await act(async () => { screen.pressByTestId('recovery-switch-account'); });
         expect(openAccountSwitcher).toHaveBeenCalledOnce();
     });
+    it('renders the quota retry time and a live duration together, then returns to wait copy', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(Math.max(Date.now(), sessionListRuntimeClock.getNowMs()));
+        const screen = await renderScreen(<SessionUsageLimitRecoveryBanner testID="quota" title="Usage limit"
+            body="Waiting for quota" quotaRetryAtMs={Date.now() + 2_000} />);
+        expect(screen.getTextContent()).toContain('(2 s)');
+        await act(async () => { vi.advanceTimersByTime(1_000); });
+        expect(screen.getTextContent()).toContain('(1 s)');
+        await act(async () => { vi.advanceTimersByTime(1_000); });
+        expect(screen.getTextContent()).toContain('Waiting for quota');
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
     it('updates only the banner leaf and removes its timer when no scheduled retry remains', async () => {
         vi.useFakeTimers();
-        vi.setSystemTime(1_700_000_000_000);
+        vi.setSystemTime(Math.max(Date.now(), sessionListRuntimeClock.getNowMs()));
         let parentRenders = 0;
         const unfocused = { get: () => false, subscribe: () => () => {} };
         function Parent({ deadline, focused = true }: { deadline: number | null; focused?: boolean }) {
@@ -113,8 +127,8 @@ describe('overload recovery countdown', () => {
         expect(screen.getTextContent()).toContain('12 seconds');
         expect(screen.getTextContent()).toContain('attempt 3');
         const parentBeforeTick = parentRenders;
-        await act(async () => { vi.advanceTimersByTime(3_000); });
-        expect(screen.getTextContent()).toContain('9 seconds');
+        await act(async () => { vi.advanceTimersByTime(1_000); });
+        expect(screen.getTextContent()).toContain('11 seconds');
         expect(parentRenders).toBe(parentBeforeTick);
         await act(async () => { appState.emit('background'); });
         expect(vi.getTimerCount()).toBe(0);

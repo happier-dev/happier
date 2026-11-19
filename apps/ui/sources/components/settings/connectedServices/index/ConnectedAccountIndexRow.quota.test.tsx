@@ -102,7 +102,7 @@ it.each([ConnectedAccountIndexStatusLines, ConnectedAccountUsageFreshnessLine])(
 });
 
 it('shows the owner’s cause before any usage figures exist', async () => {
-    const screen = await renderScreen(<ConnectedAccountIndexUsageBlock testID="empty" now={2_000}
+    const screen = await renderScreen(<ConnectedAccountIndexUsageBlock testID="empty"
         usage={{ kind: 'error', error: 'Sign in again to refresh usage', retry: vi.fn() }} />);
     expect(screen.getTextContent()).toContain('Sign in again to refresh usage');
 });

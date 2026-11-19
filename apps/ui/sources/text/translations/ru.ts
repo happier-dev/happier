@@ -8898,7 +8898,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         readyTitle: "Лимит использования сброшен",
         readyBody: "Теперь можно возобновить этот сеанс.",
         accountReached: ({ account }: { account: string }) => `Аккаунт ${account} достиг лимита использования`,
-        retryAt: ({ time }: { time: string }) => `Happier автоматически повторит попытку в ${time}.`,
+        retryAt: ({ time, duration }: { time: string; duration?: string }) => `Happier автоматически повторит попытку в ${time}${duration ? ` (${duration})` : ''}.`,
         resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
           const label = count === 1 ? "1 сброс использования" : `${count} сбросов использования`;
           return expiresAt ? `${label} доступен. Ближайший истекает ${expiresAt}.` : `${label} доступен.`;

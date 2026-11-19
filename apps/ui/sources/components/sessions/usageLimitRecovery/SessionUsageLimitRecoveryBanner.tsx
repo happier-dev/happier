@@ -1,5 +1,8 @@
 import * as React from 'react';
-import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER } from '@/components/settings/connectedServices/account/accountBlockFormatters';
+import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
+import { formatResetCountdown, readResetCountdownWakeAtMs } from '@/sync/domains/connectedServices/formatResetCountdown';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 const ALWAYS_FOCUSED = Object.freeze({ get: () => true, subscribe: () => () => {} });
 import { HappierDisclosureToggle } from '@happier-dev/plugin-ui/presentation';
@@ -14,6 +17,7 @@ import { useUsageLimitAccountLabel } from './useUsageLimitAccountLabel';
 
 type Props = React.ComponentProps<typeof WarningActionBanner> & Readonly<{
     temporaryThrottle?: Readonly<{ nextCheckAtMs: number | null; attemptCount: number }>;
+    quotaRetryAtMs?: number | null;
     /** The surface's focus, followed by subscription; the countdown ticks only while focused. Absent means focused. */
     surfaceFocus?: Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>;
     runtimeIssue?: SessionRuntimeIssueV1 | null;
@@ -26,7 +30,7 @@ type Props = React.ComponentProps<typeof WarningActionBanner> & Readonly<{
 }>;
 
 // The clock subscription belongs to this leaf; a tick never rerenders SessionView or its transcript.
-export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, surfaceFocus = ALWAYS_FOCUSED, runtimeIssue, onUseAnotherAccount, accountRecoveryIsPrimary, deliveryRecovery, accountLabel, ...props }: Props) {
+export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, quotaRetryAtMs = null, surfaceFocus = ALWAYS_FOCUSED, runtimeIssue, onUseAnotherAccount, accountRecoveryIsPrimary, deliveryRecovery, accountLabel, ...props }: Props) {
     const issue = presentSessionRuntimeIssue(runtimeIssue);
     // The title owns the limit; a cause line only adds a localized cause, never the runtime's generic preview.
     const localizedCause = runtimeIssue ? presentSessionStartupFailureCause(runtimeIssue.code, runtimeIssue) : null;
@@ -35,27 +39,32 @@ export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, surfaceFocu
     const disclosure = useCoreDisclosureToggleBinding();
     const [detailsOpen, setDetailsOpen] = React.useState(false);
     const viewed = useViewed();
-    const deadline = temporaryThrottle?.nextCheckAtMs ?? null;
-    const enabled = viewed && deadline !== null;
-    const readSeconds = React.useCallback(() => deadline === null ? 0 : Math.max(0, Math.ceil((deadline - nowServerMs()) / 1_000)), [deadline]);
-    const subscribe = React.useCallback((notify: () => void) => {
-        if (!enabled) return () => {};
-        // Focus starts and stops the tick by subscription; regaining focus catches the shown count up.
-        return followSignal(surfaceFocus, (focused) => {
-            if (!focused || readSeconds() === 0) return;
-            notify();
-            const timer = setInterval(() => {
-                notify();
-                if (readSeconds() === 0) clearInterval(timer);
-            }, 1_000);
-            return () => clearInterval(timer);
-        });
-    }, [enabled, readSeconds, surfaceFocus]);
-    const seconds = React.useSyncExternalStore(subscribe, readSeconds, readSeconds);
-    const attempt = (temporaryThrottle?.attemptCount ?? 0) + (deadline !== null ? 1 : 0);
+    const focused = React.useSyncExternalStore(surfaceFocus.subscribe, surfaceFocus.get, surfaceFocus.get);
+    const overloadDeadline = temporaryThrottle?.nextCheckAtMs ?? null;
+    const deadline = overloadDeadline ?? quotaRetryAtMs;
+    const serverOffsetMs = nowServerMs() - Date.now();
+    const readNextWake = React.useCallback((localNowMs: number) => {
+        if (deadline === null) return null;
+        const remainingMs = deadline - (localNowMs + serverOffsetMs);
+        if (remainingMs <= 0) return null;
+        if (overloadDeadline !== null) return localNowMs + (remainingMs % 1_000 || 1_000);
+        const nextWakeAtMs = readResetCountdownWakeAtMs(localNowMs + serverOffsetMs, deadline);
+        return nextWakeAtMs === null ? null : nextWakeAtMs - serverOffsetMs;
+    }, [deadline, overloadDeadline, serverOffsetMs]);
+    const localNowMs = useSessionListRuntimeDeadlineNowMs(readNextWake,
+        viewed && focused && deadline !== null && deadline > nowServerMs());
+    const nowMs = localNowMs + serverOffsetMs;
+    const seconds = overloadDeadline === null ? 0 : Math.max(0, Math.ceil((overloadDeadline - nowMs) / 1_000));
+    const attempt = (temporaryThrottle?.attemptCount ?? 0) + (overloadDeadline !== null ? 1 : 0);
+    const quotaDuration = quotaRetryAtMs !== null && quotaRetryAtMs > nowMs
+        ? formatResetCountdown(nowMs, quotaRetryAtMs, ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER)
+        : null;
+    const retryBody = quotaRetryAtMs !== null && quotaDuration !== null
+        ? t('session.usageLimitRecovery.banner.retryAt', { time: formatMoment(quotaRetryAtMs, nowMs), duration: quotaDuration })
+        : props.body;
     const accountLine = [accountLabel ? t('session.usageLimitRecovery.banner.accountReached', { account: accountLabel }) : null, issue.reset]
         .filter(Boolean).join(' · ');
-    const body = [localizedCause !== props.title ? localizedCause : null, accountLine, props.body].filter(Boolean).join('\n');
+    const body = [localizedCause !== props.title ? localizedCause : null, accountLine, retryBody].filter(Boolean).join('\n');
     // One primary and one secondary: the account recovery when offered, else the first recovery the caller
     // ranked. The quiet Hide is the composer banner's own dismissal, not a recovery.
     const accountAction = accountRecoveryLabel && onUseAnotherAccount && !accountRecoveryIsPrimary ? {
@@ -76,10 +85,10 @@ export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, surfaceFocu
         </> : null}</>}
         onActionPress={accountRecoveryIsPrimary && onUseAnotherAccount ? onUseAnotherAccount : props.onActionPress}
         secondaryActions={secondaryActions}
-        title={deadline !== null && seconds > 0
+        title={overloadDeadline !== null && seconds > 0
             ? t('session.usageLimitRecovery.overloadCountdown', { seconds, attempt })
             : props.title}
-        body={temporaryThrottle && (deadline === null || seconds === 0) && attempt > 0
+        body={temporaryThrottle && seconds === 0 && attempt > 0
             ? `${body} · ${t('session.usageLimitRecovery.overloadAttempt', { attempt })}`
             : body}
     />;

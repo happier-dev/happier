@@ -6001,6 +6001,7 @@ export function useSessionComposerController({
                             : undefined}
                         accountRecoveryIsPrimary={visibleUsageLimitRecoveryPresentation.banner.mode === 'switch_account_now'}
                         temporaryThrottle={visibleUsageLimitRecoveryPresentation.banner.temporaryThrottle}
+                        quotaRetryAtMs={visibleUsageLimitRecoveryPresentation.banner.quotaRetryAtMs}
                         surfaceFocus={surfaceFocusSignal}
                         testID={visibleUsageLimitRecoveryPresentation.banner.testID}
                         actionTestID={visibleUsageLimitRecoveryPresentation.banner.actionTestID}

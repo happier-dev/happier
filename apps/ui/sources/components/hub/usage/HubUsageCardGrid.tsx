@@ -132,7 +132,6 @@ const HubUsageCard = React.memo(function HubUsageCard(props: Readonly<{
                             estimated={meter.status === 'estimated'}
                             resetsAt={meter.resetsAt}
                             tone={resolveQuotaTone(meter.remainingPct)}
-                            now={now}
                         />
                     ))}
                 </UsageMeterStack>

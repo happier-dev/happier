@@ -1,5 +1,5 @@
 import type { ConnectedServiceQuotaGaugeLabelFormatter } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
-import type { ResetCountdownDaysFormatter } from '@/sync/domains/connectedServices/formatResetCountdown';
+import type { ResetCountdownDaysFormatter, ResetCountdownFormatter } from '@/sync/domains/connectedServices/formatResetCountdown';
 import { t } from '@/text';
 
 /**
@@ -9,7 +9,7 @@ import { t } from '@/text';
  * Shared by the legacy and qualified account-block containers so the two
  * identity models can never drift into different usage vocabulary.
  */
-export const ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER: ConnectedServiceQuotaGaugeLabelFormatter = {
+export const ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER: ConnectedServiceQuotaGaugeLabelFormatter & ResetCountdownFormatter = {
     remaining: ({ percent }) => t('connectedServices.quota.remaining', { percent }),
     remainingWithReset: ({ percent, reset }) =>
         t('connectedServices.quota.remainingWithReset', { percent, reset }),
@@ -21,6 +21,7 @@ export const ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER: ConnectedServiceQuotaGaugeLabe
         t('connectedServices.quota.duration.hoursMinutes', { hours, minutes }),
     durationHours: ({ hours }) => t('connectedServices.quota.duration.hours', { hours }),
     durationMinutes: ({ minutes }) => t('connectedServices.quota.duration.minutes', { minutes }),
+    durationSeconds: ({ seconds }) => t('usage.board.howYouWork.durationSeconds', { seconds }),
 };
 
 export const ACCOUNT_BLOCK_RESET_COUNTDOWN_DAYS_FORMATTER: ResetCountdownDaysFormatter = {

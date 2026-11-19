@@ -119,7 +119,6 @@ export const ConnectedServicePoolIndexItemView = React.memo(function ConnectedSe
                     // "next in 10d 22h" outgrows a list row's reset column; the row reads like the account rows above it.
                     resetPrefix={card ? 'next' : undefined}
                     size={meterSize}
-                    now={props.now}
                 />
             ))}
         </UsageMeterStack>

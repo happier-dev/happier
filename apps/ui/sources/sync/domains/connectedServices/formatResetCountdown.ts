@@ -1,5 +1,5 @@
 /**
- * Day/hour/minute-granular reset countdown formatting.
+ * Day/hour/minute/second-granular reset countdown formatting.
  *
  * Single owner for the countdown algorithm previously duplicated in
  * quota presentation components.
@@ -19,6 +19,7 @@ export type ResetCountdownFormatter = Readonly<{
     durationHoursMinutes: (params: Readonly<{ hours: number; minutes: number }>) => string;
     durationHours: (params: Readonly<{ hours: number }>) => string;
     durationMinutes: (params: Readonly<{ minutes: number }>) => string;
+    durationSeconds?: (params: Readonly<{ seconds: number }>) => string;
 }>;
 
 export function formatResetCountdown(
@@ -32,6 +33,9 @@ export function formatResetCountdown(
     if (delta < 0) return formatter.durationOutdated();
     if (delta === 0) return formatter.durationNow();
 
+    if (delta < MINUTE_MS && formatter.durationSeconds) {
+        return formatter.durationSeconds({ seconds: Math.ceil(delta / 1_000) });
+    }
     const totalMinutes = Math.floor(delta / MINUTE_MS);
     const days = Math.floor(totalMinutes / (60 * 24));
     const hours = Math.floor((totalMinutes - days * 60 * 24) / 60);
@@ -60,6 +64,16 @@ export function formatResetCountdownPhrase(
     if (countdown === null) return null;
     const ahead = resetsAtMs! - nowMs;
     return Number.isFinite(ahead) && ahead > 0 ? inPhrase(countdown) : countdown;
+}
+
+/** The next visible change for a live countdown using the seconds formatter. */
+export function readResetCountdownWakeAtMs(nowMs: number, resetsAtMs: number | null): number | null {
+    if (resetsAtMs === null || !Number.isFinite(resetsAtMs) || resetsAtMs < nowMs) return null;
+    const remainingMs = resetsAtMs - nowMs;
+    if (remainingMs === 0) return nowMs + 1;
+    if (remainingMs < MINUTE_MS) return resetsAtMs - (Math.ceil(remainingMs / 1_000) - 1) * 1_000;
+    const unitMs = remainingMs >= DAY_MS ? HOUR_MS : MINUTE_MS;
+    return nowMs + remainingMs % unitMs + 1;
 }
 
 export type ResetCountdownDaysFormatter = Readonly<{

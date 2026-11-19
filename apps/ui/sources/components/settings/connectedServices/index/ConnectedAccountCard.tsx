@@ -74,7 +74,7 @@ export const ConnectedAccountCardView = React.memo(function ConnectedAccountCard
                     onOpen={props.onOpen} compact prominence={props.fixProminence} />
             ) : facts.usage.kind === 'none' ? null : (
                 <View pointerEvents={facts.usage.kind === 'error' ? 'box-none' : 'none'}>
-                    <ConnectedAccountIndexUsageBlock testID={props.testID} usage={facts.usage} now={props.now} size="card" />
+                    <ConnectedAccountIndexUsageBlock testID={props.testID} usage={facts.usage} size="card" />
                 </View>
             )}
             {props.signedOut ? null : (

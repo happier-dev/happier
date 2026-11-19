@@ -8441,7 +8441,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
         readyTitle: "El límite de uso se restableció",
         readyBody: "Ya puedes reanudar esta sesión.",
         accountReached: ({ account }: { account: string }) => `${account} alcanzó su límite de uso`,
-        retryAt: ({ time }: { time: string }) => `Happier lo reintentará automáticamente a las ${time}.`,
+        retryAt: ({ time, duration }: { time: string; duration?: string }) => `Happier lo reintentará automáticamente a las ${time}${duration ? ` (${duration})` : ''}.`,
         resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
           const label = count === 1 ? "1 restablecimiento de uso" : `${count} restablecimientos de uso`;
           return expiresAt ? `${label} disponible. El primero vence el ${expiresAt}.` : `${label} disponible.`;

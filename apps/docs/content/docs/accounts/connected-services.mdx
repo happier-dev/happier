@@ -312,10 +312,12 @@ enabled. Checks from an active session, the CLI and MCP use the same recovery
 attempt; changing how you check does not start a separate recovery loop.
 
 Happier manages the wait even when the Agent has no separate quota-check command.
-A reported reset or retry-after determines when it can try to continue. Without
-reliable timing, the wait stays active until recovery is reported or you choose
-**Check now**. Temporary check failures keep the wait active without starting a
-periodic check loop.
+A reported reset or retry-after determines when it can try to continue. When
+Codex or Claude reports several exhausted windows, Happier waits for the last
+of those windows to reset. At the scheduled time Happier checks again if the
+Agent supports a quota check. Without reliable timing, the wait stays active
+until recovery is reported or you choose **Check now**. Temporary check failures
+keep the wait active without starting a periodic check loop.
 
 Happier sends the configured continuation prompt, not a replay of your original
 request. Once the continuation is accepted into Pending, its normal queue and

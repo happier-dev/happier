@@ -113,7 +113,6 @@ const EMPTY_FACTS: ConnectedAccountIndexFacts = {
 export const ConnectedAccountIndexUsageBlock = React.memo(function ConnectedAccountIndexUsageBlock(props: Readonly<{
     testID: string;
     usage: ConnectedAccountIndexUsage;
-    now: number;
     size?: UsageMeterSize;
     align?: 'start' | 'end';
 }>) {
@@ -131,7 +130,6 @@ export const ConnectedAccountIndexUsageBlock = React.memo(function ConnectedAcco
                         tone={resolveQuotaMeterTone(meter)}
                         estimated={meter.status === 'estimated'}
                         size={props.size}
-                        now={props.now}
                     />
                 ))}
             </UsageMeterStack>
@@ -141,7 +139,7 @@ export const ConnectedAccountIndexUsageBlock = React.memo(function ConnectedAcco
         return (
             <UsageMeterStack testID={`${props.testID}:meters-loading`}>
                 {LOADING_METER_KEYS.map((key) => (
-                    <UsageMeterRow key={key} label="" remainingPct={null} resetsAt={null} tone="neutral" size={props.size} now={props.now} loading />
+                    <UsageMeterRow key={key} label="" remainingPct={null} resetsAt={null} tone="neutral" size={props.size} loading />
                 ))}
             </UsageMeterStack>
         );
@@ -345,7 +343,7 @@ export const ConnectedAccountIndexRowView = React.memo(function ConnectedAccount
     const usage = (
         <View pointerEvents={facts.usage.kind === 'error' ? 'box-none' : 'none'}
             style={props.compact ? null : [styles.use, keepRowPadding]}>
-            <ConnectedAccountIndexUsageBlock testID={props.testID} usage={facts.usage} now={props.now} align="end" />
+            <ConnectedAccountIndexUsageBlock testID={props.testID} usage={facts.usage} align="end" />
         </View>
     );
     const trailing = props.signedOut ? (

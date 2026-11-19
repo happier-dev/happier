@@ -94,7 +94,6 @@ export type SessionUsageLimitRecoveryTranslationKey =
     | 'session.usageLimitRecovery.banner.readyTitle'
     | 'session.usageLimitRecovery.banner.readyBody'
     | 'session.usageLimitRecovery.banner.resetCreditSummary'
-    | 'session.usageLimitRecovery.banner.retryAt'
     | 'session.usageLimitRecovery.actions.enable'
     | 'session.usageLimitRecovery.actions.cancel'
     | 'session.usageLimitRecovery.actions.checkNow'
@@ -118,11 +117,11 @@ export type SessionUsageLimitRecoveryTranslationParams = Readonly<{
         count: number;
         expiresAt: string | null;
     }>;
-    'session.usageLimitRecovery.banner.retryAt': Readonly<{ time: string }>;
 }>;
 
 export type SessionUsageLimitRecoveryBannerPresentation = Readonly<{
     temporaryThrottle?: Readonly<{ nextCheckAtMs: number | null; attemptCount: number }>;
+    quotaRetryAtMs?: number | null;
     actionsDisabled?: boolean;
     testID: string;
     actionTestID: string;
@@ -209,9 +208,7 @@ function readUsageLimitResetAtMs(
     issue: SessionRuntimeIssueV1,
     recoveryState: SessionUsageLimitRecoveryState | null,
 ): number | null {
-    if (typeof recoveryState?.resetAtMs === 'number' && Number.isFinite(recoveryState.resetAtMs)) {
-        return recoveryState.resetAtMs;
-    }
+    if (recoveryState) return recoveryState.resetAtMs;
     return readNumberField((issue as { usageLimit?: unknown }).usageLimit, 'resetAtMs');
 }
 
@@ -311,14 +308,13 @@ function buildDaemonRetryPresentation(params: Readonly<{
     const actionLabel = translate(active ? 'session.usageLimitRecovery.stopRetrying' : 'session.usageLimitRecovery.actions.retryTemporaryThrottle');
     const retryLabel = translate('session.usageLimitRecovery.actions.retryTemporaryThrottle');
     const title = translate(params.usageLimit ? 'session.usageLimitRecovery.banner.title' : 'session.usageLimitRecovery.overloadTitle');
-    const body = params.usageLimit && nextCheckAtMs !== null
-        ? translate('session.usageLimitRecovery.banner.retryAt', { time: formatMoment(nextCheckAtMs, Date.now()) })
-        : translate(offline ? 'session.usageLimitRecovery.overloadOffline'
-            : dispatching ? 'session.usageLimitRecovery.overloadDispatching'
-            : nextCheckAtMs !== null ? 'session.usageLimitRecovery.overloadWaiting'
-            : active ? (params.usageLimit ? 'session.usageLimitRecovery.banner.waitingBody' : 'session.usageLimitRecovery.overloadAwaiting')
-            : recovery?.status === 'exhausted' ? 'session.usageLimitRecovery.overloadExhausted'
-            : 'session.usageLimitRecovery.overloadStopped');
+    const body = translate(offline ? 'session.usageLimitRecovery.overloadOffline'
+        : dispatching ? 'session.usageLimitRecovery.overloadDispatching'
+        : active && params.usageLimit ? 'session.usageLimitRecovery.banner.waitingBody'
+        : nextCheckAtMs !== null ? 'session.usageLimitRecovery.overloadWaiting'
+        : active ? 'session.usageLimitRecovery.overloadAwaiting'
+        : recovery?.status === 'exhausted' ? 'session.usageLimitRecovery.overloadExhausted'
+        : 'session.usageLimitRecovery.overloadStopped');
     const badgeLabel = params.usageLimit
         ? translate(active ? 'session.usageLimitRecovery.status.waiting' : 'session.usageLimitRecovery.status.ready')
         : title;
@@ -330,7 +326,8 @@ function buildDaemonRetryPresentation(params: Readonly<{
             testID: 'session-usageLimit-recovery', actionTestID: actionTestIdForMode(mode),
             title, body, mode, actionLabel, actionAccessibilityLabel: actionLabel,
             actionsDisabled: offline || (!active && params.checkNowSupported !== true),
-            ...(params.usageLimit ? {} : { temporaryThrottle: { nextCheckAtMs, attemptCount: recovery?.attemptCount ?? 0 } }),
+            ...(params.usageLimit ? { quotaRetryAtMs: nextCheckAtMs }
+                : { temporaryThrottle: { nextCheckAtMs, attemptCount: recovery?.attemptCount ?? 0 } }),
             secondaryActions: active && nextCheckAtMs !== null && params.checkNowSupported === true ? [{
                 kind: 'retry_temporary_throttle', label: retryLabel, accessibilityLabel: retryLabel,
                 testID: 'session-usageLimit-recovery-retryTemporaryThrottle',

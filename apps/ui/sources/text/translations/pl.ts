@@ -8277,7 +8277,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         readyTitle: "Limit użycia został zresetowany",
         readyBody: "Możesz teraz wznowić tę sesję.",
         accountReached: ({ account }: { account: string }) => `Konto ${account} osiągnęło limit użycia`,
-        retryAt: ({ time }: { time: string }) => `Happier automatycznie ponowi próbę o ${time}.`,
+        retryAt: ({ time, duration }: { time: string; duration?: string }) => `Happier automatycznie ponowi próbę o ${time}${duration ? ` (${duration})` : ''}.`,
         resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
           const label = count === 1 ? "1 reset użycia" : `${count} resetów użycia`;
           return expiresAt ? `${label} dostępny. Najwcześniej wygasa ${expiresAt}.` : `${label} dostępny.`;

@@ -7746,7 +7746,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
                 readyTitle: 'El límit d’ús s’ha restablert',
                 readyBody: 'Ara pots reprendre aquesta sessió.',
                 accountReached: ({ account }: { account: string }) => `${account} ha arribat al límit d’ús`,
-                retryAt: ({ time }: { time: string }) => `Happier ho tornarà a provar automàticament a les ${time}.`,
+                retryAt: ({ time, duration }: { time: string; duration?: string }) => `Happier ho tornarà a provar automàticament a les ${time}${duration ? ` (${duration})` : ''}.`,
                 resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
                     const label = count === 1 ? '1 restabliment d’ús' : `${count} restabliments d’ús`;
                     return expiresAt ? `${label} disponible. El primer caduca el ${expiresAt}.` : `${label} disponible.`;

@@ -626,9 +626,11 @@ function shouldPreferRuntimeIssueQuotaSnapshot(params: Readonly<{
 }>): boolean {
     if (!params.connectedSnapshot) return true;
     const runtimeFetchedAtMs = quotaSnapshotFetchedAtMs(params.runtimeSnapshot);
-    const runtimeStaleAtMs = runtimeFetchedAtMs + params.runtimeSnapshot.staleAfterMs;
     const connectedFetchedAtMs = quotaSnapshotFetchedAtMs(params.connectedSnapshot);
-    return runtimeFetchedAtMs >= connectedFetchedAtMs || runtimeStaleAtMs >= connectedFetchedAtMs;
+    if (snapshotsIdentifySameQuotaProfile(params.runtimeSnapshot, params.connectedSnapshot)) {
+        return runtimeFetchedAtMs >= connectedFetchedAtMs;
+    }
+    return runtimeFetchedAtMs + params.runtimeSnapshot.staleAfterMs >= connectedFetchedAtMs;
 }
 
 export function selectConnectedServiceSessionProviderUsageSnapshot(params: Readonly<{

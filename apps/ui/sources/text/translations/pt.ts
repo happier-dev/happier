@@ -8547,7 +8547,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
         readyTitle: "Limite de uso redefinido",
         readyBody: "Você já pode retomar esta sessão.",
         accountReached: ({ account }: { account: string }) => `${account} atingiu o limite de uso`,
-        retryAt: ({ time }: { time: string }) => `O Happier tentará novamente de forma automática às ${time}.`,
+        retryAt: ({ time, duration }: { time: string; duration?: string }) => `O Happier tentará novamente de forma automática às ${time}${duration ? ` (${duration})` : ''}.`,
         resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
           const label = count === 1 ? "1 reinício de uso" : `${count} reinícios de uso`;
           return expiresAt ? `${label} disponível. O primeiro expira em ${expiresAt}.` : `${label} disponível.`;

@@ -8129,7 +8129,7 @@ export const zhHans: TranslationStructure = {
         readyTitle: "使用限制已重置",
         readyBody: "你现在可以恢复此会话。",
         accountReached: ({ account }: { account: string }) => `${account} 已达到使用上限`,
-        retryAt: ({ time }: { time: string }) => `Happier 将于 ${time} 自动重试。`,
+        retryAt: ({ time, duration }: { time: string; duration?: string }) => `Happier 将于 ${time}${duration ? ` (${duration})` : ''} 自动重试。`,
         resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
           const label = `${count} 个使用重置`;
           return expiresAt ? `${label}可用。最早到期时间为 ${expiresAt}。` : `${label}可用。`;

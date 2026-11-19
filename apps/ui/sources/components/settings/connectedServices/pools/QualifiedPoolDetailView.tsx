@@ -755,7 +755,6 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                                             remainingPct={window.remainingPct}
                                             resetsAt={window.resetsAt}
                                             tone={resolveQuotaMeterTone({ remainingPct: window.remainingPct, status: window.estimated ? 'estimated' : 'ok' })}
-                                            now={now}
                                             size={leftWide ? 'wide' : 'default'}
                                             resetPrefix="next"
                                             estimated={window.estimated}
@@ -860,7 +859,6 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                                         enabled={member.enabled}
                                         note={note}
                                         usage={memberUsage}
-                                        now={now}
                                         onMakeActive={!isActive && fallbackControlsEnabled ? () => setActiveMember(member.ref) : null}
                                         onEnabledChange={(next) => setMemberEnabled(member.ref, next)}
                                         onOpen={props.onOpenAccount ? () => props.onOpenAccount?.(member.ref) : null}

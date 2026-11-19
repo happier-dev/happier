@@ -8747,7 +8747,7 @@ localTailscale: {
         readyTitle: "使用上限がリセットされました",
         readyBody: "このセッションを今すぐ再開できます。",
         accountReached: ({ account }: { account: string }) => `${account} は使用上限に達しました`,
-        retryAt: ({ time }: { time: string }) => `Happier は ${time} に自動で再試行します。`,
+        retryAt: ({ time, duration }: { time: string; duration?: string }) => `Happier は ${time}${duration ? ` (${duration})` : ''} に自動で再試行します。`,
         resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
           const label = count === 1 ? "使用リセット 1 件" : `使用リセット ${count} 件`;
           return expiresAt ? `${label}が利用可能です。最も早い期限は ${expiresAt} です。` : `${label}が利用可能です。`;

@@ -22,7 +22,7 @@ const { PoolMemberRow } = await import('./PoolMemberRow');
 describe('Pool member leading controls', () => {
     it('keeps the reorder handle outside the compact row button', async () => {
         const { Pressable } = await import('react-native');
-        const screen = await renderScreen(<PoolMemberRow testID="member" title="Personal" identityLabel="me@example.com" active={false} enabled note={null} usage={{ kind: 'none' }} now={0}
+        const screen = await renderScreen(<PoolMemberRow testID="member" title="Personal" identityLabel="me@example.com" active={false} enabled note={null} usage={{ kind: 'none' }}
             onMakeActive={() => {}} onEnabledChange={null} onOpen={null}
             actions={[{ id: 'remove', title: 'Remove member', icon: 'trash', onPress() {} }]}
             reorderHandle={<Pressable testID="member:handle" accessibilityRole="button" accessibilityLabel="Move Personal" />} />);
@@ -50,7 +50,7 @@ describe('Pool member row anatomy', () => {
         await withPopoverWebGlobals(async () => {
             const onOpen = vi.fn();
             const onMakeActive = vi.fn();
-            const screen = await renderScreen(<PoolMemberRow testID="member" title="Personal" identityLabel="me@example.com" active={false} enabled note={null} usage={{ kind: 'none' }} now={0}
+            const screen = await renderScreen(<PoolMemberRow testID="member" title="Personal" identityLabel="me@example.com" active={false} enabled note={null} usage={{ kind: 'none' }}
                 onMakeActive={onMakeActive} onEnabledChange={() => {}} onOpen={onOpen}
                 actions={[{ id: 'remove', title: 'Remove member', icon: 'trash', onPress() {} }]} />);
             const measure = screen.root.findAll((node) => typeof node.type === 'string' && typeof node.props.onLayout === 'function')[0];
@@ -75,13 +75,13 @@ describe('Pool member row anatomy', () => {
 describe('Pool member compact actions', () => {
     it.each(['ios', 'android'] as const)('retains long press in a wide native phone layout (%s)', async (platform) => {
         platformState.os = platform;
-        const screen = await renderScreen(<PoolMemberRow testID="member" title="Personal" identityLabel={null} active enabled note={null} usage={{ kind: 'none' }} now={0} onMakeActive={null} onEnabledChange={null} onOpen={null} actions={[{ id: 'remove', title: 'Remove member', icon: 'trash', onPress() {} }]} />);
+        const screen = await renderScreen(<PoolMemberRow testID="member" title="Personal" identityLabel={null} active enabled note={null} usage={{ kind: 'none' }} onMakeActive={null} onEnabledChange={null} onOpen={null} actions={[{ id: 'remove', title: 'Remove member', icon: 'trash', onPress() {} }]} />);
         expect(screen.findHostByTestId('member')?.props.onLongPress).toBeTypeOf('function');
     });
 
     it('opens member actions on a stationary phone long press', async () => {
         await withPopoverWebGlobals(async () => {
-            const screen = await renderScreen(<PoolMemberRow testID="member" title="Personal" identityLabel={null} active enabled note={null} usage={{ kind: 'none' }} now={0} onMakeActive={null} onEnabledChange={null} onOpen={null} actions={[{ id: 'remove', title: 'Remove member', icon: 'trash', onPress() {} }]} />);
+            const screen = await renderScreen(<PoolMemberRow testID="member" title="Personal" identityLabel={null} active enabled note={null} usage={{ kind: 'none' }} onMakeActive={null} onEnabledChange={null} onOpen={null} actions={[{ id: 'remove', title: 'Remove member', icon: 'trash', onPress() {} }]} />);
             const measure = screen.root.findAll((node) => typeof node.type === 'string' && typeof node.props.onLayout === 'function')[0];
             act(() => measure.props.onLayout({ nativeEvent: { layout: { width: 340, height: 80, x: 0, y: 0 } } }));
             const row = screen.findHostByTestId('member');
@@ -94,7 +94,7 @@ describe('Pool member compact actions', () => {
     it('offers context actions after the compact menu control disappears without making a nested row button', async () => {
         await withPopoverWebGlobals(async () => {
             let removed = false;
-            const screen = await renderScreen(<PoolMemberRow testID="member" title="Personal" identityLabel="me@example.com" active enabled note={null} usage={{ kind: 'none' }} now={0} onMakeActive={null} onEnabledChange={null} onOpen={null} actions={[{ id: 'remove', title: 'Remove member', icon: 'trash', onPress: () => { removed = true; } }]} />);
+            const screen = await renderScreen(<PoolMemberRow testID="member" title="Personal" identityLabel="me@example.com" active enabled note={null} usage={{ kind: 'none' }} onMakeActive={null} onEnabledChange={null} onOpen={null} actions={[{ id: 'remove', title: 'Remove member', icon: 'trash', onPress: () => { removed = true; } }]} />);
             const measure = screen.root.findAll((node) => typeof node.type === 'string' && typeof node.props.onLayout === 'function')[0];
             act(() => measure.props.onLayout({ nativeEvent: { layout: { width: 340, height: 80, x: 0, y: 0 } } }));
             expect(screen.findHostByTestId('member:actions-menu')).toBeNull();

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
@@ -14,6 +14,31 @@ function texts(screen: Awaited<ReturnType<typeof renderScreen>>): string {
 }
 
 describe('UsageMeterRow (lab csvc MT, the one meter)', () => {
+    it('shares one wake for visible live deadlines and stops after they pass', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW);
+        try {
+            const row = (label: string, resetsAt: number | null) =>
+                <UsageMeterRow label={label} remainingPct={42} resetsAt={resetsAt} tone="neutral" />;
+            const screen = await renderScreen(<UsageMeterStack>
+                {row('5-hour', NOW + 2_000)}
+                {row('Weekly', NOW + 2_000)}
+                {row('No deadline', null)}
+            </UsageMeterStack>);
+            expect(texts(screen)).toContain('in 2 s');
+            expect(vi.getTimerCount()).toBe(1);
+            await act(async () => { vi.advanceTimersByTime(1_000); });
+            expect(texts(screen)).toContain('in 1 s');
+            await act(async () => { vi.advanceTimersByTime(1_000); });
+            expect(texts(screen)).toContain('left now');
+            await act(async () => { vi.advanceTimersByTime(1); });
+            expect(texts(screen)).toContain('Outdated');
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('lines a stack up as one table: every name takes the widest name, so each bar starts on one x (owner 11-01)', async () => {
         const screen = await renderScreen(
             <UsageMeterStack>

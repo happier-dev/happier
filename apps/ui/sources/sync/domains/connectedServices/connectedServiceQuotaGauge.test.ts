@@ -487,6 +487,13 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
 
         expect(selectedSnapshot?.source).toBe('runtime_event');
         expect(selectedSnapshot?.recoveryCredits).toBe(recoveryCredits);
+        const newerSnapshot = { ...quotaSnapshot, fetchedAtMs: 3_000 };
+        expect(selectConnectedServiceSessionProviderUsageSnapshot({
+            ...params, connectedServiceSnapshot: newerSnapshot,
+        })).toBe(newerSnapshot);
+        expect(selectConnectedServiceSessionProviderUsageSnapshot({
+            ...params, connectedServiceSnapshot: { ...newerSnapshot, profileId: 'different' },
+        })?.source).toBe('runtime_event');
         expect(computeConnectedServiceQuotaGaugeViewModel({
             snapshot: selectedSnapshot,
             windowMode: 'most_constrained',

@@ -9823,7 +9823,7 @@ const enSession = {
       readyTitle: 'Usage limit reset',
       readyBody: 'You can resume this session now.',
       accountReached: ({ account }: { account: string }) => `${account} reached its usage limit`,
-      retryAt: ({ time }: { time: string }) => `Happier will retry automatically at ${time}.`,
+      retryAt: ({ time, duration }: { time: string; duration?: string }) => `Happier will retry automatically at ${time}${duration ? ` (${duration})` : ''}.`,
       resetCreditSummary: ({
         count,
         expiresAt,

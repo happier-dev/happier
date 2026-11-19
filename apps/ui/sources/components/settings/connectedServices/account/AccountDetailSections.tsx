@@ -143,7 +143,6 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
                                     size="wide"
                                     // A phone keeps only a short value beside the name; the reset moves beneath.
                                     layout={props.compact ? 'stacked' : undefined}
-                                    now={props.now}
                                 />
                             );
                             const pins = props.pins;

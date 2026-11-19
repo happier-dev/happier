@@ -55,7 +55,6 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
     enabled: boolean;
     note: PoolMemberNote | null;
     usage: PoolMemberUsage;
-    now: number;
     /** Null when the member cannot be made active from here (already active, or fallback unavailable). */
     onMakeActive: (() => void) | null;
     onEnabledChange: ((enabled: boolean) => void) | null;
@@ -91,7 +90,6 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
                     resetsAt={meter.resetsAt}
                     tone={resolveQuotaMeterTone(meter)}
                     estimated={meter.status === 'estimated'}
-                    now={props.now}
                     size="card"
                     layout={inlineUsage ? 'stacked' : 'inline'}
                 />
@@ -100,7 +98,7 @@ export const PoolMemberRow = React.memo(function PoolMemberRow(props: Readonly<{
     ) : props.usage.kind === 'loading' ? (
         <UsageMeterStack testID={`${props.testID}:meters-loading`}>
             {LOADING_METERS.map((key) => (
-                <UsageMeterRow key={key} label="" remainingPct={null} resetsAt={null} tone="neutral" now={props.now} loading />
+                <UsageMeterRow key={key} label="" remainingPct={null} resetsAt={null} tone="neutral" loading />
             ))}
         </UsageMeterStack>
     ) : props.usage.kind === 'signedOut' ? (

@@ -21,7 +21,7 @@ describe('account usage amounts', () => {
         ] satisfies ConnectedServiceQuotaMeterV1[];
         const projected = projectIndexMeters(meters, 1_000);
         expect(projected.map(meter => meter.remainingPct)).toEqual([null, null, null]);
-        const screen = await renderScreen(<ConnectedAccountIndexUsageBlock testID="usage" usage={{ kind: 'meters', meters: projected }} now={1_000} />);
+        const screen = await renderScreen(<ConnectedAccountIndexUsageBlock testID="usage" usage={{ kind: 'meters', meters: projected }} />);
         expect(screen.getTextContent()).toContain(formatUsageCost(4.2, 'USD'));
         expect(screen.getTextContent()).toContain(`−${formatUsageCost(0.0123, 'CNY')}`);
         expect(screen.getTextContent()).toContain(formatUsageCost(0, 'USD'));

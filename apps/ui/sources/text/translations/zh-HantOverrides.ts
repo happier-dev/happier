@@ -6962,7 +6962,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               readyTitle: '使用限制已重設',
               readyBody: '你現在可以恢復此工作階段。',
               accountReached: ({ account }: { account: string }) => `${account} 已達到使用上限`,
-              retryAt: ({ time }: { time: string }) => `Happier 將於 ${time} 自動重試。`,
+              retryAt: ({ time, duration }: { time: string; duration?: string }) => `Happier 將於 ${time}${duration ? ` (${duration})` : ''} 自動重試。`,
               resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
                 const label = `${count} 個使用重設`;
                 return expiresAt ? `${label}可用。最早到期時間為 ${expiresAt}。` : `${label}可用。`;

@@ -519,7 +519,6 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
                             estimated={window.status === 'estimated'}
                             resetsAt={window.resetsAt}
                             tone={window.tone}
-                            now={props.now}
                         />
                     ))}
                 </UsageMeterStack>
@@ -555,7 +554,6 @@ function OwnSignInGroup(props: Readonly<{ group: NonNullable<UsagePopoverSession
                         estimated={window.status === 'estimated'}
                         resetsAt={window.resetsAt}
                         tone={window.tone}
-                        now={props.now}
                     />
                 ))}
             </UsageMeterStack>

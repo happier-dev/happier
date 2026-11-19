@@ -756,6 +756,24 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
         expect(presentation?.statusBadge.label).toBe('session.usageLimitRecovery.status.resumeReady');
     });
 
+    it('keeps waiting when the latest probe clears an elapsed provider reset', () => {
+        const recoveryState = readSessionUsageLimitRecoveryFromMetadata({
+            sessionUsageLimitRecoveryV1: {
+                v: 1, status: 'waiting', issueFingerprint: buildUsageLimitIssueFingerprint(usageLimitIssue),
+                armedAtMs: usageLimitIssue.occurredAt, resetAtMs: null, nextCheckAtMs: null,
+                attemptCount: 1, maxAttempts: 5, lastProbeError: null, selectedAuth: { kind: 'native' },
+            },
+        });
+        const presentation = buildSessionUsageLimitRecoveryPresentation({
+            featureEnabled: true, lastRuntimeIssue: usageLimitIssue, latestTurnStatus: 'failed', recoveryState,
+            hasInterruptedWorkToResume: true, nowMs: 1_700_000_060_000,
+            settings: { v: 1, mode: 'auto_wait' }, translate: translateUsageLimitRecoveryKeyForTest,
+        });
+
+        expect(presentation?.waiting).toBe(true);
+        expect(presentation?.statusBadge.label).toBe('session.usageLimitRecovery.status.waiting');
+    });
+
     it('does not show recovery affordances when the feature is unavailable', () => {
         expect(buildSessionUsageLimitRecoveryPresentation({
             featureEnabled: false,
@@ -816,14 +834,9 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
             lastProbeError: null, selectedAuth: { kind: 'profile', serviceId: 'openai-codex', profileId: 'profile-1' },
         } });
         expect(recoveryState).not.toBeNull();
-        const params: unknown[] = [];
-        const translate: SessionUsageLimitRecoveryTranslate = (key, ...rest) => {
-            params.push(...rest);
-            return key;
-        };
         const input = {
             featureEnabled: true, lastRuntimeIssue: issue, latestTurnStatus: 'failed', recoveryState,
-            checkNowSupported: true, settings: { v: 1, mode: 'ask' }, translate,
+            checkNowSupported: true, settings: { v: 1, mode: 'ask' }, translate: translateUsageLimitRecoveryKeyForTest,
         } as const;
         const presentation = buildSessionUsageLimitRecoveryPresentation(input);
 
@@ -831,8 +844,8 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
         expect(presentation?.issueFingerprint).toBe(recoveryState?.issueFingerprint);
         expect(presentation?.waiting).toBe(true);
         expect(presentation?.banner.title).toBe('session.usageLimitRecovery.banner.title');
-        expect(presentation?.banner.body).toBe('session.usageLimitRecovery.banner.retryAt');
-        expect(params).toContainEqual({ time: expect.any(String) });
+        expect(presentation?.banner.body).toBe('session.usageLimitRecovery.banner.waitingBody');
+        expect(presentation?.banner.quotaRetryAtMs).toBe(nextCheckAtMs);
         expect(presentation?.banner.mode).toBe('cancel');
         expect(presentation?.banner.secondaryActions.map((action) => action.kind)).toEqual(['retry_temporary_throttle']);
         // A usage limit is not an overload: no seconds countdown titled "Model overloaded".

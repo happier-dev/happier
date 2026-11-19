@@ -8459,7 +8459,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
                 readyTitle: 'Nutzungslimit zurückgesetzt',
                 readyBody: 'Du kannst diese Session jetzt fortsetzen.',
                 accountReached: ({ account }: { account: string }) => `${account} hat das Nutzungslimit erreicht`,
-                retryAt: ({ time }: { time: string }) => `Happier versucht es um ${time} automatisch erneut.`,
+                retryAt: ({ time, duration }: { time: string; duration?: string }) => `Happier versucht es um ${time}${duration ? ` (${duration})` : ''} automatisch erneut.`,
                 resetCreditSummary: ({ count, expiresAt }: { count: number; expiresAt: string | null }) => {
                     const label = count === 1 ? '1 Nutzungs-Reset' : `${count} Nutzungs-Resets`;
                     return expiresAt ? `${label} verfügbar. Der erste läuft ab ${expiresAt}.` : `${label} verfügbar.`;
