@@ -1442,10 +1442,14 @@ an unset daemon-autostart preference stays disabled in a TTY, while an explicit
 preference, a daemon-started invocation, or malformed start-origin arguments keep
 their existing admission behavior.
 
-In the development daemon inventory, `installed` means the Agent's own resolved
-CLI executed successfully; a version string alone or an installed server dependency
-does not establish that fact. Required setup dependencies come from the selected
+In the development daemon inventory, `installed` records an admitted native
+runtime or a runnable CLI established by the launch resolver. Optional version
+metadata cannot revoke that executable fact, and an installed server dependency
+alone does not establish it. Required setup dependencies come from the selected
 runtime transport, not the list of executables a plugin is permitted to invoke.
+An admitted custom Session or execution-Run factory without a declared Session
+CLI is installed without a CLI probe; its launch owner still acquires the
+dependencies required for the selected execution.
 Inventory cache scope includes the manifest-declared executable lookup environment,
 including vendor bin roots and alternative-binary fallback controls, independently of
 whether the request also probes sign-in status.
