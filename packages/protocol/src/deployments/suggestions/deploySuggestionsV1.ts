@@ -7,6 +7,7 @@ import { InteractionTransientQuestionsAuthorRequestV1Schema, InteractionTransien
 import { resolvePublishTargetRecommendation } from '../resolvePublishTargetRecommendation.js';
 import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
+import { ScmHostingProviderKindSchema } from '../../scm/pullRequests.js';
 import { DeploymentTargetPlanV1Schema } from '../../plugins/contributions/deploymentTargets.js';
 // Monetary amounts belong to declared provider facts, including when model prose embeds them.
 import { containsPriceTextV1 } from '../../common/providerAmountV1.js';
@@ -24,7 +25,8 @@ export const DeploySuggestionCatalogV1Schema = lazyZodSchema(() => z.strictObjec
     machines: z.array(z.strictObject({ machineId: id(), label: z.optional(z.string()), online: z.boolean(),
         homeDir: z.optional(z.string()), readiness: z.enum(['ready', 'needsSetup', 'unknown']) })),
     stores: z.array(z.strictObject({ id: id(), engine: z.string() })),
-    forges: z.array(z.strictObject({ providerKind: id(), title: z.string() })),
+    // A forge is offered by its canonical hosting kind: the kind New app describes and creates repositories on.
+    forges: z.array(z.strictObject({ providerKind: ScmHostingProviderKindSchema, title: z.string() })),
     connectedAccounts: z.optional(z.array(z.strictObject({ account: asProtocolZod(QualifiedConnectedAccountRefSchema),
         health: z.enum(['healthy', 'attention', 'error']) }))),
     issues: z.optional(z.array(z.strictObject({ section: z.enum(['starters', 'apps', 'targets', 'machines', 'connectedAccounts', 'forges']),

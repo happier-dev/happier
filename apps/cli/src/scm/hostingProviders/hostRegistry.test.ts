@@ -29,4 +29,22 @@ describe('publish-capable forge catalog', () => {
         expect(forges).toEqual([{ providerKind: 'github', title: 'GitHub' }]);
         expect(effects).toBe(0);
     });
+
+    it('omits a publisher whose declared kind New app cannot describe or create on', () => {
+        const publisher: HostingProviderRuntimeRegistration = { id: 'gitea', adapter: { repositoryPublishing: {
+            describePublishTargets: async () => { throw new Error('Unexpected forge effect'); },
+            createRepository: async () => { throw new Error('Unexpected forge effect'); },
+            getRepository: async () => { throw new Error('Unexpected forge effect'); },
+        } } };
+        expect(listPublishCapableForgesV1({
+            contributes: { scmHostingProviders: [
+                { id: 'gitea', pluginId: 'forge.gitea', provenance: 'external', source: { kind: 'path' }, definition: {
+                    id: 'gitea', kind: 'gitea', title: 'Gitea', capabilities: [],
+                } },
+            ] },
+            scmHostingProvidersById: new Map([
+                ['forge.gitea/gitea', { pluginId: 'forge.gitea', occurrenceId: 'current', registration: publisher }],
+            ]),
+        })).toEqual([]);
+    });
 });
