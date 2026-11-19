@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Linking, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { PetPoseGrid } from '@/components/pets/render/PetPoseGrid';
@@ -16,7 +16,7 @@ import { Text } from '@/components/ui/text/Text';
 import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { fireAndForget } from '@/utils/system/fireAndForget';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import type { StorePetArt } from './catalog/storePets';
 import { StoreListingFacts, type StoreListingFactRow } from './StoreListingFacts';
@@ -185,11 +185,9 @@ export const StorePetListing = React.memo(function StorePetListing(
                 variant="meta"
                 accessibilityRole="link"
                 style={styles.link}
-                onPress={() =>
-                  fireAndForget(Linking.openURL(props.reportUrl!), {
-                    tag: 'StorePetListing.report',
-                  })
-                }
+                testID={id('reportLink')}
+                // The registry's takedown page opens through the shared links.openExternal Action.
+                onPress={() => { void requestOpenExternalUrl(props.reportUrl!); }}
               >
                 {t('settingsPets.store.report', { source: props.sourceTitle })}
               </Text>

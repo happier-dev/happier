@@ -14,6 +14,10 @@ vi.mock(
     (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module,
 );
 
+// The platform URL effect is external; the links.openExternal Action admission stays real.
+const externalUrlBoundary = vi.hoisted(() => vi.fn(async (_url: string) => true));
+vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: externalUrlBoundary }));
+
 const { StorePetListing } = await import('./StorePetListing');
 const { t } = await import('@/text');
 type Props = import('./StorePetListing').StorePetListingViewProps;
@@ -116,5 +120,13 @@ describe('Store pet listing', () => {
       <StorePetListing {...props({ state: { kind: 'couldntAdd', reason: 'sheetCheck' } })} />,
     );
     expect(sheet.getTextContent()).toContain(t('settingsPets.store.checkFailed'));
+  });
+
+  it('opens Report through the shared external-link Action, never a local opener', async () => {
+    externalUrlBoundary.mockClear();
+    const url = 'https://petdex.dev/legal/takedown';
+    const screen = await renderScreen(<StorePetListing {...props({ reportUrl: url })} />);
+    await screen.pressByTestIdAsync('listing:reportLink');
+    await vi.waitFor(() => expect(externalUrlBoundary).toHaveBeenCalledWith(url));
   });
 });
