@@ -96,10 +96,23 @@ describe('Account trigger HTTP read failure and recovery', () => {
         const restorePopoverGlobals = withPopoverWebGlobals();
         disposals.unshift(async () => restorePopoverGlobals());
         const screen = await renderScreen(<WorkflowSentenceBuilder anchorRef={React.createRef<View>()}
-            intent={{ name: 'Review changes', definition }} accountLifetime={lifetime} onRequestClose={() => {}} />);
+            intent={{ name: 'Review changes', definition }} accountLifetime={lifetime} onRequestClose={() => {}} />, {
+            // Test Renderer supplies host geometry and DOM events used by the real dropdown and step card.
+            createNodeMock: element => element.type === 'View' ? {
+                addEventListener() {},
+                removeEventListener() {},
+                measureInWindow: callback => callback(0, 0, 300, 40),
+            } satisfies Pick<View, 'measureInWindow'> & Pick<EventTarget, 'addEventListener' | 'removeEventListener'> : null,
+        });
         disposals.push(() => screen.unmount());
         await flushHookEffects();
         expect(screen.findHostByTestId('workflow-builder')).not.toBeNull();
+        await screen.pressByTestIdAsync('workflow-builder-sentence-if:gate');
+        await screen.pressByTestIdAsync('workflow-builder-if-gate-summary');
+        await screen.pressByTestIdAsync('workflow-builder-inspector-condition-test-trigger');
+        await vi.waitFor(() => expect(screen.findByTestId('workflow-builder-inspector-condition-test-not_exists')).not.toBeNull());
+        await screen.pressByTestIdAsync('workflow-builder-inspector-condition-test-not_exists');
+        await screen.pressByTestIdAsync('workflow-builder-inspector-done');
         for (const id of ['deep', 'quick']) {
             expect(screen.findHostByTestId(`workflow-builder-sentence-step:${id}`)).not.toBeNull();
             await screen.pressByTestIdAsync(`workflow-builder-sentence-step:${id}`);
@@ -127,9 +140,13 @@ describe('Account trigger HTTP read failure and recovery', () => {
         await screen.pressByTestIdAsync('workflow-builder-open-editor');
         const entry = vi.mocked(router.push).mock.calls.at(-1)?.[0];
         if (typeof entry !== 'object' || entry === null || !('params' in entry)) throw new Error('Expected the editor handoff');
-        expect(readWorkflowDefinitionDraftSeed(String(entry.params?.definitionDraftSeedId), lifetime.scope)?.draft?.blocks)
-            .toMatchObject([{ kind: 'if', id: 'gate', then: [{ kind: 'step', id: 'deep',
-                document: { text: editedText, references: [], attachments: [] } }], otherwise: [command('quick')] }]);
+        const editedBlocks = readWorkflowDefinitionDraftSeed(String(entry.params?.definitionDraftSeedId), lifetime.scope)?.draft?.blocks;
+        expect(editedBlocks).toMatchObject([{
+            kind: 'if', id: 'gate',
+            when: { kind: 'not', condition: { kind: 'exists', value: { kind: 'input', name: 'goal' } } },
+            then: [{ kind: 'step', id: 'deep', document: { text: editedText, references: [], attachments: [] } }],
+            otherwise: [command('quick')],
+        }]);
     });
 
     it('opens subject starters in place and retains their draft in the full editor without enrolling a trigger', async () => {

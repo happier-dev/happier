@@ -27,6 +27,7 @@ import { useWorkflowSentenceDraft } from '../authoring/useWorkflowSentenceDraft'
 import type { WorkflowSentenceEditorIntent } from '../authoring/workflowSentenceAuthoring';
 import { useWorkflowEditorComposerCustody } from '../editor/useWorkflowEditorComposerCustody';
 import { WorkflowBlockListEditor } from '../editor/WorkflowBlockListEditor';
+import { WorkflowInspector } from '../editor/WorkflowInspector';
 import { useWorkflowEditorSelector } from '../editor/workflowEditorDraftStore';
 import { renderWorkflowCardFieldRow } from '../editor/workflowCardFieldRow';
 import { WorkflowDocumentGridContext } from '../editor/workflowEditorStyles';
@@ -121,6 +122,11 @@ function WorkflowSentenceBuilderBody(
   const name = useWorkflowEditorSelector(draftStore, readName);
   const step = blocks[0] ?? null;
   const [selectedBlockId, selectBlock] = React.useState<string | null>(null);
+  const [customizingBlockId, customizeBlock] = React.useState<string | null>(null);
+  const selectSentenceBlock = React.useCallback((blockId: string | null) => {
+    customizeBlock(null);
+    selectBlock(blockId);
+  }, []);
   const machine = useServerScopedMachine(serverId, project?.machineId ?? null);
   const machines = useMachineListForServer(serverId, true) ?? undefined;
   const machineName = machine ? getMachineDisplayName(machine) : null;
@@ -133,7 +139,7 @@ function WorkflowSentenceBuilderBody(
     scope: host.composerScope,
     editable: true,
     onChange,
-    onSelect: selectBlock,
+    onSelect: selectSentenceBlock,
     focusPrompt: () => {},
   });
   const actionFieldRequests = useWorkflowEditorSelector(
@@ -205,6 +211,15 @@ function WorkflowSentenceBuilderBody(
       <View style={styles.nameField}>{nameField}</View>
     </View>
   );
+  const place = {
+    target: project,
+    machineName,
+    ...(machines === undefined ? {} : { machines }),
+    accountLifetime: lifetime,
+    onChange: (target) => {
+      if (isWorkflowProjectTarget(target)) sentence.changeProject(target);
+    },
+  } satisfies NonNullable<React.ComponentProps<typeof WorkflowInspector>['place']>;
   return (
     <FloatingOverlay
       maxHeight={props.maxHeight}
@@ -266,20 +281,24 @@ function WorkflowSentenceBuilderBody(
             onChange={onChange}
             documentEditable
             selectedBlockId={selectedBlockId}
-            onSelectBlock={selectBlock}
+            onSelectBlock={selectSentenceBlock}
             whenClause={whenClause}
-            place={{
-              target: project,
-              machineName,
-              ...(machines === undefined ? {} : { machines }),
-              accountLifetime: lifetime,
-              onChange: (target) => {
-                if (isWorkflowProjectTarget(target))
-                  sentence.changeProject(target);
-              },
-            }}
+            place={place}
             composerScope={host.composerScope}
-            renderStepCard={(blockId) => (
+            renderStepCard={(blockId) => customizingBlockId ? (
+              <WorkflowInspector
+                subject={{ kind: 'block', blockId: customizingBlockId }}
+                presentation="popover"
+                draft={draftStore.get()}
+                onChange={onChange}
+                documentEditable
+                validation={validation}
+                authoringFacts={host.authoringFacts}
+                place={place}
+                onDone={() => customizeBlock(null)}
+                testIDPrefix={`${TEST_ID}-inspector`}
+              />
+            ) : (
               <WorkflowBlockListEditor
                 draft={draftStore.get()}
                 readDraft={readDraft}
@@ -291,8 +310,8 @@ function WorkflowSentenceBuilderBody(
                 composerScope={host.composerScope}
                 composerCustody={composerCustody}
                 onChange={onChange}
-                onSelect={selectBlock}
-                onCustomize={() => {}}
+                onSelect={selectSentenceBlock}
+                onCustomize={customizeBlock}
                 onlyBlockId={blockId}
                 // A new sentence is incomplete by design; Save stays disabled until it is not.
                 revealIssues={false}
