@@ -267,7 +267,7 @@ describe("machinePoolService (SQLite integration)", () => {
             accountId: ownerId,
             input: { poolId, expectedRevision: 1 },
             io: io(),
-        })).resolves.toEqual({ ok: true, value: { poolId, deleted: true } });
+        })).resolves.toEqual({ ok: false, error: { code: 'pool_not_found' } });
         expect(await db.account.findUniqueOrThrow({ where: { id: ownerId }, select: { seq: true } })).toEqual({ seq: 3 });
     });
 
@@ -341,7 +341,7 @@ describe("machinePoolService (SQLite integration)", () => {
             accountId: ownerId,
             input: { poolId, expectedRevision: 0 },
             io: io(),
-        })).resolves.toEqual({ ok: true, value: { poolId, deleted: true } });
+        })).resolves.toEqual({ ok: false, error: { code: 'pool_not_found' } });
         expect(await db.machinePool.findUnique({ where: { id: poolId } })).toMatchObject({ accountId: otherId });
         expect(await db.accountChange.count({ where: { accountId: ownerId, kind: "machinePool" } })).toBe(0);
     });

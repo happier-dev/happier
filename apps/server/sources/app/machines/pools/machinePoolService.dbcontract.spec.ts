@@ -141,7 +141,7 @@ describe("Machine Pool aggregate provider contract", () => {
             accountId,
             input: { poolId, expectedRevision: 1 },
             io: disconnectedPresence,
-        })).resolves.toEqual({ ok: true, value: { poolId, deleted: true } });
+        })).resolves.toEqual({ ok: false, error: { code: 'pool_not_found' } });
     }, 120_000);
 
     it(`serializes resource attachment and Pool deletion through the parent-row fence on ${provider}`, async () => {

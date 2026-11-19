@@ -436,27 +436,18 @@ export async function deleteMachinePool(params: Readonly<{
         if (error instanceof MachinePoolDeleteCasLost) return { kind: "cas_lost" as const };
         throw error;
     });
-    const settled = { ok: true as const, value: { poolId: params.input.poolId, deleted: true as const } };
-    if (result.kind === "not_found") return settled;
-    if (result.kind === "cas_lost") {
-        const current = await readOwnedPool(db, params.accountId, params.input.poolId);
-        return current
-            ? {
-                ok: false,
-                error: {
-                    code: "pool_changed",
-                    current: projectPool(current, await inventoryFor(params.accountId, params.io, [current]), CUSTODIAN_POOL_ACCESS, params.accountId),
-                },
-            }
-            : settled;
+    if (result.kind === "deleted") {
+        return { ok: true, value: { poolId: params.input.poolId, deleted: true } };
     }
-    if (result.kind === "conflict") {
-        return {
-            ok: false,
-            error: { code: "pool_changed", current: projectPool(result.stored, await inventoryFor(params.accountId, params.io, [result.stored]), CUSTODIAN_POOL_ACCESS, params.accountId) },
-        };
-    }
-    return settled;
+    if (result.kind === "not_found") return { ok: false, error: { code: "pool_not_found" } };
+    const current = result.kind === "cas_lost"
+        ? await readOwnedPool(db, params.accountId, params.input.poolId)
+        : result.stored;
+    if (!current) return { ok: false, error: { code: "pool_not_found" } };
+    return {
+        ok: false,
+        error: { code: "pool_changed", current: projectPool(current, await inventoryFor(params.accountId, params.io, [current]), CUSTODIAN_POOL_ACCESS, params.accountId) },
+    };
 }
 
 async function readMachinePoolCandidateSnapshot(
