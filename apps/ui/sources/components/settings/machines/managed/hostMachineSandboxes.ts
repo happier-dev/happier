@@ -12,7 +12,7 @@ function isManagedMachineSandboxOnHost(machine: ManagedMachineV1, controller: Ma
 }
 
 export function selectHostMachineSandboxes(machines: readonly ManagedMachineV1[], controller: ManagedControllerV1): readonly ManagedMachineV1[] {
-    return machines.filter(machine => isManagedMachineSandboxOnHost(machine, controller));
+    return machines.filter(machine => machine.archivedAt === undefined && isManagedMachineSandboxOnHost(machine, controller));
 }
 
 function hostKey(controller: ManagedControllerV1): string {

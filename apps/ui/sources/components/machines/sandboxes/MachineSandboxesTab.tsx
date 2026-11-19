@@ -48,7 +48,7 @@ function MachineHostSandboxes(props: Readonly<{
     serverId: string; controller: ManagedControllerV1; empty: React.ReactElement;
 }>) {
     const host = useHostMachineSandboxes({ serverId: props.serverId, controller: props.controller });
-    const live = React.useMemo(() => host.sandboxes.filter(sandbox => sandbox.archivedAt === undefined), [host.sandboxes]);
+    const live = host.sandboxes;
     if (host.firstAnswerPending && live.length === 0) return <SkeletonRows testID="machine-sandboxes-loading" rows={3} />;
     const failed = host.entry && host.entry.status !== 'loading' && host.entry.status !== 'ready' ? host.entry : null;
     const failure = failed ? <SurfaceStateCard testID="machine-sandboxes-read-state"
@@ -60,7 +60,7 @@ function MachineHostSandboxes(props: Readonly<{
     return (
         <>
             {failure}
-            <MachineTabSubHead title={null} back={null} description={t('machineDetailPage.isolation.host.count', { count: host.count })} />
+            <MachineTabSubHead title={null} back={null} description={t('machineDetailPage.isolation.host.count', { count: live.length })} />
             <ItemGroup testID="machine-sandboxes-list">
                 {live.map(sandbox => <MachineSandboxRow key={sandbox.id} serverId={props.serverId} sandbox={sandbox} />)}
             </ItemGroup>
