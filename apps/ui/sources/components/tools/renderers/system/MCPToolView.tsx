@@ -22,7 +22,7 @@ import { presentActionApproval } from '@/components/approvals/actionApprovalPres
 import { resolveActionTitle } from '@/text/actionTitles';
 import { Typography } from '@/constants/Typography';
 import { resolveToolActionFailure, type ToolActionFailurePresentation } from '@/components/tools/shell/presentation/resolveToolActionFailure';
-import { readThemeActionCardPresentation } from '@/components/sessions/transcript/references/transcriptThemeAction';
+import { useThemeActionCardPresentation } from '@/components/sessions/transcript/references/transcriptThemeAction';
 import { ThemeActionResult } from './ThemeActionResult';
 import { readTranscriptDeploySuggestionCheck } from '@/components/sessions/transcript/references/transcriptDeploySuggestionReference';
 import { DeploySuggestionCheckResult } from './DeploySuggestionCheckToolBody';
@@ -151,33 +151,35 @@ function ActionFailureCode({ failure }: Readonly<{ failure: ToolActionFailurePre
     );
 }
 
+function renderMCPToolSummary(tool: ToolViewProps['tool']) {
+    const failure = resolveToolActionFailure(tool);
+    const resultText = tool.state === 'completed' ? getResultText(tool.result) : null;
+    const outcome = failure ? <ActionFailureCode failure={failure} />
+        : resultText ? <CodeView code={truncate(resultText, 800)} /> : null;
+    return outcome ? (
+        <ToolSectionView>
+            <View style={styles.container}>{outcome}</View>
+        </ToolSectionView>
+    ) : null;
+}
+
 export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId, serverId, sessionId, messages }) => {
     const find = useToolFindState(messageId);
+    const showSummary = detailLevel === 'summary' && !find.active;
+    const theme = useThemeActionCardPresentation(showSummary, tool, messages, messageId);
+    const summary = React.useMemo(() => showSummary ? renderMCPToolSummary(tool) : null, [showSummary, tool]);
     if (detailLevel === 'title') return null;
 
-    const { title, subtitle, resultText, input, output } = getMCPDisplay(tool);
-    const actionFailure = resolveToolActionFailure(tool);
-    const projectCommandCall = readTranscriptProjectCommandCall(tool);
-    const machineResourcesCall = projectCommandCall ? null : readTranscriptMachineResourcesCall(tool);
-
-    if (detailLevel === 'summary' && !find.active) {
+    if (showSummary) {
         // An acknowledged section move reads as what happened, with its Undo on the header (lab `clsections:agent`).
         const sectionMove = readSessionSectionMoveFact(tool);
         if (sectionMove) return <SessionSectionMoveResult fact={sectionMove} serverId={serverId} />;
         // A checked setup suggestion reads as the same cards the Describe your app step shows (deploy auto-mode U10).
         const suggestionCheck = readTranscriptDeploySuggestionCheck(tool);
         if (suggestionCheck) return <DeploySuggestionCheckResult check={suggestionCheck} />;
-        // The row header already says what the call is (title and line); the body adds only its outcome.
-        const outcome = actionFailure
-            ? <ActionFailureCode failure={actionFailure} />
-            : tool.state === 'completed' && resultText ? <CodeView code={truncate(resultText, 800)} /> : null;
-        const summary = outcome ? (
-            <ToolSectionView>
-                <View style={styles.container}>{outcome}</View>
-            </ToolSectionView>
-        ) : null;
-        const theme = readThemeActionCardPresentation({ tool, messages, messageId });
         if (theme) return theme.visible ? <ThemeActionResult presentation={theme} fallback={summary} /> : null;
+        const projectCommandCall = readTranscriptProjectCommandCall(tool);
+        const machineResourcesCall = projectCommandCall ? null : readTranscriptMachineResourcesCall(tool);
         // An agent's finite Project command shows its run's output, not the acknowledgement JSON.
         if (machineResourcesCall) return <MachineResourcesToolBody call={machineResourcesCall} serverId={serverId} />;
         return projectCommandCall
@@ -186,6 +188,7 @@ export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel, messa
     }
 
     // Full view: show raw-ish input + output (ToolFullView already provides debug toggles).
+    const { title, subtitle, resultText, input, output } = getMCPDisplay(tool);
     return (
         <ToolSectionView fullWidth>
             <View style={styles.container}>

@@ -1,3 +1,4 @@
+import { useMemo, useRef } from 'react';
 import type { Message, ToolCall } from '@happier-dev/session-core/messages';
 import {
     THEME_ACTION_IDS, isThemeActionId, ThemeActionInputSchemas, ThemeActionOutputSchemas,
@@ -7,6 +8,7 @@ import { withoutClientActionInput } from '@happier-dev/protocol/actions/clientAc
 import {
     isRecord, readHappierActionCallId, readHappierActionCallInput, readHappierActionToolResultCandidates,
 } from '@/components/sessions/transcript/references/happierActionToolResult';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 export type TranscriptThemeAction = {
     [Id in ThemeActionId]: Readonly<{ actionId: Id; input: ThemeActionInput<Id>; output: ThemeActionOutput<Id> }>;
@@ -24,9 +26,23 @@ export type ThemeActionCardPresentation = Readonly<{
     visible: boolean;
 }>;
 
+const decodedCalls = new WeakMap<ToolCall, Readonly<{
+    name: string; input: unknown; result: unknown; call: TranscriptThemeAction | null;
+}>>();
+
 /** Validate at the transcript boundary through the Action's canonical input/output schemas. */
 export function readTranscriptThemeAction(tool: ToolCall): TranscriptThemeAction | null {
     if (tool.state !== 'completed') return null;
+    const cached = decodedCalls.get(tool);
+    if (cached && cached.name === tool.name && cached.input === tool.input && cached.result === tool.result) {
+        return cached.call;
+    }
+    const call = decodeTranscriptThemeAction(tool);
+    decodedCalls.set(tool, { name: tool.name, input: tool.input, result: tool.result, call });
+    return call;
+}
+
+function decodeTranscriptThemeAction(tool: ToolCall): TranscriptThemeAction | null {
     const actionId = readHappierActionCallId(tool.name, tool.input);
     if (!actionId || !isThemeActionId(actionId)) return null;
     const input = ThemeActionInputSchemas[actionId].safeParse(withoutClientActionInput(readHappierActionCallInput(tool.name, tool.input)));
@@ -86,4 +102,15 @@ export function readThemeActionCardPresentation(input: Readonly<{
         options.push(option);
     }
     return { cardId, call, options, replayTry: call, visible: index === first + options.length - 1 };
+}
+
+/** The transcript can publish unrelated rows without changing this card's presentation. */
+export function useThemeActionCardPresentation(
+    enabled: boolean, tool: ToolCall, messages: readonly Message[], messageId?: string,
+): ThemeActionCardPresentation | null {
+    const previous = useRef<ThemeActionCardPresentation | null>(null);
+    return useMemo(() => {
+        if (!enabled) return null;
+        return previous.current = retainDeep(previous.current, readThemeActionCardPresentation({ tool, messages, messageId }));
+    }, [enabled, tool, messages, messageId]);
 }

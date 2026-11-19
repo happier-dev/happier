@@ -13,15 +13,15 @@ import { t } from '@/text';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { usePreparedThemeCss } from '@/theme/css/usePreparedThemeCss';
-import { projectThemeLibraryEntry, projectThemeMiniature } from '@/theme/profiles/themeProfilePresentation';
+import { projectThemeMiniature } from '@/theme/profiles/themeProfilePresentation';
 import { getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { ThemeActionResultView } from './ThemeActionResultView';
-import { useThemeActionResultModel, type ThemeActionCardEdit } from './useThemeActionResultModel';
+import { projectThemeActionTryEntry, useThemeActionResultModel, type ThemeActionCardEdit } from './useThemeActionResultModel';
 import type { ThemeResultDistribution } from './themeActionResultViewTypes';
 
 /** Only the visible typed result mounts domain subscriptions; ordinary tool arrivals do no theme work. */
-export function ThemeActionResult({ presentation, fallback }: Readonly<{ presentation: ThemeActionCardPresentation; fallback?: React.ReactNode }>) {
+export const ThemeActionResult = React.memo(function ThemeActionResult({ presentation, fallback }: Readonly<{ presentation: ThemeActionCardPresentation; fallback?: React.ReactNode }>) {
     const execute = useThemeActionExecution();
     const router = useRouter();
     const owner = getThemeTryOnOwner();
@@ -29,7 +29,7 @@ export function ThemeActionResult({ presentation, fallback }: Readonly<{ present
     const call = presentation.call;
     const mode = call.actionId === THEME_ACTION_IDS.tryOn ? call.input.mode : call.output.applied.mode;
     const reference = call.actionId === THEME_ACTION_IDS.apply ? call.input.ref
-        : presentation.replayTry?.input.document ? projectThemeLibraryEntry(presentation.replayTry.input.document).reference : null;
+        : presentation.replayTry ? projectThemeActionTryEntry(presentation.replayTry)?.reference ?? null : null;
     const entry = useThemeLibraryEntry(reference, presented);
     const [created] = React.useState(() => call.actionId === THEME_ACTION_IDS.tryOn && call.input.document !== null && entry === null);
     const selected = useThemeProfileReferenceSelection(presented)[mode];
@@ -77,4 +77,4 @@ export function ThemeActionResult({ presentation, fallback }: Readonly<{ present
         {target ? <ThemeDevicePickerHost theme={target} anchorRef={anchorRef} execute={execute}
             onDismiss={dismiss} onDistribution={setDistribution} /> : null}
     </>;
-}
+});

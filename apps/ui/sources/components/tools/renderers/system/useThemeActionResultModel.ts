@@ -11,12 +11,13 @@ import type { ThemeProfileCardRedo } from '@/theme/profiles/themeProfileLibrary'
 import type { ThemeUiActionExecute } from '@/components/settings/appearance/themeProfiles/useThemeActionExecution';
 import type { ThemeDevicePickerInput } from '@/components/settings/appearance/themeProfiles/useThemeDevicePicker';
 import type { ThemeActionCardPresentation, TranscriptThemeTry } from '@/components/sessions/transcript/references/transcriptThemeAction';
-import type { ThemeActionResultViewProps, ThemeResultOperation, ThemeResultPhase, ThemeResultTheme } from '@/components/tools/renderers/system/themeActionResultViewTypes';
+import type { ThemeActionResultViewProps, ThemeResultOperation, ThemeResultOption, ThemeResultPhase, ThemeResultTheme } from '@/components/tools/renderers/system/themeActionResultViewTypes';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { usePreparedThemeCss } from '@/theme/css/usePreparedThemeCss';
 import { getThemeCssWebOnlyRules } from '@/theme/css/prepareThemeCss';
 import { resolveCustomThemeSourceLabel } from '@/components/settings/appearance/themeProfiles/themeProfilePresetOptions';
 import { t } from '@/text';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 type Kept = ThemeActionOutput<typeof THEME_ACTION_IDS.keep>;
 type Applied = ThemeActionOutput<typeof THEME_ACTION_IDS.apply>;
@@ -44,12 +45,19 @@ export type ThemeActionCardFacts = Readonly<{
     onUseOtherDevices?: (theme: ThemeDevicePickerInput['theme']) => void;
 }>;
 
+const tryEntries = new WeakMap<TranscriptThemeTry['input'], ThemeLibraryEntry>();
+
 /** A card previews the Action's chosen appearance without changing the library header. */
-function projectTryEntry(call: TranscriptThemeTry) {
-    if (!call.input.document) return null;
-    return projectThemeLibraryEntry({ ...call.input.document,
-        profile: { ...call.input.document.profile, assetAppearance: call.input.mode },
-    });
+export function projectThemeActionTryEntry({ input }: TranscriptThemeTry) {
+    if (!input.document) return null;
+    let entry = tryEntries.get(input);
+    if (!entry) {
+        entry = projectThemeLibraryEntry({ ...input.document,
+            profile: { ...input.document.profile, assetAppearance: input.mode },
+        });
+        tryEntries.set(input, entry);
+    }
+    return entry;
 }
 
 /** Card-local presentation and replay data; every effect goes through the existing Action front door. */
@@ -94,17 +102,22 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
     const [busy, setBusy] = React.useState<ThemeResultOperation | null>(null);
     const [failure, setFailure] = React.useState<Extract<ThemeResultPhase, { kind: 'failed' }> | null>(null);
     const retryOperation = React.useRef<(() => Promise<void>) | null>(null);
-    const previewEntry = React.useMemo(() => selected ? projectTryEntry(selected) : null, [selected]);
+    const previewEntry = selected ? projectThemeActionTryEntry(selected) : null;
     const entry = outcome.kind === 'kept' ? outcome.output.entry : previewEntry ?? facts.entry;
     const sourceYours = t('settingsAppearance.themeProfiles.sourceYours');
     const sourceStore = t('settingsAppearance.themeProfiles.sourceStore');
     const sourcePlugin = t('settingsAppearance.themeProfiles.sourcePlugin');
-    const options = React.useMemo(() => input.options.map(option => {
-        const entry = projectTryEntry(option.call);
-        return { key: option.id, name: entry?.name ?? t('settingsAppearance.themeProfiles.defaultTheme'),
-            description: resolveCustomThemeSourceLabel(entry?.source ?? { kind: 'yours' }, { sourceYours, sourceStore, sourcePlugin }),
-            miniature: entry?.miniature ?? projectThemeMiniature({ assetAppearance: option.call.input.mode, overrides: { light: {}, dark: {} } }) };
-    }), [input.options, sourceYours, sourceStore, sourcePlugin]);
+    const defaultThemeName = t('settingsAppearance.themeProfiles.defaultTheme');
+    const previousOptions = React.useRef<readonly ThemeResultOption[]>(undefined);
+    const options = React.useMemo(() => {
+        const rows = input.options.map(option => {
+            const entry = projectThemeActionTryEntry(option.call);
+            return { key: option.id, name: entry?.name ?? defaultThemeName,
+                description: resolveCustomThemeSourceLabel(entry?.source ?? { kind: 'yours' }, { sourceYours, sourceStore, sourcePlugin }),
+                miniature: entry?.miniature ?? projectThemeMiniature({ assetAppearance: option.call.input.mode, overrides: { light: {}, dark: {} } }) };
+        });
+        return previousOptions.current = retainKeyedRows(previousOptions.current, rows, row => row.key);
+    }, [input.options, defaultThemeName, sourceYours, sourceStore, sourcePlugin]);
     const invoke = execute;
     const perform = React.useCallback((operation: ThemeResultOperation, effect: () => Promise<void>) => {
         setBusy(operation); setFailure(null); retryOperation.current = effect;
@@ -160,7 +173,7 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
         else perform('try', replay);
     }, [preparedCss.error, preparedCss.retry, failure, selected, perform, replay, tryOption, invoke]);
     const display = entry ?? (call.actionId === THEME_ACTION_IDS.apply ? facts.appliedTheme
-        : selected?.input.document === null ? { name: t('settingsAppearance.themeProfiles.defaultTheme'), mode: selected.input.mode,
+        : selected?.input.document === null ? { name: defaultThemeName, mode: selected.input.mode,
             miniature: projectThemeMiniature({ assetAppearance: selected.input.mode, overrides: { light: {}, dark: {} } }) } : null);
     if (!display) return null;
     const editTarget: ThemeActionCardEdit | null = outcome.kind === 'preview' && selected?.input.document

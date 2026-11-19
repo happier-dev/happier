@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
+import { createCommittedFiberRenderCounter, readTestRendererRoot } from '@/dev/testkit/performance/committedFiberCounts';
 import { TranscriptFindProvider } from '@/components/sessions/transcript/find/TranscriptFindContext';
 import { createTranscriptFindRowStore } from '@/components/sessions/transcript/find/transcriptFindRowStore';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -24,26 +25,60 @@ await loadSyncSingletonForTests();
 await import('./MCPToolView');
 
 describe('MCPToolView', () => {
-    it('mounts one theme card for consecutive proposals through the real result renderer', async () => {
+    it('updates the theme card for a new candidate and skips unrelated arrivals', async () => {
         const { THEME_ACTION_IDS, ThemeActionInputSchemas, ThemeActionOutputSchemas } = await import('@happier-dev/protocol/actions/themeActionFamily');
         const { themeActionDocument } = await import('@/dev/testkit/harness/themeActionHarness');
         const { prepareThemeProfileCss } = await import('@/theme/css/prepareThemeCss');
         const { createToolCallMessageFixture } = await import('@/dev/testkit/fixtures/transcriptFixtures');
         const { MCPToolView } = await import('./MCPToolView');
-        const messages = ['First', 'Second'].map(id => {
+        const { ThemeActionResult } = await import('./ThemeActionResult');
+        const { ThemeActionResultView } = await import('./ThemeActionResultView');
+        const candidate = (id: string) => {
             const document = themeActionDocument(id);
             const input = ThemeActionInputSchemas[THEME_ACTION_IDS.tryOn].parse({ document, mode: 'dark', origin: { kind: 'agent' }, group: 'choices' });
             const output = ThemeActionOutputSchemas[THEME_ACTION_IDS.tryOn].parse({ previewRef: id, coverage: prepareThemeProfileCss(document.profile).coverage, compatibility: document.compatibility });
             return createToolCallMessageFixture({ id, tool: makeToolCall({ id, name: 'mcp__happier__action_execute', state: 'completed',
                 input: { actionId: THEME_ACTION_IDS.tryOn, input }, result: { ok: true, result: output } }) });
-        });
-        const first = await renderScreen(<MCPToolView {...makeToolViewProps(messages[0]!.tool, { messages, messageId: 'First', detailLevel: 'summary' })} />);
-        const last = await renderScreen(<MCPToolView {...makeToolViewProps(messages[1]!.tool, { messages, messageId: 'Second', detailLevel: 'summary' })} />);
-        expect(first.tree.findAll(node => node.props.testID === 'theme-action-result')).toHaveLength(0);
-        expect(last.tree.findAll(node => node.props.testID === 'theme-action-result').length).toBeGreaterThan(0);
-        expect(last.getTextContent()).toContain('Second');
-        await first.unmount();
-        await last.unmount();
+        };
+        const messages = [candidate('First'), candidate('Second')];
+        const unrelated = createToolCallMessageFixture({ id: 'Unrelated', tool: makeMcpTool() });
+        const counter = createCommittedFiberRenderCounter();
+        let readRoot: ReturnType<typeof readTestRendererRoot> | undefined;
+        const transcript = (items: typeof messages) => (
+            <React.Profiler id="theme-card-arrival" onRender={() => {
+                if (readRoot) counter.onCommitRoot(readRoot());
+            }}>
+                {items.map(({ tool, id }) => <MCPToolView key={id}
+                    {...makeToolViewProps(tool, { messages: items, messageId: id, detailLevel: 'summary' })} />)}
+            </React.Profiler>
+        );
+        const screen = await renderScreen(transcript(messages));
+        readRoot = readTestRendererRoot(screen.tree.root);
+        try {
+            expect(screen.findAllHostsByTestId('theme-action-result')).toHaveLength(1);
+            expect(screen.getTextContent()).toContain('Second');
+
+            counter.start();
+            await screen.update(transcript([...messages, unrelated]));
+            const arrival = counter.read();
+            expect(arrival.commits).toBeGreaterThan(0);
+            expect(screen.getTextContent()).toContain('Created issue LIN-42');
+
+            counter.start();
+            await screen.update(transcript([messages[0]!, candidate('Third'), messages[1]!, unrelated]));
+            const candidateUpdate = counter.read();
+            expect(screen.findAllHostsByTestId('theme-action-result')).toHaveLength(1);
+            expect(screen.getTextContent()).toContain('Third');
+            expect(candidateUpdate.rendersFor(ThemeActionResultView), 'card renders after a new grouped candidate').toBe(1);
+
+            expect({
+                view: arrival.rendersFor(ThemeActionResultView),
+                model: arrival.rendersFor(ThemeActionResult),
+            }, 'card renders after one unrelated arrival').toEqual({ view: 0, model: 0 });
+        } finally {
+            counter.stop();
+            await screen.unmount();
+        }
     });
     it('previews canonical MCP content and historical text aliases equally', async () => {
         for (const result of [
