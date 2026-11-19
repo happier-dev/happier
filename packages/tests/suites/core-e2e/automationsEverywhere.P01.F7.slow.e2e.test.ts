@@ -1,6 +1,5 @@
-import { mkdir, mkdtemp } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -12,6 +11,7 @@ import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibili
 import { applyTrustedLocalPluginFixture, reloadTrustedLocalPluginFixture } from '../../src/testkit/externalSessionLiveLifecycleFixture';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { fetchJson } from '../../src/testkit/http';
+import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
 import { readWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 import { installExternalTicketAutomationFixture } from '../../src/testkit/pluginPlatform/externalTicketAutomationFixture';
@@ -23,6 +23,7 @@ import { readAutomationSubjectPickerActionPage } from '../../../../apps/ui/sourc
 import { listWorkflowStepActionSpecs } from '../../../../apps/ui/sources/components/workflows/presentation/workflowActionCatalog';
 
 describe('Automations everywhere: qualified plugin subjects', () => {
+  const run = createRunDirs({ runLabel: 'automations-p01-f7' });
   let fixture: TeamSetupFFixture | undefined;
   let otherHome: TeamSetupFFixture | undefined;
   afterEach(async () => {
@@ -32,10 +33,10 @@ describe('Automations everywhere: qualified plugin subjects', () => {
   }, 0);
 
   it('P01.F7 qualified plugin subject through public UI', async () => {
-    const testDir = await mkdtemp(join(tmpdir(), 'ae-p01-ticket-'));
+    const testDir = run.testDir('qualified-plugin-subject');
     const pluginIds = ['acme.tickets', 'other.tickets'] as const;
     fixture = await startTeamSetupFFixture({ testDir,
-      serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
+      serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1', HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS: '1' } });
     const actor = await fixture.createAccount('ticket-owner');
     const reader = await fixture.createAccount('ticket-reader');
     const machine = await fixture.enrollDaemon(actor, { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
