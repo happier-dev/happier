@@ -9,12 +9,11 @@ import { observeReviewHistory, refreshReviewHistory } from '@/sync/engine/review
 const noop = () => {};
 /** An opened workflow Review demands factual history; direct Reviews make no history request. */
 export function useReviewHistory(input: Readonly<{ workflowId: string | null | undefined; reviewId: string }>,
-    options?: Readonly<{ scope?: ServerAccountScope; enabled?: boolean }>) {
+    options?: Readonly<{ scope?: ServerAccountScope | null; enabled?: boolean }>) {
     const activeLifetime = useActiveServerAccountScopeLifetime();
     const { binding } = useServerCredentialAccountScopeBinding(options?.scope?.serverId ?? null);
-    const lifetime = options?.scope
-        ? binding?.accountId === options.scope.accountId ? binding : null
-        : activeLifetime;
+    const lifetime = options?.scope === undefined ? activeLifetime
+        : options.scope && binding?.accountId === options.scope.accountId ? binding : null;
     const presented = useLayoutPresentationActive();
     const request = React.useMemo(() => input.workflowId && input.reviewId
         ? { workflowId: input.workflowId, reviewId: input.reviewId } : null, [input.workflowId, input.reviewId]);
