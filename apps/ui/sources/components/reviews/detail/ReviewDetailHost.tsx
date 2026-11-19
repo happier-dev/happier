@@ -294,7 +294,7 @@ export function ReviewDetailHost(props: Readonly<{
   }, [detail, submitVerdict]);
 
   if (props.bodyState === 'loading' && !record) return <ReviewDetailState kind="loading" />;
-  if (props.bodyState === 'failed' && !record) return <ReviewDetailState kind="error" onRetry={props.onRetry} />;
+  if (props.bodyState === 'failed' && !record) return <ReviewDetailState kind="failed" onRetry={props.onRetry} />;
   if (!record) return <ReviewDetailState kind="missing" reason={t('reviewWalkthrough.detail.unreadable')} />;
 
   const canSubmit = Boolean(human?.needsYou.canSubmitVerdict && human.roundOrdinal === selectedRound && submitVerdict);

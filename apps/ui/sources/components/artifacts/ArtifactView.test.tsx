@@ -834,6 +834,21 @@ describe('Artifact composed view reads', () => {
         expect(screen.findByTestId('artifact:history') !== null).toBe(true);
         await screen.unmount();
     });
+    it('keeps a failed Review body retryable through its page state', async () => {
+        await setup('document');
+        const { ReviewDetailHost } = await import('@/components/reviews/detail/ReviewDetailHost');
+        const artifact: DecryptedArtifact = { id: 'failed-review-body', title: 'Review', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId: 'failed-review-body', title: 'Review' },
+            ownerAccountId: 'owner', access: 'owner', storageMode: 'plain',
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        const retry = vi.fn();
+        const screen = await renderScreen(<ReviewDetailHost artifact={artifact} bodyState="failed" onRetry={retry} />);
+        try {
+            expect(screen.findByTestId('review-detail:failed')).not.toBeNull();
+            await screen.pressByTestIdAsync('review-detail:failed-action');
+            expect(retry).toHaveBeenCalledOnce();
+        } finally { await screen.unmount(); }
+    });
     it('opens a Review as its Review page, never its stored rounds as a document', async () => {
         await setup('document');
         const rounds = [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: ['s0:r0', 's0:r1'],
@@ -1075,8 +1090,10 @@ describe('Artifact composed view reads', () => {
             if (withSession) {
                 await screen.pressByTestIdAsync('review-question-answer:retained-question');
                 const input = screen.findByTestId('review-findings-follow-up')!.findByType(AgentInput);
-                await act(async () => input.props.onChangeText('The original Account'));
-                await act(async () => input.props.onSend({ inputTextOverride: 'The original Account' }));
+                const { onChangeText, onSend } = input.props;
+                if (!onChangeText || !onSend) throw new Error('The question answer must provide an editable submit control');
+                await act(async () => onChangeText('The original Account'));
+                await act(async () => onSend({ inputTextOverride: 'The original Account' }));
                 await waitForHomeGovernance(() => expect(actions).toEqual([{ runId: 'question-run', actionId: 'review.follow_up',
                     input: { findingIds: [], replyToQuestionId: 'retained-question', messageMarkdown: 'The original Account' } }]));
                 expect(rpc.filter(request => request.method.endsWith(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION))
