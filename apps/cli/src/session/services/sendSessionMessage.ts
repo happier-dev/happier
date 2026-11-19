@@ -41,11 +41,10 @@ import { fetchEncryptedTranscriptPageAfterSeq } from '@/api/session/fetchEncrypt
 import { readSessionDeliveryMutedScopes } from '@/api/sessionDeliveryMuteTransport';
 import {
   enqueuePendingQueueV2MessageViaHttp,
-  blockPendingQueueV2Delivery,
-  discardPendingQueueV2Messages,
   enqueuePendingExecutionRunMessageViaHttp,
   listPendingQueueV2DeliveryStatusesFromServer,
   readPendingQueueV2DeliveryStatusByLocalIdFromServer,
+  settlePendingQueueV2ResumeFailure,
   type PendingQueueDeliveryBlockedReason,
 } from '@/api/session/pendingQueueV2Transport';
 import {
@@ -121,7 +120,7 @@ export type SendSessionMessageResult =
       ok: false;
       /**
        * `resume_failed` comes from the inactive-session resume seam and means the
-       * machine took the request and did not start the Session. It is distinct
+       * machine's resume attempt failed. It is distinct
        * from `unsupported`, which claims this Session or daemon cannot do it at
        * all — see `InactiveSessionResumeResult`.
        */
@@ -2171,19 +2170,17 @@ export async function sendSessionMessage(
       const refusedResume = !informationDelivery
         && (resumeResult.code === 'resume_failed' || resumeResult.code === 'SESSION_DIRECTORY_MISSING')
         && resumeResult.spawnErrorCode !== undefined;
-      if (refusedResume) {
-        // The Machine refused this attempt before a runner claimed the input.
-        // Retire that exact custody through Pending's existing settlement owner.
-        await discardPendingQueueV2Messages({ token: params.credentials.token, sessionId, localIds: [localId],
-          reason: 'resume_failed', ...(resumeResult.errorDetail
-            // The server stores this cause in plaintext: only the typed projection leaves the CLI.
-            ? { errorDetail: projectPendingDeliveryFailureCauseV1(resumeResult.errorDetail) } : {}), ...(params.signal ? { signal: params.signal } : {}),
-          ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}) });
-      } else if (resumeResult.code === 'authority_unavailable') {
-        // The input is already in custody. Keep it recoverable and visible as
-        // blocked rather than claiming it is still waiting for a runner.
-        await blockPendingQueueV2Delivery({ token: params.credentials.token, sessionId, localId,
-          reason: 'session_input_target_unavailable', ...(params.signal ? { signal: params.signal } : {}) });
+      if (refusedResume || resumeResult.code === 'authority_unavailable') {
+        await settlePendingQueueV2ResumeFailure({
+          token: params.credentials.token, sessionId, localId, ...(params.signal ? { signal: params.signal } : {}),
+          ...(refusedResume ? {
+            reason: 'resume_failed',
+            ...(resumeResult.errorDetail
+              // The server stores this cause in plaintext: only the typed projection leaves the CLI.
+              ? { errorDetail: projectPendingDeliveryFailureCauseV1(resumeResult.errorDetail) } : {}),
+            ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
+          } : { reason: 'session_input_target_unavailable' }),
+        });
       }
       if (informationDelivery) {
         return { ok: true, sessionId, localId, waited: false, admissionResult,

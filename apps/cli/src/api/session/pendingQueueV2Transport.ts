@@ -6,14 +6,15 @@ import { nullable } from 'zod/mini';
 import type { Socket } from 'socket.io-client';
 import type { SessionMessageAcceptedDeliveryContentV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 
-import { isAuthenticationError } from '@/api/client/httpStatusError';
+import { isAuthenticationError, readHttpStatus } from '@/api/client/httpStatusError';
+import { readAxiosResponseErrorCode } from '@/api/client/readAxiosResponseErrorCode';
 import type { ClientToServerEvents, ServerToClientEvents } from '../types';
 import { resolveServerHttpBaseUrl } from '../client/serverHttpBaseUrl';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import { resolveSessionMessageAdmissionTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 import { ACCEPTED_PENDING_SETTLEMENT_EVENT_V1, AcceptedPendingSettlementRequestV1Schema, AcceptedPendingSettlementResponseV1Schema } from '@happier-dev/protocol/sessions/pending/acceptedPendingSettlementV1';
 import { normalizePendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
-import { normalizePendingDeliveryStatusV1, parsePendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import { normalizePendingDeliveryStatusV1, parsePendingDeliveryStatusV1, type PendingDeliveryFailureV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { normalizePendingRequestedActionV1, PendingRequestedActionV1Schema, PendingResetStartSetInputV1Schema, SessionPendingActionSetResultV1Schema, type PendingRequestedActionV1, type PendingResetStartBindingV1, type PendingResetStartSetInputV1, type SessionPendingActionSetResultV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { PendingProviderActionSchema } from '@happier-dev/protocol/sessions/pending/pendingProviderAction';
 import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -1068,7 +1069,7 @@ export async function discardPendingQueueV2Messages(params: {
     sessionId: string;
     localIds: string[];
     reason: 'switch_to_local' | 'manual' | 'session_input_cancelled' | 'resume_failed';
-    errorDetail?: import('@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1').PendingDeliveryFailureV1['errorDetail'];
+    errorDetail?: PendingDeliveryFailureV1['errorDetail'];
     signal?: AbortSignal;
     resolveAuthorizationHeaders?: ResolvePendingQueueAuthorizationHeaders;
 }): Promise<number> {
@@ -1381,6 +1382,36 @@ type PendingDeliveryActionTransport = Readonly<{
     signal?: AbortSignal;
     resolveAuthorizationHeaders?: (request: Readonly<{ method: 'POST'; path: string; body: Record<string, unknown> }>) => Readonly<Record<string, string>> | null;
 }>;
+
+export async function settlePendingQueueV2ResumeFailure(params: Readonly<{
+    token: string;
+    sessionId: string;
+    localId: string;
+    signal?: AbortSignal;
+}> & (
+    | Readonly<{
+        reason: 'resume_failed';
+        errorDetail?: PendingDeliveryFailureV1['errorDetail'];
+        resolveAuthorizationHeaders?: ResolvePendingQueueAuthorizationHeaders;
+    }>
+    | Readonly<{ reason: 'session_input_target_unavailable' }>
+)): Promise<void> {
+    const { localId, ...request } = params;
+    try {
+        if (request.reason === 'resume_failed') {
+            await discardPendingQueueV2Messages({ ...request, localIds: [localId] });
+        } else {
+            await blockPendingQueueV2Delivery({ ...request, localId });
+        }
+    } catch (error) {
+        // Home can refuse this mutation after custody has changed or the row has left Pending.
+        // Either response leaves the original resume result and admission receipt authoritative.
+        const status = readHttpStatus(error);
+        const code = readAxiosResponseErrorCode(error);
+        if ((status === 409 && code === 'delivery-settlement-conflict') || (status === 404 && code === 'not-found')) return;
+        throw error;
+    }
+}
 
 export async function markPendingQueueV2DeliveryHandled(params: PendingDeliveryActionTransport): Promise<{ pendingQueueState?: KnownPendingQueueState }> {
     return postPendingQueueV2DeliveryAction({

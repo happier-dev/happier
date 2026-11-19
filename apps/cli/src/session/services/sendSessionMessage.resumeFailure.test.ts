@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { AxiosError } from 'axios';
 
 import { sendSessionMessage } from './sendSessionMessage';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
@@ -326,11 +327,17 @@ it('keeps an accepted returned answer pending when its exact Machine cannot resu
     receiverResumeFailure: { ok: false, code: 'resume_failed' },
   });
 });
-it('marks accepted input visibly blocked when Machine wake admission is refused', async () => {
+it.each([
+  { description: 'unclaimed input', settlementReply: null },
+  { description: 'runner-owned input', settlementReply: { status: 409, error: 'delivery-settlement-conflict' } },
+])('returns the wake refusal and accepted receipt for $description', async ({ settlementReply }) => {
   const machineResumeTransport = vi.fn(async () => ({ errorCode: 'RPC_FORBIDDEN', error: 'Forbidden' }));
   http.post.mockImplementation(async (url: string) => {
     if (url.endsWith('/pending')) return { status: 200, data: { didWrite: true, terminal: false, suppressed: false } };
-    if (url.endsWith('/delivery/block')) return { status: 200, data: { ok: true } };
+    if (url.endsWith('/delivery/block')) {
+      if (settlementReply) throw pendingHttpRefusal(settlementReply);
+      return { status: 200, data: { ok: true } };
+    }
     throw new Error(`Unexpected HTTP request: ${url}`);
   });
   expect(await sendSessionMessage({ credentials: { token: 'account-token', encryption: null }, idOrPrefix: sessionId,
@@ -381,7 +388,23 @@ it('retains the typed Machine refusal through ordinary Send after accepting Pend
   });
 });
 
-it.each(['service', 'action', 'continuity-action'] as const)('returns a typed startup refusal for a waiting send through the %s and settles its exact Pending input', async entry => {
+function pendingHttpRefusal(reply: { status: number; error: string }) {
+  return Object.assign(new AxiosError(`Request failed with status code ${reply.status}`), {
+    response: { status: reply.status, data: { error: reply.error } },
+  });
+}
+
+it.each([
+  { entry: 'service', description: 'retained input through the service' },
+  { entry: 'action', description: 'retained input through the Action' },
+  { entry: 'continuity-action', description: 'continuity refusal through the Action' },
+  { entry: 'action', description: 'runner-owned input through the Action', settlementReply: { status: 409, error: 'delivery-settlement-conflict' } },
+  { entry: 'action', description: 'input already removed from Pending through the Action', settlementReply: { status: 404, error: 'not-found' } },
+  { entry: 'service', description: 'unrecognized settlement failure through the service', settlementReply: { status: 409, error: 'pending-mutation-conflict' }, propagateFailure: true },
+  { entry: 'service', description: 'missing Session through the service', settlementReply: { status: 404, error: 'session-not-found' }, propagateFailure: true },
+] as const)('handles a waiting send startup refusal for $description', async row => {
+  const { entry } = row;
+  const settlementFailure = 'settlementReply' in row ? pendingHttpRefusal(row.settlementReply) : null;
   const localId = 'failed-start-later-send';
   receiverMetadata = { lifecycleState: 'failed' };
   const errorDetail = entry === 'continuity-action' ? { kind: 'connected_service_resume_unreachable',
@@ -405,7 +428,7 @@ it.each(['service', 'action', 'continuity-action'] as const)('returns a typed st
         failureReason: 'model_selection_required', retryable: false },
       childExit: { code: 1, signal: null }, spawnFailure: { reason: 'too_many_open_files', errno: 'EMFILE' } };
   let retainedInput: unknown;
-  let settled = false;
+  let handledSettlementRequest = false;
   const readSession = http.get.getMockImplementation();
   http.get.mockImplementation(async (url: string) => {
     if (url.endsWith(`/messages/by-local-id/${localId}`)) {
@@ -425,7 +448,8 @@ it.each(['service', 'action', 'continuity-action'] as const)('returns a typed st
     if (url.endsWith(`/pending/${localId}/discard`)) {
       expect(body).toEqual({ reason: 'resume_failed', errorDetail: settledCause });
       expect(JSON.stringify(body)).not.toMatch(/private-repo|cannot open|Review the selected model|gemini_resume_unreachable/u);
-      settled = true;
+      handledSettlementRequest = true;
+      if (settlementFailure) throw settlementFailure;
       return { status: 200, data: { ok: true, didUpdate: true } };
     }
     throw new Error(`Unexpected HTTP request: ${url}`);
@@ -447,9 +471,11 @@ it.each(['service', 'action', 'continuity-action'] as const)('returns a typed st
   const expectedFailure = { status: 'failed', code: 'resume_failed', localId, errorDetail,
     admissionResult: { status: 'accepted', localId } };
   if (entry === 'service') {
-    await expect(sendSessionMessage({ credentials, idOrPrefix: sessionId,
+    const send = sendSessionMessage({ credentials, idOrPrefix: sessionId,
       message: 'Keep this prompt for recovery', localId, wait: true, timeoutMs: 1000, machineResumeTransport,
-    })).resolves.toMatchObject({ ok: false, code: 'resume_failed', errorDetail,
+    });
+    if ('propagateFailure' in row) await expect(send).rejects.toBe(settlementFailure);
+    else await expect(send).resolves.toMatchObject({ ok: false, code: 'resume_failed', errorDetail,
       admissionResult: { status: 'accepted', localId }, settlementResult: expectedFailure });
   } else {
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'daemon-global',
@@ -462,7 +488,7 @@ it.each(['service', 'action', 'continuity-action'] as const)('returns a typed st
     if (!outcome.ok) throw new Error(outcome.error);
     expect(SessionMessageSendResultV1Schema.parse(outcome.result)).toEqual(expectedFailure);
   }
-  expect(settled).toBe(true);
+  expect(handledSettlementRequest).toBe(true);
   expect(retainedInput).toMatchObject({ localId, content: { t: 'plain', v: {
     content: { text: 'Keep this prompt for recovery' },
   } } });
