@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { commitSourceSyntax } from './commitSourceSyntax.mjs';
 import { commitPluginManifests, PLUGIN_MANIFEST_INPUT } from './commitPluginManifests.mjs';
 import { commitLockfile } from './commitLockfile.mjs';
-import { commitProducerClosure } from './commitProducerClosure.mjs';
+import { commitProducerClosure, createRevisionViewReader } from './commitProducerClosure.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 import { commitImportCycles } from './commitImportCycles.mjs';
 import { commitTreeGateMode, commitTreeEntryLoads, startCommitTreeEntryLoadReport } from './commitTreeEntryLoads.mjs';
@@ -75,11 +75,12 @@ export async function runCommitGate({ repo, base, tree, prior, cheapOnly = false
   notes.push(`syntax: ${syntax.parsed} changed source file(s) parsed`);
   if (syntax.findings.length) return refused('syntax', syntax.findings);
 
-  const closure = await judge('producer closure', () => commitProducerClosure({ repo, base, tree }));
+  const readView = createRevisionViewReader(repo);
+  const closure = await judge('producer closure', () => commitProducerClosure({ repo, base, tree, readView }));
   if (closure.findings.length) return refused('producer closure', closure.findings);
   const boundary = await judge('plugin import boundary', () => commitExtensionBoundaries({ repo, base, tree }));
   if (boundary.findings.length) return refused('plugin import boundary', boundary.findings);
-  const cycles = await judge('import cycles', () => commitImportCycles({ repo, base, tree, cacheDir: join(cacheDir, 'import-cycles') }));
+  const cycles = await judge('import cycles', () => commitImportCycles({ repo, base, tree, cacheDir: join(cacheDir, 'import-cycles'), readView }));
   notes.push(`import cycles: ${cycles.findings.length} new eager cycle(s) (${cycles.changed} changed module(s) in scope, ${cycles.ms} ms)`);
   if (cycles.findings.length) return refused('eager import cycle through a changed module (a TDZ at load)', cycles.findings);
 

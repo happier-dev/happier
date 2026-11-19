@@ -45,15 +45,15 @@ function readBlobs(git, oids) {
   return contents;
 }
 
-// Trees are immutable: one gate process (closure, then import cycles) builds each tree's view once.
-const views = new Map();
-
-/** One revision's files, module resolution and export tables, all read from Git objects. */
-export function revisionView(repo, git, rev) {
-  const tree = git(['rev-parse', '--verify', `${rev}^{tree}`]).trim();
-  const key = `${resolve(repo)}\0${tree}`;
-  if (!views.has(key)) views.set(key, buildRevisionView(repo, git, tree));
-  return views.get(key);
+/** Share Git-tree files, resolutions and export tables for one gate attempt. */
+export function createRevisionViewReader(repo) {
+  const git = gitIn(repo);
+  const views = new Map();
+  return rev => {
+    const tree = git(['rev-parse', '--verify', `${rev}^{tree}`]).trim();
+    if (!views.has(tree)) views.set(tree, buildRevisionView(repo, git, tree));
+    return views.get(tree);
+  };
 }
 
 function buildRevisionView(repo, git, rev) {
@@ -347,7 +347,7 @@ function lockfileImporters(lock) {
   return dirs;
 }
 
-export function commitProducerClosure({ repo, base, tree }) {
+export function commitProducerClosure({ repo, base, tree, readView = createRevisionViewReader(repo) }) {
   const started = Date.now();
   const git = gitIn(repo);
   const slice = [];
@@ -358,9 +358,9 @@ export function commitProducerClosure({ repo, base, tree }) {
   const lockfileInputs = slice.some(({ path }) => LOCKFILE_INPUT.test(path));
   if (!sources.length && !lockfileInputs) return { ...result, ms: Date.now() - started };
   ts ??= require('typescript');
-  const after = revisionView(repo, git, tree);
+  const after = readView(tree);
   let before;
-  const prior = () => (before ??= revisionView(repo, git, base));
+  const prior = () => (before ??= readView(base));
   const findings = [];
   if (sources.length) {
     const roots = new Set(sources.filter(({ status }) => status !== 'D').map(({ path }) => path));

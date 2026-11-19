@@ -21,7 +21,7 @@ import { collectImportBindingReads, findEvaluationCycles } from '../../apps/cli/
 import {
   collectRuntimeModuleSpecifiers, findStronglyConnectedComponents, formatCycleKey, isTestModulePath,
 } from '../../apps/cli/scripts/importCycleGuard.mjs';
-import { gitIn, revisionView } from './commitProducerClosure.mjs';
+import { createRevisionViewReader, gitIn } from './commitProducerClosure.mjs';
 
 const ts = createRequire(import.meta.url)('typescript');
 
@@ -414,7 +414,7 @@ function resolutionCandidates(after, before, inputs) {
   return [...candidates].filter(file => before.view.blobs.has(file) || after.view.blobs.has(file));
 }
 
-export function commitImportCycles({ repo, base, tree, cacheDir }) {
+export function commitImportCycles({ repo, base, tree, cacheDir, readView = createRevisionViewReader(repo) }) {
   const started = Date.now();
   const git = gitIn(repo);
   const records = nul(git(['diff-tree', '-r', '-z', '--no-renames', '--name-status', base, tree]));
@@ -428,8 +428,8 @@ export function commitImportCycles({ repo, base, tree, cacheDir }) {
   if (!changed.length && !inputs.length) return { ...result, ms: Date.now() - started };
   const store = cacheStore(cacheDir);
   const treeOf = rev => git(['rev-parse', '--verify', `${rev}^{tree}`]).trim();
-  const after = cycleContext({ git, view: revisionView(repo, git, tree), tree: treeOf(tree), store });
-  const before = cycleContext({ git, view: revisionView(repo, git, base), tree: treeOf(base), store });
+  const after = cycleContext({ git, view: readView(tree), tree: treeOf(tree), store });
+  const before = cycleContext({ git, view: readView(base), tree: treeOf(base), store });
   // A manifest or tsconfig change re-resolves modules the packet does not touch; they go through the same
   // edge/read delta below.
   if (inputs.length) for (const file of resolutionCandidates(after, before, inputs)) if (!changed.includes(file)) changed.push(file);
