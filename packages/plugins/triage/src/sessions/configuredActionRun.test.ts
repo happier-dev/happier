@@ -740,7 +740,7 @@ describe('configured action execution through the shared Session owner', () => {
         ['deploymentEnvironment', 'empty'], ['deploymentEnvironment', 'partial'],
         ['deploymentEnvironment', 'unavailable'], ['deploymentEnvironment', 'ambiguous'],
         ['deploymentEnvironment', 'noController'], ['deploymentReceipt', 'partial'],
-        ['deploymentEnvironment', 'composerUnavailable'],
+        ['deploymentReceipt', 'composerUnavailable'],
     ] as const)('settles %s with unresolved placement (%s)', async (kind, placement) => {
         const subject = kind === 'deploymentEnvironment'
             ? { kind, serverId: 'server-a', environmentId: 'environment' }
@@ -781,7 +781,8 @@ describe('configured action execution through the shared Session owner', () => {
             const result = await runTriageConfiguredHandoffV1(host as unknown as Parameters<typeof runTriageConfiguredHandoffV1>[0],
                 input.handoff, { entries: [], signal: new AbortController().signal });
             if (placement === 'composerUnavailable') {
-                expect(result.handoff).toEqual({ kind: 'unavailable', reason: 'composerUnavailable' });
+                expect(result.handoff).toEqual({ kind: 'unavailable', reason: 'composerUnavailable',
+                    detail: { reason: 'new_session_draft_unsettled', cause: 'action_unavailable' } });
                 continue;
             }
             expect(result.handoff).toEqual({ kind: 'composed', destination: { kind: 'newSessionDraft' } });
@@ -1372,6 +1373,7 @@ describe('configured action execution through the shared Session owner', () => {
         const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess(), spawnSuccess({ disposition: 'rejoined' })],
             send: [{ status: 'accepted', localId: 'repository-input' }] });
         const effects: string[] = [];
+        let refuseStart = true;
         let loseReply = true;
         let denySend = true;
         const sendOptions: unknown[] = [];
@@ -1386,8 +1388,9 @@ describe('configured action execution through the shared Session owner', () => {
                 if (id === 'projects.list') return { items: [{ projectKey: { id: 'workspace-a' }, ...acceptedWorkspace.checkout,
                     reachable: true, worktrees: [], forge: repository }], truncated: false };
                 if (id === 'session.spawn_new') {
+                    if (refuseStart) throw new PluginError({ code: 'target_home_account_mismatch' });
                     const result = await invoker.execute(id, PLUGIN_ACTION_INPUT_SCHEMAS['session.spawn_new'].parse(value));
-                    if (loseReply) { loseReply = false; throw new Error('Creation reply lost'); }
+                    if (loseReply) { loseReply = false; throw new PluginError({ code: 'action_outcome_unknown' }); }
                     return result;
                 }
                 if (id === 'session.message.send') {
@@ -1407,6 +1410,10 @@ describe('configured action execution through the shared Session owner', () => {
         } });
         const context = { ui: host, serverId: 'outer-home', signal: new AbortController().signal } as unknown as TestAccountActionContext;
         const handler = createTriageRunConfiguredActionHandler();
+        expect(await handler(input, context)).toEqual({ v: 1, handoff: { kind: 'unavailable', reason: 'targetUnavailable',
+            detail: { reason: 'session_start_refused', cause: 'target_home_account_mismatch' } } });
+        expect(invoker.callsFor('session.spawn_new')).toHaveLength(0);
+        refuseStart = false;
         const first = await handler(input, context);
         expect(first).toMatchObject({ v: 1, handoff: { kind: 'uncertain', phase: 'create', session: null }, recovery: { state: { kind: 'handoff' } } });
         expect(invoker.callsFor('session.spawn_new')).toHaveLength(1);

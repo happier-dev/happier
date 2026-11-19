@@ -11,6 +11,13 @@ describe('native failure presentation at its Triage owner', () => {
     expect(presentTriageNativeFailureResult({ ok: true, result: { v: 1, handoff } }))
       .toEqual({ kind: 'started', handoff });
   });
+  it.each([
+    ['target_home_account_mismatch', { kind: 'unavailable', code: 'target_home_account_mismatch' }],
+    ['action_outcome_unknown', { kind: 'uncertain' }],
+    ['approval_execution_outcome_unknown', { kind: 'uncertain' }],
+  ] as const)('presents the launch settlement from the Action code %s', (code, outcome) => {
+    expect(presentTriageNativeFailureResult({ ok: false, errorCode: code, error: code })).toEqual(outcome);
+  });
   it('keeps a durably admitted input started while its Session is still starting', () => {
     const handoff = { kind: 'sendResult', session: { serverId: scope.serverId, sessionId: 'diagnosis' },
       result: { status: 'accepted', localId: 'receipt-input' } } as const;

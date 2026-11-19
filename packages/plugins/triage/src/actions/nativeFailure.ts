@@ -161,7 +161,8 @@ const unavailable = (code: string): Extract<FailureActionOutcome, { kind: 'unava
 
 /** Domain outcomes are normalized at Triage, not reinterpreted by native failure presenters. */
 export function presentTriageNativeFailureResult(result: ActionExecuteResult): FailureActionOutcome | null {
-  if (!result.ok) return unavailable(result.errorCode ?? 'unknown_error');
+  if (!result.ok) return isActionOutcomeUnknownErrorCodeV1(result.errorCode)
+    ? { kind: 'uncertain' } : unavailable(result.errorCode ?? 'unknown_error');
   if (isPluginActionApprovalRequestCreated(result.result)) return { kind: 'approval', artifactId: result.result.artifactId };
   const value = result.result;
   const handoff = value && typeof value === 'object' && 'handoff' in value ? TriageSessionHandoffResultV1Schema.safeParse(value.handoff) : null;

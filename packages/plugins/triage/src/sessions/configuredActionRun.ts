@@ -11,6 +11,7 @@ import { readTriageActionPlacementV1, resolveTriageActionReferencesV1, resolveTr
 import { triageFailureSubjectEntryV1, triageHealthAlertEntryV1, type TriageSessionHandoffInputV1, type TriageSessionHandoffResultV1 } from '@happier-dev/triage-protocol/v1';
 import { composeSessionInputHandoffV1, resolveSessionInputHandoffDeliveryV1, composeSessionInputV1, SessionMessageSendResultV1ProtocolSchema, type ActionSessionAddressV1, type SessionInputForgeEvidenceV1, type SessionStatusActionResultV1 } from '@happier-dev/plugin-sdk/sessions';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/plugin-sdk/errors';
 import { PluginError, isPluginError, type JsonValue, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginActionInputById, PluginActionResultById, PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
 import { ProtocolComposerAttachmentAuthorValueV1Schema, ActionOperationGetV1ResponseProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
@@ -79,8 +80,9 @@ export async function runTriageConfiguredHandoffV1(
         v: 1, handoff, ...(recovery === undefined ? {} : { recovery }),
     });
     const unavailable = (reason: Extract<TriageSessionHandoffResultV1, { kind: 'unavailable' }>['reason']) => finish({ kind: 'unavailable', reason }, options.resumeStart);
-    const targetUnavailable = (reason: NonNullable<Extract<TriageSessionHandoffResultV1, { kind: 'unavailable' }>['detail']>['reason'], cause?: string) =>
-        finish({ kind: 'unavailable', reason: 'targetUnavailable', detail: { reason, ...(cause === undefined ? {} : { cause }) } }, options.resumeStart);
+    const targetUnavailable = (reason: NonNullable<Extract<TriageSessionHandoffResultV1, { kind: 'unavailable' }>['detail']>['reason'],
+        cause?: string, recovery = options.resumeStart) =>
+        finish({ kind: 'unavailable', reason: 'targetUnavailable', detail: { reason, ...(cause === undefined ? {} : { cause }) } }, recovery);
     const cancellation = { signal: options.signal };
     if (options.signal.aborted) return finish({ kind: 'cancelled' }, options.resumeStart);
     let configured: Awaited<ReturnType<typeof resolveTriageConfiguredActionForExecutionV1>>;
@@ -350,6 +352,9 @@ export async function runTriageConfiguredHandoffV1(
                 placement: execution ?? ((input.context.kind === 'healthAlert' || input.context.kind === 'failure') && input.context.machine
                     ? { executionTarget: input.context.machine } : null), candidates,
             });
+            const cause = composed.status === 'unavailable' ? composed.failure?.codes[0] : undefined;
+            if (cause !== undefined) return finish({ kind: 'unavailable', reason: 'composerUnavailable',
+                detail: { reason: 'new_session_draft_unsettled', cause } }, options.resumeStart);
             return composed.status === 'seeded' ? finish({ kind: 'composed', destination: { kind: 'newSessionDraft' } })
                 : composed.status === 'cancelled' ? finish({ kind: 'cancelled' })
                 // A caller with no composer (agent, MCP, CLI) keeps its typed choice request.
@@ -451,7 +456,12 @@ export async function runTriageConfiguredHandoffV1(
                 ...(existingWorkspace === undefined ? {} : { workspace: existingWorkspace }),
                 ...(verifiedReviewWorkspace === undefined ? {} : { verifiedReviewWorkspace }) } : invocation.destination,
             finalOpen: 'suppressed' });
-    } catch {
+    } catch (error) {
+        if (!isPluginError(error)) throw error;
+        if (!isActionOutcomeUnknownErrorCodeV1(error.code)) {
+            // If creation settled before a later refusal, retry against the same Session start.
+            return targetUnavailable('session_start_refused', error.code, knownSession === null ? options.resumeStart : custody);
+        }
         return finish({ kind: 'uncertain', phase: effectPhase, session: knownSession }, { ...custody,
             state: { ...custody.state, uncertainPhase: effectPhase } });
     }
