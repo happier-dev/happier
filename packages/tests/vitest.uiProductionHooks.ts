@@ -171,7 +171,7 @@ export function createUiProductionHooksVitestConfig(): UserConfig {
       exclude: workspacePackages.map(({ packageName }) => packageName),
     },
     test: {
-      setupFiles: [uiDev('vitestSetup.ts')],
+      setupFiles: [resolve(packageRoot, 'src/testkit/vitest/setupNodeFetchCancellation.ts'), uiDev('vitestSetup.ts')],
       server: {
         deps: {
           // Production UI modules can reach React Navigation and Legend's React Native
