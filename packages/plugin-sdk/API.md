@@ -2678,6 +2678,7 @@
 | `./reviews` | `ReviewScmScopePathV1Schema` | value | daemon |
 | `./reviews` | `ReviewScmScopeV1` | type | daemon |
 | `./reviews` | `ReviewScmScopeV1Schema` | value | daemon |
+| `./reviews` | `ReviewStartActionResultV1` | type | daemon |
 | `./reviews` | `ReviewStartInput` | type | daemon |
 | `./reviews` | `ReviewStartInputSchema` | value | daemon |
 | `./reviews` | `ScmPullRequestReviewScopeProductionV1` | type | daemon |
@@ -2698,11 +2699,14 @@
 | `./reviews` | `parseReviewFindingsV2` | value | daemon |
 | `./reviews` | `preflightReviewCommentPublicationRoutingV1` | value | any |
 | `./reviews` | `produceScmPullRequestReviewScope` | value | daemon |
+| `./reviews` | `readReviewStartActionResultV1` | value | daemon |
 | `./reviews` | `redactReviewCommentSensitiveText` | value | any |
 | `./reviews` | `renderReviewFindingsForVerifyV1` | value | daemon |
 | `./reviews` | `resolveReviewNarratorPolicy` | value | any |
 | `./reviews` | `reviewCommentPublicationEntryIsDiffLessV1` | value | any |
 | `./reviews` | `reviewCommentPublicationTargetMatchesV1` | value | any |
+| `./reviews` | `reviewReviewerIdsForStartV1` | value | daemon |
+| `./reviews` | `reviewReviewersForEngineIdsV1` | value | daemon |
 | `./reviews` | `validateReviewCommentPublicationClaimAgainstPlanV1` | value | any |
 | `./reviews` | `validateReviewCommentPublicationResultAgainstPlanV1` | value | any |
 | `./scm` | `GitFileLineage` | type | any |
