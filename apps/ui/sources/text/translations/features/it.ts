@@ -8898,7 +8898,7 @@ const machineDetailPageTranslations = { it: translated({
                     fresh: ({ name, machine }: { name: string; machine: string }) => `Gira in una nuova sandbox ${name} su ${machine}`,
                     kept: ({ name, machine }: { name: string; machine: string }) => `Gira nella sandbox ${name} conservata su ${machine}`,
                     directlyOnce: ({ machine }: { machine: string }) => `Gira direttamente su ${machine}, solo questa volta`,
-                    offline: ({ machine }: { machine: string }) => `${machine} è offline. La bozza resta; partirà quando ${machine} torna.`,
+                    offline: ({ machine }: { machine: string }) => `${machine} è offline. La bozza resta e partirà quando torna.`,
                     runDirectlyOnce: "Esegui direttamente questa volta",
                     rowDirectly: "viene eseguita direttamente",
                     rowFresh: ({ name }: { name: string }) => `nuova sandbox ${name}`,

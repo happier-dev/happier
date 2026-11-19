@@ -8784,7 +8784,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                     fresh: ({ name, machine }: { name: string; machine: string }) => `在 ${machine} 上的新 ${name} 沙盒中运行`,
                     kept: ({ name, machine }: { name: string; machine: string }) => `在 ${machine} 上保留的 ${name} 沙盒中运行`,
                     directlyOnce: ({ machine }: { machine: string }) => `仅这一次直接在 ${machine} 上运行`,
-                    offline: ({ machine }: { machine: string }) => `${machine} 已离线。草稿会保留；${machine} 恢复后开始运行。`,
+                    offline: ({ machine }: { machine: string }) => `${machine} 已离线。草稿会保留，恢复后开始运行。`,
                     runDirectlyOnce: "这次直接运行",
                     rowDirectly: "直接运行",
                     rowFresh: ({ name }: { name: string }) => `新的 ${name} 沙盒`,

@@ -7672,7 +7672,7 @@ export const ru: TranslationStructure = {
       title: 'Новая машина',
     },
     temporaryComputer: {
-      publishedTitle: 'Опубликованные временные компьютеры',
+      publishedTitle: 'Другой компьютер',
         title: 'Временный компьютер',
         teamAccess: {
           title: 'Ограниченный доступ к команде',
@@ -7722,8 +7722,8 @@ export const ru: TranslationStructure = {
         createNewPackage: 'Создать новый пакет',
         returnToEditing: 'Вернуться к редактированию',
         unavailable: {
-      rateLimited: 'Достигнут лимит запросов пакетов GitHub. Повторите попытку позже.',
-      rateLimitedUntil: ({ time }: { time: string }) => `Достигнут лимит запросов пакетов GitHub. Повторите попытку после ${time}.`,
+      rateLimited: 'Сейчас не удаётся проверить временные компьютеры. Повторите попытку позже.',
+      rateLimitedUntil: ({ time }: { time: string }) => `Сейчас не удаётся проверить временные компьютеры. Повторите попытку после ${time}.`,
             loading: 'Проверяем доступные пакеты…',
             notAvailable: 'Временные компьютеры недоступны в этом доме.',
             notPublished: 'Для этого дома ещё не опубликован проверенный пакет Happier Runner.',

@@ -8784,7 +8784,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                     fresh: ({ name, machine }: { name: string; machine: string }) => `在 ${machine} 上的新 ${name} 沙箱中執行`,
                     kept: ({ name, machine }: { name: string; machine: string }) => `在 ${machine} 上保留的 ${name} 沙箱中執行`,
                     directlyOnce: ({ machine }: { machine: string }) => `僅這一次直接在 ${machine} 上執行`,
-                    offline: ({ machine }: { machine: string }) => `${machine} 已離線。草稿會保留；${machine} 恢復後開始執行。`,
+                    offline: ({ machine }: { machine: string }) => `${machine} 已離線。草稿會保留，恢復後開始執行。`,
                     runDirectlyOnce: "這次直接執行",
                     rowDirectly: "直接執行",
                     rowFresh: ({ name }: { name: string }) => `新的 ${name} 沙盒`,

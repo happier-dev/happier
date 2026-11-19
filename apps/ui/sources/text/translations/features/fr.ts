@@ -8907,7 +8907,7 @@ const machineDetailPageTranslations = { fr: translated({
                     fresh: ({ name, machine }: { name: string; machine: string }) => `S’exécute dans un nouveau bac à sable ${name} sur ${machine}`,
                     kept: ({ name, machine }: { name: string; machine: string }) => `S’exécute dans le bac à sable ${name} conservé sur ${machine}`,
                     directlyOnce: ({ machine }: { machine: string }) => `S’exécute directement sur ${machine}, cette fois seulement`,
-                    offline: ({ machine }: { machine: string }) => `${machine} est hors ligne. Votre brouillon reste ; il s’exécutera quand ${machine} sera de retour.`,
+                    offline: ({ machine }: { machine: string }) => `${machine} est hors ligne. Votre brouillon reste et s’exécutera à son retour.`,
                     runDirectlyOnce: "Exécuter directement cette fois",
                     rowDirectly: "s’exécute directement",
                     rowFresh: ({ name }: { name: string }) => `nouveau bac à sable ${name}`,

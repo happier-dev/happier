@@ -8885,7 +8885,7 @@ const machineDetailPageTranslations = { pt: translated({
                     fresh: ({ name, machine }: { name: string; machine: string }) => `Roda num sandbox ${name} novo em ${machine}`,
                     kept: ({ name, machine }: { name: string; machine: string }) => `Roda no sandbox ${name} mantido em ${machine}`,
                     directlyOnce: ({ machine }: { machine: string }) => `Roda diretamente em ${machine}, só desta vez`,
-                    offline: ({ machine }: { machine: string }) => `${machine} está offline. O seu rascunho fica; corre quando ${machine} voltar.`,
+                    offline: ({ machine }: { machine: string }) => `${machine} está offline. O seu rascunho fica e corre quando voltar.`,
                     runDirectlyOnce: "Rodar diretamente desta vez",
                     rowDirectly: "roda diretamente",
                     rowFresh: ({ name }: { name: string }) => `novo sandbox ${name}`,

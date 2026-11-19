@@ -132,11 +132,10 @@ export function MachineSelectionRowAccessory<TMachine extends MachineDisplayRend
         props.onToggleFavorite?.(props.machine);
     }, [props]);
 
-    // With a hover-capable pointer the star stays out of the way until the person reaches the row (lab m-pick: no per-row star
-    // noise); a favorite keeps its filled star. Touch has no pointer to reach a row with, so it keeps the star.
+    // The star stays out of the way until the person reaches the row (lab m-pick: a row at rest is its status and check); a
+    // favorite keeps its filled star. Touch reaches a row through its focus: the list opens on the selected row.
     const rowState = React.useContext(SelectionListOptionStateContext);
-    const hoverCapable = useHoverCapablePrimaryPointer();
-    const reached = !hoverCapable || props.isFavorite || rowState === null || rowState.hovered || rowState.focused;
+    const reached = props.isFavorite || rowState === null || rowState.hovered || rowState.focused;
     const showFavoriteToggle = props.showFavoriteToggle && props.onToggleFavorite !== undefined && reached;
     const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
     const online = resolveMachinePickerPresence(props.machine, undefined, binding?.isCurrent() ? binding.scope : null).selectable;

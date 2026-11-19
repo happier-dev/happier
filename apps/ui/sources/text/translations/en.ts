@@ -9119,7 +9119,7 @@ const enNewSession = {
     title: 'New machine',
   },
   temporaryComputer: {
-    publishedTitle: 'Published temporary computers',
+    publishedTitle: 'Another computer',
     title: 'Temporary computer',
     subtitle: 'Prepare a verified Runner package for another computer.',
     continueLater: 'Continue later',
@@ -9173,8 +9173,8 @@ const enNewSession = {
     createNewPackage: 'Create a new package',
     returnToEditing: 'Return to editing',
     unavailable: {
-      rateLimited: 'GitHub’s package lookup limit has been reached. Try again later.',
-      rateLimitedUntil: ({ time }: { time: string }) => `GitHub’s package lookup limit has been reached. Try again after ${time}.`,
+      rateLimited: 'Can’t check for temporary computers right now. Try again later.',
+      rateLimitedUntil: ({ time }: { time: string }) => `Can’t check for temporary computers until ${time}.`,
       loading: 'Checking available packages…',
       notAvailable: 'Temporary computers aren’t available on this home.',
       notPublished:

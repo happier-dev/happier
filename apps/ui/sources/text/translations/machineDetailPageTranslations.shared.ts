@@ -75,7 +75,7 @@ export const english = {
                 fresh: ({ name, machine }: { name: string; machine: string }) => `Runs in a fresh ${name} sandbox on ${machine}`,
                 kept: ({ name, machine }: { name: string; machine: string }) => `Runs in the kept ${name} sandbox on ${machine}`,
                 directlyOnce: ({ machine }: { machine: string }) => `Runs directly on ${machine}, just this once`,
-                offline: ({ machine }: { machine: string }) => `${machine} is offline. Your draft stays; it runs once ${machine} is back.`,
+                offline: ({ machine }: { machine: string }) => `${machine} is offline. Your draft stays and runs when it’s back.`,
                 runDirectlyOnce: "Run directly this time",
                 rowDirectly: "runs directly",
                 rowFresh: ({ name }: { name: string }) => `fresh ${name} sandbox`,

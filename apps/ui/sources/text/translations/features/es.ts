@@ -8786,7 +8786,7 @@ const machineDetailPageTranslations = { es: translated({
                     fresh: ({ name, machine }: { name: string; machine: string }) => `Se ejecuta en un sandbox ${name} nuevo en ${machine}`,
                     kept: ({ name, machine }: { name: string; machine: string }) => `Se ejecuta en el sandbox ${name} conservado en ${machine}`,
                     directlyOnce: ({ machine }: { machine: string }) => `Se ejecuta directamente en ${machine}, solo esta vez`,
-                    offline: ({ machine }: { machine: string }) => `${machine} está sin conexión. Tu borrador se mantiene; se ejecutará cuando ${machine} vuelva.`,
+                    offline: ({ machine }: { machine: string }) => `${machine} está sin conexión. Tu borrador se mantiene y se ejecutará cuando vuelva.`,
                     runDirectlyOnce: "Ejecutar directamente esta vez",
                     rowDirectly: "se ejecuta directamente",
                     rowFresh: ({ name }: { name: string }) => `sandbox ${name} nuevo`,

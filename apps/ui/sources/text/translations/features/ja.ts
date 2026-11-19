@@ -8844,7 +8844,7 @@ const machineDetailPageTranslations = { ja: translated({
                     fresh: ({ name, machine }: { name: string; machine: string }) => `${machine} の新しい ${name} サンドボックスで実行`,
                     kept: ({ name, machine }: { name: string; machine: string }) => `${machine} の保持された ${name} サンドボックスで実行`,
                     directlyOnce: ({ machine }: { machine: string }) => `今回だけ ${machine} 上で直接実行`,
-                    offline: ({ machine }: { machine: string }) => `${machine} はオフラインです。下書きは残り、${machine} が戻ると実行されます。`,
+                    offline: ({ machine }: { machine: string }) => `${machine} はオフラインです。下書きは残り、戻ると実行されます。`,
                     runDirectlyOnce: "今回は直接実行",
                     rowDirectly: "直接実行",
                     rowFresh: ({ name }: { name: string }) => `新しい ${name} サンドボックス`,

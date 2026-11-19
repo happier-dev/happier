@@ -7633,7 +7633,7 @@ export const zhHans: TranslationStructure = {
       title: '新机器',
     },
     temporaryComputer: {
-      publishedTitle: '已发布的临时电脑',
+      publishedTitle: '另一台电脑',
       teamAccess: {
         title: '受限团队访问',
         off: '团队访问关闭',
@@ -7683,8 +7683,8 @@ export const zhHans: TranslationStructure = {
         createNewPackage: '创建新安装包',
         returnToEditing: '返回编辑',
         unavailable: {
-      rateLimited: '已达到 GitHub 软件包查询上限。请稍后重试。',
-      rateLimitedUntil: ({ time }: { time: string }) => `已达到 GitHub 软件包查询上限。请在 ${time} 之后重试。`,
+      rateLimited: '暂时无法检查临时电脑。请稍后重试。',
+      rateLimitedUntil: ({ time }: { time: string }) => `暂时无法检查临时电脑。请在 ${time} 之后重试。`,
             loading: '正在检查可用的安装包…',
             notAvailable: '此家庭暂不支持临时电脑。',
             notPublished: '此家庭尚未发布经过验证的 Happier Runner 安装包。',

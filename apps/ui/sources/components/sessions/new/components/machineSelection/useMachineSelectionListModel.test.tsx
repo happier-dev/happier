@@ -766,8 +766,10 @@ describe('useMachineSelectionListModel', () => {
     });
 
     it.each([
+        // A row at rest shows only its status and check (lab m-pick, L12 review D2); the star appears on the row the
+        // person reached (pointer or the focused row a touch list starts on) and on favorites.
         { pointer: 'mouse with a touchscreen', fine: true, idleStars: 0 },
-        { pointer: 'touch', fine: false, idleStars: 1 },
+        { pointer: 'touch', fine: false, idleStars: 0 },
     ])('keeps machine favorites reachable with a $pointer primary pointer', async ({ fine, idleStars }) => {
         const { Platform } = await import('react-native');
         const { renderScreen } = await import('@/dev/testkit');
@@ -1203,6 +1205,28 @@ describe('useMachineSelectionListModel', () => {
         section.action?.onPress();
         expect(retry).toHaveBeenCalledOnce();
         expect(rendered.getCurrent().selectedOptionId).toBe('temporary-computer:server-a:linux-x64');
+        await rendered.unmount();
+    });
+
+    it('says an unavailable Temporary computer nobody chose in one quiet line with Retry, not a disabled row', async () => {
+        const retry = vi.fn();
+        const rendered = await renderHook(() => useMachineSelectionListModel({
+            groups: [], selectedMachine: null, selectedServerId: 'server-a', recentMachines: [], favoriteMachines: [],
+            onSelectMachine: vi.fn(), onSelectScopedMachine: vi.fn(),
+            temporaryComputers: [{
+                serverId: 'server-a', artifactTarget: null, selected: false, workspace: null, disabled: true,
+                unavailableText: 'newSession.temporaryComputer.unavailable.rateLimited', onRetry: retry, onSelect: vi.fn(),
+            }],
+            showFavorites: true, showRecent: true, showSearch: true, showCliGlyphs: false, autoDetectCliGlyphs: false,
+        }));
+        const section = rendered.getCurrent().rootStep.sections.find((candidate) => candidate.id === 'temporary-computer');
+        if (section?.kind !== 'static') throw new Error('expected the Temporary computer section');
+        // Store's degraded catalog reads the same way (L12 review D3): the cause once, Retry beside it.
+        expect(section.options).toHaveLength(0);
+        expect(section.resultHint).toBe('newSession.temporaryComputer.unavailable.rateLimited');
+        section.action?.onPress();
+        expect(retry).toHaveBeenCalledOnce();
+        expect(rendered.getCurrent().selectedOptionId).toBeNull();
         await rendered.unmount();
     });
 

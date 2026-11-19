@@ -993,13 +993,20 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                     : {}),
             }
             : null;
+        // An unavailable offer nobody chose is not a choice: the section says why once, quietly, beside its Retry (the
+        // Store's degraded catalog reads the same way). A restored selection keeps its row so the draft still shows it.
+        const temporaryComputerNotice = temporaryComputers.length === 1 && temporaryComputers[0]!.disabled === true
+            && !temporaryComputers[0]!.selected
+            ? temporaryComputers[0]!.unavailableText ?? t('newSession.temporaryComputer.unavailable.unreachable')
+            : null;
         const temporaryComputerSection: SelectionListSectionDescriptor | null = temporaryComputers.length > 0
             ? {
                 kind: 'static',
                 id: 'temporary-computer',
                 title: t('newSession.temporaryComputer.publishedTitle'),
                 ...(temporaryComputerRetry ? { action: temporaryComputerRetry } : {}),
-                options: temporaryComputers.length === 1
+                ...(temporaryComputerNotice !== null ? { resultHint: temporaryComputerNotice } : {}),
+                options: temporaryComputerNotice !== null ? [] : temporaryComputers.length === 1
                     ? temporaryComputerOptions
                     : [{
                         id: 'temporary-computer',

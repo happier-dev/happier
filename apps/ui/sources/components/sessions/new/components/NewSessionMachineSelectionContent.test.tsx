@@ -175,6 +175,27 @@ describe('NewSessionMachineSelectionContent', () => {
         expect(props.rootStep.sections).toEqual([]);
     });
 
+    it('keeps a machine row to its status and check: no agent marks at rest (lab m-pick, L12 review D2)', async () => {
+        const { NewSessionMachineSelectionContent } = await import('./NewSessionMachineSelectionContent');
+        const machine = createMachine({ id: 'm-one' });
+        await renderScreen(<NewSessionMachineSelectionContent
+            groups={[{ serverId: 'server-a', serverName: 'Server A', loading: false, signedOut: false,
+                machines: [createScopedMachine(machine, { serverId: 'server-a', serverName: 'Server A' })] }]}
+            selectedMachine={machine}
+            selectedServerId="server-a"
+            recentMachines={[]}
+            favoriteMachines={[]}
+            onSelectMachine={() => {}}
+            onSelectScopedMachine={() => {}}
+            serverId="server-a"
+            maxHeight={400}
+        />);
+        const option = getOption(getSection(getLastSelectionList(), 'all'), 'm-one');
+        if (!React.isValidElement(option.rightAccessory)) throw new Error('expected the row accessory');
+        // The agents a machine has belong to its page and the Agent chip; the picker row never mounts their detection.
+        expect((option.rightAccessory.props as Readonly<{ showCliGlyphs: boolean }>).showCliGlyphs).toBe(false);
+    });
+
     it('leaves focus alone and draws page rows when the wizard lays the list out in its page', async () => {
         const { NewSessionMachineSelectionContent } = await import('./NewSessionMachineSelectionContent');
         const base = {

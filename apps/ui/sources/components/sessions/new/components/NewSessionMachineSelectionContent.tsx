@@ -149,7 +149,8 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
         showRecent: props.showRecent ?? true,
         disableOfflineMachines: props.disableOfflineMachines,
         showSearch: props.showSearch ?? true,
-        showCliGlyphs: props.showCliGlyphs ?? true,
+        // A picker row says its status and nothing more at rest (lab m-pick); the agents live on the machine's page.
+        showCliGlyphs: props.showCliGlyphs ?? false,
         autoDetectCliGlyphs: props.autoDetectCliGlyphs ?? true,
         favoriteGroupPlacement: 'afterRecent',
         testIdPrefix: props.testIdPrefix,

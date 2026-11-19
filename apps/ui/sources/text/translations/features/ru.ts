@@ -8922,7 +8922,7 @@ const machineDetailPageTranslations = { ru: translated({
                     fresh: ({ name, machine }: { name: string; machine: string }) => `Выполняется в новой песочнице ${name} на ${machine}`,
                     kept: ({ name, machine }: { name: string; machine: string }) => `Выполняется в сохранённой песочнице ${name} на ${machine}`,
                     directlyOnce: ({ machine }: { machine: string }) => `Выполняется прямо на ${machine}, только в этот раз`,
-                    offline: ({ machine }: { machine: string }) => `${machine} не в сети. Черновик сохранится; он запустится, когда ${machine} вернётся.`,
+                    offline: ({ machine }: { machine: string }) => `${machine} не в сети. Черновик сохранится и запустится, когда машина снова будет в сети.`,
                     runDirectlyOnce: "В этот раз запустить напрямую",
                     rowDirectly: "запускается напрямую",
                     rowFresh: ({ name }: { name: string }) => `новая песочница ${name}`,

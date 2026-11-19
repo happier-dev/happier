@@ -8902,7 +8902,7 @@ const machineDetailPageTranslations = { de: translated({
                     fresh: ({ name, machine }: { name: string; machine: string }) => `Läuft in einer neuen ${name}-Sandbox auf ${machine}`,
                     kept: ({ name, machine }: { name: string; machine: string }) => `Läuft in der behaltenen ${name}-Sandbox auf ${machine}`,
                     directlyOnce: ({ machine }: { machine: string }) => `Läuft direkt auf ${machine}, nur dieses Mal`,
-                    offline: ({ machine }: { machine: string }) => `${machine} ist offline. Dein Entwurf bleibt; er läuft, sobald ${machine} wieder da ist.`,
+                    offline: ({ machine }: { machine: string }) => `${machine} ist offline. Dein Entwurf bleibt und läuft, sobald er wieder da ist.`,
                     runDirectlyOnce: "Diesmal direkt ausführen",
                     rowDirectly: "läuft direkt",
                     rowFresh: ({ name }: { name: string }) => `neue ${name}-Sandbox`,

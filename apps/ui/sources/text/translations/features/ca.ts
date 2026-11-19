@@ -8891,7 +8891,7 @@ const machineDetailPageTranslations = { ca: translated({
                     fresh: ({ name, machine }: { name: string; machine: string }) => `S’executa en un sandbox ${name} nou a ${machine}`,
                     kept: ({ name, machine }: { name: string; machine: string }) => `S’executa al sandbox ${name} conservat a ${machine}`,
                     directlyOnce: ({ machine }: { machine: string }) => `S’executa directament a ${machine}, només aquesta vegada`,
-                    offline: ({ machine }: { machine: string }) => `${machine} està fora de línia. L’esborrany es manté; s’executarà quan ${machine} torni.`,
+                    offline: ({ machine }: { machine: string }) => `${machine} està fora de línia. L’esborrany es manté i s’executarà quan torni.`,
                     runDirectlyOnce: "Executa directament aquesta vegada",
                     rowDirectly: "s’executa directament",
                     rowFresh: ({ name }: { name: string }) => `sandbox ${name} nou`,

@@ -8921,7 +8921,7 @@ const machineDetailPageTranslations = { pl: translated({
                     fresh: ({ name, machine }: { name: string; machine: string }) => `Działa w nowej piaskownicy ${name} na ${machine}`,
                     kept: ({ name, machine }: { name: string; machine: string }) => `Działa w zachowanej piaskownicy ${name} na ${machine}`,
                     directlyOnce: ({ machine }: { machine: string }) => `Działa bezpośrednio na ${machine}, tylko tym razem`,
-                    offline: ({ machine }: { machine: string }) => `${machine} jest offline. Szkic zostaje; uruchomi się, gdy ${machine} wróci.`,
+                    offline: ({ machine }: { machine: string }) => `${machine} jest offline. Szkic zostaje i uruchomi się, gdy wróci.`,
                     runDirectlyOnce: "Uruchom tym razem bezpośrednio",
                     rowDirectly: "działa bezpośrednio",
                     rowFresh: ({ name }: { name: string }) => `nowa piaskownica ${name}`,
