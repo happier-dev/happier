@@ -12,6 +12,7 @@ import { readDocumentFocusReturnTarget } from '@/keyboard/focusReturn';
 import { MODAL_Z_INDEX, MODAL_Z_INDEX_STEP, SCREEN_OVERLAY_Z_INDEX } from '@/components/ui/overlays/overlayLayers';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { ModalContentIdProvider, useModalContentId } from './context/ModalContentIdContext';
+import { ModalCoveredProvider } from './context/ModalCoveredContext';
 
 const ModalContext = createContext<ModalContextValue | undefined>(undefined);
 // Consumers that only need presentation context must not receive titles,
@@ -361,8 +362,11 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
 
                         return null;
                     };
+                    // A dialog with another one in front of it is covered: its shell goes inert until the front one closes.
                     return <ModalContentIdProvider key={modal.id} id={modal.id}>
-                        {renderModal()}
+                        <ModalCoveredProvider covered={modal.visible && index < topVisibleIndex}>
+                            {renderModal()}
+                        </ModalCoveredProvider>
                     </ModalContentIdProvider>;
                     })}
                 </ModalContext.Provider>

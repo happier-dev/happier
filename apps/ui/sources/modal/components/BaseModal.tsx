@@ -10,6 +10,7 @@ import { requireReactDOM } from '@/utils/web/reactDomCjs';
 import { ModalPortalTargetProvider, useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import type { ModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
+import { useModalCovered } from '@/modal/context/ModalCoveredContext';
 import { t } from '@/text';
 import { createFloatingScrimWebStyle, FloatingScrim, useFloatingScrimFrost } from '@/components/ui/overlays/FloatingScrim';
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
@@ -149,6 +150,7 @@ export function BaseModal({
     } : null, [nativeViewportSize, placement, insets.bottom]);
     const baseZ = zIndexBase ?? MODAL_Z_INDEX;
     const inheritedWebPortalTarget = useModalPortalTarget();
+    const covered = useModalCovered();
     const [modalPortalTarget, setModalPortalTarget] = React.useState<HTMLElement | null>(null);
     const modalPortalHostRef = React.useRef<HTMLDivElement | null>(null);
     const radixDismissableLayer = React.useMemo(() => (isWeb ? requireRadixDismissableLayer() : null), []);
@@ -356,6 +358,8 @@ export function BaseModal({
                         role="dialog"
                         data-testid={testID}
                         data-happy-modal-layer=""
+                        // Behind another dialog: no focus, Tab containment or assistive technology until it closes.
+                        inert={covered || undefined}
                         aria-modal="true"
                         aria-label={modalAccessibilityLabel}
                         tabIndex={-1}
