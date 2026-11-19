@@ -657,6 +657,26 @@ describe('SessionAuthoringControls', () => {
     await selects.screen.unmount();
   });
 
+  // WF-ACCEPT-1119 item 7: on a step card the inherited "Machine default" Approval chip kept a border while
+  // "CLI settings" beside it read quiet. Every chip in the row is quiet while it inherits and bordered once changed.
+  it('draws an inherited Approval chip as quietly as its neighbours, and bordered with them once changed', async () => {
+    const { SelectionListFilterChip } = await import('@/components/ui/selectionList');
+    const fields = ['permissionMode', 'approvalProfileId'] as const;
+    const facts = { agentTargets: [directCapableClaude()] };
+    const inherited = await renderControls({ fields: [...fields], facts, values: baseValues(), inheritsUnsetValues: true });
+    expect(inherited.screen.getTextContent()).toContain('workflows.triggers.guided.profile.machineDefault');
+    // The chip is a memo component: the screen's query resolves it (a raw root query never matches).
+    expect(inherited.screen.findAllByType(SelectionListFilterChip)).toHaveLength(0);
+    await inherited.screen.unmount();
+
+    const changed = await renderControls({ fields: [...fields], facts, values: baseValues(), inheritsUnsetValues: true,
+      overriddenFields: new Set(fields), overriddenAccessibilityHint: 'Changed for this step' });
+    const bordered = changed.screen.findAllByType(SelectionListFilterChip);
+    expect(bordered).toHaveLength(2);
+    for (const chip of bordered) expect(chip.props.filter.accessibilityHint).toBe('Changed for this step');
+    await changed.screen.unmount();
+  });
+
   // WF-ACCEPT-1118B item 5 (lab round 1116b bhow-card): a workflow's unset Approval inherits the Machine's default, so
   // its select names that value, as a step's chip does; the composer's empty field keeps naming its field (QA-SHELL-1114 F3).
   it('names the inherited Machine default for an unset Approval where unset values inherit, and the field otherwise', async () => {

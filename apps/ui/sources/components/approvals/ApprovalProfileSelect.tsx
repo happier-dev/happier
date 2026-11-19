@@ -4,9 +4,9 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
-import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SessionAuthoringFieldSelectTrigger } from '@/components/sessions/authoring/controls/SessionAuthoringFieldSelectTrigger';
+import { SessionAuthoringChipTrigger } from '@/components/sessions/authoring/controls/SessionAuthoringChipTrigger';
 import type { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -138,6 +138,9 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
     layout?: 'stacked' | 'adaptive';
     /** An unset value inherits (a workflow step): its chip names the Machine default it inherits, quietly. */
     inherited?: boolean;
+    /** The chip presentation: set for this subject rather than inherited, so it is bordered and names its field. */
+    changed?: boolean;
+    changedAccessibilityHint?: string;
 }>) {
     const [open, setOpen] = React.useState(false);
     const machineDefault = props.machineDefault ?? null;
@@ -178,11 +181,12 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
             trigger={chip && props.presentation === 'selects' ? ({ toggle }) => <SessionAuthoringFieldSelectTrigger
                 anchorRef={selectAnchorRef} title={t('workflows.triggers.guided.profile.title')} label={chip.label}
                 open={open} disabled={disabled} onPress={toggle} testID={`${props.testID}-select`} />
-            : chip ? ({ toggle }) => <SelectionListFilterChip filter={{
-                id: props.testID, testID: `${props.testID}-chip`, label: t('workflows.triggers.guided.profile.title'),
-                valueLabel: chip.label, muted: !chip.chosen,
-                disabled, open: false, onOpenChange: next => { if (next) toggle(); }, renderPopoverContent: () => null,
-            }} /> : row ? ({ toggle }) => <Item testID={`${props.testID}-row`}
+            // The chip row's one trigger: quiet while inherited, bordered once changed (WF-ACCEPT-1119 item 7).
+            : chip ? ({ toggle }) => <SessionAuthoringChipTrigger title={t('workflows.triggers.guided.profile.title')}
+                label={chip.label} changed={props.changed === true}
+                {...(props.changed === true && props.changedAccessibilityHint !== undefined
+                    ? { accessibilityHint: props.changedAccessibilityHint } : {})}
+                open={open} disabled={disabled} onPress={toggle} testID={`${props.testID}-chip`} /> : row ? ({ toggle }) => <Item testID={`${props.testID}-row`}
                 title={t('workflows.triggers.guided.profile.title')} icon={props.icon} density="compact"
                 // The short choice ("Machine default", a profile's name) keeps the value beside its label; the menu names
                 // the Machine's own profile.

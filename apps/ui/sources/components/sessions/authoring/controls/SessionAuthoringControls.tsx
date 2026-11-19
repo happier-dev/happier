@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { ApprovalProfileSelect } from '@/components/approvals/ApprovalProfileSelect';
 import { resolveApprovalProfileMachineDefault, useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 
 import { usePopoverBoundaryRef } from '@/components/ui/popover/PopoverBoundary';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -23,7 +23,6 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Item } from '@/components/ui/lists/Item';
-import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { resolveRoleDisplayName } from '@/sync/domains/roles/roleCatalog';
 import { Typography } from '@/constants/Typography';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
@@ -47,9 +46,9 @@ import {
 import { SessionAuthoringConnectedServicesField } from './SessionAuthoringConnectedServicesField';
 import { SessionAuthoringCapabilitiesField } from './SessionAuthoringCapabilitiesField';
 import { useSessionAuthoringControls } from './useSessionAuthoringControls';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useSessionAuthoringEnginePicker } from './useSessionAuthoringEnginePicker';
 import { SessionAuthoringFieldSelectTrigger } from './SessionAuthoringFieldSelectTrigger';
+import { SESSION_AUTHORING_CHIP_HIT_REACH, SessionAuthoringChipTrigger, sessionAuthoringChipStyles } from './SessionAuthoringChipTrigger';
 import { PERMISSION_CONTROL_ICON } from '@/components/sessions/agentInput/definitions/createPermissionActionChip';
 import { Icon } from '@/components/ui/icons/Icon';
 
@@ -73,8 +72,6 @@ import { Icon } from '@/components/ui/icons/Icon';
  * A finger reaches the chips through the shared pressable's hit area; a wrapping chip row meets at its
  * gap rather than overlapping because the reach of each side is bounded by the free space.
  */
-/** Half the chip row's 8 px gap on every side: wrapped chips' hit areas meet, never overlap. */
-const AUTHORING_CHIP_HIT_REACH = 4;
 
 const styles = StyleSheet.create((theme) => ({
     root: {
@@ -89,33 +86,8 @@ const styles = StyleSheet.create((theme) => ({
     fields: {
         alignSelf: 'stretch',
     },
-    // The composer bar keeps its own denser variant; this is the same chip in
-    // the roomier authoring context, from the same theme tokens.
-    chip: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        borderRadius: Platform.select({ default: 16, android: 20 }),
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s6,
-        justifyContent: 'center',
-        gap: theme.space.s6,
-        // Reserved, so the changed state and the focus ring never move a neighbour.
-        borderWidth: 1,
-        borderColor: 'transparent',
-    },
-    /** A value set for this subject (not inherited): the chip carries its border. */
-    chipChanged: {
-        borderColor: theme.colors.border.strong,
-    },
     fieldTrigger: {
         alignSelf: 'stretch',
-    },
-    chipPressed: {
-        opacity: motionTokens.press.opacity,
-    },
-    chipText: {
-        ...Typography.variant('body', 'semiBold'),
-        color: theme.colors.composer.chipTint,
     },
     unavailableText: {
         ...Typography.variant('body'),
@@ -128,11 +100,6 @@ const styles = StyleSheet.create((theme) => ({
     fieldAnchor: {
         alignSelf: 'stretch',
         minWidth: 0,
-    },
-    /** Sized to its value but never past its column: a long value truncates inside the chip (C24). */
-    chipAnchor: {
-        alignSelf: 'flex-start',
-        maxWidth: '100%',
     },
     textInput: {
         ...Typography.default('regular'),
@@ -150,11 +117,11 @@ export function useSessionAuthoringChipRenderContext(
 ): AgentInputExtraActionChipRenderContext {
     const { theme } = useUnistyles();
     return React.useMemo(() => ({
-        chipStyle: (pressed: boolean) => [styles.chip, pressed ? styles.chipPressed : null],
+        chipStyle: (pressed: boolean) => [sessionAuthoringChipStyles.chip, pressed ? sessionAuthoringChipStyles.chipPressed : null],
         showLabel: true,
         iconColor: theme.colors.composer.chipTint,
-        textStyle: styles.chipText,
-        countTextStyle: styles.chipText,
+        textStyle: sessionAuthoringChipStyles.chipText,
+        countTextStyle: sessionAuthoringChipStyles.chipText,
         popoverAnchorRef,
     }), [popoverAnchorRef, theme.colors.composer.chipTint]);
 }
@@ -246,31 +213,25 @@ function SessionAuthoringOptionChip(props: Readonly<{
             </>
         );
     }
-    if (props.presentation === 'chips' && props.changed === true) {
-        // A value this subject sets is the canonical bordered chip, the one the header's Where and
-        // Triggers chips are, so the header line reads as one set (lab E1). Its chooser stays this
+    if (props.presentation === 'chips') {
+        // Quiet while inherited, the canonical bordered "Field: Value" chip once this subject sets it, so the row
+        // (a step card's foot, the header's Where and Triggers chips) reads as one set (lab E1). The chooser stays this
         // field's own picker, anchored to the chip.
         return (
             <>
-                <View ref={anchorRef} collapsable={false} style={styles.chipAnchor}>
-                    <SelectionListFilterChip
-                        filter={{
-                            id: props.controlId,
-                            testID: props.testID,
-                            label: props.title,
-                            valueLabel: currentLabel,
-                            // A changed value names its field ("Permissions: Read-only"), so it reads without its row.
-                            showLabel: true,
-                            ...(props.leading === undefined ? {} : { icon: props.leading }),
-                            ...(props.changedAccessibilityHint === undefined ? {} : { accessibilityHint: props.changedAccessibilityHint }),
-                            disabled: props.disabled === true,
-                            // The chip only asks to open; this field's own picker below is the chooser.
-                            open: false,
-                            onOpenChange: (next) => { if (next) setOpen(true); },
-                            renderPopoverContent: () => null,
-                        }}
-                    />
-                </View>
+                <SessionAuthoringChipTrigger
+                    anchorRef={anchorRef}
+                    title={props.title}
+                    label={currentLabel}
+                    {...(props.leading === undefined ? {} : { leading: props.leading })}
+                    changed={props.changed === true}
+                    {...(props.changed === true && props.changedAccessibilityHint !== undefined
+                        ? { accessibilityHint: props.changedAccessibilityHint } : {})}
+                    open={open}
+                    disabled={props.disabled === true}
+                    onPress={() => setOpen((current) => !current)}
+                    testID={props.testID}
+                />
                 {picker}
                 {openDemand}
             </>
@@ -282,7 +243,7 @@ function SessionAuthoringOptionChip(props: Readonly<{
             <View
                 ref={anchorRef}
                 collapsable={false}
-                style={props.presentation === 'fields' ? styles.fieldAnchor : styles.chipAnchor}
+                style={styles.fieldAnchor}
             >
                 <HappierPressable
                     testID={props.testID}
@@ -294,20 +255,12 @@ function SessionAuthoringOptionChip(props: Readonly<{
                     disabled={props.disabled === true}
                     expanded={open}
                     hasPopup="menu"
-                    hitReach={AUTHORING_CHIP_HIT_REACH}
+                    hitReach={SESSION_AUTHORING_CHIP_HIT_REACH}
                     onPress={() => setOpen((current) => !current)}
-                    style={(state) => props.presentation === 'fields'
-                        // The field box inside draws the ring.
-                        ? [styles.fieldTrigger, HAPPIER_FOCUS_RING_DELEGATED_STYLE]
-                        : [
-                            styles.chip,
-                            props.changed === true ? styles.chipChanged : null,
-                            state.pressed ? styles.chipPressed : null,
-                            focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
-                        ]}
+                    // The field box inside draws the ring.
+                    style={[styles.fieldTrigger, HAPPIER_FOCUS_RING_DELEGATED_STYLE]}
                 >
-                    {(state) => props.presentation === 'fields'
-                        ? renderDropdownItemTriggerRightElement({
+                    {(state) => renderDropdownItemTriggerRightElement({
                             leading: props.leading,
                             detail: currentLabel,
                             open,
@@ -317,16 +270,7 @@ function SessionAuthoringOptionChip(props: Readonly<{
                             ...(props.fieldSpan === undefined ? {} : { fieldSpan: props.fieldSpan }),
                             // The field box carries the keyboard focus ring.
                             field: resolveFieldBoxColors(theme, state.focused ? 'focused' : 'idle'),
-                        })
-                        : (
-                            <>
-                                {/* The value's identity mark leads the chip, as in every other presentation (lab dpRev `add`). */}
-                                {props.leading ?? null}
-                                <Text numberOfLines={1} style={styles.chipText}>
-                                    {currentLabel}
-                                </Text>
-                            </>
-                        )}
+                        })}
                 </HappierPressable>
             </View>
             {picker}
@@ -767,9 +711,9 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
             <HappierPressable testID={`${testIDPrefix}-${field}-reset`} accessibilityRole="button"
                 accessibilityLabel={`${title}: ${reset.label}`} disabled={props.disabled}
                 onPress={() => reset.onResetField(field)}
-                style={(state) => [styles.chip, state.pressed ? styles.chipPressed : null,
+                style={(state) => [sessionAuthoringChipStyles.chip, state.pressed ? sessionAuthoringChipStyles.chipPressed : null,
                     focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}>
-                <Text style={styles.chipText}>{reset.label}</Text>
+                <Text style={sessionAuthoringChipStyles.chipText}>{reset.label}</Text>
             </HappierPressable>
         </View>;
     };
@@ -810,6 +754,9 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                     // A host whose unset values inherit (a workflow, or a step with a way back to its workflow's) names the
                     // inherited default (WF-ACCEPT-1118B item 5).
                     {...(props.inheritsUnsetValues === true || props.resetOverride !== undefined ? { inherited: true } : {})}
+                    // Quiet while inherited and bordered once changed, as every chip in its row (WF-ACCEPT-1119 item 7).
+                    changed={isChanged('approvalProfileId')}
+                    {...(props.overriddenAccessibilityHint === undefined ? {} : { changedAccessibilityHint: props.overriddenAccessibilityHint })}
                     onChange={value => props.onChangeField('approvalProfileId', value)} disabled={props.disabled}
                     titleMeta={props.fieldMeta?.approvalProfileId} testID={`${testIDPrefix}-approvalProfileId`} />));
                 if (presentation !== 'chips' && field === 'profileId' && !props.values.profileId) return null;
@@ -913,13 +860,18 @@ export function SessionAuthoringApprovalProfileField(props: Readonly<{
     presentation?: SessionAuthoringControlsPresentation; titleMeta?: React.ReactNode; onChange: (value: string | null | undefined) => void;
     /** An unset value inherits its host's parent (a workflow step): the chip names the inherited Machine default. */
     inherited?: boolean;
+    /** Set for this subject rather than inherited (the `chips` presentation borders it). */
+    changed?: boolean;
+    changedAccessibilityHint?: string;
 }>) {
     const source = useApprovalProfiles(props.value, props.serverId ?? undefined, { demand: false, machineId: props.machineId });
     const machineDefault = React.useMemo(() => resolveApprovalProfileMachineDefault(source, props.machineId),
         [source.displayProfiles, source.machineApprovalProfiles, props.machineId]); // eslint-disable-line react-hooks/exhaustive-deps
     return <ApprovalProfileSelect mode="session" value={props.value} source={source} machineDefault={machineDefault}
         testID={props.testID} disabled={props.disabled} titleMeta={props.titleMeta} presentation={props.presentation}
-        {...(props.inherited === true ? { inherited: true } : {})} onChange={props.onChange} />;
+        {...(props.inherited === true ? { inherited: true } : {})} onChange={props.onChange}
+        {...(props.changed === true ? { changed: true } : {})}
+        {...(props.changedAccessibilityHint === undefined ? {} : { changedAccessibilityHint: props.changedAccessibilityHint })} />;
 }
 
 function sessionAuthoringUnavailableText(field: SessionAuthoringFieldId, reason: SessionAuthoringFieldUnavailableReason): string {
