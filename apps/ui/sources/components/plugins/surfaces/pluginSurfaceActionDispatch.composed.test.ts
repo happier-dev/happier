@@ -1190,6 +1190,18 @@ describe('action.invoke target occurrence through the real current-UI owner', ()
 });
 
 describe('cold mounted caller Actions through the executable dispatcher', () => {
+    async function publishManageMachine(serverId: string, machineId: string) {
+        const { createMachineFixture, createMachineListByServerIdFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const previous = getStorage().getState();
+        getStorage().setState({
+            machineListByServerId: { ...previous.machineListByServerId,
+                ...createMachineListByServerIdFixture([createMachineFixture({ id: machineId, isShared: false })], serverId) },
+            machineListStatusByServerId: { ...previous.machineListStatusByServerId, [serverId]: 'idle' },
+        });
+        onTestFinished(() => getStorage().setState({ machineListByServerId: previous.machineListByServerId,
+            machineListStatusByServerId: previous.machineListStatusByServerId }));
+    }
+
     it.each(['issueClose', 'issueReopen'] as const)('acquires an unprojected same-plugin source mutation before confirmation (%s)', async mutation => {
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
         const { GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } = await import('../../../../../../packages/plugins/scm-github/src/triage/contribution');
@@ -1201,6 +1213,7 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
         const identity = { pluginId: PLUGIN_MANIFEST.id, localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1[mutation] };
         const declaration = normalized.manifest.contributes.actions.find(action => action.id === identity.localId)!;
         const accountLifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier(rpcHomes.get('server-client-action')!.id));
+        await publishManageMachine(accountLifetime.scope.serverId, 'machine-1');
         const executionOrigin = { ...clientActionExecutionOrigin(identity.pluginId), materializationRef: {
             ...clientActionExecutionOrigin(identity.pluginId).materializationRef, machineId: 'machine-1' } };
         const action = PluginProjectedActionV2Schema.parse({ ...resolveDaemonTargetAction(identity),
@@ -1756,6 +1769,7 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
             TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/triage/src/actions/sessionLinksProtocol');
         const { testkitEntryRef, testkitLocator } = await import('../../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support');
         const lifetime = clientAccountLifetime();
+        if (placement === 'daemon') await publishManageMachine(lifetime.scope.serverId, CLIENT_ACTION_ORIGIN.materializationRef.machineId);
         const pluginId = 'happier.triage';
         const localId = TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1;
         // Real authoring, registration and invocation; the artifact loader is
