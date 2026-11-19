@@ -64,7 +64,7 @@ describe('buildSessionListRowViewModels', () => {
         expect(after[0]).not.toBe(before[0]);
         expect(after.slice(1).every((row, index) => row === before[index + 1])).toBe(true);
     });
-    it('binds the P5 row context: a group implies its Project and baseline, a shelf names them (U5)', () => {
+    it('binds row context without repeating the Project named by its leading mark', () => {
         const project = { serverId: 'home', projectKey: 'pk-happier' };
         const baseline = { id: 'ref-main', serverId: 'home', machineId: 'machine-a', rootPath: '/repo/happier', label: 'happier', createdAtMs: 1 };
         const grouped = { type: 'session', sessionId: 'ctx-row', serverId: 'home', groupKey: 'project:happier', groupKind: 'project', projectKey: project } satisfies SessionListIndexItem;
@@ -99,9 +99,9 @@ describe('buildSessionListRowViewModels', () => {
         // Inside its own Project group: the Agent leads, the Project is implied, the worktree's branch speaks.
         expect(inGroup?.rowContext).toMatchObject({ leadingMark: 'agent', project: null,
             checkout: { kind: 'branch', label: 'fix-remount' } });
-        // The shelf copy names its Project (no favicon is held yet, so the folder mark and name stand in).
-        expect(inShelf?.rowContext).toMatchObject({ leadingMark: 'projectWithAgent',
-            project: { label: 'happier', yieldsToFavicon: true }, checkout: { kind: 'branch', label: 'fix-remount' } });
+        // The shelf copy identifies its Project through the leading mark before its favicon arrives.
+        expect(inShelf?.rowContext).toMatchObject({ leadingMark: 'projectWithAgent', leadingMarkShowsProject: true,
+            project: null, checkout: { kind: 'branch', label: 'fix-remount' } });
         const faviconSource = { serverId: 'home', machineId: 'machine-a', workspacePath: '/repo/happier' };
         expect(inShelf?.rowContext).toHaveProperty('projectFaviconSource', faviconSource);
         expect(inGroup?.rowContext).toHaveProperty('projectFaviconSource', faviconSource);
