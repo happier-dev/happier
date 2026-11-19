@@ -7,6 +7,7 @@ import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1'
 
 import { useReviewFindingsModel } from './useReviewFindingsModel';
 import { ReviewFindingBody } from './ReviewFindingBody';
+import { ReviewFindingRow } from '@/components/sessions/reviews/findings/ReviewFindingRow';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -110,5 +111,41 @@ it('shows an edited current comment body beside its original finding evidence an
         await screen.update(<Finding comment={{ ...comment, body: '', finding: undefined }} />);
         expect(screen.findHostByTestId(`review-finding-body:${comment.id}`)).toBeNull();
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain('Current explanation after review.');
+    } finally { await screen.unmount(); }
+});
+
+it('keeps native finding replies readable from the shared comment window without a Session follow-up target', async () => {
+    const root = buildReviewCommentFixture({ id: 'native-thread-root', reviewId: 'review-thread', findingIdentity: 'a'.repeat(64),
+        finding: { id: 'engine-local', title: 'Threaded finding', summary: 'Root explanation', category: 'correctness', severity: 'high' } });
+    const first = buildReviewCommentFixture({ id: 'native-reply-first', reviewId: root.reviewId, threadId: root.threadId,
+        parentCommentId: root.id, body: 'First persisted reply', createdAt: 10 });
+    const nested = buildReviewCommentFixture({ id: 'native-reply-nested', reviewId: root.reviewId, threadId: root.threadId,
+        parentCommentId: first.id, body: 'Later nested reply', createdAt: 20 });
+    const other = buildReviewCommentFixture({ id: 'unrelated-reply', reviewId: root.reviewId, threadId: 'another-root',
+        parentCommentId: 'another-root', body: 'Unrelated thread content' });
+    function Finding({ comments }: { comments: readonly ReviewCommentV1[] }) {
+        const model = useReviewFindingsModel({ members: [], reviewerCount: 1,
+            record: { round: { reviewId: 'review-thread', roundOrdinal: 1, state: 'completed', reviewerIds: ['first'] }, comments },
+            scope: null, accountLifetime: null, serverId: null, sessionId: null, canAct: false, pending: {},
+            onDecideComment: async () => false });
+        return <>{model.rows.map(row => <ReviewFindingRow key={row.rowId} {...row} density="page" divided={false}
+            decisionDisabled={!row.decidable} decisionNote={null} onDecide={model.onDecide} pendingQuestion={null}
+            expanded onToggleExpanded={() => {}} onAsk={model.onAsk} />)}</>;
+    }
+    const screen = await renderScreen(<Finding comments={[nested, root, other, first]} />);
+    try {
+        const rendered = JSON.stringify(screen.tree.toJSON());
+        expect(rendered).toContain(first.body);
+        expect(rendered).toContain(nested.body);
+        expect(rendered.indexOf('First persisted reply')).toBeLessThan(rendered.indexOf('Later nested reply'));
+        expect(rendered).not.toContain(other.body);
+        expect(screen.findHostByTestId(`review-finding-ask-field:${root.id}`)).toBeNull();
+        await screen.update(<Finding comments={[root, { ...first, body: 'Edited persisted reply', serverRevision: 2 }, nested]} />);
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('Edited persisted reply');
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('First persisted reply');
+        await screen.update(<Finding comments={[root, { ...first, flags: { redacted: true }, serverRevision: 3 }, nested]} />);
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('First persisted reply');
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('Edited persisted reply');
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('Later nested reply');
     } finally { await screen.unmount(); }
 });

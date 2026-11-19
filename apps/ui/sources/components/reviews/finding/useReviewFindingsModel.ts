@@ -148,14 +148,27 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
     const [error, setError] = React.useState<string | null>(null);
     const [isApplying, setIsApplying] = React.useState(false);
     const threadEntriesByRowId = React.useMemo(() => {
-        const entriesByRowId = new Map<string, readonly ReviewFindingThreadEntryView[]>();
+        const entriesByRowId = new Map<string, ReviewFindingThreadEntryView[]>();
+        if (record) {
+            const rowByThreadId = new Map(sealedRows.map(row => [row.comment.threadId, row]));
+            for (const comment of record.comments) {
+                if (!comment.parentCommentId) continue;
+                const row = rowByThreadId.get(comment.threadId);
+                if (!row) continue;
+                const entries = entriesByRowId.get(row.rowId) ?? [];
+                entries.push({ kind: 'comment', threadId: comment.threadId, generatedAtMs: comment.createdAt, comment });
+                entriesByRowId.set(row.rowId, entries);
+            }
+            for (const entries of entriesByRowId.values()) entries.sort((left, right) => left.generatedAtMs - right.generatedAtMs);
+            return entriesByRowId;
+        }
         for (const row of rows) {
             const entries = row.sources.flatMap((source) => (source.member.threadsByFindingId[source.finding.id] ?? [])
                 .map((entry) => ({ ...entry, reviewerLabel: source.member.reviewerLabel })));
             if (entries.length > 0) entriesByRowId.set(row.rowId, entries.sort((left, right) => left.generatedAtMs - right.generatedAtMs));
         }
         return entriesByRowId;
-    }, [rows]);
+    }, [record, rows, sealedRows]);
 
     // A question's pending echo gives way once its answer has arrived in the thread.
     const threadCountByRowIdRef = React.useRef<Readonly<Record<string, number>>>({});
@@ -335,7 +348,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             decidable: true, reviewers,
             attribution: reviewers.length > 1 ? { label: formatReviewerSet(reviewers.map(reviewer => reviewer.label)),
                 backendIds: reviewers.map(reviewer => reviewer.backendId).filter(Boolean) } : null,
-            original: null, followUp: null, threadEntries: EMPTY_THREAD, askContext: null,
+            original: null, followUp: null, threadEntries: threadEntriesByRowId.get(row.rowId) ?? EMPTY_THREAD, askContext: null,
             appearance: projectReviewFindingRoundStatusV1(row.comment, record.round),
         };
     }) : rows.map(row => {

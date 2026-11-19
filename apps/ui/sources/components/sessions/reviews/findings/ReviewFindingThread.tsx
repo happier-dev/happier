@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 import { MarkdownView } from '@/components/markdown/MarkdownView';
@@ -10,6 +11,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { resolveReviewCommentBodyPromptDefault } from '@/components/reviews/content';
 
 import type { ReviewFindingThreadEntry } from '@/components/sessions/reviews/messages/resolveEffectiveReviewFindings';
 import {
@@ -21,7 +23,31 @@ import { useStructuredFindState, StructuredFindText } from '@/components/session
 import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
 
 /** One question about a finding with the answer of the reviewer it went to. */
-export type ReviewFindingThreadEntryView = ReviewFindingThreadEntry & Readonly<{ reviewerLabel: string }>;
+export type ReviewFindingCommentThreadEntryView = Readonly<{
+    kind: 'comment';
+    threadId: string;
+    generatedAtMs: number;
+    comment: ReviewCommentV1;
+}>;
+export type ReviewFindingThreadEntryView =
+    | (ReviewFindingThreadEntry & Readonly<{ kind?: 'follow_up'; reviewerLabel: string }>)
+    | ReviewFindingCommentThreadEntryView;
+
+/** A persisted comment is one reply, without inventing a reviewer question/answer pair. */
+export function ReviewFindingCommentReply(props: Readonly<{ entry: ReviewFindingCommentThreadEntryView; findBlockPrefix?: string }>) {
+    const { comment } = props.entry;
+    const redacted = comment.flags.redacted || Boolean(comment.tombstone);
+    const body = redacted ? undefined : resolveReviewCommentBodyPromptDefault(comment.body);
+    const find = useStructuredFindState();
+    return (
+        <View testID={`review-finding-comment:${comment.id}`} style={styles.entry}>
+            {body !== undefined ? <MarkdownView markdown={body} textStyle={styles.answerText}
+                findSourceRanges={find.ranges(`${props.findBlockPrefix}:comment:${comment.id}`)} findActive={find.findActive} />
+                : <Text style={styles.answerText}>{t(redacted
+                    ? 'files.reviewComments.durable.redacted' : 'files.reviewComments.durable.contentUnavailable')}</Text>}
+        </View>
+    );
+}
 
 /** Where a finding's questions are composed and who they go to. */
 export type ReviewFindingAskContext = Readonly<{
@@ -88,7 +114,9 @@ export function ReviewFindingThreadEntries(props: Readonly<{
     const find = useStructuredFindState();
     return (
         <>
-            {props.entries.map((entry, index) => (
+            {props.entries.map((entry, index) => entry.kind === 'comment' ? (
+                <ReviewFindingCommentReply key={entry.comment.id} entry={entry} findBlockPrefix={props.findBlockPrefix} />
+            ) : (
                 <View key={`${entry.threadId}:${entry.generatedAtMs}:${index}`} style={styles.entry}>
                     <View style={styles.question}>
                         <MarkdownView markdown={entry.requestMarkdown} textStyle={styles.questionText} findSourceRanges={find.ranges(`${props.findBlockPrefix}:thread:${entry.threadId}:${entry.generatedAtMs}:${index}:request`)} findActive={find.findActive} />

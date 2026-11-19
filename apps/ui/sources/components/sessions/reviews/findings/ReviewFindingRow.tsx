@@ -18,6 +18,7 @@ import { ReviewFindingBody, type ReviewFindingReviewer } from '@/components/revi
 import {
     ReviewFindingThread,
     ReviewFindingThreadEntries,
+    ReviewFindingCommentReply,
     type ReviewFindingAskContext,
     type ReviewFindingThreadEntryView,
 } from '@/components/sessions/reviews/findings/ReviewFindingThread';
@@ -337,7 +338,9 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
 function ReviewFindingThreadHistory(props: Readonly<{ entries: readonly ReviewFindingThreadEntryView[]; findBlockPrefix?: string }>) {
     return (
         <View style={styles.history}>
-            {props.entries.map((entry, index) => (
+            {props.entries.map((entry, index) => entry.kind === 'comment' ? (
+                <ReviewFindingCommentReply key={entry.comment.id} entry={entry} findBlockPrefix={props.findBlockPrefix} />
+            ) : (
                 <View key={`${entry.threadId}:${index}`} style={styles.historyEntry}>
                     <StructuredFindText blockId={`${props.findBlockPrefix}:thread:${entry.threadId}:${entry.generatedAtMs}:${index}:request`} text={entry.requestMarkdown} style={styles.summary} />
                     <StructuredFindText blockId={`${props.findBlockPrefix}:thread:${entry.threadId}:${entry.generatedAtMs}:${index}:reviewer`} text={entry.reviewerLabel} style={styles.historyAuthor} />
