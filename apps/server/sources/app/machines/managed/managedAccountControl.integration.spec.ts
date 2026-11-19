@@ -30,6 +30,8 @@ import { admitManagedInstallationPurpose } from './managedInstallation';
 import { resolveManagedGuestActivityAdmissionInTx } from './managedGuestActivity';
 import { readMachineDevcontainerWorkspaceSyncEndpointInTx } from './managedRows';
 import { admitManagedControl, reportManagedIntent } from './managedMutations';
+import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
+import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { managedMachineActionEndpointPathV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isOriginalTerminalExecutionAction, resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
@@ -76,11 +78,32 @@ describe('Account-owned managed control without a controller', () => {
         return { owner, other, guest, controller, row, resource };
     }
 
-    it('withdraws enrolled guest presence when a managed stop is confirmed', async () => {
-        const test = await createRetainedGuestFixture(false);
+    it.each([true, false])('withdraws four enrolled guest Session publishers on confirmed Stop (Machine active: %s)', async machineActive => {
+        const test = await createRetainedGuestFixture(true);
         const requestId = randomUUID();
-        const controller = { machineId: test.guest.id, installationId: test.guest.installationId! };
-        await db.machine.update({ where: { id: test.guest.id }, data: { active: true, lastActiveAt: new Date(1000) } });
+        const controller = test.controller!;
+        const presence = createSessionPublisherPresence();
+        async function publishSession(accountId: string, machineId: string) {
+            const session = await db.session.create({ data: { accountId, tag: randomUUID(),
+                metadata: '{}', encryptionMode: 'plain' } });
+            for (const targetMachineId of new Set([test.guest.id, machineId])) {
+                expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId,
+                    sessionId: session.id, machineId: targetMachineId, data: 'fixture-key' }))).toMatchObject({ ok: true });
+            }
+            const socket = { data: {} };
+            expect(await presence.registerPublisher({ socket, binding: { accountId, machineId, sessionId: session.id },
+                completeActivitySnapshot: { state: 'idle', activeCount: 0 } })).toMatchObject({ status: 'registered' });
+            return session.id;
+        }
+        const stoppedSessionIds = [];
+        for (const accountId of [test.owner.id, test.owner.id, test.owner.id, test.other.id]) {
+            stoppedSessionIds.push(await publishSession(accountId, test.guest.id));
+        }
+        // A historical key on the guest must not retire a publisher placed on the controller.
+        const controllerSessionId = await publishSession(test.owner.id, controller.machineId);
+        const activeGuestPublishers = () => db.session.count({ where: { id: { in: stoppedSessionIds }, active: true } });
+        expect(await activeGuestPublishers()).toBe(4);
+        await db.machine.update({ where: { id: test.guest.id }, data: { active: machineActive, lastActiveAt: new Date() } });
         await db.managedMachine.update({ where: { id: test.row.id }, data: {
             enrolledMachineId: test.guest.id, desired: 'stop', desiredWhen: 'now',
             admittedInput: { enrollmentAccountId: test.owner.id, submittedEffect: {
@@ -91,10 +114,13 @@ describe('Account-owned managed control without a controller', () => {
 
         const reported = await reportManagedIntent({ homeId, managedId: test.row.id,
             expectedIntentRevision: test.row.intentRevision, requestId, controller,
-            result: { kind: 'confirmed' }, observation: { observedAt: 2000, availability: 'present', power: 'stopped' } });
+            result: { kind: 'confirmed' }, observation: { observedAt: Date.now(), availability: 'present', power: 'stopped' } });
 
         expect(reported.machine.observation).toMatchObject({ availability: 'present', power: 'stopped' });
         expect(await db.machine.findUniqueOrThrow({ where: { id: test.guest.id }, select: { active: true } })).toEqual({ active: false });
+        expect(await activeGuestPublishers()).toBe(0);
+        expect(await db.session.findUniqueOrThrow({ where: { id: controllerSessionId }, select: { active: true } }))
+            .toEqual({ active: true });
     });
 
     it.each([false, true])('keeps a container workspace on the admitted guest without a host-root alias (controller present=%s)', async withController => {
