@@ -33,6 +33,10 @@ function alertTemplateMutationFailure(error: unknown): void {
   Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('promptLibrary.saveError')));
 }
 
+function alertRejectedTemplateReceipt(status: Exclude<ReturnType<typeof PromptInvocationUpdateOutputSchema.parse>['status'], 'updated'>): void {
+  Modal.alert(t('common.error'), status === 'conflict' ? t('approvals.conflictFailure') : t('promptLibrary.saveError'));
+}
+
 /**
  * A slash template's editor in the Templates collection: a saved template (`invocationId`) or the
  * new-template draft (`null`). Saving a draft opens the saved template in its place.
@@ -202,8 +206,11 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
         return false;
       }
       const receipt = (props.invocationId ? PromptInvocationUpdateOutputSchema : PromptInvocationCreateOutputSchema).parse(result.result);
-      if (receipt.status !== 'updated') throw new Error(receipt.status);
       if (!isActionCurrent()) return false;
+      if (receipt.status !== 'updated') {
+        alertRejectedTemplateReceipt(receipt.status);
+        return false;
+      }
       setPristineTitle(fields.title);
       setPristineToken(receipt.token);
       setPristineTargetArtifactId(fields.target.artifactId);
@@ -252,8 +259,11 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
         return;
       }
       const receipt = PromptInvocationDeleteOutputSchema.parse(result.result);
-      if (receipt.status !== 'updated') throw new Error(receipt.status);
       if (!isActionCurrent()) return;
+      if (receipt.status !== 'updated') {
+        alertRejectedTemplateReceipt(receipt.status);
+        return;
+      }
       discard();
       leave();
     } catch (error) {

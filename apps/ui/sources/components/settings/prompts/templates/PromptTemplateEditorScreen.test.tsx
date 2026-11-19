@@ -3,8 +3,10 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { clearActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { createPlainPromptLibraryCatalogHomeFixture } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import {
     installPromptTemplatesCommonModuleMocks,
     promptTemplatesRouterBackSpy,
@@ -17,6 +19,7 @@ const promptTemplatesRouterReplaceSpy = vi.hoisted(() => vi.fn());
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let catalog: Awaited<ReturnType<typeof createPlainPromptLibraryCatalogHomeFixture>>;
+const catalogHomeUrl = 'https://template-catalog.test';
 
 installPromptTemplatesCommonModuleMocks({
     reactNative: async () => {
@@ -148,7 +151,7 @@ describe('PromptTemplateEditorScreen', () => {
         promptTemplatesRouterPushSpy.mockClear();
         promptTemplatesRouterBackSpy.mockClear();
         promptTemplatesRouterReplaceSpy.mockClear();
-        catalog = await createPlainPromptLibraryCatalogHomeFixture('https://template-catalog.test', {
+        catalog = await createPlainPromptLibraryCatalogHomeFixture(catalogHomeUrl, {
             key: 'invocations', value: { v: 1, entries: [] },
         });
         onTestFinished(catalog.dispose);
@@ -247,7 +250,7 @@ describe('PromptTemplateEditorScreen', () => {
         expect(promptTemplatesRouterReplaceSpy).not.toHaveBeenCalled();
     });
 
-    it('edits through the captured revision and lets the Action waiver own deletion confirmation', async () => {
+    it.each(['current', 'changed'] as const)('edits through the captured template revision when the saved template is %s', async state => {
         const scope = storage.getState().settingsScope;
         if (!scope) throw new Error('Missing admitted template Account');
         const { writePromptLibraryRecord } = await import('@/sync/api/account/apiPromptLibraryCatalog');
@@ -259,10 +262,33 @@ describe('PromptTemplateEditorScreen', () => {
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.confirm).mockClear();
         vi.mocked(Modal.show).mockClear();
+        vi.mocked(Modal.alert).mockClear();
         const { PromptTemplateEditorScreen } = await import('./PromptTemplateEditorScreen');
         const screen = await renderScreen(<PromptTemplateEditorScreen invocationId="saved" />);
         await act(async () => { screen.changeTextByTestId('promptTemplate.title', 'Weekly'); });
+        if (state === 'changed') {
+            const current = catalog.read();
+            if (current.record.key !== 'invocations') throw new Error('Wrong template catalog fixture');
+            const competingRecord = { ...current.record, value: {
+                ...current.record.value,
+                entries: current.record.value.entries.map(entry => ({ ...entry, title: 'Other client' })),
+            } };
+            // A second client writes at the Home without updating this client's catalog projection.
+            const response = await runtimeFetch(new URL(`${PROMPT_LIBRARY_ROWS_ROUTE_V1}/invocations`, catalogHomeUrl), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ expectedRevision: current.revision, content: { t: 'plain', v: competingRecord } }),
+            });
+            expect(await response.json()).toMatchObject({ status: 'updated', revision: 6 });
+        }
         await screen.pressByTestIdAsync('promptTemplate.save');
+        if (state === 'changed') {
+            await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', 'approvals.conflictFailure'));
+            expect(catalog.read().record.value).toMatchObject({ entries: [{ id: 'saved', title: 'Other client' }] });
+            expect(catalog.read().revision).toBe(6);
+            expect(screen.findByTestId('promptTemplate.title')?.props.value).toBe('Weekly');
+            return;
+        }
         await vi.waitFor(() => expect(catalog.read().record.value).toMatchObject({ entries: [{ id: 'saved', title: 'Weekly',
             availableIn: 'session_only', target: { serverId: scope.serverId } }] }));
         expect(catalog.mutations).toEqual([{ key: 'invocations', expectedRevision: 5 }]);
