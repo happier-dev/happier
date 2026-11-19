@@ -2219,6 +2219,11 @@ runtime Link before creation. For a new repository-free Project, the Environment
 calls the ordinary Source creator at apply time. A later Environment refusal
 rolls both records back; there is no early Project write or separate Store writer.
 
+In 0.3 development, Deploy an app reads the selected catalog item's declared
+Domains with its template pin. Configure collects the addresses before Review
+and sends them as `domainBindings` to the same template preparation. Preparation
+refuses a missing required address for every caller.
+
 Environment template provenance retains each database by its Compose service when
 another template is added. Data overview and detail pages read that inventory;
 pre-migration backups select the database named by the saved dump source. The

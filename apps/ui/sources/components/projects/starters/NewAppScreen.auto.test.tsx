@@ -395,7 +395,7 @@ it('a catalog-app card continues in this dialog on Where for that app, not in th
   }
 });
 
-it('a catalog app picked by hand takes the same path as a suggested one: Where inside this dialog, never the Store listing (journey-deploy catWhere, D3)', async () => {
+it('a catalog app picked by hand stays in this dialog and Configure uses its catalog address declaration', async () => {
   const digest = `sha256:${'b'.repeat(64)}`;
   const summary = { sourceId: 'app', kind: 'app', itemId: 'activepieces', title: 'Activepieces', version: digest };
   const reads: unknown[] = [];
@@ -405,7 +405,8 @@ it('a catalog app picked by hand takes the same path as a suggested one: Where i
         reads.push(input);
         return { item: { summary, fetchedAt: 1, payload: { kind: 'app', state: 'ready', ref: { kind: 'content', digest },
           app: { schemaVersion: 1, title: 'Activepieces', compose: { document: 'services:\n  web:\n    image: activepieces/activepieces\n', profiles: [], services: ['web'] },
-            variables: [], generatedSecrets: [], domains: [], volumes: [] } } } };
+            variables: [], generatedSecrets: [],
+            domains: [{ key: 'public', service: 'web', containerPort: 80, protocol: 'http', required: true }], volumes: [] } } } };
       }
       const kind = (input as { kind: string }).kind;
       return { pages: [{ sourceId: kind, status: { state: 'ok', fetchedAt: 1 }, nextCursor: null, items: kind === 'app' ? [summary] : [] }] };
@@ -413,6 +414,12 @@ it('a catalog app picked by hand takes the same path as a suggested one: Where i
   });
   const { fixture, screen, onClose } = await openDescribe('manual-catalog-where');
   try {
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const scope = storage.getState().settingsScope;
+    if (!scope) throw new Error('Expected admitted Home Account');
+    await publishMachineInventoryForTest(scope, [createMachineFixture({ id: 'devbox', installationId: 'devbox-installation', activeAt: Date.now() })]);
     routerMock.spies.push.mockClear();
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.catalog.activepieces')).toBeTruthy());
     await screen.pressByTestIdAsync('newApp.catalog.activepieces');
@@ -425,6 +432,12 @@ it('a catalog app picked by hand takes the same path as a suggested one: Where i
     const { FieldValue } = await import('@/components/ui/lists/FieldRow');
     const sourceValues = screen.findAllByType(FieldValue).map((node) => [node.props.value, node.props.note]);
     expect(sourceValues).toContainEqual(['Activepieces', expect.any(String)]);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft.continue')?.props.disabled).toBe(false));
+    const readCount = reads.length;
+    await screen.pressByTestIdAsync('project-deployments.draft.continue');
+    expect(screen.findByTestId('project-deployments.draft.domain.public')).not.toBeNull();
+    expect(screen.findByTestId('project-deployments.draft.review')?.props.disabled).toBe(true);
+    expect(reads).toHaveLength(readCount);
     await screen.unmount();
   } finally {
     await standardCleanup();

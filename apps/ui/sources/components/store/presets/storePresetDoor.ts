@@ -7,12 +7,17 @@ import { containsMachineSetupItem } from '@/components/settings/machines/managed
 /** What a Store listing can hand to a preset: one App or Software item, never a Setup recipe. */
 export type StorePresetDoorItem = Exclude<MachinePresetItemV1, { kind: 'setupRecipe' }>;
 
-/** Only an admitted ready App supplies an exact pin; an unmapped listing cannot join a preset. */
-export function readStoreAppTemplateRef(item: RegistryItemV1): DeploymentTemplateRefV1 | null {
+/** Only an admitted ready App supplies a template and its exact pin. */
+export function readStoreAppTemplate(item: RegistryItemV1) {
     if (item.payload.kind !== 'app' || item.payload.state !== 'ready') return null;
-    return { sourceId: item.summary.sourceId, itemId: item.summary.itemId,
+    const templateRef: DeploymentTemplateRefV1 = { sourceId: item.summary.sourceId, itemId: item.summary.itemId,
         // Registry admission requires an App summary version identifying this payload ref.
         version: item.summary.version!, ref: item.payload.ref };
+    return { templateRef, app: item.payload.app };
+}
+
+export function readStoreAppTemplateRef(item: RegistryItemV1): DeploymentTemplateRefV1 | null {
+    return readStoreAppTemplate(item)?.templateRef ?? null;
 }
 
 /** Both App doors keep the same inert new-Project intent and exact catalog selection. */

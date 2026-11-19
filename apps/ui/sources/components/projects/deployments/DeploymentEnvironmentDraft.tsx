@@ -14,6 +14,7 @@ import { DeploymentProjectChoiceGroups, type DeploymentProjectChoiceModel } from
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentEnvironmentCopyChoicesV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentCopyV1';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
+import type { DeploymentTemplateV1 } from '@happier-dev/protocol/registries';
 import { environmentSecretBindingIdentityV1, projectEnvironmentSecretBindingIdentityV1, type DeploymentTemplateRefV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -60,6 +61,7 @@ import { DeploymentManagedDataProvisionEditor, type ManagedDataProvisionDraft } 
 
 import type { createDeploymentActions } from './deploymentActions';
 import { DeploymentDeployerFields } from './DeploymentDeployerFields';
+import { DeploymentTemplateDomainRows, projectDeploymentTemplateDomainChoices } from './DeploymentTemplateDomainRows';
 import { useDeployHostReadiness } from './EnvironmentMachineChoice';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { MachineSetupPlanReview, describeMachineSetupPlanFailure, describeMachineSetupReviewUnavailable } from '@/components/settings/machines/managed/MachineSetupPlanReview';
@@ -136,8 +138,8 @@ export const DeploymentEnvironmentDraft = React.memo(
       copyFrom?: DeploymentEnvironmentDetailV1 | null;
       /** A door that names what it starts from (Store → Apps): a stored definition, in any Project. */
       definitionKind?: 'compose' | 'image' | null;
-      /** A catalog app (Deploy an app → From the catalog): its exact registry pin is what runs, in any Project. */
-      catalogApp?: Readonly<{ templateRef: DeploymentTemplateRefV1; title: string }> | null;
+      /** The exact registry App pin and its declared addresses. */
+      catalogApp?: Readonly<{ templateRef: DeploymentTemplateRefV1; title: string; domains: Readonly<DeploymentTemplateV1['domains']> }> | null;
       /** Where a door already chose (a suggested platform); the recommendation owner still decides what is offered. */
       initialTargetKey?: string | null;
       onApprovalRequested: (artifactId: string) => void;
@@ -175,6 +177,11 @@ export const DeploymentEnvironmentDraft = React.memo(
     const [formStep, setFormStep] = React.useState<'where' | 'configure'>('where');
     const [moreOpen, setMoreOpen] = React.useState(false);
     const [configureVisited, setConfigureVisited] = React.useState(false);
+    const [domainHostnames, setDomainHostnames] = React.useState<Readonly<Record<string, string>>>({});
+    const catalogDomains = props.catalogApp?.domains;
+    const domainChoices = React.useMemo(() => catalogDomains
+      ? projectDeploymentTemplateDomainChoices(catalogDomains, domainHostnames)
+      : null, [catalogDomains, domainHostnames]);
     const [copyChoices, setCopyChoices] = React.useState(() => props.copyFrom ? initialCopyChoices(props.copyFrom) : null);
     const [provisionDrafts, setProvisionDrafts] = React.useState<Readonly<Record<string, ManagedDataProvisionDraft | null>>>({});
     const onProvisionDraftChange = React.useCallback((targetLinkId: string, draft: ManagedDataProvisionDraft | null) => {
@@ -286,7 +293,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     const reusableBindings = copyChoices?.secrets.filter(choice => choice.kind !== 'omit' && choice.binding.purpose === 'variable')
       .map(choice => choice.binding) ?? [];
     const valid =
-      configure.name.status === 'valid' && (!props.projectChoice || projectSelection != null) &&
+      configure.name.status === 'valid' && (!props.projectChoice || projectSelection != null) && !domainChoices?.missingRequired &&
       (copyChoices?.data.every(choice => choice.kind === 'createEmpty' ? provisionDrafts[choice.targetLinkId] != null
         : choice.kind !== 'reuse' || Boolean(choice.bindings?.length && choice.bindings.every(binding =>
           reusableBindings.some(eligible => environmentSecretBindingIdentityV1(eligible) === environmentSecretBindingIdentityV1(binding))))) ?? true) &&
@@ -305,7 +312,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     React.useEffect(() => {
       setPrepared(null);
       answerStepConfirmation(false);
-    }, [answerStepConfirmation, projectSelection, name, chosen?.id, branch, composePath, composeDocument, imageName, imagePort, storedDefinition, production, deployerMode, deployerPrincipals, retention, onPlatform, copyChoices, platformProvider, provisionDrafts]);
+    }, [answerStepConfirmation, projectSelection, name, chosen?.id, branch, composePath, composeDocument, imageName, imagePort, storedDefinition, domainChoices, production, deployerMode, deployerPrincipals, retention, onPlatform, copyChoices, platformProvider, provisionDrafts]);
     const machineName = (machineId: string) => {
       const machine = (allMachines ?? []).find((entry) => entry.id === machineId);
       return machine ? getMachineDisplayName(machine, allMachines ?? []) : t('approvals.machineNotKnown');
@@ -345,6 +352,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               from: 'repository', ref: branch!,
               compose: { path: composePath.trim(), profiles: [], services: [] },
             } }),
+            ...(domainChoices?.bindings.length ? { domainBindings: domainChoices.bindings } : {}),
             protection: production ? 'production' : 'nonProduction',
             purpose: 'standard',
             deployerMode,
@@ -810,8 +818,12 @@ export const DeploymentEnvironmentDraft = React.memo(
               : t('projects.deployments.whatRunsDescription')}
           >
             {props.copyFrom ? <Item title={deploymentDefinitionLabel(props.copyFrom.content) ?? t('projects.deployments.whatRunsTitle')}
-              subtitle={props.copyFrom.content.name} mode="info" /> : props.catalogApp ? <Item testID="project-deployments.draft.catalogApp"
-              title={props.catalogApp.title} mode="info" showChevron={false} /> : definitionKind === 'image' ? <>
+              subtitle={props.copyFrom.content.name} mode="info" /> : props.catalogApp ? <>
+                <Item testID="project-deployments.draft.catalogApp" title={props.catalogApp.title} mode="info" showChevron={false} />
+                <DeploymentTemplateDomainRows domains={props.catalogApp.domains} testIDPrefix="project-deployments.draft.domain"
+                  hostname={key => domainHostnames[key] ?? ''}
+                  onChangeHostname={(key, hostname) => setDomainHostnames(current => ({ ...current, [key]: hostname }))} />
+              </> : definitionKind === 'image' ? <>
               <Item title={t('managedMachines.config.image')} accessoryLayout={stepped ? 'adaptive' : 'stacked'} showChevron={false}
                 rightElement={<FieldTextInput testID="project-deployments.draft.imageName"
                   accessibilityLabel={t('managedMachines.config.image')} value={imageName}

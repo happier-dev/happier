@@ -2,7 +2,7 @@ import { deploymentRecommendationDescription } from '@/components/projects/deplo
 import * as React from 'react';
 import { useStore } from 'zustand';
 import { DeploymentTemplateChoices } from '@/components/projects/deployments/DeploymentTemplateChoices';
-import { DeploymentTemplateDomainRows } from '@/components/projects/deployments/DeploymentTemplateDomainRows';
+import { DeploymentTemplateDomainRows, projectDeploymentTemplateDomainChoices } from '@/components/projects/deployments/DeploymentTemplateDomainRows';
 import { DeploymentPartialProgress } from '@/components/projects/deployments/DeploymentPartialProgress';
 import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -42,7 +42,6 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import type {
   StoreAppListingState,
   StoreAppPreparationInput,
-  StoreAppCreateChoices,
 } from './useStoreAppListing';
 import { useStoreAppListing } from './useStoreAppListing';
 import { createStoreAppPreparationState, type StoreAppPreparationStore } from './storeAppPreparationState';
@@ -126,19 +125,8 @@ export function StoreAppPreparationReview(
   const created = refusal?.failure?.created;
   // The Environment's own choices, with the existing create form's starting values: no name, not production,
   // managers deploy (DeploymentEnvironmentDraft).
-  const domainChoices = React.useMemo(() => {
-    const bindings: NonNullable<StoreAppCreateChoices['domainBindings']> = [];
-    let invalid = false;
-    for (const domain of ready.app.domains) {
-      const hostname = domainHostnames[domain.key]?.trim() ?? '';
-      if (!hostname) {
-        if (domain.required) invalid = true;
-        continue;
-      }
-      bindings.push({ templateDomainId: domain.key, hostname });
-    }
-    return { bindings, invalid };
-  }, [domainHostnames, ready.app.domains]);
+  const domainChoices = React.useMemo(() => projectDeploymentTemplateDomainChoices(ready.app.domains, domainHostnames),
+    [domainHostnames, ready.app.domains]);
   const router = useRouter();
   const approval = useActionApprovalContinuation({
     scopeKey: JSON.stringify([serverId, accountId, ready.templateRef]),
@@ -173,7 +161,7 @@ export function StoreAppPreparationReview(
     ? t('capabilities.store.appPage.chooseMachine')
     : !environmentName.trim()
       ? t('capabilities.store.appPage.nameEnvironment')
-      : domainChoices.invalid
+      : domainChoices.missingRequired
         ? t('capabilities.store.appPage.domainRequired')
         : projectChoice.missing;
 

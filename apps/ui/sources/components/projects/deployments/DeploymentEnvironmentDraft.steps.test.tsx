@@ -243,7 +243,10 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
     }
   });
 
-  it('a catalog app deploys through the same draft: its exact pin becomes the create definition (journey-deploy catWhere → catRev)', async () => {
+  it.each([
+    { label: 'no domains', domains: [] },
+    { label: 'required domain', domains: [{ key: 'web', service: 'app', containerPort: 20128, protocol: 'http', required: true }] },
+  ] as const)('a catalog app carries its exact pin and required addresses through Configure to Review ($label)', async ({ domains }) => {
     const serverId = await homes.addHome({ name: 'Deploy catalog', serverUrl: 'https://draft-steps-catalog.test', accountId: 'alice',
       serverIdentityId: `srv_${'f'.repeat(32)}`, currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
@@ -257,7 +260,7 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
         actionId: 'deployments.environments.create', tokenEpoch: 0, execute: input => {
           const intent = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
           authored.push(intent);
-          const { mode: _mode, name: _name, definition: _definition, firstTargetLink: _link, ...selectors } = intent;
+          const { mode: _mode, name: _name, definition: _definition, firstTargetLink: _link, domainBindings: _domainBindings, ...selectors } = intent;
           return DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: { ...selectors,
             controllerMachineId: 'runtime', contentArtifactId: 'reviewed-content', contentHeaderVersion: 1, contentBodyVersion: 1 },
             review: { creationDefaults: { values: { controllerMachineId: 'runtime', retainPreviousDeployments: 1 },
@@ -268,7 +271,7 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       function CatalogDraft() {
         const projectChoice = useDeploymentProjectChoice({ lifetime: account.accountLifetime, initiallyNew: true, initialNewProjectName: 'Plausible' });
         return <DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId={null} projectChoice={projectChoice}
-          catalogApp={{ templateRef, title: 'Plausible' }} phone={false} actions={createDeploymentActions(account.accountLifetime)}
+          catalogApp={{ templateRef, title: 'Plausible', domains }} phone={false} actions={createDeploymentActions(account.accountLifetime)}
           steps={steps} onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />;
       }
       const screen = await renderScreen(<CatalogDraft />);
@@ -277,14 +280,23 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       await settle(() => expect(frame().primary.disabled).toBe(false));
       await act(async () => frame().press());
       await settle(() => expect(frame().step).toBe('configure'));
-      // What runs is the catalog app itself; nothing to type before Review.
       expect(screen.findByTestId('project-deployments.draft.catalogApp')).not.toBeNull();
+      if (domains.length) {
+        expect(screen.findByTestId('project-deployments.draft.domain.web')).not.toBeNull();
+        expect(frame().primary.disabled).toBe(true);
+        await act(async () => frame().press());
+        expect(authored).toHaveLength(0);
+        await act(async () => screen.changeTextByTestId('project-deployments.draft.domain.web', 'app.example.test'));
+      } else {
+        expect(screen.findByTestId('project-deployments.draft.domain.web')).toBeNull();
+      }
       await settle(() => expect(frame().primary.disabled).toBe(false));
       await act(async () => frame().press());
       await settle(() => expect(frame().step).toBe('review'));
       expect(authored).toHaveLength(1);
       expect(authored[0]).toMatchObject({ newProject: { name: 'Plausible' }, definition: { from: 'catalogApp', templateRef },
         firstTargetLink: { machines: [{ machineId: 'runtime', installationId: 'runtime-installation' }] } });
+      expect(authored[0]?.domainBindings).toEqual(domains.length ? [{ templateDomainId: 'web', hostname: 'app.example.test' }] : undefined);
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
@@ -315,7 +327,7 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       function CatalogDraft() {
         const projectChoice = useDeploymentProjectChoice({ lifetime: account.accountLifetime, initiallyNew: true, initialNewProjectName: 'Plausible' });
         return <DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId={null} projectChoice={projectChoice}
-          catalogApp={{ templateRef, title: 'Plausible' }} phone={false} actions={createDeploymentActions(account.accountLifetime)}
+          catalogApp={{ templateRef, title: 'Plausible', domains: [] }} phone={false} actions={createDeploymentActions(account.accountLifetime)}
           steps={steps} onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />;
       }
       const screen = await renderScreen(<CatalogDraft />);

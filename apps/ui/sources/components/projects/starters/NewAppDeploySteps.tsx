@@ -18,7 +18,7 @@ import { FieldLayout, FieldValue } from '@/components/ui/lists/FieldRow';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { readStoreAppTemplateRef } from '@/components/store/presets/storePresetDoor';
+import { readStoreAppTemplate } from '@/components/store/presets/storePresetDoor';
 import { useRegistryItem } from '@/registries/useRegistryItem';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -201,9 +201,7 @@ function DefinitionDeploy(
 }
 
 /**
- * A catalog app: the registry's own item read gives its title and exact pin (`readStoreAppTemplateRef`), and the same
- * draft creates it with `definition: { from: 'catalogApp' }` in a new Project named after it. A listing that is not a
- * ready App has no pin, so it says unavailable rather than guessing one.
+ * The registry item read supplies the App's exact pin and declared addresses to the draft.
  */
 function CatalogAppDeploy(props: BoundProps & Readonly<{ app: Readonly<{ sourceId: string; itemId: string }>; targetId: string | null }>) {
   const read = useRegistryItem({ kind: 'app', sourceId: props.app.sourceId, itemId: props.app.itemId }, true, { scope: props.lifetime.scope });
@@ -213,17 +211,20 @@ function CatalogAppDeploy(props: BoundProps & Readonly<{ app: Readonly<{ sourceI
         reason={read.error} action={{ label: t('common.retry'), onPress: read.refresh }} />
       : <SurfaceStateCard testID="newApp.deploy.loading" kind="loading" layout="inline" title={t('common.loading')} />;
   }
-  const templateRef = readStoreAppTemplateRef(read.item);
-  if (!templateRef) return <SurfaceStateCard testID="newApp.deploy.catalogUnavailable" kind="unavailable" layout="inline" title={t('common.unavailable')} />;
-  return <CatalogAppDraft {...props} templateRef={templateRef} title={read.item.summary.title} />;
+  const template = readStoreAppTemplate(read.item);
+  if (!template) return <SurfaceStateCard testID="newApp.deploy.catalogUnavailable" kind="unavailable" layout="inline" title={t('common.unavailable')} />;
+  return <CatalogAppDraft {...props} templateRef={template.templateRef} domains={template.app.domains} title={read.item.summary.title} />;
 }
 
-function CatalogAppDraft(props: BoundProps & Readonly<{ templateRef: NonNullable<ReturnType<typeof readStoreAppTemplateRef>>;
-  title: string; targetId: string | null }>) {
+type CatalogTemplate = NonNullable<ReturnType<typeof readStoreAppTemplate>>;
+
+function CatalogAppDraft(props: BoundProps & Readonly<{ templateRef: CatalogTemplate['templateRef'];
+  title: string; domains: CatalogTemplate['app']['domains']; targetId: string | null }>) {
   const { lifetime } = props;
   const projectChoice = useDeploymentProjectChoice({ lifetime, initiallyNew: true, initialNewProjectName: props.title });
   const actions = React.useMemo(() => createDeploymentActions(lifetime), [lifetime]);
-  const catalogApp = React.useMemo(() => ({ templateRef: props.templateRef, title: props.title }), [props.templateRef, props.title]);
+  const catalogApp = React.useMemo(() => ({ templateRef: props.templateRef, title: props.title, domains: props.domains }),
+    [props.templateRef, props.title, props.domains]);
   const { leaveTo, onApprovalRequested } = useDeployExits(props);
   return <DeploymentEnvironmentDraft lifetime={lifetime} sourceId={null} projectChoice={projectChoice} catalogApp={catalogApp}
     phone={props.phone} actions={actions} platformAvailable initialMachineId={props.machineId} initialTargetKey={props.targetId}

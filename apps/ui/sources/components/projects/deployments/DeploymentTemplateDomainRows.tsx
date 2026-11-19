@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import type { DeploymentTemplateV1 } from '@happier-dev/protocol/registries';
 import { Item } from '@/components/ui/lists/Item';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
@@ -7,10 +8,24 @@ import { t } from '@/text';
 
 type TemplateDomain = DeploymentTemplateV1['domains'][number];
 
+export function projectDeploymentTemplateDomainChoices(
+  domains: readonly TemplateDomain[],
+  hostnames: Readonly<Record<string, string>>,
+) {
+  const bindings: NonNullable<DeploymentTemplateInstantiateInputV1['domainBindings']> = [];
+  let missingRequired = false;
+  for (const domain of domains) {
+    const hostname = hostnames[domain.key]?.trim();
+    if (hostname) bindings.push({ templateDomainId: domain.key, hostname });
+    else if (domain.required) missingRequired = true;
+  }
+  return { bindings, missingRequired };
+}
+
 /**
  * One address row per template Domain: the hostname a person types for that service, with its DNS route beneath.
- * Every surface that chooses a template's addresses (Store preparation, a Project's Add review, a preset's App)
- * renders these rows; the template preparer owns hostname validation.
+ * Deploy an app, Store preparation, a Project's Add review and a preset's App share these rows.
+ * The template preparer owns hostname validation.
  */
 export function DeploymentTemplateDomainRows(
   props: Readonly<{
