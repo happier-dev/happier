@@ -821,6 +821,21 @@ describe('requestInactiveSessionResume', () => {
     expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private native detail');
   });
 
+  it.each(['DAEMON_RPC_UNAVAILABLE', 'SPAWN_VALIDATION_FAILED'] as const)('keeps the named requester custody cause through %s', async errorCode => {
+    const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    const cause = 'requester_session_custody_record_read_failed';
+    const errorDetail = { kind: 'launch_error', code: 'requester_session_custody_unavailable',
+      message: 'Requester Session custody unavailable', failureCause: { phase: 'client_start', failureReason: 'unknown', code: cause } };
+    callMachineRpc.mockResolvedValueOnce({ type: 'error', errorCode, errorMessage: 'private file error', errorDetail });
+    await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'local-1',
+      rawSession: rawSession(), metadata })).resolves.toMatchObject({ ok: false, code: 'resume_failed',
+        spawnErrorCode: errorCode, spawnRefusalReason: cause, errorDetail });
+    expect(diagnostic).toHaveBeenCalledWith('[SessionResume] Readiness refused', expect.objectContaining({
+      cause: errorCode, spawnRefusalReason: cause,
+    }));
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private file error');
+  });
+
   it('identifies caller cancellation without logging the abort reason', async () => {
     const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     const cancellation = new AbortController();

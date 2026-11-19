@@ -5,11 +5,23 @@ import { resolveOfflineReconnectionBackoffDelayMs } from '@/api/offline/serverCo
 import { delayUnrefAbortable } from '@/utils/time';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
+const REQUESTER_SESSION_CUSTODY_REFUSAL_CODES = [
+  'requester_session_custody_binding_mismatch',
+  'requester_session_custody_record_read_failed',
+  'requester_session_custody_runtime_unavailable',
+] as const;
+export type RequesterSessionCustodyRefusalCode = typeof REQUESTER_SESSION_CUSTODY_REFUSAL_CODES[number];
+
+export function readRequesterSessionCustodyRefusalCode(value: unknown): RequesterSessionCustodyRefusalCode | undefined {
+  return REQUESTER_SESSION_CUSTODY_REFUSAL_CODES.find(code => code === value);
+}
+
 /** Labels for existing local decisions, never credentials or another admission check. */
 export const REQUESTER_CURRENTNESS_REFUSAL_BRANCHES = [
   'local_abort_signal', 'installation_custody', 'observed_account_encryption_currentness', 'currentness_exception',
   // The admitted carrier declined a purpose it cannot spend.
   'forwarded_child_purpose', 'native_incumbent_source',
+  ...REQUESTER_SESSION_CUSTODY_REFUSAL_CODES,
 ] as const;
 export type RequesterCurrentnessRefusalBranch = typeof REQUESTER_CURRENTNESS_REFUSAL_BRANCHES[number];
 const currentnessRefusal = new AsyncLocalStorage<{ branch?: RequesterCurrentnessRefusalBranch }>();
@@ -20,7 +32,7 @@ export function recordRequesterCurrentnessRefusal(branch: RequesterCurrentnessRe
   return false;
 }
 
-/** Scope diagnostics to one header request; private projections keep their null contract. */
+/** Scope diagnostics to one request while the underlying owner keeps its existing result contract. */
 export async function captureRequesterCurrentnessRefusal<T>(read: () => Promise<T>): Promise<Readonly<{
   value: T; branch?: RequesterCurrentnessRefusalBranch;
 }>> {

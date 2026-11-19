@@ -190,7 +190,8 @@ import { resolveRequesterSessionRuntimeDirectories } from '../sessionEncryption/
 import { assertRequesterSessionAccountContextCurrent, listRequesterSessionCredentialBindings } from "../sessionEncryption/requesterSessionCredentials";
 import { captureOrdinaryRequesterSessionAccountCustodyForHost, readOrdinaryRequesterSessionAccountCustodyForHost, readOrdinaryRequesterSessionAccountOperationContextForHost } from '../sessionEncryption/ordinaryRequesterSessionAccountCustody';
 import { resolveRequesterLaunchAdmissionFailure } from '../lifecycle/requesterWorkAttribution';
-import { readRequesterHomeWithinActionLifetime } from "@/daemon/sessionEncryption/requesterCurrentness";
+import { captureRequesterCurrentnessRefusal, readRequesterHomeWithinActionLifetime, readRequesterSessionCustodyRefusalCode,
+  type RequesterSessionCustodyRefusalCode } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { buildRuntimeAuthUsageLimitRecoveryProjection } from '@/daemon/connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoveryUsageLimitMetadata';
 import { checkRuntimeAuthUsageLimitRecovery } from '@/daemon/connectedServices/runtimeAuth/checkRuntimeAuthUsageLimitRecovery';
 import { isCurrentUsageLimitRecoveryAccount } from '@/daemon/connectedServices/runtimeAuth/isCurrentUsageLimitRecoveryAccount';
@@ -562,7 +563,7 @@ import type {
   SpawnSessionOptions,
   SpawnSessionResult,
 } from '@/session/shared/spawnSessionContract';
-import { SPAWN_SESSION_ERROR_CODES, projectDaemonSpawnUnavailable, projectSessionRunnerLaunchAdmissionFailure } from '@/session/shared/spawnSessionContract';
+import { SPAWN_SESSION_ERROR_CODES, projectDaemonSpawnUnavailable, projectRequesterSessionCustodyLaunchError, projectSessionRunnerLaunchAdmissionFailure } from '@/session/shared/spawnSessionContract';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { resolveSessionMachineWorkspacePath } from '@/session/machineControlLocality';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
@@ -4071,44 +4072,41 @@ export async function startDaemonSessionControlRuntime(
   ): Promise<SpawnSessionResult> => {
     let acquiredRequesterRuntime: RequesterSessionRuntimeContext | null = null;
     const launchAccountSettingsLifetime = getActiveAccountSettingsSnapshotLifetimeToken();
-    const requesterRuntimeUnavailable = {
+    const requesterRuntimeUnavailable = (reason?: RequesterSessionCustodyRefusalCode): Extract<SpawnSessionResult, { type: 'error' }> => ({
       type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
       errorMessage: 'Requester Account runtime unavailable',
-      errorDetail: { kind: 'launch_error', code: 'requester_session_custody_unavailable',
-        message: 'Requester Session access could not be restored' },
-    } satisfies Extract<SpawnSessionResult, { type: 'error' }>;
+      errorDetail: projectRequesterSessionCustodyLaunchError('Requester Session access could not be restored', reason),
+    });
     try {
       const existingSessionId = normalizeOptionalString(options.existingSessionId);
       let ordinaryAgentIsolationAccountSource: SessionAgentIsolationAccountSource | undefined;
       const suppliedRequesterRuntime = options.requesterSessionRuntimeContext;
-      if (
-        suppliedRequesterRuntime &&
-        (suppliedRequesterRuntime.bootstrap !==
-          options.requesterSessionBootstrap ||
-          (options.existingSessionId &&
-            suppliedRequesterRuntime.bootstrap.getBoundSessionId() !==
-              options.existingSessionId) ||
-          !(await suppliedRequesterRuntime.isCurrent()))
-      )
-        return requesterRuntimeUnavailable;
+      if (suppliedRequesterRuntime) {
+        if (suppliedRequesterRuntime.bootstrap !== options.requesterSessionBootstrap
+          || existingSessionId && suppliedRequesterRuntime.bootstrap.getBoundSessionId() !== existingSessionId) {
+          return requesterRuntimeUnavailable('requester_session_custody_binding_mismatch');
+        }
+        if (!await suppliedRequesterRuntime.isCurrent()) {
+          return requesterRuntimeUnavailable('requester_session_custody_runtime_unavailable');
+        }
+      }
+      const recovered = !options.requesterSessionBootstrap && existingSessionId && requesterRuntimeAccess
+        ? await captureRequesterCurrentnessRefusal(() => resolveSessionAccountContext(existingSessionId,
+            options.requesterWorkAttributionV1, shutdownCancellationDomains.daemonWorkSignal))
+        : null;
       const requesterRuntime = options.requesterSessionBootstrap
-        ? (suppliedRequesterRuntime ??
-          (await params.createRequesterSessionRuntimeContext?.(
-            options.requesterSessionBootstrap,
-          )) ??
-          null)
-        : existingSessionId && requesterRuntimeAccess
-          ? await resolveSessionAccountContext(existingSessionId, options.requesterWorkAttributionV1,
-              shutdownCancellationDomains.daemonWorkSignal)
-          : null;
+        ? suppliedRequesterRuntime ?? await params.createRequesterSessionRuntimeContext?.(options.requesterSessionBootstrap) ?? null
+        : recovered?.value ?? null;
       acquiredRequesterRuntime = requesterRuntime;
       if (options.requesterSessionBootstrap && !requesterRuntime)
-        return requesterRuntimeUnavailable;
+        return requesterRuntimeUnavailable('requester_session_custody_runtime_unavailable');
       if (!options.requesterSessionBootstrap && existingSessionId && requesterRuntimeAccess) {
         if (requesterRuntime) {
-          if (requesterRuntime.bootstrap.getBoundSessionId() !== existingSessionId
-            || !await requesterRuntime.isCurrent(shutdownCancellationDomains.daemonWorkSignal)) {
-            return requesterRuntimeUnavailable;
+          if (requesterRuntime.bootstrap.getBoundSessionId() !== existingSessionId) {
+            return requesterRuntimeUnavailable('requester_session_custody_binding_mismatch');
+          }
+          if (!await requesterRuntime.isCurrent(shutdownCancellationDomains.daemonWorkSignal)) {
+            return requesterRuntimeUnavailable('requester_session_custody_runtime_unavailable');
           }
           // Recover birth before Account/Provider preparation and child birth,
           // not later when the runner first requests a native service.
@@ -4124,17 +4122,18 @@ export async function startDaemonSessionControlRuntime(
             && !!origin && origin.machineId === params.machineId
             && !await resolveRequesterLaunchAdmissionFailure(options)
             && isDeepStrictEqual(origin, await params.resolveCurrentMachineExecutionOriginContext?.(signal));
-          const custody = await captureOrdinaryRequesterSessionAccountCustodyForHost({
+          const ordinary = await captureRequesterCurrentnessRefusal(() => captureOrdinaryRequesterSessionAccountCustodyForHost({
             happyHomeDir: configuration.happyHomeDir, serverId: custodyServerId,
             serverHttpBaseUrl: params.serverBaseUrl, sessionId: existingSessionId, machineId: params.machineId,
             hostHomeServerIdentityId: origin?.machineId === params.machineId ? origin.serverIdentityId : null,
             sessionCustodianAccountId: params.externalActionAccountId, credentials: params.credentials,
             attribution: options.requesterWorkAttributionV1, isCurrent, signal,
-          });
-          if (!custody) {
-            return requesterRuntimeUnavailable;
+          }));
+          if (!ordinary.value) {
+            return requesterRuntimeUnavailable(readRequesterSessionCustodyRefusalCode(recovered?.branch)
+              ?? readRequesterSessionCustodyRefusalCode(ordinary.branch));
           }
-          if (origin) ordinaryAgentIsolationAccountSource = { kind: 'ordinarySession', custody, origin };
+          if (origin) ordinaryAgentIsolationAccountSource = { kind: 'ordinarySession', custody: ordinary.value, origin };
         }
       }
       const spawnParams = requesterRuntime
@@ -4167,7 +4166,7 @@ export async function startDaemonSessionControlRuntime(
           token: spawnParams.credentials.token, credentials: spawnParams.credentials, sessionId: existingSessionId,
         }).catch(() => null);
         const signal = shutdownCancellationDomains.daemonWorkSignal;
-        if (requesterRuntime && !await requesterRuntime.isCurrent(signal)) return requesterRuntimeUnavailable;
+        if (requesterRuntime && !await requesterRuntime.isCurrent(signal)) return requesterRuntimeUnavailable('requester_session_custody_runtime_unavailable');
         const admission = state ? resolveSessionAutoResumeAdmissionV1({ metadata: state.metadata,
           archivedAt: state.archivedAt, machineAvailable: true, authorityAvailable: state.metadata != null }) : null;
         if (!admission) return projectDaemonSpawnUnavailable('authority_unavailable', 'Automatic Session resume authority unavailable');
@@ -4179,7 +4178,8 @@ export async function startDaemonSessionControlRuntime(
         const beforeSessionRunnerLaunch = options.beforeSessionRunnerLaunch;
         options = { ...options, beforeSessionRunnerLaunch: async () => {
           if (!behavior.isLaunchAdmissionCurrent()) return resumeIntentChanged;
-          const unavailable = requesterRuntimeUnavailable.errorDetail;
+          const unavailable = projectRequesterSessionCustodyLaunchError('Requester Session access could not be restored',
+            'requester_session_custody_runtime_unavailable');
           const signal = shutdownCancellationDomains.daemonWorkSignal;
           if (requesterRuntime && !await requesterRuntime.isCurrent(signal)) return unavailable;
           const admission = beforeSessionRunnerLaunch ? await beforeSessionRunnerLaunch() : true;

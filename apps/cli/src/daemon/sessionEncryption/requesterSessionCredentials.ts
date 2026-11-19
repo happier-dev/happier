@@ -3,7 +3,7 @@ import { CustodySchema, WorkspaceSyncManagedTargetCustodySchema, RequesterCreden
   requesterSessionCredentialPath, requesterSessionCredentialDirectory, requesterSessionCredentialFilePrefix } from './requesterSessionCustody';
 import type { ReadonlyTrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 export { REQUESTER_SESSION_CREDENTIAL_FILE_ENV, REQUESTER_SESSION_ID_ENV, type RequesterSessionCredentialBinding, requesterSessionCredentialPath, readRequesterSessionCredentialsForChild } from './requesterSessionCustody';
-import { readRequesterHomeWithinActionLifetime, rethrowRequesterHomeReadFailure } from './requesterCurrentness';
+import { readRequesterHomeWithinActionLifetime, recordRequesterCurrentnessRefusal, rethrowRequesterHomeReadFailure } from './requesterCurrentness';
 
 import { basename, join } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -179,10 +179,16 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
       if (!input.getCreateRuntime() && input.whenRuntimeCreatable && !signal?.aborted) await input.whenRuntimeCreatable(signal);
       return signal?.aborted ? null : input.getCreateRuntime();
     };
-    if (!context && !await readCreateRuntime()) return null;
+    if (!context && !await readCreateRuntime()) {
+      if (!signal?.aborted) recordRequesterCurrentnessRefusal('requester_session_custody_runtime_unavailable');
+      return null;
+    }
     let stamp = tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1
       ?? context?.bootstrap.attribution ?? attribution;
-    if (stamp && attribution && !isDeepStrictEqual(stamp, attribution)) return null;
+    if (stamp && attribution && !isDeepStrictEqual(stamp, attribution)) {
+      recordRequesterCurrentnessRefusal('requester_session_custody_binding_mismatch');
+      return null;
+    }
     const onRecoveryRefused = onPreparationRefused ?? input.onRecoveryRefused;
     const recoverBootstrap = () => input.recoverBootstrap({ sessionId, ...(stamp ? { attribution: stamp } : {}), tracked: tracked !== undefined,
       ...(signal ? { signal } : {}),
@@ -201,7 +207,10 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
       const contextStamp = context.bootstrap.attribution;
       if (contextStamp.serverId !== stamp.serverId || contextStamp.accountId !== stamp.accountId
         || contextStamp.machineId !== stamp.machineId || contextStamp.installationId !== stamp.installationId
-        || context.bootstrap.getBoundSessionId() !== sessionId) return null;
+        || context.bootstrap.getBoundSessionId() !== sessionId) {
+        recordRequesterCurrentnessRefusal('requester_session_custody_binding_mismatch');
+        return null;
+      }
       if (await context.isCurrent(signal)) {
         if (tracked && !stillOwnsTrackedContext(context)) return null;
         if (tracked) tracked.requesterWorkAttributionV1 = stamp;
@@ -210,11 +219,18 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
     }
     if (signal?.aborted) return null;
     const createRequesterRuntime = await readCreateRuntime();
-    if (!createRequesterRuntime) return null;
+    if (!createRequesterRuntime) {
+      if (!signal?.aborted) recordRequesterCurrentnessRefusal('requester_session_custody_runtime_unavailable');
+      return null;
+    }
     const bootstrap = context ? await recoverBootstrap() : coldBootstrap;
     if (!bootstrap) return null;
     const recovered = await createRequesterRuntime(bootstrap, signal);
-    if (!recovered) { bootstrap.savedSecretOperationContext.withdrawCatalog(); return null; }
+    if (!recovered) {
+      if (!signal?.aborted) recordRequesterCurrentnessRefusal('requester_session_custody_runtime_unavailable');
+      bootstrap.savedSecretOperationContext.withdrawCatalog();
+      return null;
+    }
     if (tracked) {
       const stillTracked = tracked.reportMarkerCustody?.retiring !== true && [...trackedSessionsByKey.values()].some(candidate => candidate === tracked
         && candidate.happySessionId === sessionId);
@@ -682,9 +698,11 @@ export async function resolveRequesterSessionBootstrap(input: RequesterSessionCr
 }>): Promise<AdmittedRequesterSessionBootstrap | null> {
   try {
     const stored = await readBoundCustody(requesterSessionCredentialPath(input), input);
-    if (!stored?.homeServerIdentityId) return null;
-    if (stored.homeServerIdentityId && input.machineAdmissionBoundary.getObservedServerIdentityId
-      && stored.homeServerIdentityId !== await input.machineAdmissionBoundary.getObservedServerIdentityId()) return null;
+    if (!stored?.homeServerIdentityId || input.machineAdmissionBoundary.getObservedServerIdentityId
+      && stored.homeServerIdentityId !== await input.machineAdmissionBoundary.getObservedServerIdentityId()) {
+      recordRequesterCurrentnessRefusal('requester_session_custody_binding_mismatch');
+      return null;
+    }
     let machineAdmission: NonNullable<RpcHandlerContext['machineAdmission']> | undefined;
     let refused = false;
     const read = (credentials: StoredCredentials) => async (signal?: AbortSignal) => {
@@ -731,7 +749,10 @@ export async function resolveRequesterSessionBootstrapFromCustody(input: Readonl
   const expected = input.expectedAttribution;
   if (!installation || !boundary.isHomeCurrent()
     || expected && (expected.serverId !== input.serverId || expected.machineId !== boundary.machineId
-      || expected.installationId !== installation.installationId)) return null;
+      || expected.installationId !== installation.installationId)) {
+    recordRequesterCurrentnessRefusal('requester_session_custody_binding_mismatch');
+    return null;
+  }
   if (expected) {
     // Known custody remains an exact read. Unrelated unreadable references
     // cannot withdraw this Session's authority or trigger a credential fallback.
@@ -740,7 +761,10 @@ export async function resolveRequesterSessionBootstrapFromCustody(input: Readonl
       return await resolveRequesterSessionBootstrap({ ...input, attribution: expected });
     } catch (error) {
       rethrowRequesterHomeReadFailure(error);
-      if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') return null;
+      if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') {
+        recordRequesterCurrentnessRefusal('requester_session_custody_record_read_failed');
+        return null;
+      }
     }
   } else {
     const existing = await listRequesterSessionCredentialBindings({ happyHomeDir: input.happyHomeDir,
@@ -818,11 +842,14 @@ export async function readRequesterSessionExecutionCustodyForHost(input: Request
 }>): Promise<'absent' | 'retained' | 'unavailable'> {
   try {
     const stored = await readBoundCustody(requesterSessionCredentialPath(input), input);
-    return stored?.homeServerIdentityId === input.homeServerIdentityId
-      && sameStoredCredentials(stored.credentials, input.credentials) ? 'retained' : 'unavailable';
+    if (stored?.homeServerIdentityId === input.homeServerIdentityId
+      && sameStoredCredentials(stored.credentials, input.credentials)) return 'retained';
+    recordRequesterCurrentnessRefusal('requester_session_custody_binding_mismatch');
+    return 'unavailable';
   } catch (error) {
-    return error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'
-      ? 'absent' : 'unavailable';
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return 'absent';
+    recordRequesterCurrentnessRefusal('requester_session_custody_record_read_failed');
+    return 'unavailable';
   }
 }
 
@@ -930,7 +957,10 @@ async function readRequesterSessionCredentialBinding(
       try { const result = await timeWebLatencyPhase(`requester.${phase}`, work); status = 'completed'; return result; }
       catch (error) {
         diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
-        if (phase === 'session' && diagnostic.errorCode === 'not_authenticated') sessionReadRefused = true;
+        if (phase === 'session') {
+          if (diagnostic.errorCode === 'not_authenticated') sessionReadRefused = true;
+          if (!input.signal?.aborted) recordRequesterCurrentnessRefusal('requester_session_custody_record_read_failed');
+        }
         throw error;
       }
       finally { logger.debug('[PluginExec] Requester currentness phase', {
@@ -965,6 +995,9 @@ async function readRequesterSessionCredentialBinding(
                 accountEncryptionMode: currentness.mode, rawSession: session }) : null;
               const correspondence = input.expectedSessionCreationTag === undefined ? null
                 : SessionCreationCorrespondenceV1Schema.safeParse(owner?.sessionCreationCorrespondenceV1);
+              if (!input.scope && !session && !input.signal?.aborted) {
+                recordRequesterCurrentnessRefusal('requester_session_custody_record_read_failed');
+              }
               const bound = profile.id === input.attribution.accountId
                 && (input.scope !== undefined || session?.id === input.sessionId && readSessionAccessProjectionRoleV1(session) === 'owner')
                 && (currentness.mode === 'plain' ? input.credentials.encryption === null : input.credentials.encryption !== null)
@@ -1078,11 +1111,19 @@ async function resolveRequesterSessionCustody(input: RequesterCredentialCustodyB
     // An opaque callback never supplies a reason to delete protected custody.
     if (input.scope !== 'workspace_sync_relationship' && !readMachineAdmissionCurrent
       && input.verifyMachineAdmissionCurrent && !await input.verifyMachineAdmissionCurrent(input.signal)) return null;
-    const stored = await readBoundCustody(requesterSessionCredentialPath(input), input);
-    if (!stored) return null;
+    const stored = await readBoundCustody(requesterSessionCredentialPath(input), input).catch((error: unknown) => {
+      const absent = error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT';
+      if (!absent && !input.scope && !input.signal?.aborted) {
+        recordRequesterCurrentnessRefusal('requester_session_custody_record_read_failed');
+      }
+      throw error;
+    });
     const boundary = input.machineAdmissionBoundary;
-    if (boundary && stored.homeServerIdentityId && boundary.getObservedServerIdentityId
-      && stored.homeServerIdentityId !== await boundary.getObservedServerIdentityId()) return null;
+    if (!stored || boundary && stored.homeServerIdentityId && boundary.getObservedServerIdentityId
+      && stored.homeServerIdentityId !== await boundary.getObservedServerIdentityId()) {
+      if (!input.scope) recordRequesterCurrentnessRefusal('requester_session_custody_binding_mismatch');
+      return null;
+    }
     const callerVerifier = input.scope === 'workspace_sync_relationship' ? undefined : input.verifyMachineAdmissionCurrent;
     const verifyMachineAdmissionCurrent = callerVerifier ?? ((signal?: AbortSignal) =>
       (input.endpointRole === 'source' ? verifyWorkspaceSyncSourceMachineAdmissionCurrent

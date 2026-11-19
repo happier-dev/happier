@@ -19,7 +19,7 @@ import {
     awaitSpawnedSessionId,
     type SpawnSessionNonceResolver,
 } from '@/session/services/awaitSpawnedSessionId';
-import { projectDaemonSpawnUnavailable, SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
+import { projectDaemonSpawnUnavailable, projectRequesterSessionCustodyLaunchError, SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import { SpawnDaemonSessionRequestSchema, PRIVATE_SPAWN_SESSION_RPC_METHODS } from './spawnSessionOptionsContract';
 import type { SessionLifecycleActionHandler } from '@/session/actions/lifecycle/sessionLifecycleTypes';
 import { SessionRequesterBootstrapRpcRequestV1Schema, openSessionRequesterBootstrapRpcRequestV1,
@@ -31,6 +31,8 @@ import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS, type RequesterSessionRuntimeRefusalCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { CurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
 import { admitRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
+import { captureRequesterCurrentnessRefusal, readRequesterSessionCustodyRefusalCode,
+    type RequesterSessionCustodyRefusalCode } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { createMachineSessionDirectTargetTransport } from './sessionServerStartLifecycleAdapter';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { readAccountRoleOverridesFromSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -72,16 +74,17 @@ type RequesterSessionRuntimeOwner = Readonly<{
 async function withRequesterSessionRuntime(input: unknown, context: RpcHandlerContext,
     sessionId: string, owner: RequesterSessionRuntimeOwner | undefined,
     handler: (input: unknown, context?: RpcHandlerContext) => Promise<unknown>,
-    refused: (reason: RequesterSessionRuntimeRefusalCode) => unknown = () =>
+    refused: (reason: RequesterSessionRuntimeRefusalCode, custodyRefusal?: RequesterSessionCustodyRefusalCode) => unknown = () =>
         ({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' })): Promise<unknown> {
     if (!owner) return refused('requester_session_runtime_owner_unavailable');
     if (!context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) {
         return refused('requester_machine_admission_unavailable');
     }
     const admission = context.machineAdmission;
-    const runtime = await owner.resolve(sessionId, admission ? { serverId: owner.serverId,
-        accountId: admission.actorAccountId, machineId: admission.machineId, installationId: admission.installationId } : undefined);
-    if (!runtime) return refused('requester_session_custody_unavailable');
+    const { value: runtime, branch } = await captureRequesterCurrentnessRefusal(() => owner.resolve(sessionId,
+        admission ? { serverId: owner.serverId, accountId: admission.actorAccountId,
+            machineId: admission.machineId, installationId: admission.installationId } : undefined));
+    if (!runtime) return refused('requester_session_custody_unavailable', readRequesterSessionCustodyRefusalCode(branch));
     try {
         const bootstrap = runtime.bootstrap;
         if (bootstrap.getBoundSessionId() !== sessionId || bootstrap.attribution.serverId !== owner.serverId) {
@@ -702,11 +705,13 @@ export function registerPrivateSpawnSessionRpcHandlers(params: Readonly<{
             return projectDaemonSpawnUnavailable('requester_session_custody_unavailable', 'Requester Session credential unavailable');
         }
         const response = foreignResume && resumeContext ? await withRequesterSessionRuntime(admittedSpawnData, resumeContext,
-            parsed.data.sessionId!, params.requesterSessionRuntime, params.spawnLifecycleHandler, reason => ({
+            parsed.data.sessionId!, params.requesterSessionRuntime, params.spawnLifecycleHandler, (reason, custodyRefusal) => ({
                 type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
                 errorMessage: REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS[reason],
                 runtimeFailureReason: 'runner_authority_unavailable',
-                errorDetail: { kind: 'launch_error', code: reason, message: REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS[reason] },
+                errorDetail: reason === 'requester_session_custody_unavailable'
+                    ? projectRequesterSessionCustodyLaunchError(REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS[reason], custodyRefusal)
+                    : { kind: 'launch_error', code: reason, message: REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS[reason] },
             }))
             : await params.spawnLifecycleHandler(admittedSpawnData, resumeContext);
         if (binding?.handoffContinuation && !launchAccepted && response && typeof response === 'object'

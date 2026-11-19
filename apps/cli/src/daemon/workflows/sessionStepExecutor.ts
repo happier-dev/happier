@@ -1,6 +1,7 @@
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { StoredCredentials } from '@/persistence';
 import { logger } from '@/ui/logger';
+import { readRequesterSessionCustodyRefusalCode } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { parsePermissionIntentAlias, resolveAgentExecutionTargetFromSessionMetadata } from '@happier-dev/agents';
 import { buildExecutionRunResultContractPrompt } from '@happier-dev/protocol/execution/runs/resultContract';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
@@ -1349,8 +1350,11 @@ export function createProductionWorkflowConversationOwner(deps: Readonly<{
             ...(params.signal ? { signal: params.signal } : {}) });
           if (!resumed.ok) {
             const reason = resumed.spawnRefusalReason;
-            const runtimeIssue = reason ? projectSessionRuntimeIssueMetadataV1({
-              v: 1, scope: 'primary_session', status: 'failed', code: reason, source: 'unknown', occurredAt: Date.now(),
+            const launchDetail = resumed.errorDetail?.kind === 'launch_error' ? resumed.errorDetail : undefined;
+            const custodyRefusal = readRequesterSessionCustodyRefusalCode(reason);
+            const code = custodyRefusal && launchDetail?.failureCause?.code === custodyRefusal ? launchDetail.code : reason;
+            const runtimeIssue = reason && code ? projectSessionRuntimeIssueMetadataV1({
+              v: 1, scope: 'primary_session', status: 'failed', code, source: 'unknown', occurredAt: Date.now(),
               failureCause: { phase: 'client_start', failureReason: 'unknown', code: reason },
             }) : undefined;
             throw new WorkflowSessionCompositionError(resumed.code, resumed.code, undefined, undefined, runtimeIssue);

@@ -18,6 +18,8 @@ import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapte
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { AdmittedRequesterSessionBootstrap, RequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 
+import type { RequesterSessionCustodyRefusalCode } from '@/daemon/sessionEncryption/requesterCurrentness';
+
 export { SPAWN_SESSION_ERROR_CODES };
 export type { SpawnSessionErrorCode, SpawnSessionErrorDetail } from '@happier-dev/protocol';
 
@@ -315,6 +317,14 @@ export function projectDaemonSpawnUnavailable(
     errorMessage: message,
     errorDetail: { kind: 'launch_error', code, message },
   };
+}
+
+export function projectRequesterSessionCustodyLaunchError(
+  message: string,
+  reason?: RequesterSessionCustodyRefusalCode,
+): SessionSpawnLaunchErrorV1 {
+  return { kind: 'launch_error', code: 'requester_session_custody_unavailable', message,
+    ...(reason ? { failureCause: { phase: 'client_start', failureReason: 'unknown', code: reason } } : {}) };
 }
 
 /** One projection for private launch checks; the detail is presentation, never authority. */

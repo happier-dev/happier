@@ -19,6 +19,7 @@ import { awaitSpawnedSessionId } from './awaitSpawnedSessionId';
 import type { ActionExecutorContext, SessionInitialGoalRequestV1 } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
+import { readRequesterSessionCustodyRefusalCode } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { resolveSessionStartupTimeoutMs } from '@/daemon/spawn/waitForSessionWebhook';
 import { resolveSessionResumeControlIntent } from './sessionExplicitStopIntent';
 import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
@@ -69,9 +70,11 @@ function readResumeSpawnFailureFacts(response: unknown, requestId: string): Pick
       errorMessage: Reflect.get(response, 'errorMessage'), agentId: Reflect.get(response, 'agentId'), requestId });
     if (failure.code === SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT) errorDetail = failure.launchError;
   }
-  const spawnRefusalReason = code === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE
+  const custodyRefusal = errorDetail?.kind === 'launch_error' && errorDetail.code === 'requester_session_custody_unavailable'
+    ? readRequesterSessionCustodyRefusalCode(errorDetail.failureCause?.code) : undefined;
+  const spawnRefusalReason = custodyRefusal ?? (code === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE
     ? readSessionRuntimeIssueCode(errorDetail?.kind === 'launch_error' ? errorDetail.code : errorDetail?.kind)
-    : null;
+    : null);
   return {
     ...(errorDetail ? { errorDetail } : {}),
     ...(spawnRefusalReason ? { spawnRefusalReason } : {}),

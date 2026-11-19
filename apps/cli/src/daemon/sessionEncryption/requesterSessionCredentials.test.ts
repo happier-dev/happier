@@ -29,6 +29,7 @@ import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/
 import { PRIVATE_SPAWN_SESSION_RPC_METHODS } from '@/rpc/handlers/spawnSessionOptionsContract';
 import type { RpcHandler } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { captureRequesterCurrentnessRefusal } from './requesterCurrentness';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -1264,6 +1265,48 @@ describe('requester Session lifecycle custody', () => {
       } finally { host.setUnavailablePath(null); vi.restoreAllMocks(); await prepared.cleanupOnFailure(); }
     },
   );
+
+  it('keeps the exact requester custody refusal cause when a retained Session cannot resume', async () => {
+    const host = await home();
+    const binding = { happyHomeDir: directory!, sessionId: 'session', attribution };
+    await createRequesterSessionCredentialCustody({ ...binding, credentials, homeServerIdentityId: 'srv_original_home' });
+    let observedHomeIdentity = 'srv_original_home';
+    const recover = () => requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody({
+      ...binding, serverId: attribution.serverId, expectedAttribution: attribution, serverHttpBaseUrl: origin,
+      machineAdmissionBoundary: { ...host.boundary, getObservedServerIdentityId: () => observedHomeIdentity },
+    });
+
+    const admitted = await captureRequesterCurrentnessRefusal(recover);
+    expect(admitted.value?.getBoundSessionId()).toBe(binding.sessionId);
+    expect(admitted.branch).toBeUndefined();
+    await admitted.value?.dispose();
+
+    observedHomeIdentity = 'srv_replacement_home';
+    await expect(captureRequesterCurrentnessRefusal(recover)).resolves.toEqual({
+      value: null, branch: 'requester_session_custody_binding_mismatch',
+    });
+
+    observedHomeIdentity = 'srv_original_home';
+    host.setUnavailablePath('/v2/sessions/session');
+    const failedRecordRead = await captureRequesterCurrentnessRefusal(() => recover().catch((error: unknown) => error));
+    expect(failedRecordRead).toMatchObject({
+      value: { code: 'project_requester_home_unavailable', retryable: true },
+      branch: 'requester_session_custody_record_read_failed',
+    });
+
+    const runtimeUnavailable = requesterCredentialOwner.createRequesterSessionRuntimeContextResolver({
+      trackedSessions: new Map(),
+      getCreateRuntime: () => null,
+      recoverBootstrap: recover,
+    });
+    await expect(captureRequesterCurrentnessRefusal(() => runtimeUnavailable(binding.sessionId, binding.attribution)))
+      .resolves.toEqual({ value: null, branch: 'requester_session_custody_runtime_unavailable' });
+
+    host.setUnavailablePath(null);
+    const recovered = await recover();
+    expect(recovered?.getBoundSessionId()).toBe(binding.sessionId);
+    await recovered?.dispose();
+  });
 
   it.each(['protected', 'legacy'] as const)('preserves a retryable Home read failure during %s requester recovery and admits only after recovery', async kind => {
     const host = await home();
