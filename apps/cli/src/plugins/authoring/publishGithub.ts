@@ -5,8 +5,22 @@ import { ScmCommitCreateResponseSchema, ScmRemoteResponseSchema, ScmStatusSnapsh
 import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeScmOperationOutcome } from '@happier-dev/protocol/scm/operationOutcome';
-import { ForgeReleaseActionResultSchemasV1, type ForgeReleaseMutationResultV1, type ForgeReleaseV1 } from '@happier-dev/triage-protocol/releases/v1';
 import type { ExecuteScmActionOperationParams } from '@/scm/actions/executeScmActionOperation';
+
+// The plugin Action invocation owner validates its declared result before the
+// reviewed-child port returns it. These consumer views name only publication
+// facts; the complete release remains opaque and is passed back to its owner.
+type PublicationRelease = Readonly<Record<string, unknown> & {
+    repositoryId: string; releaseId: string; webUrl: string;
+}>;
+type PublicationReleaseReply = Readonly<{
+    kind: string;
+    release?: PublicationRelease;
+    value?: PublicationRelease;
+    failure?: Readonly<{ code: string }>;
+    releaseId?: string;
+    webUrl?: string;
+}>;
 
 export async function inspectPluginPublicationGithub(params: Readonly<{ directory: string }> &
     Pick<ExecuteScmActionOperationParams, 'signal' | 'registry' | 'hostingProviderRegistry'>): Promise<PluginPublicationGithubInspection> {
@@ -74,17 +88,18 @@ export async function publishPluginGithub(params: PluginGithubActionDependencies
     });
     const cancelled = (): PluginPublicationGithubResult | null => params.signal?.aborted
         ? { ...result, status: applied ? 'partial' : 'cancelled' } : null;
-    const mutationResult = (mutation: ForgeReleaseMutationResultV1): PluginPublicationGithubResult | null => {
-        if ('release' in mutation) {
+    const mutationResult = (mutation: PublicationReleaseReply): PluginPublicationGithubResult | null => {
+        if (mutation.release) {
             result = { ...result, releaseId: mutation.release.releaseId, releaseUrl: mutation.release.webUrl };
         }
         switch (mutation.kind) {
             case 'confirmed': return null;
             case 'conflict': return failure('changedSinceReview', 'conflict');
-            case 'rejected': return failure(mutation.failure.code);
+            case 'rejected': return failure(mutation.failure!.code);
             case 'outcome_unknown': return { ...failure(mutation.failure?.code ?? 'COMMAND_OUTCOME_UNKNOWN', 'outcome_unknown'),
                 ...(mutation.releaseId ? { releaseId: mutation.releaseId } : {}),
                 ...(mutation.webUrl ? { releaseUrl: mutation.webUrl } : {}) };
+            default: return failure('COMMAND_OUTCOME_UNKNOWN', 'outcome_unknown');
         }
     };
     try {
@@ -150,33 +165,33 @@ export async function publishPluginGithub(params: PluginGithubActionDependencies
             result = { ...result, phase: 'release' };
             if (cancelled()) return cancelled()!;
             const { releaseId, makeLatest, ...fields } = selection.release;
-            let draft: ForgeReleaseV1;
+            let draft: PublicationRelease;
             if (releaseId) {
-                const read = ForgeReleaseActionResultSchemasV1.readRelease.parse(await params.invokeGithub({
+                const read = await params.invokeGithub({
                     actionId: 'github/releases/release-read', input: selectedInput('github/releases/release-read'),
-                }));
-                if (read.kind !== 'value') return failure(read.kind === 'unavailable' ? read.failure.code : 'COMMAND_OUTCOME_UNKNOWN');
-                draft = read.value;
+                }) as PublicationReleaseReply;
+                if (read.kind !== 'value') return failure(read.kind === 'unavailable' ? read.failure!.code : 'COMMAND_OUTCOME_UNKNOWN');
+                draft = read.value!;
             } else {
-                const created = ForgeReleaseActionResultSchemasV1.createReleaseDraft.parse(await params.invokeGithub({
+                const created = await params.invokeGithub({
                     actionId: 'github/releases/draft-create', input: selectedInput('github/releases/draft-create'),
-                }));
+                }) as PublicationReleaseReply;
                 const stopped = mutationResult(created);
                 if (stopped) return stopped;
                 if (created.kind !== 'confirmed') return failure('COMMAND_OUTCOME_UNKNOWN', 'outcome_unknown');
                 applied = true;
-                draft = created.release;
+                draft = created.release!;
             }
             result = { ...result, releaseId: draft.releaseId, releaseUrl: draft.webUrl };
             if (cancelled()) return cancelled()!;
             // Review intent is the selected fields and no uploaded assets. The release owner
             // alone compares this with fresh provider fields/assets and decides conflicts.
-            const reviewed: ForgeReleaseV1 = { ...draft, ...fields,
+            const reviewed = { ...draft, ...fields,
                 assets: { rows: [], omittedRowCount: 0, projectionTruncated: false, continuation: null, incomplete: null } };
-            const published = ForgeReleaseActionResultSchemasV1.publishReleaseDraft.parse(await params.invokeGithub({
+            const published = await params.invokeGithub({
                 actionId: 'github/releases/draft-publish', input: { repository: selection.repository, repositoryId: draft.repositoryId,
                     releaseId: draft.releaseId, reviewed, makeLatest },
-            }));
+            }) as PublicationReleaseReply;
             const stopped = mutationResult(published);
             if (stopped) return stopped;
         }

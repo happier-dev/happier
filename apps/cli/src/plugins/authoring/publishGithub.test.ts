@@ -107,7 +107,7 @@ async function sourceHarness(options: { failPush?: boolean; failSelectedAdd?: bo
         // Synthetic Node process is the narrowly untyped OS fixture boundary.
         return child as unknown as childProcess.ChildProcess;
     });
-    onTestFinished(() => spawn.mockReset());
+    onTestFinished(() => { spawn.mockReset(); });
     const repositoryRequests: { url: string; method: string }[] = [];
     let repositoryCreated = false;
     const repositoryPublishing = createGithubRepositoryProvisioningAdapter({ restAdapter: createGithubRepositoryRestAdapter({
@@ -202,7 +202,8 @@ describe('optional plugin GitHub publication through existing release owners', (
         expect(result).toMatchObject({ status: 'partial', pushed: true, phase: 'release' });
         expect(h.requests.filter(request => request.method === 'POST')).toHaveLength(1);
         const pushes = source.commands.filter(command => command.args[0] === 'push');
-        expect(pushes.map(command => command.args.slice(0, 3))).toEqual([['push', 'origin', 'main']]);
+        expect(pushes).toHaveLength(1);
+        expect(pushes[0]!.args.filter(argument => !argument.startsWith('-'))).toEqual(['push', 'origin', 'main']);
         expect(pushes.some(command => command.args.some(argument => argument.startsWith('--force')))).toBe(false);
         expect(await readFile(join(source.directory, 'unrelated.txt'), 'utf8')).toBe('uncommitted work');
     });
