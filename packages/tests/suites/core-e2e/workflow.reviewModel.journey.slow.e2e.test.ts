@@ -149,7 +149,8 @@ const args = process.argv.slice(2);
 if (args.includes('--version')) console.log('2.3.12');
 else {
   fs.appendFileSync(${JSON.stringify(deepSecAuditPath)}, JSON.stringify({ args, dataRoot: process.env.DEEPSEC_DATA_ROOT }) + '\\n');
-  if (args[0] === 'process') process.exitCode = 2;
+  if (args[0] === 'scan' && fs.existsSync(${JSON.stringify(nativeHoldPath)})) setInterval(() => {}, 1000);
+  else if (args[0] === 'process') process.exitCode = 2;
   else if (args[0] === 'export') fs.writeFileSync(args[args.indexOf('--out') + 1], JSON.stringify([{
     title: 'Validate redirects', description: 'Reject an external redirect before returning.', severity: 'CRITICAL',
     metadata: { filePath: 'README.md', lineNumbers: [1] },
@@ -169,7 +170,7 @@ else {
         id: 'dep.review-slices', title: 'Slice review', binaryName: 'clawpatch', sourcePreferenceDefault: 'managed-first',
         managedInstall: { kind: 'managed_package', packageName: 'clawpatch@0.8.4', binaryName: 'clawpatch' },
         manualInstallKind: 'none', manualInstallRecipes: {}, acceptsJavaScriptFileOverride: false,
-      }, { processEnv: { HAPPIER_HOME_DIR: homeDir } });
+      }, { processEnv: { ...process.env, HAPPIER_HOME_DIR: homeDir } });
       const packageDir = join(dirname(dirname(command)), 'workspace', 'node_modules', 'clawpatch');
       await mkdir(packageDir, { recursive: true });
       await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: 'clawpatch', version: '0.8.4', bin: { clawpatch: 'index.cjs' } }));
@@ -417,7 +418,7 @@ else {
     expect(ExecutionRunGetResponseSchema.parse(await act('execution.run.get', { runId: next.runId })))
       .toMatchObject({ run: { status: 'cancelled' } });
   }
-  it('F3 DeepSec retains exported partial audit findings with an explicitly write-enabled Role through public Actions', async () => {
+  it('F3 DeepSec retains exported partial audit findings with an explicitly write-enabled Role through public Actions, New round and Stop', async () => {
     const profileId = 'happier.review.deepsec/repository-security-audit';
     const roster = ReviewEngineInventorySchema.parse(await act('review.engines.list', { sessionId: null }));
     const profileSourceCustody = roster.items.find(item => item.engineId === 'deepsec')?.profileSourceCustody;
@@ -427,25 +428,45 @@ else {
     }));
     const profile = inventory.selectionItems?.find(item => item.engineId === 'deepsec' && item.profileId === profileId);
     if (!profile?.profileSourceCustody) throw new Error('DeepSec audit profile is unavailable');
-    const result = await startNativeReview('deepsec', { scope: 'repository' }, {
+    let result = await startNativeReview('deepsec', { scope: 'repository' }, {
       roleId: await createWriteEnabledReviewRole(), profileId, profileSourceCustody: profile.profileSourceCustody,
       options: { confirmedCostWarning: true, preferredExecutablePath: deepSecExecutablePath },
     });
-    expect(result, JSON.stringify(result)).toMatchObject({ run: { status: 'succeeded' }, reviewFindings: {
-      reviewOutcome: 'partial', findings: [{ filePath: 'README.md', severity: 'blocker', startLine: 1 }],
-    } });
+    const firstRunId = result.run.runId;
     const reviewId = result.run.display?.groupId;
     expect(reviewId).toBeTruthy();
-    const persisted = ReviewCommentListResponseV1Schema.parse(await act('reviews.comments.list', { reviewId }));
-    expect(persisted.items).toHaveLength(1);
-    expect(persisted.items[0]?.author).toEqual({ kind: 'executionRun', agentId: 'deepsec', runId: result.run.runId });
-    expect(ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId })).review)
-      .toMatchObject({ state: 'partial', counts: { total: 1 } });
+    let originalId: string | undefined;
+    for (const round of [1, 2]) {
+      if (round === 2) {
+        const next = ReviewNativeNewRoundResultV1Schema.parse(await act(REVIEW_NEW_ROUND_ACTION_ID_V1, {
+          runId: firstRunId, target: { kind: 'detached' },
+        }));
+        expect(next.reviewRound).toEqual({ reviewId, roundOrdinal: 2 });
+        await act('execution.run.wait', { runId: next.runId, condition: 'terminal' });
+        result = ExecutionRunGetResponseSchema.parse(await act('execution.run.get', { runId: next.runId, includeStructured: true }));
+      }
+      expect(result, JSON.stringify(result)).toMatchObject({ run: { status: 'succeeded' }, reviewFindings: {
+        reviewOutcome: 'partial', findings: [{ filePath: 'README.md', severity: 'blocker', startLine: 1 }],
+      } });
+      const persisted = ReviewCommentListResponseV1Schema.parse(await act('reviews.comments.list', { reviewId }));
+      expect(persisted.items).toHaveLength(1);
+      if (round === 1) originalId = persisted.items[0]?.id;
+      else expect(persisted.items[0]?.id).toBe(originalId);
+      expect(persisted.items[0]?.author).toEqual({ kind: 'executionRun', agentId: 'deepsec', runId: firstRunId });
+      expect(persisted.items[0]?.appearances).toEqual(expect.arrayContaining([
+        expect.objectContaining({ roundOrdinal: round, runId: result.run.runId }),
+      ]));
+      expect(ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId })).review)
+        .toMatchObject({ state: 'partial', currentRoundOrdinal: round, counts: { total: 1 } });
+    }
     const commands: { args: string[]; dataRoot: string }[] = (await readFile(deepSecAuditPath, 'utf8'))
       .trim().split('\n').map(line => JSON.parse(line));
-    expect(commands.map(command => command.args[0])).toEqual(['scan', 'process', 'export']);
-    expect(new Set(commands.map(command => command.dataRoot)).size).toBe(1);
-    expect(commands[0]?.dataRoot).toBeTruthy();
+    expect(commands.map(command => command.args[0])).toEqual(['scan', 'process', 'export', 'scan', 'process', 'export']);
+    for (const start of [0, 3]) {
+      expect(new Set(commands.slice(start, start + 3).map(command => command.dataRoot)).size).toBe(1);
+      expect(commands[start]?.dataRoot).toBeTruthy();
+    }
+    await stopNativeRound(firstRunId, deepSecAuditPath, args => args[0] === 'scan');
   });
   it('F4 native slices preserve distinct evidence and findings through public Actions, New round and Stop', async () => {
     let result = await startNativeReview('slices', { scope: 'repository' });
