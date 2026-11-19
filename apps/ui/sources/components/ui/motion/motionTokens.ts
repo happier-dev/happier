@@ -1,7 +1,7 @@
 import { HAPPIER_MOTION_V1, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 import { Easing } from 'react-native';
 import { gestureTokens } from './gestureTokens';
-import { stepMotionTiming } from './stepMotion/stepMotionChoreography';
+import { stepMotionTiming } from './stepMotion/stepMotionTiming';
 
 export const motionTokens = {
     gesture: gestureTokens,

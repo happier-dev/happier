@@ -1,6 +1,7 @@
 import { frontGlyphLayer, travellerGlyphLayer, type GlyphInk, type GlyphInkMap, type GlyphLayer, type GlyphRect } from '@happier-dev/brand/glyph-scene';
 
-import { progressAt, revealRadius, stepMotionTiming, visualAt, type StepGrammar } from './stepMotionChoreography';
+import { progressAt, revealRadius, visualAt, type StepGrammar } from './stepMotionChoreography';
+import { stepMotionTiming } from './stepMotionTiming';
 import type { StepGrid } from './stepMotionTypes';
 
 export type StepAnimation = Readonly<{

@@ -1,29 +1,6 @@
 import type { StepMoveKind } from './stepMotionTypes';
 import type { GlyphPoint, GlyphRect } from '@happier-dev/brand/glyph-scene';
-
-export const stepMotionTiming = {
-    noticeCrossFadeMs: 200,
-    forwardS: 0.92,
-    backS: 0.8,
-    homeS: 3.4,
-    homeClimbStart: 0.16,
-    homeClear: 0.29,
-    openingS: 3.4 * 1.3,
-    band: 150,
-    ragged: 0.35,
-    alpha: 0.55,
-    cell: [8, 16] as const,
-    particleArea: 70,
-    particleDensity: 0.8,
-    particleLimit: 700,
-    smallArea: 9000,
-    smallMinimum: 160,
-    smallHalo: 8,
-    travel: 0.60,
-    stagger: 0.22,
-    lift: 45,
-    maxArc: 80,
-} as const;
+import { stepMotionTiming } from './stepMotionTiming';
 
 export type StepGrammar = 'fade' | 'morph' | 'fold' | 'home' | 'opening';
 

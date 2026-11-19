@@ -40,6 +40,7 @@ it('commits the new step immediately, ignores the previous pointer release, and 
     const root = createRoot(container);
     const dispose = vi.fn();
     const destinationClick = vi.fn();
+    const motionEnd = vi.fn();
     function Outgoing({ next }: Readonly<{ next: () => void }>) {
         React.useEffect(() => dispose, []);
         return <button data-testid="approve" onClick={next}>Approve</button>;
@@ -50,7 +51,7 @@ it('commits the new step immediately, ignores the previous pointer release, and 
             <button onClick={() => runStepMove({ layer: 'workflow', kind: 'back', commit: () => setStep('approve') })}>Back</button>
             <StepMotionLayer layerKey="workflow" stepKey={step}>
                 {step === 'approve'
-                    ? <Outgoing next={() => runStepMove({ layer: 'workflow', kind: 'step', commit: () => setStep('ready') })} />
+                    ? <Outgoing next={() => runStepMove({ layer: 'workflow', kind: 'step', commit: () => setStep('ready'), onSettled: motionEnd })} />
                     : <>
                         <h1 data-testid="ready-heading">Ready</h1>
                         <button data-testid="next" onClick={destinationClick}>Continue</button>
@@ -74,11 +75,13 @@ it('commits the new step immediately, ignores the previous pointer release, and 
         expect(document.querySelector('[inert]')).toBeNull();
         click(find('next'), 2);
         expect(destinationClick).not.toHaveBeenCalled();
+        expect(motionEnd).not.toHaveBeenCalled();
 
         pointerDown(find('next'), 3);
         click(find('next'), 3);
         expect(cancel).toHaveBeenCalledOnce();
         expect(destinationClick).toHaveBeenCalledOnce();
+        expect(motionEnd).toHaveBeenCalledExactlyOnceWith('skipped');
         await act(async () => container.querySelector('button')!.click());
         expect(document.activeElement).toBe(find('approve'));
     } finally {

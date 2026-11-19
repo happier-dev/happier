@@ -9,14 +9,13 @@ import type { FocusReturnTarget } from '@/keyboard/focusReturn';
 
 import { captureElementFlightRect } from '../rectFlight';
 import { readWebStepAnchor } from './capturePressedElement.web';
-import { freezeStepLayer } from './freezeLayer';
-import { readStepLeaves } from './freezeLayer.web';
-import { StepFreezeImage } from './StepFreezeImage';
-import { radialDistance, resolveMoveGrammar, revealRadius, stepMotionTiming, visualAt, type StepGrammar } from './stepMotionChoreography';
-import { createStepMotionScene, readStepProgress, stepAnimationDuration, type StepAnimation } from './stepMotionScene';
+import type { StepGrammar } from './stepMotionChoreography';
+import type { StepAnimation } from './stepMotionScene';
+import { stepMotionTiming } from './stepMotionTiming';
 import type { StepAnchor, StepBuild, StepBuildResult, StepFreeze, StepGrid, StepMotionLayerHandle, StepMove, StepWebLeaf } from './stepMotionTypes';
 
 type AnimatedGrammar = Exclude<StepGrammar, 'fade'>;
+type StepMotionPresentation = typeof import('./stepMotionPresentation');
 type PendingMove = {
     destination: string;
     kind: StepMove['kind'];
@@ -26,12 +25,13 @@ type PendingMove = {
     returnTo?: StepAnchor;
     startProgress?: number;
     freeze?: StepFreeze;
+    complete?: (outcome: StepBuildResult) => void;
     cancelled: boolean;
     layoutReady: boolean;
 };
 type StagePaint = Readonly<{
     animation: StepAnimation;
-    grid: StepGrid;
+    duration: number;
     freeze?: StepFreeze;
     freezeOpacity: readonly number[];
     scene: GlyphSurfaceProps['scene'];
@@ -78,11 +78,13 @@ function createStepMotionStage(
     const anchors = new Map<string, Array<StepAnchor | undefined>>();
     const pointerCommits = new Map<number, number>();
     const committedSteps = new WeakSet<StepMotionLayerHandle>();
+    const laidOutLayers = new WeakSet<StepMotionLayerHandle>();
     let pressed: StepAnchor | null = null;
     let pending: PendingMove | null = null;
     let active: { layer: string; animation?: StepAnimation; stop: () => void } | null = null;
     let commitOrder = 0;
     let glyphReady = false;
+    let presentation: StepMotionPresentation | null = null;
     let stopObserving: (() => void) | undefined;
 
     function syncPresentation() {
@@ -107,9 +109,11 @@ function createStepMotionStage(
 
     function cancelPending() {
         if (!pending) return;
-        pending.cancelled = true;
-        pending.freeze?.release();
+        const abandoned = pending;
         pending = null;
+        abandoned.cancelled = true;
+        abandoned.freeze?.release();
+        abandoned.complete?.('skipped');
     }
 
     function settle() {
@@ -146,12 +150,13 @@ function createStepMotionStage(
     }) {
         const { layer, animation, grid, freeze, source, returnTo, complete } = input;
         const incoming = layerRect(layer);
-        const duration = stepAnimationDuration(animation);
-        if (!incoming || incoming.width <= 0 || incoming.height <= 0 || !duration || !glyphReady) {
+        const duration = presentation?.stepAnimationDuration(animation);
+        if (!presentation || !incoming || incoming.width <= 0 || incoming.height <= 0 || !duration || !glyphReady) {
             freeze?.release();
             showIncoming(layer, complete);
             return;
         }
+        const { createStepMotionScene, radialDistance, readStepLeaves, readStepProgress, revealRadius, visualAt } = presentation;
         const reversing = animation.to === 0;
         const focalTarget = layer.focal();
         const returnTarget = returnTo?.testID ? layer.focal(returnTo.testID) : undefined;
@@ -247,7 +252,7 @@ function createStepMotionStage(
         const skip = () => finish('skipped');
         active = { layer: layer.key, animation, stop: skip };
         syncPresentation();
-        publish({ grid, animation, freeze, freezeOpacity, scene, finish: () => finish('settled') });
+        publish({ animation, duration, freeze, freezeOpacity, scene, finish: () => finish('settled') });
     }
 
     function enter(layer: StepMotionLayerHandle) {
@@ -257,7 +262,7 @@ function createStepMotionStage(
         move.cancelled = true;
         if (move.grammar === 'fade' || !move.freeze) {
             move.freeze?.release();
-            showIncoming(layer);
+            showIncoming(layer, move.complete);
             return;
         }
         const back = move.kind === 'back';
@@ -269,7 +274,7 @@ function createStepMotionStage(
             secondsPerProgress: grammar === 'home' ? stepMotionTiming.homeS : back ? stepMotionTiming.backS : stepMotionTiming.forwardS,
             epoch: performance.now(),
         };
-        showAnimated({ layer, animation, grid: move.grid, freeze: move.freeze, source: move.anchor, returnTo: move.returnTo });
+        showAnimated({ layer, animation, grid: move.grid, freeze: move.freeze, source: move.anchor, returnTo: move.returnTo, complete: move.complete });
     }
 
     function layerFor(target: EventTarget | null) {
@@ -362,7 +367,7 @@ function createStepMotionStage(
             committedSteps.add(layer);
             commitOrder++;
             if (pending?.destination !== layer.key) {
-                if (alreadyCommitted && (layer.warmOnMount || layer.notice) && !pending) {
+                if ((layer.notice || (alreadyCommitted && layer.warmOnMount)) && !pending) {
                     settle();
                     showIncoming(layer);
                 }
@@ -370,9 +375,12 @@ function createStepMotionStage(
             }
             if (pending.kind === 'step' || pending.kind === 'back') layer.focus(pending.returnTo?.testID);
             pending.layoutReady = true;
-            if (Platform.OS === 'web' || pending.grammar === 'fade' || (!layer.warmOnMount && pending.kind === 'home')) enter(layer);
+            // Personal Home's composer is already laid out under the held setup frame.
+            const releasingExistingHome = pending.kind === 'home' && alreadyCommitted && laidOutLayers.has(layer);
+            if (Platform.OS === 'web' || pending.grammar === 'fade' || releasingExistingHome) enter(layer);
         },
         laidOut(layer: StepMotionLayerHandle) {
+            laidOutLayers.add(layer);
             if (pending?.layoutReady) enter(layer);
         },
         nativeInput(anchor: StepAnchor, backTestID?: string) {
@@ -388,18 +396,25 @@ function createStepMotionStage(
             glyphReady = readiness === 'ready';
             if (!glyphReady && active?.animation) settle();
         },
+        loadPresentation(loaded: StepMotionPresentation) {
+            presentation = loaded;
+        },
         run<T>(move: StepMove<T>): T {
             const previous = active?.animation;
             const startProgress = move.kind === 'back' && previous?.to === 1 && active?.layer === move.layer
                 && (previous.grammar === 'morph' || previous.grammar === 'fold')
-                ? readStepProgress(previous, (performance.now() - previous.epoch) / 1000)
+                ? presentation?.readStepProgress(previous, (performance.now() - previous.epoch) / 1000)
                 : undefined;
             const outgoing = findLayer(move.layer);
             const outgoingFocal = move.kind === 'back' && outgoing ? targetRect(outgoing.focal()) : undefined;
             const anchor = outgoingFocal ? { rect: outgoingFocal } : pressed ?? undefined;
             pressed = null;
             settle();
-            if (!outgoing) return move.commit();
+            if (!outgoing) {
+                const result = move.commit();
+                move.onSettled?.('skipped');
+                return result;
+            }
             const stack = anchors.get(move.layer) ?? [];
             const returnTo = move.kind === 'back' ? stack.pop() : undefined;
             if (move.kind === 'step') {
@@ -409,18 +424,19 @@ function createStepMotionStage(
             if (move.kind === 'home') anchors.clear();
             const reduced = readReducedMotionPreference();
             if (!reduced) warm();
-            const grammar = resolveMoveGrammar({
+            const grammar = presentation?.resolveMoveGrammar({
                 ...move, reduced: reduced || !glyphReady, compact: outgoing.compact,
-            });
+            }) ?? 'fade';
             const grid = gridForWindow();
             const next: PendingMove = {
-                kind: move.kind, grammar, grid, anchor, returnTo, startProgress, cancelled: false, layoutReady: false,
+                kind: move.kind, grammar, grid, anchor, returnTo, startProgress, complete: move.onSettled,
+                cancelled: false, layoutReady: false,
                 destination: move.kind === 'home' ? 'home' : move.layer,
             };
             pending = next;
             syncPresentation();
-            if (grammar !== 'fade') {
-                const freeze = freezeStepLayer(outgoing, grid, move.kind === 'back' ? undefined : anchor);
+            if (presentation && grammar !== 'fade') {
+                const freeze = presentation.freezeStepLayer(outgoing, grid, move.kind === 'back' ? undefined : anchor);
                 if (freeze instanceof Promise) {
                     void freeze.then(result => {
                         if (next.cancelled) result?.release();
@@ -468,7 +484,10 @@ let rootStage: StepMotionStageController | null = null;
 export function StepMotionStage({ children }: React.PropsWithChildren) {
     const [paints, publish] = React.useState<StagePaint | null>(null);
     const [warming, setWarming] = React.useState(false);
-    const [GlyphSurface, setGlyphSurface] = React.useState<React.ComponentType<GlyphSurfaceProps> | null>(null);
+    const [renderer, setRenderer] = React.useState<Readonly<{
+        GlyphSurface: React.ComponentType<GlyphSurfaceProps>;
+        StepFreezeImage: StepMotionPresentation['StepFreezeImage'];
+    }> | null>(null);
     const { theme } = useUnistyles();
     const colors = React.useRef({ ...theme.colors.text, page: theme.colors.background.canvas });
     colors.current = { ...theme.colors.text, page: theme.colors.background.canvas };
@@ -477,8 +496,12 @@ export function StepMotionStage({ children }: React.PropsWithChildren) {
     React.useEffect(() => {
         if (!warming) return;
         let live = true;
-        void import('@/components/atmosphere/glyph/GlyphSurface').then(
-            module => { if (live) setGlyphSurface(() => module.GlyphSurface); },
+        void Promise.all([import('@/components/atmosphere/glyph/GlyphSurface'), import('./stepMotionPresentation')]).then(
+            ([glyph, loaded]) => {
+                if (!live) return;
+                stage.loadPresentation(loaded);
+                setRenderer({ GlyphSurface: glyph.GlyphSurface, StepFreezeImage: loaded.StepFreezeImage });
+            },
             () => { if (live) stage.glyphReadiness('still'); },
         );
         return () => { live = false; };
@@ -492,22 +515,22 @@ export function StepMotionStage({ children }: React.PropsWithChildren) {
     }, [stage]);
     const motion = React.useMemo<GlyphSurfaceProps['motion']>(() => paints ? ({
         kind: 'transition', epoch: paints.animation.epoch,
-        durationS: stepAnimationDuration(paints.animation), onSettled: paints.finish,
+        durationS: paints.duration, onSettled: paints.finish,
     }) : null, [paints]);
     return <StageContext.Provider value={stage}>
         <View style={{ flex: 1 }}>
             {children}
-            {warming && GlyphSurface ? <View pointerEvents="none" accessible={false} accessibilityElementsHidden
+            {warming && renderer ? <View pointerEvents="none" accessible={false} accessibilityElementsHidden
                 importantForAccessibility="no-hide-descendants" aria-hidden
                 style={[StyleSheet.absoluteFillObject, { zIndex: 1001 }]}>
-                {paints?.freeze?.image ? <StepFreezeImage
+                {paints?.freeze?.image ? <renderer.StepFreezeImage
                     key={paints.animation.epoch}
                     freeze={paints.freeze}
                     opacity={paints.freezeOpacity}
-                    durationMs={stepAnimationDuration(paints.animation) * 1000}
+                    durationMs={paints.duration * 1000}
                     delayMs={paints.animation.epoch - performance.now()}
                 /> : null}
-                <GlyphSurface width={width} height={height} cell={stepMotionTiming.cell}
+                <renderer.GlyphSurface width={width} height={height} cell={stepMotionTiming.cell}
                     scene={paints?.scene ?? emptyScene} motion={motion} onReady={stage.glyphReadiness} warmWhenHidden />
             </View> : null}
         </View>
@@ -519,7 +542,10 @@ export function useStepMotionStage() {
 }
 
 export function runStepMove<T>(move: StepMove<T>): T {
-    return rootStage ? rootStage.run(move) : move.commit();
+    if (rootStage) return rootStage.run(move);
+    const result = move.commit();
+    move.onSettled?.('skipped');
+    return result;
 }
 
 export function playBuild(build: StepBuild): Promise<StepBuildResult> {

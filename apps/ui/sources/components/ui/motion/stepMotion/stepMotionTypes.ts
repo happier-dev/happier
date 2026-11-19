@@ -12,6 +12,7 @@ export type StepMove<T = void> = Readonly<{
     commit: () => T;
     fromWelcome?: boolean;
     toWelcome?: boolean;
+    onSettled?: (outcome: StepBuildResult) => void;
 }>;
 
 export type StepBuild = Readonly<{
