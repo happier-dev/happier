@@ -140,6 +140,19 @@ const createSessionPendingCall = makeToolCall({
 });
 
 describe('ToolFullView as the tool-details page', () => {
+  it('replaces expired Shell output in the details page and in Debug', async () => {
+    const tool = makeToolCall({
+      name: 'Bash', state: 'completed', input: { command: 'echo retained-command' },
+      result: { stdout: 'stale-output-sentinel', exitCode: 0 },
+      toolOutputAvailability: { status: 'expired', days: 30 },
+    });
+    const screen = await renderScreen(<ToolFullView tool={tool} owningMessageId="shell-expired" />);
+    expect(screen.findByTestId('tool-details-result-expired')).toBeTruthy();
+    expect(screen.getTextContent()).toContain('retained-command');
+    await screen.pressByTestIdAsync('tool-details-debug-toggle');
+    expect(screen.getTextContent()).not.toContain('stale-output-sentinel');
+  });
+
   it.each(['denied', 'canceled'] as const)('keeps the Shell %s decision quiet in details and its header', async (status) => {
     const tool = makeToolCall({ name: 'Bash', state: 'error', result: { error: 'Terminal permission outcome' },
       permission: { id: 'shell-permission', status, decision: status === 'denied' ? 'denied' : 'abort',

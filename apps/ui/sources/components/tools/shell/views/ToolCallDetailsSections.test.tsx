@@ -7,6 +7,20 @@ import { ToolCallDetailsSections } from './ToolCallDetailsSections';
 
 afterEach(standardCleanup);
 
+it('shows the applied retention period and hides an outdated result body', async () => {
+    const tool = {
+        name: 'unrecognized-tool', state: 'completed', input: { query: 'example input' }, description: null,
+        createdAt: 1, startedAt: 1, completedAt: 2, result: 'outdated result body',
+        toolOutputAvailability: { status: 'expired', days: 30 },
+    } satisfies ToolCall;
+    const screen = await renderScreen(<ToolCallDetailsSections tool={tool} />);
+    expect(screen.findAllByTestId('tool-details-result-expired').length).toBeGreaterThan(0);
+    expect(screen.getTextContent()).toContain('Output expired after 30 days');
+    expect(screen.getTextContent()).toContain('example input');
+    expect(screen.getTextContent()).not.toContain('outdated result body');
+    await screen.unmount();
+});
+
 it.each(['cancelled', 'interrupted', 'failed'] as const)('shows error details only for a real failure (%s)', async (status) => {
     const tool: ToolCall = { name: 'unrecognized-tool', state: 'error', input: {}, description: null,
         createdAt: 1, startedAt: 1, completedAt: 2, result: { status, error: 'Turn ended' } };

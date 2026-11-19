@@ -8589,6 +8589,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             error: '錯誤',
             completed: '工具已成功完成',
             noOutput: '未產生輸出',
+            outputExpired: ({ days }) => `輸出已在 ${days} 天後到期`,
             running: '工具正在執行...',
             debug: '偵錯',
             show: '顯示',

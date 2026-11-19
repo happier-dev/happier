@@ -97,6 +97,8 @@ function ToolFullViewContent({ tool, owningMessageId, sessionId, serverId, metad
         });
     }, [interaction?.permissionDisabledReason, tool]);
 
+    const outputExpired = toolForRendering.toolOutputAvailability?.status === 'expired';
+
     const permissionTerminalErrorMessage = React.useMemo(() => {
         return resolveToolPermissionTerminalErrorMessage({
             tool: toolForRendering,
@@ -221,7 +223,7 @@ function ToolFullViewContent({ tool, owningMessageId, sessionId, serverId, metad
                             state: toolForRendering.state,
                             description: toolForRendering.description,
                             input: toolForRendering.input,
-                            result: toolForRendering.result,
+                            result: outputExpired ? undefined : toolForRendering.result,
                             createdAt: toolForRendering.createdAt,
                             startedAt: toolForRendering.startedAt,
                             completedAt: toolForRendering.completedAt,
@@ -305,7 +307,7 @@ function ToolFullViewContent({ tool, owningMessageId, sessionId, serverId, metad
     return (
         <ItemList testID="tool-details-page">
             {header}
-            {structuredPage || !SpecializedFullView ? (
+            {outputExpired || structuredPage || !SpecializedFullView ? (
                 <TextSelectabilityScope selectable>
                     <ToolCallDetailsSections tool={toolForRendering} serverId={serverId} sessionId={sessionId} declinedApproval={declinedApproval} />
                 </TextSelectabilityScope>

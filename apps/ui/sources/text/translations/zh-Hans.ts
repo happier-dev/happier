@@ -10315,6 +10315,7 @@ export const zhHans: TranslationStructure = {
       error: "错误",
       completed: "工具已成功完成",
       noOutput: "未产生输出",
+      outputExpired: ({ days }) => `输出已在 ${days} 天后过期`,
       running: "工具正在运行...",
       debug: "调试",
       show: "显示",

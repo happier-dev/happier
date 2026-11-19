@@ -10961,6 +10961,7 @@ localTailscale: {
       error: "エラー",
       completed: "ツールが正常に完了しました",
       noOutput: "出力がありません",
+      outputExpired: ({ days }) => `出力は ${days} 日後に期限切れになりました`,
       running: "ツールを実行中...",
       debug: "デバッグ",
       show: "表示",

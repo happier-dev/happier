@@ -102,6 +102,7 @@ export const ToolCallDetailsSections = React.memo(
     }>,
   ) {
     const { tool } = props;
+    const expiredOutput = tool.toolOutputAvailability?.status === 'expired' ? tool.toolOutputAvailability : null;
     const actionId = readHappierActionCallId(tool.name, tool.input);
     const args = React.useMemo(
       () =>
@@ -176,7 +177,15 @@ export const ToolCallDetailsSections = React.memo(
           </ItemGroup>
         ) : null}
 
-        {failure ? (
+        {expiredOutput ? (
+          <ItemGroup title={t('tools.structuredResult.result')} testID="tool-details-result-expired">
+            <Item
+              title={t('tools.fullView.outputExpired', { days: expiredOutput.days })}
+              mode="info"
+              showChevron={false}
+            />
+          </ItemGroup>
+        ) : failure ? (
           <ItemGroup
             title={t('tools.structuredResult.result')}
             testID="tool-details-failure"

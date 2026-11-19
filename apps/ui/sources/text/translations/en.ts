@@ -12334,6 +12334,7 @@ const enTools = {
     error: 'Error',
     completed: 'Tool completed successfully',
     noOutput: 'No output was produced',
+    outputExpired: ({ days }) => `Output expired after ${days} ${days === 1 ? "day" : "days"}`,
     running: 'Tool is running...',
     debug: 'Debug',
     show: 'Show',
