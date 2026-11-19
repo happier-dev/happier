@@ -563,7 +563,8 @@ import { runWithServerAccountScopeRequestGuard } from './runtime/orchestration/s
 import { artifactInventorySelectionOptions, doesArtifactInventorySelectionCover, isApprovalSessionInventorySelection, isApprovalStateInventorySelection, isArtifactInventoryLoaded, type ArtifactInventorySelection } from './domains/artifacts/artifactInventory';
 import { selectArtifactInventoryRows } from './store/domains/artifactInventoryIndex';
 import { createThemeProfileArtifactAdapter } from '@/theme/profiles/themeProfileArtifactAdapter';
-import { createThemeProfileLibrary, createThemeProfileSourceAdapter, type ThemeProfileLibraryContext, type ThemeProfileSourceAdapter, type ThemeProfileUndoState } from '@/theme/profiles/themeProfileLibrary';
+import { createThemeProfileLibrary, createThemeProfileSourceAdapter, readThemeProfileCardRedo, retainThemeProfileCardRedo,
+    type ThemeProfileCardRedo, type ThemeProfileLibraryContext, type ThemeProfileSourceAdapter, type ThemeProfileUndoState } from '@/theme/profiles/themeProfileLibrary';
 import type { ThemeProfileLibrary } from '@happier-dev/protocol/account/settings/themeProfiles';
 import type { ArtifactIdScopeV1 } from '@happier-dev/protocol/artifacts/idScope';
 import { THEME_ARTIFACT_KIND } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
@@ -9929,6 +9930,16 @@ class Sync {
     }
 
     private themeProfileUndo: Readonly<{ scope: ServerAccountScope; state: ThemeProfileUndoState }> | null = null;
+
+    private readActiveThemeProfileUndo(): ThemeProfileUndoState | null {
+        const current = this.themeProfileUndo;
+        return current && areServerAccountScopesEqual(current.scope, getActiveServerAccountScope()) ? current.state : null;
+    }
+
+    public readonly themeProfileCardRedo = {
+        read: (cardId: string) => readThemeProfileCardRedo(this.readActiveThemeProfileUndo(), cardId),
+        retain: (handle: string, card: ThemeProfileCardRedo) => retainThemeProfileCardRedo(this.readActiveThemeProfileUndo(), handle, card),
+    };
 
     public withThemeProfileContext = async <TResult>(operation: (context: ThemeProfileLibraryContext) => Promise<TResult>,
         options?: Readonly<{ signal?: AbortSignal; expectedScope?: AccountSettingsScope | null; artifactIdScopes?: ReadonlyMap<string, ArtifactIdScopeV1> }>,

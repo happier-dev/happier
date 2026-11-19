@@ -7,6 +7,7 @@ import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecu
 import { projectThemeLibraryEntry, projectThemeMiniature } from '@/theme/profiles/themeProfilePresentation';
 import type { ThemeLibraryEntry, ThemeProfileDocument } from '@/theme/profiles/themeProfileTypes';
 import type { ThemeTryOnOwner } from '@/theme/profiles/themeTryOn';
+import type { ThemeProfileCardRedo } from '@/theme/profiles/themeProfileLibrary';
 import type { ThemeUiActionExecute } from '@/components/settings/appearance/themeProfiles/useThemeActionExecution';
 import type { ThemeDevicePickerInput } from '@/components/settings/appearance/themeProfiles/useThemeDevicePicker';
 import type { ThemeActionCardPresentation, TranscriptThemeTry } from '@/components/sessions/transcript/references/transcriptThemeAction';
@@ -28,6 +29,10 @@ export type ThemeActionCardEdit = Readonly<{ kind: 'document'; document: ThemePr
     | Readonly<{ kind: 'entry'; entry: ThemeLibraryEntry }>;
 export type ThemeActionCardFacts = Readonly<{
     preview: ThemeTryOnOwner;
+    redo?: Readonly<{
+        read(cardId: string): ThemeProfileCardRedo | null;
+        retain(handle: Kept['undoHandle'], card: ThemeProfileCardRedo): void;
+    }>;
     entry: ThemeLibraryEntry | null;
     /** Base selections have display facts from the miniature owner and no library entry. */
     appliedTheme?: Pick<ThemeResultTheme, 'name' | 'mode' | 'miniature'>;
@@ -52,7 +57,12 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
     execute: ThemeUiActionExecute): ThemeActionResultViewProps | null {
     const presented = useLayoutPresentationActive();
     const call = input.call;
+    const [retainedRedo] = React.useState(() => {
+        const redo = facts.redo?.read(input.cardId);
+        return redo && (redo.optionId === null || input.options.some(option => option.id === redo.optionId)) ? redo : null;
+    });
     const [outcome, setOutcome] = React.useState<Outcome>(() => {
+        if (retainedRedo) return { kind: 'undone', previous: call.actionId === THEME_ACTION_IDS.apply ? 'applied' : 'kept' };
         if (call.actionId === THEME_ACTION_IDS.tryOn) return { kind: 'preview', output: call.output };
         if (call.actionId === THEME_ACTION_IDS.keep) return { kind: 'kept', output: call.output };
         return { kind: 'applied', output: call.output };
@@ -67,7 +77,7 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
     const preview = React.useSyncExternalStore(subscribePreview, readPreview, readPreview);
     React.useLayoutEffect(() => presented && preview?.origin.kind === 'agent' ? facts.preview.present(preview.previewRef) : undefined,
         [facts.preview, presented, preview?.previewRef, preview?.origin.kind]);
-    const [currentOptionKey, setCurrentOptionKey] = React.useState(() => input.options.at(-1)?.id ?? null);
+    const [currentOptionKey, setCurrentOptionKey] = React.useState(() => retainedRedo ? retainedRedo.optionId : input.options.at(-1)?.id ?? null);
     const selected = input.options.find(option => option.id === currentOptionKey)?.call ?? input.replayTry;
     const [revealedCssSource, setRevealedCssSource] = React.useState<string | null>(null);
     // Replaced transcript cards retain their authored input, while preparations share CSS identity.
@@ -120,10 +130,14 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
         if (outcome.kind === 'undone') return;
         perform('undo', async () => {
             if (outcome.kind === 'preview') await invoke(THEME_ACTION_IDS.revert, { previewRef: outcome.output.previewRef });
-            else await invoke(THEME_ACTION_IDS.undo, { undoHandle: outcome.output.undoHandle });
+            else {
+                const { undoHandle } = outcome.output;
+                await invoke(THEME_ACTION_IDS.undo, { undoHandle });
+                facts.redo?.retain(undoHandle, { cardId: input.cardId, optionId: currentOptionKey });
+            }
             setOutcome({ kind: 'undone', previous: outcome.kind });
         });
-    }, [outcome, perform, invoke]);
+    }, [outcome, perform, invoke, facts.redo, input.cardId, currentOptionKey]);
     const replay = React.useCallback(async () => {
         if (call.actionId === THEME_ACTION_IDS.apply) {
             setOutcome({ kind: 'applied', output: await invoke(THEME_ACTION_IDS.apply, call.input) });

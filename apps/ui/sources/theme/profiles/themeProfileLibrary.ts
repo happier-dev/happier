@@ -21,7 +21,25 @@ export interface ThemeProfileArtifactAdapter {
 type ThemeProfileSelectionUndo = ThemeUndoContext & Readonly<{
     preferenceChange?: Readonly<{ previous: ThemePreference; applied: ThemePreference }>;
 }>;
-export type ThemeProfileUndoState = { current: Readonly<{ handle: ThemeUndoHandle; context: ThemeProfileSelectionUndo }> | null };
+export type ThemeProfileCardRedo = Readonly<{ cardId: string; optionId: string | null }>;
+export type ThemeProfileUndoState = {
+    current: Readonly<{ kind: 'undoable'; handle: ThemeUndoHandle; context: ThemeProfileSelectionUndo }>
+        | Readonly<{ kind: 'undone'; handle: ThemeUndoHandle; card?: ThemeProfileCardRedo }>
+        | null;
+};
+
+/** The completed Undo retains a single card recipient until the next selection operation. */
+export function retainThemeProfileCardRedo(state: ThemeProfileUndoState | null, handle: ThemeUndoHandle, card: ThemeProfileCardRedo): void {
+    const operation = state?.current;
+    if (state && operation?.kind === 'undone' && operation.handle === handle) state.current = { ...operation, card };
+}
+
+export function readThemeProfileCardRedo(state: ThemeProfileUndoState | null, cardId: string): ThemeProfileCardRedo | null {
+    const operation = state?.current;
+    const card = operation?.kind === 'undone' ? operation.card : null;
+    return card?.cardId === cardId ? card : null;
+}
+
 export type ThemeProfileLibraryContext = Readonly<{
     artifacts: ThemeProfileArtifactAdapter;
     readSelection(): Readonly<Record<ThemeProfileMode, ThemeReference | null>>;
@@ -56,7 +74,7 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
             : context.pluginProfiles?.list().find(entry => sameStrictJsonValue(entry.reference, reference)) ?? null;
     const recordUndo = (undo: ThemeProfileSelectionUndo): ThemeUndoHandle => {
         const handle = context.createId();
-        undoState.current = { handle, context: undo };
+        undoState.current = { kind: 'undoable', handle, context: undo };
         return handle;
     };
     const select = async (mode: ThemeProfileMode, reference: ThemeReference | null) => {
@@ -139,10 +157,10 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
             return { entry, change: { changedIds: [], removedIds: [], selectionChangedModes: changed ? [mode] : [] },
                 undo: recordUndo(undo) };
         },
-        lastUndo: () => undoState.current?.handle ?? null,
+        lastUndo: () => undoState.current?.kind === 'undoable' ? undoState.current.handle : null,
         undo: async handle => {
             const operation = undoState.current;
-            if (!operation || operation.handle !== handle) throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_undo_handle_unknown', error: 'Theme Undo is no longer available' });
+            if (operation?.kind !== 'undoable' || operation.handle !== handle) throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_undo_handle_unknown', error: 'Theme Undo is no longer available' });
             const undo = operation.context;
             let result = unchanged();
             if (undo.createdRecord) {
@@ -159,7 +177,7 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
                         change: { ...result.change, selectionChangedModes: selectionChanged ? [undo.mode] : [] } };
                 }
             }
-            if (undoState.current === operation) undoState.current = null;
+            if (undoState.current === operation) undoState.current = { kind: 'undone', handle };
             return result;
         },
     };

@@ -15,6 +15,7 @@ import { readThemeActionCardPresentation } from '@/components/sessions/transcrip
 import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
 import { projectThemeMiniature } from '@/theme/profiles/themeProfilePresentation';
 import { useThemeActionResultModel } from './useThemeActionResultModel';
+import { readThemeProfileCardRedo, retainThemeProfileCardRedo, type ThemeProfileCardRedo } from '@/theme/profiles/themeProfileLibrary';
 import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { t } from '@/text';
 
@@ -106,11 +107,16 @@ describe('theme proposal card controller', () => {
         const parsesBeforeCard = vi.mocked(parse).mock.calls.length;
         let presented = true;
         let renders = 0;
-        const hook = await renderHook(() => { renders++; return useThemeActionResultModel(presentation,
-            { preview: state.owner, entry: null, created: true, here: 'here',
+        const redo = {
+            read: (cardId: string) => readThemeProfileCardRedo(state.context.undoState, cardId),
+            retain: (handle: string, card: ThemeProfileCardRedo) => retainThemeProfileCardRedo(state.context.undoState, handle, card),
+        };
+        const mount = () => renderHook(() => { renders++; return useThemeActionResultModel(presentation,
+            { preview: state.owner, entry: null, created: true, here: 'here', redo,
                 onUseOtherDevices: distribute, onEdit: edit }, execute); }, {
             wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active={presented}>{children}</PluginSurfaceFocusEligibilityProvider>,
         });
+        let hook = await mount();
         expect(vi.mocked(parse).mock.calls.length, 'the card consumes the preview owner table without parsing CSS').toBe(parsesBeforeCard);
         expect(hook.getCurrent()?.options?.map(option => option.miniature.mode)).toEqual(['dark', 'dark', 'dark']);
         expect(state.owner.readGlobalPresentation()).toBeNull();
@@ -159,6 +165,9 @@ describe('theme proposal card controller', () => {
         await act(async () => hook.getCurrent()!.onUndo());
         await vi.waitFor(() => expect(hook.getCurrent()?.phase.kind).toBe('undone'));
         expect([...state.rows.keys()]).toEqual([sibling.entry!.id]);
+        await hook.unmount();
+        hook = await mount();
+        expect(hook.getCurrent()).toMatchObject({ phase: { kind: 'undone' }, theme: { name: 'A' } });
         await act(async () => hook.getCurrent()!.onRedo());
         await vi.waitFor(() => expect(hook.getCurrent()?.phase.kind).toBe('kept'));
         expect([...state.rows.values()].map(row => row.document.profile.name).sort()).toEqual(['A', 'Sibling']);

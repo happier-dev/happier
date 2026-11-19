@@ -15,6 +15,7 @@ import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveAc
 import { usePreparedThemeCss } from '@/theme/css/usePreparedThemeCss';
 import { projectThemeLibraryEntry, projectThemeMiniature } from '@/theme/profiles/themeProfilePresentation';
 import { getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { ThemeActionResultView } from './ThemeActionResultView';
 import { useThemeActionResultModel, type ThemeActionCardEdit } from './useThemeActionResultModel';
 import type { ThemeResultDistribution } from './themeActionResultViewTypes';
@@ -63,7 +64,7 @@ export function ThemeActionResult({ presentation, fallback }: Readonly<{ present
             .catch((error: unknown) => alertActionFailure({ code: readActionErrorCodeV1(error),
                 reason: resolveActionExecutionErrorMessage(error, t('common.unavailable')) }));
     }, [router, execute, mode]);
-    const facts = useThemeActionResultModel(presentation, { preview: owner, entry,
+    const facts = useThemeActionResultModel(presentation, { preview: owner, entry, redo: getSyncSingleton().themeProfileCardRedo,
         appliedTheme: reference === null ? { name: t('settingsAppearance.themeProfiles.defaultTheme'), mode,
             miniature: projectThemeMiniature({ assetAppearance: mode, overrides: { light: {}, dark: {} } }) } : undefined,
         created,
