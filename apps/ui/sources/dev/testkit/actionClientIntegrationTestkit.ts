@@ -60,6 +60,21 @@ export async function mountUiManagedMachineDetail(params: Readonly<{ serverId: s
     };
 }
 
+/** Read the canonical UI projection under the restored Account's lifetime. */
+export async function readUiMachineProjection(params: Readonly<{
+    serverId: string;
+    machineId: string;
+    sections: readonly string[];
+}>) {
+    const [{ captureActiveServerAccountScopeLifetime }, { loadDaemonMergedProjectionCacheEntry }] = await Promise.all([
+        import('@/sync/domains/scope/activeServerAccountScope'),
+        import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs'),
+    ]);
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    if (!accountLifetime) throw new Error('Restored Account lifetime unavailable');
+    return loadDaemonMergedProjectionCacheEntry({ ...params, accountLifetime });
+}
+
 /** Real UI client for cross-app journeys; only the platform lock API is substituted. */
 export async function connectUiActionClient(params: Readonly<{ serverUrl: string; publicEndpoint?: string; addressAnchorUrl?: string; credentials: AuthCredentials }>) {
     const locks = installWebLockManagerMock();

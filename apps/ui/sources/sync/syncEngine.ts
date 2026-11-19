@@ -27,6 +27,7 @@ import {
 import { refreshWorkflowRunsByIds } from '@/sync/engine/workflows/refreshWorkflowRun';
 import { refreshUiActionAutomationsFromChangesV1 } from '@/sync/ops/actions/actionAutomations';
 import { invalidateMachinePoolProjection } from '@/sync/engine/machines/machinePoolProjection';
+import { publishMachineContributionRegistryProjectionRefresh } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import { invalidateSavedSecretCatalogProjection } from '@/sync/engine/settings/savedSecretCatalogEngine';
 import { readSessionMetadataLayoutVersion } from './engine/sessions/parsePlainSessionPayload';
 import { SessionMetadataUpgradeDiscovery, changesRequireSessionMetadataUpgradeDiscovery, socketRequiresSessionMetadataUpgradeDiscovery } from './engine/sessions/metadataUpgradeDiscovery';
@@ -3719,6 +3720,9 @@ class Sync {
         const activeServerIdForReset = String(
             targetToReset?.serverId ?? this.getAppliedTransportTarget()?.serverId ?? '',
         ).trim();
+        // Reset removes the descriptor baseline used to detect registry changes.
+        // The next restore must not reuse that Home's pre-disconnect projection.
+        publishMachineContributionRegistryProjectionRefresh(activeServerIdForReset);
         const withoutActiveServerEntry = <T>(entries: Readonly<Record<string, T>>): Readonly<Record<string, T>> => {
             if (!activeServerIdForReset || !(activeServerIdForReset in entries)) return entries;
             const next = { ...entries };

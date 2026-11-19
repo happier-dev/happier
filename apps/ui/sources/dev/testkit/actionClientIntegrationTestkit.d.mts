@@ -47,6 +47,12 @@ export function createUiMachineOutputFixture(serverId: string): Readonly<{
 
 // Cross-app tests resolve the real UI module at runtime, without merging its
 // importer-relative @/* aliases into the CLI-oriented TypeScript program.
+export function readUiMachineProjection(params: Readonly<{
+    serverId: string;
+    machineId: string;
+    sections: readonly string[];
+}>): Promise<import('../../agents/backendCatalog/daemonMergedProjectionCache.js').ProjectionCacheEntry | null>;
+
 export function connectUiActionClient(params: Readonly<{
     serverUrl: string;
     publicEndpoint?: string;
