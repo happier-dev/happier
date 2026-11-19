@@ -124,6 +124,21 @@ it('retains the same full after-text across a cold Changes open and View/Changes
     expect(current.diffContent).toBe(patch('new'));
     await act(async () => { tree.unmount(); });
 });
+it('retires retained controller bytes when the same path selects an attached workspace', async () => {
+    const props = { ...input, accountId: 'account-a', includeDiff: false, includeFile: true };
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => { tree = renderer.create(<Harness {...props} />); });
+    try {
+        await waitForHomeGovernance(() => expect(current.fileContent?.content).toBe('new\n'));
+        const scope = { ...input.scope, workspace: { v: 2 as const, kind: 'managed' as const, workspaceId: 'attached-project', managedId: 'guest',
+            serverId: input.scope.serverId, rootPath: input.scope.rootPath,
+            controller: { machineId: input.scope.machineId, installationId: 'installation' } } };
+        await act(async () => { tree.update(<Harness {...props} scope={scope} isActive={false} />); });
+        expect(current.fileContent).toBeNull();
+    } finally {
+        await act(async () => { tree.unmount(); });
+    }
+});
 it('switches the viewer read identity without reusing opaque binary bytes or publishing a late text read', async () => {
     const selection = resolveWorkspaceFileViewerChoiceModel({ metadata: { contentClass: 'binary' },
         preferences: { v: 1, selections: {} }, availablePluginViewers: [], builtinViewer: 'text' }).selected;

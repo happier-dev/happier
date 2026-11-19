@@ -1,4 +1,5 @@
 import { sortDirectoryEntries } from './sortDirectoryEntries';
+import type { WorkspaceListDirectoryResponse } from '@/sync/ops/workspaceFileSystem/directoryBrowsing';
 
 export type RepositoryDirectoryEntry = {
     name: string;
@@ -10,7 +11,7 @@ export type RepositoryDirectoryEntry = {
 
 export type ListRepositoryDirectoryEntriesResult =
     | { ok: true; entries: RepositoryDirectoryEntry[]; gitIgnoreAvailable?: boolean; truncated?: boolean }
-    | { ok: false; error: string };
+    | { ok: false; error: string; errorCode?: Extract<WorkspaceListDirectoryResponse, { success: false }>['errorCode'] };
 
 export function sortRepositoryDirectoryEntries(entries: RepositoryDirectoryEntry[]): RepositoryDirectoryEntry[] {
     return sortDirectoryEntries(entries);

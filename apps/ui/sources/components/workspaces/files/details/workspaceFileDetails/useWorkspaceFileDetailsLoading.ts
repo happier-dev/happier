@@ -2,6 +2,7 @@ import * as React from 'react';
 import { t } from '@/text';
 import { getActiveServerAccountScope, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { subscribeAcknowledgedWorkspaceFileWrites } from '@/sync/domains/workspaces/files/workspaceFileAcknowledgements';
+import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { refreshWorkspaceFileDetails, type WorkspaceFileDetailsFileContent } from './refreshWorkspaceFileDetails';
 import { publishSavedWorkspaceFileDetails, reconcileWorkspaceFileDetails } from './reconcileWorkspaceFileDetails';
 
@@ -31,7 +32,8 @@ export function useWorkspaceFileDetailsLoading(input: Input) {
     const request = React.useRef<object | null>(null);
     const transferAbort = React.useRef<AbortController | null>(null);
     const reusableFile = React.useRef<{ key: string; diffMode: Input['diffMode']; includeDiff: Input['includeDiff']; value: NonNullable<Input['reuseFile']> } | null>(null);
-    const resourceKey = JSON.stringify([scope?.serverId, accountId, scope?.machineId, scope?.rootPath, filePath, readAsText === true]);
+    const workspaceKey = scope ? tryBuildWorkspaceCacheKey(scope) : null;
+    const resourceKey = JSON.stringify([workspaceKey, accountId, filePath, readAsText === true]);
     const activeResource = React.useRef(resourceKey);
     activeResource.current = resourceKey;
     const [contentResource, setContentResource] = React.useState(resourceKey);

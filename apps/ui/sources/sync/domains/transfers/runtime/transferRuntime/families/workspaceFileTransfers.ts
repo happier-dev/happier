@@ -1,4 +1,4 @@
-import { RPC_ERROR_CODES, RPC_METHODS, type WorkspaceStatFileRequestV1 } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS, type WorkspaceStatFileRequestV1, type WorkspaceStatFileRequestV2 } from '@happier-dev/protocol/rpc';
 import type { FilesystemEffectFailureDetailsV1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 
 import { userRequestLeaseOwner } from '@/sync/runtime/connectivity/userRequestLease';
@@ -26,7 +26,7 @@ type TransferFileDestination = Readonly<{
     cleanup?: (() => Promise<void>) | null;
 }>;
 
-type WorkspaceStatFileRequest = WorkspaceStatFileRequestV1;
+type WorkspaceStatFileRequest = WorkspaceStatFileRequestV1 | WorkspaceStatFileRequestV2;
 
 type WorkspaceStatFileResponse =
     | Readonly<{
@@ -82,6 +82,7 @@ export async function callDaemonWorkspaceStatFileRpc(params: Readonly<{
     serverId?: string | null;
     rootPath: string;
     agentRootPath?: string | null;
+    workspace?: WorkspaceStatFileRequestV2['workspace'];
     request: Readonly<{ path: string }>;
     timeoutMs?: number | null;
     signal?: AbortSignal | null;
@@ -92,12 +93,12 @@ export async function callDaemonWorkspaceStatFileRpc(params: Readonly<{
         ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
     });
 
+    const file = {
+        path: resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, agentRootPath: params.agentRootPath, requestPath: params.request.path }),
+        ...(params.includeContentHash ? { includeContentHash: true } : {}),
+    };
     return await transferClient.call<WorkspaceStatFileResponse, WorkspaceStatFileRequest>({
-        request: {
-            rootPath: params.rootPath,
-            path: resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, agentRootPath: params.agentRootPath, requestPath: params.request.path }),
-            ...(params.includeContentHash ? { includeContentHash: true } : {}),
-        },
+        request: params.workspace ? { workspace: params.workspace, file } : { rootPath: params.rootPath, ...file },
         machineMethod: RPC_METHODS.STAT_FILE,
         timeoutMs: params.timeoutMs ?? null,
         ...(params.signal ? { signal: params.signal } : {}),

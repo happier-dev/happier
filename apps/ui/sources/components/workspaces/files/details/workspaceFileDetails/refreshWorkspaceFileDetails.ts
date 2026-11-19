@@ -2,6 +2,7 @@ import { t } from '@/text';
 import { config } from '@/config';
 import { callDaemonWorkspaceStatFileRpc } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { workspaceReadFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
+import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import { isBinaryContent, isTextReadableFileViewerKind, resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { decodeBase64 } from '@/encryption/base64';
 import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
@@ -107,6 +108,7 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                         machineId: input.scope.machineId,
                         serverId: input.scope.serverId,
                         rootPath: input.scope.rootPath,
+                        ...(input.scope.workspace ? { workspace: input.scope.workspace } : {}),
                         request: { path: input.filePath },
                         signal: input.signal,
                     });
@@ -134,14 +136,15 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                         machineId: input.scope.machineId,
                         serverId: input.scope.serverId,
                         rootPath: input.scope.rootPath,
+                        ...(input.scope.workspace ? { workspace: input.scope.workspace } : {}),
                         request: { path: input.filePath },
                         signal: input.signal,
                     });
                     if (input.signal?.aborted) throw new Error(t('files.fileReadFailed'));
                     // Binary viewers need successful target metadata; video additionally needs a stable player revision.
-                    if (wantsBinaryPreview && (!stat.success || stat.exists !== true
+                    if ((!stat.success && input.scope.workspace) || (wantsBinaryPreview && (!stat.success || stat.exists !== true
                         || (videoPreview && (typeof stat.sizeBytes !== 'number' || !Number.isFinite(stat.sizeBytes) || stat.sizeBytes < 0
-                            || typeof stat.modifiedMs !== 'number' || !Number.isFinite(stat.modifiedMs))))) {
+                            || typeof stat.modifiedMs !== 'number' || !Number.isFinite(stat.modifiedMs)))))) {
                         throw new Error(!stat.success ? stat.error : t('files.fileReadFailed'));
                     }
                     if (
@@ -175,7 +178,7 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                     };
                 }
 
-                const readResponse = await workspaceReadFile(input.scope, input.filePath, {
+                const readResponse = await workspaceReadFile(workspaceFileSystemTargetFromScope(input.scope), input.filePath, {
                     maxBytes: maxPreviewBytes ?? 256 * 1024,
                     knownSizeBytes: statSizeBytes,
                     signal: input.signal,

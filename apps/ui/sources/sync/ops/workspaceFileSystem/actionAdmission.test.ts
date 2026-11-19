@@ -199,6 +199,16 @@ afterEach(async () => {
 });
 
 describe('shared workspace filesystem Action admission', () => {
+    it('routes a managed directory read through its controller without dropping the native address', async () => {
+        const workspace = { v: 2 as const, kind: 'managed' as const, serverId: target.serverId,
+            workspaceId: 'attached-checkout', managedId: 'native-guest',
+            controller: { machineId: target.machineId, installationId: 'installed-controller' }, rootPath: target.rootPath };
+        filesystem.response = { success: true, entries: [] };
+        await expect(workspaceListDirectory({ kind: 'managed', workspace }, '.')).resolves.toEqual({ success: true, entries: [] });
+        expect(filesystem.calls).toEqual([expect.objectContaining({ machineId: workspace.controller.machineId,
+            payload: { workspace, rootPath: workspace.rootPath, path: workspace.rootPath } })]);
+    });
+
     it('preserves a workspace list refusal through search without trying a second filesystem route', async () => {
         const { searchWorkspaceFiles, workspaceFileSearchCache } = await import('@/sync/domains/workspaces/files/workspaceFileSearch');
         filesystem.response = { ok: false, errorCode: 'filesystem_identity_custody_unavailable',

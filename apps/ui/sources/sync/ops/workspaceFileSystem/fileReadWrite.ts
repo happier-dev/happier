@@ -15,7 +15,7 @@ import {
 } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 
-import type { WorkspaceFileSystemTarget } from './directoryBrowsing';
+import { projectWorkspaceFileSystemRoute, type WorkspaceFileSystemTarget } from './workspaceTarget';
 import { runTransferFinalizeRecovery } from '@/components/transfers/recovery/runTransferFinalizeRecovery';
 import { t } from '@/text';
 import { isTransferFinalizeRecoveryFailure } from '@/sync/domains/transfers/runtime/transferRuntime';
@@ -93,10 +93,8 @@ export async function workspaceStatFile(
     options?: Readonly<{ signal?: AbortSignal | null; includeContentHash?: boolean }>,
 ): Promise<WorkspaceStatFileResponse> {
     return await callDaemonWorkspaceStatFileRpc({
-        machineId: target.machineId,
-        serverId: target.serverId,
-        rootPath: target.rootPath,
-        agentRootPath: target.agentRootPath,
+        ...projectWorkspaceFileSystemRoute(target),
+        ...(target.kind === 'managed' ? { workspace: target.workspace } : {}),
         request: { path },
         ...(options?.includeContentHash ? { includeContentHash: true } : {}),
         ...(options?.signal ? { signal: options.signal } : {}),
@@ -114,22 +112,22 @@ export async function workspaceReadFile(
         knownSizeBytes?: number | null;
     }>,
 ): Promise<WorkspaceReadFileResponse> {
+    const route = projectWorkspaceFileSystemRoute(target);
     const inlineMaxBytes = resolveWorkspaceFileInlineMaxBytes();
     const maxBytes =
         typeof options?.maxBytes === 'number' && Number.isFinite(options.maxBytes)
             ? Math.min(Math.max(0, Math.floor(options.maxBytes)), HARD_OPENABLE_CONTENT_MAX_BYTES_V1)
             : options?.range?.length ?? inlineMaxBytes;
     const result = await invokeWorkspaceFileSystemAction(target, 'daemon.filesystem.readFile', {
-        rootPath: target.rootPath,
+        rootPath: route.rootPath,
         path: resolveMachineAbsolutePath({
-            rootPath: target.rootPath,
-            agentRootPath: target.agentRootPath,
+            ...route,
             requestPath: path,
             pathKind: 'workspace_entry',
         }),
         ...(options?.range ? { offset: options.range.offset, length: options.range.length } : {}),
     }, { signal: options?.signal,
-        ...(!options?.range && maxBytes > inlineMaxBytes ? { delivery: async ({ actionId, input, context }) => {
+        ...(target.kind !== 'managed' && !options?.range && maxBytes > inlineMaxBytes ? { delivery: async ({ actionId, input, context }) => {
             // A preview ceiling is an admission bound, not the file's size.
             // Keep small files on the ordinary reader even when the viewer
             // permits larger previews. Reuse its admitted RPC and Account custody.
@@ -150,7 +148,7 @@ export async function workspaceReadFile(
                 callAdmittedAction: params => callAdmittedFilesystemTransferActionRpc({ ...params, context, requestId: context.actionRequestId ?? undefined }),
             });
             return read.ok ? { success: true, content: read.contentBase64 }
-                : { success: false, error: read.error };
+                : { success: false, error: read.error, ...(read.errorCode ? { errorCode: read.errorCode } : {}) };
         } } : {}),
     });
     if (!result.ok) return projectWorkspaceFileSystemActionFailure(result);
@@ -217,25 +215,26 @@ export async function workspaceWriteFile(
         onApprovalPending?: (registration: ActionApprovalContinuation) => void }>,
 ): Promise<WorkspaceWriteFileResponse> {
     options?.signal?.throwIfAborted();
+    const route = projectWorkspaceFileSystemRoute(target);
     const contentBytes = typeof content === 'string' ? new TextEncoder().encode(content) : content;
     const inlineMaxBytes = resolveWorkspaceFileInlineMaxBytes();
-    const serverId = target.serverId ?? captureActiveServerAccountScopeLifetime()?.scope.serverId;
+    const serverId = route.serverId ?? captureActiveServerAccountScopeLifetime()?.scope.serverId;
     const account = options?.onApprovalPending && serverId ? await captureLazyActionAccountContext(serverId) : null;
     try {
 
     // View cancellation ends observation; an admitted write keeps the Action's
     // Account lifetime and must not be reported as definitely unwritten.
     const input = {
-        rootPath: target.rootPath,
-        path: resolveMachineAbsolutePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath,
-            requestPath: path, pathKind: 'workspace_entry' }),
+        rootPath: route.rootPath,
+        path: resolveMachineAbsolutePath({ ...route, requestPath: path, pathKind: 'workspace_entry' }),
         content: encodeBase64(contentBytes, 'base64'),
+        ...(target.kind === 'managed' ? { workspace: target.workspace } : {}),
         ...(expectedHash === undefined ? {} : { expectedHash }),
     };
     const accountId = options?.accountId ?? account?.accountId;
-    const operation = invokeWorkspaceFileSystemAction(account ? { ...target, serverId: account.serverId } : target,
+    const operation = invokeWorkspaceFileSystemAction(account && target.kind !== 'managed' ? { ...target, serverId: account.serverId } : target,
         'daemon.filesystem.writeFile', input, { ...(accountId ? { accountId } : {}),
-        ...(contentBytes.byteLength > inlineMaxBytes ? { delivery: async ({ context }) => {
+        ...(target.kind !== 'managed' && contentBytes.byteLength > inlineMaxBytes ? { delivery: async ({ context }) => {
         const recoveryObservation = mergeAbortSignals([options?.signal ?? undefined, context.signal]);
         try {
             const sha256 = bytesToHex(await digest('SHA-256', contentBytes));

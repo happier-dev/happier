@@ -1,4 +1,5 @@
 import { workspaceListDirectory } from '@/sync/ops/workspaceFileSystem/directoryBrowsing';
+import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import { readHomeAccountDepartures, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import {
     sortRepositoryDirectoryEntries,
@@ -105,11 +106,12 @@ export async function listWorkspaceRepositoryDirectoryEntries(input: Readonly<{
     if (!workspaceCacheKey) return { ok: false, error: 'unknown_error' };
 
     const departures = captureDirectoryReadDepartures(input.scope.serverId);
-    const response = await workspaceListDirectory(input.scope, input.directoryPath, { signal: input.signal, includeGitIgnore: true });
+    const response = await workspaceListDirectory(workspaceFileSystemTargetFromScope(input.scope), input.directoryPath,
+        { signal: input.signal, includeGitIgnore: true });
     input.signal?.throwIfAborted();
     if (departures !== readHomeAccountDepartures(input.scope.serverId)) return { ok: false, error: 'unknown_error' };
     if (!response.success) {
-        return { ok: false, error: response.error || 'unknown_error' };
+        return { ok: false, error: response.error || 'unknown_error', ...(response.errorCode ? { errorCode: response.errorCode } : {}) };
     }
 
     const entries: RepositoryDirectoryEntry[] = [];

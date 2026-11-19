@@ -3,7 +3,7 @@ import { decodeBase64 } from '@/encryption/base64';
 import { machineScmChangeDiscard, type MachineScmCallOptions } from '@/sync/ops/scm/machineScm';
 import { workspaceWriteFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
 import { machineWorkspaceFileReplaceApply } from '@/sync/ops/machineWorkspaceFileReplace';
-import type { WorkspaceFileSystemTarget } from '@/sync/ops/workspaceFileSystem/directoryBrowsing';
+import type { MachineFileSystemTarget } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import { downloadBulkPayloadViaDirectExportToDestination } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { publishPresentationNotice, readPresentationNotice, retirePresentationNotice, subscribePresentationNotices,
   type PresentationNotice } from '@/components/sessions/presentation/presentationNotices';
@@ -17,7 +17,7 @@ export type DiscardChangeResult =
   | Readonly<{ ok: true; entry: ScmChangeDiscardResultEntry; fileReplaced: boolean; undo?: () => Promise<DiscardUndoResult>; undoUnavailable?: true; retire: () => void; refreshFailed: boolean; noteDelivery?: 'queued' | 'failed' }>
   | Readonly<{ ok: false; reason: FailureReason }>;
 export type DiscardChangeParams = Readonly<{
-  target: WorkspaceFileSystemTarget;
+  target: MachineFileSystemTarget;
   entry: Omit<ScmComparisonDiscardEntry, 'includeUndo'>;
   messages: DiscardChangeMessages;
   refresh: () => Promise<void>;

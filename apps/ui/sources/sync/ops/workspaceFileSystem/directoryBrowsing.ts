@@ -5,13 +5,9 @@ import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMac
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import { FilesystemGetDirectoryTreeOutputSchema, FilesystemListDirectoryOutputSchema, type FilesystemTreeNode } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { invokeWorkspaceFileSystemAction, invokeWorkspaceFileSystemMutation, projectWorkspaceFileSystemActionFailure, type WorkspaceFileSystemFailure, type WorkspaceFileSystemMutationResponse } from './actionInvocation';
+import { projectWorkspaceFileSystemRoute, type WorkspaceFileSystemTarget } from './workspaceTarget';
 
-export type WorkspaceFileSystemTarget = Readonly<{
-    machineId: string;
-    rootPath: string;
-    agentRootPath?: string | null;
-    serverId?: string | null;
-}>;
+export type { WorkspaceFileSystemTarget } from './workspaceTarget';
 
 function resolveAbsoluteWorkspacePath(params: Readonly<{
     rootPath: string;
@@ -34,9 +30,10 @@ export async function workspaceCreateDirectory(
     options?: Readonly<{ signal?: AbortSignal; callerContext?: ActionExecutorContext }>,
 ): Promise<WorkspaceCreateDirectoryResponse> {
     try {
+        const route = projectWorkspaceFileSystemRoute(target);
         return await invokeWorkspaceFileSystemMutation(target, 'daemon.filesystem.createDirectory', {
-            rootPath: target.rootPath,
-            path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: path }),
+            rootPath: route.rootPath,
+            path: resolveAbsoluteWorkspacePath({ ...route, requestPath: path }),
         }, options);
     } catch (error) {
         return {
@@ -57,9 +54,10 @@ export async function workspaceListDirectory(
     options?: Readonly<{ signal?: AbortSignal; callerContext?: ActionExecutorContext; accountId?: string; includeGitIgnore?: boolean }>,
 ): Promise<WorkspaceListDirectoryResponse> {
     try {
+        const route = projectWorkspaceFileSystemRoute(target);
         const result = await invokeWorkspaceFileSystemAction(target, 'daemon.filesystem.listDirectory', {
-            rootPath: target.rootPath,
-            path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: path }),
+            rootPath: route.rootPath,
+            path: resolveAbsoluteWorkspacePath({ ...route, requestPath: path }),
             ...(options?.includeGitIgnore === undefined ? {} : { includeGitIgnore: options.includeGitIgnore }),
         }, options);
         if (!result.ok) return projectWorkspaceFileSystemActionFailure(result);
@@ -87,9 +85,10 @@ export async function workspaceGetDirectoryTree(
     options?: Readonly<{ signal?: AbortSignal; callerContext?: ActionExecutorContext }>,
 ): Promise<WorkspaceGetDirectoryTreeResponse> {
     try {
+        const route = projectWorkspaceFileSystemRoute(target);
         const result = await invokeWorkspaceFileSystemAction(target, 'daemon.filesystem.getDirectoryTree', {
-            rootPath: target.rootPath,
-            path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: path }),
+            rootPath: route.rootPath,
+            path: resolveAbsoluteWorkspacePath({ ...route, requestPath: path }),
             maxDepth,
         }, options);
         if (!result.ok) return projectWorkspaceFileSystemActionFailure(result);

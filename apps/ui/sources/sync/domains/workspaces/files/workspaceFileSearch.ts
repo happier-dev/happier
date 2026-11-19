@@ -6,6 +6,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { workspaceListDirectory } from '@/sync/ops/workspaceFileSystem/directoryBrowsing';
+import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import { machineWorkspaceFileList, type MachineWorkspaceFileListErrorCode } from '@/sync/ops/machineWorkspaceFileList';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { createWorkspaceFileSearchIndex, rankFileSearchResults, type WorkspaceFileSearchIndex } from './workspaceFileSearchMatcher';
@@ -298,7 +299,7 @@ async function buildFileItemsFromRipgrep(
     throwIfWorkspaceFileSearchAborted(signal);
     const res = await machineWorkspaceFileList(
         address.machineId,
-        { rootPath: address.rootPath, includeHidden: true },
+        { rootPath: address.rootPath, includeHidden: true, ...(address.workspace ? { workspace: address.workspace } : {}) },
         {
             serverId: address.serverId,
             callerContext,
@@ -331,7 +332,7 @@ async function buildFileItemsFromRipgrepGlob(
 
     const res = await machineWorkspaceFileList(
         address.machineId,
-        { rootPath: address.rootPath, query: trimmed, includeHidden: true },
+        { rootPath: address.rootPath, query: trimmed, includeHidden: true, ...(address.workspace ? { workspace: address.workspace } : {}) },
         {
             serverId: address.serverId,
             callerContext,
@@ -361,7 +362,7 @@ async function buildFileItemsFromDirectoryFallback(
         const directoryPath = queue.shift() ?? '';
         let response: Awaited<ReturnType<typeof workspaceListDirectory>>;
         try {
-            response = await workspaceListDirectory(input, directoryPath, {
+            response = await workspaceListDirectory(workspaceFileSystemTargetFromScope(input), directoryPath, {
                 callerContext,
                 ...(accountId ? { accountId } : {}),
                 ...(signal ? { signal } : {}),
@@ -619,6 +620,7 @@ export async function searchWorkspaceFiles(
     if (input.mode === 'glob') {
         const response = await machineWorkspaceFileList(input.scope.machineId, {
             rootPath: input.scope.rootPath,
+            ...(input.scope.workspace ? { workspace: input.scope.workspace } : {}),
             query: input.query.trim(),
             includeHidden: input.includeHidden ?? true,
             ...(input.resultType ? { resultType: input.resultType } : {}),

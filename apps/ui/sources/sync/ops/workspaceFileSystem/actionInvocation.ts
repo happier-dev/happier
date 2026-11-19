@@ -5,7 +5,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import type { WorkspaceFileSystemTarget } from './directoryBrowsing';
+import { projectWorkspaceFileSystemRoute, type WorkspaceFileSystemTarget } from './workspaceTarget';
 import type { UiFilesystemActionDelivery } from '@/sync/ops/actions/filesystemActionDeps';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -30,8 +30,12 @@ export async function invokeWorkspaceFileSystemAction(
     input: unknown,
     options?: Readonly<{ signal?: AbortSignal | null; accountId?: string; timeoutMs?: number | null; delivery?: UiFilesystemActionDelivery['execute']; callerContext?: ActionExecutorContext }>,
 ): Promise<ActionExecuteResult> {
+    const route = projectWorkspaceFileSystemRoute(target);
+    const actionInput = target.kind === 'managed' && input !== null && typeof input === 'object'
+        ? { ...input, workspace: target.workspace }
+        : input;
     const lifetime = captureActiveServerAccountScopeLifetime();
-    const serverId = target.serverId || lifetime?.scope.serverId;
+    const serverId = route.serverId || lifetime?.scope.serverId;
     if (!serverId) return { ok: false, errorCode: 'action_home_not_found', error: 'action_home_not_found' };
     const activeTarget = lifetime && areServerProfileIdentifiersEquivalent(serverId, lifetime.scope.serverId);
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -42,7 +46,7 @@ export async function invokeWorkspaceFileSystemAction(
     // budget. A competing reply cutoff must not discard that acknowledgement.
     const delivery = options?.delivery ?? (actionId !== FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles && typeof options?.timeoutMs === 'number' ? async (execution: Parameters<UiFilesystemActionDelivery['execute']>[0]) => {
         const { callAdmittedFilesystemActionRpc } = await import('@/sync/ops/actions/filesystemActionDeps');
-        return callAdmittedFilesystemActionRpc({ actionId: execution.actionId, machineId: target.machineId,
+        return callAdmittedFilesystemActionRpc({ actionId: execution.actionId, machineId: route.machineId,
             serverId, accountId: options.accountId, input: execution.input, context: execution.context,
             timeoutMs: options.timeoutMs, signal: execution.context.signal,
             requestId: execution.context.actionRequestId ?? undefined });
@@ -63,16 +67,16 @@ export async function invokeWorkspaceFileSystemAction(
         serverId,
         ...(expectedAccountId ? { expectedAccountId } : {}),
         ...(signal ? { signal } : {}),
-        externalActionTarget: { kind: 'machine', machineId: target.machineId },
+        externalActionTarget: { kind: 'machine', machineId: route.machineId },
     } as const;
     try {
         // Run-now present-user entry: `execute` alone offers the in-place default confirmation.
         const result = options?.callerContext?.executeOrdinaryChildAction
-            ? await options.callerContext.executeOrdinaryChildAction(actionId, input, {
+            ? await options.callerContext.executeOrdinaryChildAction(actionId, actionInput, {
                 serverId, ...(expectedAccountId ? { expectedAccountId } : {}),
                 ...(signal ? { signal } : {}), externalActionTarget: context.externalActionTarget,
             })
-            : await execute(actionId, input, context);
+            : await execute(actionId, actionInput, context);
         // Cancellation stays a rejection for mounted byte-delivery callers; `execute` would
         // otherwise settle an aborted approval wait as a typed failure.
         if (!result.ok) signal?.throwIfAborted();

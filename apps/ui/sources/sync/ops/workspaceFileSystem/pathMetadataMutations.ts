@@ -4,7 +4,7 @@ import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMac
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import { invokeWorkspaceFileSystemMutation, type WorkspaceFileSystemMutationResponse } from './actionInvocation';
 
-import type { WorkspaceFileSystemTarget } from './directoryBrowsing';
+import { projectWorkspaceFileSystemRoute, type WorkspaceFileSystemTarget } from './workspaceTarget';
 
 function resolveAbsoluteWorkspacePath(params: Readonly<{
     rootPath: string;
@@ -26,10 +26,11 @@ export async function workspaceRenamePath(
     input: Readonly<{ from: string; to: string; overwrite?: boolean }>,
 ): Promise<WorkspaceRenamePathResponse> {
     try {
+        const route = projectWorkspaceFileSystemRoute(target);
         return await invokeWorkspaceFileSystemMutation(target, 'daemon.filesystem.rename', {
-            rootPath: target.rootPath,
-            from: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: input.from }),
-            to: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: input.to }),
+            rootPath: route.rootPath,
+            from: resolveAbsoluteWorkspacePath({ ...route, requestPath: input.from }),
+            to: resolveAbsoluteWorkspacePath({ ...route, requestPath: input.to }),
             overwrite: input.overwrite === true,
         });
     } catch (error) {
@@ -48,9 +49,10 @@ export async function workspaceDeletePath(
     input: Readonly<{ path: string; recursive?: boolean }>,
 ): Promise<WorkspaceDeletePathResponse> {
     try {
+        const route = projectWorkspaceFileSystemRoute(target);
         return await invokeWorkspaceFileSystemMutation(target, 'daemon.filesystem.delete', {
-            rootPath: target.rootPath,
-            path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: input.path }),
+            rootPath: route.rootPath,
+            path: resolveAbsoluteWorkspacePath({ ...route, requestPath: input.path }),
             recursive: input.recursive === true,
         });
     } catch (error) {

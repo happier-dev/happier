@@ -84,7 +84,8 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec, requiresExplicitScmMachineTarget } from '@happier-dev/protocol/actions/actionSpecs';
 import { RPC_METHODS, type SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
 import { supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
-import { getScmRpcSideEffectClass } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { getScmRpcSideEffectClass, isScmLocalRepositoryReadRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { ManagedWorkspaceScmRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { scmFallbackError, type ScmRpcFailure } from './scmRpcFailure';
 import { runScmRpcWithAdmission, type ScmRpcTransportResult } from './scmRpcAdmission';
 import { invokeUiScmAction, normalizeUiScmFacadeResult } from './scmActionInvocation';
@@ -101,10 +102,12 @@ import { getFirstPartyScmBackendLegacyLocalId } from '@/scm/registry/firstPartyS
 import { ScmChangeDiscardResponseSchema } from '@happier-dev/protocol/scm';
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { acknowledgeWorkspaceFileWrites } from '@/sync/domains/workspaces/files/workspaceFileAcknowledgements';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 const SCM_DIFF_COMMIT_TIMEOUT_MS = 120_000;
 
 export type MachineScmCallOptions = Readonly<{
+    workspace?: WorkspaceScopeBase['workspace'];
     serverId?: string | null;
     accountId?: string | null;
     signal?: AbortSignal;
@@ -174,6 +177,10 @@ export async function runMachineScmRpc<
     request: R,
     options?: MachineScmCallOptions,
 ): Promise<ScmRpcTransportResult<T>> {
+    const workspace = options?.workspace;
+    if (workspace && !isScmLocalRepositoryReadRpcMethod(method)) {
+        return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'The workspace does not support this SCM operation.' };
+    }
     let payload: MachineScmRpcRequest = method.startsWith('scm.diffSummary.') || requiresExplicitScmMachineTarget(method) ? request : withScmBackendPreference({
         ...request,
         outcomeVersion: 1 as const,
@@ -199,10 +206,10 @@ export async function runMachineScmRpc<
     return await runScmRpcWithAdmission<T>({
         method, request: payload,
         call: (rpcMethod, rpcPayload) => machineRpcWithServerScope<unknown, object>({
-            machineId,
+            machineId: workspace?.controller.machineId ?? machineId,
             method: rpcMethod,
-            payload: rpcPayload,
-            ...(options?.serverId ? { serverId: options.serverId } : {}),
+            payload: workspace ? ManagedWorkspaceScmRpcRequestV1Schema.parse({ v: 1, kind: 'targeted_action_rpc', target: workspace, input: rpcPayload }) : rpcPayload,
+            serverId: workspace?.serverId ?? options?.serverId ?? undefined,
             ...(options?.accountId ? { accountId: options.accountId } : {}),
             ...(options?.signal ? { signal: options.signal } : {}),
             ...(options?.authorization ? { authorization: options.authorization } : {}),

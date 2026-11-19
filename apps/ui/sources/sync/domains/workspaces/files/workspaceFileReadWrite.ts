@@ -2,6 +2,7 @@ import { workspaceWriteFile as writeWorkspaceFile, type WorkspaceWriteFileRespon
 
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
+import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 
 export type { WorkspaceWriteFileResponse, WorkspaceWriteFileFailureKind } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
 export { classifyWorkspaceWriteFileFailure } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
@@ -16,11 +17,7 @@ export async function workspaceWriteFile(params: Readonly<{
     onApprovalPending?: (registration: ActionApprovalContinuation) => void;
 }>): Promise<WorkspaceWriteFileResponse> {
     return await writeWorkspaceFile(
-        {
-            machineId: params.scope.machineId,
-            rootPath: params.scope.rootPath,
-            serverId: params.scope.serverId,
-        },
+        workspaceFileSystemTargetFromScope(params.scope),
         params.path,
         params.content,
         params.expectedHash,

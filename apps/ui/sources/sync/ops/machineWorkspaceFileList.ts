@@ -34,7 +34,9 @@ export async function machineWorkspaceFileList(
     // wait precedes the scan and must not consume its execution budget.
     const admittedInput = { ...payload, budgetMs: payload.budgetMs ?? resolveMachineRpcTimeoutMs(options?.timeoutMs) };
     try {
-        const result = await invokeWorkspaceFileSystemAction({ machineId, serverId: options?.serverId, rootPath: payload.rootPath },
+        const target = payload.workspace ? { kind: 'managed' as const, workspace: payload.workspace }
+            : { machineId, serverId: options?.serverId, rootPath: payload.rootPath };
+        const result = await invokeWorkspaceFileSystemAction(target,
             FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles, admittedInput, { ...options, accountId: options?.accountId ?? undefined });
         if (!result.ok) {
             const failure = projectWorkspaceFileSystemActionFailure(result);
