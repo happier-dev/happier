@@ -498,7 +498,8 @@ const ProjectDeploymentsPage = React.memo(
     const besideList = props.workspaceRef == null && shellColumnVisible && items.length > 0;
     const openHostProject = () => router.push(projectSourceRoute(props.sourceId));
     const detail =
-      selection.defaults ? <ProjectDeploymentDefaultsSettings key={`${props.serverId}:${props.accountId}:${props.sourceId}`}
+      // Its own key: beside the list it is a sibling of LandOnFirstEnvironment, which keys on the same scope.
+      selection.defaults ? <ProjectDeploymentDefaultsSettings key={`defaults:${props.serverId}:${props.accountId}:${props.sourceId}`}
         lifetime={props.lifetime} sourceId={props.sourceId} demand={props.demand} environments={triggerEnvironments}
         project={sourceRead.source ? { name: sourceRead.source.source.name, onOpen: openHostProject } : null}
         onOpenEnvironment={openEnvironmentTriggers} onOpenPreviews={openEnvironmentPreviews} /> : draft ?? (environmentId === null ? null : selection.deploymentId ? (
