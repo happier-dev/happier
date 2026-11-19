@@ -82,7 +82,7 @@ describe('installed external HTTP secret-use public contract', () => {
             redirectTargetOrigin = `http://127.0.0.1:${redirectAddress.port}`;
             runtime = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{ manifest: {
                 schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'External secret use', description: 'Public HTTP custody fixture',
-                engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, activation: { events: [{ kind: 'startup' }] }, entrypoints: { daemon: './daemon.mjs' },
+                engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, activation: { events: [{ kind: 'startup' }] }, entrypoints: { daemon: './daemon.mjs' },
                 hostAccess: { required: [{ id: 'provider', capability: 'network', reason: 'Sync provider variables', scope: {
                     targets: [{ kind: 'fixedOrigin', origin }], methods: ['POST'], privateNetwork: true,
                 } }], optional: [] }, contributes: { actions: [{ id: 'sync', title: 'Sync variables', scopes: ['global'], surfaces: ['cli'], dangerLevel: 'safe',

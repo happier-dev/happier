@@ -5,7 +5,7 @@
   "displayName": "Packed External Sessions Fixture",
   "description": "Dependency-closed external Agent contributing the External Sessions auxiliary",
   "engines": {
-    "happier": "^0.2.0"
+    "happier": "^0.3.0"
   },
   "runtime": {
     "apiVersion": 1

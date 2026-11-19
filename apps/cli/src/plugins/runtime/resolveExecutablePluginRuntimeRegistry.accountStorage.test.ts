@@ -200,7 +200,7 @@ async function seedAccountCollectionsActionFixture(params: Readonly<{
         id: params.pluginId ?? PLUGIN_ID,
         version: '1.0.0',
         displayName: 'Account Collections fixture',
-        engines: { happier: '^0.2.0' },
+        engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.mjs', ...(params.includePage ? { development: './daemon.mjs' } : {}) },
         hostAccess: params.declareAccountStorage === false
@@ -474,7 +474,7 @@ async function seedAccountNotificationChannelFixture(params: Readonly<{
         id: PLUGIN_ID,
         version: '1.0.0',
         displayName: 'Account notification fixture',
-        engines: { happier: '^0.2.0' },
+        engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.mjs' },
         hostAccess: params.hostAccess === 'required'

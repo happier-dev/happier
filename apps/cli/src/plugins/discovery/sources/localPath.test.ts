@@ -20,7 +20,7 @@ async function writePluginManifest(rootDir: string, manifestOverrides?: Record<s
       displayName: 'Acme Oh My Pi',
       description: 'Adds Oh My Pi support',
       engines: {
-        happier: '^0.2.0',
+        happier: '^0.3.0',
       },
       contributes: {},
       ...(manifestOverrides ?? {}),
@@ -41,7 +41,7 @@ async function writeStandaloneManifest(manifestPath: string, manifestOverrides?:
       displayName: 'Acme Standalone',
       description: 'Standalone manifest file',
       engines: {
-        happier: '^0.2.0',
+        happier: '^0.3.0',
       },
       contributes: {},
       ...(manifestOverrides ?? {}),

@@ -19,7 +19,7 @@ import { executeExternalSessionCandidatesListAction as list } from './discoveryL
 async function writeAnnotationAgentFixture(pluginRoot: string): Promise<void> {
     const manifest = {
         schemaVersion: 2, id: 'acme.annotation-fixture', version: '1.0.0',
-        displayName: 'Annotation fixture', engines: { happier: '^0.2.0' },
+        displayName: 'Annotation fixture', engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
         hostAccess: { required: [], optional: [] },
         contributes: { agents: [{

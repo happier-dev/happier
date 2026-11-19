@@ -180,7 +180,7 @@ describe('managed dependency plugin contributions', () => {
                         id: 'acme.dependencies',
                         version: '1.0.0',
                         displayName: 'Acme Dependencies',
-                        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+                        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
                         entrypoints: { daemon: './daemon.js' },
                         contributes: {
                             managedDependencies: [acmeManualContribution],

@@ -115,7 +115,7 @@ async function seedCandidateFixture(input: Readonly<{
         id: pluginId,
         version: targetVersion,
         displayName: 'Candidate preparation fixture',
-        engines: { happier: '^0.2.0' },
+        engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.mjs', ...(input.readCollection ? { development: './daemon.mjs' } : {}) },
         hostAccess: { required: input.readCollection ? [{ id: 'account-state', capability: 'storage.account', reason: 'Read retained tasks.', scope: { enabled: true } }] : [], optional: [] },

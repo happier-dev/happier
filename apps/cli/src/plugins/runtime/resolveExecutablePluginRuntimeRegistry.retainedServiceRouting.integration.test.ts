@@ -245,7 +245,7 @@ function pluginManifest(input: Readonly<{
         id: PLUGIN_ID,
         version: manifestVersion,
         displayName: `Retained routing ${input.version}`,
-        engines: { happier: '^0.2.0' },
+        engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.mjs' },
         activation: { events: [{ kind: 'startup' }] },

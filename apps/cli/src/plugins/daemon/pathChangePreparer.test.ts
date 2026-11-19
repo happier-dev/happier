@@ -210,7 +210,7 @@ async function createDescriptorPlugin(params?: Readonly<{
     id: params?.pluginId ?? 'acme.descriptor',
     version: '1.0.0',
     displayName: 'Descriptor',
-    engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+    engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
     hostAccess: {
       required: params?.requiredNetworkOrigins ? [{
         id: 'api',
@@ -606,7 +606,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
     const sourcePath = join(sourceRoot, 'plugin.ts');
     await writeFile(sourcePath, [
       "export const manifest = { schemaVersion: 2, id: 'acme.source-in-place', version: '1.0.0',",
-      "displayName: 'Source in place', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },",
+      "displayName: 'Source in place', engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },",
       'hostAccess: { required: [], optional: [] }, contributes: {} };',
       'export function activate() {}',
     ].join('\n'), 'utf8');
@@ -655,7 +655,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
     const sourcePath = join(sourceRoot, 'plugin.ts');
     await writeFile(sourcePath, [
       "export const manifest = { schemaVersion: 2, id: 'acme.registered-root', version: '1.0.0',",
-      "displayName: 'Registered root', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },",
+      "displayName: 'Registered root', engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },",
       'hostAccess: { required: [], optional: [] }, contributes: {} };',
       'export function activate() {}',
     ].join('\n'), 'utf8');
@@ -1086,7 +1086,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
       id: 'acme.dev-closure',
       version: '1.0.0',
       displayName: 'Development closure',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { daemon: './dist/index.js', development: './src/index.ts' },
       hostAccess: { required: [], optional: [] },
       contributes: {},
@@ -1102,7 +1102,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
     await writeFile(join(pluginRoot, 'src', 'index.ts'), [
       "import { value } from 'runtime-dependency';",
       "import { value as developmentValue } from 'development-only-dependency';",
-      "export const manifest = { schemaVersion: 2, id: 'acme.dev-closure', version: '1.0.0', displayName: 'Development closure', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './dist/index.js', development: './src/index.ts' }, hostAccess: { required: [], optional: [] }, contributes: {} };",
+      "export const manifest = { schemaVersion: 2, id: 'acme.dev-closure', version: '1.0.0', displayName: 'Development closure', engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './dist/index.js', development: './src/index.ts' }, hostAccess: { required: [], optional: [] }, contributes: {} };",
       'export const activatedValue: string = `${value}:${developmentValue}`;',
       'export function activate(): void {}',
       '',
@@ -1222,7 +1222,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
     await mkdir(join(pluginRoot, 'src'), { recursive: true });
     const entryPath = join(pluginRoot, 'src', 'index.ts');
     const sourceForSentinel = (sentinel: string) => [
-      "export const manifest = { schemaVersion: 2, id: 'acme.repeated-development', version: '1.0.0', displayName: 'Descriptor', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { development: './src/index.ts' }, hostAccess: { required: [], optional: [] }, contributes: {} };",
+      "export const manifest = { schemaVersion: 2, id: 'acme.repeated-development', version: '1.0.0', displayName: 'Descriptor', engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { development: './src/index.ts' }, hostAccess: { required: [], optional: [] }, contributes: {} };",
       `export const sentinel = '${sentinel}';`,
       'export function activate(): void {}',
       '',
@@ -2493,7 +2493,7 @@ describe('createDaemonPathPluginChangePreparer', () => {
         executableRealms: ['reactNative'],
         contributions: [{ family: 'ui.renderers', count: 1 }],
         uiArtifacts: { status: 'unavailable', contributionIds: ['main-native'] },
-        compatibility: { happier: '^0.2.0', runtimeApiVersion: 1 },
+        compatibility: { happier: '^0.3.0', runtimeApiVersion: 1 },
         updatePolicy: 'allowed',
       },
     });

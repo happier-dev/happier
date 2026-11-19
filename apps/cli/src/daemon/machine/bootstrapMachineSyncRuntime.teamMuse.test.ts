@@ -29,7 +29,7 @@ import { bootstrapMachineSyncRuntime, retireMachineSyncRuntimeAttempt } from './
 it('reads custodian Muse models for a Team member without impersonating requester automation', async () => {
   const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController, coldStart: true,
     plugins: [{ manifest: { schemaVersion: 2, id: 'acme.team-muse-test', version: '1.0.0', displayName: 'Team catalog fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' }, contributes: {} },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' }, contributes: {} },
       files: { 'daemon.mjs': 'export function activate() {}' } }],
     resolveContributes: happyHomeDir => resolveMergedContributionRegistry({ happyHomeDir }),
   });

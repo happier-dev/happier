@@ -55,7 +55,7 @@ export function createPluginSdkV1Manifest(params: Readonly<{
         displayName: params.displayName ?? params.pluginId,
         description: params.description ?? `Plugin SDK v1 fixture for ${params.pluginId}`,
         engines: {
-            happier: '^0.2.0',
+            happier: '^0.3.0',
         },
         uses: Object.freeze([...(params.uses ?? [])]),
         entrypoints: {

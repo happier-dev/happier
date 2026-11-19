@@ -55,7 +55,7 @@ describe('plugin webhook contributions', () => {
       id: 'example.github-webhooks',
       version: '1.0.0',
       displayName: 'GitHub webhooks',
-      engines: { happier: '^0.2.0' },
+      engines: { happier: '^0.3.0' },
       runtime: { apiVersion: 1 },
       entrypoints: { daemon: './dist/index.js' },
       contributes: {
@@ -123,7 +123,7 @@ describe('plugin webhook contributions', () => {
       id: 'example.github-webhooks',
       version: '1.0.0',
       displayName: 'GitHub webhooks',
-      engines: { happier: '^0.2.0' },
+      engines: { happier: '^0.3.0' },
       runtime: { apiVersion: 1 },
       entrypoints: { daemon: './dist/index.js' },
     } as const;

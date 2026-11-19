@@ -1201,7 +1201,7 @@ describe('target activation publication', () => {
         const pluginId = 'acme.slow-lazy';
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: pluginId,
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
@@ -1274,7 +1274,7 @@ describe('target activation publication', () => {
             id: pluginId,
             version: '1.0.0',
             displayName: pluginId,
-            engines: { happier: '^0.2.0' },
+            engines: { happier: '^0.3.0' },
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             activation: { events: [{ kind: 'startup' }] },
@@ -1332,7 +1332,7 @@ describe('target activation publication', () => {
             id: pluginId,
             version: '1.0.0',
             displayName: pluginId,
-            engines: { happier: '^0.2.0' },
+            engines: { happier: '^0.3.0' },
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             activation: { events: [{ kind: 'startup' }] },
@@ -1414,7 +1414,7 @@ describe('target activation publication', () => {
             id: pluginId,
             version: '1.0.0',
             displayName: 'Host access projection',
-            engines: { happier: '^0.2.0' },
+            engines: { happier: '^0.3.0' },
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             hostAccess: {
@@ -1536,7 +1536,7 @@ describe('target activation publication', () => {
                 id: pluginId,
                 version: '1.0.0',
                 displayName: 'External account fixture',
-                engines: { happier: '^0.2.0' },
+                engines: { happier: '^0.3.0' },
                 runtime: { apiVersion: 1 },
                 entrypoints: { daemon: './daemon.mjs' },
                 contributes: {
@@ -1657,7 +1657,7 @@ describe('target activation publication', () => {
             id: pluginId,
             version: '1.0.0',
             displayName: 'Direct activation',
-            engines: { happier: '^0.2.0' },
+            engines: { happier: '^0.3.0' },
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             contributes: {},
@@ -1716,7 +1716,7 @@ describe('target activation publication', () => {
             id: pluginId,
             version: '2.0.0',
             displayName: 'Failed startup validation',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             activation: { events: [{ kind: 'startup' }] },
             contributes: {
@@ -1771,7 +1771,7 @@ describe('target activation publication', () => {
             id: pluginId,
             version: '2.0.0',
             displayName: 'Startup source preparation isolation',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             activation: { events: [{ kind: 'startup' }] },
             contributes: {
@@ -1826,7 +1826,7 @@ describe('target activation publication', () => {
             id: pluginId,
             version: '2.0.0',
             displayName: 'Retryable source preparation',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
@@ -1897,7 +1897,7 @@ describe('target activation publication', () => {
             id: pluginId,
             version: '2.0.0',
             displayName: 'Disposed source preparation',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
@@ -1964,7 +1964,7 @@ describe('target activation publication', () => {
     it('uses the contribution registration API for bundled targets', async () => {
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2, id: 'acme.target.bundled', version: '1.0.0', displayName: 'Bundled target',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './missing.mjs' },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './missing.mjs' },
             hostAccess: {
                 required: [
                     {
@@ -2147,7 +2147,7 @@ describe('target activation publication', () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-target-load-failure-'));
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2, id: 'acme.target.load-failure', version: '2.0.0', displayName: 'Target',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './missing.mjs' },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './missing.mjs' },
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
@@ -2207,7 +2207,7 @@ describe('target activation publication', () => {
     it('does not load a lazy target before demand and single-flights concurrent activation', async () => {
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2, id: 'acme.target.lazy', version: '1.0.0', displayName: 'Lazy target',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], execution: { target: 'daemon' }, surfaces: ['cli'], placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
@@ -2262,7 +2262,7 @@ describe('target activation publication', () => {
             id: 'acme.target.request-policy',
             version: '1.0.0',
             displayName: 'Request policy',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             hostAccess: { required: [], optional: [] },
             contributes: {
@@ -2346,7 +2346,7 @@ describe('target activation publication', () => {
             id: pluginId,
             version: '1.0.0',
             displayName: pluginId,
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
@@ -2418,7 +2418,7 @@ describe('target activation publication', () => {
         ].join('\n'));
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2, id: 'acme.target', version: '1.0.0', displayName: 'Target',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
@@ -2501,7 +2501,7 @@ describe('target activation publication', () => {
         ].join('\n'));
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2, id: 'acme.target.disposal', version: '1.0.0', displayName: 'Target',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
@@ -2559,7 +2559,7 @@ describe('target activation publication', () => {
         ].join('\n'));
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2, id: 'acme.target.cleanup-failure', version: '1.0.0', displayName: 'Target',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },
@@ -2620,7 +2620,7 @@ describe('target activation publication', () => {
         ].join('\n'));
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2, id: 'acme.target.cleanup-timeout', version: '1.0.0', displayName: 'Target',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
             contributes: {
                 actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],
             },

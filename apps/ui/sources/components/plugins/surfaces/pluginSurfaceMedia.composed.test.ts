@@ -73,7 +73,7 @@ it('uses the public UI client of installed external plugins for per-view consent
             await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
             await writeFile(join(pluginRoot, '.happier-plugin/plugin.json'), JSON.stringify({
                 schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'External media viewer',
-                engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+                engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
                 activation: { events: [{ kind: 'startup' }] },
                 hostAccess: { required: pluginId === ids[0] ? [{ id: 'session-images', capability: 'sessions',
                     reason: 'Read Session images', scope: { access: ['read'] } }] : [], optional: [] },

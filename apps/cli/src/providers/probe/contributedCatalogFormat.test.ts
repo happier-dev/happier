@@ -26,7 +26,7 @@ const acmePlugin = definePlugin({
   id: 'acme.models',
   version: '1.0.0',
   displayName: 'Acme Models',
-  engines: { happier: '^0.2.0' },
+  engines: { happier: '^0.3.0' },
   runtime: { apiVersion: 1 },
   entrypoints: { daemon: './daemon.mjs' },
   providers: {

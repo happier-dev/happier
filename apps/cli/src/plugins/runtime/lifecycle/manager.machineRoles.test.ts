@@ -15,7 +15,7 @@ let generation = 0;
 function createIntakeRegistry(enablement: ResolvedPluginEnablement): ResolvedContributionRegistry {
     const ingested = ingestCanonicalPluginManifest({
         schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Intake channel',
-        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
         contributes: {
             backgroundServices: [{ id: 'poll-supervisor' }],
             notificationChannels: [{ id: 'alerts', title: 'Intake channel alerts', kind: 'plugin' }],

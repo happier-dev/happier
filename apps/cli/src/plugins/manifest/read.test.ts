@@ -81,7 +81,7 @@ describe('readPluginManifest target route', () => {
     await writeFile(path, Buffer.concat([
       Buffer.from('{"schemaVersion":2,"id":"com.acme.plugin","version":"1.0.0","displayName":"'),
       Buffer.from([0xff]),
-      Buffer.from('","engines":{"happier":"^0.2.0"},"runtime":{"apiVersion":1},"contributes":{}}'),
+      Buffer.from('","engines":{"happier":"^0.3.0"},"runtime":{"apiVersion":1},"contributes":{}}'),
     ]));
 
     await expect(readPluginManifest({ sourceProvenance: 'registryCustodied', manifestPath: path })).resolves.toEqual({
@@ -158,7 +158,7 @@ describe('readPluginManifest target route', () => {
       id: 'com.acme.plugin',
       version: '1.0.0',
       displayName: 'Acme',
-      engines: { happier: '^0.2.0' },
+      engines: { happier: '^0.3.0' },
       runtime: { apiVersion: 1 },
         contributes: {
         ui: {

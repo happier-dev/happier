@@ -2407,7 +2407,7 @@ describe('managed catalog original Account transport', () => {
       await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
       await writeFile(nativeState, JSON.stringify({ reads: 0, watches: 0, disposals: 0 }));
       await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({ schemaVersion: 2,
-        id: pluginId, version: '1.0.0', displayName: 'Account logs fixture', engines: { happier: '^0.2.0' },
+        id: pluginId, version: '1.0.0', displayName: 'Account logs fixture', engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
         contributes: { projectNativeAdapters: [{ id: 'native', files: ['native.json'], roles: ['nativeServiceLifecycle'] }] },
       }));

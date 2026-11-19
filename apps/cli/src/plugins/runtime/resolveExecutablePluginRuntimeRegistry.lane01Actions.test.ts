@@ -103,7 +103,7 @@ describe('installed external plugin Lane 01 Actions', () => {
                 id: PLUGIN_ID,
                 version: '1.0.0',
                 displayName: 'External Lane 01 Action fixture',
-                engines: { happier: '^0.2.0' },
+                engines: { happier: '^0.3.0' },
                 runtime: { apiVersion: 1 },
                 entrypoints: { daemon: './daemon.mjs' },
                 hostAccess: { required: [], optional: [] },

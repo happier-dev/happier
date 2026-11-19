@@ -300,7 +300,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 id: pluginId,
                 version: '1.0.0',
                 displayName: 'Managed Provider acquisition fixture',
-                engines: { happier: '^0.2.0' },
+                engines: { happier: '^0.3.0' },
                 runtime: { apiVersion: 1 },
                 entrypoints: { daemon: './daemon.mjs' },
                 contributes: {
@@ -1531,7 +1531,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             id: 'acme.managed.runtime',
             version: '1.0.0',
             displayName: 'Managed runtime fixture',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             hostAccess: {
                 required: [{
@@ -1726,7 +1726,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             id: 'acme.mcp.session',
             version: '1.0.0',
             displayName: 'Session MCP fixture',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             secrets: [{ id: 'echo-token', custody: 'daemon' }],
             hostAccess: {
@@ -2272,7 +2272,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             id: 'acme.resource.action',
             version: '1.0.0',
             displayName: 'Resource action',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             hostAccess: { required: [], optional: [] },
             contributes: {
@@ -2682,7 +2682,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             id: 'acme.novel.accounts',
             version: '1.0.0',
             displayName: 'Novel accounts',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             hostAccess: {
                 required: [{
@@ -2929,7 +2929,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             id: 'acme.notification.action',
             version: '1.0.0',
             displayName: 'Notification action',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             hostAccess: { required: [], optional: [] },
             contributes: {
@@ -2960,7 +2960,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             id: 'acme.notification.channel',
             version: '1.0.0',
             displayName: 'Notification channel',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             hostAccess: { required: [], optional: [] },
             contributes: {

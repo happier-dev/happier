@@ -35,7 +35,7 @@ it('authorizes only the external Agent state roots actually materialized for thi
     const localId = 'native';
     const manifest = {
         schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Materialized native observation',
-        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
         hostAccess: { required: [
             { id: 'workspace', capability: 'filesystem', reason: 'Read admitted source files', scope: { locations: [{ root: 'workspace' }], access: ['read'] } },
             { id: 'environment', capability: 'environment', reason: 'Bind native home', scope: { keys: ['ACME_NATIVE_HOME'] } },

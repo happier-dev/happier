@@ -12,7 +12,7 @@ it('observes native Muse models through its published managed account declaratio
   const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ coldStart: true,
     // The authored fixture needs an installed source generation to activate bundled contributions.
     plugins: [{ manifest: { schemaVersion: 2, id: 'acme.muse-catalog-test', version: '1.0.0', displayName: 'Catalog fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
       contributes: {} }, files: { 'daemon.mjs': 'export function activate() {}' } }],
     resolveContributes: happyHomeDir => resolveMergedContributionRegistry({ happyHomeDir }),
   });

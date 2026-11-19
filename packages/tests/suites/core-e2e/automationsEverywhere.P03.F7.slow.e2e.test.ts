@@ -47,7 +47,7 @@ describe('Shared approval profiles: contributed target admission', () => {
     await writeFile(join(pluginRoot, 'package.json'), JSON.stringify({ name: action.pluginId, version: '1.0.0', type: 'module' }));
     await writeFile(join(pluginRoot, '.happier-plugin/plugin.json'), JSON.stringify(PluginManifestV2Schema.parse({
       schemaVersion: 2, id: action.pluginId, version: '1.0.0', displayName: 'Approval profile deploy fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { daemon: './daemon.mjs', development: './daemon.mjs' },
       contributes: { actions: [{ id: action.localId, title: 'Deploy fixture', scopes: ['global'],
         surfaces: ['cli', 'agent', 'mcp', 'plugin'], execution: { target: 'daemon' }, dangerLevel: 'writesRemote',

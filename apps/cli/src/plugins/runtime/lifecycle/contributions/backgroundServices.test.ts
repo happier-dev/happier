@@ -88,7 +88,7 @@ describe('background service runner host', () => {
             id: pluginId,
             version: '1.0.0',
             displayName: 'Missing invocation services',
-            engines: { happier: '^0.2.0' },
+            engines: { happier: '^0.3.0' },
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             contributes: { backgroundServices: [{ id: 'indexer' }] },
@@ -152,7 +152,7 @@ describe('background service runner host', () => {
             id: pluginId,
             version: '1.0.0',
             displayName: 'Background HostAccess',
-            engines: { happier: '^0.2.0' },
+            engines: { happier: '^0.3.0' },
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             hostAccess: {
@@ -281,7 +281,7 @@ describe('background service runner host', () => {
             id: pluginId,
             version: '1.0.0',
             displayName: 'Background Account storage',
-            engines: { happier: '^0.2.0' },
+            engines: { happier: '^0.3.0' },
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             hostAccess: {
@@ -402,7 +402,7 @@ describe('background service runner host', () => {
             id: pluginId,
             version: '1.0.0',
             displayName: 'Required background HostAccess',
-            engines: { happier: '^0.2.0' },
+            engines: { happier: '^0.3.0' },
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             hostAccess: {

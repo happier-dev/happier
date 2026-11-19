@@ -57,7 +57,7 @@ async function createSessionRunnerFixture(input: Readonly<{
     `  id: ${JSON.stringify(input.pluginId)},`,
     "  version: '1.0.0',",
     "  displayName: 'Runtime staging fixture',",
-    "  engines: { happier: '^0.2.0' },",
+    "  engines: { happier: '^0.3.0' },",
     '  runtime: { apiVersion: 1 },',
     "  entrypoints: { daemon: './dist/index.js' },",
     '  contributes: { agents: [{',

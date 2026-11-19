@@ -130,7 +130,7 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
     version: overrides.manifestVersion ?? '1.2.3',
     displayName: 'Acme npm stage',
     description: 'Candidate staging fixture',
-    engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+    engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
     entrypoints: { daemon: './dist/daemon.mjs' },
     contributes: {
       ui: {
@@ -638,7 +638,7 @@ describe('stageDownloadedNpmArtifactCandidate', () => {
         name: 'package/.happier-plugin/plugin.json',
         body: JSON.stringify({
           schemaVersion: 2, id: 'acme.npm-stage', version: '1.2.3', displayName: 'Acme',
-          description: 'Development-only published fixture', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+          description: 'Development-only published fixture', engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
           entrypoints: { development: './src/daemon.ts' }, contributes: {},
         }),
       },
@@ -683,7 +683,7 @@ describe('stageDownloadedNpmArtifactCandidate', () => {
       version: '1.2.3',
       displayName: 'Acme npm stage',
       description: 'Large declarative candidate staging fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { daemon: './dist/daemon.mjs' },
       contributes: { resources },
     }, null, 2);

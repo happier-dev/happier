@@ -60,7 +60,7 @@ async function installGeneratedUiPlugin(input?: Readonly<{
         id: pluginId,
         version: '1.0.0',
         displayName: 'Generated UI runtime fixture',
-        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
         hostAccess: { required: [], optional: [] },
         contributes: {
             ui: {

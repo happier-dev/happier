@@ -10,7 +10,7 @@ function target(contributes: Record<string, unknown>, activationEvents: readonly
         id: 'acme.activation-target',
         version: '1.0.0',
         displayName: 'Activation Target',
-        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.js' },
         contributes,
         ...(activationEvents.length > 0

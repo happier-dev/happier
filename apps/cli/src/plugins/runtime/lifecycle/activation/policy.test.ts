@@ -10,7 +10,7 @@ describe('activation metadata', () => {
             id: 'com.acme.agent-runtime-services',
             version: '1.0.0',
             displayName: 'Agent runtime services',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './dist/plugin.js' },
             hostAccess: {
                 required: [
@@ -61,7 +61,7 @@ describe('activation metadata', () => {
             id: 'com.acme.runtime-metadata',
             version: '1.0.0',
             displayName: 'Runtime metadata',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './dist/plugin.js' },
             contributes: {
                 events: [{ id: 'review-ready-event', kind: 'event', title: 'Review ready' }],

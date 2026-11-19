@@ -1684,7 +1684,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             version: '1.0.0',
             displayName: 'Retained plugin',
             description: 'Retained activation generation fixture',
-            engines: { happier: '^0.2.0' },
+            engines: { happier: '^0.3.0' },
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             activation: { events: [{ kind: 'startup' }] },

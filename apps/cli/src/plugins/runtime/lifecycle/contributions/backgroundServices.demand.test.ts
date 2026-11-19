@@ -134,7 +134,7 @@ describe('background service demand lifecycle', () => {
     it.each([false, true])('lazily activates a demand-only plugin and binds demand to its daemon invocation services (adopted: %s)', async (adopted) => {
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2, id: identity.pluginId, version: '1.0.0', displayName: 'Demand indexer',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
             contributes: { backgroundServices: [{ id: 'index', activation: 'demand' }, { id: 'followup', activation: 'demand' }] },
         }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error('Demand service manifest must be admitted');

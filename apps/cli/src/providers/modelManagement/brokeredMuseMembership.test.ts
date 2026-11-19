@@ -18,7 +18,7 @@ import { createRuntimeProviderModelManagementServices } from './runtimeServices'
 it.each(['pi', 'opencode', 'codex'])('admits the custodian Muse catalog through Home, member %s compatibility and launch without recipient observation', async agentId => {
   const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ coldStart: true,
     plugins: [{ manifest: { schemaVersion: 2, id: 'acme.brokered-muse-test', version: '1.0.0', displayName: 'Catalog fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
       contributes: {} }, files: { 'daemon.mjs': 'export function activate() {}' } }],
     resolveContributes: happyHomeDir => resolveMergedContributionRegistry({ happyHomeDir }),
   });

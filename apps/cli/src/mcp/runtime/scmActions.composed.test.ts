@@ -61,7 +61,7 @@ async function withScmDaemon(run: (fixture: Readonly<{
     await mkdir(parent); await mkdir(cwd);
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{
       manifest: { schemaVersion: 2, id: 'acme.scm', version: '1.0.0', displayName: 'SCM route fixture',
-        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
         hostAccess: { required: [], optional: [] }, contributes: { scmBackends: ['default', 'preferred'].map(id => ({
           id, title: id, kind: 'acme', capabilities: ['detect', 'diff'],
         })) } },

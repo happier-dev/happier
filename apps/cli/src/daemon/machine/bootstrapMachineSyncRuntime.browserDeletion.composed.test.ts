@@ -19,7 +19,7 @@ it('purges an inactive deleted Session browser profile through the Machine delet
     const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: homeDir,
       controller: pluginReloadController, coldStart: true, plugins: [{
         manifest: { schemaVersion: 2, id: 'acme.browser-deletion-test', version: '1.0.0', displayName: 'Browser deletion fixture',
-          engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' }, contributes: {} },
+          engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' }, contributes: {} },
         files: { 'daemon.mjs': 'export function activate() {}' },
       }] });
     const credentials = { token: 'e30.eyJzdWIiOiJvd25lciJ9.signature', encryption: null } as const;

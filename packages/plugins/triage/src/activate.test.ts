@@ -112,7 +112,7 @@ describe('Triage activation', () => {
     await withRegisteredPlugin(async ({ plugin }) => {
       const caller = await createPluginTestkit({
         manifest: { schemaVersion: 2, id: 'qa.configured-caller', version: '1.0.0',
-          displayName: 'Configured caller', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+          displayName: 'Configured caller', engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
           contributes: { actions: [{ id: 'start', title: 'Start', execution: { target: 'daemon' },
             scopes: ['global'], surfaces: ['cli'], placementBindings: [], dangerLevel: 'safe' }] } },
         actionTargets: [plugin],

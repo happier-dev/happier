@@ -92,7 +92,7 @@ export const activate = plugin.activate;
     const installedRoot = join(parentRoot, 'installed');
     const manifest = {
       schemaVersion: 2, id: 'acme.lazy-parser', version: '1.0.0', displayName: 'Lazy parser',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { development: './src/index.ts', daemon: './dist/index.js' }, contributes: {},
     };
     try {
@@ -243,7 +243,7 @@ export async function parse(text: string) { return (await import('./shape.js')).
       id: 'acme.error-abi',
       version: '1.0.0',
       displayName: 'Error ABI Fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { development: './src/index.ts', daemon: './dist/index.js' },
       contributes: {},
     };

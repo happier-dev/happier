@@ -177,7 +177,7 @@ describe('requestUserPluginChange', () => {
       },
       contributions: [{ family: 'actions', count: 1 }],
       compatibility: {
-        happier: '^0.2.0',
+        happier: '^0.3.0',
         runtimeApiVersion: 1,
         blockedNewerVersions: [{
           version: '1.2.5',

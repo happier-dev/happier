@@ -25,7 +25,7 @@ async function createManifestDeclaredSecretService() {
         id: PLUGIN_ID,
         version: '1.0.0',
         displayName: 'Notifications',
-        engines: { happier: '^0.2.0' },
+        engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 },
         secrets: [{ id: SECRET_ID, custody: 'daemon' }],
     });

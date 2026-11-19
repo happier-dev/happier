@@ -25,7 +25,7 @@ type PluginMcpServerRuntime = Parameters<PluginApi['mcp']['registerServer']>[1];
 function manifest(contributes: Record<string, unknown>, pluginId = 'acme.activation') {
     const result = ingestCanonicalPluginManifest({
         schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Activation',
-        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.js' }, contributes,
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.js' }, contributes,
     }, { sourceProvenance: 'registryCustodied' });
     if (!result.ok) throw new Error(result.diagnostics.map((item) => item.message).join('\n'));
     return result.manifest;

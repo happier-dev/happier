@@ -114,7 +114,7 @@ async function writeDescriptorOnlyPluginManifest(projectRoot: string): Promise<v
     version: '0.1.0',
     displayName: 'External Author',
     description: 'External Action authoring fixture.',
-    engines: { happier: '^0.2.0' },
+    engines: { happier: '^0.3.0' },
     runtime: { apiVersion: 1 },
     contributes: {},
   })}\n`, 'utf8');
@@ -125,7 +125,7 @@ async function writeDescriptorOnlyPluginManifest(projectRoot: string): Promise<v
     "  version: '0.1.0',",
     "  displayName: 'External Author',",
     "  description: 'External Action authoring fixture.',",
-    "  engines: { happier: '^0.2.0' },",
+    "  engines: { happier: '^0.3.0' },",
     '  runtime: { apiVersion: 1 },',
     '  contributes: {},',
     '};',

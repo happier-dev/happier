@@ -28,7 +28,7 @@ describe('notification discovery after plugin activation failure', () => {
             await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
             await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
                 schemaVersion: 2, id: PLUGIN_ID, version: '1.0.0', displayName: 'Notification availability fixture',
-                engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+                engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
                 entrypoints: { daemon: './daemon.mjs' }, hostAccess: { required: [], optional: [] },
                 contributes: { notificationChannels: [{
                     id: 'external', kind: 'plugin', title: 'External', configurable: true, defaultEnabled: true,

@@ -5,7 +5,7 @@
   "displayName": "Connected Accounts Conformance Producer",
   "description": "Packed third-party Connected Accounts runtime producer for public consumer conformance.",
   "engines": {
-    "happier": "^0.2.0"
+    "happier": "^0.3.0"
   },
   "runtime": {
     "apiVersion": 1

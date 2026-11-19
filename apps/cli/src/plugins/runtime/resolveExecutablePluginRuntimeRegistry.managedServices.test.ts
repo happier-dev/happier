@@ -95,7 +95,7 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
             process.env.PATH = `${toolRoot}${delimiter}${previousPath ?? ''}`;
             const fixture = await loadInstalledManagedServiceFixture({ happyHomeDir, pluginId, manifest: {
                 schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Machine native fixture',
-                engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+                engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
                 hostAccess: { required: [
                     { id: 'helper', capability: 'process', reason: 'Inspect the admitted Machine service',
                         scope: { executables: [{ kind: 'systemTool', id: 'helper' }], envKeys: ['PATH'] } },
@@ -167,7 +167,7 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
             process.env.PATH = `${toolRoot}${delimiter}${previousPath ?? ''}`;
             const fixture = await loadInstalledManagedServiceFixture({ happyHomeDir, pluginId, manifest: {
                 schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Native helper fixture',
-                engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+                engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
                 hostAccess: { required: [
                     { id: 'helper', capability: 'process', reason: 'Run the admitted helper', scope: { executables: [{ kind: 'systemTool', id: 'helper' }], envKeys: ['PATH'] } },
                     { id: 'root', capability: 'filesystem', reason: 'Use the admitted Project root', scope: { locations: [{ root: 'workspace' }], access: ['read'] } },
@@ -338,7 +338,7 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
                 id: pluginId,
                 version: '1.0.0',
                 displayName: 'Native service fixture',
-                engines: { happier: '^0.2.0' },
+                engines: { happier: '^0.3.0' },
                 runtime: { apiVersion: 1 },
                 entrypoints: { daemon: './daemon.mjs' },
                 hostAccess: {
@@ -540,7 +540,7 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
             pluginId,
             manifest: {
                 schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Credential-file fixture',
-                engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+                engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
                 hostAccess: {
                     required: [{
                         id: 'managed-process', capability: 'process', reason: 'Run the credential-file fixture',
@@ -713,7 +713,7 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
             pluginId,
             manifest: {
                 schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Bounded service fixture',
-                engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+                engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
                 hostAccess: { required: [], optional: [] },
                 contributes: {
                     agents: [{

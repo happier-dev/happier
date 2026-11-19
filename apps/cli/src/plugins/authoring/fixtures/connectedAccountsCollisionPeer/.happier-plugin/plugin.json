@@ -5,7 +5,7 @@
   "displayName": "Connected Accounts Collision Peer",
   "description": "Packed third-party Connected Accounts runtime peer for qualified service identity collision conformance.",
   "engines": {
-    "happier": "^0.2.0"
+    "happier": "^0.3.0"
   },
   "runtime": {
     "apiVersion": 1

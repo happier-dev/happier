@@ -53,7 +53,7 @@ async function writeHookPluginFixture(params: Readonly<{
         displayName: 'Acme Session Hook',
         description: params.description ?? 'Exercises product-owned hook dispatch through session.message.send',
         engines: {
-          happier: '^0.2.0',
+          happier: '^0.3.0',
         },
         entrypoints: {
           daemon: './daemon.mjs',

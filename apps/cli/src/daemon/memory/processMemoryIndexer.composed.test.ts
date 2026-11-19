@@ -1432,7 +1432,7 @@ describe('Memory process placement composition', () => {
       }
     `);
     const parsed = ingestCanonicalPluginManifest({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Memory native fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
       contributes: { agents: [{ id: 'reader', title: 'Native fixture', capabilities: { surfaces: ['externalSessions'] },
         surfaces: { externalSession: { sources: [{ sourceKind: 'nativeFixture',
           schema: { fields: [{ name: 'kind', kind: 'literal', value: 'nativeFixture' }] },

@@ -5,7 +5,7 @@
   "displayName": "Unrelated Packed Prerequisite",
   "description": "Installed during target admission conformance without contributing to the target.",
   "engines": {
-    "happier": "^0.2.0"
+    "happier": "^0.3.0"
   },
   "runtime": {
     "apiVersion": 1

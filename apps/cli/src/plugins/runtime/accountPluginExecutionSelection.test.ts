@@ -170,7 +170,7 @@ describe('captured Account execution selection transport', () => {
         const targetId = 'com.acme.aggregate';
         const sourceId = 'com.acme.daemon-source';
         const targetDeclaration = normalizePluginManifestV2(definePlugin({ id: targetId, version: '1.0.0',
-            displayName: 'Account aggregate', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            displayName: 'Account aggregate', engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             hostAccess: { required: [], optional: [] }, contributionPoints: {
                 sources: defineContributionProtocol({ id: 'external-source', version: 1,
                     descriptor: defineProtocolObject({ sourceId: defineProtocolString() }, { policy: 'additive-open/drop' }),

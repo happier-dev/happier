@@ -9,7 +9,7 @@ const fixture = {
   id: 'com.acme.parity',
   version: '1.0.0',
   displayName: 'Parity',
-  engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+  engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './dist/plugin.js' },
   contributes: {
     actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }],

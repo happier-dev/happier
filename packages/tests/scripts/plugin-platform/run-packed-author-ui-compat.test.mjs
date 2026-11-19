@@ -4618,7 +4618,7 @@ test('packed reviewed install carries exact daemon review through the authentica
         headerNames: ['authorization'],
       },
     }],
-    compatibility: { happier: '^0.2.0', runtimeApiVersion: 1 },
+    compatibility: { happier: '^0.3.0', runtimeApiVersion: 1 },
     updatePolicy: 'allowed',
   };
   const calls = [];
@@ -4712,7 +4712,7 @@ test('packed reviewed install reports the post-timeout daemon catalog state with
     requiredHostAccess: [],
     optionalHostAccess: [],
     rawCredentialAccess: [],
-    compatibility: { happier: '^0.2.0', runtimeApiVersion: 1 },
+    compatibility: { happier: '^0.3.0', runtimeApiVersion: 1 },
     updatePolicy: 'allowed',
   };
   const calls = [];

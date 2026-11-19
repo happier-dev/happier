@@ -194,7 +194,7 @@ async function materializeStrictIntrospectionPluginFixture(targetRoot: string): 
     version: '1.0.0',
     displayName: 'Acme Sample',
     description: 'Strict list/show introspection fixture',
-    engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+    engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
     contributes: {
       ui: {
         translations: [{ locale: 'en-US', messages: { greeting: 'Hello' } }],
@@ -474,7 +474,7 @@ async function writeDisposableActivationPlugin(rootDir: string, disposeMarkerPat
         displayName: 'Acme Reload Disposable',
         description: 'Exercises reload lifecycle ownership',
         engines: {
-          happier: '^0.2.0',
+          happier: '^0.3.0',
         },
         entrypoints: {
           daemon: './daemon.mjs',
@@ -597,7 +597,7 @@ async function writeImportSideEffectPlugin(rootDir: string, importMarkerPath: st
         displayName: 'Acme Pack Smoke',
         description: 'Exercises plugin pack output',
         engines: {
-          happier: '^0.2.0',
+          happier: '^0.3.0',
         },
         entrypoints: {
           daemon: './daemon.mjs',

@@ -296,7 +296,7 @@ describe('Machine service watch front door', () => {
                 discovers: 0, inspects: 0, accountings: 0, logs: 0, logWatches: 0, logDisposals: 0, controls: [] }));
             await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
                 schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Native service fixture',
-                engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+                engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
                 contributes: { projectNativeAdapters: [{ id: 'native', files: ['native.json'], roles: ['nativeServiceLifecycle'] }] },
             }));
             // The installed native adapter is the system boundary. Registry admission,

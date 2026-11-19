@@ -74,7 +74,7 @@ async function materializeObservationPlugin(
             id: PLUGIN_ID,
             version: '1.0.0',
             displayName: 'External Session uninstall fixture',
-            engines: { happier: '^0.2.0' },
+            engines: { happier: '^0.3.0' },
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             hostAccess: { required: [], optional: [] },

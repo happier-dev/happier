@@ -23,7 +23,7 @@ it.each([
 ])('observes the assigned native Agent routing id $routingId despite a shared local id', async ({ identity, routingId }) => {
   const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ coldStart: true,
     plugins: [{ manifest: { schemaVersion: 2, id: 'acme.other', version: '1.0.0', displayName: 'Other Agent',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
       contributes: { agents: [{ id: 'ohmypi', title: 'Other Agent', runtime: { kind: 'custom' }, primary: 'sessions',
         capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }] } },
       files: { 'daemon.mjs': 'export function activate() {}' } }],
@@ -82,7 +82,7 @@ it('observes a declared service with zero Agents through the shared catalog owne
   }) };
   const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ coldStart: true,
     plugins: [{ manifest: { schemaVersion: 2, id: identity.pluginId, version: '1.0.0', displayName: 'Service catalog',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
       contributes: { providers: [upstream.definition] } }, files: { 'daemon.mjs': `
         let activations = 0;
         export function activationCount() { return activations; }

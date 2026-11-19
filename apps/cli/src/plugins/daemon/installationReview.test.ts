@@ -272,7 +272,7 @@ describe('projectPluginInstallationReview', () => {
 
   it('retains a bounded selected compatible engine range verbatim', () => {
     const review = projectPluginInstallationReview({
-      manifest: createManifest({ happierEngine: '^0.2.0' }),
+      manifest: createManifest({ happierEngine: '^0.3.0' }),
       source: {
         kind: 'path',
         locator: '/tmp/install-review',
@@ -287,7 +287,7 @@ describe('projectPluginInstallationReview', () => {
       uiArtifacts: { verification: 'verified', contributionIds: [] },
     });
 
-    expect(review.compatibility).toEqual({ happier: '^0.2.0', runtimeApiVersion: 1 });
+    expect(review.compatibility).toEqual({ happier: '^0.3.0', runtimeApiVersion: 1 });
   });
 
   it('preserves the complete long valid selected engine range in the review', () => {

@@ -41,7 +41,7 @@ it('admits raw registry targets before compiled startup-policy and demand reads'
                 import { activatePluginRuntimeRegistry } from './apps/cli/src/plugins/runtime/lifecycle/manager.ts';
                 const admitted = ingestCanonicalPluginManifest({
                     schemaVersion: 2, id: 'acme.compiled-target', version: '1.0.0', displayName: 'Compiled target',
-                    engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.js' },
+                    engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.js' },
                     contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['session'], surfaces: ['cli'],
                         execution: { target: 'daemon' }, dangerLevel: 'safe' }] },
                 }, { sourceProvenance: 'registryCustodied' });
@@ -65,7 +65,7 @@ it('admits raw registry targets before compiled startup-policy and demand reads'
                 assert.deepEqual(collectActivationTargets(createResolvedContributionRegistry({})), []);
                 const conditional = ingestCanonicalPluginManifest({
                     schemaVersion: 2, id: 'acme.conditional', version: '1.0.0', displayName: 'Conditional',
-                    engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './conditional.cjs' },
+                    engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './conditional.cjs' },
                     activation: { configuration: { accountCollections: [{ pluginId: 'acme.conditional', collectionId: 'configuration' }] } },
                     contributes: { backgroundServices: [{ id: 'worker', title: 'Worker' }] },
                 }, { sourceProvenance: 'registryCustodied' });

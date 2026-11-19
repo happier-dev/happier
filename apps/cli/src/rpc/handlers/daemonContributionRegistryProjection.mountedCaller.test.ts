@@ -342,7 +342,7 @@ describe('mounted caller admission through the real contributed Action RPC', () 
         const protocol = { id: 'detail', version: 1 } as const;
         const target = definePlugin({
             id: targetId, version: '1.0.0', displayName: 'External detail host',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             hostAccess: { required: [], optional: [] },
             contributionPoints: { details: defineContributionProtocol({
                 ...protocol,

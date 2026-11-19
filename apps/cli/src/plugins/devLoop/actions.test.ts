@@ -54,7 +54,7 @@ async function materializeDevPlugin(rootDir: string, pluginId = 'acme.dev-loop')
       version: '1.0.0',
       displayName: 'Acme Dev Loop',
       description: 'Dev-loop action fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: {
         daemon: './daemon.mjs',
         development: './src/daemon.ts',

@@ -214,7 +214,7 @@ async function materializeAuxiliaryOnlyPlugin(
     id: pluginId,
     version,
     displayName: 'External Sessions product-route fixture',
-    engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+    engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
     entrypoints: { daemon: './daemon.mjs' },
     hostAccess: { required: [], optional: [] },
     contributes: {
@@ -456,7 +456,7 @@ async function materializeAuthorOnlyPlugin(pluginRoot: string): Promise<void> {
     id: AUTHOR_PLUGIN_ID,
     version: '1.0.0',
     displayName: 'External Sessions author-only fixture',
-    engines: { happier: '^0.2.0' },
+    engines: { happier: '^0.3.0' },
     runtime: { apiVersion: 1 },
     entrypoints: { daemon: './daemon.mjs' },
     hostAccess: {

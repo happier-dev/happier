@@ -5,7 +5,7 @@
   "displayName": "Packed Voice Fixture",
   "description": "Dependency-closed external Voice provider fixture",
   "engines": {
-    "happier": "^0.2.0"
+    "happier": "^0.3.0"
   },
   "runtime": {
     "apiVersion": 1

@@ -101,7 +101,7 @@ describe('Provider authoring through the public manifest SDK', () => {
     } satisfies ProviderContribution);
     const manifest = {
       schemaVersion: 2, id: 'acme.gateway', version: '0.1.0', displayName: 'Acme Gateway',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, hostAccess: { required: [], optional: [] },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, hostAccess: { required: [], optional: [] },
       contributes: { providers: [provider] },
     } satisfies PluginManifest;
     let catalog: ProviderConnectionsCatalogV1 = DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1;
@@ -170,7 +170,7 @@ describe('Provider authoring through the public manifest SDK', () => {
       id: 'example.experimental-provider',
       version: '0.1.0',
       displayName: 'Experimental Provider',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       hostAccess: { required: [], optional: [] },
       contributes: { providers: [provider] },
     } satisfies PluginManifest;

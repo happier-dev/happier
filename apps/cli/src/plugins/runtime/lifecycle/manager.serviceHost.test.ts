@@ -62,7 +62,7 @@ describe('admitted background service host activation', () => {
             `);
             const parsed = ingestCanonicalPluginManifest({
                 schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Consumed native reader',
-                engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+                engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
                 hostAccess: { required: [{ id: 'reader-exec', capability: 'process', reason: 'Read native transcript fixture', scope: { executables: [{ kind: 'systemTool', id: 'fixture-reader' }] } },
                     { id: 'runtime-terminal', capability: 'terminal', reason: 'Run the Agent interactive session', scope: { operations: ['open'] } }] },
                 contributes: { systemTools: [{ id: 'fixture-reader', title: 'Fixture reader', executableNames: ['fixture-reader'] }], agents: [{ id: localAgentId, title: 'Native reader',
@@ -197,7 +197,7 @@ describe('admitted background service host activation', () => {
             const pluginId = 'acme.admitted-child';
             const parsed = ingestCanonicalPluginManifest({
                 schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Admitted child',
-                engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+                engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
                 entrypoints: { daemon: './daemon.mjs' },
                 contributes: { backgroundServices: [{ id: 'selected' }, { id: 'sibling' }] },
             }, { sourceProvenance: 'registryCustodied' });
@@ -237,7 +237,7 @@ describe('admitted background service host activation', () => {
         const pluginId = 'acme.service-host';
         const parsed = ingestCanonicalPluginManifest({
             schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Service host',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             contributes: { backgroundServices: [{ id: 'selected' }, { id: 'sibling' }] },
         }, { sourceProvenance: 'registryCustodied' });

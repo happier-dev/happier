@@ -100,7 +100,7 @@ const completeReview = createPluginInstallationReviewFixture({
     },
   ],
   rawCredentialAccess: [],
-  compatibility: { happier: '^0.2.0', runtimeApiVersion: 1 },
+  compatibility: { happier: '^0.3.0', runtimeApiVersion: 1 },
   updatePolicy: 'allowed',
 });
 

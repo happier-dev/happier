@@ -2820,7 +2820,7 @@ describe('SDK testkit and production action invocation parity', () => {
         id: 'acme.alpha',
         version: '1.2.3',
         displayName: 'Action parity fixture',
-        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
         contributes: {
             actions: [{
                 id: 'run',

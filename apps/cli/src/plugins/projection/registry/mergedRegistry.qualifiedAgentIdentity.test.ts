@@ -43,7 +43,7 @@ async function writeAssistantPlugin(rootDir: string, pluginId: string, title: st
             id: pluginId,
             version: '1.0.0',
             displayName: title,
-            engines: { happier: '^0.2.0' },
+            engines: { happier: '^0.3.0' },
             entrypoints: { daemon: './daemon.js' },
             activation: { events: [{ kind: 'startup' }] },
             hostAccess: { required: [], optional: [] },

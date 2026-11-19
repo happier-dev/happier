@@ -5,7 +5,7 @@
   "displayName": "Targeted Contributions Conformance Contributor",
   "description": "Packed public contributor for the target-owned provider point.",
   "engines": {
-    "happier": "^0.2.0"
+    "happier": "^0.3.0"
   },
   "runtime": {
     "apiVersion": 1

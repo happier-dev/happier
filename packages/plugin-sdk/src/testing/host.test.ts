@@ -58,7 +58,7 @@ const manifest = {
   id: 'acme.testkit',
   version: '1.0.0',
   displayName: 'Testkit Fixture',
-  engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+  engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
   contributes: {
     actions: [{
       id: 'echo',
@@ -392,7 +392,7 @@ function actionManifest(
     id: pluginId,
     version: '1.0.0',
     displayName: pluginId,
-    engines: { happier: '^0.2.0' },
+    engines: { happier: '^0.3.0' },
     runtime: { apiVersion: 1 },
     contributes: {
       actions: [{

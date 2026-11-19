@@ -46,7 +46,7 @@ function manifest(input: Readonly<{
         id: input.pluginId,
         version: '1.0.0',
         displayName: input.pluginId,
-        engines: { happier: '^0.2.0' },
+        engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 },
         contributes: {
             managedDependencies: [input.definition],

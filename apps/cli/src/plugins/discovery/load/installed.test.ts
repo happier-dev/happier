@@ -78,7 +78,7 @@ async function writePluginManifest(rootDir: string, pluginId: string): Promise<v
       displayName: `Plugin ${pluginId}`,
       description: `Plugin ${pluginId}`,
       engines: {
-        happier: '^0.2.0',
+        happier: '^0.3.0',
       },
       runtime: {
         apiVersion: 1,
@@ -110,7 +110,7 @@ async function writeDevelopmentOnlyPluginManifest(rootDir: string, pluginId: str
       displayName: `Plugin ${pluginId}`,
       description: `Plugin ${pluginId}`,
       engines: {
-        happier: '^0.2.0',
+        happier: '^0.3.0',
       },
       runtime: {
         apiVersion: 1,
@@ -140,7 +140,7 @@ async function writeStandaloneManifest(manifestPath: string, pluginId: string): 
       displayName: `Plugin ${pluginId}`,
       description: `Plugin ${pluginId}`,
       engines: {
-        happier: '^0.2.0',
+        happier: '^0.3.0',
       },
       runtime: {
         apiVersion: 1,
@@ -547,7 +547,7 @@ describe('loadInstalledPlugins', () => {
         displayName: 'Plugin acme.escape',
         description: 'Plugin acme.escape',
         engines: {
-          happier: '^0.2.0',
+          happier: '^0.3.0',
         },
         runtime: {
           apiVersion: 1,
@@ -619,7 +619,7 @@ describe('loadInstalledPlugins', () => {
         displayName: 'Plugin acme.missing-daemon',
         description: 'Plugin acme.missing-daemon',
         engines: {
-          happier: '^0.2.0',
+          happier: '^0.3.0',
         },
         runtime: {
           apiVersion: 1,
@@ -692,7 +692,7 @@ describe('loadInstalledPlugins', () => {
         displayName: 'Plugin acme.bad-daemon-extension',
         description: 'Plugin acme.bad-daemon-extension',
         engines: {
-          happier: '^0.2.0',
+          happier: '^0.3.0',
         },
         runtime: {
           apiVersion: 1,
@@ -766,7 +766,7 @@ describe('loadInstalledPlugins', () => {
         displayName: 'Plugin acme.unsupported-targets',
         description: 'Plugin acme.unsupported-targets',
         engines: {
-          happier: '^0.2.0',
+          happier: '^0.3.0',
         },
         targets: {
           daemon: {

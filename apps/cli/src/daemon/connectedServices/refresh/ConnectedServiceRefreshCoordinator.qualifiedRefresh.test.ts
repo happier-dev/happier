@@ -1180,7 +1180,7 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
         id: 'acme.novel.refresh',
         version: '1.0.0',
         displayName: 'Novel refresh',
-        engines: { happier: '^0.2.0' },
+        engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.mjs' },
         contributes: {

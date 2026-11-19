@@ -5,7 +5,7 @@
   "displayName": "Reload Helper Example",
   "description": "Activation-time example that is intended to be edited and reloaded locally.",
   "engines": {
-    "happier": "^0.2.0"
+    "happier": "^0.3.0"
   },
   "runtime": {
     "apiVersion": 1

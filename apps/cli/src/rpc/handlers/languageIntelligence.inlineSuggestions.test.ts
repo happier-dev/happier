@@ -124,7 +124,7 @@ describe('Machine inline suggestion policy', () => {
     await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
     const manifestPath = join(pluginRoot, '.happier-plugin/plugin.json');
     const writeManifest = async (provider = definition) => await writeFile(manifestPath, JSON.stringify({ schemaVersion: 2,
-      id: pluginId, version: '1.0.0', displayName: 'Controlled FIM source', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      id: pluginId, version: '1.0.0', displayName: 'Controlled FIM source', engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { daemon: './daemon.mjs' }, contributes: { providers: [provider] } }));
     await writeManifest();
     await writeFile(join(pluginRoot, 'daemon.mjs'), managed ? `export function activate(api) {

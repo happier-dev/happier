@@ -64,7 +64,7 @@ describe('executable plugin Composer content invocation binding', () => {
                 id: pluginId,
                 version: '1.0.0',
                 displayName: 'Composer content fixture',
-                engines: { happier: '^0.2.0' },
+                engines: { happier: '^0.3.0' },
                 runtime: { apiVersion: 1 },
                 entrypoints: { daemon: './daemon.mjs' },
                 hostAccess: {

@@ -22,7 +22,7 @@ export async function observeFailure(input: Readonly<{ root: string; entryPath: 
     const pluginId = 'acme.loaderreason';
     const manifest = {
         schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Loader fixture',
-        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
         contributes: { actions: [{ id: 'run', title: 'Run', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' }] },
     };
     const admitted = ingestCanonicalPluginManifest(manifest, { sourceProvenance: 'registryCustodied' });

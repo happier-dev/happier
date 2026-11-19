@@ -49,7 +49,7 @@ async function seedFixture(writeBrandFile: boolean): Promise<Readonly<{
         id: PLUGIN_ID,
         version: '1.0.0',
         displayName: 'Brand runtime fixture',
-        engines: { happier: '^0.2.0' },
+        engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.mjs' },
         brand: { iconResourceId: 'brand-icon', monochrome: true },
@@ -230,7 +230,7 @@ describe('executable plugin portable brand Resource projection', () => {
             await mkdir(join(peerRoot, '.happier-plugin'), { recursive: true });
             await writeFile(join(peerRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
                 schemaVersion: 2, id: 'acme.brand-peer', version: '1.0.0',
-                displayName: 'Peer fixture', engines: { happier: '^0.2.0' },
+                displayName: 'Peer fixture', engines: { happier: '^0.3.0' },
                 runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
                 hostAccess: { required: [], optional: [] }, contributes: {},
             }));

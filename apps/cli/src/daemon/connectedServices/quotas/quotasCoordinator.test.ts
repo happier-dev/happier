@@ -151,7 +151,7 @@ async function createQualifiedQuotaRuntimeFixture(profile: QualifiedConnectedAcc
     resolveContributes: async (happyHomeDir) => createResolvedContributionRegistry(await resolvePluginContributes({ happyHomeDir })),
     plugins: [{
     manifest: { schemaVersion: 2, id: service.pluginId, version: '1.0.0', displayName: 'Quota fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
       hostAccess: { required: [], optional: [] }, contributes: { connectedAccountDescriptors: [{
         id: service.localId, title: 'Quota account', ...(options?.usageIdentity ? { usageIdentity: options.usageIdentity } : options?.organizationQuota ? { usageIdentity: { requiredContext: 'organization' as const } } : {}), authentication: { defaultModeId: 'manual', modes: [{
           id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
@@ -2285,7 +2285,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       id: profile.ref.service.pluginId,
       version: '1.0.0',
       displayName: 'Novel accounts',
-      engines: { happier: '^0.2.0' },
+      engines: { happier: '^0.3.0' },
       runtime: { apiVersion: 1 },
       entrypoints: { daemon: './daemon.mjs' },
       hostAccess: { required: [], optional: [] },

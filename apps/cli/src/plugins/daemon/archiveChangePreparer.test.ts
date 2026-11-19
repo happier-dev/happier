@@ -84,7 +84,7 @@ async function createArchiveFixture(params?: Readonly<{
         id: 'acme.archive-candidate',
         version: params?.manifestVersion ?? packageVersion,
         displayName: 'Acme archive candidate',
-        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
         entrypoints: { daemon: './dist/daemon.mjs' },
         hostAccess: {
           required: [],
@@ -528,7 +528,7 @@ describe('createDaemonArchivePluginChangePreparer', () => {
           { family: 'scmBackends', count: 1 },
         ],
         uiArtifacts: { status: 'none', contributionIds: [] },
-        compatibility: { happier: '^0.2.0', runtimeApiVersion: 1 },
+        compatibility: { happier: '^0.3.0', runtimeApiVersion: 1 },
         updatePolicy: 'allowed',
       },
     });

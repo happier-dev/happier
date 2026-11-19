@@ -1103,7 +1103,7 @@ it('retires nested Account Action read authority immediately while ordinary inva
     const pluginId = 'example.retiring-account-source';
     const execution = { target: 'account', account: { artifactId: 'read-retirement', exportName: 'activate' } };
     const parsed = parsePluginManifest({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Read retirement source',
-        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, contributes: {
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, contributes: {
             actions: ['source', 'relay'].map(id => ({ id, title: id, scopes: ['global'], surfaces: ['plugin'],
                 execution, dangerLevel: 'safe', readOnly: true })),
             resources: [{ id: 'status', source: 'dynamic', scope: 'session', kind: 'config',

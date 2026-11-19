@@ -722,7 +722,7 @@ describe('createBundledActivationSourceResolver', () => {
       id: 'happier.agent.session-owner',
       version: '1.0.0',
       displayName: 'Session owner',
-      engines: { happier: '^0.2.0' },
+      engines: { happier: '^0.3.0' },
       runtime: { apiVersion: 1 },
       entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: { required: [], optional: [] },

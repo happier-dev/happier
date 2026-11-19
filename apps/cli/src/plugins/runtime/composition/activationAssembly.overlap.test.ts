@@ -11,7 +11,7 @@ describe('retained plugin activation composition', () => {
     it('activates a changed occurrence independently of a retained predecessor', async () => {
         const admitted = ingestCanonicalPluginManifest(createPluginManifestV2Fixture({
             schemaVersion: 2, id: 'acme.activation-overlap', version: '1.0.0', displayName: 'Overlap',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.js' },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.js' },
             contributes: { actions: [{ id: 'identity', title: 'Identity', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' }, placementBindings: ['commandPalette'], dangerLevel: 'safe' }] },
         }), { manifestAuthority: 'bundled_first_party', sourceProvenance: 'registryCustodied' });
         if (!admitted.ok) throw new Error(JSON.stringify(admitted.diagnostics));

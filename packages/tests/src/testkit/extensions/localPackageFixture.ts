@@ -85,7 +85,7 @@ export function createLocalExtensionPackageManifest(params: Readonly<{
         displayName: params.displayName ?? params.pluginId,
         description: params.description ?? `Local extension fixture for ${params.pluginId}`,
         engines: {
-            happier: '^0.2.0',
+            happier: '^0.3.0',
         },
         uses: inferredCapabilities,
         entrypoints: {
@@ -389,7 +389,7 @@ export async function writeActivatedActionExecutionPluginFixture(params: Readonl
         displayName: 'Activated Action Execution Fixture',
         description: 'Registers a daemon-executed action during activation for core e2e validation',
         engines: {
-            happier: '^0.2.0',
+            happier: '^0.3.0',
         },
         uses: ['actions'],
         entrypoints: {
@@ -456,7 +456,7 @@ export async function writeRuntimeProjectionPluginFixture(params: Readonly<{
         displayName: 'Runtime Projection Fixture',
         description: 'Registers runtime actions, resources, and typed settings for projection validation',
         engines: {
-            happier: '^0.2.0',
+            happier: '^0.3.0',
         },
         uses: ['actions', 'resources', 'settings'],
         entrypoints: {
@@ -545,7 +545,7 @@ export async function writeReloadableActivationPluginFixture(params: Readonly<{
         displayName: 'Reloadable Activation Fixture',
         description: 'Exercises activation, disposal, and reload for core e2e validation',
         engines: {
-            happier: '^0.2.0',
+            happier: '^0.3.0',
         },
         uses: ['actions'],
         entrypoints: {
@@ -606,7 +606,7 @@ export async function writeBrokenActivationPluginFixture(params: Readonly<{
         displayName: 'Broken Activation Fixture',
         description: 'Exercises last-known-good reload failure behavior',
         engines: {
-            happier: '^0.2.0',
+            happier: '^0.3.0',
         },
         uses: ['actions'],
         entrypoints: {

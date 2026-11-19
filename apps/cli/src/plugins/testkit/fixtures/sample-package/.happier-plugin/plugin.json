@@ -5,7 +5,7 @@
   "displayName": "Acme Sample",
   "description": "Sample plugin used to exercise the local-path plugin pipeline",
   "engines": {
-    "happier": "^0.2.0"
+    "happier": "^0.3.0"
   },
   "runtime": {
     "apiVersion": 1

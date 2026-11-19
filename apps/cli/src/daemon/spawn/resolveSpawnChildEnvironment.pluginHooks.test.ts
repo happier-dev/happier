@@ -159,7 +159,7 @@ async function writeSpawnHookPluginFixture(params: Readonly<{
       displayName: 'Spawn Hook Fixture',
       description: 'Exercises daemon spawn hook dispatch through resolveSpawnChildEnvironment',
       engines: {
-        happier: '^0.2.0',
+        happier: '^0.3.0',
       },
       runtime: {
         apiVersion: 1,
@@ -412,7 +412,7 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
           displayName: 'Unrelated Spawn Hook Fixture',
           description: 'Must not be imported when another targeted spawn hook resolves installables.',
           engines: {
-            happier: '^0.2.0',
+            happier: '^0.3.0',
           },
           runtime: {
             apiVersion: 1,

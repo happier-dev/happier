@@ -102,7 +102,7 @@ async function writeExternalSessionsPlugin(input: Readonly<{
             id: PLUGIN_ID,
             version: input.version === 'H' ? '1.0.0' : '2.0.0',
             displayName: `Current global external sessions ${input.version}`,
-            engines: { happier: '^0.2.0' },
+            engines: { happier: '^0.3.0' },
             runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             activation: {

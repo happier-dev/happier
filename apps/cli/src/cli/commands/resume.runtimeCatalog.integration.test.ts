@@ -697,7 +697,7 @@ describe('happier resume', () => {
             version: '1.0.0',
             displayName: 'Acme Resume',
             description: 'Plugin resume coverage',
-            engines: { happier: '^0.2.0' },
+            engines: { happier: '^0.3.0' },
             entrypoints: {},
             hostAccess: {
               required: [{

@@ -28,7 +28,7 @@ async function materializeInstallCandidate(
       version: '1.0.0',
       displayName: 'Install transaction fixture',
       description: 'Staged review must precede immutable publication',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { daemon: './daemon.mjs' },
       hostAccess: { required: [], optional: [] },
       contributes: {},

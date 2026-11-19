@@ -130,7 +130,7 @@ async function writePlugin(params: Readonly<{
                 displayName: 'Acme Runtime',
                 description: 'Runtime hook plugin',
                 engines: {
-                    happier: '^0.2.0',
+                    happier: '^0.3.0',
                 },
                 runtime: {
                     apiVersion: 1,
@@ -179,7 +179,7 @@ async function writeManifestOnlyAcpPlugin(rootDir: string): Promise<void> {
             id: 'acme.runtime',
             version: '1.0.0',
             displayName: 'Acme ACP Runtime',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             hostAccess: {
                 required: [{
                     id: 'agent-process',

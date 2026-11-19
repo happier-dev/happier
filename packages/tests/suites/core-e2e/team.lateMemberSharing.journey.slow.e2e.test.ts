@@ -124,7 +124,7 @@ it('a late Team joiner opens existing encrypted shares; departed members and out
     serverReadable: ['id'], indexes: [], uiQueries: [], relations: [], migrations: [],
   } satisfies PluginAccountCollectionContributionV1;
   const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: pluginId, version: '1.0.0',
-    displayName: 'Late-member sharing fixture', engines: { happier: '^0.2.0' },
+    displayName: 'Late-member sharing fixture', engines: { happier: '^0.3.0' },
     entrypoints: { daemon: './daemon.mjs' }, activation: { events: [{ kind: 'startup' }] },
     contributes: { accountCollections: [contribution] } });
   const testDir = run.testDir('late-joiner');

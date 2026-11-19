@@ -5,7 +5,7 @@
   "displayName": "Happier Zipformer Voice Fixture",
   "description": "Installed-plugin fixture for the public Voice model-pack vertical.",
   "engines": {
-    "happier": "^0.2.0"
+    "happier": "^0.3.0"
   },
   "runtime": {
     "apiVersion": 1

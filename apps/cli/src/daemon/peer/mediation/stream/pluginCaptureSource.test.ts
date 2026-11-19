@@ -40,7 +40,7 @@ describe('manifest capture activation and retirement', () => {
             await mkdir(join(pluginRoot, '.happier-plugin'));
             await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
                 schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Capture retirement fixture',
-                engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+                engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
                 entrypoints: { daemon: './daemon.mjs' },
                 hostAccess: { required: [], optional: [] },
                 contributes: { captureSources: [{ id: 'screen', displayName: 'Fixture screen',

@@ -13,7 +13,7 @@ describe('headless widget catalog projection', () => {
     it('offers both execution targets and retains available localized descriptors from the real registry producer', () => {
         const pluginId = 'test.widget-catalog';
         const parsed = ingestCanonicalPluginManifest(JSON.stringify({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Widgets',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
             contributes: { ui: { views: [
                 { id: 'overview', container: 'appPage', target: { kind: 'app' }, renderer: 'content', title: { key: 'page.title', fallback: 'Widget areas' },
                   widgetAreas: [{ name: 'pinned', contextSchema: { type: 'object' } }] },

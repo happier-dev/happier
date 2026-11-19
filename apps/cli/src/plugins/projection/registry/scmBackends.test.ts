@@ -46,7 +46,7 @@ describe('SCM backend plugin contributions', () => {
                         id: 'acme.scm.backend',
                         version: '1.0.0',
                         displayName: 'Acme SCM Backend',
-                        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+                        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
                         entrypoints: { daemon: './daemon.js' },
                         contributes: {
                             agents: [],

@@ -129,7 +129,7 @@ function externalSessionManifest(
         id: PLUGIN_ID,
         version: '1.0.0',
         displayName: 'External Session Hooks',
-        engines: { happier: '^0.2.0' },
+        engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.js' },
         contributes: {
@@ -557,7 +557,7 @@ describe('real-loader External Session hook aggregate conformance', () => {
                     id: PLUGIN_ID,
                     version: '1.0.0',
                     displayName: 'No Rights',
-                    engines: { happier: '^0.2.0' },
+                    engines: { happier: '^0.3.0' },
                     runtime: { apiVersion: 1 },
                     entrypoints: { daemon: './daemon.js' },
                     contributes: {},

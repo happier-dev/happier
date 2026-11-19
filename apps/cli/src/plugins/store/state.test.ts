@@ -376,7 +376,7 @@ describe('writeCommittedLocalPathPluginFixture', () => {
         id: pluginId,
         version: '1.0.0',
         displayName: 'Committed fixture',
-        engines: { happier: '^0.2.0' },
+        engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.mjs' },
         contributes: {},

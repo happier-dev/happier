@@ -25,7 +25,7 @@ async function writeProject(projectRoot: string): Promise<void> {
     id: 'acme.observer',
     version: '0.1.0',
     displayName: 'Observer',
-    engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+    engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
     entrypoints: { daemon: './dist/index.js', development: './src/index.ts' },
     contributes: {
       actions: [{

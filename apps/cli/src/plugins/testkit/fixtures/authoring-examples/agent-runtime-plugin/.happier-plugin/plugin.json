@@ -5,7 +5,7 @@
   "displayName": "Agent Runtime Example",
   "description": "Agent-runtime example with daemon runtime adapter handlers.",
   "engines": {
-    "happier": "^0.2.0"
+    "happier": "^0.3.0"
   },
   "runtime": {
     "apiVersion": 1

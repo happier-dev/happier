@@ -40,7 +40,7 @@ it('uses the Home-enrolled Lima controller for the Connected Account launch cata
         controller: pluginReloadController, coldStart: true,
         plugins: [{
             manifest: { schemaVersion: 2, id: 'acme.guest-catalog-test', version: '1.0.0', displayName: 'Guest catalog fixture',
-                engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' }, contributes: {} },
+                engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' }, contributes: {} },
             files: { 'daemon.mjs': 'export function activate() {}' },
         }],
         resolveContributes: happyHomeDir => resolveMergedContributionRegistry({ happyHomeDir }),

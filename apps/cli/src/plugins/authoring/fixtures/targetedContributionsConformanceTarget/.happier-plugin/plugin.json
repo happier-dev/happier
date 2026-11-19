@@ -5,7 +5,7 @@
   "displayName": "Targeted Contributions Conformance Target",
   "description": "Packed public target that reads its canonical admitted contributors.",
   "engines": {
-    "happier": "^0.2.0"
+    "happier": "^0.3.0"
   },
   "runtime": {
     "apiVersion": 1

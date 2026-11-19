@@ -68,7 +68,7 @@ const PEER_RESOURCE_ID = 'peer-status';
 const BUNDLED_CHANNELS_PLUGIN_ID = 'happier.channels';
 const CHANNELS_PLUGIN_ID = BUNDLED_CHANNELS_PLUGIN_ID;
 const CHANNELS_PROVIDER_FIXTURE_ID = 'acme.channel.resource-test';
-const FIXTURE_HAPPIER_ENGINE = '^0.2.10';
+const FIXTURE_HAPPIER_ENGINE = '^0.3.0';
 const CHANNELS_PROVIDER_OPERATIONS = ConversationProvidersContributionProtocolV1.operations;
 
 function resolveExecutablePluginRuntimeRegistry(
@@ -134,7 +134,7 @@ async function seedFixture(options: Readonly<{
         id: PLUGIN_ID,
         version: '1.0.0',
         displayName: 'Live resources fixture',
-        engines: { happier: '^0.2.0' },
+        engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.mjs' },
         ...(options.dormantAction ? {} : { activation: { events: [{ kind: 'startup' }] } }),
@@ -273,7 +273,7 @@ async function seedScopedDynamicResourcePeerFixture(
         id: PEER_PLUGIN_ID,
         version: '1.0.0',
         displayName: 'Scoped dynamic Resource peer',
-        engines: { happier: '^0.2.0' },
+        engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.mjs' },
         activation: { events: [{ kind: 'startup' }] },

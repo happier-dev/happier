@@ -45,7 +45,7 @@ it.each([
     } }, ...(mode === 'allow' ? { approvalWaivedSurfaces: { [actionId]: ['plugin'] } } : {}) } };
   const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{ manifest: {
     schemaVersion: 2, id: identity.pluginId, version: '1.0.0', displayName: 'Profile deployment fixture',
-    engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+    engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
     contributes: { actions: [{ id: identity.localId, title: 'Deploy', scopes: ['global'],
       surfaces: ['ui', 'agent', 'plugin'], placementBindings: [], execution: { target: 'daemon' }, dangerLevel: 'safe' }] },
   }, files: { 'daemon.mjs': `export function activate(api) {

@@ -160,7 +160,7 @@ describe('admitted HTTP streaming through the native transport', () => {
         const pluginId = 'example.external-stream';
         const runtime = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{ manifest: {
             schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'External stream', description: 'Incremental HTTP source example',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, activation: { events: [{ kind: 'startup' }] }, entrypoints: { daemon: './daemon.mjs' },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, activation: { events: [{ kind: 'startup' }] }, entrypoints: { daemon: './daemon.mjs' },
             hostAccess: { required: [{ id: 'logs', capability: 'network', reason: 'Read selected logs', scope: {
                 targets: [{ kind: 'fixedOrigin', origin: f.origin }], methods: ['GET'], privateNetwork: true,
             } }], optional: [] }, contributes: { actions: [{ id: 'read', title: 'Read logs', scopes: ['global'], surfaces: ['cli'], dangerLevel: 'safe',

@@ -54,7 +54,7 @@ async function writePluginManifest(rootDir: string, manifestOverrides?: Record<s
                 displayName: 'Acme Oh My Pi',
                 description: 'Adds Oh My Pi support',
                 engines: {
-                    happier: '^0.2.0',
+                    happier: '^0.3.0',
                 },
                 entrypoints: {
                     daemon: './daemon.js',

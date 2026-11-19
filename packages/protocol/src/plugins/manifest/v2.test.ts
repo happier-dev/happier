@@ -21,7 +21,7 @@ function manifest(overrides: Record<string, unknown> = {}): Record<string, unkno
     id: 'com.acme.fixture',
     version: '1.0.0',
     displayName: 'Fixture',
-    engines: { happier: '^0.2.0' },
+    engines: { happier: '^0.3.0' },
     runtime: { apiVersion: 1 },
     ...overrides,
   };
@@ -319,7 +319,7 @@ describe('plugin manifest v2 root contract', () => {
       id: 'com.acme.fixture',
       version: '1.0.0',
       displayName: 'Fixture',
-      engines: { happier: '^0.2.0' },
+      engines: { happier: '^0.3.0' },
       runtime: { apiVersion: 1 },
       entrypoints: {
         daemon: './dist/plugin.js',

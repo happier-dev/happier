@@ -1189,7 +1189,7 @@ describe('canonical plugin manifest ingestion', () => {
     const bytes = Buffer.concat([
       Buffer.from('{"schemaVersion":2,"id":"com.acme.plugin","version":"1.0.0","displayName":"'),
       Buffer.from([0xff]),
-      Buffer.from('","engines":{"happier":"^0.2.0"},"runtime":{"apiVersion":1},"contributes":{}}'),
+      Buffer.from('","engines":{"happier":"^0.3.0"},"runtime":{"apiVersion":1},"contributes":{}}'),
     ]);
 
     expect(ingestPluginManifestV2(bytes)).toEqual({

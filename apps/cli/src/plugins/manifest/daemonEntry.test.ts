@@ -25,7 +25,7 @@ function createManifestWithEntrypoints(entrypoints?: Readonly<{
         version: '1.0.0',
         displayName: 'Acme Sample',
         description: 'Fixture plugin',
-        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
         activation: { events: [{ kind: 'startup' }] },
         ...(entrypoints ? { entrypoints } : {}),
         hostAccess: { required: [], optional: [] },

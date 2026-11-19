@@ -99,7 +99,7 @@ async function createPluginFixture(
         version,
         displayName: pluginId,
         description: 'Restart-isolation fixture',
-        engines: { happier: '^0.2.0' },
+        engines: { happier: '^0.3.0' },
         runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.mjs' },
         ...(activation === 'startup' ? { activation: { events: [{ kind: 'startup' as const }] } } : {}),

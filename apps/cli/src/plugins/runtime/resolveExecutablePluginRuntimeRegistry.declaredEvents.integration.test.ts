@@ -23,7 +23,7 @@ describe('executable plugin declared event ownership', () => {
             id: 'acme.declared-events',
             version: '1.0.0',
             displayName: 'Declared events fixture',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             hostAccess: { required: [], optional: [] },
             contributes: {

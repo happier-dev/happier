@@ -5,7 +5,7 @@
   "displayName": "External Declarative UI Example",
   "description": "External extension with declarative UI descriptor + resource contributions (no agent runtime).",
   "engines": {
-    "happier": "^0.2.0"
+    "happier": "^0.3.0"
   },
   "runtime": {
     "apiVersion": 1

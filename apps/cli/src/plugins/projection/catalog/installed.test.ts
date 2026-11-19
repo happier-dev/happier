@@ -502,7 +502,7 @@ describe('pluginCatalog', () => {
         version: '1.0.0',
         displayName: 'Acme Missing Daemon',
         description: 'Plugin manifest declares a daemon entry that is missing on disk',
-        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
         entrypoints: { daemon: './missing-daemon.mjs' },
         contributes: {},
       }), null, 2),

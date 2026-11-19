@@ -21,7 +21,7 @@ function assertJsonEqual(actual, expected, message) {
 await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
 await writeFile(join(pluginRoot, '.happier-plugin/plugin.json'), JSON.stringify({
     schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Idle plugin',
-    engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+    engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
     entrypoints: { daemon: './daemon.mjs' },
     contributes: {
         agents: [{ id: 'fixture-agent', title: 'Fixture Agent', primary: 'sessions',
@@ -70,7 +70,7 @@ const startupLogPath = join(happyHomeDir, 'startup.log');
 await mkdir(join(startupRoot, '.happier-plugin'), { recursive: true });
 await writeFile(join(startupRoot, '.happier-plugin/plugin.json'), JSON.stringify({
     schemaVersion: 2, id: startupId, version: '1.0.0', displayName: 'Startup plugin',
-    engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+    engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
     entrypoints: { daemon: './daemon.mjs' }, activation: { events: [{ kind: 'startup' }] },
     contributes: {},
 }));

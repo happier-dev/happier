@@ -16,7 +16,7 @@ describe('external SCM runtime consumer parity', () => {
             id: 'acme.scm.backend',
             version: '1.0.0',
             displayName: 'Acme external SCM backend',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             hostAccess: { required: [], optional: [] },
             contributes: {
@@ -33,7 +33,7 @@ describe('external SCM runtime consumer parity', () => {
             id: 'acme.scm.hosting',
             version: '1.0.0',
             displayName: 'Acme external SCM hosting provider',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
             entrypoints: { daemon: './daemon.mjs' },
             hostAccess: { required: [], optional: [] },
             contributes: {

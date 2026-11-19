@@ -45,7 +45,7 @@ async function materializeAuxiliaryOnlyPlugin(pluginRoot: string): Promise<void>
         id: PLUGIN_ID,
         version: '1.0.0',
         displayName: 'External Sessions only fixture',
-        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.mjs' },
         hostAccess: { required: [], optional: [] },
         contributes: {
@@ -384,7 +384,7 @@ async function materializeExternalHandoffPlugin(pluginRoot: string): Promise<voi
         id: HANDOFF_PLUGIN_ID,
         version: '1.0.0',
         displayName: 'External handoff fixture',
-        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+        engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
         entrypoints: { daemon: './daemon.mjs' },
         hostAccess: { required: [], optional: [] },
         contributes: {

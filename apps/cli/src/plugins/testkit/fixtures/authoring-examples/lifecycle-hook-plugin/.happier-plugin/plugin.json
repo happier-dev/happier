@@ -5,7 +5,7 @@
   "displayName": "Lifecycle Hook Example",
   "description": "Manifest-declared lifecycle hook example for plugin authoring.",
   "engines": {
-    "happier": "^0.2.0"
+    "happier": "^0.3.0"
   },
   "runtime": {
     "apiVersion": 1

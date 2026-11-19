@@ -8,7 +8,7 @@ function manifest(runtime: unknown): Readonly<Record<string, unknown>> {
     id: 'com.acme.runtime-api-fixture',
     version: '1.0.0',
     displayName: 'Runtime API fixture',
-    engines: { happier: '^0.2.0' },
+    engines: { happier: '^0.3.0' },
     ...(runtime === undefined ? {} : { runtime }),
     hostAccess: { required: [], optional: [] },
     contributes: {},

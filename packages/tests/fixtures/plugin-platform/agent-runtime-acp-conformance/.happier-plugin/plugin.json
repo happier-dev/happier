@@ -5,7 +5,7 @@
   "displayName": "Declarative ACP Agent Runtime Proof",
   "description": "Packed static ACP Agent fixture with no executable plugin entrypoint.",
   "engines": {
-    "happier": "^0.2.0"
+    "happier": "^0.3.0"
   },
   "runtime": {
     "apiVersion": 1

@@ -22,7 +22,7 @@ describe('background service registry definitive disposal', () => {
         const pluginId = 'acme.disposal-retry';
         const ingested = ingestCanonicalPluginManifest({
             schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Disposal retry',
-            engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+            engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
             contributes: { backgroundServices: [{ id: 'index', placement: 'process', activation: 'demand' }] },
         }, { sourceProvenance: 'registryCustodied' });
         if (!ingested.ok) throw new Error('Expected valid process manifest');

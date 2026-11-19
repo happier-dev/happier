@@ -496,7 +496,7 @@ describe('bundlePluginDaemonRuntime', () => {
       id: 'acme.bundle-env',
       version: '1.0.0',
       displayName: 'Bundle Environment Fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { development: './src/index.ts', daemon: './dist/index.js' },
       contributes: {},
     };
@@ -537,7 +537,7 @@ describe('bundlePluginDaemonRuntime', () => {
       id: 'acme.bundle-portable',
       version: '1.0.0',
       displayName: 'Bundle Portable Fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { development: '.\\src\\index.ts', daemon: '.\\dist\\index.js' },
       contributes: {},
     };
@@ -645,7 +645,7 @@ describe('bundlePluginDaemonRuntime', () => {
     await writeFile(join(projectRoot, 'src', 'index.ts'), [
       'export const manifest = {',
       "  schemaVersion: 2, id: 'acme.source-owner', version: '1.0.0',",
-      "  displayName: 'Source owner', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },",
+      "  displayName: 'Source owner', engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },",
       "  entrypoints: { daemon: './.happier-plugin-build/daemon.js' }, hostAccess: { required: [], optional: [] },",
       '  contributes: {},',
       '};',
@@ -676,7 +676,7 @@ describe('bundlePluginDaemonRuntime', () => {
       "import { createSessionAgentRuntime } from './agent/runtime/factory.js';",
       'export const manifest = {',
       "  schemaVersion: 2, id: 'acme.session-build', version: '1.0.0',",
-      "  displayName: 'Session build', engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },",
+      "  displayName: 'Session build', engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },",
       "  entrypoints: { daemon: './dist/index.js' }, hostAccess: { required: [], optional: [] },",
       '  contributes: { agents: [{',
       "    id: 'session-build', title: 'Session build', runtime: { kind: 'custom' }, primary: 'sessions',",
@@ -731,7 +731,7 @@ describe('bundlePluginDaemonRuntime', () => {
       id: 'acme.bundle-portable-invalid',
       version: '1.0.0',
       displayName: 'Bundle Portable Invalid Fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { development: './src/index.ts', daemon: daemonEntrypoint },
       contributes: {},
     };
@@ -766,7 +766,7 @@ describe('bundlePluginDaemonRuntime', () => {
       id: 'acme.bundle-emit-collision',
       version: '1.0.0',
       displayName: 'Bundle Emit Collision Fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { development: './src/index.ts', daemon: daemonEntrypoint },
       contributes: {},
     };
@@ -802,7 +802,7 @@ describe('bundlePluginDaemonRuntime', () => {
       id: 'acme.bundle-emit-disjoint',
       version: '1.0.0',
       displayName: 'Bundle Emit Disjoint Fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { development: './src/index.ts', daemon: './.happier-plugin/daemon.js' },
       contributes: {},
     };
@@ -837,7 +837,7 @@ describe('bundlePluginDaemonRuntime', () => {
       id: 'acme.bundle-emit-noemit',
       version: '1.0.0',
       displayName: 'Bundle No-Emit Fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { development: './src/index.ts', daemon: './dist/index.js' },
       contributes: {},
     };
@@ -875,7 +875,7 @@ describe('bundlePluginDaemonRuntime', () => {
       id: 'acme.bundle-symlink-alias',
       version: '1.0.0',
       displayName: 'Bundle Symlink Alias Fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { development: './src/index.ts', daemon: './dist/index.js' },
       contributes: {},
     };
@@ -924,7 +924,7 @@ describe('bundlePluginDaemonRuntime', () => {
       id: 'acme.bundle-hardlink-alias',
       version: '1.0.0',
       displayName: 'Bundle Hard Link Alias Fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { development: './src/index.ts', daemon: './dist/index.js' },
       contributes: {},
     };
@@ -981,7 +981,7 @@ describe('bundlePluginDaemonRuntime', () => {
       id: 'acme.bundle-fixture',
       version: '1.0.0',
       displayName: 'Bundle Fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { development: './src/index.ts', daemon: './dist/index.js' },
       contributes: {},
     };
@@ -1027,7 +1027,7 @@ describe('bundlePluginDaemonRuntime', () => {
       id: 'acme.bundle-contained',
       version: '1.0.0',
       displayName: 'Bundle Containment Fixture',
-      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+      engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
       entrypoints: { development: './src/index.ts', daemon: './dist/nested/index.js' },
       contributes: {},
     };
