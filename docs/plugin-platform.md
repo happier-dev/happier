@@ -3002,6 +3002,13 @@ text templates nor a second dialog. Missing operands add no line. The manifest
 and each nested field remain closed declarations; older unsupported strict
 hosts refuse this unreleased addition through normal compatibility admission.
 
+Durable target-Action approvals retain the same declared paths and titles on
+the request. Inbox Details reads their values from already-redacted input.
+The redacted input stays available under Technical details when an Action
+declares fields. Requests created without field declarations use the generic
+input presentation. Use matching daemon and UI readers for newly created
+development requests.
+
 The same `confirmationWhen` declaration accepts
 `{ presentUserUi: false }` for a uniformly reversible own-UI operation such as
 completing or reopening a review. That scoped value also accepts an input

@@ -46,6 +46,7 @@ function subject(request: TargetActionApprovalRequestV1): unknown {
     input: request.input,
     secretInputPaths: request.secretInputPaths,
     secretInputLabels: request.secretInputLabels,
+    inputFields: request.inputFields,
     approvalInputCustody: request.approvalInputCustody,
     accountId: request.accountId,
     resourceId: request.resourceId,

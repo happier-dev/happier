@@ -54,6 +54,7 @@ function createTargetActionApprovalRequestCandidate(
     input: projected.input,
     secretInputPaths: action.secretInputPaths ?? [],
     ...(action.secretInputLabels === undefined ? {} : { secretInputLabels: action.secretInputLabels }),
+    ...(action.confirmation?.inputFields === undefined ? {} : { inputFields: action.confirmation.inputFields }),
     ...(currentIntent.approvalInputCustody === 'live_only' || projected.confidentialPaths.length || requesterConfirmation && requestedSurface === 'plugin'
       ? { approvalInputCustody: 'live_only' } : {}),
     ...(action.accountId ? { accountId: action.accountId } : {}),

@@ -17,6 +17,7 @@ import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority
 import { AgentRuntimeJsonValueV1Schema } from '../runtime/agentSessionV1.js';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
 import { InputPathSchema } from '../inputs/inputPredicates.js';
+import { PluginActionConfirmationInputFieldV2Schema } from '../plugins/actions/v2.js';
 import { ApprovalAutomaticChecksV1Schema, isApprovalRequestExecutionApproved } from './approvalAutomaticChecks.js';
 
 export const TARGET_ACTION_APPROVAL_LIMITS_V1 = Object.freeze({
@@ -52,6 +53,8 @@ export const TargetActionApprovalRequestV1Schema = lazyZodSchema(() => z.strictO
   /** Absent on older development requests, which remain readable but cannot disclose their input safely. */
   secretInputPaths: z.optional(z.array(InputPathSchema)),
   secretInputLabels: z.optional(z.record(InputPathSchema, z.string())),
+  /** Authored review paths and titles. Operand values come from the projected input. */
+  inputFields: z.optional(z.array(PluginActionConfirmationInputFieldV2Schema)),
   /** Replay requires the original live invocation, including any confidential raw operands. */
   approvalInputCustody: z.optional(ApprovalInputCustodySchema),
   sourceCustody: PluginSourceCustodyV1Schema,

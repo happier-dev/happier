@@ -12,6 +12,7 @@ import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1
 import { AgentRuntimeJsonValueV1Schema } from '../runtime/agentSessionV1.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 import { InputPathSchema } from '../inputs/inputPredicates.js';
+import { resolvePluginLocalizedStringV2Text } from '../plugins/contributions/publicTypes.js';
 import { getActionSpec, type ActionSpec, type ApprovalPresentationContext } from './actionSpecs.js';
 import { resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
 import { actionInputFieldAcceptsNull } from './actionInputSchemaPath.js';
@@ -1296,8 +1297,8 @@ function matchesConfidentialInputPath(secret: readonly string[], path: readonly 
 }
 
 /**
- * Installed Actions have no built-in ActionSpec. Their admitted JSON is the
- * review contract; never use the static manifest confirmation as its substitute.
+ * Installed Actions have no built-in ActionSpec. Their admitted JSON supplies
+ * the operand values; confirmation declarations supply paths and titles.
  * Declared confidential inputs remain opaque. Value-free Connected Account and
  * Saved Secret bindings retain their exact identity like every other admitted
  * operand; diagnostic key spelling cannot decide what an effect may hide.
@@ -1368,6 +1369,20 @@ function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsR
     ? Object.entries(redacted).map(([key, value]) => ({ key, value }))
     : [{ key: '', value: redacted }];
   try {
+    for (const field of request.inputFields ?? []) {
+      const segments = field.path.split('.');
+      if (confidentialPaths.some(path => {
+        const concealed = path ? path.split('.') : [];
+        return concealed.length <= segments.length
+          && matchesConfidentialInputPath(segments.slice(0, concealed.length), concealed);
+      })) continue;
+      const values: unknown[] = [];
+      visitSegments(redacted, segments, 0, values);
+      const literal = formatApprovalFieldValues(values, { preserveStructuredValues: true });
+      if (literal === null) continue;
+      rows.push({ kind: 'value', path: `input.${field.path}`, title: resolvePluginLocalizedStringV2Text(field.title),
+        value: literal });
+    }
     for (const { key, value } of fields) {
       if (confidentialPaths.includes('') || confidentialPaths.includes(key)) continue;
       // The built-in formatter deliberately trims and joins values. Arbitrary
@@ -1375,7 +1390,8 @@ function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsR
       const literal = JSON.stringify(value);
       if (literal === undefined) return unavailable();
       rows.push({ kind: 'value', path: key ? `input.${key}` : 'input',
-        title: key ? humanizeApprovalKey(key) : 'Arguments', value: literal });
+        title: key ? humanizeApprovalKey(key) : 'Arguments', value: literal,
+        ...(request.inputFields?.length ? { technical: true as const } : {}) });
     }
   } catch {
     // JSON admission has no depth quota. If this platform cannot serialize the
@@ -1390,6 +1406,7 @@ function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsR
 type TargetActionApprovalFieldsRequest = Readonly<{
   kind: 'plugin_target_action'; input: unknown; secretInputPaths?: readonly string[]; status?: TargetActionApprovalRequestV1['status'];
   secretInputLabels?: Readonly<Record<string, string>>;
+  inputFields?: Readonly<NonNullable<TargetActionApprovalRequestV1['inputFields']>>;
   approvalInputCustody?: 'live_only';
 }>;
 

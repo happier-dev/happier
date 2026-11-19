@@ -189,6 +189,7 @@ function rejoin(stored: StoredArtifact | null, proposed: CreationRequest): Creat
     if (!sameStrictJsonValue(originSubject(receipt.executionOriginV1!), originSubject(subject.executionOriginV1!))
       || !targetActionApprovalSubjectsEqual(receipt, { ...subject,
         createdAtMs: existing.createdAtMs, summary: existing.summary, detail: existing.detail,
+        inputFields: existing.inputFields,
         // Profile aliases are routing hints, not a second Home identity.
         ...(existing.replayPlacement && proposed.replayPlacement
           && existing.executionOriginV1.serverIdentityId
