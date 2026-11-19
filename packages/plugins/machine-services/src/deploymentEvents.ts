@@ -189,17 +189,21 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 const receipts: Receipt[] = [];
                 if (state.fullRead) {
                     const retained: Receipt[] = [];
-                    const environmentIds: (string | undefined)[] = [];
+                    const environmentIds: string[] = [];
+                    let previewSelector: { projectSourceId: string; previewTemplateEnvironmentId: string; includeDeleted: true } | undefined;
                     if (source.previewChildren && source.environmentId !== undefined) {
                         const template = await context.services.actions.execute('deployments.environments.get', {
                             serverId: source.serverId, environmentId: source.environmentId,
                         }, { signal: context.signal });
                         if (!('ok' in template) || !template.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in template ? template.error : 'deployment_unavailable' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: template });
+                        previewSelector = { projectSourceId: template.environment.projectSourceId,
+                            previewTemplateEnvironmentId: source.environmentId, includeDeleted: true };
+                    }
+                    if (source.environmentId === undefined || previewSelector) {
                         let cursor: string | undefined;
                         do {
                             const page = await context.services.actions.execute('deployments.environments.list', {
-                                serverId: source.serverId, projectSourceId: template.environment.projectSourceId,
-                                previewTemplateEnvironmentId: source.environmentId, includeDeleted: true, ...(cursor ? { cursor } : {}),
+                                serverId: source.serverId, ...previewSelector, ...(cursor ? { cursor } : {}),
                             }, { signal: context.signal });
                             if (!('ok' in page) || !page.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in page ? page.error : 'deployment_unavailable' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: page });
                             if (page.coverage === 'partial') throw withActionFailureDiagnostic(new PluginError({ code: 'deployment_unavailable' }), { phase: 'deployment.events.environments.list', causeKind: 'incomplete' });
@@ -210,11 +214,11 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                         let cursor: string | undefined;
                         do {
                             const page = await context.services.actions.execute('deployments.receipts.list', {
-                                serverId: source.serverId, ...(environmentId !== undefined ? { environmentId } : {}), ...(event === changedEvent && environmentId !== undefined ? { limit: 1 } : {}),
+                                serverId: source.serverId, environmentId, ...(event === changedEvent ? { limit: 1 } : {}),
                                 ...(cursor ? { cursor } : {}),
                             }, { signal: context.signal });
                             if (!('ok' in page) || !page.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in page ? page.error : 'deployment_unavailable', message: 'Deployment receipts are unavailable.' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: page });
-                            retained.push(...page.items); cursor = event === changedEvent && environmentId !== undefined ? undefined : page.nextCursor ?? undefined;
+                            retained.push(...page.items); cursor = event === changedEvent ? undefined : page.nextCursor ?? undefined;
                         } while (cursor);
                     }
                     // The adapter belongs to one authenticated Account. Share the

@@ -52,7 +52,12 @@ function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = fa
             ? { ok: false, error: 'unsupported_action' }
             : { ok: true, environment, targetLink, credentialPrincipal: config.credentialPrincipal };
         if (id === 'deployments.environments.get') return { ok: true, environment, targetLinks: [targetLink] };
+        if (id === 'deployments.environments.list') return input.cursor === 'next-environment'
+            ? { ok: true, items: [environment], nextCursor: null, coverage: 'complete' }
+            : { ok: true, items: [{ id: 'other-environment' }], nextCursor: 'next-environment', coverage: 'complete' };
         if (id === 'deployments.receipts.list') {
+            if (typeof input.environmentId !== 'string') return { ok: false, error: 'deployment_invalid' };
+            if (input.environmentId !== current.environmentId) return { ok: true, items: [], nextCursor: null };
             const items = input.inProgressOnly ? current.state === 'running' ? [current] : []
                 : [current, ...Array.from({ length: 2000 }, (_, index) => ({ ...receipt, id: `historical-${index}`,
                     state: 'succeeded', requestedAtMs: 1, settledAtMs: 2 }))];
@@ -162,7 +167,7 @@ it('publishes a failed Event when the receipt has no failure summary', async () 
     expect(result.observations[0]).toMatchObject({ payload: { state: 'failed', phase: null, failureCode: null } });
 });
 
-it('sets up any deployment kind without a resource census and follows addressed remote receipts', async () => {
+it('replays retained receipts by visible Environment and follows addressed remote receipts', async () => {
     const h = fixture(undefined, 'deployment-failed', true); h.settle();
     const setup = await deploymentEventActions['deployment-failed/setup']!.run({ v: 1, serverId: config.serverId }, h.context);
     expect(setup.sourceConfig).toEqual({ v: 1, serverId: config.serverId, observingSince: 1000 });
@@ -178,7 +183,10 @@ it('sets up any deployment kind without a resource census and follows addressed 
             { role: 'context', subject: { kind: 'machine', serverId: config.serverId, machineId: 'machine-a' } },
         ] });
         expect(h.execute.mock.calls.filter(([id]) => id === 'deployments.environments.get')).toHaveLength(0);
-        expect(h.execute.mock.calls.find(([id]) => id === 'deployments.receipts.list')?.[1]).toEqual({ serverId: config.serverId });
+        expect(h.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.list').map(([, input]) => input)).toEqual([
+            { serverId: config.serverId, environmentId: 'other-environment' },
+            { serverId: config.serverId, environmentId: config.environmentId },
+        ]);
         h.setReceipt({ id: 'receipt-remote', environmentId: 'remote-environment' });
         h.reads.length = 0;
         await h.receiptChanged('remote-environment');
