@@ -32,6 +32,7 @@ import {
 } from '@/auth/capabilities/authMethodCapabilities';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useAccountServiceEntryOptions, type AccountServiceEntryOptions } from './useAccountServiceEntryOptions';
 
 type AuthEntryServerAvailability = 'loading' | 'ready' | 'legacy' | 'unavailable' | 'incompatible';
 
@@ -61,6 +62,27 @@ export type AuthEntryOptions = Readonly<{
     retentionDisclosure?: RelayRetentionDisclosureState | null;
     retryServerCheck: () => void;
 }>;
+
+/** Welcome's one observation of the selected Home and its effective sign-in service. */
+export function useWelcomeAuthEntryOptions(): Readonly<{
+    authEntryOptions: AuthEntryOptions;
+    accountServiceEntry: AccountServiceEntryOptions;
+}> {
+    const authEntryOptions = useAuthEntryOptions();
+    const accountServiceEntry = useAccountServiceEntryOptions(authEntryOptions.requestedHomeTarget
+        ? {
+            kind: 'home',
+            target: authEntryOptions.requestedHomeTarget,
+            policy: authEntryOptions.signInServicePolicy,
+            selfService: {
+                endpointUrl: authEntryOptions.serverUrlForCopy,
+                expectedServerIdentityId: authEntryOptions.observedHomeServerIdentityId,
+                ...authEntryOptions.homeTransport,
+            },
+        }
+        : { kind: 'none' });
+    return { authEntryOptions, accountServiceEntry };
+}
 
 type ObservedAuthEntryOptions = Pick<
     AuthEntryOptions,
@@ -421,15 +443,9 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                     });
                 }
                 commitUsableObservation(observation);
-                if (observation.serverAvailability === 'ready' && mounted) {
-                    if (enrollmentTransport) {
-                        // This reader has no explicit transport seam. Do not ask a
-                        // different machine at the canonical loopback address.
-                        setOptions((current) => ({ ...current, retentionDisclosure: {
-                            kind: 'unreadable', retry: () => setServerCheckNonce((nonce) => nonce + 1),
-                        } }));
-                        return;
-                    }
+                // This disclosure reader has no enrollment transport. A canonical loopback
+                // address can belong to another machine, so leave the disclosure absent here.
+                if (observation.serverAvailability === 'ready' && mounted && !enrollmentTransport) {
                     // Sign-in never waits on this: the disclosure fills in beside the actions.
                     readRetentionDisclosure({
                         serverId: activeServerSnapshot.serverId,

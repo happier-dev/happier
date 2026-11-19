@@ -137,9 +137,16 @@ vi.mock('@/auth/context/AuthContext', () => ({
     }),
 }));
 
-vi.mock('@/components/account/auth/useAuthEntryOptions', () => ({
-    useAuthEntryOptions: () => authEntryOptionsState.current,
-}));
+vi.mock('@/components/account/auth/useAuthEntryOptions', async () => {
+    const { useAccountServiceEntryOptions } = await import('@/components/account/auth/useAccountServiceEntryOptions');
+    return {
+        useAuthEntryOptions: () => authEntryOptionsState.current,
+        useWelcomeAuthEntryOptions: () => ({
+            authEntryOptions: authEntryOptionsState.current,
+            accountServiceEntry: useAccountServiceEntryOptions(),
+        }),
+    };
+});
 
 
 const tauriDesktopState = vi.hoisted(() => ({ value: false }));

@@ -10,8 +10,7 @@ import { LaptopHomeNudgeTile } from '@/components/homes/journeys/nudge/LaptopHom
 import { ReconcileHomesContent } from '@/components/homes/journeys/reconcile/ReconcileHomesSheet';
 import { UseServiceAsHomeSheet } from '@/components/homes/journeys/serviceHome/UseServiceAsHomeSheet';
 import { HomeAddForm } from '@/components/homes/add/HomeAddForm';
-import { PhoneWelcomeDoorway } from '@/components/homes/journeys/phone/PhoneWelcomeDoorway';
-import { WelcomeActionList, type WelcomeActionAdmission } from '@/components/onboarding/preAuth/WelcomeActionList';
+import { WelcomeDecisionPanel } from '@/components/onboarding/preAuth/WelcomeDecisionPanel';
 import { useJourneyAccountService, type JourneyAccountService } from '@/components/homes/journeys/useJourneyAccountService';
 import type { AccountDirectoryAuthMethodDiscovery } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
@@ -55,7 +54,6 @@ type Frame = typeof FRAMES[number];
 type ContinuationFrame = typeof CONTINUATION_FRAMES[number];
 
 const noop = () => {};
-const IMMEDIATE_ADMISSION: WelcomeActionAdmission = { pendingActionId: null, run: async (_id, action) => { await action(); } };
 
 export function HomesJourneysSpecimen(props: Readonly<{ only: string | null }>) {
     const frames = props.only
@@ -105,9 +103,18 @@ function FrameBody(props: Readonly<{ frame: Frame }>) {
         case 'K1p':
             return (
                 <View style={styles.phoneDoorway}>
-                    <WelcomeActionList admission={IMMEDIATE_ADMISSION}>
-                        <PhoneWelcomeDoorway canScanQr onScan={noop} onConnectDirectly={noop} />
-                    </WelcomeActionList>
+                    <WelcomeDecisionPanel
+                        authEntryOptions={{ serverAvailability: 'ready', showAuthActions: true, authEntryUnavailable: false,
+                            serverUrlForCopy: '', retryServerCheck: noop }}
+                        accountServiceEntry={service.entry}
+                        onContinueWithAccountServiceProvider={noop}
+                        onContinueWithAccountServiceKey={noop}
+                        onChooseAccountService={noop}
+                        onChangeRelay={noop}
+                        onOpenRestore={noop}
+                        onConnectHomeDirectly={noop}
+                        canScanQr
+                    />
                 </View>
             );
         case 'J2':

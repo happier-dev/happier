@@ -22,6 +22,31 @@ const method = (id: string, actionId: 'login' | 'provision', mode: 'keyed' | 'ke
 });
 
 describe('composeWelcomeEntryModel', () => {
+    it('places the first-run restore door and self-hosting footer from device and Home facts', () => {
+        const input = {
+            target: { kind: 'none' },
+            homeMethods: [],
+            context: { kind: 'home' },
+            allowedNavigation: { changeHome: true, selectService: true, scanOrPasteHome: true, createPersonalHome: false },
+            serviceCatalogState: { kind: 'not_offered' },
+            userHistory: 'first_time',
+            placement: { hasHome: false, canConnectDirectly: true, platform: 'phone', canScanQr: true, canShowQr: false },
+        } as const;
+        const firstRun = composeWelcomeEntryModel(input);
+        expect(firstRun.actions[0]?.action).toEqual({ kind: 'scan_or_paste_home', labelRole: 'login' });
+        expect(firstRun.restore).toEqual({ title: 'welcome.welcomeSecondaryButton', subtitle: 'welcome.welcomeSecondarySubtitle', icon: 'qr-code' });
+        expect(firstRun.showSelfHostingFooter).toBe(false);
+
+        const returning = composeWelcomeEntryModel({
+            ...input,
+            userHistory: 'returning',
+            homeMethods: [method('key_challenge', 'login', 'keyed')],
+            placement: { ...input.placement, hasHome: true, platform: 'computer' },
+        });
+        expect(returning.restore).toEqual({ title: 'welcome.welcomeReturningLoginButton', subtitle: 'welcome.loginSubtitleKeyFirst', icon: 'key' });
+        expect(returning.showSelfHostingFooter).toBe(true);
+    });
+
     it('keeps Home actions live while optional service discovery is loading', () => {
         const model = composeWelcomeEntryModel({
             target: { kind: 'selected_home', home: target, label: 'Home A' },

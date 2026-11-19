@@ -34,10 +34,21 @@ export type WelcomeAction =
     | Readonly<{ kind: 'scan_or_paste_home'; labelRole: 'login' | 'method' }>
     | Readonly<{ kind: 'choose_home' }>
     | Readonly<{ kind: 'choose_sign_in_service' }>
+    | Readonly<{ kind: 'use_service_as_home'; name: string; url: string }>
     | Readonly<{ kind: 'create_personal_home' }>;
 
 export type WelcomeEntryModel = Readonly<{
     heading: 'first_time' | 'returning';
+    chooseHomeDestination: 'direct' | 'picker';
+    showSelfHostingFooter: boolean;
+    showWaysHeading: boolean;
+    showKeyProvisioningIntro: boolean;
+    hasLoginDoor: boolean;
+    restore: Readonly<{
+        title: 'welcome.welcomeSecondaryButton' | 'welcome.welcomeReturningLoginButton' | 'connect.scanExistingHomeQrTitle' | 'connect.usePairingLinkTitle';
+        subtitle: 'welcome.loginSubtitleKeyFirst' | 'welcome.loginSubtitleLinkFirst' | 'welcome.welcomeSecondarySubtitle' | 'connect.pairingLinkRequired';
+        icon: 'key' | 'link' | 'qr-code';
+    }>;
     /** Only notices about the effective Home target belong in this entry. */
     showHomeStatus: boolean;
     targetContext?: Readonly<{ label: string }>;
@@ -86,6 +97,14 @@ export type ComposeWelcomeEntryModelInput = Readonly<{
         }>
         | Readonly<{ kind: 'unavailable' | 'unsupported' | 'methodless'; hintName?: string }>;
     userHistory: 'first_time' | 'returning';
+    placement?: Readonly<{
+        hasHome: boolean;
+        canConnectDirectly: boolean;
+        platform: 'phone' | 'computer';
+        canScanQr: boolean;
+        canShowQr: boolean;
+        serviceHome?: Readonly<{ name: string; url: string }>;
+    }>;
     /** Catalog method id of this device's last successful sign-in; absent when nothing is recorded. */
     lastSignInMethodId?: string | null;
 }>;
@@ -251,6 +270,29 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
         actions.findIndex((candidate) => actionIdentity(candidate) === actionIdentity(action)) === index
     ));
     const dominantActionId = input.context.kind === 'home' ? null : input.context.dominantActionId;
+    const { placement } = input;
+    const firstTime = input.userHistory === 'first_time';
+    const hasHome = placement?.hasHome ?? false;
+    const chooseHomeDestination = hasHome ? 'picker' : 'direct';
+    const canChooseHome = !placement || hasHome || placement.canConnectDirectly;
+    const showKeyProvisioningIntro = unique.some((action) =>
+        action.kind === 'authenticate' && action.labelRole === 'new_here' && action.request.execution.kind === 'generated_key');
+    const restoreDoorFirst = placement && firstTime
+        && input.context.kind === 'home'
+        && input.target.kind === 'none'
+        && !input.allowedNavigation.createPersonalHome
+        && !(hasHome && showKeyProvisioningIntro)
+        && input.allowedNavigation.scanOrPasteHome;
+    if (!canChooseHome) {
+        const chooseHomeIndex = unique.findIndex((action) => action.kind === 'choose_home');
+        if (chooseHomeIndex >= 0) unique.splice(chooseHomeIndex, 1);
+    }
+    if (restoreDoorFirst) {
+        const restoreIndex = unique.findIndex((action) => action.kind === 'scan_or_paste_home');
+        if (restoreIndex >= 0) unique.splice(restoreIndex, 1);
+        unique.unshift(pairingLogin);
+        if (placement.serviceHome) unique.push({ kind: 'use_service_as_home', ...placement.serviceHome });
+    }
     if (dominantActionId) {
         const dominantIndex = unique.findIndex((action) => actionIdentity(action) === dominantActionId);
         if (dominantIndex > 0) unique.unshift(unique.splice(dominantIndex, 1)[0]!);
@@ -278,8 +320,28 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
         };
 
     const hasAuthentication = unique.some((action) => action.kind === 'authenticate');
+    const hasLoginDoor = unique.some((action) =>
+        (action.kind === 'authenticate' || action.kind === 'scan_or_paste_home') && action.labelRole === 'login');
+    const leadWithLink = placement?.platform === 'phone';
+    const qrAvailable = leadWithLink && (placement.canScanQr || placement.canShowQr);
     return {
         heading: input.userHistory,
+        chooseHomeDestination,
+        showSelfHostingFooter: hasHome && input.target.kind === 'none' && input.allowedNavigation.changeHome,
+        showWaysHeading: firstTime && !hasLoginDoor,
+        showKeyProvisioningIntro,
+        hasLoginDoor,
+        restore: !unique.some((action) => action.kind === 'scan_or_paste_home' && action.labelRole === 'login') ? {
+            title: placement?.canScanQr ? 'connect.scanExistingHomeQrTitle' : 'connect.usePairingLinkTitle',
+            subtitle: placement?.canScanQr ? 'welcome.welcomeSecondarySubtitle' : 'connect.pairingLinkRequired',
+            icon: placement?.canScanQr ? 'qr-code' : 'link',
+        } : {
+            title: firstTime ? 'welcome.welcomeSecondaryButton' : 'welcome.welcomeReturningLoginButton',
+            subtitle: !leadWithLink
+                ? 'welcome.loginSubtitleKeyFirst'
+                : qrAvailable ? 'welcome.welcomeSecondarySubtitle' : 'welcome.loginSubtitleLinkFirst',
+            icon: !leadWithLink ? 'key' : qrAvailable ? 'qr-code' : 'link',
+        },
         showHomeStatus,
         ...(input.target.kind === 'none'
             ? input.serviceCatalogState.kind === 'ready' ? { targetContext: { label: input.serviceCatalogState.name } } : {}

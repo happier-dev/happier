@@ -41,9 +41,11 @@ await import('./WelcomeDecisionPanel');
 function renderPanel() {
     const onOpenRestore = vi.fn();
     const onConnectHomeDirectly = vi.fn();
+    const onChooseAccountService = vi.fn();
     return {
         onOpenRestore,
         onConnectHomeDirectly,
+        onChooseAccountService,
         screenPromise: (async () => {
             const { WelcomeDecisionPanel } = await import('./WelcomeDecisionPanel');
             return await renderScreen(
@@ -53,41 +55,40 @@ function renderPanel() {
                     onOpenRestore={onOpenRestore}
                     onChangeRelay={() => {}}
                     onConnectHomeDirectly={onConnectHomeDirectly}
+                    onChooseAccountService={onChooseAccountService}
                 />,
             );
         })(),
     };
 }
 
-describe('WelcomeDecisionPanel on a phone (the Homes doorway)', () => {
+describe('WelcomeDecisionPanel on a phone', () => {
     beforeEach(() => {
         spies.show.mockClear();
         viewport.klass = 'compact';
     });
 
-    it('offers scan, sign in with the service, and connecting to a Home directly', async () => {
+    it('offers restore, sign-in service selection, and connecting to a Home directly', async () => {
         const { screenPromise, onOpenRestore } = renderPanel();
         const screen = await screenPromise;
-        expect(screen.findByTestId('welcome-doorway-scan')).toBeTruthy();
-        expect(screen.findByTestId('welcome-doorway-sign-in')).toBeTruthy();
-        expect(screen.findByTestId('welcome-doorway-change-service')).toBeTruthy();
-        expect(screen.findByTestId('welcome-doorway-direct')).toBeTruthy();
+        expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
+        expect(screen.findByTestId('welcome-account-service-choose')).toBeTruthy();
+        expect(screen.findByTestId('welcome-use-different-home')).toBeTruthy();
 
-        await screen.pressByTestIdAsync('welcome-doorway-scan');
+        await screen.pressByTestIdAsync('welcome-scan-existing-home');
         expect(onOpenRestore).toHaveBeenCalledOnce();
         await screen.unmount();
     });
 
-    it('continues to a Home directly as a welcome step, and opens the service ways as sheets', async () => {
-        const { screenPromise, onConnectHomeDirectly } = renderPanel();
+    it('opens the existing direct-Home and service-selection steps', async () => {
+        const { screenPromise, onConnectHomeDirectly, onChooseAccountService } = renderPanel();
         const screen = await screenPromise;
         // Owner 11-13: connecting to a Home directly is a step of the welcome, not a sheet over it.
-        await screen.pressByTestIdAsync('welcome-doorway-direct');
+        await screen.pressByTestIdAsync('welcome-use-different-home');
         expect(onConnectHomeDirectly).toHaveBeenCalledOnce();
         expect(spies.show).not.toHaveBeenCalled();
-        await screen.pressByTestIdAsync('welcome-doorway-change-service');
-        expect(spies.show).toHaveBeenLastCalledWith(expect.objectContaining({ props: { initialPath: 'other_service' },
-            chrome: expect.objectContaining({ testID: 'already-use-happier-sheet' }) }));
+        await screen.pressByTestIdAsync('welcome-account-service-choose');
+        expect(onChooseAccountService).toHaveBeenCalledOnce();
         await screen.unmount();
     });
 
@@ -96,25 +97,25 @@ describe('WelcomeDecisionPanel on a phone (the Homes doorway)', () => {
         // The host passes no connect step when setup policy denies custom Home addresses.
         const screen = await renderScreen(<WelcomeDecisionPanel authEntryOptions={firstRunOptions} canScanQr
             onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} />);
-        expect(screen.findByTestId('welcome-doorway-scan')).toBeTruthy();
-        expect(screen.findByTestId('welcome-doorway-direct')).toBeNull();
+        expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
+        expect(screen.findByTestId('welcome-use-different-home')).toBeNull();
         viewport.klass = 'medium';
         const wide = await renderScreen(<WelcomeDecisionPanel authEntryOptions={firstRunOptions} canScanQr
             onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} />);
-        expect(wide.findByTestId('welcome-doorway-scan')).toBeTruthy();
-        expect(wide.findByTestId('welcome-doorway-direct')).toBeNull();
+        expect(wide.findByTestId('welcome-scan-existing-home')).toBeTruthy();
+        expect(wide.findByTestId('welcome-use-different-home')).toBeNull();
         await screen.unmount();
         await wide.unmount();
     });
 
-    it('shows the same first-run doorway on a wider window (one first run on every width)', async () => {
+    it('offers the same first-run operations on a wider window', async () => {
         // UI refinements 11-13 ruling: wide composes the same steps with more room, not a different first screen.
         viewport.klass = 'medium';
         const { screenPromise, onConnectHomeDirectly } = renderPanel();
         const screen = await screenPromise;
-        expect(screen.findByTestId('welcome-doorway-scan')).toBeTruthy();
-        expect(screen.findByTestId('welcome-scan-existing-home')).toBeFalsy();
-        await screen.pressByTestIdAsync('welcome-doorway-direct');
+        expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
+        expect(screen.findByTestId('welcome-account-service-choose')).toBeTruthy();
+        await screen.pressByTestIdAsync('welcome-use-different-home');
         expect(onConnectHomeDirectly).toHaveBeenCalledOnce();
         await screen.unmount();
     });
@@ -133,7 +134,6 @@ describe('WelcomeDecisionPanel on a phone (the Homes doorway)', () => {
             accountServiceEntry={{ effectiveSignInService: { kind: 'no_target_default', endpoint: url }, endpoint: { url, source: 'default' },
                 status: 'unsupported', discovery: null, transport: {}, retry: vi.fn() }}
             onContinueWithHomeAuthentication={authenticate} onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} onConnectHomeDirectly={vi.fn()} />);
-        expect(screen.findByTestId('welcome-doorway-scan')).toBeNull();
         await screen.pressByTestIdAsync('welcome-provider-primary');
         expect(authenticate).toHaveBeenCalledWith(expect.objectContaining({ execution: { kind: 'key_entry' },
             authority: { purpose: 'home', target } }));
@@ -157,7 +157,6 @@ describe('WelcomeDecisionPanel on a phone (the Homes doorway)', () => {
                         action: { id: 'login', mode: 'keyed' }, execution: { kind: 'key_entry' },
                     }] }}
                 onContinueWithHomeAuthentication={vi.fn()} onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} onConnectHomeDirectly={vi.fn()} />);
-            expect(screen.findByTestId('welcome-doorway-scan')).toBeNull();
             expect(screen.findByTestId('welcome-primary-start')).toBeTruthy();
             expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
             await screen.unmount();

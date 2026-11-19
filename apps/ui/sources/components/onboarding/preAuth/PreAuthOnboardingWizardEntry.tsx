@@ -11,8 +11,7 @@ import type { AccountDirectoryKeyLoginOutcome } from '@/components/account/auth/
 import { launchAccountServiceOAuthAuthentication } from '@/components/account/auth/accountServiceAuthenticationActions';
 import type { WelcomeAuthenticationMethod } from '@/components/onboarding/preAuth/composeWelcomeEntryModel';
 import type { AccountContinuationIntent } from '@happier-dev/cli-common/accountService';
-import { useAuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
-import { useAccountServiceEntryOptions } from '@/components/account/auth/useAccountServiceEntryOptions';
+import { useWelcomeAuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import type { AccountServiceSelectionFormProps } from '@/components/account/auth/AccountServiceSelectionForm';
 import { selectAccountServiceEndpoint } from '@/sync/ops/accountDirectory/selectAccountServiceEndpoint';
 import { useIsLandscape } from '@/utils/platform/responsive';
@@ -86,28 +85,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
     }, [suppliedHomeAddress]);
     const isLandscape = useIsLandscape();
     const isDesktopShell = React.useMemo(() => isDesktopHost(), []);
-    const authEntryOptions = useAuthEntryOptions();
-    const accountServiceTargetContext = React.useMemo(() => authEntryOptions.requestedHomeTarget ? ({
-        kind: 'home' as const,
-        target: authEntryOptions.requestedHomeTarget,
-        ...(authEntryOptions.signInServicePolicy ? { policy: authEntryOptions.signInServicePolicy } : {}),
-        selfService: {
-            endpointUrl: authEntryOptions.serverUrlForCopy,
-            ...(authEntryOptions.observedHomeServerIdentityId
-                ? { expectedServerIdentityId: authEntryOptions.observedHomeServerIdentityId }
-                : {}),
-            ...authEntryOptions.homeTransport,
-        },
-    }) : ({ kind: 'none' as const }), [
-        authEntryOptions.requestedHomeTarget,
-        authEntryOptions.homeTransport,
-        authEntryOptions.observedHomeServerIdentityId,
-        authEntryOptions.serverUrlForCopy,
-        authEntryOptions.signInServicePolicy,
-    ]);
-    // The selected sign-in service is resolved independently of the focused Home, so a fresh
-    // device with zero Home profiles still reaches its advertised sign-in methods.
-    const accountServiceEntry = useAccountServiceEntryOptions(accountServiceTargetContext);
+    const { authEntryOptions, accountServiceEntry } = useWelcomeAuthEntryOptions();
     const selectAccountService = React.useCallback<AccountServiceSelectionFormProps['onSelect']>(async (entered, options) => {
         return await selectAccountServiceEndpoint(entered, options);
     }, []);

@@ -15,15 +15,36 @@ import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOpt
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 import { lastSignInMethodState, onboardingAuthHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { t } from '@/text';
+import { FirstOpenWelcomeModelContext } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
 
 import { WelcomeDecisionPanel } from './WelcomeDecisionPanel';
+import { WelcomeEntryView, type WelcomeEntryViewModel } from './WelcomeEntryView';
 
-// The device camera is a platform boundary: each case says whether this device has one.
-const camera = vi.hoisted(() => ({ available: false }));
-vi.mock('@/utils/platform/qrScannerSupport', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/utils/platform/qrScannerSupport')>()),
-    canUseCurrentDeviceQrScanner: () => camera.available,
-}));
+it('renders the same display model live and in an inert opening replica', async () => {
+    const publish = vi.fn<(model: WelcomeEntryViewModel) => void>();
+    const screen = await renderScreen(
+        <FirstOpenWelcomeModelContext.Provider value={publish}>
+            <WelcomeDecisionPanel authEntryOptions={baseOptions} onOpenRestore={vi.fn()}
+                onOpenSecretKeyLogin={vi.fn()} onChangeRelay={vi.fn()} onConnectHomeDirectly={vi.fn()}
+                onContinueWithHomeAuthentication={vi.fn()} />
+        </FirstOpenWelcomeModelContext.Provider>,
+    );
+    const [published] = publish.mock.calls[0] ?? [];
+    expect(published).toBeDefined();
+    const serialized = JSON.stringify(published);
+    expect(serialized).not.toMatch(/home-a|relay\.example\.test|authority|execution|profileRef/);
+    const replica = await renderScreen(<WelcomeEntryView
+        model={JSON.parse(serialized)} compact={false}
+    />);
+    expect(replica.findByTestId('welcome-decision-panel')?.props.pointerEvents).toBe('none');
+    expect(replica.findByTestId('welcome-primary-start-title')).not.toBeNull();
+    expect(replica.findByTestId('welcome-primary-start-title')?.props.children).toEqual(
+        screen.findByTestId('welcome-primary-start-title')?.props.children,
+    );
+});
+
+// The controller supplies the camera affordance to the panel as a fact.
+let cameraAvailable = false;
 
 /** Runs a case on a computer-sized or phone-sized window (the window is a platform boundary). */
 async function onDevice(device: 'computer' | 'phone', hasCamera: boolean, run: () => Promise<void>) {
@@ -31,8 +52,8 @@ async function onDevice(device: 'computer' | 'phone', hasCamera: boolean, run: (
         ? { width: 390, height: 844, scale: 1, fontScale: 1 }
         : { width: 1440, height: 900, scale: 1, fontScale: 1 };
     const get = vi.spyOn(Dimensions, 'get').mockReturnValue(window);
-    camera.available = hasCamera;
-    try { await run(); } finally { get.mockRestore(); camera.available = false; }
+    cameraAvailable = hasCamera;
+    try { await run(); } finally { get.mockRestore(); cameraAvailable = false; }
 }
 
 vi.mock('react-native-unistyles', async () => {
@@ -77,6 +98,7 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 function renderPanel(
     overrides: Partial<AuthEntryOptions> = {},
     accountServiceEntry?: AccountServiceEntryOptions,
+    canScanQr = true,
 ) {
     const options: AuthEntryOptions = { ...baseOptions, ...overrides };
     const callbacks = {
@@ -95,7 +117,7 @@ function renderPanel(
             <WelcomeDecisionPanel
                 authEntryOptions={options}
                 accountServiceEntry={accountServiceEntry}
-                canScanQr
+                canScanQr={canScanQr}
                 {...callbacks}
             />,
         ),
@@ -318,9 +340,8 @@ describe('WelcomeDecisionPanel', () => {
         );
 
         expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
-        // A first run is the doorway on every width (UI refinements 11-13).
-        expect(screen.findByTestId('welcome-doorway-sign-in')).toBeTruthy();
-        expect(screen.findByTestId('welcome-doorway-change-service')).toBeTruthy();
+        expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
+        expect(screen.findByTestId('welcome-account-service-choose')).toBeTruthy();
     });
 
     it('keeps the unrelated seeded Home methods out of a default-service first run', async () => {
@@ -340,10 +361,9 @@ describe('WelcomeDecisionPanel', () => {
         );
 
         expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
-        // The first-run doorway signs in through the service's own sheet; no seeded Home method is offered here.
         expect(screen.findAllByTestId('welcome-provider-primary')).toHaveLength(0);
-        expect(screen.findByTestId('welcome-doorway-sign-in')).toBeTruthy();
-        expect(onContinueWithAccountServiceProvider).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('welcome-account-service-provider-github');
+        expect(onContinueWithAccountServiceProvider).toHaveBeenCalledOnce();
     });
 
     it('says what each Home sign-in way does instead of repeating the Home on every card', async () => {
@@ -791,8 +811,10 @@ describe('WelcomeDecisionPanel', () => {
         });
         const screen = await screenPromise;
 
-        const notice = screen.findByTestId('welcome-account-service-recovery');
-        expect(notice?.props.accessibilityLiveRegion).toBe('polite');
+        const notice = screen.findHostByTestId('welcome-account-service-recovery');
+        expect(notice).toBeTruthy();
+        // The notice announces itself once, politely, through the shared state line's live region.
+        expect(screen.findAll((node) => node.props?.accessibilityLiveRegion === 'polite' || node.props?.['aria-live'] === 'polite').length).toBeGreaterThan(0);
         expect(screen.getTextContent()).toContain('Acme ID');
         expect(screen.getTextContent()).toContain('You can still use this Home');
     });
@@ -808,7 +830,7 @@ describe('WelcomeDecisionPanel', () => {
         });
         const screen = await screenPromise;
 
-        expect(screen.findAllByTestId('welcome-auth-loading')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('welcome-auth-loading')).toHaveLength(1);
         expect(screen.findAllByTestId('welcome-account-service-loading')).toHaveLength(0);
     });
 
@@ -895,7 +917,7 @@ describe('WelcomeDecisionPanel', () => {
 
         it('the Login door promises only what Login offers on this device', async () => {
             const doorSubtitle = async () => {
-                const { screenPromise } = renderPanel({ authenticationActions: keyAndEmail });
+                const { screenPromise } = renderPanel({ authenticationActions: keyAndEmail }, undefined, cameraAvailable);
                 const screen = await screenPromise;
                 const subtitle = screen.findByTestId('welcome-scan-existing-home-subtitle')?.props.children;
                 await screen.unmount();
