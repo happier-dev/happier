@@ -65,6 +65,7 @@ import { sessionPendingRoutes } from '@/app/api/routes/session/pendingRoutes';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
 import { registerSessionListingRoutes } from '@/app/api/routes/session/registerSessionListingRoutes';
 import { registerAccountEncryptionRoutes } from '@/app/api/routes/account/registerAccountEncryptionRoutes';
+import { registerAutomationActionIndexRoutes } from '@/app/api/routes/automations/registerAutomationActionIndexRoutes';
 import { PendingActivationHoldReasonV1Schema, ManagedPendingActivationFailureRequestV1Schema,
     PendingActivationAuthorizationV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { markPendingActivationAuthorizationFailedInTx, mapPendingActivationAuthorization } from '@/app/session/pending/pendingActivationAuthorization';
@@ -795,6 +796,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
         sessionPendingRoutes(app);
         registerSessionListingRoutes(app);
         registerAccountEncryptionRoutes(app);
+        registerAutomationActionIndexRoutes(app);
         machinesRoutes(app);
         try {
             expect(await enqueuePendingMessage(input)).toMatchObject({ ok: true });
@@ -857,7 +859,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
             // A retained signed root cannot outlive its installed signer.
             await db.machine.update({ where: { id: test.guest.id }, data: { installationId: randomUUID() } });
             expect(await runWithServerHttpBaseUrl(origin, () => executor.execute(actionId, actionInput, context)))
-                .toMatchObject({ ok: false, errorCode: 'ERR_BAD_REQUEST' });
+                .toMatchObject({ ok: false, errorCode: 'action_failed', failureCause: { httpStatus: 401 } });
             expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toEqual(retried);
         } finally { await app.close(); restoreEnv(envBefore); }
     });
