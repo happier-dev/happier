@@ -23,6 +23,7 @@ import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databa
 import { startFinJourneyFixture, type FinJourneyFixture } from '../../src/testkit/finJourney';
 import { writeFinMuseExecutable } from '../../src/testkit/finMuse';
 import { createRunDirs } from '../../src/testkit/runDir';
+import { waitFor } from '../../src/testkit/timing';
 import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { postEncryptedSessionMessage } from '../../src/testkit/memoryRpc';
 import { createSessionWithCiphertexts } from '../../src/testkit/sessions';
@@ -50,6 +51,7 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
   let panelAuditPath: string;
   let deepSecAuditPath: string;
   let deepSecExecutablePath: string;
+  let nativeHoldPath: string;
   async function createSourceSession(account = owner) {
     const source = await createSessionWithCiphertexts({ baseUrl: fixture!.server.baseUrl, token: account.auth.token,
       metadataCiphertextBase64: encryptLegacyBase64({ path: machine.workspaceDir }, account.auth.accountSigningSeed),
@@ -82,6 +84,7 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
     await nativeReply({ summary: 'No findings in the fixture change', findings: [] });
     const executablePath = await writeFinMuseExecutable({ binDir: bin, recordingPath, auditPath });
     panelReplyPath = join(testDir, 'panel-reply.json');
+    nativeHoldPath = join(testDir, 'native-hold');
     panelAuditPath = join(testDir, 'panel-audit.jsonl');
     await writeFile(panelAuditPath, '');
     await writeFile(panelReplyPath, JSON.stringify(panelNativeReview));
@@ -94,7 +97,10 @@ else {
   if (args[0] === 'review') console.log('Enqueued job 3');
   else if (args[0] === 'job' && args[1] === 'list') console.log('[{"id":3,"job_type":"synthesis"}]');
   else if (args[0] === 'job' && args[1] === 'show') console.log(fs.readFileSync(${JSON.stringify(panelReplyPath)}, 'utf8'));
-  else if (args[0] === 'job' && args[1] === 'wait') process.exitCode = 1;
+  else if (args[0] === 'job' && args[1] === 'wait') {
+    if (fs.existsSync(${JSON.stringify(nativeHoldPath)})) setInterval(() => {}, 1000);
+    else process.exitCode = 1;
+  }
 }
 `, { mode: 0o755 });
     deepSecAuditPath = join(testDir, 'deepsec-audit.jsonl');
@@ -347,6 +353,20 @@ else {
       name: 'Native review with workspace writes', workspaceWrites: 'allow' } });
     return roleId;
   }
+  async function stopNativeRound(firstRunId: string, audit: string, isWaiting: (args: string[]) => boolean) {
+    await writeFile(nativeHoldPath, 'hold native process until Stop');
+    const previousLines = (await readFile(audit, 'utf8')).trim().split('\n').length;
+    const next = ReviewNativeNewRoundResultV1Schema.parse(await act(REVIEW_NEW_ROUND_ACTION_ID_V1, {
+      runId: firstRunId, target: { kind: 'detached' },
+    }));
+    await waitFor(async () => (await readFile(audit, 'utf8')).trim().split('\n').slice(previousLines)
+      .some(line => isWaiting((JSON.parse(line) as { args: string[] }).args)),
+    { failFast: true, context: 'New round reaches held native process before Stop' });
+    await act('execution.run.stop', { runId: next.runId });
+    await act('execution.run.wait', { runId: next.runId, condition: 'terminal' });
+    expect(ExecutionRunGetResponseSchema.parse(await act('execution.run.get', { runId: next.runId })))
+      .toMatchObject({ run: { status: 'cancelled' } });
+  }
   it('F3 DeepSec retains exported partial audit findings with an explicitly write-enabled Role through public Actions', async () => {
     const profileId = 'happier.review.deepsec/repository-security-audit';
     const roster = ReviewEngineInventorySchema.parse(await act('review.engines.list', { sessionId: null }));
@@ -377,7 +397,7 @@ else {
     expect(new Set(commands.map(command => command.dataRoot)).size).toBe(1);
     expect(commands[0]?.dataRoot).toBeTruthy();
   });
-  it('F4 native panel with an explicitly write-enabled Role preserves a failed member and substantive evidence through public Actions and starts a new round', async () => {
+  it('F4 native panel with an explicitly write-enabled Role preserves a failed member and substantive evidence through public Actions, New round and Stop', async () => {
     const panelRecord = structuredClone(panelNativeReview);
     panelRecord.panel.members[1]!.status = 'failed';
     await writeFile(panelReplyPath, JSON.stringify(panelRecord));
@@ -425,6 +445,9 @@ else {
       expect(ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId })).review)
         .toMatchObject({ state: 'partial', currentRoundOrdinal: round, counts: { total: 1 } });
     }
+    await stopNativeRound(firstRunId, panelAuditPath, args => args[0] === 'job' && args[1] === 'wait');
+    const stoppedCommands: { args: string[] }[] = (await readFile(panelAuditPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    expect(stoppedCommands.at(-1)).toMatchObject({ args: ['daemon', 'stop'] });
   });
   it('F1 refuses an inaccessible source Session before launching a reviewer', async () => {
     const other = await fixture!.createAccount('source-owner');
