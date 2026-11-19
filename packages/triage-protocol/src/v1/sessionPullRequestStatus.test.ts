@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SessionPullRequestWatchBindingReadV1Schema } from '@happier-dev/channels-protocol/v1';
+import { SessionPullRequestWatchBindingReadV1Schema } from '@happier-dev/plugin-sdk/protocol';
 
 import { TriagePullRequestStatusV1Schema } from './pullRequestStatus.js';
 import { TriageEntryRefV1Schema } from './identity.js';

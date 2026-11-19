@@ -2,7 +2,7 @@ import {
     defineProtocolArray, defineProtocolLiteral, defineProtocolObject, defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 import { ActionSessionAddressV1Schema, SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
-import { SessionPullRequestBindingMetadataFieldsV1 } from '@happier-dev/channels-protocol/v1';
+import { SessionPullRequestBindingMetadataFieldsV1 } from '@happier-dev/plugin-sdk/protocol';
 
 import { TriageSourceFailureV1Schema } from './diagnostics.js';
 import { TriageEntryRefV1Schema, TriageSourceInstanceIdV1Schema } from './identity.js';

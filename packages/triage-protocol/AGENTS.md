@@ -23,10 +23,10 @@ a domain-specific failure or page owner. Each domain epoch follows the same
 SDK protocol-evolution doctrine independently of package SemVer.
 
 Only the browser-safe public SDK entry points allowlisted by
-`packages/plugin-sdk/src/featureProtocolPackagePolicy.test.ts` and the public
-`@happier-dev/channels-protocol` V1 contract may be imported. Channels owns the
-shared CI identity, state, annotation and failure-summary closure; re-export
-those exact values rather than defining another parser here.
+`packages/plugin-sdk/src/featureProtocolPackagePolicy.test.ts` may be imported.
+Consume the shared CI and pull-request watch schemas through the SDK’s Channels
+projection on `@happier-dev/plugin-sdk/protocol`. Re-export the exact shared CI
+values so Triage and Channels both use the same parsers.
 Never import `@happier-dev/protocol`, `zod`, a host internal, a provider SDK, or
 a source plugin. Apply the repository [SDK protocol-evolution doctrine](../../docs/compatibility.md#sdk-protocol-evolution)
 at the owning schema, without a second parser or handwritten JSON Schema.

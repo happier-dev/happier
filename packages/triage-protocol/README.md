@@ -36,9 +36,9 @@ The package exposes explicit versioned entry points:
 
 The CI and Releases additions describe 0.3 development-source Developer Preview
 contracts, not an npm publication. Shared CI identities, states, annotations and
-failure summaries are defined once in `@happier-dev/channels-protocol/v1` and
-re-exported unchanged here; the remaining CI and Releases schemas stay in this
-package. Provider clients, credentials, runtime controllers and UI remain outside
+failure summaries come from the public SDK’s Channels projection on
+`@happier-dev/plugin-sdk/protocol` and are re-exported unchanged here. The
+remaining CI and Releases schemas stay in this package. Provider clients, credentials, runtime controllers and UI remain outside
 these protocol packages.
 
 ```ts
