@@ -21,7 +21,7 @@ import { databaseActionSettlement } from './actionSettlement.js';
 export type ConsoleExecution = Readonly<{
     mode: 'read' | 'write'; running: boolean;
     result?: DatabaseOperationResultV1;
-    error?: Readonly<{ message: string; code?: string; range?: ConsoleSelection; statementRange?: ConsoleSelection }>;
+    error?: Readonly<{ message: string; code?: string; range?: ConsoleSelection; positionedIn?: string; statementRange?: ConsoleSelection }>;
 }>;
 export type WorkbenchConsoleHost = Readonly<{
     consoleState(targetKey: string): ReturnType<typeof createConsoleState>;
@@ -38,13 +38,15 @@ export function createConsole(instance: WorkbenchConsoleHost, targetKey: string)
     let closed = false;
     function binding(explainMode?: 'plan' | 'analyze'): WorkbenchControlBinding {
         let submitted: ReturnType<typeof selectConsoleStatements> = [];
+        let submittedSql: string | undefined;
         let submittedMode: ConsoleExecution['mode'] = 'read';
         const controller: PluginUiActionControlController = {
             prepare({ signal }) {
                 if (closed || signal.aborted || execution.get('run').running) return null;
                 submittedMode = execution.get('run').mode;
-                submitted = selectConsoleStatements(text.get().sql, selection.get('selection'), explainMode ? 'read' : submittedMode,
-                    instance.statementRanges(text.get().sql, instance.target(targetKey).engine));
+                const sql = text.get().sql;
+                submitted = selectConsoleStatements(sql, selection.get('selection'), explainMode ? 'read' : submittedMode,
+                    instance.statementRanges(sql, instance.target(targetKey).engine));
                 if (!submitted.length) return null;
                 const values = parameterInputs.get('parameters').map(inputs => inputs.map(readConsoleParameter));
                 if (values.some(inputs => inputs.some(value => value === undefined))) {
@@ -54,6 +56,7 @@ export function createConsole(instance: WorkbenchConsoleHost, targetKey: string)
                 const operands: DatabaseStatementV1[] = submitted.map((statement, index) => ({ sql: statement.sql,
                     parameters: (values[index] ?? []).filter((value): value is DatabaseValueV1 => value !== undefined) }));
                 const target = instance.target(targetKey).target;
+                submittedSql = sql;
                 execution.set('run', { mode: submittedMode, running: true });
                 return { input: projectNativeJsonValueForTransport(explainMode
                     ? { operation: 'statement.explain', target, statement: operands[0]!, mode: explainMode, accessMode: 'read' }
@@ -76,12 +79,15 @@ export function createConsole(instance: WorkbenchConsoleHost, targetKey: string)
                         const offset = cause?.position && statement ? characters.slice(0, cause.position - 1).join('').length + statement.range.start : undefined;
                         execution.set('run', { mode, running: false, result, error: { code: result.code,
                             message: cause?.message ?? ('reason' in result ? result.reason ?? result.code : result.code),
-                            ...(statement ? { statementRange: statement.range } : {}), ...(offset === undefined ? {} : { range: { start: offset, end: offset + (characters[(cause?.position ?? 1) - 1]?.length ?? 0) } }) } });
+                            ...(statement ? { statementRange: statement.range } : {}),
+                            ...(offset === undefined ? {} : { positionedIn: submittedSql,
+                                range: { start: offset, end: offset + (characters[(cause?.position ?? 1) - 1]?.length ?? 0) } }) } });
                     }
                 } else if (settled.status === 'error' || settled.status === 'outcomeUnknown') {
                     execution.set('run', { mode, running: false, error: { code: settled.code, message: settled.message } });
                 } else execution.set('run', { mode, running: false });
                 submitted = [];
+                submittedSql = undefined;
             },
         };
         return { action: databaseActionLocalIdV1(explainMode ? DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1 : DATABASE_STATEMENT_RUN_ACTION_ID_V1),

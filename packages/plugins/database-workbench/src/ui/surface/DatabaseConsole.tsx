@@ -20,6 +20,7 @@ import {
   CodeEditor,
   Collection,
   useHappierCollection,
+  type CodeEditorHandle,
 } from '@happier-dev/plugin-ui/components';
 import { useDatabaseConsole, useDatabaseTargets, useWorkbenchInstance } from '../hooks.js';
 import type { WorkbenchLaunchInput } from './mount.js';
@@ -206,11 +207,30 @@ function HistoryMenu(
   );
 }
 
+function editorPosition(document: string, offset: number) {
+  const lines = document.slice(0, offset).split(/\r\n|\r|\n/);
+  return { line: lines.length, character: lines[lines.length - 1]!.length };
+}
+
 /** SQL against this database: read by default, write only by choice, Explain beside Run. */
 export function DatabaseConsole(props: Readonly<{ targetKey: string; scope: WorkbenchLaunchInput['scope'] }>) {
   const translate = usePluginTranslation();
   const instance = useWorkbenchInstance();
   const sql = useDatabaseConsole(props.targetKey);
+  const [editor, setEditor] = React.useState<CodeEditorHandle | null>(null);
+  const positionedError = sql.error?.positionedIn === sql.text ? sql.error : undefined;
+  React.useEffect(() => {
+    if (!editor) return;
+    if (!positionedError?.range || positionedError.positionedIn === undefined) {
+      editor.setDecorations('diagnostic', []);
+      return;
+    }
+    const start = editorPosition(positionedError.positionedIn, positionedError.range.start);
+    const end = editorPosition(positionedError.positionedIn, positionedError.range.end);
+    editor.setDecorations('diagnostic', [{ id: 'database-console-error', severity: 'error',
+      startLine: start.line, startCharacter: start.character, endLine: end.line, endCharacter: end.character,
+      message: positionedError.message }]);
+  }, [editor, positionedError]);
   const descriptor = instance.target(props.targetKey);
   const machineLabel = useDatabaseTargets(props.scope).targets.find((candidate) => candidate.targetKey === props.targetKey)?.machineLabel ?? null;
   const canWrite = descriptor.access?.canWrite === true;
@@ -272,6 +292,7 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string; scope: Work
       <Stack grow>
         <CodeEditor
           {...sql.editorProps}
+          ref={setEditor}
           presentation="framed"
           showLineNumbers
         />

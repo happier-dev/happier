@@ -41,7 +41,8 @@ it('explains the caret statement with read access and projects Unicode engine po
     expect(prepared?.input).toMatchObject({ operation: 'statement.explain', accessMode: 'read', mode: 'analyze', statement: { sql: 'select 😀;' } });
     binding.controller.onSettled({ ok: true, result: { ok: false, status: 'failed', code: 'syntax_error',
         cause: { source: 'engine', code: '42601', message: 'Positioned error', position: 8 } } });
-    expect(console.execution.get('run').error).toMatchObject({ range: { start: start + 7, end: start + 9 }, statementRange: { start, end: sql.length } });
+    expect(console.execution.get('run').error).toMatchObject({ range: { start: start + 7, end: start + 9 },
+        positionedIn: sql, statementRange: { start, end: sql.length } });
     expect(text.get().history).toEqual([]);
 });
 
