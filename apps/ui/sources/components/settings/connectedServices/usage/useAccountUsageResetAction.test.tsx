@@ -13,9 +13,7 @@ import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { decideApprovalAsInbox, installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { buildRecoveryCreditConsumeIdempotencyKey } from '@happier-dev/protocol/connect/recoveryCreditConsumeIdempotencyKey';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -51,7 +49,6 @@ it.each(['approve', 'reject', 'disabled', 'stale'] as const)('admits the shared 
     const serverId = await home.addHome({ name: 'Reset Home', serverUrl, serverIdentityId: 'srv_reset_approval',
         accountId: 'reset-account', currentAccount: true });
     const artifacts = home.artifacts(serverId);
-    await installOwnMachineApprovalReplayBoundary({ harness: home, serverId, accountId: 'reset-account', machineId: 'selected-machine' });
     const machineRow = createPlainMachineRowFixture({ id: 'selected-machine', accountId: 'reset-account' });
     home.answer(serverId, '/v1/machines', { body: [machineRow] });
     home.answer(serverId, '/v1/machines/selected-machine', { body: { machine: machineRow } });
@@ -99,6 +96,9 @@ it.each(['approve', 'reject', 'disabled', 'stale'] as const)('admits the shared 
         machineId: decision === 'approve' ? undefined : machine.id,
         snapshotFetchedAtMs: 123, onApplied: () => { applied = true; } }));
     let request: Promise<void> | undefined;
+    let answerConsent: ((approved: boolean) => void) | undefined;
+    // Own UI Ask settles at the native consent boundary, without an Inbox Artifact.
+    vi.mocked(Modal.confirm).mockImplementation(() => new Promise(resolve => { answerConsent = resolve; }));
     try {
         if (decision === 'stale') storage.getState().applyMachines([{ ...machine, revokedAt: Date.now() }], true, { sourceServerId: active.serverId });
         await act(async () => { request = hook.getCurrent().use('credit-1'); });
@@ -114,24 +114,15 @@ it.each(['approve', 'reject', 'disabled', 'stale'] as const)('admits the shared 
         }
         expect(rpc).not.toHaveBeenCalled();
         expect(applied).toBe(false);
-        expect(hook.getCurrent().pending, JSON.stringify(vi.mocked(Modal.alert).mock.calls)).toBe(true);
-        await waitForHomeGovernance(() => expect(artifacts.list()).toHaveLength(1));
-        const artifactId = artifacts.list()[0]!.id;
+        await waitForHomeGovernance(() => expect(answerConsent).toBeTypeOf('function'));
+        expect(hook.getCurrent().pending).toBe(true);
+        expect(artifacts.list()).toEqual([]);
         expect(rpc).not.toHaveBeenCalled();
         expect(applied).toBe(false);
-        expect(StoredApprovalRequestSchema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!))).toMatchObject({
-            status: 'open', actionId: 'connectedServices.quota.reset', actionArgs: {
-                machineId: machine.id, serviceId: 'openai-codex', profileId: 'work', providerCreditId: 'credit-1', sourceSnapshotFetchedAtMs: 123,
-            },
-        });
-        const decided = await decideApprovalAsInbox(active.serverId, artifactId, decision);
-        expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true });
+        await act(async () => { answerConsent!(decision === 'approve'); await request; });
         await waitForHomeGovernance(() => expect(hook.getCurrent().pending).toBe(false));
         await request;
         if (decision === 'approve') {
-            expect(StoredApprovalRequestSchema.parse(JSON.parse(artifacts.readPlainBody(artifactId)!))).toMatchObject({
-                status: 'executed', execution: { ok: true, result: { receipt: { status: 'nothing_to_reset' } } },
-            });
             expect(spends).toEqual([expect.objectContaining({
                 serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', providerCreditId: 'credit-1',
                 idempotencyKey: buildRecoveryCreditConsumeIdempotencyKey({ serviceId: 'openai-codex', profileId: 'work',
@@ -144,6 +135,7 @@ it.each(['approve', 'reject', 'disabled', 'stale'] as const)('admits the shared 
             expect(applied).toBe(false);
         }
     } finally {
+        answerConsent?.(false);
         await hook.unmount(); await request;
         await serverScopedRpcSocketPool.stopAll(); resetScopedMachineTransportCacheForTests();
         installDisconnectedServerSocketBoundary();
