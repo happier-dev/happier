@@ -18,7 +18,7 @@ import { t } from '@/text';
 import { useSharePresentationHost, useShareGrantRowPresentation, ShareSheetButton } from './sharePresentationHost';
 const styles = StyleSheet.create(theme => ({
     helpLine: { color: theme.colors.text.secondary },
-    description: { paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s16 },
+    description: { color: theme.colors.text.secondary, paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s16 },
 }));
 function SharePrincipalVisual(props: Readonly<{ principal: SharePrincipalPresentation; testID: string; size?: number }>): React.ReactElement {
     const { principal } = props;

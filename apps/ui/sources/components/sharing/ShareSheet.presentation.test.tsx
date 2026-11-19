@@ -1,4 +1,3 @@
-import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 // @vitest-environment jsdom
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -140,6 +139,7 @@ vi.mock('@legendapp/list/react-native', async importOriginal => {
     return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>(), renderItems: true }).module;
 });
 
+const { SHARE_SHEET_HOST } = await import('./shareSheetHost');
 const { storage } = await import('@/sync/domains/state/storage');
 const { renderScreen, standardCleanup } = await import('@/dev/testkit');
 const { applyProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests } = await import('@/sync/store/settings/profileCatalogSnapshot');
