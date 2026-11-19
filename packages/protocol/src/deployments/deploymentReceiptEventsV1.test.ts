@@ -1,6 +1,19 @@
 import { expect, it } from 'vitest';
 import * as events from './deploymentActionsV1.js';
 
+it('supports kind-wide deployment receipt observation without an Environment selector', () => {
+  const input = { v: 1, serverId: 'home' };
+  expect(events.DeploymentReceiptEventSetupV1Schema.parse(input)).toEqual(input);
+  const source = { ...input, observingSince: 10 };
+  expect(events.DeploymentReceiptEventSourceConfigV1Schema.parse(source)).toEqual(source);
+  expect(events.readDeploymentReceiptEventSubjectV1(source)).toBeNull();
+  expect(events.DeploymentReceiptEventSetupV1Schema.safeParse({ ...input, targetLinkId: 'target' }).success).toBe(false);
+  expect(events.DeploymentReceiptEventSetupV1Schema.safeParse({ ...input, previewChildren: true }).success).toBe(false);
+  expect(events.DeploymentReceiptListInputV1Schema.safeParse({ serverId: 'home' }).success).toBe(false);
+  const receiptAddress = { serverId: 'home', environmentId: 'environment' };
+  expect(events.DeploymentReceiptListInputV1Schema.parse(receiptAddress)).toEqual(receiptAddress);
+});
+
 it('projects the exact private receipt failure phase without disclosing content', () => {
   const reference = { contentArtifactId: 'receipt', contentHeaderVersion: 2, contentBodyVersion: 3 };
   const artifact = { artifactId: 'receipt', revision: { headerVersion: 2, bodyVersion: 3 },

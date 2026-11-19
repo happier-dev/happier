@@ -72,7 +72,9 @@ it('P01.F3 remote resource event reaches ordinary effects', async () => {
   }, { failFast: true, context: 'The second Machine receipt reaches one ordinary Run and diagnosis Session' });
   expect((await runs())[0]!.cause).toMatchObject({ kind: 'trigger', triggerKind: 'pluginEvent',
     triggerId: trigger.triggerId, evidence: { eventRef: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed } });
-  const listed = await actor.execute('deployments.receipts.list', { serverId: fixture.serverId });
+  const listed = await actor.execute('deployments.receipts.list', {
+    serverId: fixture.serverId, environmentId: deployInput.environmentId,
+  });
   expect(listed.ok, JSON.stringify(listed)).toBe(true);
   if (!listed.ok) throw new Error(listed.errorCode);
   const page = DeploymentReceiptListResultV1Schema.parse(listed.result);
