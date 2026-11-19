@@ -123,7 +123,7 @@ describe('resolveTriageListShellState', () => {
     expect(readTriageSourceFailureRowV1(source, undefined, 'en-US').reason).toContain(`Try again at ${retryAt}.`);
     expect(readTriageListFailureNotice(state.failure, undefined, 'en-US').description).toContain(`Try again at ${retryAt}.`);
     // One translated sentence owns the time's position and punctuation (ja puts it first).
-    const ja: TriageTextResolverV1 = (key, fallback = '') => key === 'plugins.triage.surface.waiting.retryAt' ? '{time}以降に再試行できます。' : fallback;
+    const ja: TriageTextResolverV1 = (key, fallback = '') => key === 'plugins.triage.surface.waiting.retryAtTime' ? '{time}以降に再試行できます。' : fallback;
     const jaAt = formatTriageTimestampV1('ja', retryNotBeforeMs, 'absolute', retryNotBeforeMs);
     expect(readTriageSourceFailureRowV1(source, ja, 'ja').reason).toMatch(new RegExp(`${jaAt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}以降に再試行できます。$`));
     expect(readTriageRefreshPacingNotice('sourceRetryDeadline', retryNotBeforeMs, 'ja', ja).description).toMatch(/以降に再試行できます。$/);

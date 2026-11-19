@@ -388,7 +388,7 @@ function latestRetryDeadline(sources: readonly TriageListSourceFailureV1[]): Pic
 /** "Try again at <time>." as one translated sentence, so each locale places the time and punctuation itself. */
 function readRetryAtSentence(text: TriageTextResolverV1, locale: string, retryAtMs: number): string {
   const retryAt = formatTriageTimestampV1(locale, retryAtMs, 'absolute', retryAtMs);
-  return text('plugins.triage.surface.waiting.retryAt', 'Try again at {time}.').replace('{time}', retryAt);
+  return text('plugins.triage.surface.waiting.retryAtTime', 'Try again at {time}.').replace('{time}', retryAt);
 }
 
 /** Details: the producer's own explanation when the line said something shorter, then the code support can look up. */
