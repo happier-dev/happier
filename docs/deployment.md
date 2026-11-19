@@ -524,7 +524,9 @@ Vercel promotes a Preview deployment by rebuilding that exact deployment for
 Production through `POST /v13/deployments`. The receipt observes the new native
 deployment ID and settles when Vercel confirms production traffic. For a selected
 Production deployment, the adapter uses the existing `POST /v10/projects/{projectId}/promote/{deploymentId}`
-alias operation. A `READY` build with a pending alias remains in progress.
+alias operation. A `READY` build with a pending alias remains in progress. Once
+Vercel's project names the rebuild as its current Production target, the exact
+deployment response can confirm alias assignment while the project's alias fields lag.
 [Vercel promotion guide](https://vercel.com/docs/deployments/promoting-a-deployment)
 
 Cloudflare Workers observations report a `workers.dev` URL only when the script's

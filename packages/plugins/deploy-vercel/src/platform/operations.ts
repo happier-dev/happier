@@ -317,6 +317,8 @@ function observation(response: HttpResponse, context: VercelPlatformContext, pha
       if (!promotion) state = 'succeeded';
       else if (value.target === 'production' && record(value.meta) && value.meta.action === 'promote') {
         if (value.aliasError != null) state = 'failed';
+        else if (value.projectId === expectedProject
+          && (value.aliasAssigned === true || typeof value.aliasAssigned === 'number')) state = 'succeeded';
         else state = value.aliasAssigned === false ? 'running' : 'outcome_unknown';
       } else state = 'outcome_unknown';
       break;

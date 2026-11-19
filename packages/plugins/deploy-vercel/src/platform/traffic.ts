@@ -33,7 +33,7 @@ async function readTrafficResponse(read: () => Promise<HttpResponse>, context: V
 
 /** Production traffic settles from the alias job or the project's current production target.
  * openapi.vercel.sh requestPromote (v10), requestRollback (v1), getProject (v9), inspected 2026-11-10.
- * If the project cannot settle the result, a Preview rebuild can still report its native progress.
+ * An exact deployment read can confirm alias assignment for the current Production rebuild.
  */
 export async function observeVercelTraffic(input: Selection, operation: Operation, context: VercelPlatformContext): Promise<DeploymentTargetRoleResultV1> {
   if (!input.providerDeploymentId) return fail('outcome_unknown');
@@ -55,17 +55,18 @@ export async function observeVercelTraffic(input: Selection, operation: Operatio
   // Vercel can clear lastAliasRequest once the job completes (live, 2026-11-15). The project's current
   // production target, with its aliases assigned and no alias error, is then the settled traffic fact.
   const production = object(project.targets) ? project.targets.production : undefined;
-  if (state === 'outcome_unknown' && object(production) && production.id === input.providerDeploymentId
-    && (typeof production.aliasAssigned === 'number' || production.aliasAssigned === true) && production.aliasError == null) state = 'succeeded';
+  const currentProduction = object(production) && production.id === input.providerDeploymentId ? production : undefined;
+  if (state === 'outcome_unknown' && currentProduction
+    && (typeof currentProduction.aliasAssigned === 'number' || currentProduction.aliasAssigned === true)
+    && currentProduction.aliasError == null) state = 'succeeded';
   if (state === 'outcome_unknown' && operation === 'promote') {
-    // A preview rebuild can run or fail before it has an alias job. READY alone does not prove traffic moved.
     const deployment = await observeVercelDeployment(input, context, { promotion: true });
     if ('code' in deployment) return { v: 1, state, providerDeploymentId: input.providerDeploymentId, observedAtMs: context.now(),
       failureCause: projectActionFailureCauseV1(deployment, 'deployment.vercel.traffic') };
-    if (deployment.state !== 'outcome_unknown') return deployment;
+    if (deployment.state !== 'outcome_unknown'
+      && (deployment.state !== 'succeeded' || (currentProduction && currentProduction.aliasError == null))) return deployment;
   }
-  const builtInUrls = state === 'succeeded' && object(production) && production.id === input.providerDeploymentId
-    ? readVercelBuiltInUrls(production) : undefined;
+  const builtInUrls = state === 'succeeded' && currentProduction ? readVercelBuiltInUrls(currentProduction) : undefined;
   return { v: 1, state, providerDeploymentId: input.providerDeploymentId, observedAtMs: context.now(),
     ...(builtInUrls === undefined ? {} : { builtInUrls }) };
 }

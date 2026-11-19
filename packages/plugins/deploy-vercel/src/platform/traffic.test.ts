@@ -22,7 +22,7 @@ const jsonResponse = (status: number, value: unknown) => ({
 });
 
 it('rebuilds the selected preview for production and observes the new id until it serves traffic', async () => {
-  let stage: 'building' | 'ready' | 'current' | 'error' | 'alias-error' = 'building';
+  let stage: 'building' | 'ready' | 'current' | 'error' | 'alias-error' | 'assigned' | 'superseded' = 'building';
   const requests: HttpRequest[] = [];
   const production = { id: 'dpl_current', target: 'production', aliasAssigned: 1, aliasError: null };
   const http = createPluginHttpFixture({ async request(request) {
@@ -37,12 +37,16 @@ it('rebuilds the selected preview for production and observes the new id until i
     }
     if (request.method === 'GET' && pathname === '/v13/deployments/dpl_prior') return jsonResponse(200, nativeDeployment(null));
     if (request.method === 'GET' && pathname === '/v9/projects/prj_exact') {
+      const current = stage === 'current' || stage === 'assigned'
+        ? { ...production, id: 'dpl_promoted', aliasAssigned: stage === 'assigned' ? false : 1, alias: ['fixture.vercel.app'] }
+        : production;
       return jsonResponse(200, { id: 'prj_exact', accountId: 'team_exact', lastAliasRequest: null,
-        targets: { production: stage === 'current' ? { ...production, id: 'dpl_promoted', alias: ['fixture.vercel.app'] } : production } });
+        targets: { production: current } });
     }
     if (request.method === 'GET' && pathname === '/v13/deployments/dpl_promoted') {
       return jsonResponse(200, { ...nativeDeployment('production', stage === 'error' ? 'ERROR' : stage === 'building' ? 'BUILDING' : 'READY'),
-        id: 'dpl_promoted', aliasAssigned: false, meta: { action: 'promote' },
+        id: 'dpl_promoted', aliasAssigned: stage === 'assigned' || stage === 'superseded', meta: { action: 'promote' },
+        ...(stage === 'assigned' ? { alias: ['fixture.vercel.app'] } : {}),
         aliasError: stage === 'alias-error' ? { code: 'alias_failed', message: 'Could not assign production alias' } : null });
     }
     return jsonResponse(422, { error: { code: 'unprocessable_entity', message: 'Preview deployments require a production rebuild.' } });
@@ -61,6 +65,12 @@ it('rebuilds the selected preview for production and observes the new id until i
     await expect(observe()).resolves.toMatchObject({ state: 'failed', providerDeploymentId: 'dpl_promoted' });
     stage = 'alias-error';
     await expect(observe()).resolves.toMatchObject({ state: 'failed', providerDeploymentId: 'dpl_promoted' });
+    // The project has the exact production target, but its alias fields can lag behind the deployment read.
+    stage = 'assigned';
+    await expect(observe()).resolves.toMatchObject({ state: 'succeeded', providerDeploymentId: 'dpl_promoted',
+      builtInUrls: ['https://fixture.vercel.app'] });
+    stage = 'superseded';
+    await expect(observe()).resolves.toMatchObject({ state: 'outcome_unknown', providerDeploymentId: 'dpl_promoted' });
     stage = 'current';
     await expect(observe()).resolves.toMatchObject({ state: 'succeeded', providerDeploymentId: 'dpl_promoted',
       builtInUrls: ['https://fixture.vercel.app'] });
