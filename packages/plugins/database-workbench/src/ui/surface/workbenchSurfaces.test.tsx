@@ -243,6 +243,29 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
+  it('reopens a saved database when the person retries its failed connection read', async () => {
+    const connection = connectionResourceHandlers();
+    const watchResource = vi.fn(connection.watchResource)
+      .mockRejectedValueOnce(new Error('Connection unavailable'));
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'linked-retry', mountNonce: 'linked-retry' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: renderPage, subPath: `${savedDatabasePath}/data/public/invoices`,
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...connection, watchResource, executeAction: daemonAnswers([descriptor]) },
+    });
+    try {
+      await settle(20);
+      expect(await fixture.getByText('Databases could not be read')).toBeTruthy();
+      expect(watchResource).toHaveBeenCalledTimes(1);
+      await fixture.press(await fixture.getByRole('button', { name: 'Try again' }));
+      await settle(20);
+      expect(await fixture.getByRole('button', { name: '48212' })).toBeTruthy();
+      expect(watchResource).toHaveBeenCalledTimes(2);
+    } finally { await fixture.dispose(); }
+  });
+
   it('opens the Overview directory as the selected page detail', async () => {
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'page-overview', mountNonce: 'page-overview' },

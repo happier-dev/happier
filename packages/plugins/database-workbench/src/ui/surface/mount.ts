@@ -114,28 +114,34 @@ export function useWorkbenchMount(
   return instance;
 }
 
+type LinkedWorkbenchFailure = { status: 'unavailable'; error: unknown };
+type LinkedWorkbenchReady = { status: 'ready'; descriptor: DatabaseDescriptorV1; client: WorkbenchClient };
+
 type LinkedWorkbench =
   | { status: 'loading' }
-  | { status: 'unavailable'; error: unknown }
-  | { status: 'ready'; descriptor: DatabaseDescriptorV1; client: WorkbenchClient };
+  | (LinkedWorkbenchFailure & { retry(): void })
+  | LinkedWorkbenchReady;
 
 export function useLinkedWorkbench(context: RenderContext, target: DatabaseTargetV1): LinkedWorkbench {
   const { hostApi } = context;
   const targetKey = workbenchTargetKey(target);
+  const [attempt, setAttempt] = React.useState(0);
+  const retry = React.useCallback(() => setAttempt(current => current + 1), []);
   const [settled, setSettled] = React.useState<{
     hostApi: RenderContext['hostApi'];
     targetKey: string;
-    result: Exclude<LinkedWorkbench, { status: 'loading' }>;
+    attempt: number;
+    result: LinkedWorkbenchFailure | LinkedWorkbenchReady;
   }>();
   React.useEffect(() => {
     const client = createHostWorkbenchClient(hostApi, { pageLocation: true, pageTarget: target });
     let active = true;
     void client.describe(target).then(
       descriptor => {
-        if (active) setSettled({ hostApi, targetKey, result: { status: 'ready', descriptor, client } });
+        if (active) setSettled({ hostApi, targetKey, attempt, result: { status: 'ready', descriptor, client } });
       },
       error => {
-        if (active) setSettled({ hostApi, targetKey, result: { status: 'unavailable', error } });
+        if (active) setSettled({ hostApi, targetKey, attempt, result: { status: 'unavailable', error } });
       },
     );
     return () => {
@@ -144,8 +150,8 @@ export function useLinkedWorkbench(context: RenderContext, target: DatabaseTarge
     };
     // The target key keeps the same demand when only the relation changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostApi, targetKey]);
-  return settled?.hostApi === hostApi && settled.targetKey === targetKey
-    ? settled.result
-    : { status: 'loading' };
+  }, [hostApi, targetKey, attempt]);
+  if (settled?.hostApi !== hostApi || settled.targetKey !== targetKey || settled.attempt !== attempt)
+    return { status: 'loading' };
+  return settled.result.status === 'unavailable' ? { ...settled.result, retry } : settled.result;
 }

@@ -130,6 +130,8 @@ function LinkedWorkbenchPage({ context, target, place }: Readonly<{
       kind="unavailable"
       title={translate('plugins.database.find.failed', 'Databases could not be read')}
       details={linked.error instanceof Error ? linked.error.message : undefined}
+      onRetry={linked.retry}
+      retryLabel={translate('plugins.database.retry', 'Try again')}
     />
   );
   return <MountedWorkbenchPage context={context} place={place}
