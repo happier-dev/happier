@@ -22,7 +22,6 @@ import type {
     PluginApiScmHostingProviderRegistration,
 } from '../api/types';
 import type { PluginActivationSource, ValidatedAgentSessionRunnerFactoryFactV1 } from '../activationSources';
-import { loadPluginModule } from '../loadPluginModule';
 import { classifyPluginModuleFailure, readPluginModuleFailureCause, type PluginModuleFailureCause } from '../moduleFailure';
 import {
     createPluginRuntimeOccurrenceId,
@@ -55,7 +54,7 @@ import {
     isAutomaticActivationSuppressedByMachineRoles,
     activationTargetMatchesContributionDemand,
 } from './activation/targets';
-import { resolveActivationSource } from './activation/source';
+import { loadDaemonPluginActivationModule, resolveActivationSource } from './activation/source';
 import { activateContributionModule } from './activation/activateContributionModule';
 import {
     buildActivationPolicy,
@@ -461,38 +460,13 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             continue;
         }
         try {
-            let cacheGenerationId: string;
-            if (activationSource.kind === 'bundled') {
-                cacheGenerationId = (
-                    params.immutableGenerationIdsByPluginId?.get(target.pluginId)
-                    ?? `runtime:${params.generation}:${target.pluginId}`
-                );
-            } else {
-                const committedAuthorization = activationSource.committedAuthorization;
-                const developmentAuthority = activationSource.sourceAuthority?.kind === 'development'
-                    ? activationSource.sourceAuthority
-                    : null;
-                const accountAuthority = activationSource.sourceAuthority?.kind === 'account_release'
-                    ? activationSource.sourceAuthority : null;
-                if (!committedAuthorization && !developmentAuthority && !accountAuthority) {
-                    throw new Error(
-                        `Plugin '${target.pluginId}' has no committed authorization for daemon activation`,
-                    );
-                }
-                cacheGenerationId = committedAuthorization?.immutableGenerationId
-                    ?? (accountAuthority ? JSON.stringify(resolvePluginSourceCustody(accountAuthority)) : undefined)
-                    ?? `development:${developmentAuthority!.registeredRootId}:${developmentAuthority!.observedRevision}`;
-            }
-            moduleNamespace = target.account
-                ? (await activationSource.resolveRelativeModule?.(target.account.artifactId))?.module ?? (() => {
-                    throw new Error(`Account artifact '${target.account.artifactId}' has no admitted module source`);
-                })()
-                : await loadPluginModule({
+            moduleNamespace = await loadDaemonPluginActivationModule({
                 source: activationSource,
-                // Module graphs are scoped by the direct immutable generation,
-                // never a copied manifest/package digest.
-                cacheKey: `generation:${cacheGenerationId}`,
-            }) as PluginDaemonModuleNamespace;
+                pluginId: target.pluginId,
+                generation: params.generation,
+                immutableGenerationId: params.immutableGenerationIdsByPluginId?.get(target.pluginId),
+                accountArtifactId: target.account?.artifactId,
+            });
         } catch (error) {
             if (!isActivationCurrent()) {
                 continue;

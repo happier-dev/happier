@@ -515,14 +515,14 @@ import type { PluginRuntimeGenerationAuthority, PluginContributionRuntimeLifecyc
 import type { ResolvedManagedProviderRuntimeInvocationServices, ManagedProviderSessionCustodyBinding, ManagedProviderSessionBootstrapPreparation, ManagedProviderRuntimeOperationClaim, ManagedProviderExplicitStartJoinResult, ManagedProviderExplicitStartJoinInput, RetainedManagedProviderRuntimeInvocationScope, ManagedProviderAdoptedPublicOutcome, ManagedProviderInvocationAccountAuthority } from './providerBindings/runtimeTypes';
 import { mergePluginDiagnostics, projectActivatedAgentContributions, mergeActivatedContributes } from './composition/activatedContributions';
 import { assertCommittedResourceActivationIdentity } from './lifecycle/activation/committedResourceIdentity';
+import { loadDaemonPluginActivationModule, resolveActivationSource } from './lifecycle/activation/source';
 import { isJsonRecord, cloneLegacyMcpHandlerInput, projectPluginMcpDiscoveredEndpoints, projectPluginMcpDiscoveryWarnings, projectPluginMcpDiscoveryWarningsToLegacyDetection } from './invocation/mcpDiscoveryProjection';
 
 /**
- * Author-source preparation owns normalization. The executable registry only
- * reads that candidate-local carrier; the Data host still validates the
- * runtime/static correspondence at its private boundary.
+ * Read the callbacks from the admitted activation module. The Data host
+ * validates their correspondence with the manifest declarations.
  */
-function readPreparedDaemonDatabaseRuntimeProjection(
+function readDaemonDatabaseRuntimeProjection(
     module: PluginDaemonModuleNamespace | undefined,
 ): PluginDaemonDatabaseRuntimeProjection {
     const projection = module?.daemonDatabases;
@@ -1006,6 +1006,21 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const immutableGenerationIdsByPluginId = new Map(
         committedImmutableGenerationIdsByPluginId,
     );
+    // Source-in-place graph evaluation is scoped to this admitted source.
+    // Keep the same source for activation and daemon database preparation.
+    const daemonDatabaseActivationSources = new Map<string, PluginActivationSource<PluginDaemonModuleNamespace>>();
+    const resolveDaemonActivationSource: typeof resolveCommittedActivationSource = (target) => {
+        if (target.account || target.manifest.contributes.daemonDatabases.length === 0) {
+            return resolveCommittedActivationSource(target);
+        }
+        const existing = daemonDatabaseActivationSources.get(target.pluginId);
+        if (existing) return existing;
+        const source = resolveCommittedActivationSource(target);
+        if (source?.kind === 'bundled' && source.sourceAuthority?.kind === 'development') {
+            daemonDatabaseActivationSources.set(target.pluginId, source);
+        }
+        return source;
+    };
     let captureActivatedPluginConsumerPreparation: ((pluginId: string) => () => Promise<void>) | undefined;
     const activationParams: Omit<
         Parameters<typeof activatePluginRuntimeRegistry>[0],
@@ -1029,7 +1044,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ),
         happyHomeDir: params?.happyHomeDir,
         resolveActivationSource(target) {
-            const source = resolveCommittedActivationSource(target);
+            const source = resolveDaemonActivationSource(target);
             // Admission must establish custody before activate() can publish
             // callable Actions. Consumer refresh retains its invariant check;
             // an unavailable source is isolated by the activation owner instead.
@@ -2071,10 +2086,16 @@ export async function resolveExecutablePluginRuntimeRegistry(
     }>): Promise<void> => {
         for (const pluginId of [...new Set(input.pluginIds)].sort()) {
             const target = resolveExactActivationTarget(pluginId);
-            const declarations = target?.manifest.contributes.daemonDatabases ?? Object.freeze([]);
-            if (declarations.length === 0) continue;
+            if (!target || target.manifest.contributes.daemonDatabases.length === 0) continue;
+            const declarations = target.manifest.contributes.daemonDatabases;
             const lifecycle = resolveRuntimeConsumerLifecycle(pluginId);
-            const graph = params?.preparedActivationGraphsByPluginId?.get(pluginId);
+            const module = await loadDaemonPluginActivationModule({
+                source: resolveActivationSource(target, resolveDaemonActivationSource),
+                pluginId,
+                generation,
+                immutableGenerationId: immutableGenerationIdsByPluginId.get(pluginId),
+                accountArtifactId: target.account?.artifactId,
+            });
             const incumbentContracts = input.incumbentContractsByPluginId?.get(pluginId);
             await daemonDatabaseHost.prepare({
                 pluginId,
@@ -2082,7 +2103,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 signal: lifecycle.retirementSignal,
                 isOccurrenceCurrent: lifecycle.isCurrent,
                 declarations,
-                runtime: readPreparedDaemonDatabaseRuntimeProjection(graph?.module),
+                runtime: readDaemonDatabaseRuntimeProjection(module),
                 ...(incumbentContracts
                     ? { incumbentContracts }
                     : {}),

@@ -3,6 +3,8 @@ import type { PluginCleanup } from '@happier-dev/plugin-sdk';
 import type { PluginActivationSource } from '../../activationSources';
 import type { PluginDaemonModuleNamespace } from '../../types';
 import type { ResolvedActivationTarget } from '../../../projection/registry/types';
+import { loadPluginModule } from '../../loadPluginModule';
+import { resolvePluginSourceCustody } from '../../sourceAuthority';
 
 /**
  * Resolution of "where does this plugin's activation code come from and how
@@ -14,6 +16,39 @@ import type { ResolvedActivationTarget } from '../../../projection/registry/type
 export type ActivationExport = (
     api: PluginApi,
 ) => void | PluginCleanup | Promise<void | PluginCleanup>;
+
+/** Load the admitted daemon graph for both activation and pre-activation data preparation. */
+export async function loadDaemonPluginActivationModule(input: Readonly<{
+    source: PluginActivationSource<PluginDaemonModuleNamespace>;
+    pluginId: string;
+    generation: number;
+    immutableGenerationId?: string;
+    accountArtifactId?: string;
+}>): Promise<PluginDaemonModuleNamespace> {
+    const { source, pluginId } = input;
+    let cacheGenerationId: string;
+    if (source.kind === 'bundled') {
+        cacheGenerationId = input.immutableGenerationId ?? `runtime:${input.generation}:${pluginId}`;
+    } else {
+        const committedId = source.committedAuthorization?.immutableGenerationId;
+        const authority = source.sourceAuthority;
+        if (committedId) {
+            cacheGenerationId = committedId;
+        } else if (authority?.kind === 'account_release') {
+            cacheGenerationId = JSON.stringify(resolvePluginSourceCustody(authority));
+        } else if (authority?.kind === 'development') {
+            cacheGenerationId = `development:${authority.registeredRootId}:${authority.observedRevision}`;
+        } else {
+            throw new Error(`Plugin '${pluginId}' has no committed authorization for daemon activation`);
+        }
+    }
+    if (input.accountArtifactId !== undefined) {
+        const admitted = await source.resolveRelativeModule?.(input.accountArtifactId);
+        if (!admitted) throw new Error(`Account artifact '${input.accountArtifactId}' has no admitted module source`);
+        return admitted.module;
+    }
+    return await loadPluginModule({ source, cacheKey: `generation:${cacheGenerationId}` });
+}
 
 export function resolveActivationExport(moduleNamespace: PluginDaemonModuleNamespace, exportName = 'activate'): Readonly<
     | { status: 'found'; activate: ActivationExport }

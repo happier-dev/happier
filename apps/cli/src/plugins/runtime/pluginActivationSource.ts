@@ -100,7 +100,10 @@ export function createPluginActivationSourceResolver(deps: Readonly<{
                         },
                         sourceAuthority: developmentAuthority,
                     })
-            ).then(result => result.graph);
+            ).then(result => result.graph, (error) => {
+                graph = undefined;
+                throw error;
+            });
             const sharedSource = {
                 sourceAuthority: developmentAuthority,
                 processEntry: { rootPath, entryPath, loadMode: 'source-ts' as const },
