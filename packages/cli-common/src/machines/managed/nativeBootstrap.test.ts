@@ -94,6 +94,22 @@ describe('native stream channel', () => {
 });
 
 describe('Session holder bootstrap in a managed guest', () => {
+    it.each([
+        'Windows_NT\nAMD64\nC:/Users/guest\n',
+        'FreeBSD\nx86_64\n/home/guest\n',
+        'Linux\nriscv64\n/home/guest\n',
+    ])('F8: refuses an unsupported holder platform before artifact resolution or delivery (%j)', async stdout => {
+        let probes = 0;
+        await expect(ensureManagedGuestSessionHolder({ version: 'test',
+            io: {
+                exec: async () => { probes += 1; return { status: 0, stdout, stderr: '' }; },
+                putFile: async () => { throw new Error('unexpected artifact delivery'); },
+            },
+            resolveArtifacts: async () => { throw new Error('unexpected artifact resolution'); },
+        })).rejects.toMatchObject({ code: 'session_holder_unavailable' });
+        expect(probes).toBe(1);
+    });
+
     it.each(['platform', 'placement'] as const)('retains command failure at the %s boundary', async phase => {
         await expect(ensureManagedGuestSessionHolder({ version: 'test',
             io: { exec: async ({ command }) => command.startsWith('uname') && phase !== 'platform'
