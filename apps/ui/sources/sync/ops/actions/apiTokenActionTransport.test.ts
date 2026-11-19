@@ -11,6 +11,20 @@ import { resolveSessionComposerStateFromAuthoringContext } from '@/components/se
 import { resolveSessionComposerState } from '@/components/sessions/authoring/context/resolveSessionComposerState';
 
 describe('API-token Action transport', () => {
+    it('returns every safe schema issue and its path before requesting the Home', async () => {
+        const request: ServerFetch = async () => { throw new Error('Invalid input must be refused locally'); };
+        const rejected = 'private-permission-input';
+        const result = await executeApiTokenAction({ request }, 'session.permission_mode.set', {
+            sessionId: { privateValue: rejected }, permissionMode: rejected,
+        });
+        expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters', details: { issues: [
+            { code: 'invalid_union', path: ['sessionId'], message: expect.any(String) },
+            { code: 'invalid_type', path: ['sessionId'], message: expect.any(String) },
+            { code: 'invalid_union', path: ['sessionId', 'selector'], message: expect.any(String) },
+            { code: 'invalid_value', path: ['permissionMode'], message: expect.any(String) },
+        ] } });
+        expect(JSON.stringify(result)).not.toContain(rejected);
+    });
     it('preserves the Machine availability cause and remedy without adopting unrelated diagnostics', async () => {
         const diagnostic = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
         const request: ServerFetch = async () => Response.json({ error: 'invalid_request', code: 'target_unavailable', diagnostic }, { status: 409 });

@@ -5,6 +5,7 @@ import type { MachinePoolResolveInputV1 } from '@happier-dev/protocol/machines/p
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { ExternalActionRequesterInvocationV1Schema, isManagedControllerCodecActionV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -110,7 +111,7 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
     const parsedInput = actionId === 'action.operations.list' || actionId === 'action.operations.get'
         ? ActionOperationActionInputSchemasV1[actionId].safeParse(params.input)
         : ManagedMachineActionInputSchemasV1[actionId].safeParse(params.input);
-    if (!parsedInput.success) return failure('invalid_parameters');
+    if (!parsedInput.success) return actionInputValidationFailure(parsedInput.error);
     let input = parsedInput.data;
     let acquireInput = actionId === 'machines.managed.acquire' ? ManagedAcquireInputV1Schema.parse(input) : undefined;
     let review = acquireInput ? resolveManagedAcquireReviewV1(acquireInput) : null;

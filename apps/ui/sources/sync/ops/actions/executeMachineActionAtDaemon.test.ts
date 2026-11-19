@@ -11,6 +11,21 @@ const refused = (actionArgs: unknown): ActionExecuteResult => ({ ok: false,
     errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
     details: { reviewDigest, review: { actionArgs, preview: { summary: 'Review the prepared effect' } } } });
 
+it('returns the exact Environment creation repair issues before dispatching the Machine Action', async () => {
+    const execute = vi.fn();
+    const result = await executeMachineActionAtDaemon('deployments.environments.create', {
+        serverId: 'home', requestKey: 'create-preview', protection: 'nonProduction', purpose: 'preview',
+        deployerMode: 'managers', name: 'private-preview-title',
+    }, context, execute);
+    expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters', details: { issues: [
+        { path: [], message: 'Select an existing or reviewed new Project.' },
+        { path: [], message: 'A preview or its named companion derives from one template and existing Source.' },
+        { path: [], message: 'Create selects an authored definition or an exact source copy.' },
+    ] } });
+    expect(JSON.stringify(result)).not.toContain('private-preview-title');
+    expect(execute).not.toHaveBeenCalled();
+});
+
 it('keeps approval creation on the originating account executor', () => {
     expect(isUiMachineOwnedAdmissionAction('approval.request.create', {
         actionId: 'session.spawn_new', actionArgs: {}, summary: 'Create a Session', createdBy: 'voice',

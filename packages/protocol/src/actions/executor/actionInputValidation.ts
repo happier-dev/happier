@@ -34,8 +34,19 @@ function isJsonPrimitive(value: unknown): value is JsonPrimitive {
 
 const { localeError: formatSchemaIssue } = z.locales.en();
 
-/** Use schema defaults, never custom prose or input-bearing unknown-key lists. */
+const safeRefinementMessage = Symbol('safe Action input refinement message');
+
+/** Declare a schema-authored repair message. The message must be independent of the submitted input. */
+export function actionInputRefinementMessage(message: string, path?: (string | number)[]) {
+  return { message, path, params: { [safeRefinementMessage]: message } };
+}
+
+/** Use schema-authored repair messages and defaults that omit the submitted input. */
 function projectIssueMessage(issue: core.$ZodIssue): string {
+  if (issue.code === 'custom' && issue.params) {
+    const message: unknown = Reflect.get(issue.params, safeRefinementMessage);
+    if (typeof message === 'string') return message;
+  }
   if (issue.code === 'invalid_type') return `Expected ${issue.expected}`;
   if (issue.code === 'unrecognized_keys') return 'Unrecognized input fields';
   const formatted = formatSchemaIssue({ ...issue, input: undefined });
@@ -67,7 +78,7 @@ function projectIssue(issue: core.$ZodIssue, parentPath: readonly (string | numb
   }, ...(issue.code === 'invalid_union' ? issue.errors.flatMap(branch => branch.flatMap(child => projectIssue(child, path))) : [])];
 }
 
-/** Never echo rejected values, unknown-key lists, or custom issue prose. */
+/** Never echo rejected values, unknown-key lists, or unverified custom issue prose. */
 export function actionInputValidationFailure(error: core.$ZodError): ReturnType<typeof actionInputIssueFailure> {
   return actionInputIssueFailure(...projectActionInputIssues(error));
 }

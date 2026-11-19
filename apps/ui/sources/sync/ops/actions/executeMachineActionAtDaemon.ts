@@ -3,6 +3,7 @@ import { ActionIdSchema, isSessionSpawnNewActionIdV1, isWorkspaceSyncRelationshi
 import { getActionSpec, hasDeclaredActionDaemonIngress } from '@happier-dev/protocol/actions/actionSpecs';
 import { isDeploymentAccountMachineTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -95,7 +96,7 @@ export async function executeMachineActionAtDaemon(
     }
     const spec = getActionSpec(actionId);
     const parsed = spec.inputSchema.safeParse(input);
-    if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    if (!parsed.success) return actionInputValidationFailure(parsed.error);
     const settle = (result: ActionExecuteResult) => result.ok ? settleActionOutput(actionId, result) : result;
     const result = completeActionResult(await execute(parsed.data));
     return result.ok ? settle(result) : confirmOwnUiRefusal(actionId, parsed.data, context, result, confirm,

@@ -1,6 +1,7 @@
 import { projectExternalActionHttpFailureV1, ExternalActionHttpErrorSchema, ExternalActionRequestEnvelopeV1Schema, parseExternalActionResponseEnvelopeV1, type ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { PUBLIC_ACTION_INPUT_SCHEMAS, PUBLIC_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ServerFetch } from '@/sync/http/client';
@@ -19,8 +20,7 @@ export async function executeApiTokenAction(transport: ApiTokenActionTransport, 
         const projection = actionId === 'session.spawn_new' ? projectSessionSpawnNewApiRequest(input) : { input, target: transport.target };
         const inputSchema: core.$ZodType<unknown> = PUBLIC_ACTION_INPUT_SCHEMAS[publicId.data];
         const parsedInput = safeParse(inputSchema, projection.input);
-        if (!parsedInput.success) return { ok: false, errorCode: 'invalid_parameters',
-            error: parsedInput.error.issues.map((issue) => issue.message).join('; ') };
+        if (!parsedInput.success) return actionInputValidationFailure(parsedInput.error);
         const validatedInput = parsedInput.data;
         body = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, input: validatedInput, ...(projection.target ? { target: projection.target } : {}) });
     } catch { return refused('invalid_parameters'); }

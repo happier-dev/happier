@@ -6,6 +6,19 @@ import { BotFaceSetInputSchema } from '../../sessions/identity/sessionBotFaceV1.
 import { createActionExecutor } from '../actionExecutor.js';
 
 describe('Action input validation diagnostics', () => {
+  it('returns all root repair messages when Environment creation input fails its refinements', async () => {
+    const failure = await createActionExecutor({}).execute('deployments.environments.create', {
+      serverId: 'home', requestKey: 'create-preview', protection: 'nonProduction', purpose: 'preview',
+      deployerMode: 'managers', name: 'private-preview-title',
+    }, { surface: 'agent', authority: 'account_automation', serverId: 'home' });
+    expect(failure).toMatchObject({ ok: false, errorCode: 'invalid_parameters', details: { issues: [
+      { code: 'custom', path: [], message: 'Select an existing or reviewed new Project.' },
+      { code: 'custom', path: [], message: 'A preview or its named companion derives from one template and existing Source.' },
+      { code: 'custom', path: [], message: 'Create selects an authored definition or an exact source copy.' },
+    ] } });
+    expect(JSON.stringify(failure)).not.toContain('private-preview-title');
+  });
+
   it.each(['link', 'missing'])('refuses %s invitation input with token guidance before any Home call', async kind => {
     const token = 'a'.repeat(43);
     const input = kind === 'link' ? { v: 1, token: `https://app.example/join/${token}?target=opaque&targetBinding=binding` } : { v: 1 };

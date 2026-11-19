@@ -17,6 +17,7 @@ import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from './deploymentReceiptResultV1.js';
 import type { ActionApprovalRequestCreatedResult, ActionExecuteFailure, ActionExecuteResult } from '../actions/actionExecutionResult.js';
+import { actionInputRefinementMessage } from '../actions/executor/actionInputValidation.js';
 import { DeploymentBindingsPatchInputV1Schema } from './deploymentBindingPatchV1.js';
 import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateBaseInputV1Schema, DeploymentOwnServerTargetMachinesV1Schema } from './deploymentEnvironmentCreateV1.js';
 import { DeploymentPreviewReferenceV1Schema } from './deploymentPreviewReferenceV1.js';
@@ -240,22 +241,22 @@ export const DeploymentEnvironmentCreateIntentInputV1Schema = lazyZodSchema(() =
   generatedSecretAudience: DeploymentTemplateInstantiateInputV1Schema.shape.generatedSecretAudience,
   domainBindings: DeploymentTemplateInstantiateInputV1Schema.shape.domainBindings,
   firstTargetLink: z.optional(z.strictObject({ machines: DeploymentOwnServerTargetMachinesV1Schema })),
-}).check(z.refine(input => hasOneDeploymentProjectV1(input.projectSourceId, input.newProject), { message: 'Select an existing or reviewed new Project.' }),
+}).check(z.refine(input => hasOneDeploymentProjectV1(input.projectSourceId, input.newProject), actionInputRefinementMessage('Select an existing or reviewed new Project.')),
   z.refine(input => input.purpose === 'preview' || input.previewCompanionOfEnvironmentId !== undefined
     ? (input.purpose !== 'preview' || input.previewCompanionOfEnvironmentId === undefined)
     && input.preview !== undefined && input.projectSourceId !== undefined
     && input.newProject === undefined && input.copyFrom === undefined && input.definition === undefined && input.firstTargetLink === undefined
     && input.protection === 'nonProduction' : input.preview === undefined,
-    { message: 'A preview or its named companion derives from one template and existing Source.' }),
+    actionInputRefinementMessage('A preview or its named companion derives from one template and existing Source.')),
   z.refine(input => input.purpose === 'preview' || input.previewCompanionOfEnvironmentId !== undefined || input.name.trim().length > 0,
-    { path: ['name'], message: 'Ordinary creation requires a name.' }),
-  z.refine(input => input.newProject === undefined || input.definition?.from !== 'repository', { message: 'A new repository-free Project needs a stored definition.' }),
-  z.refine(input => input.newProject === undefined || input.copyFrom === undefined, { message: 'A new repository-free Project selects its stored definition.' }),
+    actionInputRefinementMessage('Ordinary creation requires a name.', ['name'])),
+  z.refine(input => input.newProject === undefined || input.definition?.from !== 'repository', actionInputRefinementMessage('A new repository-free Project needs a stored definition.')),
+  z.refine(input => input.newProject === undefined || input.copyFrom === undefined, actionInputRefinementMessage('A new repository-free Project selects its stored definition.')),
   z.refine(input => input.definition?.from === 'catalogApp'
     || input.bindings === undefined && input.generatedSecretAudience === undefined && input.domainBindings === undefined,
-    { message: 'Catalog variables and generation are prepared by the template owner.' }),
+    actionInputRefinementMessage('Catalog variables and generation are prepared by the template owner.')),
   z.refine(input => input.firstTargetLink === undefined || input.definition?.from !== 'repository' || input.definition.compose !== undefined,
-    { message: 'An own-server first target requires repository Compose selectors.' }),
+    actionInputRefinementMessage('An own-server first target requires repository Compose selectors.')),
   z.refine(input => input.preview !== undefined || input.copyFrom !== undefined || input.definition !== undefined,
-  { message: 'Create selects an authored definition or an exact source copy.' })));
+  actionInputRefinementMessage('Create selects an authored definition or an exact source copy.'))));
 export type DeploymentEnvironmentCreateIntentInputV1 = z.infer<typeof DeploymentEnvironmentCreateIntentInputV1Schema>;

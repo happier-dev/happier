@@ -7,6 +7,7 @@ import { createPrivateLabelActionOpener, createPrivateLabelActionPreparer } from
 import { openMachinePoolActionOutputV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { createMachinePoolPrivateLabelClientForAccount, openMachinePoolPrivateViewV1 } from '@/sync/ops/machinePoolPrivateLabelProjection';
 import { resolveAmbientTeamCredentialModelForModelIntent } from '@happier-dev/agents/session/state/metadataReaders';
+import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import { readActionOutputDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
 import { isSessionSpawnNewActionIdV1, SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -5886,11 +5887,11 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
       if (!confirmInFlow) return { ok: true as const, input: value };
       const parsed = getActionSpec(actionId).inputSchema.safeParse(value);
       return parsed.success ? { ok: true as const, input: parsed.data }
-        : { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+        : actionInputValidationFailure(parsed.error);
     };
     if (confirmInFlow && !authorInput) {
       const parsed = getActionSpec(actionId).inputSchema.safeParse(input);
-      if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      if (!parsed.success) return actionInputValidationFailure(parsed.error);
       input = parsed.data;
     }
     const { openRoute, archiveOperation, reviewedManagedMachine, voiceSpeechSource, ...actionContext } = context ?? {};
