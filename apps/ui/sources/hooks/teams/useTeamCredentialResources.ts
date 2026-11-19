@@ -49,10 +49,12 @@ import {
     getTeamCredentialResourcesSnapshot,
     readTeamCredentialResource,
     subscribeTeamsSnapshots,
+    teamCredentialActivityPages,
     teamCredentialUsageObservations,
 } from '@/sync/store/teams/teamsSnapshots';
 
-import { useTeamPagedList, type TeamPagedList } from './useTeamPagedList';
+import { useTeamObservedPagedList } from './useTeamObservedPagedList';
+import type { TeamPagedList } from './useTeamPagedList';
 import {
     composeTeamCredentialProviderSourceOffer,
     type TeamCredentialSourceCandidatePresentationV1,
@@ -255,9 +257,8 @@ export function useTeamCredentialResources(params: Readonly<{
 /**
  * One resource's administrative history.
  *
- * This stays a paged read rather than a shared projection: activity is only
- * ever read by the open Activity route, so promoting it would add retained
- * state with no second consumer. It is requested only once that route opens.
+ * The Activity route reads the history on demand, showing its previously
+ * observed range while the fresh read is pending.
  */
 export function useTeamCredentialActivity(params: Readonly<{
     scope: ServerAccountScope | null;
@@ -286,7 +287,9 @@ export function useTeamCredentialActivity(params: Readonly<{
         [serverId, accountId, resourceId],
     );
 
-    return useTeamPagedList<TeamCredentialResourceActivityEventV1>({
+    return useTeamObservedPagedList<TeamCredentialResourceActivityEventV1>({
+        scope: params.scope,
+        observations: teamCredentialActivityPages,
         key: params.scope
             ? serverAccountScopedResourceKey(params.scope, 'team-credential-activity', resourceId)
             : '',

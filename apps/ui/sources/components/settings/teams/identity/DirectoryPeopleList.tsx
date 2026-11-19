@@ -4,13 +4,14 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { useTeamPagedList } from '@/hooks/teams/useTeamPagedList';
+import { useTeamObservedPagedList } from '@/hooks/teams/useTeamObservedPagedList';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { TeamDirectoryPeoplePageV1 } from '@happier-dev/protocol/teams';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
+import { serverAccountScopedTeamResourceKey, type TeamAddress } from '@/sync/domains/teams/teamAddress';
 import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
+import { teamDirectoryPeoplePages } from '@/sync/store/teams/teamsSnapshots';
 import { t } from '@/text';
 
 import { teamMemberDetailPath } from '../teamsRoutes';
@@ -43,8 +44,10 @@ export function useDirectoryPeopleList(props: Readonly<{
                 failure: result.failure.domainFailure ?? { kind: 'unknown' as const, retryable: result.failure.retryable, code: null },
             };
     }, [client, props.address.teamId, props.sourceId]);
-    return useTeamPagedList({
-        key: `${props.scope.serverId} ${props.scope.accountId} ${props.address.teamId} ${props.sourceId}`,
+    return useTeamObservedPagedList({
+        scope: props.scope,
+        observations: teamDirectoryPeoplePages,
+        key: serverAccountScopedTeamResourceKey(props.scope, props.address, 'directory-people', props.sourceId),
         enabled: props.enabled ?? true,
         loadPage,
         // Directory projection changes are published as the Team change.

@@ -8,8 +8,9 @@ import { SettingAnchor, SettingRow } from '@/components/settings/shell/SettingRo
 import { TEAM_IDENTITY_CONNECTION_SETTINGS } from './teamAuthenticationSettings';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
 import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
-import { useTeamPagedList } from '@/hooks/teams/useTeamPagedList';
-import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
+import { useTeamObservedPagedList } from '@/hooks/teams/useTeamObservedPagedList';
+import { serverAccountScopedTeamResourceKey, type TeamAddress } from '@/sync/domains/teams/teamAddress';
+import { teamExternalGroupBindingPages } from '@/sync/store/teams/teamsSnapshots';
 import { identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { t } from '@/text';
@@ -54,8 +55,10 @@ export const IdentityConnectionGroupMappings = React.memo(function IdentityConne
             ? { kind: 'succeeded' as const, value: { items: result.value.items, nextCursor: result.value.nextCursor } }
             : { kind: 'failed' as const, failure: result.failure.domainFailure ?? { kind: 'unknown' as const, retryable: result.failure.retryable, code: null } };
     }, [client, props.address.teamId, props.connectionId]);
-    const bindings = useTeamPagedList({
-        key: `${props.scope.serverId} ${props.scope.accountId} ${props.address.teamId} ${props.connectionId} identity-groups`,
+    const bindings = useTeamObservedPagedList({
+        scope: props.scope,
+        observations: teamExternalGroupBindingPages,
+        key: serverAccountScopedTeamResourceKey(props.scope, props.address, 'identity-groups', props.connectionId),
         enabled: true,
         loadPage,
     });
@@ -117,7 +120,7 @@ export const IdentityConnectionGroupMappings = React.memo(function IdentityConne
         <>
             <SettingAnchor setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.groupMappings}><ItemGroup title={t('identityAdministration.directoryGroups')}>
                 {bindings.status === 'loading' && bindings.rows.length === 0 ? <SurfaceStateCard kind="loading" size="line" title={t('common.loading')} /> : bindings.rows.length === 0 && !bindings.error ? <SurfaceStateCard kind="empty" size="line" title={t('identityAdministration.unmapped')} /> : bindings.rows.map((binding) => (
-                    <Item key={binding.id} testID={`identity-group-binding:${binding.id}`} title={binding.externalGroupId} subtitle={`${t('identityAdministration.mappedTo')}: ${openedGroupDisplayNames.get(binding.target.teamGroupId) ?? t('common.unavailable')}`} loading={pending === binding.id} disabled={pending !== null || !props.mutationsAvailable} onPress={() => void remove(binding)} showChevron={false} />
+                    <Item key={binding.id} testID={`identity-group-binding:${binding.id}`} title={binding.externalGroupId} subtitle={`${t('identityAdministration.mappedTo')}: ${openedGroupDisplayNames.get(binding.target.teamGroupId) ?? t('common.unavailable')}`} loading={pending === binding.id} disabled={pending !== null || !props.mutationsAvailable || bindings.status === 'refreshing'} onPress={() => void remove(binding)} showChevron={false} />
                 ))}
                 {bindings.hasMore && !bindings.error ? <Item testID="identity-group-bindings-load-more" title={t('identityAdministration.loadMore')} loading={bindings.status === 'loading_more'} disabled={bindings.status === 'loading_more'} onPress={() => void bindings.loadMore()} showChevron={false} /> : null}
             </ItemGroup></SettingAnchor>

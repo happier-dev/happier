@@ -151,7 +151,7 @@ const CredentialActivity = React.memo(function CredentialActivity(props: Readonl
                 </ItemGroup>
             ) : null}
 
-            {activity.rows.length === 0 && activity.status === 'ready' ? (
+            {activity.rows.length === 0 && (activity.status === 'ready' || activity.status === 'refreshing') ? (
                 <ItemGroup description={t('teams.credentials.activity.empty')}>
                     <Item
                         testID="team-credential-activity-empty"

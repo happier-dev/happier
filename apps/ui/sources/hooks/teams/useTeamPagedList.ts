@@ -50,7 +50,7 @@ function initialState<TRow>(observation?: TeamPage<TRow>): TeamPagedListState<TR
         status: observation === undefined ? 'loading' as const : 'refreshing' as const,
         error: null,
         cursor: null,
-        hasMore: observation?.nextCursor !== null,
+        hasMore: observation !== undefined && observation.nextCursor !== null,
     });
 }
 

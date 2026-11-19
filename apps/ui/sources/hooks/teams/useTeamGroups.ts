@@ -22,9 +22,11 @@ import {
     getTeamGroupSnapshot,
     getTeamGroupsSnapshot,
     subscribeTeamsSnapshots,
+    teamGroupMemberPages,
 } from '@/sync/store/teams/teamsSnapshots';
 
-import { useTeamPagedList, type TeamPagedList } from './useTeamPagedList';
+import { useTeamObservedPagedList } from './useTeamObservedPagedList';
+import type { TeamPagedList } from './useTeamPagedList';
 
 export type TeamGroupsRoster = TeamPagedList<TeamGroupV1> & Readonly<{
     /** Retained rows cannot prove absence while their snapshot is stale or refreshing. */
@@ -161,9 +163,8 @@ export function useTeamGroups(params: Readonly<{
  * contributed by native plus two directories appears exactly once — which is
  * why the Group's own `memberCount` and this list agree.
  *
- * This stays a paged read rather than a shared projection: a Group's member
- * list is only ever read by the open Group surface, so promoting it would add
- * retained state with no second consumer.
+ * The open Group reads its own sequence. Returning to it presents the last
+ * observed range while the pager revalidates it.
  */
 export function useTeamGroupMembers(params: Readonly<{
     scope: ServerAccountScope | null;
@@ -187,7 +188,9 @@ export function useTeamGroupMembers(params: Readonly<{
         [serverId, accountId, teamId, groupId],
     );
 
-    return useTeamPagedList<TeamGroupMemberV1>({
+    return useTeamObservedPagedList<TeamGroupMemberV1>({
+        scope: params.scope,
+        observations: teamGroupMemberPages,
         key: params.scope && params.address
             ? serverAccountScopedTeamResourceKey(params.scope, params.address, 'group-members', groupId)
             : '',

@@ -332,7 +332,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
     // native contribution sits on a later Group page.
     React.useEffect(() => {
         if (!picking || members.error || !members.hasMore) return;
-        if (members.status === 'loading' || members.status === 'loading_more') return;
+        if (members.status !== 'ready') return;
         void members.loadMore();
     }, [picking, members.error, members.hasMore, members.status, members.loadMore]);
 
@@ -369,14 +369,11 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         && context.canMutate
         && groupCurrent
         && !archived;
-    const canEditRoster = rosterEditable && !busy;
+    const canEditRoster = rosterEditable && !busy && members.status !== 'refreshing';
     const nativeAccountIds = React.useMemo(() => new Set(
         members.rows.filter((member) => member.contributions.native).map((member) => member.accountId),
     ), [members.rows]);
-    const nativeRosterReady = !members.error
-        && !members.hasMore
-        && members.status !== 'loading'
-        && members.status !== 'loading_more';
+    const nativeRosterReady = members.status === 'ready' && !members.hasMore;
 
     /**
      * One settlement for the immediate roster answer and the approved one.
@@ -638,7 +635,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                 title: t('teams.groups.removeNative'),
                                 icon: 'user-minus' as const,
                                 destructive: true,
-                                disabled: busy,
+                                disabled: !canEditRoster,
                                 onPress: () => {
                                     void runRosterChange(
                                         () => removeTeamGroupMember({
@@ -663,7 +660,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                                 id: 'add-to-group',
                                 title: t('teams.groups.addMember'),
                                 icon: 'user-plus' as const,
-                                disabled: busy,
+                                disabled: !canEditRoster,
                                 onPress: () => { void addNative(member); },
                             }] : []),
                             ...member.contributions.external.map((contribution) => ({
@@ -725,7 +722,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
 
         // An archived Group has no effective members; its banner already says why, so its roster
         // is not called empty "yet".
-        if (members.rows.length === 0 && members.status === 'ready' && !archived) {
+        if (members.rows.length === 0 && (members.status === 'ready' || members.status === 'refreshing') && !archived) {
             add('members-empty', () => (
                 <ItemGroup
                     title={t('teams.groups.membersSection')}

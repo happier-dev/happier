@@ -121,7 +121,7 @@ const MemberGroupsSection = React.memo(function MemberGroupsSection(props: Reado
                 );
             })}
             {/* Rows already read stay on screen through a failure. */}
-            {failure ?? (groups.rows.length > 0 ? null : groups.status === 'ready' ? (
+            {failure ?? (groups.rows.length > 0 ? null : groups.status === 'ready' || groups.status === 'refreshing' ? (
                 <SurfaceStateCard
                     testID="team-member-groups-empty"
                     kind="empty"

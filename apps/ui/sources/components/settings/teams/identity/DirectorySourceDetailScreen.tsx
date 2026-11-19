@@ -18,7 +18,7 @@ import type { VirtualizedListRef } from '@/components/ui/lists/virtualized';
 import { restoreFocusToBestTarget } from '@/keyboard/focusReturn';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
 import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
-import { useTeamPagedList } from '@/hooks/teams/useTeamPagedList';
+import { useTeamObservedPagedList } from '@/hooks/teams/useTeamObservedPagedList';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { TeamDirectoryGroupPageV1 } from '@happier-dev/protocol/teams';
 import { identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
@@ -27,7 +27,8 @@ import { getPreferredLanguage, t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
-import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
+import { serverAccountScopedTeamResourceKey, type TeamAddress } from '@/sync/domains/teams/teamAddress';
+import { teamDirectoryGroupPages } from '@/sync/store/teams/teamsSnapshots';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 
 import { TeamSection } from '../TeamSection';
@@ -110,6 +111,7 @@ const DirectoryGroupMappings = React.memo(function DirectoryGroupMappings(props:
         }),
         [props.requestApproval, props.scope.accountId, props.scope.serverId],
     );
+    const filter = query.trim();
     const loadPage = React.useCallback(async (cursor: string | null, signal: AbortSignal) => {
         const result = await executeIdentityAdministrationRead<TeamDirectoryGroupPageV1>((options) => client.executeDirectory('teams.directory.groups.list', {
             v: 1,
@@ -117,14 +119,16 @@ const DirectoryGroupMappings = React.memo(function DirectoryGroupMappings(props:
             sourceId: props.sourceId,
             limit: 50,
             cursor,
-            ...(query.trim() ? { query: query.trim() } : {}),
+            ...(filter ? { query: filter } : {}),
         }, options), signal);
         return result.ok
             ? { kind: 'succeeded' as const, value: result.value }
             : { kind: 'failed' as const, failure: result.failure.domainFailure ?? { kind: 'unknown' as const, retryable: result.failure.retryable, code: null } };
-    }, [client, props.address.teamId, props.sourceId, query]);
-    const directoryGroups = useTeamPagedList({
-        key: `${props.scope.serverId} ${props.scope.accountId} ${props.address.teamId} ${props.sourceId} ${query.trim()}`,
+    }, [client, props.address.teamId, props.sourceId, filter]);
+    const directoryGroups = useTeamObservedPagedList({
+        scope: props.scope,
+        observations: filter ? null : teamDirectoryGroupPages,
+        key: serverAccountScopedTeamResourceKey(props.scope, props.address, 'directory-groups', props.sourceId, filter),
         enabled: props.groupMappingsAvailable,
         loadPage,
         // Directory projection changes are published as the Team change.

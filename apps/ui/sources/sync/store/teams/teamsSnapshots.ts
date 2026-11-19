@@ -4,12 +4,17 @@ import {
     type TeamMembershipV1,
     type TeamCredentialResourceCatalogEntryV1,
     type TeamCredentialExternalApiKeySummaryV1,
+    type TeamCredentialResourceActivityEventV1,
     type TeamCredentialUsageQueryResultV1,
     type TeamCredentialResourceSummaryV1,
     type TeamCredentialViewerCapabilitiesV1,
     type TeamGroupV1,
+    type TeamGroupMemberV1,
     type TeamInvitationRowV1,
+    type TeamDirectoryGroupPageV1,
+    type TeamDirectoryPeoplePageV1,
     type TeamDirectorySourceSummaryV1,
+    type TeamExternalGroupBindingV1,
     type TeamSummaryV1,
     type TeamSharedResourceSummaryRowV1,
 } from '@happier-dev/protocol/teams';
@@ -255,6 +260,12 @@ export const teamDirectorySourcePages = createTeamObservations<TeamPage<TeamDire
 export const teamInvitationPages = createTeamObservations<TeamPage<TeamInvitationRowV1>>();
 export const teamCredentialExternalApiKeyObservations = createTeamObservations<readonly TeamCredentialExternalApiKeySummaryV1[]>();
 export const teamCredentialUsageObservations = createTeamObservations<TeamCredentialUsageQueryResultV1>();
+export const teamGroupMemberPages = createTeamObservations<TeamPage<TeamGroupMemberV1>>();
+export const teamMemberGroupPages = createTeamObservations<TeamPage<TeamGroupV1>>();
+export const teamCredentialActivityPages = createTeamObservations<TeamPage<TeamCredentialResourceActivityEventV1>>();
+export const teamDirectoryPeoplePages = createTeamObservations<TeamPage<TeamDirectoryPeoplePageV1['items'][number]>>();
+export const teamDirectoryGroupPages = createTeamObservations<TeamPage<TeamDirectoryGroupPageV1['items'][number]>>();
+export const teamExternalGroupBindingPages = createTeamObservations<TeamPage<TeamExternalGroupBindingV1>>();
 const retainedTeamObservations = [
     teamSharedMachineObservations,
     teamSharedMachinePoolObservations,
@@ -265,6 +276,12 @@ const retainedTeamObservations = [
     teamInvitationPages,
     teamCredentialExternalApiKeyObservations,
     teamCredentialUsageObservations,
+    teamGroupMemberPages,
+    teamMemberGroupPages,
+    teamCredentialActivityPages,
+    teamDirectoryPeoplePages,
+    teamDirectoryGroupPages,
+    teamExternalGroupBindingPages,
 ];
 const listeners = new Set<() => void>();
 

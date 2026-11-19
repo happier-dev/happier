@@ -9,6 +9,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
+import { createDeferred } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { accountDisplayProfileFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
@@ -401,6 +402,32 @@ describe('TeamGroupDetailScreen', () => {
         const ids = collectRenderedTestIds(screen.tree.toJSON());
         expect(ids).not.toContain('team-group-members-loading-skeleton:1');
         releaseRoster();
+    });
+
+    it.each([
+        { items: [teamGroupMemberFixture()], row: 'team-group-member:account-ada' },
+        { items: [], row: 'team-group-members-empty' },
+    ])('keeps the observed Group roster ($row) visible while the Home refreshes it', async ({ items, row }) => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, GROUP_GET_PATH, {
+            body: teamGroupFixture({ memberCount: items.length, capabilities: MANAGED_GROUP_CAPABILITIES }),
+        });
+        const body = { items, nextCursor: null };
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body });
+        const first = await renderGroupDetail(serverId);
+        await waitForTestId(first, row);
+        await first.unmount();
+
+        const observedRequests = harness.requestsFor(GROUP_MEMBERS_LIST_PATH).length;
+        const fresh = createDeferred<void>();
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body, respondAfter: fresh.promise });
+        const returned = await renderGroupDetail(serverId);
+        await vi.waitFor(() => expect(harness.requestsFor(GROUP_MEMBERS_LIST_PATH).length).toBeGreaterThan(observedRequests));
+        const ids = collectRenderedTestIds(returned.tree.toJSON());
+        expect(ids).toContain(row);
+        expect(ids).not.toContain('team-group-members-loading-skeleton:0');
+        await act(async () => fresh.resolve());
+        await returned.unmount();
     });
 
     it('offers retry for a transient Group-detail read failure', async () => {
