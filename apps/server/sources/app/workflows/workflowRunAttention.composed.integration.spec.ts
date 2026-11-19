@@ -151,6 +151,7 @@ describe("workflow Run attention to Inbox through SQLite", () => {
         }, pendingPermissions: [], pendingUserActions: [] };
         const inbox = buildInboxWorkGroups({ workflowRuns: attention.runs.map(run =>
             workflowRunRowFromSummary(WorkflowRunSummaryV1Schema.parse(run), null)), sessionEntries: [entry],
+            workflowServerId: "home",
             automationRuns: [], automationServerId: "home", openApprovals: [], stalledSessions: [], landings: [], snoozed: [],
             resolveSession: id => id === session.id ? session : null,
             resolveOriginRunId: value => value.candidate.awareness.origin?.kind === "run_step"
