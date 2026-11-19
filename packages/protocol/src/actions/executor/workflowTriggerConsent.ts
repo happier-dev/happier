@@ -23,6 +23,15 @@ type WorkflowTriggerConsentDefinition = Readonly<{
   materializer?: Pick<MaterializeWorkflowAcceptedSnapshotV1Input, 'effects' | 'roleSelection'>;
 }>;
 
+async function readNativeActionContract(id: string) {
+  const { ActionIdSchema } = await import('../actionIds.js');
+  const actionId = ActionIdSchema.safeParse(id);
+  if (!actionId.success) return null;
+  const { getActionSpec } = await import('../actionSpecs.js');
+  const { freezeWorkflowActionContractV1, actionSpecToActionDefinitionV1 } = await import('../actionCatalog.js');
+  return freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(actionId.data)));
+}
+
 /** Read only the child Artifact revisions needed by the actor-consent currentness check. */
 export async function readWorkflowTriggerChildRevisions(input: Readonly<{
   definition: WorkflowDefinitionV1;
@@ -98,9 +107,6 @@ export async function materializeWorkflowTriggerActionDefinition(input: Readonly
   deferTargetAvailability?: boolean;
 }>) {
   const children: Record<string, WorkflowDefinitionV1> = {};
-  const { ActionIdSchema } = await import('../actionIds.js');
-  const { getActionSpec } = await import('../actionSpecs.js');
-  const { freezeWorkflowActionContractV1, actionSpecToActionDefinitionV1 } = await import('../actionCatalog.js');
   const materialized = await materializeWorkflowDefinitionAuthorityV1({ definition: input.definition,
     ...(input.materializer?.roleSelection ? { roleSelection: input.materializer.roleSelection } : {}),
     context: { source: { kind: 'inline' }, inputs: input.inputs, machineId: input.project.machineId,
@@ -111,10 +117,7 @@ export async function materializeWorkflowTriggerActionDefinition(input: Readonly
       ...input.materializer?.effects,
       resolveTargetAvailability: input.deferTargetAvailability === true ? async () => true
         : input.materializer?.effects.resolveTargetAvailability ?? (async leaf => leaf.kind === 'action' || leaf.kind === 'workflow'),
-      readActionContract: input.materializer?.effects.readActionContract ?? (async id => {
-        const actionId = ActionIdSchema.safeParse(id);
-        return actionId.success ? freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(actionId.data))) : null;
-      }),
+      readActionContract: input.materializer?.effects.readActionContract ?? readNativeActionContract,
       readWorkflowDefinition: async ref => {
         const key = formatWorkflowDefinitionRefV1(ref);
         const definition = await input.resolveWorkflow(key);
@@ -127,17 +130,23 @@ export async function materializeWorkflowTriggerActionDefinition(input: Readonly
 }
 
 /** Save and selected-trigger reads derive the same exact authored effects. */
-export async function readWorkflowTriggerConsentSteps(input: WorkflowTriggerConsentDefinition): Promise<WorkflowApprovedOperationV1['steps']> {
+export async function readWorkflowTriggerActionConsent(input: WorkflowTriggerConsentDefinition) {
   const deployment = input.context.deploymentTriggers?.some(row => row.triggerId === input.triggerId) === true;
   const definition = deployment ? { ...input.definition,
     inputs: input.definition.inputs.map(field => field.name === 'sha' || field.name === 'requestKey'
       ? { ...field, required: false } : field) } : input.definition;
+  const materializer = input.materializer;
   const { materialized, program } = await materializeWorkflowTriggerActionDefinition({ definition,
     inputs: resolveWorkflowRunStartInputsV1(definition, input.context.inputs), project: input.project,
-    resolveWorkflow: input.resolveWorkflow });
+    resolveWorkflow: input.resolveWorkflow, deferTargetAvailability: materializer !== undefined,
+    ...(materializer ? { materializer: { ...materializer, effects: { ...materializer.effects,
+      readActionContract: async (id) => await readNativeActionContract(id)
+        ?? await materializer.effects.readActionContract?.(id) ?? null,
+    } } } : {}) });
   if (!materialized.ok) throw Object.assign(new Error(materialized.error.code), { code: materialized.error.code });
-  return projectWorkflowTriggerConsentSteps({ definition, children: program.children,
-    materializedLeaves: materialized.materializedLeaves, deployment });
+  const materializedLeaves = materialized.materializedLeaves;
+  return { steps: projectWorkflowTriggerConsentSteps({ definition, children: program.children, materializedLeaves, deployment }),
+    materializedLeaves };
 }
 
 /** Authoring and Run admission consume the same already materialized effect scope. */
@@ -204,7 +213,7 @@ export async function normalizeStoredWorkflowTriggerConsent(input: Readonly<{
     if (legacy.operation.parent.actionId === 'workflow.trigger.update'
       && (legacy.operation.parent.input.automationId !== input.automationId
         || legacy.operation.parent.input.triggerId !== trigger.triggerId)) continue;
-    const steps = await readWorkflowTriggerConsentSteps({ definition: legacy.program.definition,
+    const { steps } = await readWorkflowTriggerActionConsent({ definition: legacy.program.definition,
       context, project: input.project, triggerId: trigger.triggerId,
       resolveWorkflow: async ref => {
         const child = legacy.program.children[ref];

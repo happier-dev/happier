@@ -21,7 +21,7 @@ describe('Automatic Action-event consent', () => {
       },
     }] });
     const project = { machineId: 'machine', directory: '/repo' };
-    const steps = await consent.readWorkflowTriggerConsentSteps({ definition, project, triggerId: 'check-trigger',
+    const { steps } = await consent.readWorkflowTriggerActionConsent({ definition, project, triggerId: 'check-trigger',
       context: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' } },
       resolveWorkflow: async () => { throw new Error('No child Workflow'); } });
     const operation = await prepareWorkflowApprovedOperation({ parent: { actionId: 'workflow.trigger.add', input: {
@@ -45,7 +45,7 @@ describe('Automatic Action-event consent', () => {
         actionId: { kind: 'trigger_event', event, path: ['actionId'] },
         secret: { kind: 'literal', value: { _isSecretValue: true, value: 'private' } },
       } } } }] });
-    const steps = await consent.readWorkflowTriggerConsentSteps({ definition,
+    const { steps } = await consent.readWorkflowTriggerActionConsent({ definition,
       project: { machineId: 'machine', directory: '/repo' }, triggerId: 'check-trigger',
       context: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' } },
       resolveWorkflow: async () => { throw new Error('No child Workflow'); } });

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { createBackupVerifyWorkflowV1, createNightlyBackupsWorkflowV1 } from '../../workflows/builtins/backupExamples.js';
-import { readWorkflowTriggerConsentSteps } from './workflowTriggerConsent.js';
+import { readWorkflowTriggerActionConsent } from './workflowTriggerConsent.js';
 
 describe('Nightly saved trigger consent', () => {
   it('preserves fixed snapshot verification consent outside the per-snapshot Nightly loop', async () => {
     const backupTarget = { serverId: 'home', environmentId: 'environment', expectedRevision: 4, configRevision: 1,
       machineId: 'machine', installationId: 'installation', targetLinkId: 'target', deploymentId: 'deployment' };
-    const steps = await readWorkflowTriggerConsentSteps({ definition: createBackupVerifyWorkflowV1(),
+    const { steps } = await readWorkflowTriggerActionConsent({ definition: createBackupVerifyWorkflowV1(),
       context: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' },
         inputs: { backupTarget, backupOperationId: 'backup-operation', snapshotId: 'a'.repeat(64), verificationLevel: 'manifestReadBack' } },
       project: { machineId: 'controller', directory: '/repo' }, triggerId: 'verify',
@@ -20,7 +20,7 @@ describe('Nightly saved trigger consent', () => {
       config: { path: '/backups/app' }, credentialBindings: [],
       sources: [{ kind: 'volume', sourceId: 'data', service: 'app', volume: 'data', consistency: 'stopDuringCopy' }],
       ownership: { environmentId: 'environment', prefix: 'app' }, retention: { kind: 'keepEverything' } };
-    const steps = await readWorkflowTriggerConsentSteps({ definition: createNightlyBackupsWorkflowV1(),
+    const { steps } = await readWorkflowTriggerActionConsent({ definition: createNightlyBackupsWorkflowV1(),
       context: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' },
         inputs: { backupEnvironment, backupPolicy, verificationLevel: 'manifestReadBack' } },
       project: { machineId: 'controller', directory: '/repo' }, triggerId: 'nightly',

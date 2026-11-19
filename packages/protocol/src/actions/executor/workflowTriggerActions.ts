@@ -76,7 +76,7 @@ import type { WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1
 import type { WorkflowApprovedOperationV1 } from '../../actions/approvedOperationV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, StrictJsonValueSchema } from '../../json/strictJsonValue.js';
-import { readWorkflowTriggerConsentSteps, readWorkflowTriggerActorConsentSteps, readWorkflowTriggerChildRevisions, normalizeStoredWorkflowTriggerConsent } from './workflowTriggerConsent.js';
+import { readWorkflowTriggerActionConsent, readWorkflowTriggerActorConsentSteps, readWorkflowTriggerChildRevisions, normalizeStoredWorkflowTriggerConsent } from './workflowTriggerConsent.js';
 import type { WorkflowApprovedOperationNativeAccountV1 } from './workflowRunActions.js';
 import type { WorkflowDefinitionSavedByV1 } from '../../workflows/workflowDefinitionV1.js';
 import { resolveInitialDeploymentApprovalV1 } from '../../deployments/deploymentApprovalScopeV1.js';
@@ -625,9 +625,10 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       if (input.mode === 'automatic') refuse('approval_required');
       return;
     }
-    const steps = await readWorkflowTriggerConsentSteps({
+    const { steps, materializedLeaves } = await readWorkflowTriggerActionConsent({
       definition: input.definition, context: input.context, project: input.project,
       triggerId: input.triggerId, resolveWorkflow: resolveDefinition,
+      materializer: await deps.resolveMaterializer?.(input.project, input.caller),
     });
     let mode: 'automatic' | 'ask' | undefined = input.mode;
     if (mode === undefined) {
@@ -644,7 +645,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     if (mode !== 'automatic') return;
     if (steps.length === 0) refuse('approval_required');
     const { prepareWorkflowApprovedOperation } = await import('./workflowRunActions.js');
-    const operation = await prepareWorkflowApprovedOperation({ parent: input.parent, steps, context: input.caller,
+    const operation = await prepareWorkflowApprovedOperation({ parent: input.parent, steps, materializedLeaves, context: input.caller,
       ...(deps.nativeAccount ? { nativeAccount: deps.nativeAccount } : {}) });
     input.context.actionApprovals = [...retained, { triggerId: AutomationTriggerIdSchema.parse(input.triggerId), operation }];
   };

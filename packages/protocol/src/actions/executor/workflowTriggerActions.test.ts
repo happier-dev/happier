@@ -1486,6 +1486,32 @@ describe('Account source watcher assignment', () => {
 });
 
 describe('person-saved deployment trigger consent', () => {
+  it('freezes a contributed Event Action using its admitted contract', async () => {
+    const actionId = 'example.fixture/actions/check';
+    const event = deploymentEventTrigger.eventRef;
+    const source = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{
+      kind: 'action', id: 'check', actionId, input: {
+        deploymentId: { kind: 'trigger_event', event, path: ['deploymentId'] },
+      },
+    }] });
+    const f = fixture(source);
+    const actions = createWorkflowTriggerActions({ ...f.deps,
+      nativeAccount: { accountId: 'owner', serverId: 'home', isCurrent: async () => true },
+      resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true,
+        readActionContract: async id => id === actionId ? {
+          inputSchema: { type: 'object', properties: { deploymentId: { type: 'string' } }, required: ['deploymentId'] },
+          outputSchema: {}, secretInputPaths: [],
+        } : null,
+      } }),
+    });
+    const saved = await actions.add({ workflow, project, trigger: deploymentEventTrigger, actionApproval: 'automatic' },
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'owner',
+        serverId: 'home', actionRequestId: 'save-contributed-action' });
+    expect(saved.set.context?.actionApprovals?.[0]?.operation.steps).toEqual([{ actionId, input: {},
+      binding: { kind: 'trigger_event', references: { deploymentId: { kind: 'trigger_event', event, path: ['deploymentId'] } } },
+    }]);
+  });
+
   it('saves the exact compact SHA consent when the authored deployment omits a target link', async () => {
     const base = deploymentWorkflowDefinition();
     const source = WorkflowDefinitionV1Schema.parse({ ...base, blocks: base.blocks.map(block => {
