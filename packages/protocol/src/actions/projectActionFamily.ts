@@ -239,6 +239,7 @@ function row<const Id extends ProjectActionIdV1>(id: Id) {
       executionPlacementForInput: (input: unknown) => isProjectSetupTrustRequestV1(id, input) ? 'account' as const : 'machine' as const } : {}),
     ...(id === 'projects.compute.exec' ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
     originalExecution: { accountRoot: 'allowed' }, title: PROJECT_ACTION_COPY[id][0],
+    approvalPresentation: { summary: () => PROJECT_ACTION_COPY[id][1] },
     description: clientRead
       ? 'List authorized applicable built-in and plugin pages for the exact accepted Project and Home on the answering client, including user-hidden pages. This reads the existing page catalog without opening a Project, selecting a Machine or loading page content. Open a returned href with workspace.tabs.open; read or change navigation placement through settings.get and settings.set.'
       : id === 'projects.script.run'

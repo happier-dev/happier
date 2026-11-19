@@ -1526,6 +1526,19 @@ describe('plugin development confirmation summary', () => {
   });
 });
 
+it('keeps the Project Setup review digest compatible with the loaded Machine summary', async () => {
+  const { buildApprovalPreviewSummary } = await import('./actionExecutor.js');
+  const { computeActionReviewDigestV1 } = await import('./decisionAuthority.js');
+  const actionId = 'projects.prepare';
+  const spec = getActionSpec(actionId);
+  const actionArgs = spec.inputSchema.parse({ phase: 'setup', workspace: {
+    serverId: 'home', workspaceId: 'checkout', machineId: 'machine', rootPath: '/checkout',
+  } });
+  const machineReview = { actionArgs, preview: { actionId, summary: 'Run a project\'s setup on a machine, so it is ready to work in.' } };
+  const uiReview = { actionArgs, preview: { actionId, summary: buildApprovalPreviewSummary(spec, actionArgs) } };
+  expect(computeActionReviewDigestV1(actionId, uiReview)).toBe(computeActionReviewDigestV1(actionId, machineReview));
+});
+
 describe('workspace sync approval operands', () => {
   it.each([
     'workspace.sync.relationship.disable',
