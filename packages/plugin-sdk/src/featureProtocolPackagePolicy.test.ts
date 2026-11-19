@@ -77,6 +77,9 @@ const FEATURE_PROTOCOL_TEST_ONLY_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, R
         'compilePluginJsonSchema',
         'isValidPluginJsonSchemaValue',
     ]),
+    [`${SDK_PACKAGE_NAME}/testing`]: new Set([
+        'createPluginTestkit',
+    ]),
 });
 
 /**
@@ -288,6 +291,15 @@ const FEATURE_PROTOCOL_PROTOCOL_IMPORT_ALLOWLIST = new Set([
     'MAX_CONVERSATION_ENDPOINT_STABLE_ID_UTF8_BYTES',
     'MAX_CONVERSATION_PROVIDER_DIAGNOSTIC_UTF8_BYTES',
     'MAX_CONVERSATION_PROVIDER_MESSAGE_ID_UTF8_BYTES',
+    // Triage composes the public Review, launch preference, and entry reference facts.
+    'INTERNAL_TASK_SOURCE_V1',
+    'ProtocolLaunchProfileCheckoutPreferenceV1Schema',
+    'ProtocolLaunchProfilePlacementPreferenceV1Schema',
+    'ReviewAttentionV1ProtocolSchema',
+    'TriageEntryRefV1Fields',
+    'internalTaskLocalRefV1',
+    'internalTaskOwnerAccountIdV1',
+    'isInternalTaskReferenceV1',
     ...Object.entries(FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE)
         .flatMap(([symbol, audience]) => (
             audience === 'feature-protocol'
@@ -524,8 +536,14 @@ const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet
     // Canonical portable target identity only; Agent operations remain outside
     // reusable feature protocols. Triage's Session handoff consumes this parser.
     [`${SDK_PACKAGE_NAME}/agents`]: new Set(['AgentTargetKeyV2Schema']),
-    // Only the canonical portable numeric contract, never Action services.
-    [`${SDK_PACKAGE_NAME}/actions`]: new Set(['EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES', 'databaseActionLocalIdV1', 'isDatabaseActionIdV1']),
+    // Portable Action declaration, identity, and result sizing facts.
+    [`${SDK_PACKAGE_NAME}/actions`]: new Set([
+        'EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES',
+        'PluginActionDeclaration',
+        'databaseActionLocalIdV1',
+        'isDatabaseActionIdV1',
+        'measureExternalActionResultResponseEnvelopeUtf8BytesV1',
+    ]),
     // Coordination17:13: portable feature failures use this exact public
     // cross-copy error identity, never the root invocation/service context.
     [`${SDK_PACKAGE_NAME}/errors`]: new Set(['PluginError', 'isPluginError']),
@@ -573,6 +591,11 @@ const FEATURE_PROTOCOL_SDK_IMPORT_ALLOWLIST: Readonly<Record<string, ReadonlySet
     [`${SDK_PACKAGE_NAME}/sessions`]: new Set([
         'AgentPermissionIntentV1',
         'AgentPermissionIntentV1Schema',
+        'SessionAcceptedWorkspaceV1Schema',
+        'SessionInputHandoffCompositionResultV1Schema',
+        'SessionInputHandoffDeliveryChoiceV1Schema',
+        'SessionInputHandoffSendResultV1Schema',
+        'SessionInputHandoffSessionChoiceV1Schema',
         'SessionInputForgeEvidenceV1',
         'SessionInputForgeEvidenceV1Schema',
         'SessionAuthoringCheckoutCreationDraftV1',
@@ -1873,7 +1896,7 @@ describe('feature-protocol package policy', () => {
             'sdkRuntimeEscape.ts': "import { value } from '@happier-dev/plugin-sdk/runtime';\nvoid value;\n",
             'sdkHostEscape.ts': "import { value } from '@happier-dev/plugin-sdk/host';\nvoid value;\n",
             'sdkUiEscape.ts': "import { value } from '@happier-dev/plugin-sdk/ui';\nvoid value;\n",
-            'sdkTestingEscape.ts': "import { value } from '@happier-dev/plugin-sdk/testing';\nvoid value;\n",
+            'sdkTestingEscape.ts': "import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';\nvoid createPluginTestkit;\n",
         })) {
             expect(() => assertFeatureProtocolPackageBoundary({
                 ...featureProtocolFixture,
