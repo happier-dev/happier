@@ -5,6 +5,7 @@ import { createStorageCategoryCatalog } from '@/storage/categoryCatalog';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { constants as fsConstants } from 'node:fs';
 import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -63,7 +64,9 @@ os.identity = new AsyncLocalStorage<'member'>();
 // selection, Exec launch, the Workspace effect bridge, SCM and Git stay real.
 // One cold-runtime case starts the actual worker subprocess; the remaining
 // routing cases use a scoped worker so the filesystem boundary can model denial.
-// The builtin is patched in place (not module-mocked) so plugin-loaded backends see it too.
+// The suite patches the actual builtin for both source and plugin imports. The
+// common Windows asset mock copies the methods before these UID guards are installed.
+vi.unmock('node:fs/promises');
 const fsPromises = createRequire(import.meta.url)('node:fs/promises') as typeof import('node:fs/promises');
 const originalFs = { ...fsPromises };
 beforeAll(() => {
@@ -294,7 +297,9 @@ async function memberProjectRuntime(f: Awaited<ReturnType<typeof fixture>>, work
           .approveReviewedEffect({ project: { serverId: f.home, projectId: workspace.projectKey! },
             reviewedEffectDigest: current.setupReview.reviewedEffectDigest, currentEffectDigest: current.setupReview.reviewedEffectDigest,
             approvedAtMs: 1, expectedRevision: 'absent', authority: 'present_user' });
-        await operationRuntime.handlers.getV2({ operationId: 'member-removal' });
+        const priorDaemonTouches = os.daemonTouches.length;
+        await operationRuntime.handlers.getV2({ operationId: 'member-removal', refreshSetupReview: true });
+        expect(os.daemonTouches.slice(priorDaemonTouches)).toEqual([]);
       }
     } };
 }
@@ -571,7 +576,7 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(daemonGit()).toEqual([]);
   });
 
-  it('leaves a FIFO Git state file to the member process only', async () => {
+  it('refuses a FIFO in the member without blocking the daemon', async () => {
     const f = await fixture();
     const state = join(f.memberRepository, '.git', 'rebase-merge');
     await mkdir(state);
@@ -579,18 +584,21 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     const fifo = join(state, 'onto_name');
     // A FIFO is an OS object; Node has no creator for it.
     execFileSync('/usr/bin/mkfifo', [fifo]);
+    onTestFinished(async () => {
+      // Release a regressed blocking reader without waiting for a reader ourselves.
+      try {
+        const writer = await originalFs.open(fifo, fsConstants.O_WRONLY | fsConstants.O_NONBLOCK);
+        await writer.close();
+      } catch (error) {
+        const code = error instanceof Error && 'code' in error ? error.code : undefined;
+        if (code !== 'ENXIO' && code !== 'ENOENT') throw error;
+      }
+    });
     const pending = f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: f.memberRepository }, 'member-account', 'use');
-    try {
-      await vi.waitFor(() => expect(os.memberReads).toContain(fifo), { timeout: 20_000 });
-      // The daemon keeps serving while the member's own read waits on its FIFO.
-      expect(await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: f.ownerRepository }, 'manager-account', 'manage'))
-        .toMatchObject({ success: true });
-      expect(os.daemonTouches).toEqual([]);
-    } finally {
-      // Release the member's blocked read (a writer closing the FIFO ends it).
-      const writer = await originalFs.open(fifo, 'w'); await writer.close();
-      await pending;
-    }
+    await vi.waitFor(() => expect(os.memberReads).toContain(fifo), { timeout: 20_000 });
+    const ownerStatus = f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: f.ownerRepository }, 'manager-account', 'manage');
+    await expect(pending).resolves.toMatchObject({ success: false, errorCode: 'COMMAND_FAILED' });
+    await expect(ownerStatus).resolves.toMatchObject({ success: true });
     expect(os.daemonTouches).toEqual([]);
   });
 

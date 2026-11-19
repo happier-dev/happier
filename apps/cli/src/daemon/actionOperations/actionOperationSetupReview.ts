@@ -1,5 +1,6 @@
 import { ProjectSetupConsentFailureDetailsV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import type { ProjectSetupConsentFailureDetailsV1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { currentWorkspaceSource, runWithWorkspaceSourceDemand } from '@/workspaces/source/workspaceSource';
 import type { ActionOperationReviewContinuation, ActionOperationSetupDecision } from './actionOperationTypes';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -16,6 +17,8 @@ export function createActionOperationSetupReview(input: Readonly<{
       const parsed = ProjectSetupConsentFailureDetailsV1Schema.parse(details);
       let currentDetails = parsed;
       input.signal.throwIfAborted();
+      // A later inspection or consent RPC runs in its own request scope.
+      const source = currentWorkspaceSource();
       await new Promise<void>((resolve, reject) => {
         let current = true;
         let refreshing: Promise<void> | undefined;
@@ -38,7 +41,7 @@ export function createActionOperationSetupReview(input: Readonly<{
           // Reads join; a human choice remeasures after any in-flight read.
           if (refreshing) return decision ? refreshing.then(() => inspect(decision)) : refreshing;
           refreshing = (async () => {
-            const reviewed = await producer.review(decision);
+            const reviewed = await runWithWorkspaceSourceDemand(source, () => producer.review(decision));
             if (!current || input.signal.aborted) return;
             if (!reviewed) { complete(); return; }
             const next = ProjectSetupConsentFailureDetailsV1Schema.parse(reviewed);
