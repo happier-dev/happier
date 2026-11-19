@@ -63,11 +63,11 @@ export async function startFinJourneyFixture(params: Readonly<{ testDir: string;
       const seeded = await seedCliAuthForTestAccount({ cliHome: homeDir, serverUrl: server.baseUrl, auth: account.auth, mode: 'dataKey' });
       const daemon = await startTestDaemon({ testDir: directory, happyHomeDir: homeDir,
         requireMachineControlReady: true, env: {
-        ...process.env, CI: '1', HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: server.baseUrl,
-        HAPPIER_WEBAPP_URL: server.baseUrl, HAPPIER_VARIANT: 'dev', HAPPIER_DISABLE_CAFFEINATE: '1',
+        ...process.env, CI: '1', HAPPIER_VARIANT: 'dev', HAPPIER_DISABLE_CAFFEINATE: '1',
         HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(), HAPPIER_CLAUDE_CONFIG_DIR: claudeConfigDir,
         HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
         NODE_OPTIONS: sourceOptions, ...options.env,
+        HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: server.baseUrl, HAPPIER_WEBAPP_URL: server.baseUrl,
       } });
       daemons.push(daemon);
       return { daemon, homeDir, workspaceDir, cliServerId: seeded.serverId,
