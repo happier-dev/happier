@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { MachineAccessMutationResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { decodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { ApiClient } from '../../../../apps/cli/src/api/api';
@@ -16,6 +17,7 @@ import { buildTestAccountCliAuthCredentials } from '../../src/testkit/cliAuth';
 import { startTeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import { fetchJson } from '../../src/testkit/http';
+import { addFriend, setUsername } from '../../src/testkit/socialFriends';
 import { createUserScopedSocketCollector, type SocketCollector } from '../../src/testkit/socketClient';
 import { waitFor } from '../../src/testkit/timing';
 import { buildMachineInstallationProof, createMachineInstallationIdentityFixture } from '../../src/testkit/machineIdentity';
@@ -37,6 +39,7 @@ describe('composed Machine content-key conversion', () => {
         }, serverEnv: {
         DATABASE_URL: postgres.homeDatabaseUrl, HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
         HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1',
+        HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: '1', HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME: '1',
       } });
       const account = await fixture.createAccount('content-key-owner');
       const accountId = readAccountIdFromToken(account.credentials.token);
@@ -181,6 +184,20 @@ describe('composed Machine content-key conversion', () => {
       await machine.restart();
       await assertDaemonControl();
       await machine.daemon.stop();
+      const recipient = await fixture.createAccount('content-key-recipient');
+      const recipientId = readAccountIdFromToken(recipient.auth.token);
+      if (!recipientId || recipientId === accountId) throw new Error('Expected a separate Machine recipient Account');
+      await setUsername(fixture.server.baseUrl, account.auth.token, 'conversion_owner');
+      await setUsername(fixture.server.baseUrl, recipient.auth.token, 'conversion_recipient');
+      await addFriend(fixture.server.baseUrl, account.auth.token, recipientId);
+      await addFriend(fixture.server.baseUrl, recipient.auth.token, accountId);
+      const principal = { kind: 'account' as const, accountId: recipientId };
+      const granted = await account.executeAsPerson('machines.access.grant.set', { ...machine.target, principal, level: 'view' });
+      if (!granted.ok) throw new Error(`Machine share refused (${granted.errorCode})`);
+      expect(MachineAccessMutationResultV1Schema.parse(granted.result)).toMatchObject({
+        kind: 'saved', grant: { machineId, principal, level: 'view' },
+      });
+
       const restarted = await read();
       // Exercise the disclosure guard with the opaque publication, even when
       // normal daemon metadata updates have published a different projection.
@@ -201,6 +218,24 @@ describe('composed Machine content-key conversion', () => {
       const switched = await fetchJson<unknown>(`${fixture.server.baseUrl}/v1/account/encryption`, { headers });
       expect(switched.status, JSON.stringify(switched.data)).toBe(200);
       expect(switched.data).toMatchObject({ mode: 'plain' });
+
+      // Inspect the raw recipient response while the row still contains E2EE content.
+      // Parsing it as a stored read would drop any accidentally disclosed extra fields.
+      const recipientRead = await fetchJson<unknown>(`${fixture.server.baseUrl}/v1/machines/${machineId}`, {
+        headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${recipient.auth.token}` },
+      });
+      const { access: ownerAccess, recipientWorkPending: _pending, recipientWorkCursor: _cursor, ...row } = beforePlain;
+      if (!ownerAccess) throw new Error('Expected the custodian in the Machine projection');
+      expect(recipientRead.status).toBe(200);
+      expect(recipientRead.data).toStrictEqual({ machine: {
+        ...row,
+        storageMode: 'plain',
+        metadata: null, daemonState: null, dataEncryptionKey: null,
+        devcontainerChild: null, deploymentApp: null, runnerContentKeyBinding: null,
+        access: { custodian: ownerAccess.custodian, role: 'use', resourceMode: 'plain',
+          accessState: 'refused', reason: 'encryption_material_unavailable' },
+      } });
+
       // Persisted Home mode alone does not discard this computer's active-key custody.
       await expect(restartedReader.prepareMachineContentKey(machineId, options)).rejects.toMatchObject({ code: 'account_mode_downgrade_unverified' });
       const unconfirmed = await prepareThroughAction();
