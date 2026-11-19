@@ -124,6 +124,7 @@ const FIXTURES: readonly Fixture[] = [
 const ASK_CONTEXT: ReviewFindingAskContext = {
   sessionId: 'dev-specimen',
   serverId: null,
+  accountLifetime: null,
   draftRunId: 'run_dev_specimen',
   recipient: {
     label: 'Both',

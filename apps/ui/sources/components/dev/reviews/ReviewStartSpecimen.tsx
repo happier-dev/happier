@@ -99,7 +99,7 @@ const FIXTURES: readonly Fixture[] = [
       principal: { kind: 'account', accountId: 'mika' },
       required: true,
     },
-    mark: () => <Icon name="user" size={ICON_SIZE.sm} />,
+    mark: () => <Icon name="person" size={ICON_SIZE.sm} />,
   },
   {
     id: 'coderabbit',
