@@ -4,6 +4,9 @@ import { ACTION_POLICY_ACTION_IDS, ActionPolicyInputSchemas, ActionPolicyOutputS
 import { BUILT_IN_SETTINGS_DECLARATIONS_V1, describeSettingsDeclarationApprovalSummaryV1, projectSettingsDeclarationApprovalInputV1, readBuiltInSettingDeclarationV1, readBuiltInSettingsOperationApprovalPolicyV1, readBuiltInSettingsWriteSafetyV1, readBuiltInSettingsPermissionChangingV1 } from '../settings/settingsDeclarations.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 
+const policyTargetVisibleWhen = { op: 'not', predicate: { op: 'or', any: [
+  { op: 'truthy', path: 'profileChange' }, { op: 'truthy', path: 'profiles' },
+] } } as const;
 
 export const ACTION_POLICY_SPECS = Object.freeze([
   ...(ACTION_POLICY_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
@@ -18,11 +21,13 @@ export const ACTION_POLICY_SPECS = Object.freeze([
     bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_'), voiceClientToolName: id.replaceAll('.', '_') },
     inputSchema: ActionPolicyInputSchemas[id], outputSchema: ActionPolicyOutputSchemas[id],
     inputHints: { fields: [
-      { path: 'actionId', title: 'Action id', widget: 'text', required: true },
-      { path: 'audience', title: 'Audience', widget: 'text', required: id !== 'actions.policy.set' },
+      { path: 'actionId', title: 'Action id', widget: 'text', required: true, visibleWhen: policyTargetVisibleWhen },
+      { path: 'audience', title: 'Audience', widget: 'text', required: id !== 'actions.policy.set', visibleWhen: policyTargetVisibleWhen },
+      ...(id === 'actions.policy.get' ? [{ path: 'profiles', title: 'Approval profiles', widget: 'boolean' as const }] : []),
       ...(id === 'actions.policy.set' ? [
         { path: 'mode', title: 'Audience policy', widget: 'text' as const },
         { path: 'change', title: 'Policy change', widget: 'json' as const },
+        { path: 'profileChange', title: 'Approval profile change', widget: 'json' as const },
       ] : []),
     ] },
     cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },

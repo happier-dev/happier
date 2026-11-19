@@ -23,6 +23,31 @@ import { computeWorkspaceSyncPolicyDigest } from '../sessions/control/handoff/wo
 import { readBuiltinWidgetDescriptorV1 } from '../widgets/builtinWidgetDescriptorV1.js';
 
 describe('approval field presentation', () => {
+  it('admits review of the captured named profile creation without an unrelated Action id', () => {
+    // QA-C r14b's actual request failed approval with path=actionId even
+    // though the public policy schema admits this independent union branch.
+    const actionArgs = { profileChange: { kind: 'create', profile: { name: 'QA-C r14b resource profile' } } };
+    expect(getActionSpec('actions.policy.set').inputSchema.safeParse(actionArgs).success).toBe(true);
+    const presentation = describeApprovalRequestFields({ actionId: 'actions.policy.set', actionArgs });
+    expect(presentation.unrepresentable).toBeNull();
+    expect(presentation.rows).toContainEqual(expect.objectContaining({ path: 'profileChange', kind: 'value' }));
+    const actionPolicy = describeApprovalRequestFields({ actionId: 'actions.policy.set',
+      actionArgs: { actionId: 'session.stop', audience: 'agent', mode: 'ask_first' } });
+    expect(actionPolicy.unrepresentable).toBeNull();
+    expect(actionPolicy.rows).toContainEqual(expect.objectContaining({ path: 'actionId', kind: 'value' }));
+    for (const profileChange of [
+      { kind: 'machine_default', machineId: 'machine', id: null },
+      { kind: 'delete', id: 'builtin:apply-safe', expectedRevision: { headerVersion: 1, bodyVersion: 1 } },
+    ]) {
+      const actionArgs = { profileChange };
+      expect(getActionSpec('actions.policy.set').inputSchema.safeParse(actionArgs).success).toBe(true);
+      expect(describeApprovalRequestFields({ actionId: 'actions.policy.set', actionArgs }).unrepresentable).toBeNull();
+    }
+    expect(describeApprovalRequestFields({ actionId: 'actions.policy.get', actionArgs: { profiles: true } }).unrepresentable).toBeNull();
+    expect(describeApprovalRequestFields({ actionId: 'actions.policy.set',
+      actionArgs: { audience: 'agent', mode: 'ask_first' } }).unrepresentable).toMatchObject({ path: 'actionId' });
+  });
+
   it('omits unset optional choices while retaining supplied selections', () => {
     for (const actionArgs of [{}, { states: undefined }]) {
       const presentation = describeApprovalRequestFields({ actionId: 'workflow.run.list', actionArgs });
