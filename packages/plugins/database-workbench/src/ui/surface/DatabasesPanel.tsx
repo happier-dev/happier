@@ -9,7 +9,6 @@ import {
   LoadingState,
   Popover,
   Stack,
-  Text,
   defineUiSurface,
   usePluginTranslation,
   type PluginTranslate,
@@ -190,12 +189,12 @@ function DatabasesPanel(context: RenderContext) {
           <DatabaseRows context={context} launch={launch} />
         </WorkbenchProvider>
       ) : (
-        <Text
-          tone="secondary"
-          variant="meta"
-          value={translate(
+        // The same line state as "No databases found": it sits inside the sheet with the row inset.
+        <EmptyState
+          layout="line"
+          title={translate(
             'plugins.database.find.noCheckout',
-            'Open Dev servers from a project checkout to see its databases.',
+            'Databases show here when this workspace is a project checkout.',
           )}
         />
       )}
