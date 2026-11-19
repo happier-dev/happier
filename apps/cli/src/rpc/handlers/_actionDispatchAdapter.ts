@@ -225,9 +225,6 @@ export function buildActionExecutorContextForRpc(
         ...(localActionContext?.executionRunWorkflowRunId
             ? { executionRunWorkflowRunId: localActionContext.executionRunWorkflowRunId }
             : {}),
-        ...(localActionContext?.executionRunReviewTranscriptEvidence
-            ? { executionRunReviewTranscriptEvidence: localActionContext.executionRunReviewTranscriptEvidence }
-            : {}),
         ...(localActionContext?.executionRunWorkflowScope
             ? { executionRunWorkflowScope: localActionContext.executionRunWorkflowScope }
             : {}),

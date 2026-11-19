@@ -51,7 +51,6 @@ export function normalizeParsedReviewContent(params: Readonly<{
   value: unknown;
   intentInput?: unknown;
   generatedAtMs: number;
-  sourceTranscriptCoverage?: 'complete' | 'partial';
 }>): ReviewFindingsContentV2 | null {
   const parsedRecord = params.value && typeof params.value === 'object' && !Array.isArray(params.value)
     ? params.value as Record<string, unknown> : null;
@@ -107,7 +106,6 @@ export function normalizeParsedReviewContent(params: Readonly<{
   // A findings array reports findings, not whether inspection succeeded.
   const reviewOutcome = parsedRecord.status === 'failed' || parsedRecord.reviewOutcome === 'failed' ? 'failed'
     : parsedRecord.status === 'partial' || parsedRecord.reviewOutcome !== 'complete' || limits.findingsTruncated === true
-      || params.sourceTranscriptCoverage === 'partial'
       || (inventory.state !== undefined && inventory.state !== 'complete') ? 'partial' : 'complete';
   const { triage: _triage, publication: _publication, commentIds: _commentIds,
     materialization: _materialization, materializationFailures: _materializationFailures,
@@ -145,7 +143,6 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
   rawText: string;
   intentInput?: unknown;
   retentionPolicy?: ExecutionRunRetentionPolicy;
-  reviewTranscriptEvidence?: Readonly<{ coverage: 'complete' | 'partial' }>;
 }>): ExecutionRunProfileBoundedCompleteResult {
   const trimmed = params.rawText.trim();
   const parsedJson: unknown = parseTrailingJsonObject(trimmed);
@@ -241,7 +238,6 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
 
   const content = normalizeParsedReviewContent({
     value: parsedJson, intentInput: params.intentInput, generatedAtMs: params.finishedAtMs,
-    sourceTranscriptCoverage: params.reviewTranscriptEvidence?.coverage,
   });
   if (!content) {
     const summary = 'Invalid review output (expected strict JSON).';

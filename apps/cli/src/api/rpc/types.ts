@@ -49,7 +49,6 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
     /** Identity from the admitted in-process Workflow caller; never transported in RPC input. */
     executionRunWorkflowRunId?: string;
     executionRunWorkflowScope?: ActionExecutorContext['executionRunWorkflowScope'];
-    executionRunReviewTranscriptEvidence?: ActionExecutorContext['executionRunReviewTranscriptEvidence'];
     /** Accepted Workflow Machine ceiling from the in-process host, never RPC input. */
     executionRunTargetMachineId?: ActionExecutorContext['executionRunTargetMachineId'];
     operationProgress?: ActionExecutorContext['operationProgress'];

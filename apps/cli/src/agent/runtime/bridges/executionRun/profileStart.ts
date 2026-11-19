@@ -20,7 +20,6 @@ export function buildExecutionRunProfileStartParams(run: ExecutionRunState): Exe
     ...(run.launch?.connectedServicesSelection !== undefined ? { connectedServices: run.launch.connectedServicesSelection } : {}),
     instructions: run.instructions,
     intentInput: run.intentInput,
-    ...(run.reviewTranscriptEvidence ? { reviewTranscriptEvidence: run.reviewTranscriptEvidence } : {}),
     permissionMode: run.permissionMode,
     retentionPolicy: run.retentionPolicy,
     runClass: run.runClass,

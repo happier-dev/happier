@@ -13,7 +13,6 @@ export function normalizeReviewOutput(params: Readonly<{
   finishedAtMs: number;
   rawText: string;
   intentInput?: unknown;
-  reviewTranscriptEvidence?: import('@happier-dev/protocol/reviews/reviewStart').ReviewTranscriptEvidence;
   retentionPolicy?: ExecutionRunRetentionPolicy;
 }>): ExecutionRunProfileBoundedCompleteResult {
   return normalizeStrictJsonReviewOutput(params);

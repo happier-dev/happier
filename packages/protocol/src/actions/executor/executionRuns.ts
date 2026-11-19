@@ -125,7 +125,7 @@ export function buildExecutionRunCallOptions(
   workflowObservationSink?: unknown,
   actionContext?: Pick<ActionExecutorContext, 'actionCaller' | 'actionRequestId' | 'requesterWorkAttributionV1' | 'onTransportIssued'
     | 'surface' | 'runtimeAccountId' | 'callerInputConstraints' | 'callerPermissionMode' | 'workspaceWrites'
-    | 'externalActionCredential' | 'externalActionExecutionAuthorization' | 'externalActionTarget' | 'admittedMachineTarget' | 'approvalProfileId' | 'executionRunReviewTranscriptEvidence'>,
+    | 'externalActionCredential' | 'externalActionExecutionAuthorization' | 'externalActionTarget' | 'admittedMachineTarget' | 'approvalProfileId'>,
 ): ExecutionRunCallOptions | undefined {
   const origin = normalizeId(originSessionId);
   const target = normalizeId(actionContext?.admittedMachineTarget?.machineId ?? targetMachineId);
@@ -136,10 +136,8 @@ export function buildExecutionRunCallOptions(
   if (!targetServerId && !signal && !origin && !target
     && permissionRequestStore === undefined && workflowObservationSink === undefined
     && !actionRequestId && !actionCaller && !authority && !requesterWorkAttributionV1 && !actionContext?.onTransportIssued
-    && actionContext?.approvalProfileId === undefined
-    && actionContext?.executionRunReviewTranscriptEvidence === undefined) return undefined;
+    && actionContext?.approvalProfileId === undefined) return undefined;
   return {
-    ...(actionContext?.executionRunReviewTranscriptEvidence ? { reviewTranscriptEvidence: actionContext.executionRunReviewTranscriptEvidence } : {}),
     ...(targetServerId ? { serverId: targetServerId } : {}),
     ...(origin ? { originSessionId: origin } : {}),
     ...(target ? { targetMachineId: target } : {}),

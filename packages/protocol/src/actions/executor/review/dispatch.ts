@@ -12,7 +12,7 @@ import { ReviewWalkthroughRequestSchema, ReviewExplainFindingsRequestSchema, Rev
 import { resolveSessionIdFromInput, resolveServerIdForExecutionRunScope } from '../sessionScope.js';
 import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, classifyExecutionRunStartFailure } from '../executionRuns.js';
 import { readRecord, hasOwn } from '../../../inputs/inputRecords.js';
-import { requiresReviewWorkflowCompositionV1, reviewReviewerIdForSelectionV1, reviewReviewerIdsForStartV1, type ReviewStartInput, type ReviewTranscriptEvidence } from '../../../reviews/reviewStart.js';
+import { requiresReviewWorkflowCompositionV1, reviewReviewerIdForSelectionV1, reviewReviewerIdsForStartV1, type ReviewStartInput } from '../../../reviews/reviewStart.js';
 import { SESSION_TRANSCRIPT_GET_MAX_LIMIT, SessionTranscriptGetResultSchema } from '../../specs/session/transcript.js';
 import { createPermissionPolicyResult, resolveAgentExecutionRunPermission } from '../callerContext.js';
 import { EXECUTION_RUN_ACTION_PERMISSION_MODES } from '../../executionRunActionPermissionMode.js';
@@ -38,10 +38,10 @@ export function reviewScopeForInput(input: unknown): ReviewEngineScope {
   return hasOwn(record, 'selectedPaths') || hasOwn(record, 'selectedFiles') ? 'paths' : 'worktree';
 }
 
-export async function readReviewTranscriptEvidence(sourceSession: ReviewTranscriptEvidence['sourceSession'],
+async function readReviewTranscriptInput(sourceSession: NonNullable<ReviewStartInput['sourceSession']>,
   execute: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>,
-  context: ActionExecutorContext): Promise<Readonly<{ ok: true; evidence: ReviewTranscriptEvidence }> | Extract<ActionExecuteResult, { ok: false }>> {
-  const items: ReviewTranscriptEvidence['items'][number][] = [];
+  context: ActionExecutorContext): Promise<Readonly<{ ok: true; instructions: string }> | Extract<ActionExecuteResult, { ok: false }>> {
+  const items: import('../../specs/session/transcript.js').SessionTranscriptGetItem[] = [];
   let cursor: string | null = null;
   let partial = false;
   for (;;) {
@@ -65,7 +65,7 @@ export async function readReviewTranscriptEvidence(sourceSession: ReviewTranscri
     }
     cursor = page.nextCursor;
   }
-  return { ok: true, evidence: { sourceSession, items, coverage: partial ? 'partial' : 'complete' } };
+  return { ok: true, instructions: `Session transcript (${partial ? 'partial' : 'complete'} coverage):\n${JSON.stringify({ sourceSession, items })}` };
 }
 
 export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionId' | 'deps' | 'ctx' | 'parsed' | 'data'> & Readonly<{
@@ -316,10 +316,43 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const comparisonCapture = reviewInput.comparisonId && selectedSource && comparisonCwd && comparisonTarget
           ? { target: comparisonTarget, input: { cwd: comparisonCwd, source: selectedSource,
             comparisonId: reviewInput.comparisonId, ...(sessionId ? { sessionId } : {}) } } : undefined;
-        if (requiresReviewWorkflowCompositionV1(reviewInput)) {
-          // Workflow execution may happen on another host or after a restart.
-          // Its concrete review.start leaves own source admission; only the
-          // explicit selection and source address enter the accepted graph.
+        const workflowComposition = requiresReviewWorkflowCompositionV1(reviewInput);
+        const reviewers = reviewInput.steps?.flatMap(step => step.reviewers) ?? reviewInput.reviewers;
+        const transcriptReviewers = reviewers.filter(reviewer => reviewer.kind !== 'person' && reviewer.includeSessionTranscript === true);
+        const profileSelections = reviewers.flatMap((selection, index) => {
+          if (selection.kind !== 'engine') return [];
+          const engineInput = { ...reviewInput, ...selection,
+            ...(!workflowComposition ? ctx.reviewReviewerLaunchInputs?.[index] : undefined) };
+          return engineInput.profileId ? [{ engineId: selection.engineId, profileId: engineInput.profileId,
+            ...(engineInput.profileSourceCustody ? { profileSourceCustody: engineInput.profileSourceCustody } : {}) }] : [];
+        });
+        const readReviewEngineInventory = async (dispatchOptions = opts) => await deps.reviewEnginesList!({
+          sessionId,
+          ...(detached && dispatchOptions?.targetMachineId ? { machineId: dispatchOptions.targetMachineId } : {}),
+          includeDisabled: false,
+          ...(profileSelections.length > 0 ? { profileSelections } : {}),
+          scope: reviewScopeForInput(reviewInput),
+        }, ctx);
+        let reviewEngineInventory: unknown;
+        if (transcriptReviewers.some(reviewer => reviewer.kind === 'engine')) {
+          if (!deps.reviewEnginesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          reviewEngineInventory = await readReviewEngineInventory();
+          const defaultOptions = readReviewNarratorOptions(reviewEngineInventory);
+          const profileOptions = readReviewNarratorOptions({ items: readRecord(reviewEngineInventory).selectionItems });
+          if (reviewers.some((selection, index) => {
+            if (selection.kind !== 'engine' || selection.includeSessionTranscript !== true) return false;
+            const engineInput = { ...reviewInput, ...selection,
+              ...(!workflowComposition ? ctx.reviewReviewerLaunchInputs?.[index] : undefined) };
+            const options = engineInput.profileId ? profileOptions : defaultOptions;
+            return options.find(option => option.value === normalizeExecutionBackendOptionValue(selection.engineId)
+              && (!engineInput.profileId || option.profileId === engineInput.profileId))?.capabilities.sessionTranscript !== true;
+          })) return { ok: false, errorCode: 'review_transcript_unsupported', error: 'review_transcript_unsupported' };
+        }
+        const transcript = transcriptReviewers.length > 0 && reviewInput.sourceSession
+          ? await readReviewTranscriptInput(reviewInput.sourceSession, executeHostChild, ctx) : null;
+        if (transcript && !transcript.ok) return transcript;
+        if (workflowComposition) {
+          // Retain admitted ordinary reviewer prompts so Workflow leaves do not reread the source.
           const records = deps.reviewRecords?.(ctx);
           if (!records) return { ok: false, errorCode: 'review_record_unavailable', error: 'review_record_unavailable' };
           const reviewRound = await records.start({ reviewId: globalThis.crypto.randomUUID(), title: 'Code review',
@@ -348,7 +381,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
               reviewedFingerprint: null, results: [] } };
           }
           const { buildReviewStepsWorkflowV1 } = await import('../../../workflows/builtins/reviewAndConverge.js');
-          const built = buildReviewStepsWorkflowV1(reviewInput, reviewRound, initialComparison, comparisonCapture?.input);
+          const built = buildReviewStepsWorkflowV1(reviewInput, reviewRound, initialComparison, comparisonCapture?.input, transcript?.ok ? transcript.instructions : undefined);
           const started = await executeHostChild('workflow.run.start', { runId: globalThis.crypto.randomUUID(),
             source: { kind: 'inline', definition: built.definition }, inputs: built.inputs }, ctx);
           if (!started.ok) {
@@ -432,20 +465,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           ...reviewIntentInput
         } = reviewInput;
         const intentInputBase = { ...reviewIntentInput, permissionMode };
-        const profileSelections = admittedEngineSelections.flatMap(({ selection, engineInput }) =>
-          engineInput.profileId ? [{
-            engineId: selection.engineId,
-            profileId: engineInput.profileId,
-            ...(engineInput.profileSourceCustody ? { profileSourceCustody: engineInput.profileSourceCustody } : {}),
-          }] : []);
-        const reviewEngineInventory = await deps.reviewEnginesList({
-          sessionId,
-          ...(detached && executionRunDispatchOpts?.targetMachineId
-            ? { machineId: executionRunDispatchOpts.targetMachineId } : {}),
-          includeDisabled: false,
-          ...(profileSelections.length > 0 ? { profileSelections } : {}),
-          scope: reviewScopeForInput(reviewInput),
-        }, ctx);
+        reviewEngineInventory ??= await readReviewEngineInventory(executionRunDispatchOpts);
         const narratorOptions = readReviewNarratorOptions(reviewEngineInventory);
         const explicitProfileOptions = readReviewNarratorOptions({ items: readRecord(reviewEngineInventory).selectionItems });
         const selectedReviewEngineItems = new Map(admittedEngineSelections.map(({ reviewerId, selection, engineInput }) => {
@@ -455,16 +475,6 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             && (!engineInput.profileId || option.profileId === engineInput.profileId));
           return [reviewerId, item] as const;
         }));
-        // Source access belongs to the existing transcript Action and caller;
-        // only the selected launches receive its transient evidence.
-        const transcriptRequested = engineSelections.some(({ selection }) => selection.includeSessionTranscript === true);
-        if (engineSelections.some(({ selection, reviewerId }) => selection.includeSessionTranscript === true
-          && selectedReviewEngineItems.get(reviewerId)?.capabilities.sessionTranscript !== true)) {
-          return { ok: false, errorCode: 'review_transcript_unsupported', error: 'review_transcript_unsupported' };
-        }
-        const transcript = transcriptRequested && reviewInput.sourceSession
-          ? await readReviewTranscriptEvidence(reviewInput.sourceSession, executeHostChild, ctx) : null;
-        if (transcript && !transcript.ok) return transcript;
         const narrationRequested = reviewInput.outputs?.includes('walkthrough') === true;
         const narrationPolicy = resolveReviewNarratorPolicy({
           selectedEngineIds: engineSelections.map(entry => entry.reviewerId),
@@ -506,7 +516,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           ...(comparisonCapture ? { comparisonCapture } : {}),
           reviewerIds: reviewReviewerIdsForStartV1(reviewInput), startedAt: Date.now(), signal: ctx.signal });
         const reviewGroupId = reviewRound.reviewId;
-        const { reviewTranscriptEvidence: _inheritedTranscript, ...reviewLaunchOptions } = executionRunDispatchOpts ?? {};
+        const reviewLaunchOptions = executionRunDispatchOpts;
         const results = await fanoutStarts({
           keys: engineSelections.map(entry => entry.reviewerId),
           recordActionOutputDiagnostic: deps.recordActionOutputDiagnostic,
@@ -535,7 +545,8 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
                   ? { notifyParentOnCompletion: reviewInput.notifyParentOnCompletion }
                   : {}),
                 backendTarget: normalizeExecutionBackendTargetValue(engineId),
-                instructions,
+                instructions: selection.includeSessionTranscript === true && transcript?.ok
+                  ? `${instructions}\n\n${transcript.instructions}` : instructions,
                 reviewOutputSelection: reviewInput.outputs ? { outputs: reviewInput.outputs, narrator } : null,
                 ...(engineInput.childSelection ? { childSelection: engineInput.childSelection }
                   : sessionId === null && engineInput.modelId === undefined && engineInput.modelSelection === undefined && !teamCredentialModel
@@ -584,8 +595,6 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
               },
               {
                 ...reviewLaunchOptions,
-                ...(selection.includeSessionTranscript === true && transcript?.ok
-                  ? { reviewTranscriptEvidence: transcript.evidence } : {}),
                 ...(ctx.agentStartWorkDepth !== undefined ? { workDepth: ctx.agentStartWorkDepth, agentStartContext: ctx.agentStartContext, workspaceWrites: ctx.agentStartWorkspaceWrites, sessionAgentSpawnPolicyV1: ctx.sessionAgentSpawnPolicyV1 } : {}),
               }, ctx,
             );

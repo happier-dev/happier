@@ -557,7 +557,6 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       }
       const started = await params.manager.start({
         ...runStartRequest,
-        ...(actionOptions?.reviewTranscriptEvidence ? { reviewTranscriptEvidence: actionOptions.reviewTranscriptEvidence } : {}),
         ...(parsed.data.intent === 'voice_agent' ? {
           actionInvocation: readAdmittedVoiceRunActionInvocation(actionOptions, actionId),
         } : {}),

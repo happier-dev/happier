@@ -188,7 +188,6 @@ export const ReviewProfile: ExecutionRunIntentProfile = bindScmExecutionRunProfi
       finishedAtMs,
       rawText,
       intentInput: start.intentInput,
-      reviewTranscriptEvidence: start.reviewTranscriptEvidence,
     }),
   // review.triage (a ReviewComment transition) and review.follow_up (a resumed run) are handled by
   // the execution-run runtime; the review's result is never rewritten by an action.

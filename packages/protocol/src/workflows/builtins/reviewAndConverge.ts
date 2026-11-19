@@ -14,7 +14,7 @@ import { document, input, literal, result } from './definitionParts.js';
 
 /** One admitted pass; the Review record and aggregate owners decide coverage and attention. */
 export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, reviewRound: ReviewRoundBindingV1,
-  comparison?: ScmComparison, comparisonCapture?: ScmComparisonCaptureInput): Readonly<{ definition: WorkflowDefinitionV1; inputs: Record<string, JsonValue> }> {
+  comparison?: ScmComparison, comparisonCapture?: ScmComparisonCaptureInput, transcriptInput?: string): Readonly<{ definition: WorkflowDefinitionV1; inputs: Record<string, JsonValue> }> {
   const inputs: Record<string, JsonValue> = {
     reviewInput: StrictJsonValueSchema.parse(reviewInput), reviewRound,
     previousRoundContext: null,
@@ -48,6 +48,9 @@ export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, review
       : `${stage.instructions}\nReview read-only. Return structured findings, including a complete empty result when no defects are found.`;
     const branches = stage.reviewers.flatMap<Extract<WorkflowBlock, { kind: 'parallel' }>['branches'][number]>((reviewer, reviewerIndex) => {
         if (reviewer.kind === 'person') return [];
+        const { includeSessionTranscript, ...participant } = reviewer;
+        const reviewerInstructions = includeSessionTranscript && transcriptInput
+          ? `${instructions}\n\n${transcriptInput}` : instructions;
         const reviewerId = reviewReviewerIdForSelectionV1(reviewerIndex, stepIndex);
         if (reviewer.kind === 'engine') {
           const references = [prepared, ...previous].map((_, index) => {
@@ -59,9 +62,9 @@ export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, review
             .filter(([, value]) => value !== undefined).map(([key, value]) => [key, literal(StrictJsonValueSchema.parse(value))]));
           return [{ id: `branch-${reviewerId}`, blocks: [{ kind: 'action' as const, id: reviewerId, name: 'Run the selected reviewer', actionId: 'review.start',
             ...(reviewer.roleId ? { execution: { roleId: reviewer.roleId } } : {}),
-            input: { ...bindings, reviewers: literal([StrictJsonValueSchema.parse(reviewer)]),
+            input: { ...bindings, reviewers: literal([StrictJsonValueSchema.parse(participant)]),
               instructions: { kind: 'text' as const,
-                document: { text: `${instructions}\n\n${references.map(reference => reference.token).join('\n\n')}`, references },
+                document: { text: `${reviewerInstructions}\n\n${references.map(reference => reference.token).join('\n\n')}`, references },
                 input: [prepared, ...previous] },
               permissionMode: literal('read_only'),
               reviewRound: round, reviewReviewerId: literal(reviewerId), reviewRoundSettlement: literal('workflow'),
@@ -71,10 +74,10 @@ export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, review
         }
         const participantName = `reviewer_${stepIndex + 1}_${reviewerIndex + 1}`;
         inputs[participantName] = StrictJsonValueSchema.parse(reviewer.kind === 'model'
-          ? { ...reviewer, launch: { ...reviewer.launch, permissionMode: 'read-only' } } : reviewer);
+          ? { ...participant, launch: { ...reviewer.launch, permissionMode: 'read-only' } } : participant);
         declarations.push({ name: participantName, valueType: 'json', required: true, inputType: { hostType: 'agentParticipant' } });
         return [{ id: `branch-${reviewerId}`, blocks: [{ kind: 'step' as const, id: reviewerId, name: 'Review with the selected participant',
-          document: document(instructions), execution: { participant: { kind: 'input' as const, name: participantName }, permissionMode: 'read-only' as const },
+          document: document(reviewerInstructions), execution: { participant: { kind: 'input' as const, name: participantName }, permissionMode: 'read-only' as const },
           input: [prepared, literal({ kind: 'review_session.v1', reviewerId }), ...previous], result: { kind: 'json' as const, schema: terminalSchema },
         }] }];
       });

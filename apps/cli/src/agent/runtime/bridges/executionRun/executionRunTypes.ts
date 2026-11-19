@@ -43,8 +43,6 @@ export type ExecutionRunNativeOfferedModelReader = (request: Readonly<{
 }>, signal?: AbortSignal) => Promise<AgentProbeModel | undefined>;
 
 export type ExecutionRunManagerStartParams = Readonly<{
-  /** Admission-only source evidence; excluded from Happier persistence. */
-  reviewTranscriptEvidence?: import('@happier-dev/protocol/reviews/reviewStart').ReviewTranscriptEvidence;
   /** Original nonsecret Review output choice, independent of the reviewer's own input. */
   reviewOutputSelection?: import('@happier-dev/protocol/reviews/reviewNarration').ReviewOutputSelection | null;
   /** Existing Account Voice invocation admitted by the signed Action front door; live only. */
@@ -219,8 +217,6 @@ export type ExecutionRunState = Readonly<{
   backendId: string;
   instructions: string;
   intentInput?: unknown;
-  /** Transient source evidence, never retained with Run state. */
-  reviewTranscriptEvidence?: ExecutionRunManagerStartParams['reviewTranscriptEvidence'];
   display?: ExecutionRunDisplay;
   permissionMode: string;
   approvalProfileId?: string | null;

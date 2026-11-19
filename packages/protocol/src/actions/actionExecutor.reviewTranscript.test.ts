@@ -15,12 +15,13 @@ const engine = (engineId: string) => ({ value: engineId, engineId, label: engine
   capabilities: { structuredNarration: true, sessionTranscript: true } });
 
 describe('review.start selected source transcript', () => {
-  it('defers source admission to concrete reviewer leaves of a mixed Workflow', async () => {
+
+  it('reads once at admission and supplies ordinary input to engine and Session Workflow reviewers', async () => {
     let reads = 0;
     let request: unknown;
     const executor = createActionExecutor({
-      sessionTranscriptGet: async () => { reads++; throw new Error('Only the concrete reviewer reads the source'); },
-      reviewEnginesList: async () => { throw new Error('Only the concrete reviewer resolves its engine'); },
+      sessionTranscriptGet: async ({ sessionId }) => { reads++; return { ok: true, sessionId, items: [{ id: 'm1', createdAt: 1, semanticRole: 'assistant', role: 'assistant', kind: 'text', text: 'The test command was skipped.' }], nextCursor: null, hasMore: false, diagnostics: { rawRowsScanned: 1, pagesFetched: 1, scanLimitReached: false, payloadTruncations: 0 } }; },
+      reviewEnginesList: async () => ({ items: [engine('codex')] }),
       workflowAction: async invocation => {
         if (invocation.actionId !== 'workflow.run.start') throw new Error('Unexpected Workflow operation');
         request = invocation.input;
@@ -29,20 +30,20 @@ describe('review.start selected source transcript', () => {
     });
     const reviewer = { kind: 'engine', engineId: 'codex', includeSessionTranscript: true };
     const sourceSession = { serverId: 'home', sessionId: 'source' };
-    expect(await executor.execute('review.start', { sessionId: 'review-session', instructions: 'Review.',
-      sourceSession, reviewers: [reviewer, { kind: 'session', session: { serverId: 'home', sessionId: 'other-reviewer' } }] },
+    expect(await executor.execute('review.start', { sessionId: 'review-session', scope: 'repository', instructions: 'Review.',
+      sourceSession, reviewers: [reviewer, { kind: 'session', session: { serverId: 'home', sessionId: 'other-reviewer' }, includeSessionTranscript: true }] },
     { surface: 'ui', serverId: 'home' })).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
-    expect(reads).toBe(0);
+    expect(reads).toBe(1);
     const admitted = WorkflowRunStartRequestV1Schema.parse(request);
     if (admitted.source.kind !== 'inline') throw new Error('Expected an inline Review Workflow');
     const stage = admitted.source.definition.blocks.find(block => block.kind === 'parallel');
     if (stage?.kind !== 'parallel') throw new Error('Expected the mixed Review stage');
-    expect(stage.branches[0]?.blocks[0]).toMatchObject({ kind: 'action', actionId: 'review.start', input: {
-      reviewers: { kind: 'literal', value: [reviewer] }, sourceSession: { kind: 'literal', value: sourceSession },
-    } });
+    expect(JSON.stringify(stage.branches[0])).toContain('The test command was skipped.');
+    expect(JSON.stringify(stage.branches[1])).toContain('The test command was skipped.');
+    expect(JSON.stringify(stage.branches[0])).not.toContain('includeSessionTranscript');
   });
 
-  it('reads no source by default and keeps selected source evidence outside the Run input', async () => {
+  it('reads no source by default and delivers selected source as ordinary Run instructions', async () => {
     const starts: Array<{ input: unknown; options: unknown }> = [];
     let reads = 0;
     const executor = createActionExecutor({
@@ -70,11 +71,9 @@ describe('review.start selected source transcript', () => {
     ] },
       { surface: 'ui', serverId: 'home' })).toMatchObject({ ok: true });
     expect(reads).toBe(2);
-    expect(starts[1]?.options).toMatchObject({ reviewTranscriptEvidence: { coverage: 'complete',
-      sourceSession: input.sourceSession, items: [{ text: 'All tests passed.' }, { text: 'The test command was skipped.' }] } });
-    expect(JSON.stringify(starts[1]?.input)).not.toContain('All tests passed.');
+    expect(starts[1]?.input).toMatchObject({ instructions: expect.stringContaining('All tests passed.') });
+    expect(starts[2]?.input).toMatchObject({ instructions: expect.stringContaining('The test command was skipped.') });
     expect(starts).toHaveLength(3);
-    expect(starts[2]?.options).toMatchObject({ reviewTranscriptEvidence: { coverage: 'complete' } });
   });
 
   it('returns the source reader denial without starting a reviewer', async () => {
@@ -91,43 +90,61 @@ describe('review.start selected source transcript', () => {
     expect(starts).toBe(0);
   });
 
-  it('refuses an explicitly selected profile that cannot consume transcript input before reading the source', async () => {
+  it.each(['direct', 'mixed', 'steps'] as const)('refuses an unsupported transcript profile at %s admission before reading the source', async route => {
     let reads = 0;
     let starts = 0;
+    let workflowStarts = 0;
+    let supportsTranscript = true;
     const profileSourceCustody = { kind: 'managed', immutableGenerationId: 'native-cli-review', installSource: 'archive' } as const;
     const executor = createActionExecutor({
       reviewEnginesList: async () => ({
-        items: [{ value: 'codex', engineId: 'codex', label: 'Codex', enabled: true, profileId: 'generic-review',
-          capabilities: { structuredNarration: true, sessionTranscript: true } }],
-        selectionItems: [{ value: 'codex', engineId: 'codex', label: 'Native CLI review', enabled: true, profileId: 'native-cli-review',
-          capabilities: { structuredNarration: false, sessionTranscript: false } }],
+        items: [{ ...engine('codex'), profileId: 'generic-review' }],
+        selectionItems: [{ ...engine('codex'), label: 'Native CLI review', profileId: 'native-cli-review',
+          capabilities: { structuredNarration: false, sessionTranscript: supportsTranscript } }],
       }),
-      sessionTranscriptGet: async () => { reads++; return {}; },
+      sessionTranscriptGet: async ({ sessionId }) => { reads++; return { ok: true, sessionId, items: [],
+        nextCursor: null, hasMore: false,
+        diagnostics: { rawRowsScanned: 0, pagesFetched: 1, scanLimitReached: false, payloadTruncations: 0 } }; },
       executionRunStart: async () => { starts++; return { runId: 'run' }; },
-    } as ActionExecutorDeps);
-    expect(await executor.execute('review.start', { sessionId: 'review-session', reviewRound,
-      reviewers: [{ kind: 'engine', engineId: 'codex', profileId: 'native-cli-review', profileSourceCustody, includeSessionTranscript: true }],
-      instructions: 'Review.', sourceSession: { serverId: 'home', sessionId: 'source' } },
-    { surface: 'ui', serverId: 'home' })).toMatchObject({ ok: false, errorCode: 'review_transcript_unsupported' });
+      workflowAction: async () => { workflowStarts++; return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' }; },
+    });
+    const reviewer = { kind: 'engine', engineId: 'codex', profileId: 'native-cli-review', profileSourceCustody, includeSessionTranscript: true } as const;
+    const session = { kind: 'session', session: { serverId: 'home', sessionId: 'other-reviewer' } } as const;
+    const input = { sessionId: 'review-session', scope: 'repository', instructions: 'Review.',
+      sourceSession: { serverId: 'home', sessionId: 'source' },
+      reviewers: route === 'mixed' ? [reviewer, session] : [reviewer],
+      ...(route === 'direct' ? { reviewRound } : route === 'steps'
+        ? { steps: [{ kind: 'review', reviewers: [reviewer], instructions: 'Review.' }] } : {}),
+    };
+    expect(await executor.execute('review.start', input, { surface: 'ui', serverId: 'home' }))
+      .toMatchObject(route === 'direct' ? { ok: true } : { ok: false, errorCode: 'content_unavailable' });
+    expect(reads).toBe(1);
+    expect(starts + workflowStarts).toBe(1);
+    supportsTranscript = false;
+    reads = 0;
+    starts = 0;
+    workflowStarts = 0;
+    expect(await executor.execute('review.start', input, { surface: 'ui', serverId: 'home' }))
+      .toMatchObject({ ok: false, errorCode: 'review_transcript_unsupported' });
     expect(reads).toBe(0);
-    expect(starts).toBe(0);
+    expect(starts + workflowStarts).toBe(0);
   });
 
   it('preserves incomplete reader coverage instead of silently claiming a full source', async () => {
-    let evidence: unknown;
+    let instructions: unknown;
     const executor = createActionExecutor({
       reviewEnginesList: async () => ({ items: [engine('codex')] }),
       sessionTranscriptGet: async ({ sessionId }) => ({ ok: true, sessionId,
         items: [{ id: 'm1', createdAt: 1, semanticRole: 'assistant', role: 'assistant', kind: 'text', text: 'Truncated', truncated: true }],
         hasMore: false, nextCursor: null,
         diagnostics: { rawRowsScanned: 1, pagesFetched: 1, scanLimitReached: true, payloadTruncations: 1 } }),
-      executionRunStart: async (_sessionId, _input, options) => { evidence = options; return { runId: 'run' }; },
+      executionRunStart: async (_sessionId, input) => { instructions = input.instructions; return { runId: 'run' }; },
     } as ActionExecutorDeps);
     expect(await executor.execute('review.start', { sessionId: 'review-session', reviewRound,
       reviewers: [{ kind: 'engine', engineId: 'codex', includeSessionTranscript: true }], instructions: 'Review.',
       sourceSession: { serverId: 'home', sessionId: 'source' } },
     { surface: 'ui', serverId: 'home' })).toMatchObject({ ok: true });
-    expect(evidence).toMatchObject({ reviewTranscriptEvidence: { coverage: 'partial' } });
+    expect(instructions).toEqual(expect.stringContaining('partial'));
   });
 
   it('reads once for a mixed roster and supplies evidence only to the selected reviewer', async () => {
@@ -151,12 +168,7 @@ describe('review.start selected source transcript', () => {
       sourceSession: { serverId: 'home', sessionId: 'source' } },
     { surface: 'ui', serverId: 'home' })).toMatchObject({ ok: true });
     expect(reads).toBe(1);
-    expect(starts).toEqual(expect.arrayContaining([
-      { input: expect.objectContaining({ intentInput: expect.objectContaining({ engineId: 'codex' }) }),
-        options: expect.objectContaining({ reviewTranscriptEvidence: { sourceSession: { serverId: 'home', sessionId: 'source' },
-          items: [], coverage: 'complete' } }) },
-      { input: expect.objectContaining({ intentInput: expect.objectContaining({ engineId: 'claude' }) }),
-        options: expect.not.objectContaining({ reviewTranscriptEvidence: expect.anything() }) },
-    ]));
+    expect(starts[0]?.input).toMatchObject({ instructions: expect.stringContaining('Session transcript') });
+    expect(starts[1]?.input).toMatchObject({ instructions: 'Review.' });
   });
 });

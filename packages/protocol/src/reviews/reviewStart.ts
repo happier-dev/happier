@@ -16,18 +16,10 @@ import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { defineProtocolJsonValue } from '../plugins/actions/protocolComposableSchema.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionSessionAddressV1Schema } from '../actions/sessionAddressV1.js';
-import type { SessionTranscriptGetItem } from '../actions/specs/session/transcript.js';
 import { ExecutableSessionParticipantSelectionV1Schema, ExecutableModelParticipantSelectionV1Schema } from '../discussions/executableParticipants.js';
 import { ReviewRequestedReviewerInputV1Schema } from './reviewHumanV1.js';
 import { ReviewRoundBindingV1Schema } from './reviewArtifactV1.js';
 import type { ScmDiffArea } from '../scm/workingSnapshot.js';
-
-/** Admitted source evidence carried only by the host's live launch context. */
-export type ReviewTranscriptEvidence = Readonly<{
-  sourceSession: z.infer<typeof ActionSessionAddressV1Schema>;
-  coverage: 'complete' | 'partial';
-  items: readonly SessionTranscriptGetItem[];
-}>;
 
 /**
  * Canonical, cross-surface input contract for starting reviews.
@@ -106,8 +98,8 @@ export type ReviewEngineReviewerSelectionV1 = z.infer<typeof ReviewEngineReviewe
 // Every reviewer crosses Action JSON transport, including additive native launch metadata.
 export const ReviewReviewerSelectionV1Schema = lazyZodSchema(() => asProtocolZod(projectZodProtocolSchema(z.discriminatedUnion('kind', [
   ReviewEngineReviewerSelectionV1Schema,
-  ExecutableSessionParticipantSelectionV1Schema,
-  ExecutableModelParticipantSelectionV1Schema,
+  z.extend(ExecutableSessionParticipantSelectionV1Schema, { includeSessionTranscript: z.optional(z.boolean()) }),
+  z.extend(ExecutableModelParticipantSelectionV1Schema, { includeSessionTranscript: z.optional(z.boolean()) }),
   z.strictObject({ kind: z.literal('person'), ...ReviewRequestedReviewerInputV1Schema.shape }),
 ]))));
 export type ReviewReviewerSelectionV1 = z.infer<typeof ReviewReviewerSelectionV1Schema>;
@@ -220,7 +212,7 @@ export const ReviewStartInputFieldsSchema = lazyZodSchema(() => z.looseObject({
       ctx.addIssue({ code: 'custom', path: ['scope'], message: 'Repository reviews cannot be restricted to selected files, a captured comparison or pull request' });
     }
     if (!value.sourceSession && [...value.reviewers, ...(value.steps?.flatMap(step => step.reviewers) ?? [])]
-      .some(reviewer => reviewer.kind === 'engine' && reviewer.includeSessionTranscript === true)) {
+      .some(reviewer => reviewer.kind !== 'person' && reviewer.includeSessionTranscript === true)) {
       ctx.addIssue({ code: 'custom', path: ['sourceSession'], message: 'Selected transcript requires an explicit source Session and Home' });
     }
     if (value.target && value.sessionId !== undefined) {

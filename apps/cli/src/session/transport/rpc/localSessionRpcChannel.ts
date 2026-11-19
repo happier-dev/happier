@@ -63,7 +63,7 @@ type LocalCallerAuthority = 'present_user' | 'account_automation';
 export type LocalSessionRpcActionContext = Readonly<Pick<RpcLocalActionContext,
   'surface' | 'authority' | 'actionCaller' | 'actionRequestId' | 'callerPermissionMode' | 'causalPermissionAuthority'
   | 'agentStartContext' | 'agentStartWorkDepth' | 'agentStartWorkspaceWrites' | 'sessionAgentSpawnPolicyV1'
-  | 'executionRunWorkflowRunId' | 'executionRunWorkflowScope' | 'executionRunReviewTranscriptEvidence' | 'requesterWorkAttributionV1'>>;
+  | 'executionRunWorkflowRunId' | 'executionRunWorkflowScope' | 'requesterWorkAttributionV1'>>;
 const LOCAL_ROUTE_CREDENTIAL_KINDS: ReadonlySet<AuthTokenKind> = new Set(['account', 'account_directory', 'terminal']);
 
 type LocalSessionRpcDescriptorV1 = Readonly<{

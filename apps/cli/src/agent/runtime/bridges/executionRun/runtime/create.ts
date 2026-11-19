@@ -444,13 +444,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     throw error;
                 }
             }
-            const transcriptEvidence = opts.start?.reviewTranscriptEvidence;
-            const diagnosticValues = [
-                ...Object.values(secretReferenceEnvironment),
-                ...(transcriptEvidence ? [JSON.stringify(transcriptEvidence),
-                    ...transcriptEvidence.items.flatMap(item => [item.text, item.summary]
-                        .filter((value): value is string => typeof value === 'string' && value.length > 0))] : []),
-            ];
+            const diagnosticValues = Object.values(secretReferenceEnvironment);
             if (diagnosticValues.length > 0) {
                 secretReferenceRedaction = createProviderRedactionLease({
                     values: diagnosticValues,

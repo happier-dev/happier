@@ -766,7 +766,6 @@ async function startAdmittedExecutionRunInWorkspace(
       backendTarget: args.params.backendTarget,
       backendId,
       instructions: args.params.instructions ?? '',
-      ...(args.params.reviewTranscriptEvidence ? { reviewTranscriptEvidence: args.params.reviewTranscriptEvidence } : {}),
       ...(typeof args.params.intentInput !== 'undefined' ? { intentInput: args.params.intentInput } : {}),
       ...(args.params.display ? { display: args.params.display } : {}),
       permissionMode: args.params.permissionMode,
@@ -868,7 +867,6 @@ async function startAdmittedExecutionRunInWorkspace(
           : {}),
         start: backendStartContext = {
           ...startParams,
-          ...(args.params.reviewTranscriptEvidence ? { reviewTranscriptEvidence: args.params.reviewTranscriptEvidence } : {}),
           profileId: profileId ?? undefined,
           ...(startProfileSourceCustody
             ? { profileSourceCustody: startProfileSourceCustody }
