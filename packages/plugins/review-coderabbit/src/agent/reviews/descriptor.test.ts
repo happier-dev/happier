@@ -14,7 +14,7 @@ describe('CodeRabbit review descriptor', () => {
     const backend = PLUGIN_MANIFEST.contributes.agents[0];
     expect(backend?.id).toBe('coderabbit');
     expect(backend?.primary).toBe('executionRuns');
-    expect(backend?.capabilities.executionRuns).toEqual({ open: ['create'], checkpoint: false, stop: true });
+    expect(backend?.capabilities.executionRuns).toEqual({ open: ['create'], checkpoint: false, stop: true, workspaceWrites: 'deny' });
   });
 
   it('projects a review-only execution run profile', () => {
