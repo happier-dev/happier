@@ -18,6 +18,7 @@ import { readCliAccessKeyForServerId, type CliAccessKey } from '../cliAccessKey'
 import { daemonControlPostJson } from '../daemon/controlServerClient';
 import { buildCredentialsAuthBootstrapStorageSnapshot } from '../uiE2e/buildAuthBootstrapStorageSnapshot';
 import { fetchJson } from '../http';
+import { resolveCliTestLaunchSpec } from '../process/cliLaunchSpec';
 import type { AuthBootstrapStorageSnapshot } from '../uiE2e/readLegacyAuthSecretFromLocalStorage';
 import {
   applyTrustedLocalPluginFixture,
@@ -1301,13 +1302,19 @@ export async function buildCurrentSourcePublicPluginFixture(root: string): Promi
   // dependency preparation, declaration/manifest emission, daemon bundling,
   // and UI artifacts. The QA harness intentionally does not reproduce any of
   // those responsibilities or manufacture an archive-shaped candidate.
-  await execFileAsync(process.execPath, [
-    join(REPOSITORY_ROOT, 'apps/cli/bin/happier.mjs'),
-    'plugins',
-    'dev',
-    'build',
-    root,
-  ], { cwd: REPOSITORY_ROOT, maxBuffer: 32 * 1024 * 1024 });
+  const launch = await resolveCliTestLaunchSpec(
+    { testDir: dirname(root), env: process.env },
+    { repoRoot: REPOSITORY_ROOT, snapshotDir: join(dirname(root), 'cli-public-plugin-build') },
+  );
+  try {
+    await execFileAsync(launch.command, [...launch.args, 'plugins', 'dev', 'build', root], {
+      cwd: launch.cwd ?? REPOSITORY_ROOT,
+      env: { ...process.env, ...launch.env },
+      maxBuffer: 32 * 1024 * 1024,
+    });
+  } finally {
+    await launch.cleanup?.();
+  }
 }
 
 async function attestCurrentManagedStackFixtureArtifact(params: Readonly<{
