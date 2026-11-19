@@ -2,6 +2,7 @@
 import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { ComposerSnapshotV1Schema } from '@happier-dev/plugin-sdk/ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -191,6 +192,22 @@ describe('the Triage entries compact control', () => {
 
         // One, not two: another plugin's attachment lives in the same snapshot.
         await expect(control.getByText('Mine')).resolves.toEqual({ content: 'Mine' });
+    });
+
+    it('updates the mounted compact label when the host removes the attachment outside the picker', async () => {
+        const control = await mountControl({
+            attachments: [attachmentView({ instanceId: 'a1', label: 'Attached pull request', entryId: '42' })],
+        });
+        await expect(control.getByText('Attached pull request')).resolves.toBeDefined();
+
+        await act(async () => {
+            control.emitComposerSnapshot(SESSION_COMPOSER, ComposerSnapshotV1Schema.parse({
+                ...snapshot([]), revision: 4,
+            }));
+        });
+
+        await expect(control.getByText('PRs & Issues')).resolves.toBeDefined();
+        await expect(control.queryByText('Attached pull request')).resolves.toBeUndefined();
     });
 
     it('falls back to the plain title when the composer cannot be read', async () => {
