@@ -299,6 +299,25 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
+  it('starts the replacement workbench at the location delivered with its host binding', async () => {
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'page-location', mountNonce: 'page-location' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: context => renderPage({ ...context, hostApi: { ...context.hostApi } }),
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'overview',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([descriptor]) },
+    });
+    try {
+      await settle(20);
+      expect(await fixture.getByText('invoices')).toBeTruthy();
+      await fixture.updatePageLocation('data/public/invoices');
+      await settle(20);
+      expect(await fixture.getByText('48212')).toBeTruthy();
+    } finally { await fixture.dispose(); }
+  });
+
   it('keeps reference navigation beside an editable text foreign-key cell', async () => {
     const replacePageLocation = vi.fn(async ({ subPath }: { subPath: string }) => subPath);
     const fixture = await createPluginUiTestkit({

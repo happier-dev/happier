@@ -122,8 +122,8 @@ function WorkbenchPage(context: RenderContext) {
             fkTrail: [],
           }
         : null,
-    [targetKey],
-  ); // eslint-disable-line react-hooks/exhaustive-deps
+    [targetKey, context.subPath],
+  );
   const options = React.useMemo(() => ({ pageLocation: true }), []);
   const instance = useWorkbenchMount(context, launch, initial, options);
   if (!instance || !targetKey || !launch) {
