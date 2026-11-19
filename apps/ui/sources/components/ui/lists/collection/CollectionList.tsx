@@ -669,8 +669,10 @@ const CollectionColumnRow = React.memo(function CollectionColumnRow(props: Colle
         ? { unopened: !props.selected, visible: true } : null, [needsYou, props.selected]);
     // A disclosure's count speaks for rows it hides: while it is open its rows are listed and the count says
     // nothing more, so the end column keeps only what the row adds ("+", a state) (owner 11-01).
+    // A state that needs the person is the reason to look at the row: the count gives way to it, while the name keeps
+    // its width and the disclosure its place (UI refinements ruling 2026-11-19, the Services column at 300 px).
     const hasCount = props.count !== undefined && props.count !== null && props.count !== ''
-        && !(props.disclosure && props.disclosure.expanded);
+        && !(props.disclosure && props.disclosure.expanded) && !(needsYou && props.status);
     const count = hasCount ? <Text style={styles.trailingCount}>{String(props.count)}</Text> : null;
     // The name tells rows apart (UI refinements 2026-11-16): a state in the row's end is its compact status, the tone
     // dot alone with its words as its accessible name, so the title keeps the row's width.

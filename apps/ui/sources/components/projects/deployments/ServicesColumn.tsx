@@ -40,7 +40,7 @@ import { buildDeploymentEnvironmentHref, buildDeploymentProjectHref, SERVICES_RO
 import { useDeploymentInventory } from './useDeploymentProject';
 import { useServicesListView, useServicesSpaceHeader } from './useServicesListView';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { DeploymentEnvironmentRowMenu, DeploymentEnvironmentStateMark, DeploymentTreeRow } from './rows/DeploymentEnvironmentRow';
+import { DeploymentEnvironmentRowMenu, DeploymentEnvironmentStateMark, DeploymentTreeRow, deploymentRowStateNeedsYou } from './rows/DeploymentEnvironmentRow';
 import { usePinnedEnvironmentIds } from '@/sync/domains/workspaces/projectAccountRows';
 import { setServicesColumnGrouping, useServicesColumnGrouping, type ServicesColumnGrouping } from '@/sync/domains/state/servicesColumnUiState';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -529,6 +529,8 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
                 icon={<Icon name="folder" />}
                 status={trouble ? <DeploymentEnvironmentStateMark state={trouble}
                   testID={`services-column:project:${group.key}:end`} /> : undefined}
+                // Folded, the Project's state asks for the person as its Environment's row does, so its count gives way.
+                needsYou={deploymentRowStateNeedsYou(trouble)}
                 treeItem={treeItemOf(`project:${group.key}`)}
                 count={open ? null : group.rows.length}
                 disclosure={{

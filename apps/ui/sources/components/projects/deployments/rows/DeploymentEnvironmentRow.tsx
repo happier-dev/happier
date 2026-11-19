@@ -35,6 +35,11 @@ export type DeploymentRowState = DeploymentEnvironmentState | Readonly<{ tone: H
 /** The tones that ask for the person: the row keeps the shared needs-you treatment while its state has one. */
 const NEEDS_YOU_TONES: ReadonlySet<string> = new Set<HappierTone>(['danger', 'warning', 'attention']);
 
+/** Whether a tree row's state asks for the person (a toned state, not a working deploy): every deploy tree row asks here. */
+export function deploymentRowStateNeedsYou(state: DeploymentRowState | null | undefined): boolean {
+  return state?.tone ? NEEDS_YOU_TONES.has(state.tone) : false;
+}
+
 /**
  * The one Environment state mark (UI refinements ruling 2026-11-15 08:57Z): plugin-ui `Status` inline, its dot and word
  * in the state's tone, pulsing while a deploy works. Every Environment row draws its state through here: the Services
@@ -193,7 +198,7 @@ export const DeploymentTreeRow = React.memo(function DeploymentTreeRow(
         )
       }
       // While it needs the person (a toned state, not a working deploy) the row keeps the shared needs-you treatment.
-      needsYou={row.state?.tone ? NEEDS_YOU_TONES.has(row.state.tone) : false}
+      needsYou={deploymentRowStateNeedsYou(row.state)}
       status={
         <DeploymentEnvironmentRowEnd
           state={row.state ?? null}
