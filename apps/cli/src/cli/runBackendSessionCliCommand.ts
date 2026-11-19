@@ -995,7 +995,7 @@ Provider CLI Options:
         });
       }
 
-      const { mergeSessionTeamCredentialBindingIntents } = await import('@/session/services/spawnConnectedServicesDefaults');
+      const { mergeSessionTeamCredentialBindingIntents } = await import('@happier-dev/protocol/teams/credentials/sessionBindingIntentV1');
       const sessionRuntimeParams = {
         credentials,
         directory,

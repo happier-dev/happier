@@ -23,7 +23,8 @@ import { tryNormalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/act
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { SessionPlacementSelectionV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import type { ConnectedServiceBindingsV2, SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol';
-import { materializeSessionSpawnConnectedServicesDefaults, mergeSessionTeamCredentialBindingIntents, readAgentPurposeDefaults, type ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
+import { mergeSessionTeamCredentialBindingIntents } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
+import { materializeSessionSpawnConnectedServicesDefaults, readAgentPurposeDefaults, type ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
 import { readSessionSpawnModelChoice } from './readSessionSpawnModelChoice';
 import { readSessionSpawnMemberDefaults } from './readSessionSpawnMemberDefaults';
 

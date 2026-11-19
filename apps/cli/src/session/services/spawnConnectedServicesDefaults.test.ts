@@ -14,9 +14,9 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { teamCredentialDisplayNamePrivateLabelBindingV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { mergeSessionTeamCredentialBindingIntents } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import {
   createSpawnConnectedServicesTeamResourceCatalogResolver,
-  mergeSessionTeamCredentialBindingIntents,
   resolvePurposeTeamCredentialBindingIntents,
   resolvePurposeTeamCredentialBindingIntentsFromHome,
   resolveSpawnConnectedServicesDefaultDisposition,

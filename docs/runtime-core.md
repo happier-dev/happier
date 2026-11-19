@@ -1832,7 +1832,10 @@ changing the Session's chosen permission mode. Its prompt introduces the Bot
 and offers the optional first task; it does not execute that task. A content
 failure retains the committed Session and known resource IDs and prevents launch.
 The browser birth adapter retains ordinary initial access, manager, primary Team,
-Team credential bindings and organization placement. Direct-recipient E2EE
+Team credential bindings and organization placement. Browser birth uses the same
+projection and merge as CLI creation to send the reviewed Team model as a Session
+binding intent. Home checks the recipient's entitlement and the reviewed resource
+revision at creation. The runner uses the binding accepted by Home. Direct-recipient E2EE
 envelopes use the actual new Session key during creation; collective envelope
 preparation uses the existing served Session key before the content continuation
 and first Pending input.

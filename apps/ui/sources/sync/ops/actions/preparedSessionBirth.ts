@@ -12,7 +12,8 @@ import { SessionPendingEnqueueByMachineResponseV1Schema, SessionPendingTemplateO
 import { serializeSessionInputRequestEqualityIntentV1, SESSION_INPUT_REQUEST_META_KEY,
     SESSION_MESSAGE_PROVENANCE_META_KEY } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
-import { readAuthoredSessionModelSelection } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
+import { sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
+import { mergeSessionTeamCredentialBindingIntents, readAuthoredSessionModelSelection } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { createSessionCreateOrLoad } from '@/sync/domains/session/hostedSystemSession';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
@@ -37,6 +38,13 @@ export async function createUiPreparedSessionBirthV1(
     const { accountMode, encryption } = await account.resolveAccountEncryption(args.signal);
     account.assertCurrent();
     const modelSelection = readAuthoredSessionModelSelection(input) ?? undefined;
+    const modelBinding = modelSelection?.v === 2 && modelSelection.ref.source === 'team_resource'
+        ? sessionModelSelectionV2TeamBindingIntent(modelSelection)
+        : undefined;
+    const teamCredentialBindings = mergeSessionTeamCredentialBindingIntents({
+        explicit: input.teamCredentialBindings,
+        admitted: modelBinding ? [modelBinding] : undefined,
+    });
     const correspondence = buildSessionCreationCorrespondence({ identity: { sessionCreationTag: args.sessionCreationTag }, recipe: {
         execution: { machineId: input.executionTarget.machineId, directory: input.directory },
         organization: normalizeSessionCreationOrganizationPlacementV1(input.organizationPlacement),
@@ -58,7 +66,7 @@ export async function createUiPreparedSessionBirthV1(
         modelSelection, connectedServices: input.connectedServices,
         capabilitySelection: input.capabilitySelection, allowedTools: input.allowedTools,
         unlistedTools: input.unlistedTools, workspaceWrites: args.context?.workspaceWrites,
-        authoringOrigin: input.authoringOrigin, teamCredentialBindings: input.teamCredentialBindings,
+        authoringOrigin: input.authoringOrigin, teamCredentialBindings,
     }, ...(input.directory.kind === 'path' ? { directory: input.directory.path } : {}),
         agentModeId: input.agentModeId, accountSettings,
         materializationIdentity: generateConnectedServiceMaterializationIdentityV1({ randomBytes }) });
@@ -67,7 +75,7 @@ export async function createUiPreparedSessionBirthV1(
             const created = await createSessionCreateOrLoad({ credentials: account.credentials, accountMode, encryption,
                 tag: correspondence.sessionCreationTag, metadata, randomBytes,
                 organizationPlacement: correspondence.recipe.organization, initialAccess: input.initialAccess,
-                primaryTeamId: input.primaryTeamId, teamCredentialBindings: input.teamCredentialBindings,
+                primaryTeamId: input.primaryTeamId, teamCredentialBindings,
                 manager: input.manager,
                 request: (path, init) => account.request(path, { ...init, signal: args.signal }),
                 assertCurrent: account.assertCurrent,

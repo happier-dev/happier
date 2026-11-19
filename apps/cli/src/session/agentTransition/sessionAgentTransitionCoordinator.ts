@@ -45,8 +45,8 @@ import {
   ConnectedServicesDefaultUnavailableError,
   createCredentialsSpawnConnectedServicesTeamResourceCatalogResolver,
   resolveSessionSpawnConnectedServicesDefaultsPayload,
-  mergeSessionTeamCredentialBindingIntents,
 } from '@/session/services/spawnConnectedServicesDefaults';
+import { mergeSessionTeamCredentialBindingIntents } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
 import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 import { requestSessionStop } from '@/session/services/requestSessionStop';

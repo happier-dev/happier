@@ -92,6 +92,30 @@ export const SessionTeamCredentialBindingIntentsV1Schema = lazyZodSchema(() => z
 
 export type SessionTeamCredentialBindingIntentListV1 = z.infer<typeof SessionTeamCredentialBindingIntentsV1Schema>;
 
+/**
+ * A Session's creation-time Team slot bindings: an explicit binding the
+ * caller chose for a slot wins; admitted durable defaults fill the others.
+ */
+export function mergeSessionTeamCredentialBindingIntents(params: Readonly<{
+  explicit: SessionTeamCredentialBindingIntentListV1 | undefined;
+  admitted: SessionTeamCredentialBindingIntentListV1 | null | undefined;
+}>): SessionTeamCredentialBindingIntentListV1 | undefined {
+  if (!params.admitted || params.admitted.length === 0) return params.explicit;
+  const explicitSlotKeys = new Set(
+    (params.explicit ?? []).map((intent) => sessionTeamCredentialSlotKeyV1(intent.slot)),
+  );
+  return SessionTeamCredentialBindingIntentsV1Schema.parse([
+    ...(params.explicit ?? []).map(intent => {
+      if (intent.resourceId === null || intent.teamId !== undefined) return intent;
+      const admitted = params.admitted?.find(candidate => candidate.resourceId === intent.resourceId
+        && candidate.resourceId !== null && candidate.deliveryMode === intent.deliveryMode
+        && sessionTeamCredentialSlotKeyV1(candidate.slot) === sessionTeamCredentialSlotKeyV1(intent.slot));
+      return admitted?.resourceId && admitted.teamId ? { ...intent, teamId: admitted.teamId } : intent;
+    }),
+    ...params.admitted.filter((intent) => !explicitSlotKeys.has(sessionTeamCredentialSlotKeyV1(intent.slot))),
+  ]);
+}
+
 export function encodeSessionTeamCredentialSlotKeyV1(slot: SessionTeamCredentialSlotV1): Uint8Array {
   return new TextEncoder().encode(sessionTeamCredentialSlotKeyV1(slot));
 }

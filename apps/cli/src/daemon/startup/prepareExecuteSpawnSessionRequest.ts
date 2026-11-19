@@ -38,9 +38,9 @@ import { readAgentDefaultModelSelectionV1 } from '@happier-dev/protocol/provider
 import {
     ConnectedServicesDefaultUnavailableError,
     createCredentialsSpawnConnectedServicesTeamResourceCatalogResolver,
-    mergeSessionTeamCredentialBindingIntents,
     resolveSessionSpawnConnectedServicesDefaultsPayload,
 } from '@/session/services/spawnConnectedServicesDefaults';
+import { mergeSessionTeamCredentialBindingIntents } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 
 /**

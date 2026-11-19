@@ -50,15 +50,17 @@ afterEach(() => {
     standardCleanup();
 });
 
-it('commits the Team model carried by a browser Session birth binding in the recipe and runtime metadata', async () => {
+it.each(['binding', 'selection'] as const)('commits the browser Bot model and its Team binding from a %s', async source => {
     const serverId = await homes.addHome({ name: 'Birth Home', serverUrl: 'https://browser-birth.test',
         serverIdentityId: 'srv_birth', accountId: 'recipient', currentAccount: true, accountEncryptionMode: 'plain' });
-    const team = { teamId: 'team', resourceId: 'team-provider', expectedResourceRevision: 3, deliveryMode: 'brokered' };
+    const team = { teamId: 'team', resourceId: 'team-provider', expectedResourceRevision: 0, deliveryMode: 'brokered' };
     const model = { agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-bot-model' };
+    const selection = { v: 2, updatedAt: 0, ref: { source: 'team_resource', ...team, ...model } };
+    const binding = { v: 1, slot: { kind: 'provider_model' }, ...team, providerModelSelection: model };
     const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'browser-bot-copy',
         executionTarget: { serverId, machineId: 'asleep-machine' }, directory: { kind: 'managed' },
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-        teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, ...team, providerModelSelection: model }],
+        ...(source === 'binding' ? { teamCredentialBindings: [binding] } : { modelSelection: selection }),
     });
     const boundary = createSessionMetadataHttpBoundary(() => ({}));
     let birthRequest: unknown;
@@ -81,7 +83,7 @@ it('commits the Team model carried by a browser Session birth binding in the rec
             sessionCreationTag: SessionCreationTagV1Schema.parse(`create:v1:${'a'.repeat(43)}`),
         }, { beforeLaunch: async () => {}, hostOnboarding: { templateName: 'Helper', templateVersion: '1.0.0' } });
         expect(result).toMatchObject({ type: 'success', sessionId: 'browser-bot', initialInput: { status: 'accepted' } });
-        const selection = { v: 2, updatedAt: 0, ref: { source: 'team_resource', ...team, ...model } };
+        expect(birthRequest).toHaveProperty('teamCredentialBindings', [binding]);
         expect(birthRequest).toHaveProperty('ownerMetadata.v.system.sessionCreationCorrespondenceV1.recipe.modelSelection', selection);
         expect(birthRequest).toHaveProperty('ownerMetadata.v.runtime.modelSelectionIntentV2', selection);
     } finally {

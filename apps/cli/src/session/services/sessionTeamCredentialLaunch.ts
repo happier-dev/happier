@@ -2,8 +2,8 @@ import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract'
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ProviderBrokerApplicationBindingV1, TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { mergeSessionTeamCredentialBindingIntents,
-  readTeamCredentialLaunchReadinessRefusal,
+import { mergeSessionTeamCredentialBindingIntents } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
+import { readTeamCredentialLaunchReadinessRefusal,
   resolvePurposeTeamCredentialBindingIntents, type PurposeTeamResourceSelectionForSession } from './spawnConnectedServicesDefaults';
 import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn,
   type AgentSpawnPurposeContributions } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';

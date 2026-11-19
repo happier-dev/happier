@@ -9,7 +9,7 @@ import { resolveTeamResourceConnectedServiceSelectionV1 } from '@happier-dev/pro
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults } from '@happier-dev/protocol/account/settings/connected-services';
 import type { ActionExecutorDeps, AgentConnectedAccountPurposeDefault, QualifiedConnectedAccountPurposeV1, ConnectedServiceBindingSelectionV1, ConnectedServiceBindingSelectionV2, ConnectedServiceBindingsV2, ProviderBrokerApplicationBindingV1, TeamCredentialResourceCatalogEntryV1, TeamResourceConnectedServiceSelectionV2 } from '@happier-dev/protocol';
-import { SessionTeamCredentialBindingIntentsV1Schema, sessionTeamCredentialSlotKeyV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
+import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import type { SessionTeamCredentialBindingIntentListV1, SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams';
 
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
@@ -395,30 +395,6 @@ export function resolvePurposeTeamCredentialBindingIntents(params: Readonly<{
     });
   }
   return SessionTeamCredentialBindingIntentsV1Schema.parse(intents);
-}
-
-/**
- * A Session's creation-time Team slot bindings: an explicit binding the
- * caller chose for a slot wins; admitted durable defaults fill the others.
- */
-export function mergeSessionTeamCredentialBindingIntents(params: Readonly<{
-  explicit: SessionTeamCredentialBindingIntentListV1 | undefined;
-  admitted: SessionTeamCredentialBindingIntentListV1 | null | undefined;
-}>): SessionTeamCredentialBindingIntentListV1 | undefined {
-  if (!params.admitted || params.admitted.length === 0) return params.explicit;
-  const explicitSlotKeys = new Set(
-    (params.explicit ?? []).map((intent) => sessionTeamCredentialSlotKeyV1(intent.slot)),
-  );
-  return SessionTeamCredentialBindingIntentsV1Schema.parse([
-    ...(params.explicit ?? []).map(intent => {
-      if (intent.resourceId === null || intent.teamId !== undefined) return intent;
-      const admitted = params.admitted?.find(candidate => candidate.resourceId === intent.resourceId
-        && candidate.resourceId !== null && candidate.deliveryMode === intent.deliveryMode
-        && sessionTeamCredentialSlotKeyV1(candidate.slot) === sessionTeamCredentialSlotKeyV1(intent.slot));
-      return admitted?.resourceId && admitted.teamId ? { ...intent, teamId: admitted.teamId } : intent;
-    }),
-    ...params.admitted.filter((intent) => !explicitSlotKeys.has(sessionTeamCredentialSlotKeyV1(intent.slot))),
-  ]);
 }
 
 export async function resolvePurposeTeamCredentialBindingIntentsFromHome(params: Readonly<{
