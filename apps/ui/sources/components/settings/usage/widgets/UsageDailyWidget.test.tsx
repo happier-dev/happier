@@ -68,6 +68,8 @@ describe('Daily period chart', () => {
     ]);
   });
   it('names weekly bars by the dates they start on and says the chart is by week (USAGE-ACCEPT 1118 #18)', async () => {
+    // Keep the last week running: replacing its date with "This week" must fail too (review F-05).
+    vi.spyOn(Date, 'now').mockReturnValue(start + 12 * day);
     const props = fixture([10, 30, 20], start + 14 * day, true, 'week');
     const screen = await renderScreen(<UsageDailyWidget {...props} />);
     const chart = screen.findByType(StackedSeriesChart);
