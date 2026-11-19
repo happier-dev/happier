@@ -18,9 +18,10 @@ export {
 
 export type RpcMethod = (typeof RPC_METHODS)[keyof typeof RPC_METHODS];
 
-/** Optional expensive byte-identity request for the incumbent STAT_FILE owner. */
+/** A workspace caller addresses its root; incumbent callers may stat an unscoped path. */
 export type WorkspaceStatFileRequestV1 = Readonly<{
   path: string;
+  rootPath?: string;
   includeContentHash?: boolean;
 }>;
 

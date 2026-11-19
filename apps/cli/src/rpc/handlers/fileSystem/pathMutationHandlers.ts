@@ -416,7 +416,13 @@ export function registerPathMutationHandlers(
     const path = typeof data?.path === 'string' ? data.path : '';
     logger.debug('Stat file request:', path);
 
-    const validation = validatePath(path, deps.workingDirectory, deps.getAdditionalAllowedReadDirs(), deps.accessPolicy);
+    const validation = data?.rootPath === undefined
+      ? validatePath(path, deps.workingDirectory, deps.getAdditionalAllowedReadDirs(), deps.accessPolicy)
+      : authorizeFilesystemPathWithinRoot({
+          targetPath: path, rootPath: typeof data.rootPath === 'string' ? data.rootPath : '',
+          defaultDirectory: deps.workingDirectory, accessPolicy: deps.accessPolicy,
+          additionalAllowedDirs: deps.getAdditionalAllowedReadDirs(),
+        });
     if (!validation.valid) {
       return { success: false, error: validation.error, errorCode: validation.errorCode };
     }

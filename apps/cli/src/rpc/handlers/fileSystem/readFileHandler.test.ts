@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { constants } from 'node:fs';
-import { mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -124,6 +124,29 @@ describe('readFile ranged RPC', () => {
       filesystemBoundary.afterReadPath = null; filesystemBoundary.afterRead = null;
       await rm(rootPath, { recursive: true, force: true });
     }
+  });
+  it('confines rooted file metadata to the addressed workspace while retaining unrooted reads', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-stat-root-'));
+    const rootPath = join(directory, 'workspace');
+    const handlers = new Map<string, RpcHandler>();
+    const registration = registerFileSystemHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, directory, {
+      accessPolicy: { kind: 'osUser' },
+      effectAdmission: createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home' }),
+    });
+    const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+      machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+        installationId: 'installation', role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
+    try {
+      await mkdir(rootPath);
+      const inside = join(rootPath, 'inside.txt');
+      const outside = join(directory, 'outside.txt');
+      await writeFile(inside, 'inside');
+      await writeFile(outside, 'outside');
+      const stat = handlers.get(RPC_METHODS.STAT_FILE)!;
+      expect(await stat({ rootPath, path: inside }, context)).toMatchObject({ success: true, exists: true, sizeBytes: 6 });
+      expect(await stat({ rootPath, path: outside }, context)).toMatchObject({ success: false, errorCode: 'access_denied' });
+      expect(await stat({ path: outside }, context)).toMatchObject({ success: true, exists: true, sizeBytes: 7 });
+    } finally { await registration.dispose(); await rm(directory, { recursive: true, force: true }); }
   });
   it('refuses a member through every inline filesystem alias before effects', async () => {
     const rootPath = await mkdtemp(join(tmpdir(), 'happier-filesystem-aliases-'));

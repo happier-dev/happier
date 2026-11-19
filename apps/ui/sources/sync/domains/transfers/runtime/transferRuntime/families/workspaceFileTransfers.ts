@@ -94,6 +94,7 @@ export async function callDaemonWorkspaceStatFileRpc(params: Readonly<{
 
     return await transferClient.call<WorkspaceStatFileResponse, WorkspaceStatFileRequest>({
         request: {
+            rootPath: params.rootPath,
             path: resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, agentRootPath: params.agentRootPath, requestPath: params.request.path }),
             ...(params.includeContentHash ? { includeContentHash: true } : {}),
         },
@@ -277,7 +278,7 @@ export async function downloadDaemonWorkspaceFileToBase64(params: Readonly<{
     });
     const absolutePath = resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, agentRootPath: params.agentRootPath, requestPath: params.path });
     const stat = await statClient.call<WorkspaceStatFileResponse, WorkspaceStatFileRequest>({
-        request: { path: absolutePath },
+        request: { rootPath: params.rootPath, path: absolutePath },
         machineMethod: RPC_METHODS.STAT_FILE,
         signal: account.signal,
     });

@@ -44,6 +44,14 @@ response also remains a load failure: presentation never infers source absence
 from an errno or message. Matching development daemon and UI readers should
 reload together for the corrected missing-source presentation.
 
+Placed workspace previews pass their addressed `rootPath` to the existing
+`STAT_FILE` RPC, so the daemon selects and confines metadata reads through the
+same workspace source as rooted browse and content reads. Existing path-only
+stat requests retain their behavior. The inspected `../0.2` frontier at
+`73c533b470ac3` ignores the field and has no placed-workspace admission.
+Placed previews require the matching 0.3 UI and daemon. No persisted format,
+RPC method, or wire epoch changes.
+
 ## Starter forge catalog projection (unreleased 0.3)
 
 The closed `deployments.suggestions.catalog` input accepts optional

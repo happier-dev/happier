@@ -29,7 +29,7 @@ const filesystem = vi.hoisted(() => ({ paths: new Set<string>(), calls: [] as un
     prompts: 0, promptValue: 'b', promptGate: null as Promise<void> | null,
     mutationGate: null as Promise<void> | null,
     fileBytes: null as Uint8Array | null, deliveredBytes: 0, carrierUnavailable: false,
-    readGate: null as Promise<void> | null }));
+    readGate: null as Promise<void> | null, placedFileRoot: null as string | null }));
 // The finite carrier is the byte-network boundary. Real encryption, manifest
 // verification, buffering, bounds and destination completion stay in the driver.
 vi.mock('@/sync/domains/transfers/runtime/transferRuntime/plumbing/machineCarrierHttpLease', async (importOriginal) => ({
@@ -65,7 +65,7 @@ vi.mock('@/sync/domains/transfers/runtime/transferRuntime/plumbing/machineCarrie
 }));
 type FilesystemBoundaryRequest = { method: string; requestId?: string; serverId?: string; accountId?: string;
     machineId: string; signal?: AbortSignal | null;
-    payload: { path?: string; from?: string; to?: string; offset?: number; length?: number; destination?: { destinationId: string };
+    payload: { rootPath?: string; path?: string; from?: string; to?: string; offset?: number; length?: number; destination?: { destinationId: string };
         input?: { destination?: { destinationId: string } } } };
 
 // The physical Machine filesystem remains the boundary for authenticated HTTP
@@ -76,7 +76,12 @@ async function receiveFilesystemRequest(request: FilesystemBoundaryRequest, invo
         if (request.method === 'daemon.filesystem.writeFile' || request.method === 'daemon.filesystem.createDirectory') await filesystem.mutationGate;
         if (filesystem.fileBytes) {
             const bytes = filesystem.fileBytes;
-            if (request.method === 'statFile') return { success: true, exists: true, kind: 'file', sizeBytes: bytes.length };
+            if (request.method === 'statFile') {
+                if (filesystem.placedFileRoot && request.payload.rootPath !== filesystem.placedFileRoot) {
+                    return { success: true, exists: false };
+                }
+                return { success: true, exists: true, kind: 'file', sizeBytes: bytes.length };
+            }
             if (request.method === 'daemon.filesystem.readFile') {
                 await filesystem.readGate;
                 if (request.payload.length !== undefined) {
@@ -183,7 +188,7 @@ beforeEach(async () => {
     filesystem.paths.clear(); filesystem.paths.add('/repo/a'); filesystem.calls.length = 0;
     filesystem.response = { success: true }; filesystem.error = null; filesystem.nativeAsk = false;
     filesystem.prompts = 0; filesystem.promptValue = 'b'; filesystem.promptGate = null;
-    filesystem.fileBytes = null; filesystem.deliveredBytes = 0; filesystem.carrierUnavailable = false;
+    filesystem.fileBytes = null; filesystem.deliveredBytes = 0; filesystem.carrierUnavailable = false; filesystem.placedFileRoot = null;
     filesystem.mutationGate = null; filesystem.readGate = null;
 });
 afterEach(async () => {
@@ -371,6 +376,17 @@ describe('shared workspace filesystem Action admission', () => {
             await screen.unmount();
         } finally { handoff.dispose(); }
     });
+    it('previews a guest-only file through the admitted workspace root', async () => {
+        const { refreshWorkspaceFileDetails } = await import('@/components/workspaces/files/details/workspaceFileDetails/refreshWorkspaceFileDetails');
+        const content = 'The controller has no copy of this guest file.';
+        filesystem.placedFileRoot = target.rootPath;
+        filesystem.fileBytes = new TextEncoder().encode(content);
+        const preview = await refreshWorkspaceFileDetails({
+            scope: target, filePath: 'guest-only.txt', diffMode: 'both', includeDiff: false,
+        });
+        expect(preview.error).toBeNull();
+        expect(preview.fileContent?.content).toBe(content);
+    });
     it('keeps a cold viewer loading beyond 15 seconds and publishes the successful inline read', async () => {
         const text = 'riverglassneedle late success';
         filesystem.fileBytes = new TextEncoder().encode(text);
@@ -454,6 +470,7 @@ describe('shared workspace filesystem Action admission', () => {
         storage.getState().applySettingsForScope(accountScope, settings, 1);
         homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 1 } });
         filesystem.fileBytes = new Uint8Array(3_000_000).fill(120);
+        filesystem.placedFileRoot = target.rootPath;
         const read = await workspaceReadFile(target, 'file', { maxBytes: 4_000_000 });
         expect(read.success, !read.success ? read.error : undefined).toBe(true);
         if (read.success) expect(Buffer.from(read.content, 'base64').equals(Buffer.from(filesystem.fileBytes))).toBe(true);
