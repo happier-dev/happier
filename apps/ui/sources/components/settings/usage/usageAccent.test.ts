@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import { HAPPIER_SERIES_RAMP_ALPHAS as USAGE_SERIES_RAMP_ALPHAS } from '@happier-dev/plugin-ui/presentation';
 
+import { getAgentIdentityColor, getNeutralAgentIdentityColor } from '@/agents/catalog/catalog';
 import {
+    createUsageAgentSeriesColor,
     usageMeterFill,
     usageSeriesColor,
     usageSignatureAccent,
@@ -69,5 +71,20 @@ describe('usageAccent — the single usage palette owner (R-DESIGN D-1)', () => 
         expect(withUsageAccentAlpha('#2BACCC', 0.5)).toBe('rgba(43, 172, 204, 0.5)');
         expect(withUsageAccentAlpha('rgba(1, 2, 3, 0.4)', 0.5)).toBe('rgba(1, 2, 3, 0.4)');
         expect(withUsageAccentAlpha('#2BACCC', 2)).toBe('rgba(43, 172, 204, 1)');
+    });
+});
+
+// USAGE-ACCEPT 1118 #10: a ranked Agent chart drew every Agent without a catalog hue in the one neutral, so its
+// five leaders and their Other could not be told apart.
+describe('ranked Agent series colours', () => {
+    const theme = { dark: false, colors: { text: { link: '#2BACCC', primary: '#18171C', secondary: '#6c6c70' }, surface: { base: '#FFFFFF' } } } as const;
+    it('keeps catalog hues and gives each hue-less leader its own ink step, apart from the neutral', () => {
+        const color = createUsageAgentSeriesColor(theme);
+        const neutral = getNeutralAgentIdentityColor(theme);
+        expect(color('claude')).toBe(getAgentIdentityColor(theme, 'claude'));
+        const unhued = ['acme-one', 'acme-two', 'acme-three'].map(color);
+        expect(new Set([...unhued, neutral]).size).toBe(4);
+        // Asked again, an Agent keeps its step.
+        expect(color('acme-one')).toBe(unhued[0]);
     });
 });

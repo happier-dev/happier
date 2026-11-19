@@ -20,7 +20,7 @@
  */
 
 import { mixHappierColorOverPaper, resolveHappierSeriesRampColor } from '@happier-dev/plugin-ui/presentation';
-import { getNeutralAgentIdentityColor } from '@/agents/catalog/catalog';
+import { getAgentIdentityColor, getNeutralAgentIdentityColor } from '@/agents/catalog/catalog';
 
 type UsageAccentThemeSlice = Readonly<{
     colors: Readonly<{
@@ -37,6 +37,28 @@ type UsageAccentThemeSlice = Readonly<{
 /** The neutral every folded "Other" series takes, in any dimension. */
 export function usageOtherColor(theme: Readonly<{ dark: boolean }>): string {
     return getNeutralAgentIdentityColor(theme);
+}
+
+/**
+ * The colours of one ranked Agent chart (Daily, Flow): each Agent its catalog identity hue. An Agent the catalog
+ * draws without one takes the next step of the ink ramp in rank order, so ranked leaders stay apart from each other
+ * and from the folded Other's neutral (USAGE-ACCEPT 1118 #10: ten leaders in one grey). Call it once per chart, in
+ * rank order.
+ */
+export function createUsageAgentSeriesColor(theme: UsageAccentThemeSlice & Readonly<{ dark: boolean }>): (agentId: string) => string {
+    const neutral = getNeutralAgentIdentityColor(theme);
+    const ink = theme.colors.text.primary ?? theme.colors.text.secondary;
+    const inkSteps = new Map<string, number>();
+    return (agentId) => {
+        const identity = getAgentIdentityColor(theme, agentId);
+        if (identity !== neutral) return identity;
+        let step = inkSteps.get(agentId);
+        if (step === undefined) {
+            step = inkSteps.size;
+            inkSteps.set(agentId, step);
+        }
+        return resolveHappierSeriesRampColor(ink, theme.colors.surface?.base, step + 1);
+    };
 }
 
 /** The one signature accent for usage surfaces. */

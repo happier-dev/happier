@@ -10,10 +10,9 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { getAgentIdentityColor } from '@/agents/catalog/catalog';
 import { t } from '@/text';
 import { agentIdFromEngineKey, USAGE_MODEL_MIX_OTHER_KEY } from '@/sync/api/account/usageAnalytics';
-import { usageOtherColor, usageSignatureAccent } from '../usageAccent';
+import { createUsageAgentSeriesColor, usageOtherColor, usageSignatureAccent } from '../usageAccent';
 import { formatUsageCalendarDate, formatUsageWeeklyBucketLabel, resolveUsageShownCalendarRange } from '@/sync/domains/usage/usageCalendarPresentation';
 import { usageCostKindPhrase, usagePageCostTrend } from '../usageCostPresentation';
 import { useUsageDrill } from '../usageDrill';
@@ -99,12 +98,13 @@ export function UsageDailyWidget(props: UsageBodyProps) {
       ),
     [range, props.query.granularity, props.query.timeZoneOffsetMinutes],
   );
-  const { series: sourceSeries, incompleteBucketStarts } = React.useMemo(() => usageSourceTimelineSeries({
+  const { series: sourceSeries, incompleteBucketStarts } = React.useMemo(() => { const agentColor = createUsageAgentSeriesColor(theme);
+    return usageSourceTimelineSeries({
     timeline: metric === 'cost' ? view?.pageCost.accounting.engineTimeline : props.slice.accounting?.engineTimeline,
     range, coverage, metric, costMode: props.query.costBasis, costSelection: view?.pageCost.selection ?? null,
     dimensionKey: agentIdFromEngineKey, label: usageAgentTitle,
-    color: (_index, key) => key === USAGE_MODEL_MIX_OTHER_KEY ? usageOtherColor(theme) : getAgentIdentityColor(theme, key), bucketLabel,
-  }), [props.slice.accounting?.engineTimeline, view?.pageCost, range, coverage, metric, props.query.costBasis, theme, bucketLabel]);
+    color: (_index, key) => key === USAGE_MODEL_MIX_OTHER_KEY ? usageOtherColor(theme) : agentColor(key), bucketLabel,
+  }); }, [props.slice.accounting?.engineTimeline, view?.pageCost, range, coverage, metric, props.query.costBasis, theme, bucketLabel]);
   const byAgent = sourceSeries.length > 0 || (metric === 'tokens' && view?.agentMix.hasData === true);
   const agentForSeries = React.useCallback((id: string) => sourceSeries.find(entry => entry.id === id)?.dimensionKey ?? id, [sourceSeries]);
   const pageCost = view?.pageCost;
@@ -114,11 +114,12 @@ export function UsageDailyWidget(props: UsageBodyProps) {
     if (sourceSeries.length > 0) return sourceSeries;
     if (byAgent) {
       const mix = range ? fillUsageMixCalendar(view.agentMix, range, coverage) : view.agentMix;
+      const agentColor = createUsageAgentSeriesColor(theme);
       return mix.keys.map((key, index) => ({
         id: key.key,
         label: key.key === USAGE_MODEL_MIX_OTHER_KEY ? t('usage.modelMix.other') : usageAgentTitle(key.key, key.label),
         // The Agent dimension draws each Agent in its identity hue; the mark sits beside it in the legend.
-        color: key.key === USAGE_MODEL_MIX_OTHER_KEY ? usageOtherColor(theme) : getAgentIdentityColor(theme, key.key),
+        color: key.key === USAGE_MODEL_MIX_OTHER_KEY ? usageOtherColor(theme) : agentColor(key.key),
         detail: format(key.totalTokens),
         points: mix.buckets.map((bucket) => ({
           id: String(bucket.startMs),

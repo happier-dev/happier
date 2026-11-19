@@ -9,8 +9,7 @@ import {
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { agentIdFromEngineKey, USAGE_MODEL_MIX_OTHER_KEY } from '@/sync/api/account/usageAnalytics';
 import { t } from '@/text';
-import { getAgentIdentityColor } from '@/agents/catalog/catalog';
-import { usageOtherColor, usageSeriesColor } from '../usageAccent';
+import { createUsageAgentSeriesColor, usageOtherColor, usageSeriesColor } from '../usageAccent';
 import { formatUsageCalendarDate, resolveUsageShownCalendarRange } from '@/sync/domains/usage/usageCalendarPresentation';
 import { usageCostKindPhrase, usagePageCostTrend } from '../usageCostPresentation';
 import { useUsageDrill } from '../usageDrill';
@@ -68,16 +67,17 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
   const accounting = cost ? view?.pageCost.accounting : props.slice.accounting;
   const range = React.useMemo(() => resolveUsageShownCalendarRange(props.query, props.slice.accounting?.coverage, props.slice.accounting, props.slice.accountingObservationRange),
     [props.query, props.slice.accounting, props.slice.accountingObservationRange]);
-  const { series: sourceSeries } = React.useMemo(() => usageSourceTimelineSeries({
+  const { series: sourceSeries } = React.useMemo(() => { const agentColor = createUsageAgentSeriesColor(theme);
+    return usageSourceTimelineSeries({
     timeline: byModel ? accounting?.modelTimeline : accounting?.engineTimeline,
     range, coverage: props.slice.accounting?.coverage,
     metric, costMode: props.query.costBasis, costSelection: view?.pageCost.selection ?? null,
     dimensionKey: byModel ? key => key : agentIdFromEngineKey,
     label: byModel ? (key, fallback) => usageDimensionLabel('model', key, fallback) : usageAgentTitle,
     color: (index, key) => key === USAGE_MODEL_MIX_OTHER_KEY ? usageOtherColor(theme)
-      : byModel ? usageSeriesColor(theme, index) : getAgentIdentityColor(theme, key),
+      : byModel ? usageSeriesColor(theme, index) : agentColor(key),
     bucketLabel: startMs => formatUsageCalendarDate(startMs, props.query.timeZoneOffsetMinutes, { month: 'short', day: 'numeric' }),
-  }), [byModel, accounting, range, props.slice.accounting?.coverage, view?.pageCost.selection, props.query, theme]);
+  }); }, [byModel, accounting, range, props.slice.accounting?.coverage, view?.pageCost.selection, props.query, theme]);
   const agentForSeries = React.useCallback((id: string) => sourceSeries.find(entry => entry.id === id)?.dimensionKey ?? id, [sourceSeries]);
   const mix = React.useMemo(() => {
     if (!view) return null;
@@ -95,6 +95,7 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
         return usageVolumeSeries(range ? fillUsageTrendCalendar(trend, range, props.slice.accounting?.coverage) : trend,
           'cost', t('usage.cost'), usageSeriesColor(theme, 0), props.query.timeZoneOffsetMinutes);
       }
+      const agentColor = createUsageAgentSeriesColor(theme);
       return mix
         ? usageMixSeries(
             mix,
@@ -105,7 +106,7 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
                 ? usageOtherColor(theme)
                 : byModel
                   ? usageSeriesColor(theme, index)
-                  : getAgentIdentityColor(theme, key),
+                  : agentColor(key),
             props.query.timeZoneOffsetMinutes,
           ).map((entry, index) => ({
             ...entry,
