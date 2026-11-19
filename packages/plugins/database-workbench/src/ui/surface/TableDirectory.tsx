@@ -189,6 +189,7 @@ function SchemaDirectory(
         'Tables',
       )}
       title={translate('plugins.database.directory.title', 'Tables')}
+      titleKind="section"
       // The section leads with its name and count, then what the order means (lab p7AddNow/directory).
       header={(slots) => (
         <Stack gap="xsmall">

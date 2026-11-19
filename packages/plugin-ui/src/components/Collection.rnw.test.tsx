@@ -422,6 +422,7 @@ type HarnessOptions = Readonly<{
   summaryRows?: CollectionProps<Entry>['summaryRows'];
   renderDetail?: CollectionProps<Entry>['renderDetail'];
   title?: CollectionProps<Entry>['title'];
+  titleKind?: CollectionProps<Entry>['titleKind'];
   listWidthPx?: number;
   onListWidthCommit?: (widthPx: number) => void;
   resizeKey?: string;
@@ -500,6 +501,7 @@ function Harness(props: HarnessProps): ReactElement {
       {...(props.header === undefined ? {} : { header: props.header })}
       {...(props.footer === undefined ? {} : { footer: props.footer })}
       {...(props.title === undefined ? {} : { title: props.title })}
+      {...(props.titleKind === undefined ? {} : { titleKind: props.titleKind })}
       testID="collection"
       listTestID="collection-list"
       detailTestID="collection-detail"
@@ -6993,6 +6995,25 @@ describe("the search in the caller's header row", () => {
     ).toBeNull();
     expect(phone.query('toolbar')!.textContent).not.toContain('PRs & Issues');
     phone.unmount();
+  });
+
+  it("keeps a section's own name on a phone, where the navigation names the page around it", () => {
+    const header: CollectionProps<Entry>['header'] = (slots) => (
+      <View testID="toolbar">
+        {slots.title}
+        {slots.search}
+      </View>
+    );
+    // A Collection that is one section of a page (a database Overview's Tables): the phone bar says the page's
+    // name, never the section's, so the section heading stays, and never becomes the page's large title.
+    for (const pageChrome of [{ showsTitle: true }, { showsTitle: true, largeTitle: true }]) {
+      const phone = mount({ search, title: 'Tables', titleKind: 'section', header, pageChrome });
+      phone.measure(390);
+      const heading = phone.query('toolbar')!.querySelector('[role="heading"]');
+      expect(heading?.textContent).toBe('Tables');
+      expect([...phone.container.querySelectorAll('[role="heading"]')].filter((node) => node.textContent === 'Tables')).toHaveLength(1);
+      phone.unmount();
+    }
   });
 
   it("leads a phone's collection page with its large title when the host's navigation leaves the name to the page", () => {

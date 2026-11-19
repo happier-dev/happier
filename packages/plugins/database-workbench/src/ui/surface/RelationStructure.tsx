@@ -91,6 +91,7 @@ function ColumnsTable(
     <Collection
       accessibilityLabel={translate('plugins.database.structure.columns', 'Columns')}
       title={translate('plugins.database.structure.columns', 'Columns')}
+      titleKind="section"
       header={(slots) => (
         <Row gap="small" align="center">
           {slots.title}

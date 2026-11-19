@@ -483,6 +483,11 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
    */
   title?: string;
   /**
+   * `section`: `title` names one section of a page (a database Overview's Tables), not the page. A phone's
+   * navigation names the page, so the section keeps its heading there and never becomes the page's large title.
+   */
+  titleKind?: 'page' | 'section';
+  /**
    * How the Collection rests; `table` becomes the list beside a detail and on narrow screens. `board` and `grid`
    * keep their cards and open the detail in the page's details pane (pushed where there is none). The caller owns the
    * choice (and remembers it); switching keeps the model, the open item and its mounted detail.
@@ -2980,7 +2985,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     : size.width < HAPPIER_PAGE_METRICS.toolbarFoldBelowWidthPx || (toolbarRowPx !== null && toolbarRowPx < toolbarNeedPx);
   // A phone's top-level collection page leads with its name as the large title, above the toolbar (lab `merged-list`
   // 390, as core's Inbox, `phone-P4`): the host's navigation row then carries no title of its own.
-  const largeTitle = props.title !== undefined && pageChrome?.largeTitle === true ? props.title : null;
+  const sectionTitle = props.titleKind === 'section';
+  const largeTitle = props.title !== undefined && !sectionTitle && pageChrome?.largeTitle === true ? props.title : null;
   // That title's line is a phone main screen's head (core's `MainScreenHeader`, owner 11-15): the route's controls (the
   // Machine), the host's magnifier with the search folded behind it, and the toolbar's ⋯ and + stand on it.
   const renderSearchToggle = largeTitle !== null && props.search !== undefined ? pageChrome?.renderSearchToggle : undefined;
@@ -3008,7 +3014,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const titleLineLend = useMemo(() => lendsTitleLine ? createCollectionTitleLineLend(collapsesSearch) : null,
     [collapsesSearch, lendsTitleLine]);
   const header = typeof props.header === 'function' ? props.header({
-    title: props.title === undefined || pageChrome?.showsTitle === true || largeTitle !== null ? null : (
+    title: props.title === undefined || (!sectionTitle && (pageChrome?.showsTitle === true || largeTitle !== null)) ? null : (
       <HappierText variant="heading" tone="neutral" accessibilityRole="header" numberOfLines={1}>{props.title}</HappierText>
     ),
     search: search.control === null || !searchShown ? null : (
