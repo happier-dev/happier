@@ -635,9 +635,10 @@ describe("managed acquisition durable authority", () => {
                 retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false } },
         } });
         const original = { homeId, managedId: created.machine.id, expectedIntentRevision: 0, requestId: creationRequestId, controller };
+        const devcontainerObservation = { nativeResourceId: 'old-native', user: 'coder', workspaceFolder: '/work',
+            storage: { kind: 'child' as const, childPath: '/work' } };
         const resource = { contributionRef: { pluginId: manifest.id, localId: "child" }, schemaVersion: 1, value: { id: "old-native" },
-            ...(compute ? {} : { devcontainerObservation: { nativeResourceId: 'old-native', user: 'coder', workspaceFolder: '/work',
-                storage: { kind: 'child' as const, childPath: '/work' } } }) };
+            ...(compute ? {} : { devcontainerObservation }) };
         await submitManagedAcquire(original);
         await reportManagedAcquire({ ...original, result: { kind: "bound", resource }, bootstrapInstalled: true });
         const oldGuestKeys = tweetnacl.sign.keyPair();
@@ -707,7 +708,7 @@ describe("managed acquisition durable authority", () => {
         await expect(inTx(tx => requireManagedEnrollmentInTx(tx, { ...current, resource }, account.id))).rejects.toMatchObject({ code: 'enrollment_retired' });
         await expect(reportManagedIntent({ ...current, result: { kind: 'bound', resource } })).rejects.toMatchObject({ code: 'resource_mismatch' });
         await expect(reportManagedIntent({ ...current, result: { kind: 'bound', resource: { ...resource,
-            devcontainerObservation: { ...resource.devcontainerObservation, user: 'different-user' } } } })).rejects.toMatchObject({ code: 'resource_mismatch' });
+            devcontainerObservation: { ...devcontainerObservation, user: 'different-user' } } } })).rejects.toMatchObject({ code: 'resource_mismatch' });
         if (!sameRebuildAdmission) {
             const updatedPolicy = await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id,
                 input: { action: 'machines.managed.retention.update', requestId: 'reviewed-policy', input: { homeId, managedId: created.machine.id,
@@ -717,7 +718,7 @@ describe("managed acquisition durable authority", () => {
         const enrollmentRevision = sameRebuildAdmission ? 1 : 2;
         const enrollmentRequestId = sameRebuildAdmission ? current.requestId : 'reviewed-policy';
         const replacement = { ...resource, value: { id: "new-native" },
-            devcontainerObservation: { ...resource.devcontainerObservation, nativeResourceId: 'new-native' } };
+            devcontainerObservation: { ...devcontainerObservation, nativeResourceId: 'new-native' } };
         const replacementPublications: unknown[] = [];
         eventRouter.setIo({ to: () => ({ emit: (event, payload) => { if (event === 'update') replacementPublications.push(payload); },
             disconnectSockets: () => undefined }) });
