@@ -4,15 +4,17 @@ import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollment
 import { authQRStart, type HomeQrEnrollmentTarget, type QRAuthKeyPair } from '@/auth/flows/qrStart';
 import { authQRWait } from '@/auth/flows/qrWait';
 import { buildRenderableHomeQrInviteDeepLink } from '@/auth/pairing/pairingUrl';
+import { resolveObservedReversePairingHome } from '@/auth/pairing/resolveReversePairingHome';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { pairingRequest } from '@/sync/api/account/apiPairingAuth';
-import { probeServerFeaturesAtUrl } from '@/sync/api/capabilities/serverFeaturesClient';
+import { observeAuthenticatedServerFeaturesFresh, probeServerFeaturesAtUrl } from '@/sync/api/capabilities/serverFeaturesClient';
 import {
     adoptHomeProfileWithCredentials,
     isHomeProfileAdoptionPartialCommitFailure,
     type HomeProfileAdoptionPartialCommitFailure,
 } from '@/sync/domains/server/adoptHomeProfile';
-import { buildHomeConnectionDescriptorForProfile, getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { computeHomeQrBindingProofV2, createHomeQrReverseInviteV2, deriveHomeQrBindingKeyV2, deriveHomeQrRendezvousSecretV2, type HomeQrInviteV2 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { enrollmentPollingBackoffMs } from '@/auth/enrollment/enrollmentPollingBackoff';
@@ -120,12 +122,13 @@ export function useReversePairingSession(params: Readonly<{ enabled: boolean; ta
             // Resolve only the caller-selected stored Home. Ambient focus and fallback profiles
             // are deliberately not enrollment authority.
             const profile = params.targetProfileId ? getServerProfileById(params.targetProfileId) : null;
-            const descriptor = profile ? buildHomeConnectionDescriptorForProfile(profile) : null;
-            if (!descriptor || profile?.serverIdentityId !== descriptor.homeServerIdentityId) {
+            const admission = profile ? resolveObservedReversePairingHome(profile) : null;
+            if (!profile || !admission) {
                 if (!isCurrent(attempt)) return;
                 publish(attempt, { phase: 'invalid' });
                 return;
             }
+            const { descriptor } = admission;
             const transportResolution = await resolveHomeEnrollmentTransport(descriptor);
             if (!isCurrent(attempt)) {
                 if (transportResolution.ok) await transportResolution.transport.close().catch(() => {});
@@ -260,10 +263,25 @@ export function useReversePairingSession(params: Readonly<{ enabled: boolean; ta
             // requester's immutable key. Credential adoption is the first non-cancellable
             // local commit boundary.
             publish(attempt, { phase: 'adding', descriptor, expiresAtMs: material.invite.expiresAtMs });
+            let adoptionDescriptor = descriptor;
+            if (admission.requiresAuthenticatedObservation) {
+                const observation = await observeAuthenticatedServerFeaturesFresh({
+                    request: target.createRequest({ serverId: profile.id, credentials: result.credentials }),
+                });
+                if (!isCurrent(attempt)) return;
+                const published = observation.status === 'ready' ? observation.features.homeConnectionDescriptor : undefined;
+                if (!published || observation.status !== 'ready' || observation.serverIdentityId !== descriptor.homeServerIdentityId
+                    || published.homeServerIdentityId !== descriptor.homeServerIdentityId
+                    || createServerUrlComparableKey(published.canonicalServerUrl) !== createServerUrlComparableKey(descriptor.canonicalServerUrl)) {
+                    publish(attempt, { phase: 'retryable_error', descriptor, partialCommit: null });
+                    return;
+                }
+                adoptionDescriptor = published;
+            }
             let adoptedProfileId: string;
             try {
                 const adoptedProfile = await adoptHomeProfileWithCredentials({
-                    descriptor,
+                    descriptor: adoptionDescriptor,
                     source: 'qr',
                     preserveUserLabel: true,
                     credentials: result.credentials,
@@ -280,7 +298,7 @@ export function useReversePairingSession(params: Readonly<{ enabled: boolean; ta
                 return;
             }
             if (isCurrent(attempt)) {
-                publish(attempt, { phase: 'succeeded', descriptor, profileId: adoptedProfileId });
+                publish(attempt, { phase: 'succeeded', descriptor: adoptionDescriptor, profileId: adoptedProfileId });
             }
         } catch {
             if (!isCurrent(attempt)) return;

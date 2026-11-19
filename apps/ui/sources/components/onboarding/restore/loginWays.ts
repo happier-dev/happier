@@ -1,29 +1,20 @@
-import {
-  buildHomeConnectionDescriptorForProfile,
-  listServerProfiles,
-} from '@/sync/domains/server/serverProfiles';
+import { resolveObservedReversePairingHome } from '@/auth/pairing/resolveReversePairingHome';
+import { getServerProfileById, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 
 /**
  * The requester-displayed direction needs one unambiguous saved Home to display a
- * QR for. Resolve it from the saved profiles this device already knows, and only
- * when exactly one of them can produce an established connection descriptor;
- * ambiguity stays on the scanner rather than guessing an enrollment target.
+ * QR for. A focused Welcome supplies its exact profile; targetless restore
+ * offers this direction only when one profile has a usable observed address.
  */
-export function resolveReverseQrTargetProfileId(): string | null {
-  let resolved: string | null = null;
-  for (const profile of listServerProfiles()) {
-    const descriptor = buildHomeConnectionDescriptorForProfile(profile);
-    if (
-      !descriptor ||
-      profile.serverIdentityId !== descriptor.homeServerIdentityId
-    )
-      continue;
-    if (resolved) return null;
-    resolved = profile.id;
-  }
-  return resolved;
+export function resolveReverseQrTargetProfileId(selectedProfileId?: string): string | null {
+    if (selectedProfileId) {
+        const profile = getServerProfileById(selectedProfileId);
+        return profile && resolveObservedReversePairingHome(profile) ? profile.id : null;
+    }
+    const eligible = listServerProfiles().filter(resolveObservedReversePairingHome);
+    return eligible.length === 1 ? eligible[0].id : null;
 }
 
 /**
@@ -32,7 +23,7 @@ export function resolveReverseQrTargetProfileId(): string | null {
  * opens it promises the same order, so the two never disagree.
  */
 export function useLoginLeadsWithLink(): boolean {
-  return useViewportClass() === 'compact';
+    return useViewportClass() === 'compact';
 }
 
 /** Whether Login can involve a QR code here: this device scans one, or shows one for its single saved Home. */
