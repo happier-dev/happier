@@ -1,4 +1,4 @@
-import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/plugin-sdk/sessions';
 
 /** Native dispatch may have committed input without a usable identity receipt. */
 export class OpenCodePromptIdentityUnresolvedError extends Error {

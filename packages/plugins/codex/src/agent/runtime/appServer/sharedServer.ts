@@ -1,10 +1,10 @@
-import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/plugin-sdk/sessions';
 import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { constants } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isPluginError, redactBugReportSensitiveText, type LoggerService } from '@happier-dev/plugin-sdk';
-import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH } from '@happier-dev/plugin-sdk/sessions';
 
 import type { ExecService, PluginProcessHandle, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { AgentSessionNativeHomeService } from '@happier-dev/plugin-sdk/agents/runtime';

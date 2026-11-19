@@ -1,4 +1,4 @@
-import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/plugin-sdk/sessions';
 import type { ClaudeIssuedRequestIdentity } from '../auth/services/runtime/requestIdentity.js';
 import type {
   AgentExecutionRunConversationEventV1,

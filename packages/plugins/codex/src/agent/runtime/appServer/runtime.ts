@@ -1,4 +1,4 @@
-import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/plugin-sdk/sessions';
 import { AGENT_UNSUPPORTED_CONTENT_TEXT } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { createHash, randomUUID } from 'node:crypto';
 import { createCodexCompactionOperation, type CodexCompactionOperation } from './compaction.js';
@@ -66,7 +66,7 @@ import {
 } from '../../auth/services/runtime/auth/accountId.js';
 import { readCodexAuthTokensFromNativeHome } from '../../cli/auth/environment.js';
 import type { SessionTaskSnapshotEntry } from '@happier-dev/plugin-sdk/sessions/work-state';
-import { readAgentStartupFailureDetails } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readAgentStartupFailureDetails } from '@happier-dev/plugin-sdk/sessions';
 import { ConnectedServiceLimitCategoryV1Schema } from '@happier-dev/protocol/connect/connectedServiceLimitCategory';
 import { readCodexRuntimeRateLimitsSnapshot } from '../../auth/services/quota/runtimeRateLimits.js';
 import { readCodexSessionCatalog, type CodexSessionCatalogReader } from './catalog/index.js';

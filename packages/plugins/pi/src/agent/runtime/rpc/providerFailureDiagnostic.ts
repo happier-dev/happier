@@ -1,4 +1,4 @@
-import { projectProviderSessionFailureCause, projectSessionRuntimeFailureCause, readProviderErrorDiagnosticFacts } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectProviderSessionFailureCause, projectSessionRuntimeFailureCause, readProviderErrorDiagnosticFacts } from '@happier-dev/plugin-sdk/sessions';
 import {
   redactBugReportSensitiveText,
   trimBugReportTextToMaxBytes,

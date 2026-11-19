@@ -1,4 +1,4 @@
-import { projectSessionRuntimeFailureCause, projectProviderSessionFailureCause, readProviderErrorDiagnosticFacts } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause, projectProviderSessionFailureCause, readProviderErrorDiagnosticFacts } from '@happier-dev/plugin-sdk/sessions';
 import { asRecord, normalizeString } from './openCodeParsing.js';
 import { formatOpenCodeServerPromptErrorMessage } from './formatOpenCodeServerPromptErrorMessage.js';
 import { isOpenCodeServerAuthFailure } from './openCodeServerClient.js';

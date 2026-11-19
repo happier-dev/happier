@@ -1,4 +1,4 @@
-import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/plugin-sdk/sessions';
 import { randomUUID } from 'node:crypto';
 import { createClaudePromptSettlementTracker, type ClaudeSdkPromptTransportOutcome } from './promptSettlement.js';
 export type { ClaudeSdkPromptTransportOutcome } from './promptSettlement.js';

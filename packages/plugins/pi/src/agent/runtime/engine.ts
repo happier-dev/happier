@@ -1,4 +1,4 @@
-import { readSessionRuntimeFailureCause, projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readSessionRuntimeFailureCause, projectSessionRuntimeFailureCause } from '@happier-dev/plugin-sdk/sessions';
 import {
   type AgentExecutionRunOpenRequest,
   type AgentExecutionRunRuntime,

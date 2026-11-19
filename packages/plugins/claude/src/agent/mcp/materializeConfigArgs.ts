@@ -1,4 +1,4 @@
-import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/plugin-sdk/sessions';
 import { rmdirSync, unlinkSync } from 'node:fs';
 import { rmdir, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';

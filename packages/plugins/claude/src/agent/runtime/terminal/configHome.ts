@@ -1,4 +1,4 @@
-import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/plugin-sdk/sessions';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk';

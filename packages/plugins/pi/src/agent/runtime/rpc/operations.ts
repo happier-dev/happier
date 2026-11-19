@@ -1,4 +1,4 @@
-import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/plugin-sdk/sessions';
 import { parseMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { createMcpCatalogPermissionChoiceV1, type InteractionTransientApprovalAuthorRequestV1 } from '@happier-dev/plugin-sdk/interactions';
 import { PI_PROVIDER_ID } from '../../providerBinding.js';

@@ -1,4 +1,4 @@
-import { readSessionRuntimeIssueCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readSessionRuntimeIssueCode } from '@happier-dev/plugin-sdk/sessions';
 
 const CODEX_REALTIME_ENABLED_LAUNCH_UNAVAILABLE = 'CODEX_REALTIME_ENABLED_LAUNCH_UNAVAILABLE';
 

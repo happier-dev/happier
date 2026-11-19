@@ -139,3 +139,6 @@ export { SessionInputForgeEvidenceV1Schema, renderSessionInputContextPromptV1, r
 export type { SessionInputForgeEvidenceV1 } from './forgeEvidence.js';
 export { SessionInputForgeEvidenceAttachmentValueV1Schema, readSessionInputForgeEvidenceAttachmentV1,
     buildSessionInputForgeEvidenceAttachmentValueV1, SESSION_INPUT_FORGE_EVIDENCE_ATTACHMENT_IDENTITY_V1 } from './forgeEvidence.js';
+
+export { projectSessionRuntimeFailureCause, SessionRuntimeFailureCauseV1Schema, readAgentStartupFailureDetails, readSessionStartupFailurePreview, sanitizeSessionRuntimeIssueV1, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, readSessionRuntimeIssueCode, RunnerDaemonPluginServicesPreparationCauseV1Schema, readSessionRuntimeFailureCause, readSessionPreparationFailureCode, projectProviderSessionFailureCause, readProviderErrorDiagnosticFacts } from '../services/sessions.js';
+export type { AgentStartupFailureDetails } from '../services/sessions.js';

@@ -32,7 +32,7 @@ import {
     readClaudePendingLocalId,
 } from '../../providerOperations.js';
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
-import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/plugin-sdk/sessions';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 

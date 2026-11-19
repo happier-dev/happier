@@ -1,5 +1,5 @@
 import { z } from 'zod/mini';
-import { SessionRuntimeFailureCauseV1Schema, projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { SessionRuntimeFailureCauseV1Schema, projectSessionRuntimeFailureCause } from '@happier-dev/plugin-sdk/sessions';
 import { ClaudeSessionRuntimeUsageLimitDetailsSchema, ClaudeSessionRuntimeTemporaryThrottleDetailsSchema } from './providerFailureDetails.js';
 import { mapClaudeProviderFailureToUsageDetails as mapProviderFailure } from '../../auth/services/runtime/usage.js';
 

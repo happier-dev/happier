@@ -69,7 +69,7 @@ import {
   createCodexSharedAppServer,
 } from './sharedServer.js';
 import { buildCodexExecutionRunBaseEnv } from '../../executionRuns/environment.js';
-import { readAgentStartupFailureDetails, readSessionStartupFailurePreview, sanitizeSessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readAgentStartupFailureDetails, readSessionStartupFailurePreview, sanitizeSessionRuntimeIssueV1 } from '@happier-dev/plugin-sdk/sessions';
 import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, codexConfigOverridesToThreadConfig, listCodexAppServerMcpServerNames } from './config/overrides.js';
 
 type CodexSharedAppServer = NonNullable<Awaited<ReturnType<typeof createCodexSharedAppServer>>>;
