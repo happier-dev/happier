@@ -9,6 +9,8 @@ import { createFileTransferPayloadSource, resolveTransferPayloadManifestHash } f
 import type { MachineNativeEffectContext } from './machineNativeEffectAdmission';
 import { MachineNativeEffectAdmissionError } from './machineNativeEffectAdmission';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readPluginActionError, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE } from './nativeComposeFailure';
 import { logger } from '@/ui/logger';
 
 /** Host-only custody from the containing native admission, never receipt data. */
@@ -325,6 +327,48 @@ export function createNativeComposeImageIdentity(input: Readonly<{
         }
         return null;
     };
+    const resolveImage = async (selection: Readonly<{ service: string; reference: string; platform: string }>,
+        options?: Readonly<{ signal?: AbortSignal }>, localAlias?: string): Promise<DeploymentImageV1> => {
+        const inspected = await input.run(['image', 'inspect', '--platform', selection.platform, localAlias ?? selection.reference], options?.signal);
+        if (inspected.exitCode !== undefined && inspected.exitCode !== 0) return refuse('deployment_image_identity_unavailable');
+        const inspection = readNativeImageJson(inspected.stdout);
+        if (!Array.isArray(inspection) || inspection.length !== 1 || !record(inspection[0])) return refuse('deployment_image_identity_unavailable');
+        const native = inspection[0];
+        const repoDigests = Array.isArray(native.RepoDigests) ? native.RepoDigests.filter((ref): ref is string => typeof ref === 'string') : [];
+        const manifestDigest = record(native.Descriptor) && typeof native.Descriptor.digest === 'string' ? native.Descriptor.digest
+            : repoDigests.find(ref => selection.reference.includes('@') ? ref === selection.reference : true)?.split('@').at(-1);
+        if (!manifestDigest || !/^sha256:[a-f0-9]{64}$/u.test(manifestDigest)
+            || selection.reference.includes('@') && !selection.reference.endsWith(`@${manifestDigest}`)) return refuse('deployment_image_manifest_mismatch');
+        const localOnly = localAlias !== undefined || !selection.reference.includes('@') && isNativeComposeLocalOnlyImage(native);
+        const reference = localOnly ? undefined : selection.reference.includes('@') ? selection.reference
+            : repoDigests.find(ref => ref.endsWith(`@${manifestDigest}`));
+        // Native references can contain bound secrets; scratch names must
+        // not publish a dictionary-testable digest of that reference.
+        const scratch = await mkdtemp(join(await input.directory(), 'candidate-'));
+        const file = join(scratch, 'image.tar');
+        let retained = false;
+        try {
+            // A mutable tag may move after inspection. Native Id is only an
+            // invocation-local save alias; archive bytes establish CONFIG.
+            // Containerd's platform child Id may not be addressable. Its
+            // root RepoDigest is an immutable local alias, not registry proof.
+            const saveReference = localAlias ?? reference ?? (localOnly ? repoDigests[0] : undefined)
+                ?? (typeof native.Id === 'string' ? native.Id : refuse('deployment_image_identity_unavailable'));
+            await input.run(['image', 'save', '--platform', selection.platform, '--output', file, saveReference], options?.signal);
+            const saved = await verifyNativeComposeImageArchive(file, { manifestDigest, platform: selection.platform });
+            const manifestType = record(native.Descriptor) ? native.Descriptor.mediaType : undefined;
+            // RepoDigests can name a multi-platform index. Only a native
+            // manifest descriptor or the manifest's own bytes proves this
+            // field; an index digest must never masquerade as a variant.
+            if (!saved.manifestMatches && manifestType !== 'application/vnd.oci.image.manifest.v1+json'
+                && manifestType !== 'application/vnd.docker.distribution.manifest.v2+json') return refuse('deployment_image_manifest_mismatch');
+            const image: DeploymentImageV1 = { service: selection.service, platform: selection.platform, configDigest: saved.configDigest, manifestDigest,
+                ...(reference ? { registryReference: reference } : {}) };
+            preparedArchives.set(imageKey(image), { path: file, reference: saveReference });
+            retained = true;
+            return image;
+        } finally { if (!retained) await rm(scratch, { recursive: true, force: true }); }
+    };
     const identity = {
         /** Host-private repo:tag from the canonical ownedTag/activationRef
          * producer, not a native ID, digest, pattern or inventory request.
@@ -364,43 +408,7 @@ export function createNativeComposeImageIdentity(input: Readonly<{
             } finally { await rm(scratch, { recursive: true, force: true }); }
         },
         async resolve(selection: Readonly<{ service: string; reference: string; platform: string }>, options?: Readonly<{ signal?: AbortSignal }>): Promise<DeploymentImageV1> {
-            const inspection: unknown = JSON.parse((await input.run(['image', 'inspect', '--platform', selection.platform, selection.reference], options?.signal)).stdout);
-            if (!Array.isArray(inspection) || inspection.length !== 1 || !record(inspection[0])) return refuse('deployment_image_identity_unavailable');
-            const native = inspection[0];
-            const repoDigests = Array.isArray(native.RepoDigests) ? native.RepoDigests.filter((ref): ref is string => typeof ref === 'string') : [];
-            const manifestDigest = record(native.Descriptor) && typeof native.Descriptor.digest === 'string' ? native.Descriptor.digest
-                : repoDigests.find(ref => selection.reference.includes('@') ? ref === selection.reference : true)?.split('@').at(-1);
-            if (!manifestDigest || !/^sha256:[a-f0-9]{64}$/u.test(manifestDigest)
-                || selection.reference.includes('@') && !selection.reference.endsWith(`@${manifestDigest}`)) return refuse('deployment_image_manifest_mismatch');
-            const localOnly = !selection.reference.includes('@') && isNativeComposeLocalOnlyImage(native);
-            const reference = localOnly ? undefined : selection.reference.includes('@') ? selection.reference
-                : repoDigests.find(ref => ref.endsWith(`@${manifestDigest}`));
-            // Native references can contain bound secrets; scratch names must
-            // not publish a dictionary-testable digest of that reference.
-            const scratch = await mkdtemp(join(await input.directory(), 'candidate-'));
-            const file = join(scratch, 'image.tar');
-            let retained = false;
-            try {
-                // A mutable tag may move after inspection. Native Id is only an
-                // invocation-local save alias; archive bytes establish CONFIG.
-                // Containerd's platform child Id may not be addressable. Its
-                // root RepoDigest is an immutable local alias, not registry proof.
-                const saveReference = reference ?? (localOnly ? repoDigests[0] : undefined)
-                    ?? (typeof native.Id === 'string' ? native.Id : refuse('deployment_image_identity_unavailable'));
-                await input.run(['image', 'save', '--platform', selection.platform, '--output', file, saveReference], options?.signal);
-                const saved = await verifyNativeComposeImageArchive(file, { manifestDigest, platform: selection.platform });
-                const manifestType = record(native.Descriptor) ? native.Descriptor.mediaType : undefined;
-                // RepoDigests can name a multi-platform index. Only a native
-                // manifest descriptor or the manifest's own bytes proves this
-                // field; an index digest must never masquerade as a variant.
-                if (!saved.manifestMatches && manifestType !== 'application/vnd.oci.image.manifest.v1+json'
-                    && manifestType !== 'application/vnd.docker.distribution.manifest.v2+json') return refuse('deployment_image_manifest_mismatch');
-                const image: DeploymentImageV1 = { service: selection.service, platform: selection.platform, configDigest: saved.configDigest, manifestDigest,
-                    ...(reference ? { registryReference: reference } : {}) };
-                preparedArchives.set(imageKey(image), { path: file, reference: saveReference });
-                retained = true;
-                return image;
-            } finally { if (!retained) await rm(scratch, { recursive: true, force: true }); }
+            return resolveImage(selection, options);
         },
         /** Review resolves a mutable name once. Later platforms use NAME@index
          * from that approval, never another resolution of the source tag. */
@@ -421,19 +429,30 @@ export function createNativeComposeImageIdentity(input: Readonly<{
             const expected = at < 0 ? undefined : selection.reference.slice(at + 1);
             if (!repository || /[\s@\\]/u.test(repository) || repository.includes('://') || repository.startsWith('-')
                 || expected !== undefined && !/^sha256:[a-f0-9]{64}$/u.test(expected)) return refuse('deployment_image_registry_mismatch');
+            const registry = resolveNativeComposeRegistryForReference(selection.reference, options?.registries) ?? null;
+            let localFallback: Readonly<{ platform: string; alias: string }> | undefined;
             signal?.throwIfAborted();
             if (expected === undefined) {
                 const inspection = await input.run(['image', 'inspect', ...(platforms ? ['--platform', platforms[0]!] : []), selection.reference], signal);
                 if (inspection.exitCode === undefined || inspection.exitCode === 0) {
                     const local: unknown = JSON.parse(inspection.stdout);
-                    if (Array.isArray(local) && local.length === 1 && record(local[0])
-                        && isNativeComposeLocalOnlyImage(local[0])) {
-                        // A local-only image has no registry index provenance. Its
-                        // exact native archive can serve only its proved platform.
-                        if (platforms && platforms.length !== 1) return unavailable();
-                        const platform = platforms?.[0] ?? actualPlatform(local[0].Os, local[0].Architecture, local[0].Variant);
-                        if (!platform) return unavailable();
-                        return [await identity.resolve({ service: selection.service, reference: selection.reference, platform }, options)];
+                    if (Array.isArray(local) && local.length === 1 && record(local[0])) {
+                        const native = local[0];
+                        const platform = platforms?.[0] ?? actualPlatform(native.Os, native.Architecture, native.Variant);
+                        if (isNativeComposeLocalOnlyImage(native)) {
+                            // Local images can serve only the platform proved by their exact archive.
+                            if (!platform || (platforms && platforms.length !== 1)) return unavailable();
+                            return [await identity.resolve({ service: selection.service, reference: selection.reference, platform }, options)];
+                        }
+                        // Docker 29.0 and 29.1 can report synthetic digests without origin metadata.
+                        // Keep the immutable local alias as a candidate while trying the anonymous registry.
+                        if (native.Identity === undefined && registry === null && platform && (platforms?.length ?? 1) === 1
+                            && Array.isArray(native.RepoTags) && native.RepoTags.includes(selection.reference)) {
+                            const repoDigests: unknown[] = Array.isArray(native.RepoDigests) ? native.RepoDigests : [];
+                            const alias = repoDigests.find((value): value is string => typeof value === 'string'
+                                && !value.startsWith('-') && /^[^@\s\\]+@sha256:[a-f0-9]{64}$/u.test(value));
+                            if (alias) localFallback = { platform, alias };
+                        }
                     }
                 }
             }
@@ -448,14 +467,25 @@ export function createNativeComposeImageIdentity(input: Readonly<{
             };
             const raw = async (reference: string) => {
                 signal?.throwIfAborted();
-                const result = await input.run(['buildx', 'imagetools', 'inspect', '--raw', reference], signal,
-                    resolveNativeComposeRegistryForReference(reference, options?.registries) ?? null);
+                const result = await input.run(['buildx', 'imagetools', 'inspect', '--raw', reference], signal, registry);
                 signal?.throwIfAborted();
                 return { bytes: result.stdout, digest: `sha256:${createHash('sha256').update(result.stdout).digest('hex')}`, value: parse(result.stdout) };
             };
             const single = (mediaType: unknown) => mediaType === 'application/vnd.oci.image.manifest.v1+json'
                 || mediaType === 'application/vnd.docker.distribution.manifest.v2+json';
-            const root = await raw(selection.reference);
+            let root: Awaited<ReturnType<typeof raw>>;
+            try { root = await raw(selection.reference); }
+            catch (error) {
+                if (!localFallback) throw error;
+                const native = readPluginActionError(error);
+                const cause = readPluginActionFailureAuthorPayload(native?.data).failureCause;
+                if (native?.code !== 'native_failed' || !cause || 'kind' in cause
+                    || (cause.errorCode !== 'deployment_image_pull_denied' && cause.errorCode !== 'deployment_image_not_found')
+                    || cause.phase !== `${NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE}.${cause.errorCode}`) throw error;
+                signal?.throwIfAborted();
+                return [await resolveImage({ service: selection.service, reference: selection.reference,
+                    platform: localFallback.platform }, options, localFallback.alias)];
+            }
             if (expected !== undefined && root.digest !== expected) return refuse('deployment_image_manifest_mismatch');
             const index = root.value.mediaType === 'application/vnd.oci.image.index.v1+json'
                 || root.value.mediaType === 'application/vnd.docker.distribution.manifest.list.v2+json';
@@ -495,8 +525,7 @@ export function createNativeComposeImageIdentity(input: Readonly<{
                     || typeof manifest.value.config.digest !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(manifest.value.config.digest)) return refuse('deployment_image_manifest_mismatch');
                 const reference = `${repository}@${manifest.digest}`;
                 signal?.throwIfAborted();
-                const config: unknown = JSON.parse((await input.run(['buildx', 'imagetools', 'inspect', '--format', '{{json .Image}}', reference], signal,
-                    resolveNativeComposeRegistryForReference(reference, options?.registries) ?? null)).stdout);
+                const config: unknown = JSON.parse((await input.run(['buildx', 'imagetools', 'inspect', '--format', '{{json .Image}}', reference], signal, registry)).stdout);
                 signal?.throwIfAborted();
                 const configPlatform = record(config) ? actualPlatform(config.os, config.architecture, config.variant) : undefined;
                 if (platform === undefined) platform = configPlatform;

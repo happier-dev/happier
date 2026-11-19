@@ -4,7 +4,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { create as createTar } from 'tar';
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createNativeComposeImageIdentity } from './nativeComposeImageIdentity';
+import { NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE } from './nativeComposeFailure';
 import { nativeRegistryPause310 as fixture } from './nativeComposeImageRegistry.testkit';
 import { nativeDocker29LocalBuild } from './nativeComposeImageDocker29.testkit';
 
@@ -99,7 +101,7 @@ describe('preapproval native immutable index and variant discovery', () => {
                 .rejects.toMatchObject({ code: 'deployment_image_unavailable' });
         } finally { await rm(root, { recursive: true, force: true }); }
     });
-    it('retains a Docker29 local index with RepoDigests without registry acquisition or child-ID lookup', async () => {
+    it.each([true, false])('retains the exact Docker29 local index when origin information is present=%s', async reportsOrigin => {
         const root = await mkdtemp(join(tmpdir(), 'happier-docker29-'));
         try {
             const captured = nativeDocker29LocalBuild;
@@ -110,10 +112,17 @@ describe('preapproval native immutable index and variant discovery', () => {
             const archive = join(root, 'local.tar');
             await createTar({ cwd: root, file: archive }, Object.keys(captured.entries));
             const reference = captured.inspect[0].RepoTags[0];
+            const registryDenied = new PluginError({ code: 'native_failed', message: 'Native Compose operation could not be completed',
+                failureCause: { phase: `${NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE}.deployment_image_pull_denied`, errorClass: 'Error',
+                    errorCode: 'deployment_image_pull_denied', httpStatus: null } });
             const identity = createNativeComposeImageIdentity({ async directory() { return root; }, async run(args) {
                 // Docker is the substituted external boundary. Child IDs are not addressable.
-                if (args[0] !== 'image') throw new Error('Local build queried registry');
-                if (args[1] === 'inspect') return { stdout: JSON.stringify(args.includes('--platform') ? captured.platformInspect : captured.inspect), exitCode: 0 };
+                if (args[0] === 'buildx' && !reportsOrigin) throw registryDenied;
+                if (args[0] !== 'image') throw new Error('Local build with known origin queried a registry');
+                if (args[1] === 'inspect') {
+                    const [native] = args.includes('--platform') ? captured.platformInspect : captured.inspect;
+                    return { stdout: JSON.stringify([{ ...native, ...(!reportsOrigin ? { Identity: undefined } : {}) }]), exitCode: 0 };
+                }
                 if (args[1] === 'save') {
                     expect(args.at(-1)).toBe(captured.inspect[0].RepoDigests[0]);
                     await copyFile(archive, args[args.indexOf('--output') + 1]!);
@@ -126,6 +135,16 @@ describe('preapproval native immutable index and variant discovery', () => {
                 configDigest: JSON.parse(captured.entries['manifest.json'])[0].Config.replace('blobs/sha256/', 'sha256:') }];
             expect(await identity.resolveVariants({ service: 'app', reference, platforms: ['linux/amd64'] })).toEqual(expected);
             expect(await identity.resolveVariants({ service: 'app', reference })).toEqual(expected);
+            if (!reportsOrigin) {
+                await expect(identity.resolveVariants({ service: 'app', reference: captured.inspect[0].RepoDigests[0] }))
+                    .rejects.toBe(registryDenied);
+                await expect(identity.resolveVariants({ service: 'app', reference, platforms: ['linux/amd64', 'linux/arm64'] }))
+                    .rejects.toBe(registryDenied);
+                await expect(identity.resolveVariants({ service: 'app', reference }, { registries: [{
+                    origin: 'https://docker.io', access: 'pull', bindingIdentity: 'selected-registry',
+                    envPort: { async prepare() { throw new Error('Registry preparation belongs to the native boundary'); } },
+                }] })).rejects.toBe(registryDenied);
+            }
         } finally { await rm(root, { recursive: true, force: true }); }
     });
     it('pins only the needed review variant and later derives another platform solely from the approved index', async () => {

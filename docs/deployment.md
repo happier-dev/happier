@@ -4770,10 +4770,16 @@ by Docker's installer. Installer failure stays on the recipe step for Retry.
 grants close to administrator power; existing inputs without `mode` retain that setup.
 Shared-daemon configuration belongs to the group variant only.
 
-Docker Buildx is also a prerequisite for image preparation, including image-only
-Compose services: native `imagetools inspect` establishes immutable image index,
-manifest, configuration and platform provenance before approval. Bake is invoked
-only for services with a build definition. `docker_buildx_not_installed` retains
+Docker Buildx is also a prerequisite for registry and build image preparation.
+Native `imagetools inspect` establishes immutable registry image index, manifest,
+configuration and platform provenance before approval. Older Docker 29 engines
+can attach a repository digest to a local image without recording where it came
+from. When the anonymous registry denies access or has no such image, approval
+can use the exact local tag on its single proved platform. The local archive
+provides the image identity without making a registry provenance claim. A selected
+registry binding, a pinned digest or a request for multiple platforms still needs
+registry proof. Bake runs only for services with a build definition.
+`docker_buildx_not_installed` retains
 `kind: 'systemToolUnavailable'`, `toolId: 'docker-buildx'` and
 `remedy: 'install_docker_buildx_plugin_on_machine'`. Install Docker Buildx on the
 image preparation Machine (`docker-buildx-plugin` with Docker Engine packages;
