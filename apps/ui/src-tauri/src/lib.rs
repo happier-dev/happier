@@ -155,7 +155,12 @@ pub fn run() {
     if let Some(init_script) =
         web_runtime_config::build_desktop_web_runtime_config_init_script_from_env()
     {
-        builder = builder.append_invoke_initialization_script(init_script);
+        // Plugin scripts run at document start after Tauri publishes the native window label.
+        builder = builder.plugin(
+            tauri::plugin::Builder::<_, ()>::new("desktop-web-runtime-config")
+                .js_init_script(init_script)
+                .build(),
+        );
     }
 
     #[cfg(desktop)]

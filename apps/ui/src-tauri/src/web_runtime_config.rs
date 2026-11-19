@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::desktop_window::MAIN_WINDOW_LABEL;
+
 #[path = "organization_policy.rs"]
 mod organization_policy;
 use organization_policy::OrganizationPolicyReadError;
@@ -122,9 +124,9 @@ fn build_desktop_web_runtime_config_init_script(
     config: &DesktopWebRuntimeConfig,
 ) -> Option<String> {
     let payload = serde_json::to_string(config).ok()?;
-    Some(format!(
-        r#";(function(){{try{{const next={payload};if(!next||typeof next!=="object"){{return;}}const current=(window.__HAPPIER_WEB_RUNTIME_CONFIG__&&typeof window.__HAPPIER_WEB_RUNTIME_CONFIG__==="object")?window.__HAPPIER_WEB_RUNTIME_CONFIG__:{{}};window.__HAPPIER_WEB_RUNTIME_CONFIG__={{...current,...next}};if(typeof next.serverUrl==="string"&&next.serverUrl.trim()){{try{{const nextUrl=new URL(window.location.href);nextUrl.searchParams.set("server",next.serverUrl.trim());window.history.replaceState(null,"",nextUrl.toString());}}catch(_urlError){{}}}}}}catch(_error){{}}}})();"#,
-    ))
+    let main_window = serde_json::to_string(MAIN_WINDOW_LABEL).ok()?;
+    let apply = include_str!("desktop_web_runtime_config.js");
+    Some(format!(";({apply})({payload}, {main_window});"))
 }
 
 pub(crate) fn build_desktop_web_runtime_config_init_script_from_env() -> Option<String> {
@@ -236,7 +238,7 @@ mod tests {
         assert!(script.contains("\"serverContext\":\"stack\""));
         assert!(script.contains("history.replaceState"));
         assert!(script.contains("searchParams.set("));
-        assert!(script.contains("\"server\""));
+        assert!(script.contains("'server'"));
     }
 
     #[test]
@@ -244,15 +246,7 @@ mod tests {
         let raw = "{\"organization\":\"a\\\";throw 'unexpected'\\n</script>\"}\n\u{2028}\u{2029}";
         let config = resolve_desktop_web_runtime_config_with(|_| None, Ok(Some(raw.to_string())))
             .expect("ordinary production desktop must inject organization policy");
-        let script = build_desktop_web_runtime_config_init_script(&config).unwrap();
-        let payload = script
-            .split_once("const next=")
-            .unwrap()
-            .1
-            .split_once(";if(!next")
-            .unwrap()
-            .0;
-        let serialized: serde_json::Value = serde_json::from_str(payload).unwrap();
+        let serialized = serde_json::to_value(config).unwrap();
         assert_eq!(
             serialized,
             serde_json::json!({"organizationPolicyJson": raw})
