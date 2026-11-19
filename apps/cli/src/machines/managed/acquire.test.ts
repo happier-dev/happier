@@ -54,9 +54,7 @@ import type { PluginServices, PluginInvocationContext } from '@happier-dev/plugi
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { ManagedBootstrapCredentialCreateV1Schema, ManagedControllerCurrentInputV1Schema, ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { logger } from '@/ui/logger';
 import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { AcquireResultV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { ManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { MachineProvisionerNativeExecResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -541,7 +539,6 @@ describe('creation environment stage', () => {
         { action: 'machines.managed.acquire', outcome: 'isolationApproval', storedEnabled: false },
         { action: 'machines.managed.acquire', outcome: 'previewRefusal', storedEnabled: false },
         { action: 'machines.managed.acquire', outcome: 'isolationUnavailable', storedEnabled: false },
-        { action: 'machines.managed.acquire', outcome: 'rolesUnavailable', storedEnabled: false },
         { action: 'machines.managed.bootstrap.retry', outcome: 'applied', storedEnabled: false },
         { action: 'machines.managed.bootstrap.retry', outcome: 'applied', storedEnabled: true },
         { action: 'machines.managed.inspect', outcome: 'applied', storedEnabled: false },
@@ -552,7 +549,7 @@ describe('creation environment stage', () => {
         const { action, outcome, storedEnabled } = scenario;
         const freshEnrollment = 'freshEnrollment' in scenario && scenario.freshEnrollment;
         const identity = { kind: 'dedicatedDaemonUser' as const, username: 'happier' as const, serviceMode: 'user' as const,
-            role: outcome === 'rolesUnavailable' ? 'server' as const : 'deployTarget' as const, adminAccessAtCreation: 'preauthorized' as const };
+            role: 'deployTarget' as const, adminAccessAtCreation: 'preauthorized' as const };
         const retained = ManagedMachineV1Schema.parse({ ...machine, homeId: 'srv_bootstrap_policy', enrollmentIdentity: identity, allocation: 'bound', enrolledMachineId: 'guest',
             resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
         if (action === 'machines.managed.inspect') retained.observation = { observedAt: 0, availability: 'unavailable', reason: 'bootstrap.approval_canceled' };
@@ -564,8 +561,6 @@ describe('creation environment stage', () => {
         const keys = tweetnacl.sign.keyPair();
         let policyWritten = false;
         let isolationWritten = false;
-        let rolesWritten = false;
-        const roleWarning = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
         const isolationInputs: unknown[] = [];
         const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
@@ -581,17 +576,6 @@ describe('creation environment stage', () => {
                         ? { kind: 'approval_request_created', artifactId: 'admin-approval', actionId: 'machines.setup.adminAccess.set' }
                         : outcome === 'outcomeUnknown' ? { status: 'outcomeUnknown' }
                         : { status: 'applied', policy: { version: 1, mode: 'preauthorized' }, metadataVersion: 2 } } } };
-            }
-            if (String(url).endsWith('/v1/actions/machines.roles.set')) {
-                // Machine roles (OWNER-RULINGS 2026-11-12): a deploy target seeds Deployments + Sessions over the missing field.
-                const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-                expect(carrier.managedContinuation).toEqual({ managedId: retained.id, creationRequestId: 'creation-policy', expectedIntentRevision: 0 });
-                expect(carrier.envelope).toMatchObject({ requestId: childRequestId, input: { serverId: 'srv_bootstrap_policy', machineId: 'guest',
-                    expectedMetadataVersion: 0, policy: resolveManagedMachineEnrollmentRolesV1(identity) } });
-                rolesWritten = true;
-                if (outcome === 'rolesUnavailable') return { status: 503, data: { error: 'target_unavailable' } };
-                return { status: 200, data: { v: 1, actionId: 'machines.roles.set', requestId: childRequestId, execution: { ok: true,
-                    result: { status: 'applied', policy: resolveManagedMachineEnrollmentRolesV1(identity), metadataVersion: 3 } } } };
             }
             if (String(url).endsWith('/v1/actions/machines.agentIsolation.preview')) {
                 expect(policyWritten).toBe(!isRetry || freshEnrollment);
@@ -654,7 +638,7 @@ describe('creation environment stage', () => {
                 operationAcceptance: { operationId: 'creation-operation', accept() {} } },
         });
         if (action === 'machines.managed.inspect') await expect(execution).resolves.toMatchObject({ machine: { id: retained.id } });
-        else if (outcome === 'applied' || outcome === 'isolationUnavailable' || outcome === 'rolesUnavailable') await expect(execution).resolves.toMatchObject({ managedId: 'managed', operation: { operationId: 'creation-operation' } });
+        else if (outcome === 'applied' || outcome === 'isolationUnavailable') await expect(execution).resolves.toMatchObject({ managedId: 'managed', operation: { operationId: 'creation-operation' } });
         else if (outcome === 'previewRefusal') {
             await expect(execution).rejects.toMatchObject({ name: 'ManagedMachineControllerError', code: 'RPC_FORBIDDEN', failureCause: {
                 errorClass: 'ManagedMachineControllerError', errorCode: 'RPC_FORBIDDEN', phase: 'machines.agentIsolation.preview',
@@ -664,11 +648,7 @@ describe('creation environment stage', () => {
         }
         else await expect(execution).rejects.toMatchObject({ code: outcome === 'adminApproval' || outcome === 'isolationApproval' ? 'approval_context_unavailable' : 'action_outcome_unknown' });
         expect(policyWritten).toBe(!isRetry || freshEnrollment);
-        // Machine roles seed once, after administrator access, only where creation initializes policy.
-        expect(rolesWritten).toBe(initializesPolicy && outcome !== 'outcomeUnknown' && outcome !== 'adminApproval');
-        if (outcome === 'rolesUnavailable') expect(roleWarning).toHaveBeenCalledWith('[MANAGED MACHINE] Enrollment roles seed failed', {
-            managedId: retained.id, machineId: 'guest', code: 'target_unavailable',
-        });
+        expect(post.mock.calls.some(([url]) => String(url).endsWith('/v1/actions/machines.roles.set'))).toBe(false);
         // ISO-UPDATE-1111: retained Update/Inspect must not replay creation policy.
         if (!initializesPolicy) expect(isolationInputs).toEqual([]);
         expect(isolationWritten).toBe(initializesPolicy && outcome !== 'outcomeUnknown' && outcome !== 'adminApproval' && outcome !== 'previewRefusal' && outcome !== 'isolationUnavailable');
