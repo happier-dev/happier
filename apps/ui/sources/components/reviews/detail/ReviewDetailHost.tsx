@@ -22,6 +22,8 @@ import { useReviewHistory } from '../useReviewHistory';
 import { useReviewComments } from '@/components/sessions/reviews/findings/useReviewRunComments';
 import { ReviewFindingRow } from '@/components/sessions/reviews/findings/ReviewFindingRow';
 import { useReviewFindingsModel, type ReviewFindingDecisionTarget } from '../finding/useReviewFindingsModel';
+import { ReviewQuestions, ReviewFollowUpDock } from '../finding/ReviewQuestions';
+import { useReviewQuestionRuns } from './useReviewQuestionRuns';
 import { ReviewFindingsList } from './ReviewFindingsList';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
@@ -224,7 +226,9 @@ export function ReviewDetailHost(props: Readonly<{
   const findingRound = React.useMemo(() => round && record ? { round: { reviewId: record.reviewId,
     roundOrdinal: round.ordinal, reviewerIds: round.reviewerIds, state: round.state }, comments: comments.comments } : undefined,
   [comments.comments, record, round]);
-  const findings = useReviewFindingsModel({ members: EMPTY_MEMBERS, record: findingRound,
+  const questionRuns = useReviewQuestionRuns({ runs: round?.runs, accountLifetime: binding,
+    enabled: presented && activeTab === 'findings' });
+  const findings = useReviewFindingsModel({ members: questionRuns.members, record: findingRound,
     reviewerCount: round?.reviewerIds.length ?? 0, scope, accountLifetime: binding,
     serverId: scope?.serverId ?? null, sessionId: null, canAct: canEdit, pending: comments.pending,
     onDecideComment: decide });
@@ -309,6 +313,15 @@ export function ReviewDetailHost(props: Readonly<{
           action={{ label: t('common.retry'), onPress: () => void comments.refresh() }} /> : null}
         {comments.cursor ? <TextLinkButton testID="review-findings-load-more-comments" disabled={comments.loadingMore}
           label={t(comments.loadMoreFailed ? 'common.retry' : 'files.reviewComments.durable.showMore')} onPress={() => void comments.loadMore()} /> : null}
+        {questionRuns.loading && questionRuns.members.length === 0 ? <SurfaceStateCard kind="loading" size="line" title={t('common.loading')} /> : null}
+        {questionRuns.failed ? <SurfaceStateCard testID="review-detail:questions-unavailable" kind="error" size="line" title={t('common.error')}
+          action={{ label: t('common.retry'), onPress: questionRuns.retry }} /> : null}
+        <ReviewQuestions questions={findings.questions} multiReviewer={(round?.reviewerIds.length ?? 0) > 1}
+          canAct={canEdit} onAnswer={findings.setReplyToQuestion} />
+        {canEdit && findings.questions.length > 0 && openFinding === null ? <ReviewFollowUpDock
+          sessionId={findings.dockMembers[0]?.sessionId ?? null} serverId={scope?.serverId ?? null} accountLifetime={binding}
+          draftRunId={findings.dockMembers[0]?.runId ?? null} members={findings.dockMembers}
+          recipient={findings.dockRecipient} followUp={findings.followUp} onSend={findings.askReviewers} /> : null}
         {findings.error ? <SurfaceStateCard kind="error" size="line" title={t('common.error')} reason={findings.error} /> : null}
         {findings.approval.approvalPending && findings.approval.approvalId && scope ? <ActionApprovalPendingNotice
           testID="review-detail:approval" message={t('approvals.title')}
@@ -332,8 +345,6 @@ export function ReviewDetailHost(props: Readonly<{
     )}</ReviewPagePluginContent>
   );
 }
-
-const EMPTY_MEMBERS = Object.freeze([]);
 
 /** The round's runs, each opening its own result page (where its findings are decided today). */
 function ReviewRoundRuns(props: Readonly<{ round: ReviewRecordRound; scope: ServerAccountScope | null }>) {

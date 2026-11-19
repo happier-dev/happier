@@ -11,7 +11,9 @@ export type ReviewFollowUpAvailability =
  * Advisory projection of the result's runRef retention. It cannot prove current lifecycle or
  * retained-session availability; runtime admission decides those and its refusal is shown below.
  */
-export function resolveReviewFollowUpAvailability(runRef: ExecutionRunStructuredRunRef): ReviewFollowUpAvailability {
+export function resolveReviewFollowUpAvailability(runRef: ExecutionRunStructuredRunRef,
+    context?: Readonly<{ sessionId: string | null }>): ReviewFollowUpAvailability {
+    if (context && !context.sessionId) return { available: false, reason: t('runPage.review.followUpUnavailable.resumeUnavailable') };
     if (runRef.retentionPolicy === 'resumable') return { available: true };
     return { available: false, reason: t('runPage.review.followUpUnavailable.notResumable') };
 }

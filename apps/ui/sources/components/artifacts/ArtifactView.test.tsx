@@ -40,6 +40,13 @@ import { Modal } from '@/modal';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useArtifactNetworkEditor } from './useArtifactNetworkEditor';
+import { AgentInput } from '@/components/sessions/agentInput';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
+import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
+import { SESSION_RPC_METHODS, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -659,6 +666,95 @@ describe('Artifact composed view reads', () => {
             await screen.pressByTestIdAsync('review-detail:tab:activity');
             await flushHookEffects();
             expect(reads).toHaveLength(1);
+        } finally { await screen.unmount(); }
+    });
+    it.each([false, true])('reads native Review questions only for presented findings from their retained Machine and Home (Session: %s)', async withSession => {
+        const reviewId = 'native-review-questions';
+        const run = ExecutionRunPublicStateSchema.parse({ runId: 'question-run', callId: 'question-call', sidechainId: 'sidechain',
+            intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, display: { title: 'Retained reviewer' },
+            permissionMode: 'default', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+            status: 'succeeded', startedAtMs: 1, finishedAtMs: 2 });
+        const record: DecryptedArtifact = { id: reviewId, title: 'Questions', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId, title: 'Questions' },
+            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2,
+                reviewerIds: ['opaque-participant'], runs: [{ kind: 'execution', runId: run.runId, machineId: 'question-machine', ...(withSession ? { sessionId: 'question-session' } : {}) }] }] }),
+            ownerAccountId: 'owner', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        const reads: unknown[] = [];
+        const retained = { run, structuredMeta: { kind: 'review_narration.v1', payload: {} }, reviewFindings: {
+            runRef: { runId: run.runId, callId: run.callId, backendId: 'claude', backendTarget: run.backendTarget, retentionPolicy: 'resumable' },
+            summary: 'A question remains', overviewMarkdown: 'A question remains', findings: [], assumptions: [], generatedAtMs: 2,
+            questions: [{ id: 'retained-question', text: 'Which Account owns this data?', status: 'open', findingIds: [] }],
+        } };
+        const actions: unknown[] = [];
+        const rpc = installSessionActionRpcBoundary((request, context) => {
+            if (request.method.endsWith(SESSION_RPC_METHODS.EXECUTION_RUN_GET)) {
+                reads.push({ method: request.method, serverUrl: context.serverUrl, input: request.params });
+                return retained;
+            }
+            if (request.method.endsWith(RPC_METHODS.CAPABILITIES_DESCRIBE)) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
+            if (request.method.endsWith(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION)) {
+                actions.push(request.params);
+                retained.reviewFindings.questions[0]!.status = 'answered';
+                return { ok: true };
+            }
+            throw new Error(`Unexpected question RPC: ${request.method}`);
+        });
+        const reviewerSession = createSessionFixture({ id: 'question-session', active: true,
+            metadata: { path: '/repo', host: 'test', machineId: 'question-machine' } });
+        const sessions = createSessionMetadataHttpBoundary(() => ({ 'question-session': reviewerSession }));
+        const { served } = await setup('document', undefined, false, request => {
+            if (request.path === `/v1/artifacts/${reviewId}`) return Response.json(createPlainArtifactHttpFixture(record, 'owner'));
+            if (request.path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {
+                execution: { runs: { enabled: true } }, encryption: { plaintextStorage: { enabled: true }, accountOptOut: { enabled: true } } },
+                capabilities: { serverIdentity: { serverIdentityId: 'question-home' } } }));
+            const machine = createPlainMachineReadHttpResponseFixture(request.path, { method: request.method,
+                ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }, 'owner');
+            if (machine) return machine;
+            if (request.path === '/v1/reviews/comments') return Response.json({ items: [], cursor: null });
+            return sessions.handle(request.url, { method: request.method,
+                ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }) ?? undefined;
+        });
+        await setServerProfileIdentityForUrl(served.homes.owner!.serverUrl, 'question-home');
+        const scope = captureActiveServerAccountScopeLifetime()!.scope;
+        if (withSession) {
+            await prepareSessionDraftPersistenceStorage();
+            getStorage().getState().applySessions([{ ...reviewerSession, serverId: scope.serverId }]);
+        }
+        const page = (active: boolean) => <PluginSurfaceFocusEligibilityProvider active={active} presentationActive={active}>
+            <ArtifactView artifactId={reviewId} artifact={{ ...record, sourceServerId: scope.serverId }} presentation="page" />
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(page(false));
+        try {
+            await flushHookEffects();
+            expect(reads).toEqual([]);
+            await act(async () => { screen.update(page(true)); });
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-question:retained-question'),
+                `${screen.getTextContent()}\n${JSON.stringify({ reads, requests: served.requests.map(request => ({ path: request.path, method: request.method, body: request.body })) })}`).not.toBeNull());
+            expect(screen.getTextContent()).toContain('Which Account owns this data?');
+            expect(reads).toEqual([{ method: `${withSession ? 'question-session' : 'question-machine'}:${SESSION_RPC_METHODS.EXECUTION_RUN_GET}`,
+                serverUrl: served.homes.owner!.serverUrl,
+                input: { runId: 'question-run', includeStructured: true, includeLatestToolResult: false } }]);
+            if (withSession) {
+                await screen.pressByTestIdAsync('review-question-answer:retained-question');
+                const input = screen.findByTestId('review-findings-follow-up')!.findByType(AgentInput);
+                await act(async () => input.props.onChangeText('The original Account'));
+                await act(async () => input.props.onSend({ inputTextOverride: 'The original Account' }));
+                await waitForHomeGovernance(() => expect(actions).toEqual([{ runId: 'question-run', actionId: 'review.follow_up',
+                    input: { findingIds: [], replyToQuestionId: 'retained-question', messageMarkdown: 'The original Account' } }]));
+                expect(rpc.filter(request => request.method.endsWith(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION))
+                    .map(request => request.method)).toEqual([`question-session:${SESSION_RPC_METHODS.EXECUTION_RUN_ACTION}`]);
+                await waitForHomeGovernance(() => {
+                    expect(screen.findByTestId('review-question:retained-question')).not.toBeNull();
+                    expect(screen.findByTestId('review-question-answer:retained-question')).toBeNull();
+                });
+            } else {
+                expect(screen.findByTestId('review-question-answer:retained-question')).toBeNull();
+                expect(screen.findByTestId('review-findings-follow-up-unavailable')).not.toBeNull();
+            }
+            const readsBeforeActivity = reads.length;
+            await screen.pressByTestIdAsync('review-detail:tab:activity');
+            await flushHookEffects();
+            expect(reads).toHaveLength(readsBeforeActivity);
         } finally { await screen.unmount(); }
     });
     it('keeps an unreadable durable finding visible as unavailable rather than a clean Review', async () => {

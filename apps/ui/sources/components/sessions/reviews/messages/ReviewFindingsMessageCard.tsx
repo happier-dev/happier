@@ -19,7 +19,7 @@ import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/navigation/buildSessionExecutionRunRouteHref';
 import { ReviewFindingRow, type ReviewFindingDecision } from '@/components/sessions/reviews/findings/ReviewFindingRow';
-import { ReviewFollowUpComposer } from '@/components/sessions/reviews/findings/ReviewFollowUpComposer';
+import { ReviewQuestions, ReviewFollowUpDock } from '@/components/reviews/finding/ReviewQuestions';
 import {
     formatReviewFindingsHeadline,
     isHighReviewSeverity,
@@ -267,31 +267,8 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
     ) : null;
 
     const dock = isPage && canAct && openThreadRowId === null ? (
-        <View style={styles.dock}>
-            {followUp.available ? (
-                <>
-                    <ReviewFollowUpComposer
-                        testID="review-findings-follow-up"
-                        sessionId={sessionId}
-                        serverId={serverId}
-                        accountLifetime={accountLifetime}
-                        draftRunId={runId}
-                        placeholder={dockMembers.length > 1
-                            ? t('runPage.review.askReviewersPlaceholder')
-                            : t('runPage.review.askReviewerPlaceholder')}
-                        recipient={dockRecipient}
-                        onSend={model.askReviewers}
-                    />
-                    <Text style={styles.caption}>
-                        {dockMembers.length > 1
-                            ? t('runPage.review.followUpsGoToAll', { count: dockMembers.length })
-                            : t('runPage.review.followUpsGoTo', { reviewer: dockMembers[0]!.reviewerLabel })}
-                    </Text>
-                </>
-            ) : (
-                <Text testID="review-findings-follow-up-unavailable" style={styles.caption}>{followUp.reason}</Text>
-            )}
-        </View>
+        <ReviewFollowUpDock sessionId={sessionId} serverId={serverId} accountLifetime={accountLifetime}
+            draftRunId={runId} members={dockMembers} recipient={dockRecipient} followUp={followUp} onSend={model.askReviewers} />
     ) : null;
 
     const groupHeadline = multiReviewer
@@ -500,32 +477,8 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                         { tag: 'ReviewFindingsMessageCard.loadMore' }); }} />
             ) : null}
 
-            {isPage ? model.questions.map(({ member, question }) => (
-                <View key={`${member.runId}:${question.id}`} testID={`review-question:${question.id}`} style={styles.question}>
-                    <Icon name="question" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
-                    <View style={styles.questionBody}>
-                        <Text style={styles.questionEyebrow}>
-                            {multiReviewer ? `${member.reviewerLabel} · ${t('runPage.review.reviewerAsks')}` : t('runPage.review.reviewerAsks')}
-                        </Text>
-                        <Text selectable style={styles.questionText}>
-                            {question.text}
-                            {canAct && member.followUp.available && question.status === 'open' ? (
-                                <>
-                                    {'  '}
-                                    <Text
-                                        testID={`review-question-answer:${question.id}`}
-                                        accessibilityRole="button"
-                                        onPress={() => model.setReplyToQuestion({ member, question })}
-                                        style={styles.inlineLinkText}
-                                    >
-                                        {t('runPage.review.answer')}
-                                    </Text>
-                                </>
-                            ) : null}
-                        </Text>
-                    </View>
-                </View>
-            )) : null}
+            {isPage ? <ReviewQuestions questions={model.questions} multiReviewer={multiReviewer}
+                canAct={canAct} onAnswer={model.setReplyToQuestion} /> : null}
 
             {isPage ? members.filter((member) => member.normalized.assumptions.length > 0).map((member) => (
                 <View key={`assumptions:${member.runId}`} style={styles.section}>
@@ -639,28 +592,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexWrap: 'wrap',
         gap: theme.space.s8,
     },
-    question: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: theme.space.s10,
-        padding: 14,
-        borderRadius: 12,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.border.default,
-    },
-    questionBody: {
-        flex: 1,
-        minWidth: 0,
-        gap: theme.space.s4,
-    },
-    questionEyebrow: {
-        color: theme.colors.text.secondary,
-        ...Typography.variant('body', 'semiBold'),
-    },
-    questionText: {
-        color: theme.colors.text.primary,
-        ...Typography.variant('reading'),
-    },
     quiet: {
         color: theme.colors.text.secondary,
         ...Typography.variant('body'),
@@ -668,9 +599,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     inlineLinkText: {
         ...Typography.default('semiBold'),
         color: theme.colors.text.secondary,
-    },
-    dock: {
-        gap: theme.space.s6,
     },
     caption: {
         color: theme.colors.text.secondary,
