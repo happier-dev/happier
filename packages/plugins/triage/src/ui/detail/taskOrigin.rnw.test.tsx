@@ -14,6 +14,39 @@ import { TriageTaskOrigin, TriageTaskOriginLink } from './taskOrigin.js';
 const mounted: PluginUiTestkit[] = [];
 afterEach(async () => { for (const fixture of mounted.splice(0)) await fixture.dispose(); });
 
+it('opens the persisted Review backlink without reading finding bodies', async () => {
+  const entryRef = testkitEntryRef({ kindId: 'issue', entryId: 'review-task' });
+  const originReview = { reviewId: 'review-1', findingIds: ['finding-1', 'finding-2'] };
+  const reads: string[] = [];
+  const opens: unknown[] = [];
+  const fixture = await createPluginUiTestkit({
+    identity: { instanceId: 'persisted-review-origin', mountNonce: 'one' },
+    authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+    surface: defineUiSurface(() => {
+      const [unrelated, setUnrelated] = React.useState(0);
+      return <><TriageTaskOrigin entryRef={{ ...entryRef }} />
+        <Button title={`Unrelated ${unrelated}`} onPress={() => setUnrelated(value => value + 1)} /></>;
+    }),
+    surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+    handlers: {
+      executeAction: ({ action, input }) => {
+        reads.push(action);
+        expect(input).toEqual({ v: 1, entryRef });
+        if (action === 'tasks/read-origin-error-v1') return { v: 1, originError: null };
+        expect(action).toBe('tasks/read-origin-review-v1');
+        return { v: 1, originReview };
+      },
+      openResource: ({ resource }) => { opens.push(resource); },
+    },
+  });
+  mounted.push(fixture);
+  await fixture.findByRole('button', { name: 'Review' });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Unrelated 0' })); });
+  expect(reads.sort()).toEqual(['tasks/read-origin-error-v1', 'tasks/read-origin-review-v1']);
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Review' })); });
+  expect(opens).toEqual([{ kind: 'artifact', artifactId: 'review-1' }]);
+});
+
 it('reads the persisted origin once per open or explicit refresh and opens the complete error reference', async () => {
   const entryRef = testkitEntryRef({ kindId: 'issue', entryId: 'created-issue' });
   const originError = { entryRef: testkitEntryRef({ kindId: 'error-issue', collisionScope: 'production', entryId: 'checkout-error' }),
@@ -34,6 +67,7 @@ it('reads the persisted origin once per open or explicit refresh and opens the c
     adapter: createPluginUiRnwSemanticSurfaceAdapter(),
     handlers: {
       executeAction: ({ action, input }) => {
+        if (action === 'tasks/read-origin-review-v1') return { v: 1, originReview: null };
         expect(action).toBe('tasks/read-origin-error-v1'); reads.push(input); return { v: 1, originError };
       },
       openSurface: request => { opens.push(request); },
@@ -88,7 +122,8 @@ it('presents a failed origin relationship read once and keeps its existing retry
     authorPlugin: { id: 'happier.triage', version: '0.0.0' },
     surface: defineUiSurface(() => <TriageTaskOrigin entryRef={testkitEntryRef()} />),
     surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-    handlers: { executeAction: async () => { reads += 1; if (reads === 1) throw new PluginError({ code: 'origin_read_unavailable',
+    handlers: { executeAction: async ({ action }) => { if (action === 'tasks/read-origin-review-v1') return { v: 1, originReview: null };
+        reads += 1; if (reads === 1) throw new PluginError({ code: 'origin_read_unavailable',
         details: { requestId: 'origin-read-17' } }); return { v: 1, originError: null }; },
       presentActionFailure: async ({ failure }) => { received.push(failure); return { reason: 'Cannot read', nextStep: 'Try again', technicalDetails: [
         { key: 'code', label: 'Code', value: failure.errorCode },
