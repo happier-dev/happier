@@ -1,4 +1,4 @@
-import { MachineSetupPlanResultV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupApplyInputV1Schema,
+import { machineSetupApplyTargetFromPlanV1, MachineSetupPlanResultV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupApplyInputV1Schema,
     type MachineSetupAppChildV1, type MachineSetupApplyInputV1, type MachineSetupCombinedPlanResultV1,
     type MachineSetupPlanResultV1, type MachineSetupPlanInputV1, type MachineSetupPlanUnavailableTargetV1, type MachineSetupSourceApplyV1,
     type MachineSetupRemoveInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -97,9 +97,10 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
         const row = combined?.success ? combined.data.targets.find(target => target.homeId === expected.homeId && target.machineId === expected.machineId) : undefined;
         if (row && 'status' in row) { unavailableTargets.push(row); continue; }
         const target = row && 'plan' in row ? row : undefined;
-        if (params.combined && (!target || expected.appChildren !== undefined && target.appChildren === undefined)) return fail('managed_response_invalid');
+        if (params.combined && !target) return fail('managed_response_invalid');
         const effects = MachineSetupPlanResultV1Schema.safeParse(target ? target.plan : outcome.result);
         if (!effects.success || effects.data.recipePlans === undefined) return fail('managed_response_invalid');
+        if (expected.appChildren !== undefined && effects.data.appChildren === undefined) return fail('managed_response_invalid');
         if (effects.data.desiredRevision !== expected.desiredRevision || !sameStrictJsonValue(effects.data.sources, expectedSources[index])) return fail('plan_changed');
         if (!sameStrictJsonValue(effects.data.removeItemKeys, expected.removeItemKeys)) return fail('plan_changed');
         if (expected.removeItemKeys !== undefined && effects.data.removalPlans === undefined) return fail('managed_response_invalid');
@@ -110,12 +111,8 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
             signal: params.context.signal,
         });
         if (!current()) return fail('continuation_retired');
-        admitted.push({ homeId: expected.homeId, machineId: expected.machineId, sources: effects.data.sources,
-            desiredRevision: effects.data.desiredRevision, recipePlans: effects.data.recipePlans, exclusions: effects.data.exclusions,
-            ...(expected.preset ? { preset: expected.preset } : {}),
-            ...(effects.data.removeItemKeys === undefined ? {} : { removeItemKeys: effects.data.removeItemKeys }),
-            ...(effects.data.removalPlans === undefined ? {} : { removalPlans: effects.data.removalPlans }),
-            ...(target?.appChildren === undefined ? {} : { appChildren: target.appChildren }) });
+        admitted.push({ ...machineSetupApplyTargetFromPlanV1(expected, effects.data),
+            ...(expected.preset ? { preset: expected.preset } : {}) });
         facts.push({ homeId: expected.homeId, machineId: expected.machineId, support: effects.data.support,
             ...(effects.data.review === undefined ? {} : { review: effects.data.review }),
             ...(effects.data.sourceFacts === undefined ? {} : { sourceFacts: effects.data.sourceFacts }),
