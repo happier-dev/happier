@@ -1,4 +1,4 @@
-import { resolveUsageCostBasisForSelection, resolveUsageCostForSelection } from '@happier-dev/protocol/usage/usageCostFacts';
+import { resolveUsageCostBasisForSelection } from '@happier-dev/protocol/usage/usageCostFacts';
 import { type UsagePageCostProjection, type UsagePageCostSelection} from '@happier-dev/protocol/usage/usageCostFacts';
 import { type UsageObservationCost } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { usageCostKindPhrase } from '@/sync/domains/usage/resolveUsageCostModeLabel';
@@ -22,10 +22,12 @@ export function usagePageCostRow(cost: UsageObservationCost, selection: UsagePag
 
 /** Chart coordinates of the same selected page facts; unavailable money stays unavailable. */
 export function usagePageCostTrend(projection: UsagePageCostProjection) {
-  return (projection.accounting.series ?? []).map(bucket => ({ timestamp: bucket.bucketStartMs / 1000,
-    tokens: resolveUsageMeasuredTokens(bucket.tokens).total, reportCount: bucket.eventCount,
-    cost: resolveUsageCostForSelection(bucket.cost, projection.selection),
-  }));
+  return (projection.accounting.series ?? []).map(bucket => {
+    const basis = resolveUsageCostBasisForSelection(bucket.cost, projection.selection);
+    return { timestamp: bucket.bucketStartMs / 1000,
+      tokens: resolveUsageMeasuredTokens(bucket.tokens).total, reportCount: bucket.eventCount,
+      cost: basis?.amountUsd ?? null, partialCost: basis?.partial === true };
+  });
 }
 
 /**

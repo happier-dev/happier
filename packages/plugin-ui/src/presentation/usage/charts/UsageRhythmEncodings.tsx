@@ -14,6 +14,8 @@ export type UsageWeekHourModel = Readonly<{
   encoding: 'amount' | 'ordinal';
   /** Seven rows (Mon…Sun) of 24 hourly values. */
   grid: readonly (readonly (number | null)[])[];
+  /** Cells that contribute to the drawing but cannot receive its peak label. */
+  peakIneligibleCells?: readonly (readonly [weekday: number, hour: number])[];
 }>;
 
 export type UsageWeekTideLabels = Readonly<{
@@ -36,8 +38,12 @@ export function UsageWeekTide(props: UsageChartBaseProps & Readonly<{ model: Usa
   const grid = props.model.grid;
   const height = 186;
   const max = Math.max(0, ...grid.flat().filter((value): value is number => value !== null)) || 1;
+  const ineligible = props.model.peakIneligibleCells
+    ? new Set(props.model.peakIneligibleCells.map(([weekday, hour]) => weekday * 24 + hour)) : undefined;
   let peak = { value: -1, row: 0, hour: 0 };
-  grid.forEach((row, rowIndex) => row.forEach((value, hour) => { if (value !== null && value > peak.value) peak = { value, row: rowIndex, hour }; }));
+  grid.forEach((row, rowIndex) => row.forEach((value, hour) => {
+    if (value !== null && value > peak.value && !ineligible?.has(rowIndex * 24 + hour)) peak = { value, row: rowIndex, hour };
+  }));
   const axis = 34;
   const plot = width === null ? 0 : width - axis - 4;
   const rowHeight = (height - 26) / 8.4;
@@ -98,6 +104,8 @@ export type UsageDaylightModel = Readonly<{
   encoding: 'amount' | 'ordinal';
   /** 24 hourly values of the typical day; null = not known. */
   hours: readonly (number | null)[];
+  /** Hours that contribute to the drawing but cannot be named as the peak. */
+  peakIneligibleHours?: readonly number[];
   /** The owner's Night shift window, only when its share may be shown; `share` is that window's share of the measure. */
   night: Readonly<{ fromHour: number; toHour: number; share: number | null }> | null;
 }>;
@@ -122,7 +130,13 @@ export function UsageDaylight(props: UsageChartBaseProps & Readonly<{ model: Usa
   const svgText = useUsageChartSvgText(props.theme);
   const hours = props.model.hours.map((value) => value ?? 0);
   const max = Math.max(0, ...hours) || 1;
-  const peakHour = props.model.hours.some((value) => value !== null && value > 0) ? hours.indexOf(Math.max(...hours)) : null;
+  let peakHour: number | null = null;
+  let peakValue = 0;
+  props.model.hours.forEach((value, hour) => {
+    if (value === null || value <= peakValue || props.model.peakIneligibleHours?.includes(hour)) return;
+    peakValue = value;
+    peakHour = hour;
+  });
   const night = props.model.night;
   const inNight = (hour: number) => night !== null && (night.fromHour > night.toHour ? hour >= night.fromHour || hour < night.toHour : hour >= night.fromHour && hour < night.toHour);
   const small = width !== null && width < 420;

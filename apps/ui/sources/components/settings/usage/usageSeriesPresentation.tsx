@@ -4,7 +4,7 @@ import { describeHappierSeriesBucket, type HappierSeries, type HappierSeriesBuck
 
 import { resolveUsageBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
 import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
-import { resolveUsageCostBasis, resolveUsageCostForSelection } from '@happier-dev/protocol/usage/usageCostFacts';
+import { resolveUsageCostBasis, resolveUsageCostBasisForSelection, resolveUsageCostForSelection } from '@happier-dev/protocol/usage/usageCostFacts';
 import { type UsagePageCostSelection, type UsageCostMode } from '@happier-dev/protocol/usage/usageCostFacts';
 import { type UsageAnalyticsCoverage, type UsageAnalyticsQueryResponse} from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
@@ -160,12 +160,20 @@ export function usageSourceTimelineSeries(input: Readonly<{
     label: (key: string, fallback: string | undefined) => string;
     color: (index: number, key: string) => string;
     bucketLabel: (startMs: number) => string;
-}>): readonly UsageSourceSeries[] {
+}>): Readonly<{ series: readonly UsageSourceSeries[]; incompleteBucketStarts: ReadonlySet<number> }> {
     const timeline = input.timeline ?? [];
-    if (input.metric === 'tokens' && !timeline.some(bucket => bucket.leaders.some(leader => leader.sources?.length))) return [];
+    const incompleteBucketStarts = new Set<number>();
+    if (input.metric === 'tokens' && !timeline.some(bucket => bucket.leaders.some(leader => leader.sources?.length))) {
+        return { series: [], incompleteBucketStarts };
+    }
     type Series = { key: string; label: string; values: Map<number, number | null>; allOutside: boolean;
         details: Record<string, Map<string, UsageSourceDetail>> };
     const parts = new Map<string, Series>();
+    const appendMeasurement = (entry: Series, startMs: number, value: number | null, partial: boolean | undefined) => {
+        if (value === null || partial) incompleteBucketStarts.add(startMs);
+        entry.values.set(startMs, addUsageMeasurements(entry.values.get(startMs) ?? null, value));
+        return value;
+    };
     for (const bucket of timeline) for (const leader of bucket.leaders) {
         const key = input.dimensionKey(leader.key);
         const entry = parts.get(key) ?? { key, label: input.label(key, leader.key === key ? leader.label : undefined),
@@ -175,25 +183,21 @@ export function usageSourceTimelineSeries(input: Readonly<{
         // to its individual capture sources. The query owner selects the leader's
         // money; source partitions are details, never another summation policy.
         if (input.metric === 'cost') {
-            const value = leader.cost ? input.costSelection !== undefined
-                ? resolveUsageCostForSelection(leader.cost, input.costSelection)
-                : resolveUsageCostBasis(leader.cost, input.costMode)?.amountUsd ?? null : null;
-            const previous = entry.values.get(bucket.bucketStartMs);
-            entry.values.set(bucket.bucketStartMs, addUsageMeasurements(previous ?? null, value));
+            const basis = leader.cost ? input.costSelection !== undefined
+                ? resolveUsageCostBasisForSelection(leader.cost, input.costSelection)
+                : resolveUsageCostBasis(leader.cost, input.costMode) : null;
+            appendMeasurement(entry, bucket.bucketStartMs, basis?.amountUsd ?? null, basis?.partial);
         } else if (!leader.sources?.length) {
-            const previous = entry.values.get(bucket.bucketStartMs);
-            entry.values.set(bucket.bucketStartMs, addUsageMeasurements(previous ?? null, resolveUsageMeasuredTokens(leader.tokens).total));
+            const tokens = resolveUsageMeasuredTokens(leader.tokens);
+            appendMeasurement(entry, bucket.bucketStartMs, tokens.total, tokens.fromParts);
         }
         for (const part of leader.sources ?? []) {
             if (part.execution !== 'outside') entry.allOutside = false;
             const execution = part.execution === 'happier' ? t('usage.board.page.executionHappier')
                 : part.execution === 'outside' ? t('usage.board.page.executionOutside') : t('usage.board.page.executionUnknown');
-            const value = input.metric === 'tokens' ? resolveUsageMeasuredTokens(part.tokens).total : input.costSelection !== undefined
+            const tokens = input.metric === 'tokens' ? resolveUsageMeasuredTokens(part.tokens) : null;
+            const value = tokens ? appendMeasurement(entry, bucket.bucketStartMs, tokens.total, tokens.fromParts) : input.costSelection !== undefined
                 ? resolveUsageCostForSelection(part.cost, input.costSelection) : resolveUsageCostBasis(part.cost, input.costMode)?.amountUsd ?? null;
-            if (input.metric === 'tokens') {
-                const previous = entry.values.get(bucket.bucketStartMs);
-                entry.values.set(bucket.bucketStartMs, addUsageMeasurements(previous ?? null, value));
-            }
             const details = entry.details[String(bucket.bucketStartMs)] ?? new Map<string, UsageSourceDetail>();
             const basisLabel = input.metric === 'cost' && input.costSelection !== undefined
                 ? usagePageCostRow(part.cost, input.costSelection)?.label : undefined;
@@ -228,7 +232,7 @@ export function usageSourceTimelineSeries(input: Readonly<{
         }
         displayed.push(tail);
     }
-    return displayed.map((entry, index) => ({ id: entry.key, dimensionKey: entry.key, label: entry.label,
+    const series = displayed.map((entry, index) => ({ id: entry.key, dimensionKey: entry.key, label: entry.label,
         sourceDetails: Object.fromEntries(Object.entries(entry.details).map(([bucket, details]) => [bucket, [...details.values()]])),
         color: input.color(index, entry.key),
         ...(entry.allOutside ? { fillPattern: 'hatch' as const } : {}),
@@ -241,6 +245,7 @@ export function usageSourceTimelineSeries(input: Readonly<{
                 : input.range ? usageMissingBucketValue(startMs, input.range, input.coverage) : null;
             return { id: String(startMs), x: startMs, label: input.bucketLabel(startMs), y: entry.values.has(startMs) ? entry.values.get(startMs)! : value };
         }) }));
+    return { series, incompleteBucketStarts };
 }
 
 /** Host Popover and scrolling stay at their incumbent owner; only inert chart facts cross this adapter. */

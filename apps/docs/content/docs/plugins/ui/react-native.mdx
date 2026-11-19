@@ -1110,6 +1110,8 @@ geometry and formatting. `showAxis`, `showLegend`, `showGrid`, `showScaleValues`
 `showReadout`, `showPointLabels`, `showPeakValue` and `showAnnotations` choose
 visible context. Provide localized `summary`, `unknownLabel`, `valuesLabel`
 and `valuesCollapseLabel` where needed; `testID` identifies the chart.
+With `showPeakValue`, `peakEligibleBucketIds` restricts the annotation to the
+listed point IDs. An empty list hides the annotation.
 Each `axisTicks` entry can be a `{ label, bucket }` pair, with a zero-based
 bucket index, to put the label at that observation. String ticks spread in order
 over the buckets, from the first observation to the last.

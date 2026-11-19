@@ -86,6 +86,8 @@ export type StackedSeriesChartProps = Readonly<{
   barEmphasis?: 'last' | 'maximum' | 'none';
   showPointLabels?: boolean;
   showPeakValue?: boolean;
+  /** When supplied, only these bucket IDs can receive the peak label. An empty list hides the label. */
+  peakEligibleBucketIds?: readonly string[];
   /** Every tick sits at a bucket: a `{ label, bucket }` tick at that bucket ("6 AM" under the 6 AM bar; on a line or area, at
    * the bucket's own x). Plain strings are spread over the buckets in order, the first on the first bucket and the last on the
    * last, so a label is never set between buckets. Absent, the first and last bucket name the plot's two ends. */
@@ -400,7 +402,18 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
   const overlays = new Set(props.series.filter(entry => entry.overlay).map(entry => entry.id));
   const bucketTotal = (bucket: HappierSeriesBucket): number | null => bucket.values.some((entry) => !overlays.has(entry.seriesId) && entry.value !== null)
     ? bucket.values.reduce((sum, entry) => sum + (overlays.has(entry.seriesId) ? 0 : entry.value ?? 0), 0) : null;
-  const peakIndex = geometry.buckets.reduce((peak, bucket, index) => (bucketTotal(bucket) ?? -Infinity) > (bucketTotal(geometry.buckets[peak]!) ?? -Infinity) ? index : peak, 0);
+  const findPeak = (eligible?: ReadonlySet<string>) => {
+    let peak: { index: number; total: number } | undefined;
+    for (const [index, bucket] of geometry.buckets.entries()) {
+      if (eligible && !eligible.has(bucket.id)) continue;
+      const total = bucketTotal(bucket);
+      if (total !== null && (!peak || total > peak.total)) peak = { index, total };
+    }
+    return peak;
+  };
+  const labelEligibility = props.showPeakValue && props.peakEligibleBucketIds !== undefined ? new Set(props.peakEligibleBucketIds) : undefined;
+  const overallPeak = props.barEmphasis === 'maximum' || (props.showPeakValue && !labelEligibility) ? findPeak() : undefined;
+  const labelPeak = labelEligibility ? findPeak(labelEligibility) : overallPeak;
   const barGap = props.barGap ?? HAPPIER_DATA_METRICS.barGapPx;
   const barSlotWidth = props.barSlotWidth ?? Math.max(0, plotWidth - (props.barLeadingInset ?? 0) * 2 - barGap * Math.max(0, geometry.buckets.length - 1)) / Math.max(1, geometry.buckets.length);
   const nativeDense = !props.renderBucket && !inline && nativeTarget !== undefined && geometry.buckets.length > 0
@@ -626,7 +639,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
             // Stacked segments part on a paper seam, as stacked areas do; the base segment sits on the axis.
             const seam = props.series.length > 1 && seriesIndex > 0 && entry.lower !== 0 && extent > HAPPIER_DATA_METRICS.barSeamPx * 2 ? HAPPIER_DATA_METRICS.barSeamPx : 0;
             const barHeight = extent - seam;
-            const emphasized = index === (props.barEmphasis === 'maximum' ? peakIndex : geometry.buckets.length - 1);
+            const emphasized = index === (props.barEmphasis === 'maximum' ? overallPeak?.index ?? 0 : geometry.buckets.length - 1);
             return <SeriesBar key={entry.seriesId} testID={props.testID ? `${props.testID}-bar-${index}-${seriesIndex}` : undefined}
               top={entry.value >= 0 ? Math.max(0, geometry.yAt(entry.lower) - extent) : geometry.yAt(entry.lower) + seam} height={barHeight}
               color={entry.color ?? color(seriesIndex)} opacity={entry.opacity ?? (selectedId === bucket.id || props.series.length > 1 || emphasized || props.barEmphasis === 'none' ? 1 : props.barEmphasis === 'maximum' ? Math.max(0.55, 0.9 * barHeight / height) : 0.65)}
@@ -650,7 +663,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
         const columnStyle = props.variant === 'bar'
           ? { ...(props.barSlotWidth ? { width: props.barSlotWidth } : { flex: 1 }), height }
           : { position: 'absolute' as const, ...geometry.hitRangeAt(index), height };
-        const peakTotal = props.showPeakValue && index === peakIndex ? bucketTotal(bucket) : null;
+        const peakTotal = props.showPeakValue && labelPeak?.index === index ? labelPeak.total : null;
         // A peak of nothing names nothing ("$0.00" over an empty plot).
         // It rests on its own bar (a scale rounded above the peak would otherwise leave it floating at the
         // plot's top), and the edge buckets align it inward so a narrow column never cuts it at the card edge.

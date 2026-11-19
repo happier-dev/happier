@@ -6,6 +6,8 @@ import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { resolveUsageBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
+import { aggregateUsageContributionCosts } from '@happier-dev/protocol/usage/usageAggregation';
+import { serializeUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { t } from '@/text';
 import { WidgetFrameBodyRowsContext } from '@/components/widgets/frame/widgetFrameBody';
@@ -100,6 +102,53 @@ describe('Daily period chart', () => {
     expect(chart.props.series[0].points.map((point: { y: number }) => point.y)).toEqual([0, 10, 30, 2]);
   });
 
+  it.each([
+    { hasCompleteDay: true, missingEngine: 'claude:local', firstDay: [2, null] },
+    { hasCompleteDay: false, missingEngine: 'claude:local', firstDay: [2, null] },
+    { hasCompleteDay: true, missingEngine: 'codex:remote', firstDay: [2] },
+    { hasCompleteDay: true, missingEngine: 'codex:local', firstDay: [2] },
+    { hasCompleteDay: true, missingEngine: 'no Agent split', firstDay: [2] },
+  ])('keeps unpriced Agent cost out of the exact average and peak ($missingEngine, complete day: $hasCompleteDay)', async ({
+    hasCompleteDay, missingEngine, firstDay,
+  }) => {
+    const endMs = start + 2 * day;
+    vi.spyOn(Date, 'now').mockReturnValue(endMs + day);
+    const props = fixture([10, 20], endMs);
+    const query = normalizeUsageQuery({ ...props.query, metric: 'cost', costBasis: 'reported' });
+    const observed = props.slice.accounting!;
+    const price = (reportedUsd: number | null) => ({ reportedUsd, estimatedUsd: null, currency: 'USD' });
+    const byAgent = (key: string, reportedUsd: number | null) => ({ key, eventCount: 1,
+      tokens: observed.totals.tokens, cost: price(reportedUsd),
+      sources: [{ source: 'runtime', path: 'runtime' as const, execution: 'happier' as const,
+        eventCount: 1, tokens: observed.totals.tokens, cost: price(reportedUsd) }] });
+    const partialDayCost = serializeUsageCostBasis(aggregateUsageContributionCosts([
+      { cost: price(2) }, { cost: price(null) },
+    ], 'reported'), 'reported');
+    const sameEngine = missingEngine === 'codex:local';
+    const noAgentSplit = missingEngine === 'no Agent split';
+    const mixedDay = sameEngine ? [{ ...byAgent('codex:local', 2), eventCount: 2,
+      cost: partialDayCost }]
+      : [byAgent('codex:local', 2), byAgent(missingEngine, null)];
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: {
+      ...observed,
+      totals: { ...observed.totals, cost: price(hasCompleteDay ? 3.5 : 2) },
+      ...(noAgentSplit && observed.series ? {
+        series: observed.series.map((bucket, index) => ({ ...bucket, cost: index === 0 ? partialDayCost : price(1.5) })),
+      } : {}),
+      engineTimeline: noAgentSplit ? [] : [
+        { bucketStartMs: start, bucketEndMs: start + day, leaders: mixedDay },
+        { bucketStartMs: start + day, bucketEndMs: endMs,
+          leaders: sameEngine ? [byAgent('codex:local', 1.5)]
+            : [byAgent('codex:local', 0.5), byAgent(missingEngine, hasCompleteDay ? 1 : null)] },
+      ],
+    } }] }, bundledUsageModelPriceCatalog).results[0]!;
+    const screen = await renderScreen(<UsageDailyWidget {...props} query={query} slice={slice} />);
+    const chart = screen.findByType(StackedSeriesChart);
+    expect(chart.props.series.map((entry: { points: { y: number | null }[] }) => entry.points[0]?.y)).toEqual(firstDay);
+    expect(chart.props.reference?.value).toBe(hasCompleteDay ? 1.5 : undefined);
+    expect(screen.findHostByTestId('daily.chart-peak')?.props.children).toBe(hasCompleteDay ? '$1.50' : undefined);
+  });
+
   it('includes a completed historical last day, skips uncovered days, and draws no today comparison', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(start + 20 * day);
     const screen = await renderScreen(<UsageDailyWidget {...fixture([10, null, 0, 30], start + 4 * day)} />);
@@ -108,6 +157,26 @@ describe('Daily period chart', () => {
     expect(chart.props.barRanges).toEqual([]);
     expect(chart.props.series[0].points.map((point: { y: number | null }) => point.y)).toEqual([10, null, 0, 30]);
     expect(screen.findAllHostsByTestId(`daily.chart-gap-${start + day}`)).toHaveLength(1);
+  });
+
+  it.each([true, false])('keeps token parts out of exact Daily comparisons and peaks (by Agent: %s)', async (byAgent) => {
+    const endMs = start + 2 * day;
+    vi.spyOn(Date, 'now').mockReturnValue(endMs + day);
+    const props = fixture([30, 10], endMs, byAgent);
+    const observed = props.slice.accounting!;
+    const floor = { input: 30, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+    const slice = resolveUsagePageAggregation({ queries: [props.query], accounting: [{ query: props.query, status: 'available', value: {
+      ...observed,
+      series: observed.series?.map((bucket, index) => index === 0 ? { ...bucket, tokens: floor } : bucket),
+      engineTimeline: observed.engineTimeline?.map((bucket, index) => index === 0 ? { ...bucket, leaders: bucket.leaders.map(leader => ({
+        ...leader, tokens: floor, sources: leader.sources?.map(source => ({ ...source, tokens: floor })),
+      })) } : bucket),
+    } }] }, bundledUsageModelPriceCatalog).results[0]!;
+    const screen = await renderScreen(<UsageDailyWidget {...props} slice={slice} />);
+    const chart = screen.findByType(StackedSeriesChart);
+    expect(chart.props.series[0].points.map((point: { y: number | null }) => point.y)).toEqual([30, 10]);
+    expect(chart.props.reference?.value).toBe(10);
+    expect(screen.findHostByTestId('daily.chart-peak')?.props.children).toBe('10');
   });
 
   it('keys the hatched day in the legend, so a day with no figure reads as one (R137 Costs)', async () => {

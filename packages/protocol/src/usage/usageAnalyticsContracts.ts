@@ -75,7 +75,7 @@ export const UsageObservationCostSchema = lazyZodSchema(() => z.strictObject({
   /** Compact query projection only: selected availability survives JSON without report member identities. */
   selectedBasis: z.optional(z.strictObject({ mode: UsageAnalyticsCostModeSchema,
     value: z.nullable(z.strictObject({ kind: z.enum(['reported', 'estimated', 'invoice', 'api_equivalent', 'mixed']),
-      currency: z.string().check(z.minLength(1)), source: z.string().check(z.minLength(1)) })) })),
+      currency: z.string().check(z.minLength(1)), source: z.string().check(z.minLength(1)), partial: z.optional(z.literal(true)) })) })),
 }));
 export type UsageObservationCost = z.infer<typeof UsageObservationCostSchema>;
 

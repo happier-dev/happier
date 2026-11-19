@@ -62,7 +62,7 @@ describe('usage projection into the shared series renderer', () => {
             return { key, eventCount: 1, tokens, cost, sources: [{ source: 'runtime', path: 'runtime' as const,
                 execution: 'happier' as const, eventCount: 1, tokens, cost }] };
         };
-        const series = usageSourceTimelineSeries({
+        const { series } = usageSourceTimelineSeries({
             timeline: [
                 { bucketStartMs: 0, bucketEndMs: 10, leaders: [leader('a', 1), leader('b', 2), leader('c', 3), leader('d', 4), leader('e', 5), leader('f', 6)] },
                 { bucketStartMs: 10, bucketEndMs: 20, leaders: [leader('a', 10), leader('g', 11)] },
@@ -80,7 +80,7 @@ describe('usage projection into the shared series renderer', () => {
         const cost = { reportedUsd: null, estimatedUsd: null, currency: 'USD' };
         const unknown = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
         const known = { ...unknown, total: 12 };
-        const series = usageSourceTimelineSeries({ timeline: [{ bucketStartMs: 0, bucketEndMs: 10, leaders: [
+        const { series } = usageSourceTimelineSeries({ timeline: [{ bucketStartMs: 0, bucketEndMs: 10, leaders: [
             { key: 'claude:local', eventCount: 1, tokens: unknown, cost, sources: [
                 { source: 'native', path: 'native', execution: 'outside', eventCount: 1, tokens: unknown, cost },
                 { source: 'runtime', path: 'runtime', execution: 'happier', eventCount: 1, tokens: known, cost },
@@ -104,7 +104,7 @@ describe('usage projection into the shared series renderer', () => {
             timeline: [{ bucketStartMs: 0, bucketEndMs: 10, leaders: entries }], range: null, metric, costMode: 'auto',
             costSelection: { kind: 'estimated', currency: 'USD', mode: 'auto' },
             dimensionKey: key => key.split(':')[0]!, label: key => key, color: () => 'ink', bucketLabel: String,
-        });
+        }).series;
         const series = project(leaders);
         const claude = series.find(entry => entry.id === 'claude')!;
         const screen = await renderScreen(<LensChart series={series} />);
@@ -122,7 +122,7 @@ describe('usage projection into the shared series renderer', () => {
     it('retains known cost from older unpartitioned buckets beside source-partitioned buckets', () => {
         const tokens = { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 };
         const cost = { reportedUsd: 0, estimatedUsd: 9, currency: 'USD', costSource: 'pricing_estimate' as const };
-        const series = usageSourceTimelineSeries({ timeline: [
+        const { series } = usageSourceTimelineSeries({ timeline: [
             { bucketStartMs: 0, bucketEndMs: 10, leaders: [{ key: 'claude', eventCount: 1, tokens, cost }] },
             { bucketStartMs: 10, bucketEndMs: 20, leaders: [{ key: 'claude', eventCount: 1, tokens, cost,
                 sources: [{ source: 'native', path: 'native', execution: 'outside', eventCount: 1, tokens, cost }] }] },
@@ -139,7 +139,7 @@ describe('usage projection into the shared series renderer', () => {
             { source: 'runtime', path: 'runtime' as const, execution: 'happier' as const, eventCount: 1, tokens, cost },
             { source: 'native', path: 'native' as const, execution: 'outside' as const, eventCount: 1, tokens, cost },
         ];
-        const series = usageSourceTimelineSeries({ timeline: [
+        const { series } = usageSourceTimelineSeries({ timeline: [
             { bucketStartMs: 0, bucketEndMs: day, leaders: [
                 { key: 'model:local', eventCount: 1, tokens, cost, sources: [sources[0]!] },
                 { key: 'model:remote', eventCount: 1, tokens, cost, sources: [sources[1]!] },
@@ -156,7 +156,7 @@ describe('usage projection into the shared series renderer', () => {
         ]);
         expect(series[0]!.sourceDetails?.['0']?.every(part => !part.label.includes('runtime'))).toBe(true);
         expect(usageSourceTimelineSeries({ timeline: [{ bucketStartMs: 0, bucketEndMs: day, leaders: [{ key: 'old', eventCount: 1, tokens, cost }] }],
-            range: null, metric: 'tokens', costMode: 'auto', dimensionKey: key => key, label: key => key, color: () => 'ink', bucketLabel: String })).toEqual([]);
+            range: null, metric: 'tokens', costMode: 'auto', dimensionKey: key => key, label: key => key, color: () => 'ink', bucketLabel: String }).series).toEqual([]);
     });
     it('retains older accounting buckets and the current currency in exact selected values', async () => {
         const points = Array.from({ length: 40 }, (_, index) => ({ timestamp: 1_710_000_000 + index * 86_400, tokens: index, cost: index === 0 ? 0.00004 : index, reportCount: 1 }));

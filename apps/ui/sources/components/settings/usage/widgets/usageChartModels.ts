@@ -132,24 +132,28 @@ function emptyCalendarMetric(calendar: UsageAgentCalendar, metric: UsageChartMet
 export function projectUsageWeekHours(calendar: UsageAgentCalendar, metric: UsageChartMetric): UsageWeekHourModel | null {
   const empty = emptyCalendarMetric(calendar, metric);
   const grid = Array.from({ length: 7 }, () => Array.from<number | null>({ length: 24 }).fill(empty));
+  const peakIneligibleCells: (readonly [weekday: number, hour: number])[] = [];
   let known = empty === 0;
   for (const bucket of calendar.weekdayHourBuckets) {
     const value = readUsageCalendarMetric(bucket.totals, metric);
     if (value !== null) known = true;
     const row = (bucket.weekday + 6) % 7;
     grid[row]![bucket.hour] = value;
+    if (metric === 'cost' && bucket.totals.cost?.partial) peakIneligibleCells.push([row, bucket.hour]);
   }
-  return known ? { encoding: 'amount', grid } : null;
+  return known ? { encoding: 'amount', grid, ...(peakIneligibleCells.length ? { peakIneligibleCells } : {}) } : null;
 }
 
 export function projectUsageDaylight(calendar: UsageAgentCalendar, metric: UsageChartMetric, slice: UsageQueryResultSlice): UsageDaylightModel | null {
   const empty = emptyCalendarMetric(calendar, metric);
   const hours = Array.from<number | null>({ length: 24 }).fill(empty);
+  const peakIneligibleHours: number[] = [];
   let known = empty === 0;
   for (const bucket of calendar.hourOfDayBuckets) {
     const value = readUsageCalendarMetric(bucket.totals, metric);
     if (value !== null) known = true;
     hours[bucket.hour] = value;
+    if (metric === 'cost' && bucket.totals.cost?.partial) peakIneligibleHours.push(bucket.hour);
   }
   if (!known) return null;
   const window = slice.howYouWork?.nightShift ?? null;
@@ -164,7 +168,8 @@ export function projectUsageDaylight(calendar: UsageAgentCalendar, metric: Usage
     if (window && isUsageNightHour(bucket.hour, window)) nightBusy += amount;
   }
   const share = window && busyTotal !== null && busyTotal > 0 ? nightBusy / busyTotal : null;
-  return { encoding: 'amount', hours, night: window ? { fromHour: window.startHour, toHour: window.endHour, share } : null };
+  return { encoding: 'amount', hours, night: window ? { fromHour: window.startHour, toHour: window.endHour, share } : null,
+    ...(peakIneligibleHours.length ? { peakIneligibleHours } : {}) };
 }
 
 /** The actual day shown: the chosen `day`, else the period's busiest day by witnessed peak. */

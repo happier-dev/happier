@@ -51,6 +51,28 @@ function calendar(value: UsageAnalyticsQueryResponse, mode: NonNullable<typeof q
 const wire = (value: UsageAnalyticsQueryResponse) => UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(value)));
 
 describe('compact calendar pricing', () => {
+    it('keeps the known cost and its incomplete status in rich and compact hourly views', () => {
+        const value = response([
+            row(1, { cost: { reportedUsd: 2, estimatedUsd: null, currency: 'USD' } }),
+            row(2, { agentId: 'claude', modelId: null,
+                cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD' } }),
+            row(3, { observedAtMs: startMs + 3_601_000,
+                cost: { reportedUsd: 1.5, estimatedUsd: null, currency: 'USD' } }),
+        ]);
+        const mode = 'reported';
+        const compact = wire(projectUsageAnalyticsSummary(value, { ...query, costMode: mode }));
+        const { value: summaryCalendar, pricing } = compact.summary!.accountingCalendar!;
+        const repriced = repriceUsageSummaryCalendarPricing(summaryCalendar, pricing!, catalog, {}, mode);
+        for (const result of [calendar(value, mode), UsageAgentCalendarSchema.parse(repriced)]) {
+            for (const buckets of [result.weekdayHourBuckets, result.hourOfDayBuckets]) {
+                const costs = buckets.map(bucket => bucket.totals.cost);
+                expect(costs.find(cost => cost?.amountUsd === 2)).toMatchObject({ partial: true });
+                expect(costs.find(cost => cost?.amountUsd === 1.5)).toBeDefined();
+                expect(costs.find(cost => cost?.amountUsd === 1.5)).not.toHaveProperty('partial');
+            }
+        }
+    });
+
     it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
         'reuses exact %s calendar targets before traversing unchanged atomic groups', mode => {
         const preciseTokens = withUsageMoney({ ...tokens }, { input: { units: 100000000000000003n, scale: 17 } });

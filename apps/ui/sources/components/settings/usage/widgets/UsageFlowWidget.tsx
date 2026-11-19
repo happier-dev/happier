@@ -68,7 +68,7 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
   const accounting = cost ? view?.pageCost.accounting : props.slice.accounting;
   const range = React.useMemo(() => resolveUsageShownCalendarRange(props.query, props.slice.accounting?.coverage, props.slice.accounting, props.slice.accountingObservationRange),
     [props.query, props.slice.accounting, props.slice.accountingObservationRange]);
-  const sourceSeries = React.useMemo(() => usageSourceTimelineSeries({
+  const { series: sourceSeries } = React.useMemo(() => usageSourceTimelineSeries({
     timeline: byModel ? accounting?.modelTimeline : accounting?.engineTimeline,
     range, coverage: props.slice.accounting?.coverage,
     metric, costMode: props.query.costBasis, costSelection: view?.pageCost.selection ?? null,

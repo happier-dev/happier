@@ -902,6 +902,27 @@ describe('Usage chart models', () => {
     expect(projectUsageWeekHours(value, 'busy')!.grid[0]![9]).toBe(900_000);
   });
 
+  it('retains partial costs in hourly geometry and omits them from exact peak eligibility', () => {
+    const cost = (amountUsd: number) => ({ amountUsd, currency: 'USD', kind: 'reported' as const, source: 'provider_reported' });
+    const partial = { ...cost(2), partial: true as const };
+    const hours = [
+      { hour: 9, totals: metrics({ cost: partial }), agents: [], leaders: leaders() },
+      { hour: 10, totals: metrics({ cost: cost(1.5) }), agents: [], leaders: leaders() },
+    ];
+    const value = calendar({
+      weekdayHourBuckets: hours.map(hour => ({ weekday: 1, ...hour })),
+      hourOfDayBuckets: hours,
+    });
+    const query = normalizeUsageQuery({});
+    const slice = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!;
+    const week = projectUsageWeekHours(value, 'cost');
+    expect(week).toMatchObject({ peakIneligibleCells: [[0, 9]] });
+    expect(week?.grid[0]?.slice(9, 11)).toEqual([2, 1.5]);
+    const daylight = projectUsageDaylight(value, 'cost', slice);
+    expect(daylight).toMatchObject({ peakIneligibleHours: [9] });
+    expect(daylight?.hours.slice(9, 11)).toEqual([2, 1.5]);
+  });
+
   it('preserves unknown weekday cells instead of painting partial history as measured zero', () => {
     const value = calendar({
       coverage: { ...coverage, accounting: 'partial' },

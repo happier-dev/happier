@@ -13,7 +13,7 @@ const Amount = lazyZodSchema(() => z.number().check(z.nonnegative()));
 const Coverage = lazyZodSchema(() => z.enum(['complete_for_supplied_facts', 'partial', 'unknown', 'unavailable']));
 const CoverageFields = lazyZodSchema(() => z.strictObject({ accounting: Coverage, busy: Coverage, steering: Coverage }));
 const AgentId = lazyZodSchema(() => z.nullable(z.string().check(z.minLength(1))));
-const Cost = lazyZodSchema(() => z.strictObject({ amountUsd: Amount, currency: z.string(), source: z.string(),
+const Cost = lazyZodSchema(() => z.strictObject({ amountUsd: Amount, currency: z.string(), source: z.string(), partial: z.optional(z.literal(true)),
     kind: z.enum(['reported', 'estimated', 'api_equivalent', 'invoice', 'mixed']) }));
 const Metrics = lazyZodSchema(() => z.strictObject({
     tokens: z.nullable(Count), tokensFromParts: z.optional(z.literal(true)), eventCount: z.nullable(Count), sessions: z.nullable(Count), cost: z.nullable(Cost),

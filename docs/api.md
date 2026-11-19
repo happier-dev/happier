@@ -3385,6 +3385,11 @@ falls back to a legacy Session usage report on an unsupported server.
 Numeric accounting remains queryable for E2EE Sessions under
 the approved usage disclosure contract, without exposing transcript content.
 
+Selected cost can carry an optional `partial: true` in
+`selectedBasis.value` and in calendar costs. The accompanying amount is a
+known subtotal with an unpriced contribution. Exact peak annotations use
+complete cost buckets.
+
 Private responses include complete `scopeKeys` for requested Agent, Machine,
 Project and source breakdowns. These identities come from the same admitted
 population as totals and do not obey the charts' ranked `topLimit`. Usage filter

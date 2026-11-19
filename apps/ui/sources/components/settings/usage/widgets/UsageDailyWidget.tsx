@@ -99,7 +99,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
       ),
     [range, props.query.granularity, props.query.timeZoneOffsetMinutes],
   );
-  const sourceSeries = React.useMemo(() => usageSourceTimelineSeries({
+  const { series: sourceSeries, incompleteBucketStarts } = React.useMemo(() => usageSourceTimelineSeries({
     timeline: metric === 'cost' ? view?.pageCost.accounting.engineTimeline : props.slice.accounting?.engineTimeline,
     range, coverage, metric, costMode: props.query.costBasis, costSelection: view?.pageCost.selection ?? null,
     dimensionKey: agentIdFromEngineKey, label: usageAgentTitle,
@@ -107,6 +107,8 @@ export function UsageDailyWidget(props: UsageBodyProps) {
   }), [props.slice.accounting?.engineTimeline, view?.pageCost, range, coverage, metric, props.query.costBasis, theme, bucketLabel]);
   const byAgent = sourceSeries.length > 0 || (metric === 'tokens' && view?.agentMix.hasData === true);
   const agentForSeries = React.useCallback((id: string) => sourceSeries.find(entry => entry.id === id)?.dimensionKey ?? id, [sourceSeries]);
+  const pageCost = view?.pageCost;
+  const costTrend = React.useMemo(() => metric === 'cost' && pageCost ? usagePageCostTrend(pageCost) : null, [metric, pageCost]);
   const series = React.useMemo<readonly HappierSeries[]>(() => {
     if (!view) return [];
     if (sourceSeries.length > 0) return sourceSeries;
@@ -126,7 +128,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
         })),
       }));
     }
-    const trend = metric === 'cost' ? usagePageCostTrend(view.pageCost) : view.trend;
+    const trend = costTrend ?? view.trend;
     return usageVolumeSeries(
       range ? fillUsageTrendCalendar(trend, range, coverage) : trend,
       metric,
@@ -134,7 +136,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
       usageSignatureAccent(theme),
       props.query.timeZoneOffsetMinutes,
     ).map(entry => ({ ...entry, points: entry.points.map(point => ({ ...point, label: bucketLabel(Number(point.x) * 1000) })) }));
-  }, [view, byAgent, sourceSeries, metric, theme, format, range, coverage, bucketLabel, props.query.timeZoneOffsetMinutes, currency]);
+  }, [view, byAgent, sourceSeries, metric, theme, format, range, coverage, bucketLabel, props.query.timeZoneOffsetMinutes, currency, costTrend]);
   // Bars use calendar categories. Keep the timestamp as semantic identity, while exact-value
   // alternatives receive the same formatted date as the axis rather than a numeric epoch.
   const chartSeries = React.useMemo(() => series.map(entry => ({
@@ -190,30 +192,37 @@ export function UsageDailyWidget(props: UsageBodyProps) {
   // completed active days. It is neither a forecast nor a distribution/confidence band.
   const dailyContext = React.useMemo(() => {
     const empty = { reference: undefined, barRanges: [], bucketShading: [] };
-    if (props.query.granularity !== 'day') return empty;
-    const now = Date.now();
+    const incompleteTrend = metric === 'cost'
+      ? costTrend?.filter(point => point.partialCost)
+      : view?.trend.filter(point => point.tokensFromParts);
+    const incompleteTrendStarts = new Set(incompleteTrend?.map(point => point.timestamp * 1000));
     const buckets = (series[0]?.points ?? []).flatMap((point, index) => {
       if (typeof point.x !== 'number' || !Number.isFinite(point.x)) return [];
       const startMs = byAgent ? point.x : point.x * 1000;
-      const calendar = resolveUsageCalendarInstant(startMs, props.query.timeZoneOffsetMinutes);
       const values = series.map(entry => entry.points[index]?.y);
-      const total = values.every(value => typeof value === 'number' && Number.isFinite(value))
+      const complete = !incompleteBucketStarts.has(startMs) && !incompleteTrendStarts.has(startMs)
+        && values.every(value => typeof value === 'number' && Number.isFinite(value));
+      const total = complete
         ? values.reduce<number>((sum, value) => sum + (value ?? 0), 0) : null;
-      return [{ id: point.id, ...calendar, total }];
+      return [{ id: point.id, startMs, total }];
     });
-    const bucketShading = buckets.filter(bucket => bucket.weekday === 0 || bucket.weekday === 6)
+    const peak = { peakEligibleBucketIds: buckets.filter(bucket => bucket.total !== null).map(bucket => bucket.id) };
+    if (props.query.granularity !== 'day') return { ...empty, ...peak };
+    const now = Date.now();
+    const days = buckets.map(bucket => ({ ...bucket, ...resolveUsageCalendarInstant(bucket.startMs, props.query.timeZoneOffsetMinutes) }));
+    const bucketShading = days.filter(bucket => bucket.weekday === 0 || bucket.weekday === 6)
       .map(bucket => ({ bucketId: bucket.id }));
-    const completed = buckets.filter(bucket => bucket.bucketEndMs <= now
+    const completed = days.filter(bucket => bucket.bucketEndMs <= now
       && (!range || ((range.startMs ?? bucket.bucketStartMs) <= bucket.bucketStartMs && range.endMs >= bucket.bucketEndMs))
       && bucket.total !== null && Number.isFinite(bucket.total) && bucket.total > 0);
-    if (completed.length === 0) return { ...empty, bucketShading };
+    if (completed.length === 0) return { ...empty, ...peak, bucketShading };
     const value = completed.reduce((sum, bucket) => sum + bucket.total! / completed.length, 0);
     const reference = { value, label: t('usage.board.page.average') };
-    const current = buckets.find(bucket => bucket.bucketStartMs <= now && now < bucket.bucketEndMs);
+    const current = days.find(bucket => bucket.bucketStartMs <= now && now < bucket.bucketEndMs);
     const barRanges = current?.total !== null && current?.total !== undefined && current.total < value
       ? [{ bucketId: current.id, lower: current.total, upper: value, label: reference.label }] : [];
-    return { reference, barRanges, bucketShading };
-  }, [series, byAgent, range, props.query.granularity, props.query.timeZoneOffsetMinutes]);
+    return { reference, barRanges, bucketShading, ...peak };
+  }, [series, byAgent, range, props.query.granularity, props.query.timeZoneOffsetMinutes, metric, incompleteBucketStarts, costTrend, view?.trend]);
   const axisTicks = React.useMemo(() => {
     const labels = series[0]?.points.map((point) => point.label ?? '') ?? [];
     const last = series[0]?.points[labels.length - 1];

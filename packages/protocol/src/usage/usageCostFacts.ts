@@ -13,7 +13,11 @@ export interface UsageCostBasis {
   source: string;
 }
 /** A best-available aggregate labels unlike witnessed kinds rather than calling them reported. */
-export type UsageSelectedCostBasis = Omit<UsageCostBasis, 'kind'> & Readonly<{ kind: UsageCostBasis['kind'] | 'mixed' }>;
+export type UsageSelectedCostBasis = Omit<UsageCostBasis, 'kind'> & Readonly<{
+  kind: UsageCostBasis['kind'] | 'mixed';
+  /** The known amount omits a witnessed unpriced contribution. */
+  partial?: true | undefined;
+}>;
 
 /** Covered fallback facts remain readable, but are not another selected charge or attributed zero. */
 export function isUsageCostCoveredByReportedTotal(cost: UsageObservationCost, mode: UsageCostMode): boolean {
@@ -246,7 +250,8 @@ export function serializeUsageCostBasis(cost: UsageObservationCost, mode: UsageC
   const selected = resolveUsageCostBasis(cost, mode);
   const { effectiveUsd: _effective, selectedBasis: _previous, ...observed } = cost;
   return selected ? withUsageMoney<UsageObservationCost>({ ...observed, effectiveUsd: selected.amountUsd,
-    selectedBasis: { mode, value: { kind: selected.kind, currency: selected.currency, source: selected.source } } },
+    selectedBasis: { mode, value: { kind: selected.kind, currency: selected.currency, source: selected.source,
+      ...(selected.partial ? { partial: selected.partial } : {}) } } },
     { effectiveUsd: readUsageMoney(selected, 'amountUsd', selected.amountUsd) })
     : { ...observed, ...(resolveEffectiveUsageCostUsd(cost, mode) === 0 ? { effectiveUsd: 0 } : {}),
       selectedBasis: { mode, value: null } };

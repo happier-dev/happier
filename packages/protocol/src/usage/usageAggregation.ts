@@ -155,7 +155,8 @@ export function selectResolvedUsageCost(cost: UsageObservationCost, mode: UsageC
     if (admitted?.covered) return createEmptyUsageSelectedCost();
     const selected = resolveUsageCostBasis(cost, mode);
     return { available: admitted?.mode === mode ? admitted.available : true, selected,
-        ...(admitted?.hasUnpriced || !selected && resolveEffectiveUsageCostUsd(cost, mode) !== 0 ? { hasUnpriced: true as const } : {}) };
+        ...(admitted?.hasUnpriced || selected?.partial || !selected && resolveEffectiveUsageCostUsd(cost, mode) !== 0
+            ? { hasUnpriced: true as const } : {}) };
 }
 
 /** Merge already-selected partitions without re-reading raw facts or resolving overlap. */
@@ -168,7 +169,7 @@ type SelectedCostOperands = Readonly<{ available: boolean; basis: Omit<UsageSele
 type SelectedCostEvidence = Pick<SelectedCostOperands, 'available' | 'basis' | 'hasUnpriced'>;
 function selectedCostOperands(state: UsageSelectedCostAccumulator): SelectedCostOperands {
     const basis = state.selected;
-    return { available: state.available, basis, ...(state.hasUnpriced ? { hasUnpriced: true as const } : {}),
+    return { available: state.available, basis, ...(state.hasUnpriced || basis?.partial ? { hasUnpriced: true as const } : {}),
         ...(basis ? { amount: readUsageMoney(basis, 'amountUsd', basis.amountUsd) } : {}) };
 }
 function mergeSelectedCostOperands(left: SelectedCostOperands, right: SelectedCostOperands, mode: UsageCostMode): SelectedCostOperands {
@@ -192,7 +193,7 @@ function publishSelectedCost(state: SelectedCostOperands): UsageSelectedCostAccu
     // A zero-token tariff identity is not evidence that an unpriced request was free.
     const basis = state.hasUnpriced && state.basis?.source === 'no_tokens' ? null : state.basis;
     return { available: state.available, ...(state.hasUnpriced ? { hasUnpriced: true as const } : {}), selected: basis ? withUsageMoney({ ...basis,
-        amountUsd: usageMoneyToNumber(state.amount!) }, { amountUsd: state.amount! }) : null };
+        ...(state.hasUnpriced ? { partial: true as const } : {}), amountUsd: usageMoneyToNumber(state.amount!) }, { amountUsd: state.amount! }) : null };
 }
 
 /** Resolve whole-total overlap only within the actual selected population, including bucket/Work subsets. */

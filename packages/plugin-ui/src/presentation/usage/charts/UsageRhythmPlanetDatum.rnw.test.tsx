@@ -80,6 +80,31 @@ describe('Rhythm and planet chart datum targets', () => {
       } finally { mount.unmount(); }
     }
   });
+  it('draws the partial Week Tide amount and labels the highest eligible cell as the peak', () => {
+    const peak = (_weekday: number, _hour: number, amount: number) => `Peak $${amount.toFixed(2)}`;
+    const labelMoney = (amount: number) => `$${amount.toFixed(2)}`;
+    const model = { encoding: 'amount' as const, grid: [[2, 1.5]], peakIneligibleCells: [[0, 0]] as const };
+    const mount = datums(<UsageWeekTide {...base} labels={{ weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+      clock: String, peak, values: { ...values, weekdayColumn: 'Day', formatValue: labelMoney, levelNames: levels } }}
+      model={model} />);
+    try {
+      expect(mount.values()).toContainEqual(expect.objectContaining({ value: '2', subtitle: '$2.00' }));
+      expect(mount.container.textContent).toContain('Peak $1.50');
+      expect(mount.container.textContent).not.toContain('Peak $2.00');
+    } finally { mount.unmount(); }
+  });
+  it('uses the highest eligible Daylight hour in the caption while retaining the partial amount', () => {
+    const model = { encoding: 'amount' as const, hours: [2, 1.5], night: null, peakIneligibleHours: [0] };
+    const mount = datums(<UsageDaylight {...base} labels={{ clock: String, night: () => 'Night',
+      caption: hour => hour === null ? 'No peak' : `Peak hour ${hour}`,
+      values: { ...values, hourColumn: 'Hour', valueColumn: 'Cost', formatValue: amount => `$${amount.toFixed(2)}`, levelNames: levels } }}
+      model={model} />);
+    try {
+      expect(mount.values()).toContainEqual(expect.objectContaining({ value: '2', subtitle: 'Cost · $2.00' }));
+      expect(mount.container.textContent).toContain('Peak hour 1');
+      expect(mount.container.textContent).not.toContain('Peak hour 0');
+    } finally { mount.unmount(); }
+  });
   it('discloses sky stars and floor marks without exposing ordinal levels as private amounts', () => {
     for (const encoding of ['amount', 'ordinal'] as const) {
       const mount = datums(<UsageSkyOfDays {...base} agents={agents} labels={skyLabels} model={{ encoding, colourBy: 'intensity', days: [
