@@ -45,6 +45,7 @@ export {
 } from './sessionAgentSpawnPolicyV1.js';
 
 import { AccountSettingsPersistedObjectSchema } from './accountSettingsPersistedObject.js';
+import { ReviewQualityAggregationV1Schema } from '../../reviews/reviewQualityAggregationV1.js';
 import { DEFAULT_SESSION_AGENT_START_ALLOW_LISTS_V1, SessionAgentStartAllowListsV1Schema, SessionAgentStartAllowListsV1StrictSchema } from './sessionAgentStartAllowListsV1.js';
 export { DEFAULT_SESSION_AGENT_START_ALLOW_LISTS_V1, SessionAgentStartAllowListsV1Schema, type SessionAgentStartAllowListsV1 } from './sessionAgentStartAllowListsV1.js';
 import { SessionReminderPresetsV1Schema } from './sessionReminderPresetsV1.js';
@@ -941,6 +942,7 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     collectionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     sessionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     reviewSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
+    reviewQualityAggregation: accountPreference(ReviewQualityAggregationV1Schema, 'lowest', 'review quality aggregation'),
     workflowRunSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     workflowSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     discussionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),

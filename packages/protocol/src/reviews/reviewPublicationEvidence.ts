@@ -2,6 +2,14 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { SessionRuntimeIssueV1Schema } from '../sessions/control/runtimeIssueV1.js';
 
+/** A model's short assessment of the code reviewed in this round. */
+export const ReviewQualityV1Schema = lazyZodSchema(() => z.strictObject({
+  score: z.number().check(z.int(), z.minimum(1), z.maximum(5)),
+  rationale: z.string().check(z.trim(), z.regex(/^[^\r\n\u2028\u2029]+$/u)),
+}));
+export type ReviewQualityV1 = z.infer<typeof ReviewQualityV1Schema>;
+export { ReviewQualityAggregationV1Schema, type ReviewQualityAggregationV1 } from './reviewQualityAggregationV1.js';
+
 /** Host receipts from the existing review comment publication owner. */
 export const ReviewPublicationMaterializationSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('complete') }),
@@ -16,6 +24,7 @@ export const ReviewPublicationEvidenceSchema = lazyZodSchema(() => z.object({
   commentIds: z.optional(z.array(z.string().check(z.minLength(1)))),
   materialization: z.optional(ReviewPublicationMaterializationSchema),
   reviewOutcome: ReviewReviewerOutcomeV1Schema.shape.reviewOutcome,
+  quality: ReviewReviewerOutcomeV1Schema.shape.quality,
 }));
 export type ReviewPublicationEvidence = z.infer<typeof ReviewPublicationEvidenceSchema>;
 
@@ -24,6 +33,7 @@ export const ReviewReviewerOutcomeV1Schema = lazyZodSchema(() => z.strictObject(
   key: z.string().check(z.minLength(1)), runId: z.optional(z.string().check(z.minLength(1))),
   outcome: z.enum(['completed', 'failed', 'cancelled', 'launch_failed']),
   reviewOutcome: z.optional(z.enum(['complete', 'partial', 'failed', 'unavailable'])),
+  quality: z.optional(ReviewQualityV1Schema),
   runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
   errorCode: z.optional(z.string().check(z.minLength(1))), materialization: z.optional(ReviewPublicationMaterializationSchema),
 }));
