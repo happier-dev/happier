@@ -82,7 +82,8 @@ function SpecimenPlayer(props: Readonly<{ controls: MediaPlayerVideoControls; on
 
 /** `rc-ed&real=1`: a short true WebM through the held player and the finite frame decoder. */
 const REAL_CLIP_MS = 2_400;
-async function recordRealClip(): Promise<string> {
+/** A short real WebM drawn on a canvas, for specimens that need a playable video. */
+export async function recordRealClip(): Promise<string> {
     const canvas = document.createElement('canvas');
     canvas.width = 720;
     canvas.height = 450;

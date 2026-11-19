@@ -45,6 +45,8 @@ import { canOpenFileInDefaultApp, saveFileUri } from '@/sync/runtime/files/saveF
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { SessionPaneLazyLoader } from '@/components/sessions/panes/SessionPaneLazyLoader';
 import type { MediaPlayerBodyProps } from '@/components/workspaces/files/file/MediaPlayerBody';
+import type { MediaPlayerVideoControls } from '@/components/workspaces/files/file/videoFrameAccess';
+import { formatPlaybackTime } from '@/components/workspaces/files/file/filePageMediaFacts';
 import type { PdfViewerProps } from '../pdf/PdfViewerStates';
 import type { PdfZoom } from '../pdf/pdfZoom';
 
@@ -164,6 +166,8 @@ type StageViewerProps = Readonly<{
   onOpenInDefaultApp?: () => void;
   /** Annotate mode: the canvas lies on the picture and takes the pointer; zoom keeps working (MIS §8). */
   annotator: ImageAnnotator | null;
+  /** The active video's transport, so a paused frame can be read and marked. */
+  onVideoControls?: (controls: MediaPlayerVideoControls | null) => void;
 }>;
 
 /** A fitted, non-interactive neighbour on either side of the current page. */
@@ -504,6 +508,7 @@ const StageViewer = React.forwardRef<ViewerHandle, StageViewerProps>(
             <View style={StyleSheet.absoluteFill}>
               <StageDocumentItem item={item} isActive={props.phase === 'open'}
                 onPreviewChange={reportPreview}
+                onVideoControls={props.onVideoControls}
                 onDownload={props.onDownload}
                 onOpenInDefaultApp={props.onOpenInDefaultApp} />
             </View>
@@ -560,6 +565,7 @@ function StageDocumentItem(props: Readonly<{
   onPreviewChange: (preview: FilePreviewSourceState) => void;
   onDownload?: () => void;
   onOpenInDefaultApp?: () => void;
+  onVideoControls?: (controls: MediaPlayerVideoControls | null) => void;
 }>) {
   // Full screen shows the whole page first (lab MS1f); the zoom menu and pinch take it closer.
   const [zoom, setZoom] = React.useState<PdfZoom>('fit-page');
@@ -569,7 +575,7 @@ function StageDocumentItem(props: Readonly<{
         testID="media-stage-video"
         load={loadStageMediaPlayer}
         props={{ kind: 'video', title: props.item.title, source: props.item.source, isActive: props.isActive,
-          onPreviewChange: props.onPreviewChange,
+          onPreviewChange: props.onPreviewChange, onVideoControls: props.onVideoControls,
           onDownload: props.onDownload, onOpenInDefaultApp: props.onOpenInDefaultApp }}
       />
     );
@@ -727,7 +733,18 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
   const immersiveValue = useSharedValue(0);
   const chromeValue = useSharedValue(0);
   const opened = React.useRef(false);
-  const item = gallery.currentItem;
+  // A paused video frame is marked as a picture in its video's place (platform lab `media`): the frame holds
+  // the slot until Done, Cancel or its copy lands in a Session, then the video returns at that moment.
+  const [heldFrame, setHeldFrame] = React.useState<Readonly<{ index: number; timeSeconds: number; item: MediaStageItem }> | null>(null);
+  const [videoControls, setVideoControls] = React.useState<MediaPlayerVideoControls | null>(null);
+  const resumeAt = React.useRef<number | null>(null);
+  const handleVideoControls = React.useCallback((controls: MediaPlayerVideoControls | null) => {
+    setVideoControls(controls);
+    if (controls && resumeAt.current !== null) { controls.seekTo(resumeAt.current); resumeAt.current = null; }
+  }, []);
+  const item = heldFrame?.index === gallery.index ? heldFrame.item : gallery.currentItem;
+  const stageItems = React.useMemo(() => heldFrame
+    ? gallery.items.map((entry, index) => (index === heldFrame.index ? heldFrame.item : entry)) : gallery.items, [gallery.items, heldFrame]);
   const multiple = gallery.items.length > 1;
   const showStrip = !phone && multiple;
   // The active viewer holds these bytes for its lifetime; flight and Save follow that exact preview, including Retry.
@@ -790,21 +807,44 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
   const capsuleLayout = useStageCapsuleLayout();
   const annotateShortcut = useKeyboardShortcutLabel('media.annotate');
   // Every picture: Done lands in place where the picture is editable, as a copy in a draft elsewhere (P2 U4).
-  const annotatable = isPicture(item) && currentPreview !== null && phase === 'open';
+  const pictureAnnotatable = isPicture(item) && currentPreview !== null && phase === 'open';
+  const frameAnnotatable = item.kind === 'video' && videoControls !== null && phase === 'open';
+  const annotatable = pictureAnnotatable || frameAnnotatable;
+  const annotateFrame = React.useCallback(async () => {
+    if (!videoControls || item.kind !== 'video') return;
+    videoControls.playback?.pause();
+    const frame = await videoControls.readFrame().catch(() => null);
+    if (!frame) return;
+    const frameTime = formatPlaybackTime(frame.timeSeconds);
+    setHeldFrame({ index: gallery.index, timeSeconds: frame.timeSeconds, item: {
+      kind: 'image', title: `${item.title} · ${frameTime}`, source: { enabled: true, source: { kind: 'uri', uri: frame.uri } },
+      annotate: true, frameTime, ...(item.targetSession ? { targetSession: item.targetSession } : {}) } });
+  }, [gallery.index, item, videoControls]);
   const enterAnnotate = React.useCallback(() => {
+    if (frameAnnotatable) { void annotateFrame(); return; }
     const size = sizes.current.get(gallery.index);
-    if (!annotatable || !size || !currentPreview) return;
+    if (!pictureAnnotatable || !size || !currentPreview) return;
     setImmersive(false);
     setReverted(false);
     void stageAnnotation.enter({ uri: currentPreview.uri, width: size.width, height: size.height });
-  }, [annotatable, currentPreview, gallery.index, stageAnnotation]);
-  // Tray "Edit marks" opens the stage straight into Annotate.
-  const autoAnnotated = React.useRef(false);
+  }, [annotateFrame, currentPreview, frameAnnotatable, gallery.index, pictureAnnotatable, stageAnnotation]);
+  // Tray "Edit marks" (and a held video frame) opens straight into Annotate, once per item.
+  const autoAnnotated = React.useRef<MediaStageItem | null>(null);
   React.useEffect(() => {
-    if (!item.annotate || autoAnnotated.current || !annotatable || !sizes.current.get(gallery.index)) return;
-    autoAnnotated.current = true;
+    if (!item.annotate || autoAnnotated.current === item || !pictureAnnotatable || !sizes.current.get(gallery.index)) return;
+    autoAnnotated.current = item;
     enterAnnotate();
-  }, [annotatable, enterAnnotate, gallery.index, item.annotate]);
+  }, [enterAnnotate, gallery.index, item, pictureAnnotatable]);
+  // The held frame gives its slot back once its annotate session has ended (Done, Cancel or the copy landed).
+  const frameAnnotated = React.useRef(false);
+  React.useEffect(() => {
+    if (!heldFrame) { frameAnnotated.current = false; return; }
+    if (stageAnnotation.session) { frameAnnotated.current = true; return; }
+    if (frameAnnotated.current && !stageAnnotation.choosingSession) {
+      resumeAt.current = heldFrame.timeSeconds;
+      setHeldFrame(null);
+    }
+  }, [heldFrame, stageAnnotation.choosingSession, stageAnnotation.session]);
   const cancelAnnotate = React.useCallback(() => {
     if (annotator) stageAnnotation.cancel(annotator.store.getState().document);
   }, [annotator, stageAnnotation]);
@@ -999,7 +1039,7 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
       <StageViewer
         key={gallery.index}
         ref={viewerRef}
-        items={gallery.items}
+        items={stageItems}
         index={gallery.index}
         viewport={viewport}
         window={windowRect}
@@ -1017,6 +1057,7 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
         {...(savable && canOpenFileInDefaultApp() ? { onOpenInDefaultApp: openInDefaultApp } : {})}
         onZoomChange={setZoomPercent}
         annotator={annotation?.annotator ?? null}
+        onVideoControls={handleVideoControls}
         clip={zoomPercent !== null && !phone && !immersive}
         {...(item.openFile ? { onOpenFile: item.openFile } : {})}
       />

@@ -10,6 +10,7 @@ import { STORED_IMAGE_HOST } from '@/components/ui/media/StoredImagePicture';
 import type { MediaStageItem } from '@/components/ui/media/stage/mediaStageItems';
 import { useMediaStage } from '@/components/ui/media/stage/useMediaStage';
 import { CHECKOUT_PAGE_URI, TERMINAL_URI } from '@/components/screenCapture/dev/screenCaptureFixtures';
+import { recordRealClip } from '@/components/screenCapture/dev/RecordingSpecimen';
 import type { UseFilePreviewSourceInput } from '@/components/ui/media/useFilePreviewSource';
 import { Text } from '@/components/ui/text/Text';
 import { FileViewerBody } from '@/components/workspaces/files/file/FileViewerBody';
@@ -179,6 +180,14 @@ export function MediaViewerSpecimen() {
         title="Annotate a message picture"
         onPress={() => stage.open([CHECKOUT_ITEM, TERMINAL_ITEM], 0)}
         testID="dev-media-open-message-picture"
+      />
+      {/* A received video: pause it, mark the frame with numbered steps and attach it (platform lab `media`). */}
+      <RoundButton
+        size="small"
+        display="secondary"
+        title="Mark a frame of a received video"
+        onPress={() => { void recordRealClip().then(uri => stage.open([{ kind: 'video', title: 'checkout-1440.webm', source: uriSource(uri) }], 0)); }}
+        testID="dev-media-open-video"
       />
       {/* MS1 failure: a picture whose read does not finish; the stage offers Retry (RFSM-02). */}
       <RoundButton

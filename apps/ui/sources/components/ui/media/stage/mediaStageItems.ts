@@ -32,6 +32,8 @@ export type MediaStageItem = Readonly<{
     annotate?: boolean;
     /** Chooser's default only; its canonical resolver still decides the destination. */
     targetSession?: SessionAddress;
+    /** A paused video frame held for marking: its time travels with the copy's words. */
+    frameTime?: string;
 }>;
 
 export type MediaStageProps = Readonly<{

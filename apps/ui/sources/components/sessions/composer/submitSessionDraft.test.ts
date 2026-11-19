@@ -491,6 +491,52 @@ describe('submitSessionDraft', () => {
         expect(readSessionAttachmentDrafts(resolveSessionAttachmentDraftScope(scope))).toEqual([]);
     });
 
+    it('sends a marked picture with its numbered notes after the person words, and the agent reads them beside the picture', async () => {
+        const { createImageAnnotator } = await import('@/components/ui/media/annotation/annotatorStore');
+        const scope = target();
+        const ref = { kind: 'session', sessionId } as const;
+        const owner = createExistingSessionComposerDocumentOwner({ scope, ref });
+        const tokenText = '[Image #1](happier-ref:attachment:marked)';
+        const text = `Enter should queue, not interrupt.\n\n${tokenText}`;
+        owner.replaceDocument({ text, composerAttachments: [], structuredInputMentions: [{ kind: 'attachment', ref: 'attachment:marked',
+            label: 'Image #1', tokenText, start: text.indexOf(tokenText), end: text.indexOf(tokenText) + tokenText.length }] });
+        // Mark: three numbered steps through the annotator, a note on the first and the last; the middle stays bare.
+        const annotator = createImageAnnotator({ source: { uri: 'blob:settings', width: 800, height: 500, scale: 1 } });
+        annotator.apply(['a', 'b', 'c'].map((id, index) => ({ kind: 'mark.add' as const,
+            mark: { id, kind: 'step' as const, at: { x: 100 * (index + 1), y: 80 }, color: 'red' as const, size: 'm' as const } })));
+        for (const [id, note] of [['a', 'Move this group under Input'], ['c', 'List the microphones here']] as const) {
+            const mark = annotator.store.getState().document.marks.find(candidate => candidate.id === id)!;
+            annotator.apply([{ kind: 'mark.update', mark: { ...mark, note } as typeof mark }]);
+        }
+        const attempt = getOrCreateSessionMessagingDraftMutationAttempt({ scope, sessionId,
+            currentness: captureSessionDraftCurrentness({ scope, address: ref }), intent: { kind: 'send', target: sessionId } });
+        const source = { kind: 'memory' as const, name: 'settings.png', bytes: new Uint8Array([1, 2]), mimeType: 'image/png' };
+        writeSessionAttachmentDrafts(resolveSessionAttachmentDraftScope(scope), [{ id: 'marked', status: 'pending', source,
+            edit: { original: source, document: annotator.store.getState().document },
+            targetUploadedCheckpoints: [{ id: 'marked', target: scope, executionTarget: { serverId, machineId: 'machine_1' },
+                messageLocalId: attempt!.localId, uploadedPath: 'settings.png', uploadedSizeBytes: 2,
+                uploadedMimeType: 'image/png', attachmentHandle: { v: 1, sessionId, id: 'marked' } }] }]);
+        const sent: Array<ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>['envelope']> = [];
+        homes.answer(serverId, '/v1/actions/session.message.send', { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            sent.push(request.envelope);
+            return { body: { v: 1, actionId: 'session.message.send', requestId: request.envelope.requestId,
+                execution: { ok: true, result: SessionMessageSendResultV1Schema.parse({ status: 'accepted', localId: attempt!.localId }) } } };
+        } });
+        expect(await submitSessionDraft({ sessionTarget: scope })).toMatchObject({ ok: true, result: { status: 'accepted' } });
+        expect(sent).toHaveLength(1);
+        const steps = '[Image #1]\n1. Move this group under Input\n2.\n3. List the microphones here';
+        expect(sent[0]).toMatchObject({ input: { message: `${text}\n\n${steps}`,
+            structuredInput: { sessionAttachments: [{ id: 'marked', sessionId }] } } });
+        const uploads = [buildUploadedAttachment({ id: 'marked', name: 'settings.png', path: 'settings.png', sizeBytes: 2,
+            mimeType: 'image/png', attachmentHandle: { v: 1, sessionId, id: 'marked' } })];
+        const message = (sent[0]!.input as { message: string }).message;
+        expect(projectSessionInputReferencesV1({ text: message, references: { uploads,
+            imageInputs: uploads.flatMap(upload => upload.structuredInput ? [StructuredImageInputV1Schema.parse(upload.structuredInput)] : []) } }).text)
+            .toBe(`Enter should queue, not interrupt.\n\n[Image #1]\n\n${steps}`);
+        expect(readSessionAttachmentDrafts(resolveSessionAttachmentDraftScope(scope))).toEqual([]);
+    });
+
     it('sends the whole unmounted draft once, retains issued uploads on failure, and clears only after accepted retry', async () => {
         const scope = target();
         const ref = { kind: 'session', sessionId } as const;

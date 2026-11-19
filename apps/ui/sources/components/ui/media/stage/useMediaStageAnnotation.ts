@@ -58,7 +58,8 @@ export function useMediaStageAnnotation(item: MediaStageItem) {
         try {
             const sessionTarget = 'accountId' in target ? target : await exactSessionTarget(target);
             if (!sessionTarget) { setFailure('annotation.targetUnavailable'); return false; }
-            const result = await copyAnnotatedPicture({ source: session.source, document: copyDocument, name: item.title, sessionTarget });
+            const result = await copyAnnotatedPicture({ source: session.source, document: copyDocument, name: item.title, sessionTarget,
+                ...(item.frameTime ? { caption: item.frameTime } : {}) });
             if (!result.ok) { setFailure(result.reason); return false; }
             discard(); return true;
         } finally { entering.current = false; setPending(false); }
