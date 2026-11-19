@@ -694,6 +694,43 @@ test('QA reload preparation runs ahead of overdue waiters (reload #173)', linux,
   await overdue.admit();
 });
 
+test('the shared current-source server starts next after a busy producer lock is released', linux, async t => {
+  const { root, broker } = await fixture(t);
+  const locks = [{ path: join(root, 'build-producer.lock'), kind: 'workspace' }];
+  const publishing = await tryWorkspaceBuildResources({ locks, env: {} });
+  assert.equal(publishing.acquired, true);
+  const order = [];
+  const waiters = [];
+  const stop = new AbortController();
+  const producer = (name, floorKiB, env) => {
+    const job = runAdmittedTask({ root, repoDir: root, cacheBaseDir: root, ...priorityIdentity(root, 'producer'),
+      floorKiB, env, locks, signal: stop.signal }, async () => {
+      order.push({ name, floorKiB: broker.status().reservedMemoryKiB });
+    });
+    waiters.push(job);
+    return job;
+  };
+  const blocked = async count => {
+    while (broker.status().waitingCount !== count || broker.status().activeCount) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  };
+  try {
+    producer('identity', 75, {});
+    await blocked(1);
+    producer('shared server', 60, { HAPPIER_ADMISSION_PREPARES_CLASS: 'source-reload' });
+    await blocked(2);
+    assert.deepEqual(order, [], 'neither build preempts the current publication');
+    await publishing.release();
+    await Promise.all(waiters);
+    assert.deepEqual(order, [{ name: 'shared server', floorKiB: 60 }, { name: 'identity', floorKiB: 75 }]);
+  } finally {
+    stop.abort();
+    await Promise.allSettled(waiters);
+    await publishing.release();
+  }
+});
+
 test('a shared preparation step takes the highest rank among the runs waiting on it', linux, async t => {
   // P03 ORCH 2026-11-17: a package-dist build is a prerequisite of every run waiting
   // on its output, so a later focused run's request for the same build raises it.

@@ -10,6 +10,8 @@ import { performance } from 'node:perf_hooks';
 import { tmpdir } from 'node:os';
 import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { runWorkspaceBuildAdmission } from '../utils/proc/workspace_build_admission.mjs';
+import { SOURCE_RELOAD_ADMISSION_CLASS } from '../utils/dev_targets/command_resources.mjs';
+import { isRepoStackIdentityName } from '../utils/stack/repo_stack_identity.mjs';
 import { assertSharedDatabaseMigrationsApplied, SharedDatabaseMigrationError } from '../utils/server/shared_database_migration_gate.mjs';
 import { isWorkspaceBundleLockActive, withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { isPidAlive, observePidLiveness } from '../utils/proc/pids.mjs';
@@ -1003,7 +1005,8 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
     revision = sourceRevision || !requireCurrentSource ? await resolveProducerRevision({ repoDir, sourceRevision, env: context.env }) : null;
     if (!revision && !requireCurrentSource) logger.error('[source-bundle] capture source=checkout: no revision descriptor reached this host; other lanes\' uncommitted edits can enter this capture');
     const completed = await adopt();
-    if (!revision && components.some(component => component.component === 'server')) {
+    const buildsCheckoutServer = !revision && components.some(component => component.component === 'server');
+    if (buildsCheckoutServer) {
       // Checkout captures can preflight their live catalog before build admission.
       // Revision captures use the selected server's catalog at migration admission;
       // another lane's untracked checkout migrations do not belong to that runtime.
@@ -1017,6 +1020,9 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
     revisionArchivePath = revision?.descriptorPath ? await requestRevisionInstallArchive({ repoDir,
       descriptor: await readSourceRevisionDescriptor(revision.descriptorPath), treesRoot: sourceRevisionTreesRoot(context.producerStackBaseDir),
       requestBaseArchive, env: context.env, signal }) : null;
+    const admissionEnv = buildsCheckoutServer && requireCurrentSource && isRepoStackIdentityName(context.producerStackName)
+      ? { ...context.env, HAPPIER_ADMISSION_PREPARES_CLASS: SOURCE_RELOAD_ADMISSION_CLASS }
+      : context.env;
     const response = await withSingleTrailingBuildPass({ run: async () => {
       const response = await withSourceRuntimeWorkerResult(async resultPath => {
         const result = await runWorkspaceBuildAdmission({ repoDir,
@@ -1027,7 +1033,7 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
             revision: revision && { ...revision, latest: false }, select: select(), revisionArchivePath, resultPath })] }),
           locks: [{ path: sourceRuntimeProducerBuildLockPath(context.producerStackBaseDir), kind: 'workspace', timeoutMs: null,
             errorLabel: 'source runtime producer lock' }],
-          cwd: repoDir, env: context.env, signal, devStartup: true, admissionClass: 'source-bundle', stdio: ['ignore', 'pipe', 'pipe'],
+          cwd: repoDir, env: admissionEnv, signal, devStartup: true, admissionClass: 'source-bundle', stdio: ['ignore', 'pipe', 'pipe'],
           captureStdout: false, onStdout: chunk => stderrStream.write(chunk),
           onStderr: chunk => stderrStream.write(chunk) });
         if (result.error) throw result.error;

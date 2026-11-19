@@ -54,7 +54,7 @@ const PRODUCER_RANK = 2;
 // P03 ORCH 2026-11-17: a preparation step is a prerequisite of every run waiting
 // on its output, so it takes the highest class rank among the runs currently
 // waiting on it (`preparesClass`; never a script rank), or its own rank when that
-// is higher. Only these classes take `preparesClass`.
+// is higher. Only these classes share preparation ranks.
 const PREPARATION_CLASSES = new Set(['native-custody', 'package-dist', 'source-asset', 'dependency-install']);
 function preparedRank(request) {
   return PREPARATION_CLASSES.has(request.resourceClass ?? request.className) && typeof request.preparesClass === 'string'
@@ -333,7 +333,14 @@ export function createAdmissionBroker({ root,
   // P03 ORCH RULING 2026-11-17 (owner 15:31Z): QA reload preparation runs ahead of
   // tests, so it precedes overdue waiters: source-reload, then overdue FIFO, then rank.
   const overdue = (item, now) => now - item.arrivedAt >= HEAD_RESERVATION_DELAY_MS;
-  const reload = item => (item.resourceClass ?? item.className) === SOURCE_RELOAD_ADMISSION_CLASS;
+  const reload = item => {
+    const resourceClass = item.resourceClass ?? item.className;
+    // The shared checkout server prepares repo-dev readiness under the
+    // source-bundle resource budget. Identity captures share its lock.
+    return resourceClass === SOURCE_RELOAD_ADMISSION_CLASS
+      || (resourceClass === 'source-bundle' && item.ownPriority === PRODUCER_RANK
+        && item.preparesClass === SOURCE_RELOAD_ADMISSION_CLASS);
+  };
   const compareService = now => (left, right) => Number(reload(right)) - Number(reload(left))
     || Number(overdue(right, now)) - Number(overdue(left, now))
     || (overdue(left, now) ? 0 : right.headPriority - left.headPriority)
