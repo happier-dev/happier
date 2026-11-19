@@ -2614,6 +2614,13 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                         operationOptions,
                     ),
                 );
+            case 'plugin_connected_accounts.resolve_selection_v1': {
+                const accounts = await connectedAccountsFor(operation.serviceScope);
+                if (!accounts.resolveSelection) {
+                    return fail('plugin_service_unavailable', 'Runner Connected Account selection service is unavailable');
+                }
+                return result(operation, await accounts.resolveSelection(operation.purpose, operationOptions));
+            }
             case 'plugin_connected_accounts.request_selection_v1':
                 return result(
                     operation,
@@ -3058,13 +3065,14 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 return withExternalSessionFollowRequestId(operation.requestId, () => dispatchOperation(input));
             }
             if (operation.kind !== 'plugin_connected_accounts.get_binding_v1'
+                && operation.kind !== 'plugin_connected_accounts.resolve_selection_v1'
                 && operation.kind !== 'plugin_connected_accounts.watch.open_v1'
                 && operation.kind !== 'plugin_connected_accounts.watch.next_v1') return dispatchOperation(input);
             return withConnectedAccountBindingDiagnostic({
                 sessionId: input.sessionId, invocationId: operation.invocationId, requestId: operation.requestId,
                 pluginId: input.retainedAgent.pluginId, localId: input.retainedAgent.localAgentId,
-                operation: operation.kind === 'plugin_connected_accounts.get_binding_v1' ? 'get_binding'
-                    : operation.kind === 'plugin_connected_accounts.watch.open_v1' ? 'watch_open' : 'watch_next',
+                operation: operation.kind === 'plugin_connected_accounts.watch.open_v1' ? 'watch_open'
+                    : operation.kind === 'plugin_connected_accounts.watch.next_v1' ? 'watch_next' : 'get_binding',
                 // The SDK scope owner adds the declared purpose after authorization;
                 // this raw wire argument may contain arbitrary plugin input.
                 ...('subscriptionId' in operation ? { subscriptionId: operation.subscriptionId } : {}),

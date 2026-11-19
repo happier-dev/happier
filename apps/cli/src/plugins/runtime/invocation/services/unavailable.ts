@@ -793,6 +793,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
             const fail = unavailableMethod('connectedAccounts', code, diagnostic);
             return Object.freeze({
                 getBinding: fail,
+                resolveSelection: fail,
                 requestSelection: fail,
                 materialize: fail,
                 listAccounts: fail,

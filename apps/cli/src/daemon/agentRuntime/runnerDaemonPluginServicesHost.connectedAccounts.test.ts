@@ -1,6 +1,8 @@
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { PluginConnectedAccountAuthenticationV2Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol';
+import { createPurposeTargetResolver } from '@happier-dev/cli-common/connectedAccounts';
 import { emptyConnectedAccountCatalogRecordV1, sealConnectedAccountCatalogContentV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { prepareRunnerDaemonPluginServices } from '@/agent/runtime/session/process/runnerDaemonPluginServices';
 import { RunnerDaemonPluginServiceOperationV1Schema, decodeRunnerDaemonPluginServiceWireValueV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
@@ -24,17 +26,35 @@ function deferred() {
     return { promise, resolve };
 }
 
-async function fixture(authorizedPurposes: readonly string[] = purposes) {
+async function fixture(authorizedPurposes: readonly string[] = purposes, selection?: 'unselected' | 'selected' | 'unavailable') {
     const credentials = { token: 'binding-fixture', encryption: null };
     setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: resolveAccountSettingsScopeKey(credentials),
         settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 7, loadedAtMs: 1, settingsSecretsReadKeys: [] });
     const unreachable = async (): Promise<never> => { throw new Error('Unbound purposes must not select or materialize a target'); };
-    // Only the Home HTTP boundary is replaced below. Catalog, binding ownership,
-    // SDK scope enforcement, runner proxy and strict wire codec all remain real.
+    // Home HTTP and account metadata transport are fixture boundaries. Catalog,
+    // target resolution, binding ownership, SDK scope, proxy and wire codec remain real.
     const owner = createConnectedAccountPurposeBindingOwner({
         store: createActiveAccountSettingsConnectedAccountPurposeBindingStore({ credentials }),
-        selectTarget: unreachable, resolveTarget: unreachable, materializeAccount: unreachable,
+        selectTarget: unreachable, resolveTarget: selection === undefined ? unreachable : createPurposeTargetResolver({
+            available: true,
+            resolveService: async () => ({ service, authentication: PluginConnectedAccountAuthenticationV2Schema.parse({
+                defaultModeId: 'token', modes: [{ id: 'token', kind: 'manual', outcomeReconciliation: 'none',
+                    fields: [{ id: 'token', title: 'Token', secret: true, schema: { type: 'string' } }] }],
+            }) }),
+            listAccounts: async () => selection === 'unavailable' ? [] : [QualifiedConnectedAccountProfileV4Schema.parse({
+                ref: { service, accountId: 'selected' }, authenticationModeId: 'token', status: 'connected',
+                revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+                configurationReady: true, configurationRevision: null, scopes: [], displayName: 'Selected account',
+            })],
+        }), materializeAccount: unreachable,
         projectTargetAccounts: unreachable, assertTargetAccountMaterializable: unreachable,
+    });
+    const purpose = { consumer, purpose: purposes[0] };
+    const lease = selection === undefined ? undefined : owner.activatePurposeBindings({
+        subject: { kind: 'execution_run', runId: 'runner-selection', runnerPid: 123, agentId: consumer.localId, isCurrent: () => true },
+        purposes: [purpose], bindings: selection === 'unselected' ? [] : [
+            { purpose, target: { kind: 'account', account: { service, accountId: 'selected' } } },
+        ],
     });
     const controller = new AbortController();
     const connectedHost = createStablePluginConnectedAccountsHost(owner);
@@ -43,7 +63,8 @@ async function fixture(authorizedPurposes: readonly string[] = purposes) {
         contribution: { id: consumer.localId, qualifiedId: `${consumer.pluginId}/agents/${consumer.localId}` },
         occurrenceId: 'binding-occurrence', correlationId: 'binding-callback', surface: 'cli',
         session: { id: 'binding-session' }, signal: controller.signal, isOccurrenceCurrent: () => !controller.signal.aborted,
-    }, authorizedPurposes.map(purpose => ({ purpose, serviceRefs: [service], operations: ['use'], materializationKinds: [] })));
+    }, authorizedPurposes.map(purpose => ({ purpose, serviceRefs: [service], operations: ['use'], materializationKinds: [] })),
+    lease ? { exactPurposeBindingSubjectId: lease.subjectId } : undefined);
     const unavailable = createUnavailablePluginServices();
     const services = { ...unavailable, connectedAccounts, availability: (id: Parameters<typeof unavailable.availability>[0]) =>
         id === 'connectedAccounts' ? { status: 'available' as const } : unavailable.availability(id) };
@@ -77,7 +98,7 @@ async function fixture(authorizedPurposes: readonly string[] = purposes) {
     });
     return { accounts: runnerServices.connectedAccounts, directAccounts: connectedAccounts, requests,
         refreshPurposeCatalog: () => refreshActiveConnectedAccountCatalog({ credentials, key: 'purposes', readMode: 'admitted' }, true),
-        async dispose() { controller.abort(); await host.dispose(); } };
+        async dispose() { controller.abort(); lease?.dispose(); await host.dispose(); } };
 }
 
 function home(readCurrentness: () => Promise<void> = async () => {}) {
@@ -100,6 +121,23 @@ function home(readCurrentness: () => Promise<void> = async () => {}) {
 
 describe('runner qualified-purpose cold preparation through the real binding owner', () => {
     afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+
+    it.each(['unselected', 'selected', 'unavailable'] as const)('round-trips admitted native selection (%s) through the runner', async selection => {
+        const f = await fixture(purposes, selection);
+        try {
+            if (selection === 'unavailable') {
+                await expect(f.accounts.resolveSelection!(purposes[0])).rejects.toMatchObject({
+                    code: 'plugin_connected_account_binding_unavailable', details: { reasonCode: 'target_unavailable' },
+                });
+            } else {
+                const direct = await f.directAccounts.resolveSelection!(purposes[0]);
+                expect(direct).toMatchObject(selection === 'unselected' ? { credentialSource: 'machineLogin' } : {
+                    credentialSource: 'connectedAccount', binding: { account: { service, accountId: 'selected' } },
+                });
+                await expect(f.accounts.resolveSelection!(purposes[0])).resolves.toEqual(direct);
+            }
+        } finally { await f.dispose(); }
+    });
 
     it.each(['sdk', 'runner'] as const)('omits undeclared purpose content from %s diagnostics without changing the refusal', async surface => {
         home();

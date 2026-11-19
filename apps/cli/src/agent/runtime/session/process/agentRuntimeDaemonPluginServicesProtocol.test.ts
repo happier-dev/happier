@@ -97,6 +97,7 @@ const retainedRunnerOperationClassification = [
             'plugin_notifications.preferences_v1',
             'plugin_notifications.watch_preferences.open_v1',
             'plugin_connected_accounts.get_binding_v1',
+            'plugin_connected_accounts.resolve_selection_v1',
             'plugin_connected_accounts.materialize_v1',
             'plugin_connected_accounts.list_accounts_v1',
             'plugin_connected_accounts.materialize_listed_account_v1',

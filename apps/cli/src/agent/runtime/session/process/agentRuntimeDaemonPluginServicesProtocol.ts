@@ -1109,6 +1109,13 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
         purpose: BoundedIdSchema,
     })),
     lazyZodSchema(() => z.strictObject({
+        kind: z.literal('plugin_connected_accounts.resolve_selection_v1'),
+        ...OperationBaseSchema,
+        ...OptionalWitnessSchema,
+        ...OptionalConnectedAccountsServiceScopeSchema,
+        purpose: BoundedIdSchema,
+    })),
+    lazyZodSchema(() => z.strictObject({
         kind: z.literal('plugin_connected_accounts.request_selection_v1'),
         ...OperationBaseSchema,
         ...OptionalWitnessSchema,

@@ -2338,6 +2338,19 @@ export async function prepareRunnerDaemonPluginServices(
                     purpose,
                 });
             },
+            async resolveSelection(purpose, options) {
+                if (!serviceScope) {
+                    assertAvailable('connectedAccounts');
+                }
+                return await dispatch<Awaited<ReturnType<NonNullable<
+                    PluginServices['connectedAccounts']['resolveSelection']
+                >>>>({
+                    kind: 'plugin_connected_accounts.resolve_selection_v1',
+                    ...requestBase(),
+                    ...(serviceScope ? { serviceScope } : {}),
+                    purpose,
+                }, options?.signal ? { signal: options.signal } : undefined);
+            },
             async requestSelection(request) {
                 if (!serviceScope) {
                     assertAvailable('connectedAccounts');
