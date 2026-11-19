@@ -4,6 +4,10 @@ import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
+import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -17,6 +21,8 @@ import { waitFor } from '../../src/testkit/timing';
 import { readWorkflowChildSession, waitForWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { createTempDirHandle, type TempDirHandle } from '../../src/testkit/fs/tempDir';
+import { createWorkflowRunStorageClient } from '../../../../apps/cli/src/daemon/workflows/workflowRunStorageClient';
+import { buildWorkflowActionContext } from '../../../../apps/cli/src/daemon/workflows/workflowActionContext';
 
 let fixture: TeamSetupFFixture | undefined;
 let workspace: TempDirHandle | undefined;
@@ -290,10 +296,38 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
   await waitFor(async () => (await readAutomationRuns(neighborSaved.set.automationId)).length === 1,
     { context: 'A second lifetime independently retains its firing for the same source occurrence' });
   const cleanupRun = (await readAutomationRuns(cleanupSaved.set.automationId))[0]!;
+  // Consume the real admitted Run, as the daemon does; a Run id alone is not a Workflow caller.
+  const storedCleanup = await createWorkflowRunStorageClient({ token: actor.credentials.token,
+    serverHttpBaseUrl: fixture.server.baseUrl }).execute({ operation: 'get', runId: cleanupRun.id });
+  if (typeof storedCleanup !== 'object' || storedCleanup === null
+    || !('keyCensus' in storedCleanup) || !('acceptedEnvelope' in storedCleanup)) {
+    throw new Error('Accepted cleanup Run snapshot unavailable');
+  }
+  const cleanupCensus = WorkflowRunRecipientCensusResponseV1Schema.parse(storedCleanup.keyCensus);
+  if (cleanupCensus.ownerAccountCurrentness.mode !== 'e2ee') throw new Error('Expected E2EE cleanup Run');
+  const cleanupEncryption = actor.credentials.encryption;
+  if (cleanupEncryption?.type !== 'dataKey') throw new Error('Expected the fixture cleanup Run data key');
+  const cleanupMaterial = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+    material: cleanupEncryption, dataKeyPublicKey: cleanupEncryption.publicKey });
+  const cleanupKey = resolveWorkflowRunDataKeyV1({ encryption: {
+    witness: { ...cleanupCensus.ownerAccountCurrentness, mode: cleanupCensus.ownerAccountCurrentness.mode },
+    material: cleanupMaterial }, census: cleanupCensus });
+  const cleanupEnvelope = parseWorkflowStoredContentEnvelopeV1(storedCleanup.acceptedEnvelope);
+  if (cleanupKey.kind !== 'available' || !cleanupEnvelope) throw new Error('Accepted cleanup Run key unavailable');
+  const acceptedCleanup = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ ...cleanupKey.encryption.runCrypto,
+    binding: { v: 1, purpose: 'accepted_snapshot', accountId: cleanupCensus.ownerAccountId, runId: cleanupRun.id },
+    envelope: cleanupEnvelope });
+  if (acceptedCleanup.kind !== 'available') throw new Error('Accepted cleanup Run content unavailable');
+  const cleanupContext = { ...buildWorkflowActionContext({ runId: cleanupRun.id,
+    source: acceptedCleanup.content.source, authorization: acceptedCleanup.content.authorization,
+    origin: acceptedCleanup.content.origin, workspace: acceptedCleanup.content.workspaceTarget.project }),
+    surface: 'mcp' as const };
   const unrelatedRunRemoval = await actor.execute('workflow.trigger.remove', {
     automationId: siblingSaved.set.automationId, triggerId: siblingSaved.triggerId,
-  }, { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'workflowRun', runId: cleanupRun.id } });
-  expect(unrelatedRunRemoval).toMatchObject({ ok: true, result: {
+  }, cleanupContext);
+  expect(unrelatedRunRemoval, JSON.stringify(unrelatedRunRemoval.ok ? { ok: true } : {
+    ok: false, errorCode: unrelatedRunRemoval.errorCode, failureCause: unrelatedRunRemoval.failureCause,
+  })).toMatchObject({ ok: true, result: {
     kind: 'approval_request_created', actionId: 'workflow.trigger.remove', artifactId: expect.any(String),
   } });
   // Existing Prisma tracing observes the real PostgreSQL path, including grants and reservations.
@@ -385,10 +419,12 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
     audience: 'mcp', mode: 'ask_first' })).toMatchObject({ ok: true });
   const requiredCleanup = await actor.execute('workflow.trigger.remove', {
     automationId: cleanupSaved.set.automationId, triggerId: cleanupSaved.triggerId,
-  }, { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'workflowRun', runId: cleanupRun.id },
+  }, { ...cleanupContext,
     actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {},
       approvalRequiredSurfaces: { 'workflow.trigger.remove': ['mcp'] } }) });
-  expect(requiredCleanup).toMatchObject({ ok: true, result: {
+  expect(requiredCleanup, JSON.stringify(requiredCleanup.ok ? { ok: true } : {
+    ok: false, errorCode: requiredCleanup.errorCode, failureCause: requiredCleanup.failureCause,
+  })).toMatchObject({ ok: true, result: {
     kind: 'approval_request_created', actionId: 'workflow.trigger.remove', artifactId: expect.any(String),
   } });
   expect(await actor.executeAsPerson('actions.policy.set', { actionId: 'workflow.trigger.remove',
