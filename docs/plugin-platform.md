@@ -13278,9 +13278,10 @@ supported operations. Host admission remains authoritative for target and access
 the callback adds no permission decision. Credentials and connection handles
 remain in-process. The optional `deploymentDatabases` host service exposes that
 same selection owner to the database workbench, whose public operations remain
-semantic `database.*` Actions. Operands and results derive from
-`@happier-dev/database-protocol`; no per-engine Action or connection registry is
-introduced. Matching unpublished SDK and host source reload together; the
+semantic `database.*` Actions. The SDK publishes the service operands, results,
+targets and engine capability vocabulary at `@happier-dev/plugin-sdk/database`.
+`@happier-dev/database-protocol` composes those projections into the workbench’s
+feature contracts. Matching unpublished SDK and host source reload together; the
 portable descriptor grammar and wire epoch are unchanged.
 
 In unreleased 0.3 source, engine-only plugins declare `databaseEngines` through

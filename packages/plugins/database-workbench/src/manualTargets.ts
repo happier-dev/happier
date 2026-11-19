@@ -1,14 +1,26 @@
 import { createCanonicalJsonSigningInput, isRecord, PluginError } from '@happier-dev/plugin-sdk';
 import { decideDatabaseAccessV1, summarizeDatabaseAccessV1 } from '@happier-dev/databases';
-import { DatabaseAgentAccessV1Schema, DatabaseEngineIdV1Schema, DatabaseManualTargetV1Schema } from '@happier-dev/database-protocol';
+import {
+    DatabaseAgentAccessV1Schema,
+    DatabaseEngineIdV1Schema,
+    DatabaseManualTargetV1Schema,
+} from '@happier-dev/plugin-sdk/database';
 import type { DatabaseEnginesServiceV1 } from '@happier-dev/plugin-sdk';
 import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
 import type { StorageScopeService } from '@happier-dev/plugin-sdk/storage';
 import type {
-    DatabaseAgentAccessV1, DatabaseEngineIdV1, DatabaseDescriptorV1, DatabaseManualTargetV1, DatabaseOperationClassV1,
-    DatabaseOperationInputV1, DatabaseRequesterKindV1, DatabaseTargetsListInputV1, DatabaseTargetsListResultV1,
-    DatabaseAccessSummaryV1, DatabaseTargetV1,
-} from '@happier-dev/database-protocol';
+    DatabaseAgentAccessV1,
+    DatabaseEngineIdV1,
+    DatabaseDescriptorV1,
+    DatabaseManualTargetV1,
+    DatabaseOperationClassV1,
+    DatabaseOperationInputV1,
+    DatabaseRequesterKindV1,
+    DatabaseTargetsListInputV1,
+    DatabaseTargetsListResultV1,
+    DatabaseAccessSummaryV1,
+    DatabaseTargetV1,
+} from '@happier-dev/plugin-sdk/database';
 import type { DatabaseWorkbenchConnection } from './connection.js';
 import { databaseEngineCapabilities } from './capabilities.js';
 

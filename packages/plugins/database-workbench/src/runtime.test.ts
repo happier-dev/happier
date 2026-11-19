@@ -12,7 +12,23 @@ import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
 import { createPluginTestkit, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import type { ResourcesService } from '@happier-dev/plugin-sdk/resources';
 import type { StorageScopeService, StorageService } from '@happier-dev/plugin-sdk/storage';
-import { DATABASE_ACCESS_READ_ACTION_ID_V1, DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_EDITS_APPLY_ACTION_ID_V1, DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_TARGETS_CONNECT_ACTION_ID_V1, DATABASE_TARGETS_FORGET_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1, DatabaseDescriptorV1Schema, databaseActionLocalIdV1, type DatabaseDescriptorV1, type DatabaseManualTargetV1 } from '@happier-dev/database-protocol';
+import {
+    DATABASE_ACCESS_READ_ACTION_ID_V1,
+    DATABASE_ACCESS_SET_ACTION_ID_V1,
+    DATABASE_DESCRIBE_ACTION_ID_V1,
+    DATABASE_EDITS_APPLY_ACTION_ID_V1,
+    DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
+    DATABASE_STATEMENT_RUN_ACTION_ID_V1,
+    DATABASE_TARGETS_CONNECT_ACTION_ID_V1,
+    DATABASE_TARGETS_FORGET_ACTION_ID_V1,
+    DATABASE_TARGETS_LIST_ACTION_ID_V1,
+} from '@happier-dev/database-protocol';
+import {
+    DatabaseDescriptorV1Schema,
+    type DatabaseDescriptorV1,
+    type DatabaseManualTargetV1,
+} from '@happier-dev/plugin-sdk/database';
+import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { createDatabaseActions } from './actions.js';
 import { openManualDatabaseConnection } from './connection.js';
 import { createDatabaseConnectionResourceRuntime, DATABASE_CONNECTION_RESOURCE_ID_V1 } from './resources.js';
@@ -249,7 +265,10 @@ describe('semantic database Action runtime', () => {
             expect(await kit.invokeAction(runId, read)).toMatchObject({ ok: true });
             expect({ acquisitions, openings, closures }).toEqual({ acquisitions: 1, openings: 1, closures: 0 });
             expect(await kit.invokeAction(databaseActionLocalIdV1(DATABASE_DESCRIBE_ACTION_ID_V1), { operation: 'describe', target }))
-                .toEqual({ ok: true, operation: 'describe', descriptor });
+                .toEqual({ ok: true, operation: 'describe', descriptor: {
+                    ...descriptor,
+                    automationSubject: { ok: true, subject: { kind: 'database', serverId: 'server', target } },
+                } });
             expect({ acquisitions, openings, closures }).toEqual({ acquisitions: 2, openings: 2, closures: 1 });
             expect(await kit.invokeAction(runId, { operation: 'statement.run', target, subscriptionId: 'open-pane', mode: 'write', executionMode: 'transaction',
                 statements: [{ sql: "UPDATE selected SET label='after'", parameters: [] }] })).toMatchObject({ ok: true });

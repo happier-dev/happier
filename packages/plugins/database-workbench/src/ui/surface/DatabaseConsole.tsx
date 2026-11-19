@@ -1,8 +1,5 @@
 import * as React from 'react';
-import type {
-  DatabaseOperationResultV1,
-  DatabaseStatementResultV1,
-} from '@happier-dev/database-protocol';
+import type { DatabaseOperationResultV1, DatabaseStatementResultV1 } from '@happier-dev/plugin-sdk/database';
 import {
   Action,
   Button,

@@ -1,4 +1,4 @@
-import type { DatabaseCellResultV1, DatabaseCellV1, DatabaseValueRangeV1 } from '@happier-dev/database-protocol';
+import type { DatabaseCellResultV1, DatabaseCellV1, DatabaseValueRangeV1 } from '@happier-dev/plugin-sdk/database';
 
 export type JsonCellInspection =
     | Readonly<{ status: 'complete'; value: string; formatted: string }>

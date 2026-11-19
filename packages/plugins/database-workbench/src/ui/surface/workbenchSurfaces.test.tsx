@@ -3,15 +3,15 @@
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  DATABASE_RELATIONS_LIST_ACTION_ID_V1,
-  DATABASE_ROWS_READ_ACTION_ID_V1,
-  DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
-  DATABASE_STATS_READ_ACTION_ID_V1,
-  DATABASE_STRUCTURE_READ_ACTION_ID_V1,
-  DATABASE_TARGETS_LIST_ACTION_ID_V1,
-  readAutomationDatabaseSubjectV1,
-  type DatabaseDescriptorV1,
+    DATABASE_RELATIONS_LIST_ACTION_ID_V1,
+    DATABASE_ROWS_READ_ACTION_ID_V1,
+    DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
+    DATABASE_STATS_READ_ACTION_ID_V1,
+    DATABASE_STRUCTURE_READ_ACTION_ID_V1,
+    DATABASE_TARGETS_LIST_ACTION_ID_V1,
 } from '@happier-dev/database-protocol';
+import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
+import { type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';

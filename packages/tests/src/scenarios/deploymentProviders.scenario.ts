@@ -3,7 +3,7 @@ import { connectFreshVercelThroughDeploymentUi, connectUiPersonActionClient } fr
 import { expect } from 'vitest';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { DatabaseOperationResultV1Schema, DatabaseReadStatementInputV1Schema } from '@happier-dev/database-protocol';
+import { DatabaseOperationResultV1Schema, DatabaseReadStatementInputV1Schema } from '@happier-dev/plugin-sdk/database';
 import { ConnectedAccountAttemptResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import { DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentGetResultV1Schema,

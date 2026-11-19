@@ -4,8 +4,11 @@ import { AutomationDatabaseSubjectV1ProtocolSchema, automationSubjectKeyV1, proj
 import { admitCheckpointedPluginEventObservationV1, createPluginEventAutomationSetupResultV1JsonSchema,
     type PluginEventDispositionV1 } from '@happier-dev/plugin-sdk/events';
 import { defineProtocolLiteral, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
-import { DatabaseFindingObservationV1ProtocolSchema, DatabaseFindingSourceScopeV1ProtocolSchema,
-    type DatabaseFindingObservationV1 } from '@happier-dev/database-protocol';
+import {
+    DatabaseFindingObservationV1ProtocolSchema,
+    DatabaseFindingSourceScopeV1ProtocolSchema,
+    type DatabaseFindingObservationV1,
+} from '@happier-dev/plugin-sdk/database';
 
 export const DATABASE_FINDING_EVENT_REF = { pluginId: 'happier.database', localId: 'finding-observed' } as const;
 export const DATABASE_FINDING_SETUP_LOCAL_ID = 'insights/observation/setup';

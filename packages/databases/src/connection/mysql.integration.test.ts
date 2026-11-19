@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Duplex } from 'node:stream';
 import { promisify } from 'node:util';
 import { expect, it, vi } from 'vitest';
-import { DatabaseOperationResultV1Schema } from '@happier-dev/database-protocol';
+import { DatabaseOperationResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { openMysqlConnection } from './mysql.js';
 
 const run = promisify(execFile);

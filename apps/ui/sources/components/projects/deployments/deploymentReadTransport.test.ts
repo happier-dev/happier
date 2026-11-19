@@ -22,7 +22,8 @@ import { buildDeploymentAccountChangeV1, DeploymentDomainPageSuccessV1Schema, De
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { databaseActionMetadata, type DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
+import { databaseActionMetadata } from '@happier-dev/plugin-sdk/actions';
+import { type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';

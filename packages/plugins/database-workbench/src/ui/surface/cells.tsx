@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DatabaseCellV1 } from '@happier-dev/database-protocol';
+import type { DatabaseCellV1 } from '@happier-dev/plugin-sdk/database';
 import { Text, type PluginTranslate } from '@happier-dev/plugin-ui';
 
 type CellPresentation = Readonly<{

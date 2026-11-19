@@ -101,7 +101,9 @@ import { managedDataQueryPostgresAvailable, managedQueryEndpoint, managedQueryPr
 import * as supabaseEntry from '../../../../../../packages/plugins/deployment-supabase/src/index.js';
 import * as neonEntry from '../../../../../../packages/plugins/deployment-neon/src/index.js';
 import { plugin as databaseWorkbench } from '../../../../../../packages/plugins/database-workbench/src/manifest.js';
-import { DATABASE_STATEMENT_RUN_ACTION_ID_V1, databaseActionLocalIdV1, type DatabaseValueV1 } from '@happier-dev/database-protocol';
+import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { type DatabaseValueV1 } from '@happier-dev/plugin-sdk/database';
+import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { createDeploymentDatabasesInvocationServicesForHost } from '@/deployments/targets/createDeploymentDatabasesInvocationServicesForHost';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';

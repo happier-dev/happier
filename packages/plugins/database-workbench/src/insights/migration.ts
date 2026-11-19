@@ -1,4 +1,4 @@
-import type { DatabaseTaskEvidenceV1 } from '@happier-dev/database-protocol';
+import type { DatabaseTaskEvidenceV1 } from '@happier-dev/plugin-sdk/database';
 import type { SessionInputHandoffInputV1 } from '@happier-dev/plugin-sdk/sessions';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';

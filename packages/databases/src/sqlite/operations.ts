@@ -1,9 +1,22 @@
 import type {
-    DatabaseCellReadInputV1, DatabaseCellV1, DatabaseEditV1, DatabaseFailureV1, DatabaseFilterV1, DatabaseNamedCellV1,
-    DatabaseIncomingForeignKeyV1, DatabaseOperationInputV1, DatabaseOperationResultV1, DatabaseOrderV1, DatabaseRelationStructureV1,
-    DatabaseRelationV1, DatabaseRowsReadInputV1, DatabaseSemanticTypeV1,
-    DatabaseStatementResultV1, DatabaseStatementV1, DatabaseValueV1,
-} from '@happier-dev/database-protocol';
+    DatabaseCellReadInputV1,
+    DatabaseCellV1,
+    DatabaseEditV1,
+    DatabaseFailureV1,
+    DatabaseFilterV1,
+    DatabaseNamedCellV1,
+    DatabaseIncomingForeignKeyV1,
+    DatabaseOperationInputV1,
+    DatabaseOperationResultV1,
+    DatabaseOrderV1,
+    DatabaseRelationStructureV1,
+    DatabaseRelationV1,
+    DatabaseRowsReadInputV1,
+    DatabaseSemanticTypeV1,
+    DatabaseStatementResultV1,
+    DatabaseStatementV1,
+    DatabaseValueV1,
+} from '@happier-dev/plugin-sdk/database';
 import { admitSqliteWorkbenchStatement, scanSqliteStatements, sqliteStatementBindings } from './statement.js';
 import { quoteSqliteIdentifier } from './identifiers.js';
 import { databaseRowsBindingV1 } from '../rows.js';

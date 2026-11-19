@@ -1,8 +1,5 @@
 import * as React from 'react';
-import type {
-  DatabaseStatsObservationV1,
-  DatabaseStatsReadV1,
-} from '@happier-dev/database-protocol';
+import type { DatabaseStatsObservationV1, DatabaseStatsReadV1 } from '@happier-dev/plugin-sdk/database';
 import { Metric, Row, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { useDatabaseActivity, useDatabaseInsights } from '../hooks.js';
 import { ACTIVITY_READ, ConnectionsMetric } from './insights/ActivityView.js';

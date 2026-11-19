@@ -1,4 +1,4 @@
-import type { DatabaseStatsReadV1 } from '@happier-dev/database-protocol';
+import type { DatabaseStatsReadV1 } from '@happier-dev/plugin-sdk/database';
 import type { DatabaseStatsSqlPlanV1 } from '../stats.js';
 import { statsSqlPlan, statsText, statsCounter, statsNumber, statsBoolean, statsOptional, statsShape, statsRelation, statsSize, statsJsonArray, statsJsonObject } from '../stats.js';
 import { normalizePostgresqlStatement } from './statement.js';

@@ -1,3 +1,4 @@
+import { projectAppCallsUsageV1 } from '@happier-dev/plugin-sdk/usage';
 import { expect, it } from 'vitest';
 import { definePlugin, type PluginServices } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -85,7 +86,7 @@ it('reads one selected cost aggregate through the published Action and prices it
             const costs = await import('./costs.js');
             const window = await costs.readCaptureCostWindow(f.runtime, { worktree: partition, since: 1000, until: 2000, granularity: 'hour' });
             const pricing = await costs.loadCaptureCostPricingContext(context, summaryOnly ? [] : ['private-model']);
-            const usage = database.projectDatabaseCaptureUsageV1(window, pricing.catalog,
+            const usage = projectAppCallsUsageV1(window, pricing.catalog,
                 pricing.viewerOverrides, { granularity: 'hour' });
             return projectNativeJsonValueForTransport({ ...usage,
                 accounting: UsageAnalyticsQueryResponseSchema.parse(usage.accounting) });
@@ -109,7 +110,7 @@ it('reads one selected cost aggregate through the published Action and prices it
         expect(priced).toMatchObject({ subject: 'app_calls', accounting: { totals: { cost: { apiEquivalentUsd: 4 } },
             priceCatalog: { provenance: { revision: 'cost-fixture' } },
             costFacts: expect.arrayContaining([expect.objectContaining({ kind: 'reported', currency: 'EUR', amountUsd: 7 })]) } });
-        const usage = database.projectDatabaseCaptureUsageV1(raw.ok ? raw : (() => { throw new Error('Cost read failed'); })(),
+        const usage = projectAppCallsUsageV1(raw.ok ? raw : (() => { throw new Error('Cost read failed'); })(),
             catalog, { 'private-model': { kind: 'map', modelId: 'reference' } }, { granularity: 'hour' });
         expect(resolveUsageCostBasis(usage.accounting.totals.cost, 'api_equivalent')?.amountUsd).toBe(4);
         expect(calls).toEqual([{ id: 'settings.get', input: { anchor: 'usage.modelPrices' } },

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import type { DatabaseOperationResultV1, DatabaseRelationStructureV1 } from '@happier-dev/database-protocol';
+import type { DatabaseOperationResultV1, DatabaseRelationStructureV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import type { WorkbenchClient, WorkbenchLocation } from './models.js';
 import { workbenchTargetKey, createWorkbenchInstance } from './workbench.js';

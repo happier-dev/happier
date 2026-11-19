@@ -1,4 +1,8 @@
-import type { DatabaseColumnV1, DatabaseRowsResultV1, DatabaseRelationStructureV1 } from '@happier-dev/database-protocol';
+import type {
+    DatabaseColumnV1,
+    DatabaseRowsResultV1,
+    DatabaseRelationStructureV1,
+} from '@happier-dev/plugin-sdk/database';
 
 const cellKinds = { text: 'text', boolean: 'bool', integer: 'number', decimal: 'number', float: 'number',
     json: 'json', binary: 'bytes', temporal: 'time', unknown: 'text' } as const;

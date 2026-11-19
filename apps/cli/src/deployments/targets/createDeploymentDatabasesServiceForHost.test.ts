@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DatabaseDescriptorV1, DatabaseManagedDeploymentTargetV1 } from '@happier-dev/database-protocol';
+import type { DatabaseDescriptorV1, DatabaseManagedDeploymentTargetV1 } from '@happier-dev/plugin-sdk/database';
 import type { DeploymentTargetDatabaseRuntimeV1 } from '@happier-dev/plugin-sdk';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';

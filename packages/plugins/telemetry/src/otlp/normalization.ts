@@ -1,6 +1,7 @@
 import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
 import { createHash } from 'node:crypto';
-import { resolveUsageTokenCategories, type DatabaseCaptureCostMetadataV1 } from '@happier-dev/database-protocol';
+import type { DatabaseCaptureCostMetadataV1 } from '@happier-dev/database-protocol';
+import { resolveUsageTokenCategories } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { MetricDimensions, MetricTemporality, NormalizeDatabaseStatement, NormalizedException, NormalizedLog, NormalizedMetricPoint, NormalizedResourceIdentity, NormalizedSpan, NormalizedTelemetryBatch, OtlpSignal, TelemetryValue } from './types.js';
 
 export class OtlpDecodeError extends Error {}

@@ -1,7 +1,10 @@
 import { expect, vi } from 'vitest';
 import { z } from 'zod';
 import { DatabaseCaptureCostsReadResultV1Schema, TELEMETRY_COSTS_READ_ACTION_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_METRICS_READ_ACTION_ID_V1, TelemetryMetricsReadResultV1Schema } from '@happier-dev/database-protocol';
-import { projectDatabaseCaptureUsageV1, projectDatabaseAppCostMetricSeriesV1 } from '@happier-dev/database-protocol';
+import {
+    projectAppCallsUsageV1 as projectDatabaseCaptureUsageV1,
+    projectAppCallsCostMetricSeriesV1 as projectDatabaseAppCostMetricSeriesV1,
+} from '@happier-dev/plugin-sdk/usage';
 import { HealthCheckResultV1ProtocolSchema } from '@happier-dev/protocol/deployments/healthCheckV1';
 import { UsageModelPriceCatalogSchema, UsageModelPriceOverridesV1Schema } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';

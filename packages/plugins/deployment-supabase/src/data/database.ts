@@ -1,5 +1,9 @@
 import { PluginError, type DeploymentTargetDatabaseRuntimeV1 } from '@happier-dev/plugin-sdk';
-import { DatabaseOperationNameV1Schema, type DatabaseDescriptorV1, type DatabaseManagedDeploymentTargetV1 } from '@happier-dev/database-protocol';
+import {
+    DATABASE_OPERATION_NAMES_V1,
+    type DatabaseDescriptorV1,
+    type DatabaseManagedDeploymentTargetV1,
+} from '@happier-dev/plugin-sdk/database';
 import { fitDatabaseOperationResult } from '@happier-dev/databases';
 import {
   admitPostgresqlWorkbenchStatement, decodePostgresqlObjectRowsV1, postgresqlParameter,
@@ -12,7 +16,7 @@ const unavailable = { ok: false, status: 'unavailable', code: 'database_operatio
 
 function descriptor(target: DatabaseManagedDeploymentTargetV1, placement: DatabaseDescriptorV1['placement']): DatabaseDescriptorV1 {
   return { target, label: target.database, engine: 'postgresql', origin: { label: 'Supabase' }, placement,
-    capabilities: DatabaseOperationNameV1Schema.options.map(operation => operation === 'describe' || operation === 'statement.run' || operation === 'edits.apply'
+    capabilities: DATABASE_OPERATION_NAMES_V1.map(operation => operation === 'describe' || operation === 'statement.run' || operation === 'edits.apply'
       ? { operation, available: true }
       : { operation, available: false, code: unavailable.code, reason: unavailable.reason }) };
 }

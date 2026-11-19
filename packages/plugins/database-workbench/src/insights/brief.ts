@@ -1,5 +1,9 @@
 import { browserExceptionSetupReferenceV1 } from './browserSetup.js';
-import type { DatabaseFindingBaselineV1, DatabaseFindingV1, DatabaseTaskEvidenceV1 } from '@happier-dev/database-protocol';
+import type {
+    DatabaseFindingBaselineV1,
+    DatabaseFindingV1,
+    DatabaseTaskEvidenceV1,
+} from '@happier-dev/plugin-sdk/database';
 import { DATABASE_CAPTURE_STATUS_ACTION_ID_V1, DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1,
     DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import type { SessionInputDeliveryPlanV1, SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';

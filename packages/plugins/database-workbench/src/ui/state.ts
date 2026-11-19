@@ -1,5 +1,5 @@
 import type { WorkbenchLocation } from './models.js';
-import type { DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
+import type { DatabaseTargetsListInputV1 } from '@happier-dev/plugin-sdk/database';
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 
 export type WorkbenchPaneIdentity = Readonly<({ kind: 'session'; sessionId: string } | { kind: 'project'; projectKey: string })

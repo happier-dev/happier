@@ -3,13 +3,8 @@ import {
   type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
-import {
-  TELEMETRY_EXCEPTION_ISSUE_TRANSITION_ACTION_ID_V1,
-  TELEMETRY_EXCEPTION_ISSUES_REFRESH_ACTION_ID_V1,
-  TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1,
-  databaseActionLocalIdV1,
-  databaseActionMetadata,
-} from '@happier-dev/database-protocol';
+import { TELEMETRY_EXCEPTION_ISSUE_TRANSITION_ACTION_ID_V1, TELEMETRY_EXCEPTION_ISSUES_REFRESH_ACTION_ID_V1, TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { databaseActionLocalIdV1, databaseActionMetadata } from '@happier-dev/plugin-sdk/actions';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import { localCaptureBackground } from '../background.js';
 import { telemetryPartition } from '../telemetry/assignments.js';

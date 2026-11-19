@@ -2,7 +2,7 @@ import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
-import type { DatabaseOperationClassV1 } from '@happier-dev/database-protocol';
+import type { DatabaseOperationClassV1 } from '@happier-dev/plugin-sdk/database';
 import { parseDatabaseConnectionUrl } from '@happier-dev/databases';
 import { environmentSecretBindingIdentityV1, type DeploymentEnvironmentDetailV1,
     type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createBackupVerifyWorkflowV1, createRestoreDrillWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/backupExamples';
 import { WorkflowDefinitionV1Schema, type WorkflowActionLeafV1 } from '@happier-dev/protocol/workflows';
 import { DeploymentBackupVerifyInputV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
-import { DatabaseReadStatementInputV1Schema } from '@happier-dev/database-protocol';
+import { DatabaseReadStatementInputV1Schema } from '@happier-dev/plugin-sdk/database';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 import { resolveWorkflowActionFieldBinding, type WorkflowValueResolutionRuntime } from './input';

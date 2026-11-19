@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
 import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
-import type { DatabaseDescriptorV1, DatabaseManualTargetV1 } from '@happier-dev/database-protocol';
+import type { DatabaseDescriptorV1, DatabaseManualTargetV1 } from '@happier-dev/plugin-sdk/database';
 import { openManualDatabaseConnection } from './connection.js';
 import { createDatabaseConnectionResourceRuntime } from './resources.js';
 

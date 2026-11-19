@@ -1,5 +1,5 @@
 import { PluginError, type DeploymentTargetDatabaseRuntimeV1 } from '@happier-dev/plugin-sdk';
-import type { DatabaseDescriptorV1, DatabaseFailureV1 } from '@happier-dev/database-protocol';
+import type { DatabaseDescriptorV1, DatabaseFailureV1 } from '@happier-dev/plugin-sdk/database';
 import {
   executePostgresqlOperation, PostgresqlInputError, PostgresqlOperationError, postgresqlFailureCause,
   type PostgresqlNativeResult,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compareDatabaseEvidenceWindowsV1, compareDatabaseStatsCountersV1, compareDatabaseStatsSizeV1 } from './statsComparisons.js';
-import type { DatabaseMeasuredWindowV1, DatabaseStatsCounterSampleV1 } from '@happier-dev/database-protocol';
+import type { DatabaseMeasuredWindowV1 } from './statsComparisons.js';
+import type { DatabaseStatsCounterSampleV1 } from '@happier-dev/plugin-sdk/database';
 
 const sample = (rows: DatabaseStatsCounterSampleV1['rows'], observedAtMs: number): DatabaseStatsCounterSampleV1 => ({
     engineId: 'postgresql', observedAtMs, coverage: { status: 'complete' }, rows,

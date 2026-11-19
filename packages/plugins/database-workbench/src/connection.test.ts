@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
-import type { DatabaseManualTargetV1 } from '@happier-dev/database-protocol';
+import type { DatabaseManualTargetV1 } from '@happier-dev/plugin-sdk/database';
 import { openManualDatabaseConnection, type DatabaseWorkbenchConnection } from './connection.js';
 
 const target: DatabaseManualTargetV1 = {

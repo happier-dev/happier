@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createConnection, type Connection } from 'mysql2/promise';
-import type { DatabaseStatsReadV1 } from '@happier-dev/database-protocol';
+import type { DatabaseStatsReadV1 } from '@happier-dev/plugin-sdk/database';
 import { executeMysqlOperation, quoteMysqlIdentifier } from '@happier-dev/databases/mysql';
 import { mysqlConnectionOptions, mysqlNativeResult } from './mysql.js';
 

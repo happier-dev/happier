@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/v1';
-import type { DatabaseDescriptorV1, DatabaseStatsOperationInputV1, DatabaseTargetsListResultV1 } from '@happier-dev/database-protocol';
+import type {
+    DatabaseDescriptorV1,
+    DatabaseStatsOperationInputV1,
+    DatabaseTargetsListResultV1,
+} from '@happier-dev/plugin-sdk/database';
 import { readDeploymentDatabaseSizesV1 } from './deploymentDatabaseSize.js';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 

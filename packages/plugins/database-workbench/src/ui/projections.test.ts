@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import type { DatabaseRowsResultV1, DatabaseRelationStructureV1 } from '@happier-dev/database-protocol';
+import type { DatabaseRowsResultV1, DatabaseRelationStructureV1 } from '@happier-dev/plugin-sdk/database';
 import { projectRelationPage } from './projections.js';
 
 it('keeps incomplete and exact values intact while joining structural column facts by name', () => {

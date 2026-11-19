@@ -3,7 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { DATABASE_CONNECTION_RESOURCE_ID_V1, DatabaseOperationInputV1Schema, type DatabaseDescriptorV1, type DatabaseSelectedRowsExportInputV1 } from '@happier-dev/database-protocol';
+import {
+    DATABASE_CONNECTION_RESOURCE_ID_V1,
+    type DatabaseSelectedRowsExportInputV1,
+} from '@happier-dev/database-protocol';
+import { DatabaseOperationInputV1Schema, type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import { computeSha256HexDigest, PluginError } from '@happier-dev/plugin-sdk';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';

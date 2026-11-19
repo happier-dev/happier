@@ -1,4 +1,4 @@
-import type { DatabaseRelationV1 } from '@happier-dev/database-protocol';
+import type { DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
 import type { WorkbenchLocation } from '../models.js';
 
 const MODES: readonly WorkbenchLocation['mode'][] = [

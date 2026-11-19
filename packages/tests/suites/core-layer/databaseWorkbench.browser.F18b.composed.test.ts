@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
-import { DatabaseFindingBriefBuildResultV1Schema } from '../../../database-protocol/src/databaseFindings';
+import { DatabaseFindingBriefBuildResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
 import { createRunDirs } from '../../src/testkit/runDir';
 

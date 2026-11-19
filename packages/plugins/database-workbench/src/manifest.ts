@@ -1,6 +1,6 @@
 import { definePlugin, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { resolveDatabaseRequesterKindV1 } from '@happier-dev/databases';
-import type { DatabaseTargetV1 } from '@happier-dev/database-protocol';
+import type { DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseActions } from './actions.js';
 import { createManualDatabaseTargets } from './manualTargets.js';
 import { createWorktreeDatabaseTargets } from './worktreeTargets.js';

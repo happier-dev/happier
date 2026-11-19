@@ -1,10 +1,10 @@
 import * as React from 'react';
 import {
-  DatabaseDescriptorV1Schema,
-  DatabaseTargetsListInputV1Schema,
-  type DatabaseDescriptorV1,
-  type DatabaseTargetsListInputV1,
-} from '@happier-dev/database-protocol';
+    DatabaseDescriptorV1Schema,
+    DatabaseTargetsListInputV1Schema,
+    type DatabaseDescriptorV1,
+    type DatabaseTargetsListInputV1,
+} from '@happier-dev/plugin-sdk/database';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { databaseStatementRangesV1 } from '@happier-dev/databases/statements';
 import { useHostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';

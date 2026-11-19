@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DatabaseContinuationV1Schema, type DatabaseStatsReadV1 } from '@happier-dev/database-protocol';
+import { DatabaseContinuationV1Schema, type DatabaseStatsReadV1 } from '@happier-dev/plugin-sdk/database';
 import { compilePostgresqlStatsV1 } from './stats.js';
 import { executePostgresqlOperation, type PostgresqlQuery } from './operations.js';
 import { compilePostgresqlSetupV1, decodePostgresqlSetupV1 } from './setup.js';

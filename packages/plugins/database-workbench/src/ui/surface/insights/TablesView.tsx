@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DatabaseRelationV1, DatabaseStatsObservationV1 } from '@happier-dev/database-protocol';
+import type { DatabaseRelationV1, DatabaseStatsObservationV1 } from '@happier-dev/plugin-sdk/database';
 import {
   Collection,
   formatHappierDataBytes,

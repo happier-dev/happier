@@ -1,9 +1,22 @@
 import type {
-    DatabaseCellReadInputV1, DatabaseEditV1, DatabaseFailureCauseV1, DatabaseFailureV1, DatabaseFilterV1, DatabaseNamedCellV1,
-    DatabaseIncomingForeignKeyV1, DatabaseOperationInputV1, DatabaseOperationResultV1, DatabaseOrderV1, DatabaseRelationStructureV1,
-    DatabaseRelationV1, DatabaseRowsReadInputV1, DatabaseRowsResultV1,
-    DatabaseSemanticTypeV1, DatabaseStatementResultV1, DatabaseValueV1,
-} from '@happier-dev/database-protocol';
+    DatabaseCellReadInputV1,
+    DatabaseEditV1,
+    DatabaseFailureCauseV1,
+    DatabaseFailureV1,
+    DatabaseFilterV1,
+    DatabaseNamedCellV1,
+    DatabaseIncomingForeignKeyV1,
+    DatabaseOperationInputV1,
+    DatabaseOperationResultV1,
+    DatabaseOrderV1,
+    DatabaseRelationStructureV1,
+    DatabaseRelationV1,
+    DatabaseRowsReadInputV1,
+    DatabaseRowsResultV1,
+    DatabaseSemanticTypeV1,
+    DatabaseStatementResultV1,
+    DatabaseValueV1,
+} from '@happier-dev/plugin-sdk/database';
 import { admitMysqlWorkbenchStatement } from './statement.js';
 import { databaseRowsBindingV1 } from '../rows.js';
 import { compileMysqlStatsV1 } from './stats.js';

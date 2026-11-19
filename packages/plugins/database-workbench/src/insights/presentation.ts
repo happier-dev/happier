@@ -1,4 +1,4 @@
-import type { DatabaseStatsStatementV1 } from '@happier-dev/database-protocol';
+import type { DatabaseStatsStatementV1 } from '@happier-dev/plugin-sdk/database';
 
 /** Selected-statement metrics use the native cumulative counters. They say
  * nothing about database-wide/OS cache use, interval continuity or index advice. */

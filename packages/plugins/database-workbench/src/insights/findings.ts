@@ -1,8 +1,14 @@
 import { computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput, PluginError,
     type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1, databaseActionLocalIdV1,
-    type DatabaseFindingObservationV1, type DatabaseFindingV1, type DatabaseFindingsListInputV1,
-    type DatabaseOperationResultV1, type DatabaseStatsObservationV1 } from '@happier-dev/database-protocol';
+import { DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import {
+    type DatabaseFindingObservationV1,
+    type DatabaseFindingV1,
+    type DatabaseFindingsListInputV1,
+    type DatabaseOperationResultV1,
+    type DatabaseStatsObservationV1,
+} from '@happier-dev/plugin-sdk/database';
+import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import type { DatabaseActionProducers } from '../actions.js';
 import { buildDatabaseFindingBriefV1 } from './brief.js';
 

@@ -1,4 +1,4 @@
-import type { DatabaseBuiltinEngineIdV1, DatabaseCapabilityV1 } from '@happier-dev/database-protocol';
+import type { DatabaseBuiltinEngineIdV1, DatabaseCapabilityV1 } from '@happier-dev/plugin-sdk/database';
 
 // The current built-in adapters implement the same operation family. These facts
 // describe execution support; engine roles and statement forms settle on execution.

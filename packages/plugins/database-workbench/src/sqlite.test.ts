@@ -4,8 +4,8 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
-import type { DatabaseOperationInputV1, DatabaseTargetV1 } from '@happier-dev/database-protocol';
-import { DatabaseOperationResultV1Schema, DatabaseTargetV1Schema } from '@happier-dev/database-protocol';
+import type { DatabaseOperationInputV1, DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
+import { DatabaseOperationResultV1Schema, DatabaseTargetV1Schema } from '@happier-dev/plugin-sdk/database';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { openSqliteConnection, type SqliteConnection } from './sqlite.js';
 

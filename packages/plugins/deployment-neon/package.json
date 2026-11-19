@@ -36,7 +36,6 @@
     "typecheck:tests": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json"
   },
   "dependencies": {
-    "@happier-dev/database-protocol": "0.0.0",
     "@happier-dev/databases": "0.0.0",
     "@happier-dev/deployment-protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0"

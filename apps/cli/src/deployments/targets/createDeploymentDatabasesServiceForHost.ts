@@ -1,7 +1,14 @@
 import { PluginError, type DeploymentDatabasesServiceV1, type DeploymentTargetPreparationBaseV1,
     type DeploymentTargetDatabaseRuntimeV1 } from '@happier-dev/plugin-sdk';
-import { readAutomationDatabaseSubjectV1, type DatabaseCompletenessV1, type DatabaseDescriptorV1, type DatabaseManagedDeploymentTargetV1,
-    type DatabaseOperationClassV1, type DatabaseOperationInputV1, type DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
+import {
+    type DatabaseCompletenessV1,
+    type DatabaseDescriptorV1,
+    type DatabaseManagedDeploymentTargetV1,
+    type DatabaseOperationClassV1,
+    type DatabaseOperationInputV1,
+    type DatabaseTargetsListInputV1,
+} from '@happier-dev/plugin-sdk/database';
+import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
 import { builtinDatabaseCapabilities } from '@happier-dev/databases/capabilities';
 import { openOwnServerDatabaseConnectionForHost } from './ownServer/databaseConnection';
 import { readOwnServerDataServiceDeploymentForHost, resolveOwnServerDataQueryDefinitionForHost } from './ownServer/dataQueryScope';

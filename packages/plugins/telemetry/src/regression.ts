@@ -2,8 +2,9 @@ import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-s
 import { isPluginActionApprovalRequestCreated, type PluginActionDefinition, type PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
-import { compareDatabaseEvidenceWindowsV1, databaseActionLocalIdV1, databaseActionMetadata,
-    TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1, TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1, TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { compareDatabaseEvidenceWindowsV1 } from '@happier-dev/databases/stats-comparisons';
+import { databaseActionLocalIdV1, databaseActionMetadata } from '@happier-dev/plugin-sdk/actions';
 import { localCaptureBackground } from './background.js';
 import { evaluateKeyFlowWindow, keyFlowCapabilityDisabledReason, readKeyFlowWindows } from './health.js';
 import { regressionCompareInputSchema, regressionCompareResultSchema, regressionScheduleInputSchema,

@@ -22,7 +22,6 @@
     "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/protocol": "0.0.0",
     "zod": "4.6.7"
   },
   "peerDependencies": { "@happier-dev/plugin-sdk": ">=0.0.0 <1.0.0" },

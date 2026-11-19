@@ -3,8 +3,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
 import { DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_ROWS_READ_ACTION_ID_V1, DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
   DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_TARGETS_CONNECT_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
-import { DatabaseOperationResultV1Schema, DatabaseRowsReadInputV1Schema } from '../../../database-protocol/src/databaseOperations';
-import { DatabaseTargetsConnectResultV1Schema } from '../../../database-protocol/src/databaseTargetActions';
+import {
+    DatabaseOperationResultV1Schema,
+    DatabaseRowsReadInputV1Schema,
+} from '@happier-dev/plugin-sdk/database';
+import { DatabaseDescriptorV1Schema as DatabaseTargetsConnectResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
 import { createRunDirs } from '../../src/testkit/runDir';
 

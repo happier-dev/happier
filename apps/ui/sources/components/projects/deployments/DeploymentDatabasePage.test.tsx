@@ -49,8 +49,10 @@ import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
-import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1, databaseActionLocalIdV1,
-  databaseActionMetadata, DatabaseTargetsListInputV1Schema, type DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
+import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { DatabaseTargetsListInputV1Schema, type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
+import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import { databaseActionMetadata } from '@happier-dev/plugin-sdk/actions';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DatabaseStatsObservationV1, DatabaseTargetV1 } from '@happier-dev/database-protocol';
+import type { DatabaseStatsObservationV1, DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
 import { getPersistenceStorage, clearPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { createDatabaseStatsLastLook } from './lastLook';
 

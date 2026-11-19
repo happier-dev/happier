@@ -1,6 +1,6 @@
 import { PluginError, isPluginError, type DeploymentTargetPreparationBaseV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
-import type { DatabaseFailureV1 } from '@happier-dev/database-protocol';
+import type { DatabaseFailureV1 } from '@happier-dev/plugin-sdk/database';
 import { request, resource } from './operations.js';
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);

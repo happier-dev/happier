@@ -1,4 +1,4 @@
-import type { DatabaseStatsReadV1 } from '@happier-dev/database-protocol';
+import type { DatabaseStatsReadV1 } from '@happier-dev/plugin-sdk/database';
 import type { DatabaseStatsSqlPlanV1 } from '../stats.js';
 import { statsSqlPlan, statsText, statsBoolean, statsOptional, statsCounter, statsSize, statsRelation, statsJsonArray } from '../stats.js';
 import { quoteSqliteIdentifier } from './identifiers.js';

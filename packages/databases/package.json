@@ -7,11 +7,6 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    "./app-usage": {
-      "happier-source": "./src/appUsage.ts",
-      "types": "./dist/appUsage.d.ts",
-      "default": "./dist/appUsage.js"
-    },
     "./stats-comparisons": {
       "happier-source": "./src/statsComparisons.ts",
       "types": "./dist/statsComparisons.d.ts",
@@ -81,7 +76,6 @@
     "pg": "8.23.1",
     "mysql2": "3.24.6",
     "@happier-dev/protocol": "0.0.0",
-    "@happier-dev/database-protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0"
   }
 }

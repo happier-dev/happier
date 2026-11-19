@@ -6,9 +6,10 @@ import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openPr
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import type { Settings } from '../../../../apps/cli/src/persistence';
-import { DatabaseWorktreeTargetV1Schema } from '../../../database-protocol/src/databaseTargets';
+import { DatabaseWorktreeTargetV1Schema } from '@happier-dev/plugin-sdk/database';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_CONNECT_ACTION_ID_V1, databaseActionLocalIdV1, type DatabaseActionIdV1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
-import { DatabaseTargetsConnectInputV1Schema, DatabaseTargetsConnectResultV1Schema } from '../../../database-protocol/src/databaseTargetActions';
+import { DatabaseTargetsConnectInputV1Schema } from '../../../database-protocol/src/databaseTargetActions';
+import { DatabaseDescriptorV1Schema as DatabaseTargetsConnectResultV1Schema } from '@happier-dev/plugin-sdk/database';
 
 import { startDatabaseWorkbenchPostgres } from './process/databaseWorkbenchPostgres';
 export { prepareDatabaseWorkbenchPostgresService } from './process/databaseWorkbenchPostgres';

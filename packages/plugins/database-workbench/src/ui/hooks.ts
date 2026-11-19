@@ -1,5 +1,10 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
-import type { DatabaseCompletenessV1, DatabaseRelationV1, DatabaseStatsReadV1, DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
+import type {
+    DatabaseCompletenessV1,
+    DatabaseRelationV1,
+    DatabaseStatsReadV1,
+    DatabaseTargetsListInputV1,
+} from '@happier-dev/plugin-sdk/database';
 import type { WorkbenchInstance } from './workbench.js';
 import type { WorkbenchChange, WorkbenchLocation, WorkbenchStatementsObservation, WorkbenchStatus } from './models.js';
 import type { WorkbenchResource } from './resource.js';

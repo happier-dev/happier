@@ -1,7 +1,8 @@
 # `@happier-dev/database-protocol`
 
-Versioned database workbench business schemas shared by the workbench, engine
-implementations, deployment transports, UI, CLI and plugin SDK projections.
+Versioned feature schemas for Database workbench Actions, demand and telemetry.
+The workbench, engine implementations, deployment transports, UI and CLI share
+the database service operands and results from `@happier-dev/plugin-sdk/database`.
 This is unreleased 0.3 development source.
 
 Import the current contract from `@happier-dev/database-protocol/v1`; the base
@@ -9,6 +10,11 @@ entrypoint exposes the same producers. Credential-free fixtures are available
 from `@happier-dev/database-protocol/testing/v1`. The package contains no SQL,
 driver, permission policy, credential acquisition, persistence or connection
 lifecycle.
+
+Schemas compose through the public `@happier-dev/plugin-sdk/protocol` authoring contract and the SDK’s database
+projections. Import the existing app-call usage projectors from
+`@happier-dev/plugin-sdk/usage` and statistics comparisons from
+`@happier-dev/databases/stats-comparisons`.
 
 Targets identify existing worktree, deployment or Project Saved Secret owners.
 They carry no connection URL. Operation inputs select one target, and may name
@@ -77,7 +83,7 @@ Happier extension for a producer-reported amount and currency, not a standard
 OpenTelemetry cost attribute. An amount without its currency remains unknown.
 The collector stores and aggregates these values without consulting prices.
 
-App LLM cost operands can be projected with `projectDatabaseCaptureUsageV1` for
+App LLM cost operands can be projected with `projectAppCallsUsageV1` for
 the existing Usage cost, daily and breakdown renderers. Pass the catalog read
 through `usage.prices.get`, the invoking viewer's `usageModelPriceOverridesV1`,
 and the same hour/day granularity requested from the collector. The result's
@@ -85,7 +91,7 @@ and the same hour/day granularity requested from the collector. The result's
 the projection never reads or writes Agent history. Pricing, currency facts,
 unknown prices and catalog revision come from the shared Usage owner. Collector coverage remains
 alongside the accounting response, so lost observations are not zero spend.
-`projectDatabaseAppCostMetricSeriesV1` projects those same priced buckets for the
+`projectAppCallsCostMetricSeriesV1` projects those same priced buckets for the
 Telemetry Metric widget's LLM cost option. Its `DatabaseTelemetryMetricIntervalV1`
 shape is shared with metric analysis and health-check trends. Missing cost has
 no value; consumers preserve the associated Usage coverage.

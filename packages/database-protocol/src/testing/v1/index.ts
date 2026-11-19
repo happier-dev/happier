@@ -1,4 +1,4 @@
-import type { DatabaseDescriptorV1 } from '../../databaseOperations.js';
+import type { DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 
 /** Fresh credential-free worktree descriptor for protocol and consumer contract tests. */
 export function createDatabaseDescriptorV1Fixture(): DatabaseDescriptorV1 {

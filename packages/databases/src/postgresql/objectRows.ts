@@ -1,4 +1,4 @@
-import type { DatabaseStatementResultV1, DatabaseValueV1 } from '@happier-dev/database-protocol';
+import type { DatabaseStatementResultV1, DatabaseValueV1 } from '@happier-dev/plugin-sdk/database';
 import { isStrictPluginJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import { PostgresqlOperationError } from './operations.js';
 

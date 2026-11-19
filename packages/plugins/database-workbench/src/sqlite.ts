@@ -1,7 +1,11 @@
 import { statSync } from 'node:fs';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
-import type { DatabaseFailureCauseV1, DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/database-protocol';
+import type {
+    DatabaseFailureCauseV1,
+    DatabaseOperationInputV1,
+    DatabaseOperationResultV1,
+} from '@happier-dev/plugin-sdk/database';
 import { executeSqliteOperation, SqliteOperationError, type SqliteExecutionOptions, type SqliteNativeValue, type SqliteQuery } from '@happier-dev/databases/sqlite';
 import { DatabaseStatementError } from '@happier-dev/databases';
 import { fitDatabaseOperationResult } from '@happier-dev/databases';

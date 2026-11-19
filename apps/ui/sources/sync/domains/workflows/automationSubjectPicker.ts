@@ -1,6 +1,6 @@
 import { AutomationSubjectV1Schema, type AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import type { DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
+import type { DatabaseTargetsListInputV1 } from '@happier-dev/plugin-sdk/database';
 import { DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import type { AutomationSubjectKind } from '@happier-dev/plugin-sdk/automations';
 import { ProjectSourcesListOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';

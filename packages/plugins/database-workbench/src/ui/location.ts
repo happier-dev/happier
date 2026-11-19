@@ -1,4 +1,10 @@
-import type { DatabaseRelationV1, DatabaseCellV1, DatabaseForeignKeyV1, DatabaseIncomingForeignKeyV1, DatabaseFilterV1 } from '@happier-dev/database-protocol';
+import type {
+    DatabaseRelationV1,
+    DatabaseCellV1,
+    DatabaseForeignKeyV1,
+    DatabaseIncomingForeignKeyV1,
+    DatabaseFilterV1,
+} from '@happier-dev/plugin-sdk/database';
 import type { WorkbenchLocation } from './models.js';
 
 export function sameRelation(left?: DatabaseRelationV1, right?: DatabaseRelationV1): boolean {

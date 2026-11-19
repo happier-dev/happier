@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_EDITS_APPLY_ACTION_ID_V1, DatabaseEditsApplyInputV1Schema,
-  DatabaseOperationResultV1Schema, type DatabaseEditsApplyInputV1 } from '@happier-dev/database-protocol';
+import { DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_EDITS_APPLY_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import {
+    DatabaseEditsApplyInputV1Schema,
+    DatabaseOperationResultV1Schema,
+    type DatabaseEditsApplyInputV1,
+} from '@happier-dev/plugin-sdk/database';
 import { startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
 import { createRunDirs } from '../../src/testkit/runDir';
 

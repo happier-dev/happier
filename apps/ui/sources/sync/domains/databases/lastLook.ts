@@ -1,10 +1,10 @@
 import {
     DatabaseStatsCounterSampleV1Schema,
-    compareDatabaseStatsCountersV1,
     type DatabaseStatsCounterSampleV1,
     type DatabaseStatsObservationV1,
     type DatabaseTargetV1,
-} from '@happier-dev/database-protocol';
+} from '@happier-dev/plugin-sdk/database';
+import { compareDatabaseStatsCountersV1 } from '@happier-dev/databases/stats-comparisons';
 
 import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createPersistentUiState, UiStatePersistenceError } from '@/sync/domains/state/persistentUiState';

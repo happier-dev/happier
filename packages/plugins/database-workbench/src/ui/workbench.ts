@@ -1,8 +1,15 @@
 import type {
-    DatabaseCellResultV1, DatabaseDescriptorV1, DatabaseFailureV1, DatabaseIncomingForeignKeyV1, DatabaseOperationResultV1,
-    DatabaseRelationV1, DatabaseTargetV1, DatabaseTargetsListInputV1,
-    DatabaseStatsReadV1, DatabaseStatsObservationV1,
-} from '@happier-dev/database-protocol';
+    DatabaseCellResultV1,
+    DatabaseDescriptorV1,
+    DatabaseFailureV1,
+    DatabaseIncomingForeignKeyV1,
+    DatabaseOperationResultV1,
+    DatabaseRelationV1,
+    DatabaseTargetV1,
+    DatabaseTargetsListInputV1,
+    DatabaseStatsReadV1,
+    DatabaseStatsObservationV1,
+} from '@happier-dev/plugin-sdk/database';
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { inspectJsonCell } from './cellInspection.js';

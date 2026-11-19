@@ -1,4 +1,4 @@
-import type { DatabaseWorktreeTargetV1 } from '@happier-dev/database-protocol';
+import type { DatabaseWorktreeTargetV1 } from '../database/index.js';
 import type { DatabaseEnginesServiceV1 } from '../databaseEngines.js';
 /** @moduleRealm daemon */
 export type { DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1, DeploymentSourceMaterializationPortV1, DeploymentTelemetryAssignmentV1, DeploymentTelemetryServiceV1 } from './deployments.js';

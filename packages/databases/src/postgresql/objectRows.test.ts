@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DatabaseStatementResultV1Schema } from '@happier-dev/database-protocol';
+import { DatabaseStatementResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { decodePostgresqlObjectRowsV1, PostgresqlOperationError } from './index.js';
 
 describe('restricted PostgreSQL object-row frames', () => {

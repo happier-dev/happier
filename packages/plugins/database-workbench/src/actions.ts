@@ -1,32 +1,31 @@
+import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
+import { databaseActionLocalIdV1, databaseActionMetadata } from '@happier-dev/plugin-sdk/actions';
 import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import * as database from '@happier-dev/database-protocol';
-import { databaseActionMetadata } from '@happier-dev/database-protocol';
+import * as databaseAbi from '@happier-dev/plugin-sdk/database';
 import { exportSelectedRows } from './selectedExport.js';
 import { FileDownloadResultV1ProtocolSchema, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
-import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 
-export { databaseActionMetadata, databaseActionOperationClass } from '@happier-dev/database-protocol';
-
-function projectDescriptor(descriptor: database.DatabaseDescriptorV1): database.DatabaseDescriptorV1 {
+function projectDescriptor(descriptor: databaseAbi.DatabaseDescriptorV1): databaseAbi.DatabaseDescriptorV1 {
     return { ...descriptor, automationSubject: descriptor.automationSubject
-        ?? database.readAutomationDatabaseSubjectV1(descriptor.placement.serverId, descriptor.target) };
+        ?? readAutomationDatabaseSubjectV1(descriptor.placement.serverId, descriptor.target) };
 }
 
 export type DatabaseActionProducers = Readonly<{
-    listTargets?: (input: database.DatabaseTargetsListInputV1, context: PluginInvocationContext)
-        => database.DatabaseTargetsListResultV1 | Promise<database.DatabaseTargetsListResultV1>;
+    listTargets?: (input: databaseAbi.DatabaseTargetsListInputV1, context: PluginInvocationContext)
+        => databaseAbi.DatabaseTargetsListResultV1 | Promise<databaseAbi.DatabaseTargetsListResultV1>;
     connectTarget?: (input: database.DatabaseTargetsConnectInputV1, context: PluginInvocationContext)
-        => database.DatabaseDescriptorV1 | Promise<database.DatabaseDescriptorV1>;
+        => databaseAbi.DatabaseDescriptorV1 | Promise<databaseAbi.DatabaseDescriptorV1>;
     forgetTarget?: (input: database.DatabaseTargetsForgetInputV1, context: PluginInvocationContext) => void | Promise<void>;
-    executeOperation?: (input: database.DatabaseOperationInputV1, context: PluginInvocationContext)
-        => database.DatabaseOperationResultV1 | Promise<database.DatabaseOperationResultV1>;
-    listFindings?: (input: database.DatabaseFindingsListInputV1, context: PluginInvocationContext)
-        => database.DatabaseFindingsListResultV1 | Promise<database.DatabaseFindingsListResultV1>;
-    readFinding?: (input: database.DatabaseFindingReadInputV1, context: PluginInvocationContext)
-        => database.DatabaseFindingReadResultV1 | Promise<database.DatabaseFindingReadResultV1>;
-    buildInsightBrief?: (input: database.DatabaseInsightBriefBuildInputV1, context: PluginInvocationContext)
-        => database.DatabaseFindingBriefBuildResultV1 | Promise<database.DatabaseFindingBriefBuildResultV1>;
+    executeOperation?: (input: databaseAbi.DatabaseOperationInputV1, context: PluginInvocationContext)
+        => databaseAbi.DatabaseOperationResultV1 | Promise<databaseAbi.DatabaseOperationResultV1>;
+    listFindings?: (input: databaseAbi.DatabaseFindingsListInputV1, context: PluginInvocationContext)
+        => databaseAbi.DatabaseFindingsListResultV1 | Promise<databaseAbi.DatabaseFindingsListResultV1>;
+    readFinding?: (input: databaseAbi.DatabaseFindingReadInputV1, context: PluginInvocationContext)
+        => databaseAbi.DatabaseFindingReadResultV1 | Promise<databaseAbi.DatabaseFindingReadResultV1>;
+    buildInsightBrief?: (input: databaseAbi.DatabaseInsightBriefBuildInputV1, context: PluginInvocationContext)
+        => databaseAbi.DatabaseFindingBriefBuildResultV1 | Promise<databaseAbi.DatabaseFindingBriefBuildResultV1>;
     readAccess?: (input: database.DatabaseAccessReadInputV1, context: PluginInvocationContext)
         => database.DatabaseAccessReadResultV1 | Promise<database.DatabaseAccessReadResultV1>;
     setAccess?: (input: database.DatabaseAccessSetInputV1, context: PluginInvocationContext)
@@ -66,11 +65,11 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
         const metadata = databaseActionMetadata[database.DATABASE_TARGETS_LIST_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_TARGETS_LIST_ACTION_ID_V1)] = {
             ...common, ...metadata, surfaces: readSurfaces,
-            inputSchema: database.DatabaseTargetsListInputV1ProtocolSchema,
-            resultSchema: database.DatabaseTargetsListResultV1ProtocolSchema,
+            inputSchema: databaseAbi.DatabaseTargetsListInputV1Schema,
+            resultSchema: databaseAbi.DatabaseTargetsListResultV1Schema,
             // definePlugin supplies the value admitted by this exact input schema.
             run: async (input: JsonValue, context: PluginInvocationContext) => {
-                const result = await listTargets(input as database.DatabaseTargetsListInputV1, context);
+                const result = await listTargets(input as databaseAbi.DatabaseTargetsListInputV1, context);
                 return projectNativeJsonValueForTransport({ ...result, targets: result.targets.map(projectDescriptor) });
             },
         };
@@ -81,7 +80,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
         actions[database.databaseActionLocalIdV1(database.DATABASE_TARGETS_CONNECT_ACTION_ID_V1)] = {
             ...common, ...metadata,
             inputSchema: database.DatabaseTargetsConnectInputV1ProtocolSchema,
-            resultSchema: database.DatabaseTargetsConnectResultV1ProtocolSchema,
+            resultSchema: databaseAbi.DatabaseDescriptorV1Schema,
             // The SDK admits the canonical association input before acquiring a connection.
             run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
                 projectDescriptor(await connectTarget(input as database.DatabaseTargetsConnectInputV1, context))),
@@ -109,10 +108,10 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
             ...common, ...metadata, inputSchema,
             // Agents reach writes too: the access decider and the D13 level decide admission and Ask.
             surfaces: readSurfaces,
-            resultSchema: database.DatabaseOperationResultV1ProtocolSchema,
+            resultSchema: databaseAbi.DatabaseOperationResultV1Schema,
             // All entries come from the P1 operation union; the SDK has already parsed the input.
             run: async (input: JsonValue, context: PluginInvocationContext) => {
-                const result = await executeOperation(input as database.DatabaseOperationInputV1, context);
+                const result = await executeOperation(input as databaseAbi.DatabaseOperationInputV1, context);
                 return projectNativeJsonValueForTransport(result.ok && result.operation === 'describe'
                     ? { ...result, descriptor: projectDescriptor(result.descriptor) } : result);
             },
@@ -124,10 +123,10 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
         const metadata = databaseActionMetadata[actionId];
         actions[database.databaseActionLocalIdV1(actionId)] = {
             ...common, ...metadata,
-            inputSchema: database.DatabaseFindingsListInputV1ProtocolSchema,
-            resultSchema: database.DatabaseFindingsListResultV1ProtocolSchema,
+            inputSchema: databaseAbi.DatabaseFindingsListInputV1ProtocolSchema,
+            resultSchema: databaseAbi.DatabaseFindingsListResultV1ProtocolSchema,
             run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
-                await listFindings(input as database.DatabaseFindingsListInputV1, context)),
+                await listFindings(input as databaseAbi.DatabaseFindingsListInputV1, context)),
         };
     }
     const readFinding = producers.readFinding;
@@ -136,10 +135,10 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
         const metadata = databaseActionMetadata[actionId];
         actions[database.databaseActionLocalIdV1(actionId)] = {
             ...common, ...metadata,
-            inputSchema: database.DatabaseFindingReadInputV1ProtocolSchema,
-            resultSchema: database.DatabaseFindingReadResultV1ProtocolSchema,
+            inputSchema: databaseAbi.DatabaseFindingReadInputV1ProtocolSchema,
+            resultSchema: databaseAbi.DatabaseFindingReadResultV1ProtocolSchema,
             run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
-                await readFinding(input as database.DatabaseFindingReadInputV1, context)),
+                await readFinding(input as databaseAbi.DatabaseFindingReadInputV1, context)),
         };
     }
     const buildInsightBrief = producers.buildInsightBrief;
@@ -148,10 +147,10 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
         const metadata = databaseActionMetadata[actionId];
         actions[database.databaseActionLocalIdV1(actionId)] = {
             ...common, ...metadata,
-            inputSchema: database.DatabaseInsightBriefBuildInputV1ProtocolSchema,
-            resultSchema: database.DatabaseFindingBriefBuildResultV1ProtocolSchema,
+            inputSchema: databaseAbi.DatabaseInsightBriefBuildInputV1ProtocolSchema,
+            resultSchema: databaseAbi.DatabaseFindingBriefBuildResultV1ProtocolSchema,
             run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
-                await buildInsightBrief(input as database.DatabaseInsightBriefBuildInputV1, context)),
+                await buildInsightBrief(input as databaseAbi.DatabaseInsightBriefBuildInputV1, context)),
         };
     }
     const readAccess = producers.readAccess;

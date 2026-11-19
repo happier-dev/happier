@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { DatabaseStatsStatementV1Schema } from '@happier-dev/database-protocol';
+import { DatabaseStatsStatementV1Schema } from '@happier-dev/plugin-sdk/database';
 import { projectDatabaseStatementMetrics } from './presentation.js';
 
 it('keeps unobserved buffer activity unknown and computes the selected statement ratio from native counters', () => {

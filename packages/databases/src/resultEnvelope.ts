@@ -1,8 +1,16 @@
 import type {
-    DatabaseCellV1, DatabaseCompletenessV1, DatabaseContinuationV1, DatabaseOperationInputV1,
-    DatabaseOperationResultV1, DatabasePartialCellV1, DatabaseRowV1, DatabaseRowsReadInputV1,
-    DatabaseRowsResultV1, DatabaseReadStatementInputV1, DatabaseValueRangeV1,
-} from '@happier-dev/database-protocol';
+    DatabaseCellV1,
+    DatabaseCompletenessV1,
+    DatabaseContinuationV1,
+    DatabaseOperationInputV1,
+    DatabaseOperationResultV1,
+    DatabasePartialCellV1,
+    DatabaseRowV1,
+    DatabaseRowsReadInputV1,
+    DatabaseRowsResultV1,
+    DatabaseReadStatementInputV1,
+    DatabaseValueRangeV1,
+} from '@happier-dev/plugin-sdk/database';
 import {
     EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
     isExternalActionResultWithinResponseEnvelopeLimitV1,

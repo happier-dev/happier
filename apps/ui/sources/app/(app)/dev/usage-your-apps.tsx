@@ -18,7 +18,7 @@ import { normalizeUsageQuery, type UsageQuery } from '@happier-dev/protocol/inpu
 import type { UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets';
-import { projectDatabaseCaptureUsageSourcesV1 } from '@happier-dev/databases/app-usage';
+import { projectAppCallsUsageSourcesV1 as projectDatabaseCaptureUsageSourcesV1 } from '@happier-dev/plugin-sdk/usage';
 import { usageAppCallsSourceId } from '@/sync/domains/usage/usageAppCallsSource';
 import { UsageBreakdownsWidget } from '@/components/settings/usage/widgets/UsageBreakdownsWidget';
 import { UsageAppsNothingRecorded } from '@/components/settings/usage/UsageAppsNothingRecorded';

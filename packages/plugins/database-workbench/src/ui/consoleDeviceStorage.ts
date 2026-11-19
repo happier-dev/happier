@@ -1,4 +1,4 @@
-import type { DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
+import type { DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';

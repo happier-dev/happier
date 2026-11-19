@@ -1,5 +1,13 @@
 import { fileURLToPath } from 'node:url';
-import { DatabaseBuiltinEngineIdV1Schema, type DatabaseEngineIdV1, type DatabaseCapabilityV1, type DatabaseManualTargetV1, type DatabaseOperationClassV1, type DatabaseOperationInputV1, type DatabaseOperationResultV1 } from '@happier-dev/database-protocol';
+import {
+    DatabaseBuiltinEngineIdV1Schema,
+    type DatabaseEngineIdV1,
+    type DatabaseCapabilityV1,
+    type DatabaseManualTargetV1,
+    type DatabaseOperationClassV1,
+    type DatabaseOperationInputV1,
+    type DatabaseOperationResultV1,
+} from '@happier-dev/plugin-sdk/database';
 import { PluginError, type DatabaseEnginesServiceV1 } from '@happier-dev/plugin-sdk';
 import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
 import { builtinDatabaseConnectionEngine, databaseConnectionScheme, parseDatabaseConnectionUrl, sqliteDatabaseFileUrl } from '@happier-dev/databases';

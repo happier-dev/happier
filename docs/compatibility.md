@@ -9883,8 +9883,8 @@ change, without a wire epoch, persisted format, adapter or additional collector.
 
 Unreleased 0.3 engine-only plugins use the closed `databaseEngines` contribution
 family, with closed capability entries and the existing daemon activation ABI.
-The platform owns the structural capability grammar; database-protocol supplies
-the workbench operation vocabulary. Unknown operation names are omitted from
+The platform owns the structural capability grammar. The SDK publishes the
+workbench operation vocabulary at `@happier-dev/plugin-sdk/database`. Unknown operation names are omitted from
 that workbench projection. Optional invocation and dynamic-Resource services
 expose the enabled catalogue and in-process open/execute/close path. Matching
 development Protocol, SDK, CLI-common, plugins, and daemon readers reload together;

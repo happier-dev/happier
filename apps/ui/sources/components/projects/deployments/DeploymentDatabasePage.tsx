@@ -92,8 +92,8 @@ import {
 } from './useDeploymentReads';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { useDeploymentTargetLinkChoices } from './useDeploymentTargetLinkChoices';
-import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1, DatabaseTargetsListResultV1Schema }
-  from '@happier-dev/database-protocol';
+import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { DatabaseTargetsListResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { HappyError } from '@/utils/errors/errors';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';

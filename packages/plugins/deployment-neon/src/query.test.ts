@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { definePlugin, DeploymentTargetPreparationBaseV1ProtocolSchema, PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
-import { DatabaseReadStatementInputV1Schema, DatabaseOperationResultV1ProtocolSchema, type DatabaseOperationInputV1 } from '@happier-dev/database-protocol';
+import {
+    DatabaseReadStatementInputV1Schema,
+    DatabaseOperationResultV1Schema as DatabaseOperationResultV1ProtocolSchema,
+    type DatabaseOperationInputV1,
+} from '@happier-dev/plugin-sdk/database';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';

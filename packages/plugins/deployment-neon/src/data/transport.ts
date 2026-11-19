@@ -1,7 +1,7 @@
 import { PluginError, isPluginError, type DeploymentTargetPreparationBaseV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { postgresqlReadOnlyRoleGuardSql } from '@happier-dev/deployment-protocol';
-import type { DatabaseFailureV1 } from '@happier-dev/database-protocol';
+import type { DatabaseFailureV1 } from '@happier-dev/plugin-sdk/database';
 import { request, record } from './provider.js';
 
 const invalid = (): never => { throw new PluginError({ code: 'provider_response_invalid' }); };

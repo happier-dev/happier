@@ -1,8 +1,15 @@
-import type { DatabaseActionIdV1, DatabaseDescriptorV1, DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/database-protocol';
-import { readAutomationDatabaseSubjectV1 } from '@happier-dev/database-protocol';
+import type { DatabaseActionIdV1 } from '@happier-dev/database-protocol';
+import type {
+    DatabaseDescriptorV1,
+    DatabaseOperationClassV1,
+    DatabaseOperationInputV1,
+    DatabaseOperationResultV1,
+} from '@happier-dev/plugin-sdk/database';
+import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/plugin-sdk/errors';
-import { databaseActionOperationClass, type DatabaseActionProducers } from './actions.js';
+import { databaseActionOperationClass } from '@happier-dev/plugin-sdk/actions';
+import type { DatabaseActionProducers } from './actions.js';
 import type { DatabaseWorkbenchConnection } from './connection.js';
 import { DATABASE_CONNECTION_RESOURCE_ID_V1 } from './resources.js';
 import { projectDatabaseFindingObservation } from './insights/findings.js';

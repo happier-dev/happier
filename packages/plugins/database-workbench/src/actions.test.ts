@@ -2,30 +2,46 @@ import { describe, expect, it } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import {
-    DATABASE_EDITS_APPLY_ACTION_ID_V1, DATABASE_ROWS_READ_ACTION_ID_V1, DATABASE_ROWS_EXPORT_ACTION_ID_V1, DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1,
-    DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
-    DATABASE_TARGETS_CONNECT_ACTION_ID_V1, DATABASE_TARGETS_FORGET_ACTION_ID_V1,
-    DATABASE_TARGETS_LIST_ACTION_ID_V1, DATABASE_DESCRIBE_ACTION_ID_V1, DatabaseDescriptorV1Schema,
+    DATABASE_EDITS_APPLY_ACTION_ID_V1,
+    DATABASE_ROWS_READ_ACTION_ID_V1,
+    DATABASE_ROWS_EXPORT_ACTION_ID_V1,
+    DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1,
+    DATABASE_STATEMENT_RUN_ACTION_ID_V1,
+    DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
+    DATABASE_TARGETS_CONNECT_ACTION_ID_V1,
+    DATABASE_TARGETS_FORGET_ACTION_ID_V1,
+    DATABASE_TARGETS_LIST_ACTION_ID_V1,
+    DATABASE_DESCRIBE_ACTION_ID_V1,
     DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
-    DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1, DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1,
+    DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
+    DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1,
     DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
-    type DatabaseFindingsListInputV1, type DatabaseFindingsListResultV1,
-    type DatabaseFindingReadInputV1, type DatabaseFindingReadResultV1,
-    type DatabaseInsightBriefBuildInputV1, type DatabaseFindingBriefBuildResultV1,
-    DatabaseEditsApplyInputV1Schema, DatabaseRowsReadInputV1Schema, DatabaseStatementRunInputV1Schema,
-    databaseActionLocalIdV1,
 } from '@happier-dev/database-protocol';
+import {
+    type DatabaseDescriptorV1,
+    type DatabaseFindingsListInputV1,
+    type DatabaseFindingsListResultV1,
+    type DatabaseFindingReadInputV1,
+    type DatabaseFindingReadResultV1,
+    type DatabaseInsightBriefBuildInputV1,
+    type DatabaseFindingBriefBuildResultV1,
+    DatabaseEditsApplyInputV1Schema,
+    DatabaseRowsReadInputV1Schema,
+    DatabaseStatementRunInputV1Schema,
+} from '@happier-dev/plugin-sdk/database';
+import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { pluginActionDeclarationIsReadOnlyForInput, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
 import { projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { PluginActionContributionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
-import { createDatabaseActions, databaseActionOperationClass } from './actions.js';
+import { createDatabaseActions } from './actions.js';
+import { databaseActionOperationClass } from '@happier-dev/plugin-sdk/actions';
 import { buildDatabaseFindingBriefV1 } from './insights/brief.js';
 
 const target = {
     kind: 'worktree', accountId: 'account', installationId: 'installation', projectKey: 'project',
     workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/project' },
     source: { kind: 'service', serviceId: 'api', variable: 'DATABASE_URL' },
-};
+} as const;
 
 function declarations() {
     const actions = definePlugin({
@@ -94,11 +110,11 @@ describe('producer-backed database Action declarations', () => {
             environment: { serverId: 'home', projectSourceId: 'app', environmentId: 'environment' },
             targetLinkId: 'runtime', deploymentId: 'serving', serviceId: 'postgres', database: 'app' },
             subjectTarget: { kind: 'environment', environmentId: 'environment', service: 'postgres', database: 'app' } },
-    ])('transports $kind producer results with canonical subjects through real Action admission', async ({ binding, subjectTarget }) => {
-        const descriptor = DatabaseDescriptorV1Schema.parse({ target: binding, label: 'Database', engine: 'postgresql',
+    ] as const)('transports $kind producer results with canonical subjects through real Action admission', async ({ binding, subjectTarget }) => {
+        const descriptor = { target: binding, label: 'Database', engine: 'postgresql',
             origin: { label: 'Service', environment: undefined }, capabilities: [], access: undefined,
             placement: { serverId: 'home', accountId: 'account', machineId: 'machine', installationId: 'installation' },
-        });
+        } satisfies DatabaseDescriptorV1;
         const plugin = definePlugin({ id: 'happier.database', version: '0.0.0', displayName: 'Database',
             actions: createDatabaseActions({
                 listTargets: async () => ({ targets: [descriptor], completeness: { complete: true } }),

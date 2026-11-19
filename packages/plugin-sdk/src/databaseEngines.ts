@@ -1,7 +1,7 @@
 import type { PluginDatabaseEngineContributionV1 as CanonicalDeclaration } from '@happier-dev/protocol/plugins/contributions/databaseEngines';
-import type { DatabaseCapabilityV1, DatabaseEngineIdV1, DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/database-protocol';
+import type { DatabaseCapabilityV1, DatabaseEngineIdV1, DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseOperationResultV1 } from './database/index.js';
 
-export type { DatabaseTargetV1, DatabaseStatsObservationV1, DatabaseStatsCounterComparisonV1 } from '@happier-dev/database-protocol';
+export type { DatabaseTargetV1, DatabaseStatsObservationV1, DatabaseStatsCounterComparisonV1 } from './database/index.js';
 
 export type PluginDatabaseEngineContributionV1 = Readonly<Omit<CanonicalDeclaration, 'capabilities'> & { capabilities: readonly DatabaseCapabilityV1[] }>;
 export type PluginDatabaseEngineOpenInputV1 = Readonly<{ connectionString: string; access: DatabaseOperationClassV1; signal?: AbortSignal }>;

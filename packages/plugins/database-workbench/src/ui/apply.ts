@@ -1,4 +1,5 @@
-import { DATABASE_EDITS_APPLY_ACTION_ID_V1, type DatabaseDescriptorV1, type DatabaseRelationV1 } from '@happier-dev/database-protocol';
+import { DATABASE_EDITS_APPLY_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { type DatabaseDescriptorV1, type DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { createStagedEdits } from './drafts.js';

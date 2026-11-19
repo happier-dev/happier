@@ -5,5 +5,4 @@ export * from './access.js';
 export * from './stats.js';
 export * from './resultEnvelope.js';
 export * from './rows.js';
-export * from './appUsage.js';
 export * from './statsComparisons.js';

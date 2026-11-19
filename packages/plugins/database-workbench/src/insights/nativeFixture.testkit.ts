@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { executeSqliteOperation, type SqliteNativeValue } from '@happier-dev/databases/sqlite';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
-import type { DatabaseDescriptorV1, DatabaseManualTargetV1, DatabaseOperationInputV1 } from '@happier-dev/database-protocol';
+import type {
+    DatabaseDescriptorV1,
+    DatabaseManualTargetV1,
+    DatabaseOperationInputV1,
+} from '@happier-dev/plugin-sdk/database';
 
 export const target: DatabaseManualTargetV1 = { kind: 'manual', accountId: 'alice', installationId: 'installation',
     projectKey: 'project', savedSecretId: 'selected', workspace: { serverId: 'server', machineId: 'machine', workspaceId: 'workspace', rootPath: '/project' } };

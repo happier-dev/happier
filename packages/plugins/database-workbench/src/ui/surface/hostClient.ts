@@ -1,15 +1,17 @@
 import {
-  DATABASE_CONNECTION_RESOURCE_ID_V1,
-  DATABASE_PLUGIN_ID_V1,
-  DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1,
-  DatabaseDemandSnapshotV1Schema,
-  DATABASE_OPERATION_ACTION_ID_V1,
-  DATABASE_TARGETS_LIST_ACTION_ID_V1,
-  type DatabaseDemandSnapshotV1,
-  type DatabaseOperationResultV1,
-  type DatabaseTargetV1,
-  type DatabaseTargetsListResultV1,
+    DATABASE_CONNECTION_RESOURCE_ID_V1,
+    DATABASE_PLUGIN_ID_V1,
+    DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1,
+    DatabaseDemandSnapshotV1Schema,
+    DATABASE_OPERATION_ACTION_ID_V1,
+    DATABASE_TARGETS_LIST_ACTION_ID_V1,
+    type DatabaseDemandSnapshotV1,
 } from '@happier-dev/database-protocol';
+import {
+    type DatabaseOperationResultV1,
+    type DatabaseTargetV1,
+    type DatabaseTargetsListResultV1,
+} from '@happier-dev/plugin-sdk/database';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';

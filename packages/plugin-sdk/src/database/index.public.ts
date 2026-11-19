@@ -1,5 +1,5 @@
-export type { DatabaseAccessDecisionV1 } from './projections.js';
 export { DatabaseAccessReadResultV1Schema, type DatabaseAccessReadResultV1 } from './accessRead.js';
+export type { DatabaseAccessDecisionV1 } from './projections.js';
 export type { DatabaseAccessRefusalV1 } from './projections.js';
 export type { DatabaseAccessSummaryV1 } from './projections.js';
 export type { DatabaseAgentAccessV1 } from './projections.js';
@@ -147,3 +147,157 @@ export { DatabaseValueRangeV1Schema } from './projections.js';
 export { DatabaseValueV1Schema } from './projections.js';
 export { DatabaseWorktreeTargetV1Schema } from './projections.js';
 export { DatabaseWriteStatementInputV1Schema } from './projections.js';
+
+export {
+    DatabaseCaptureProjectV1ProtocolSchema as DatabaseCaptureProjectV1Schema,
+    DatabaseCaptureSourceV1ProtocolSchema as DatabaseCaptureSourceV1Schema,
+    DatabaseCaptureCoverageV1ProtocolSchema as DatabaseCaptureCoverageV1Schema,
+} from './databaseCaptureSource.js';
+export {
+    DatabaseTelemetryMetricIntervalV1ProtocolSchema as DatabaseTelemetryMetricIntervalV1Schema,
+} from './databaseTelemetryMetricSeries.js';
+export type {
+    DatabaseTelemetryMetricIntervalV1,
+} from './databaseTelemetryMetricSeries.js';
+export {
+    TelemetryKeyFlowMeasureV1ProtocolSchema as TelemetryKeyFlowMeasureV1Schema,
+    TelemetryKeyFlowConfigV1ProtocolSchema as TelemetryKeyFlowConfigV1Schema,
+    TelemetryMetricsReadInputV1ProtocolSchema as TelemetryMetricsReadInputV1Schema,
+    TelemetryMetricsReadResultV1ProtocolSchema as TelemetryMetricsReadResultV1Schema,
+    TelemetryEnvironmentMetricsReadInputV1ProtocolSchema as TelemetryEnvironmentMetricsReadInputV1Schema,
+    TelemetryEnvironmentMetricsResourceInputV1ProtocolSchema as TelemetryEnvironmentMetricsResourceInputV1Schema,
+    TelemetryEnvironmentMetricsReadResultV1ProtocolSchema as TelemetryEnvironmentMetricsReadResultV1Schema,
+    TelemetryMetricsActionReadInputV1ProtocolSchema,
+    TelemetryMetricsActionReadResultV1ProtocolSchema,
+    projectTelemetryMetricsActionReadResultV1,
+} from './telemetryMetrics.js';
+export type {
+    TelemetryEnvironmentMetricsReadInputV1,
+    TelemetryEnvironmentMetricsReadResultV1,
+    TelemetryEnvironmentMetricsResourceInputV1,
+    TelemetryMetricsReadResultV1,
+    TelemetryMetricsReadInputV1,
+    TelemetryKeyFlowConfigV1,
+    TelemetryKeyFlowMeasureV1,
+} from './telemetryMetrics.js';
+export {
+    DATABASE_CAPTURE_COST_TOKEN_FIELDS_V1,
+    DatabaseCaptureCostsReadInputV1ProtocolSchema as DatabaseCaptureCostsReadInputV1Schema,
+    DatabaseCaptureCostOperandV1ProtocolSchema as DatabaseCaptureCostOperandV1Schema,
+    DatabaseCaptureCostsReadResultV1ProtocolSchema as DatabaseCaptureCostsReadResultV1Schema,
+} from './databaseCaptureCosts.js';
+export type {
+    DatabaseCaptureCostsReadInputV1,
+    DatabaseCaptureCostOperandV1,
+    DatabaseCaptureCostMetadataV1,
+    DatabaseCaptureCostsReadResultV1,
+} from './databaseCaptureCosts.js';
+export {
+    DatabaseCaptureCursorV1ProtocolSchema as DatabaseCaptureCursorV1Schema,
+    DatabaseCapturePageV1ProtocolSchema as DatabaseCapturePageV1Schema,
+    DatabaseCaptureSummaryV1ProtocolSchema as DatabaseCaptureSummaryV1Schema,
+    DatabaseCaptureRepeatedQueryV1ProtocolSchema as DatabaseCaptureRepeatedQueryV1Schema,
+    DatabaseCaptureEndpointCursorV1ProtocolSchema as DatabaseCaptureEndpointCursorV1Schema,
+    DatabaseCaptureEndpointV1ProtocolSchema as DatabaseCaptureEndpointV1Schema,
+    DatabaseCaptureLogCorrelationV1ProtocolSchema as DatabaseCaptureLogCorrelationV1Schema,
+    DatabaseCaptureStatusInputV1ProtocolSchema as DatabaseCaptureStatusInputV1Schema,
+    DatabaseCaptureStatusResultV1ProtocolSchema as DatabaseCaptureStatusResultV1Schema,
+    DatabaseCaptureQueriesListInputV1ProtocolSchema as DatabaseCaptureQueriesListInputV1Schema,
+    DatabaseCaptureQueriesListResultV1ProtocolSchema as DatabaseCaptureQueriesListResultV1Schema,
+    DatabaseCaptureQueryGetInputV1ProtocolSchema as DatabaseCaptureQueryGetInputV1Schema,
+    DatabaseCaptureQueryGetResultV1ProtocolSchema as DatabaseCaptureQueryGetResultV1Schema,
+    DatabaseCaptureTracesListInputV1ProtocolSchema as DatabaseCaptureTracesListInputV1Schema,
+    DatabaseCaptureTracesListResultV1ProtocolSchema as DatabaseCaptureTracesListResultV1Schema,
+    DatabaseCaptureTraceGetInputV1ProtocolSchema as DatabaseCaptureTraceGetInputV1Schema,
+    DatabaseCaptureTraceGetResultV1ProtocolSchema as DatabaseCaptureTraceGetResultV1Schema,
+    DatabaseCaptureLogsListInputV1ProtocolSchema as DatabaseCaptureLogsListInputV1Schema,
+    DatabaseCaptureLogsListResultV1ProtocolSchema as DatabaseCaptureLogsListResultV1Schema,
+    DatabaseCaptureEndpointsListInputV1ProtocolSchema as DatabaseCaptureEndpointsListInputV1Schema,
+    DatabaseCaptureEndpointsListResultV1ProtocolSchema as DatabaseCaptureEndpointsListResultV1Schema,
+    DatabaseCaptureClearInputV1ProtocolSchema as DatabaseCaptureClearInputV1Schema,
+    DatabaseCaptureClearResultV1ProtocolSchema as DatabaseCaptureClearResultV1Schema,
+    DatabaseCaptureConfigureInputV1ProtocolSchema as DatabaseCaptureConfigureInputV1Schema,
+    DatabaseCaptureConfigureResultV1ProtocolSchema as DatabaseCaptureConfigureResultV1Schema,
+    DatabaseCaptureResourceInputV1ProtocolSchema as DatabaseCaptureResourceInputV1Schema,
+    DatabaseCaptureResourceSnapshotV1ProtocolSchema as DatabaseCaptureResourceSnapshotV1Schema,
+} from './databaseCapture.js';
+export type {
+    DatabaseCaptureResourceInputV1,
+    DatabaseCaptureProjectV1,
+    DatabaseCaptureSourceV1,
+    DatabaseCaptureCursorV1,
+    DatabaseCapturePageV1,
+    DatabaseCaptureCoverageV1,
+    DatabaseCaptureSummaryV1,
+    DatabaseCaptureRepeatedQueryV1,
+    DatabaseCaptureEndpointCursorV1,
+    DatabaseCaptureEndpointV1,
+    DatabaseCaptureLogCorrelationV1,
+    DatabaseCaptureResourceSnapshotV1,
+    DatabaseCaptureStatusInputV1,
+    DatabaseCaptureStatusResultV1,
+    DatabaseCaptureQueriesListInputV1,
+    DatabaseCaptureQueriesListResultV1,
+    DatabaseCaptureQueryGetInputV1,
+    DatabaseCaptureQueryGetResultV1,
+    DatabaseCaptureTracesListInputV1,
+    DatabaseCaptureTracesListResultV1,
+    DatabaseCaptureTraceGetInputV1,
+    DatabaseCaptureTraceGetResultV1,
+    DatabaseCaptureLogsListInputV1,
+    DatabaseCaptureLogsListResultV1,
+    DatabaseCaptureEndpointsListInputV1,
+    DatabaseCaptureEndpointsListResultV1,
+    DatabaseCaptureClearInputV1,
+    DatabaseCaptureClearResultV1,
+    DatabaseCaptureConfigureInputV1,
+    DatabaseCaptureConfigureResultV1,
+} from './databaseCapture.js';
+export {
+    DATABASE_PLUGIN_ID_V1,
+    DATABASE_TARGETS_LIST_ACTION_ID_V1,
+    DATABASE_TARGETS_CONNECT_ACTION_ID_V1,
+    DATABASE_TARGETS_FORGET_ACTION_ID_V1,
+    DATABASE_DESCRIBE_ACTION_ID_V1,
+    DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
+    DATABASE_RELATIONS_LIST_ACTION_ID_V1,
+    DATABASE_STRUCTURE_READ_ACTION_ID_V1,
+    DATABASE_ROWS_READ_ACTION_ID_V1,
+    DATABASE_ROWS_EXPORT_ACTION_ID_V1,
+    DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1,
+    DATABASE_CELL_READ_ACTION_ID_V1,
+    DATABASE_STATEMENT_RUN_ACTION_ID_V1,
+    DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
+    DATABASE_EDITS_APPLY_ACTION_ID_V1,
+    DATABASE_ACCESS_READ_ACTION_ID_V1,
+    DATABASE_ACCESS_SET_ACTION_ID_V1,
+    UI_DATABASE_OPEN_ACTION_ID_V1,
+    UI_DATABASE_NAVIGATE_ACTION_ID_V1,
+    UI_DATABASE_DRAFT_READ_ACTION_ID_V1,
+    DATABASE_STATS_READ_ACTION_ID_V1,
+    DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1,
+    DATABASE_STATS_ENABLE_ACTION_ID_V1,
+    DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
+    DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1,
+    DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
+    DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
+    DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
+    DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1,
+    DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1,
+    DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1,
+    DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1,
+    DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
+    DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
+    DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1,
+    TELEMETRY_METRICS_READ_ACTION_ID_V1,
+    TELEMETRY_COSTS_READ_ACTION_ID_V1,
+    TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1,
+    TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1,
+    TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1,
+    TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1,
+    TELEMETRY_EXCEPTION_ISSUE_TRANSITION_ACTION_ID_V1,
+    TELEMETRY_EXCEPTION_ISSUES_REFRESH_ACTION_ID_V1,
+    DATABASE_ACTION_IDS_V1,
+    DATABASE_CONNECTION_RESOURCE_ID_V1,
+} from './identities.js';
+export type { DatabaseActionIdV1 } from './identities.js';

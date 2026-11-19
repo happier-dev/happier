@@ -1,8 +1,8 @@
 import type {
-  DatabaseStatsCounterComparisonV1,
-  DatabaseStatsObservationV1,
-  DatabaseStatsReadV1,
-} from '@happier-dev/database-protocol';
+    DatabaseStatsCounterComparisonV1,
+    DatabaseStatsObservationV1,
+    DatabaseStatsReadV1,
+} from '@happier-dev/plugin-sdk/database';
 import { WORKBENCH_DISPLAY_PAGE_ROWS } from '../mount.js';
 import { projectDatabaseStatementMetrics } from '../../../insights/presentation.js';
 

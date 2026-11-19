@@ -5,7 +5,7 @@ import type {
     DatabaseDescriptorV1, DatabaseEngineIdV1, DatabaseManagedDeploymentTargetV1,
     DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseOperationResultV1,
     DatabaseTargetsListResultV1,
-} from '@happier-dev/database-protocol';
+} from './database/index.js';
 import { PluginError } from './errors.js';
 import type { ProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import type { DeploymentTargetContributionV1 as CanonicalDeploymentTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';

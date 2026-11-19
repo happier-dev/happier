@@ -5,7 +5,22 @@ import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
 import nacl from 'tweetnacl';
 
-import { DatabaseManagedDeploymentTargetV1Schema, DatabaseOperationResultV1Schema, DatabaseTargetsListResultV1Schema, DATABASE_TARGETS_LIST_ACTION_ID_V1, DatabaseReadStatementInputV1Schema, DatabaseWriteStatementInputV1Schema, DatabaseEditsApplyInputV1Schema, DATABASE_PLUGIN_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_EDITS_APPLY_ACTION_ID_V1, type DatabaseActionIdV1 } from '@happier-dev/database-protocol';
+import {
+    DatabaseManagedDeploymentTargetV1Schema,
+    DatabaseOperationResultV1Schema,
+    DatabaseTargetsListResultV1Schema,
+    DatabaseReadStatementInputV1Schema,
+    DatabaseWriteStatementInputV1Schema,
+    DatabaseEditsApplyInputV1Schema,
+} from '@happier-dev/plugin-sdk/database';
+import {
+    DATABASE_TARGETS_LIST_ACTION_ID_V1,
+    DATABASE_PLUGIN_ID_V1,
+    DATABASE_STATEMENT_RUN_ACTION_ID_V1,
+    DATABASE_DESCRIBE_ACTION_ID_V1,
+    DATABASE_EDITS_APPLY_ACTION_ID_V1,
+    type DatabaseActionIdV1,
+} from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { DeploymentTargetLinkContentV1Schema } from '@happier-dev/deployment-protocol';
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,

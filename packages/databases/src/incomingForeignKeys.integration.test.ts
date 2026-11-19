@@ -3,7 +3,11 @@ import { DatabaseSync } from 'node:sqlite';
 import { createConnection } from 'mysql2/promise';
 import { Client } from 'pg';
 import { expect, it } from 'vitest';
-import type { DatabaseOperationInputV1, DatabaseOperationResultV1, DatabaseRelationV1 } from '@happier-dev/database-protocol';
+import type {
+    DatabaseOperationInputV1,
+    DatabaseOperationResultV1,
+    DatabaseRelationV1,
+} from '@happier-dev/plugin-sdk/database';
 import { mysqlConnectionOptions, mysqlNativeResult } from './connection/mysql.js';
 import { executeMysqlOperation } from './mysql/operations.js';
 import { executePostgresqlOperation } from './postgresql/operations.js';

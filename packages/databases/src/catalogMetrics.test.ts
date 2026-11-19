@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DatabaseOperationResultV1Schema } from '@happier-dev/database-protocol';
+import { DatabaseOperationResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { executePostgresqlOperation, type PostgresqlQuery } from './postgresql/operations.js';
 import { executeMysqlOperation, type MysqlQuery } from './mysql/operations.js';
 

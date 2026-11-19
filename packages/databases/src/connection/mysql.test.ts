@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, expect, it, vi } from 'vitest';
-import { DatabaseOperationResultV1Schema } from '@happier-dev/database-protocol';
+import { DatabaseOperationResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { builtinDatabaseCapabilities } from '../capabilities.js';
 import { openMysqlConnection } from './mysql.js';
 

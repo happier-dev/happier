@@ -3,11 +3,15 @@ import { HealthCheckResultV1ProtocolSchema, SavedHealthCheckSelectorV1ProtocolSc
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
-import { TELEMETRY_METRICS_READ_ACTION_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1,
-    databaseActionLocalIdV1, databaseActionMetadata, projectDatabaseCaptureUsageV1, projectDatabaseAppCostMetricSeriesV1,
-    projectUsagePageCost, TelemetryMetricsReadResultV1Schema, type TelemetryMetricsReadResultV1,
-    TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
-import { TelemetryEnvironmentMetricsReadResultV1Schema } from '@happier-dev/database-protocol';
+import { TELEMETRY_METRICS_READ_ACTION_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1, type TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
+import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import { projectTelemetryMetricsActionReadResultV1 } from '@happier-dev/plugin-sdk/database';
+import { databaseActionMetadata } from '@happier-dev/plugin-sdk/actions';
+import {
+    projectAppCallsUsageV1 as projectDatabaseCaptureUsageV1,
+    projectAppCallsCostMetricSeriesV1 as projectDatabaseAppCostMetricSeriesV1,
+} from '@happier-dev/plugin-sdk/usage';
+import { projectUsagePageCost } from '@happier-dev/plugin-sdk/usage';
 import { localCaptureBackground } from './background.js';
 import type { CaptureRuntime } from './runtime.js';
 import type { CaptureSummary } from './store/capture.js';
@@ -234,7 +238,7 @@ export const telemetryHealthActions: Record<string, PluginActionDefinition> = {
                     return { environmentId, result: evaluateKeyFlowWindow(selected, undefined, context.invokedAtMs, admitted.collectorMachineId),
                         routes: [], trend: selected.trend };
                 }));
-                return projectNativeJsonValueForTransport(TelemetryEnvironmentMetricsReadResultV1Schema.parse({ items }));
+                return projectTelemetryMetricsActionReadResultV1({ items });
             }
             const admitted = await admit({ serverId: input.serverId, environmentId: input.environmentId });
             const runtime = localCaptureBackground.readRuntime();
@@ -242,13 +246,12 @@ export const telemetryHealthActions: Record<string, PluginActionDefinition> = {
             const selected: KeyFlowWindow = reason ? { measurements: unknown(input, reason), routes: [], trend: [] }
                 : (await readKeyFlowWindows(runtime!, [input], context))[0]!;
             const evaluate = (measurement: KeyFlowMeasurements) => evaluateKeyFlow(measurement, undefined, context.invokedAtMs, admitted.collectorMachineId);
-            // Usage keeps exact-money Symbols in process; its public schema projects
-            // the wire response before the SDK's strict native-JSON boundary.
-            return keyFlowReadResultSchema.parse(projectNativeJsonValueForTransport(TelemetryMetricsReadResultV1Schema.parse({ result: evaluateKeyFlowWindow(selected, undefined,
-                context.invokedAtMs, admitted.collectorMachineId),
+            return projectTelemetryMetricsActionReadResultV1({
+                result: evaluateKeyFlowWindow(selected, undefined, context.invokedAtMs, admitted.collectorMachineId),
                 routes: selected.routes.map(route => ({ method: route.method, route: route.route,
                     result: evaluate(route.measurements) })), trend: selected.trend,
-                ...(selected.usage ? { usage: selected.usage } : {}) })));
+                ...(selected.usage ? { usage: selected.usage } : {}),
+            });
         },
     },
 };

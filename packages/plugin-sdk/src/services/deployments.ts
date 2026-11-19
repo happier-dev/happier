@@ -2,7 +2,7 @@
 import type { DeploymentTelemetryAssignmentsV1, DeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import type {
     DatabaseAccessSummaryV1, DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseTargetsListInputV1, DatabaseTargetsListResultV1,
-} from '@happier-dev/database-protocol';
+} from '../database/index.js';
 import type { DeploymentDatabaseResolutionV1 } from '../deploymentTargets.js';
 
 /** Exact deployment admitted by the host's target-role invocation. No paths or source overrides. */

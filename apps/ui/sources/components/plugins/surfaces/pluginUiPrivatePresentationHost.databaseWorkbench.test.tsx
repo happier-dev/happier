@@ -1,11 +1,12 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DatabaseStatsObservationV1, DatabaseTargetV1 } from '@happier-dev/database-protocol';
+import type { DatabaseStatsObservationV1, DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import { createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiHostApi, RenderContext } from '@happier-dev/plugin-sdk/ui';
 import * as hostApi from '@happier-dev/plugin-ui/hostApi';
 import { PluginUiPresentationHostProviderInternal } from '../../../../../../packages/plugin-ui/src/presentationHost/context';
+import { workbenchTargetKey } from '../../../../../../packages/plugins/database-workbench/src/ui/workbench';
 import { useWorkbenchMount } from '../../../../../../packages/plugins/database-workbench/src/ui/surface/mount';
 import { renderHook } from '@/dev/testkit';
 import { clearPersistenceStorage, getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
@@ -32,7 +33,7 @@ describe('mounted database workbench host owners', () => {
         const host = createPluginUiPrivatePresentationHost(undefined);
         const descriptor = { ...createDatabaseDescriptorV1Fixture(), target };
         host.databaseWorkbench.lastLook(scope, target).observe(observation('5', 500), ['shown']);
-        const targetKey = JSON.stringify(target);
+        const targetKey = workbenchTargetKey(target);
         const launch = { descriptor, scope: {
             kind: 'worktree' as const, accountId: 'launch-owner', installationId: 'installation', projectKey: 'project',
             workspace: { serverId: 'launch-home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/repo' },

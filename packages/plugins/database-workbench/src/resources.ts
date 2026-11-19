@@ -4,12 +4,11 @@ import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
 import {
     DatabaseDescribeInputV1Schema,
     DatabaseOperationInputV1Schema,
-    DatabaseOwnWriteV1Schema,
-    type DatabaseDemandSnapshotV1,
     type DatabaseDescribeInputV1,
     type DatabaseDescriptorV1,
     type DatabaseRelationV1,
-} from '@happier-dev/database-protocol';
+} from '@happier-dev/plugin-sdk/database';
+import { DatabaseOwnWriteV1Schema, type DatabaseDemandSnapshotV1 } from '@happier-dev/database-protocol';
 import type { DatabaseWorkbenchConnection } from './connection.js';
 
 export { DATABASE_CONNECTION_RESOURCE_ID_V1 } from '@happier-dev/database-protocol';

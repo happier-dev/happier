@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { DatabaseOperationResultV1Schema } from './databaseOperations.js';
+import { DatabaseOperationResultV1Schema } from '@happier-dev/plugin-sdk/database';
 
 it('preserves aligned incoming references and accepts older structure results', () => {
     const structure = {

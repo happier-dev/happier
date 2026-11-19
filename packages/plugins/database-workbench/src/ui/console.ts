@@ -1,5 +1,13 @@
-import { DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
-    type DatabaseDescriptorV1, type DatabaseOperationResultV1, type DatabaseStatementV1, type DatabaseValueV1 } from '@happier-dev/database-protocol';
+import {
+    DATABASE_STATEMENT_RUN_ACTION_ID_V1,
+    DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
+} from '@happier-dev/database-protocol';
+import {
+    type DatabaseDescriptorV1,
+    type DatabaseOperationResultV1,
+    type DatabaseStatementV1,
+    type DatabaseValueV1,
+} from '@happier-dev/plugin-sdk/database';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { createConsoleState } from './consoleState.js';

@@ -1,5 +1,5 @@
 import { readDeploymentDatabaseSizesV1 } from '../projection/deploymentDatabaseSize.js';
-import type { DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
+import type { DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { describe, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentCollectionV1, createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createDeploymentReadControllerV1 } from './createDeploymentReadControllerV1.js';

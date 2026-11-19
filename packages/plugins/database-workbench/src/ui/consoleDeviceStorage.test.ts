@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import type { DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
+import type { DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiSemanticSurfaceAdapter } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiDeviceStateResultV1 } from '@happier-dev/plugin-sdk/ui';
 import { createConsoleDeviceStorage } from './consoleDeviceStorage.js';

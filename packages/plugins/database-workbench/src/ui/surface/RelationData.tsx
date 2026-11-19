@@ -1,11 +1,11 @@
 import * as React from 'react';
 import type {
-  DatabaseCellV1,
-  DatabaseIncomingForeignKeyV1,
-  DatabaseNamedCellV1,
-  DatabaseRelationV1,
-  DatabaseValueV1,
-} from '@happier-dev/database-protocol';
+    DatabaseCellV1,
+    DatabaseIncomingForeignKeyV1,
+    DatabaseNamedCellV1,
+    DatabaseRelationV1,
+    DatabaseValueV1,
+} from '@happier-dev/plugin-sdk/database';
 import {
   Button,
   CodeBlock,

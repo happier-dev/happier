@@ -6,7 +6,7 @@ import type {
 import type { UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { DatabaseCaptureCostsReadResultV1Schema } from '@happier-dev/database-protocol';
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { projectDatabaseCaptureUsageSourcesV1 } from '@happier-dev/databases/app-usage';
+import { projectAppCallsUsageSourcesV1 as projectDatabaseCaptureUsageSourcesV1 } from '@happier-dev/plugin-sdk/usage';
 import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { usageAppCallsSourceId } from '@/sync/domains/usage/usageAppCallsSource';
 

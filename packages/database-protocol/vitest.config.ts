@@ -9,6 +9,7 @@ export default defineConfig({
     root: packageRoot,
     plugins: [createWorkspacePackageSourcesPlugin([
         { packageName: '@happier-dev/protocol', packageSourceRoot: resolve(packageRoot, '../protocol/src') },
+        { packageName: '@happier-dev/plugin-sdk', packageSourceRoot: resolve(packageRoot, '../plugin-sdk/src') },
     ])],
     test: { ...resolveVitestWorkers(), environment: 'node', include: ['src/**/*.test.ts'], exclude: ['node_modules/**', 'dist/**'] },
 });

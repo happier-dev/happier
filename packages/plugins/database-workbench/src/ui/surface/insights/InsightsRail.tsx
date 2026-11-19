@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
-import type { DatabaseStatsObservationV1 } from '@happier-dev/database-protocol';
+import type { DatabaseStatsObservationV1 } from '@happier-dev/plugin-sdk/database';
 import {
   ErrorState,
   Icon,

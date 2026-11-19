@@ -1,7 +1,11 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import type { DatabaseDeploymentServiceTargetV1, DatabaseOperationResultV1,
-    DatabaseReadStatementInputV1, DatabaseStatsOperationInputV1 } from '@happier-dev/database-protocol';
+import type {
+    DatabaseDeploymentServiceTargetV1,
+    DatabaseOperationResultV1,
+    DatabaseReadStatementInputV1,
+    DatabaseStatsOperationInputV1,
+} from '@happier-dev/plugin-sdk/database';
 import { openPostgresqlConnection, type PostgresqlConnection } from '@happier-dev/databases/connection/postgresql';
 import { openMysqlConnection } from '@happier-dev/databases/connection/mysql';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';

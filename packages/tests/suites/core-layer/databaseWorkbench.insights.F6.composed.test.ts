@@ -1,10 +1,13 @@
 import { expect, it } from 'vitest';
 
 import { DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
-import { DatabaseOperationResultV1Schema, DatabaseStatementExplainInputV1Schema,
-  DatabaseStatsOperationInputV1Schema } from '../../../database-protocol/src/databaseOperations';
-import { DatabaseStatsReasonV1Schema, type DatabaseStatsReadV1 } from '../../../database-protocol/src/databaseStats';
-import { type DatabaseTargetV1 } from '../../../database-protocol/src/databaseTargets';
+import {
+    DatabaseOperationResultV1Schema,
+    DatabaseStatementExplainInputV1Schema,
+    DatabaseStatsOperationInputV1Schema,
+} from '@happier-dev/plugin-sdk/database';
+import { DatabaseStatsReasonV1Schema, type DatabaseStatsReadV1 } from '@happier-dev/plugin-sdk/database';
+import { type DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
 import { startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
 import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import { createRunDirs } from '../../src/testkit/runDir';

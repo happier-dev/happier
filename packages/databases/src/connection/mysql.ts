@@ -1,6 +1,6 @@
 import { createConnection, type ConnectionOptions } from 'mysql2';
 import type { Duplex } from 'node:stream';
-import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/database-protocol';
+import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/plugin-sdk/database';
 import { statsOperationResultV1 } from '../stats.js';
 import { DatabaseStatementError, fitDatabaseOperationResult, withDatabaseConnectionUrlOptions } from '../index.js';
 import {

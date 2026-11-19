@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DatabaseOperationInputV1Schema, DatabaseReadStatementInputV1Schema } from '@happier-dev/database-protocol';
+import { DatabaseOperationInputV1Schema, DatabaseReadStatementInputV1Schema } from '@happier-dev/plugin-sdk/database';
 import { postgresqlReadOnlyRoleGuardSql } from '@happier-dev/deployment-protocol';
 import { openPostgresqlConnection } from './postgresql.js';
 

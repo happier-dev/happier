@@ -8,8 +8,11 @@ import { expect, it } from 'vitest';
 
 import { DeploymentContentV1Schema } from '@happier-dev/deployment-protocol';
 import { createDeploymentDumpBackupSourceV1 } from '@happier-dev/deployments';
-import { DatabaseReadStatementInputV1Schema, DatabaseWriteStatementInputV1Schema,
-    DatabaseOperationResultV1Schema } from '@happier-dev/database-protocol';
+import {
+    DatabaseReadStatementInputV1Schema,
+    DatabaseWriteStatementInputV1Schema,
+    DatabaseOperationResultV1Schema,
+} from '@happier-dev/plugin-sdk/database';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,

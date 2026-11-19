@@ -5,7 +5,10 @@ import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { DATABASE_STATS_READ_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
-import { DatabaseOperationResultV1Schema, DatabaseStatsOperationInputV1Schema } from '../../../database-protocol/src/databaseOperations';
+import {
+    DatabaseOperationResultV1Schema,
+    DatabaseStatsOperationInputV1Schema,
+} from '@happier-dev/plugin-sdk/database';
 import { DATABASE_FINDING_EVENT_REF, DATABASE_FINDING_SETUP_LOCAL_ID } from '../../../plugins/database-workbench/src/insights/events';
 import { startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
 import { fetchJson } from '../../src/testkit/http';

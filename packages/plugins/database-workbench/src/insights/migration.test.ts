@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { SessionInputHandoffInputV1Schema, runSessionInputHandoffV1 } from '@happier-dev/plugin-sdk/sessions';
-import { DatabaseTaskEvidenceV1Schema } from '@happier-dev/database-protocol';
+import { DatabaseTaskEvidenceV1Schema } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseMigrationHandoffControl } from './migration.js';
 import { target } from './nativeFixture.testkit.js';
 

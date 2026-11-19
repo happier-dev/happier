@@ -1,10 +1,7 @@
 import { expect, it } from 'vitest';
 
-import {
-  DATABASE_ROWS_READ_ACTION_ID_V1,
-  DATABASE_STRUCTURE_READ_ACTION_ID_V1,
-  DatabaseOperationResultV1Schema,
-} from '@happier-dev/database-protocol';
+import { DATABASE_ROWS_READ_ACTION_ID_V1, DATABASE_STRUCTURE_READ_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { DatabaseOperationResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { incomingForeignKeyNavigation } from '../../../plugins/database-workbench/src/ui/location';
 import { startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
 import { createRunDirs } from '../../src/testkit/runDir';

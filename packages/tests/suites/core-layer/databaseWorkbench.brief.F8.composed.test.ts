@@ -10,13 +10,22 @@ import { SessionInputHandoffInputV1Schema, SessionInputHandoffResultV1Schema } f
 import { SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
   DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
-import { DatabaseFindingBaselineV1Schema, DatabaseFindingBriefBuildInputV1Schema,
-  DatabaseFindingBriefBuildResultV1Schema, DatabaseFindingReadInputV1Schema,
-  DatabaseFindingReadResultV1Schema, DatabaseFindingsListInputV1Schema,
-  DatabaseFindingsListResultV1Schema } from '../../../database-protocol/src/databaseFindings';
-import { DatabaseOperationResultV1Schema, DatabaseStatsOperationInputV1Schema,
-  DatabaseTargetsListInputV1Schema, DatabaseTargetsListResultV1Schema } from '../../../database-protocol/src/databaseOperations';
-import { DatabaseStatsReasonV1Schema } from '../../../database-protocol/src/databaseStats';
+import {
+    DatabaseFindingBaselineV1Schema,
+    DatabaseFindingBriefBuildInputV1Schema,
+    DatabaseFindingBriefBuildResultV1Schema,
+    DatabaseFindingReadInputV1Schema,
+    DatabaseFindingReadResultV1Schema,
+    DatabaseFindingsListInputV1Schema,
+    DatabaseFindingsListResultV1Schema,
+} from '@happier-dev/plugin-sdk/database';
+import {
+    DatabaseOperationResultV1Schema,
+    DatabaseStatsOperationInputV1Schema,
+    DatabaseTargetsListInputV1Schema,
+    DatabaseTargetsListResultV1Schema,
+} from '@happier-dev/plugin-sdk/database';
+import { DatabaseStatsReasonV1Schema } from '@happier-dev/plugin-sdk/database';
 import { startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';

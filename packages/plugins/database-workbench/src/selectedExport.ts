@@ -1,4 +1,8 @@
-import type { DatabaseCellV1, DatabaseSelectedRowsExportInputV1, DatabaseSelectedRowsExportResultV1 } from '@happier-dev/database-protocol';
+import type { DatabaseCellV1 } from '@happier-dev/plugin-sdk/database';
+import type {
+    DatabaseSelectedRowsExportInputV1,
+    DatabaseSelectedRowsExportResultV1,
+} from '@happier-dev/database-protocol';
 
 /** Quoted empty text differs from the SQL NULL marker; exact numbers and JSON retain their text. */
 function csvCell(cell: DatabaseCellV1): string {

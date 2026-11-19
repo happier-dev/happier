@@ -1,8 +1,11 @@
 import { DeploymentPendingDeployStoredIntentV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { DatabaseTargetsListResultV1Schema, readAutomationDatabaseSubjectV1, type DatabaseTargetsListResultV1,
-    type AutomationDatabaseSubjectReadV1 } from '@happier-dev/database-protocol';
+import { DatabaseTargetsListResultV1Schema, type DatabaseTargetsListResultV1 } from '@happier-dev/plugin-sdk/database';
+import {
+    readAutomationDatabaseSubjectV1,
+    type AutomationDatabaseSubjectReadV1,
+} from '@happier-dev/plugin-sdk/automations';
 import {
     DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentDataSizeResultV1Schema,
     DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema,

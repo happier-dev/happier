@@ -1,6 +1,10 @@
 import type { DeploymentEnvironmentContentV1, DeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/v1';
-import { DatabaseOperationResultV1Schema, type DatabaseDescriptorV1, type DatabaseStatsOperationInputV1,
-    type DatabaseTargetsListResultV1 } from '@happier-dev/database-protocol';
+import {
+    DatabaseOperationResultV1Schema,
+    type DatabaseDescriptorV1,
+    type DatabaseStatsOperationInputV1,
+    type DatabaseTargetsListResultV1,
+} from '@happier-dev/plugin-sdk/database';
 import type { DeploymentDatabaseSizeV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 
 /** Page measurements consume the shared operation owner's typed size observation. */

@@ -2255,9 +2255,6 @@ importers:
 
   packages/database-protocol:
     dependencies:
-      '@happier-dev/protocol':
-        specifier: 0.0.0
-        version: link:../protocol
       zod:
         specifier: 4.6.7
         version: 4.6.7
@@ -2274,9 +2271,6 @@ importers:
 
   packages/databases:
     dependencies:
-      '@happier-dev/database-protocol':
-        specifier: 0.0.0
-        version: link:../database-protocol
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../plugin-sdk
@@ -2321,15 +2315,15 @@ importers:
 
   packages/deployments:
     dependencies:
-      '@happier-dev/database-protocol':
-        specifier: 0.0.0
-        version: link:../database-protocol
       '@happier-dev/databases':
         specifier: 0.0.0
         version: link:../databases
       '@happier-dev/deployment-protocol':
         specifier: 0.0.0
         version: link:../deployment-protocol
+      '@happier-dev/plugin-sdk':
+        specifier: 0.0.0
+        version: link:../plugin-sdk
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../protocol
@@ -2483,9 +2477,6 @@ importers:
       '@happier-dev/cli-common':
         specifier: 0.0.0
         version: link:../cli-common
-      '@happier-dev/database-protocol':
-        specifier: 0.0.0
-        version: link:../database-protocol
       '@happier-dev/deployment-protocol':
         specifier: 0.0.0
         version: link:../deployment-protocol
@@ -3130,9 +3121,6 @@ importers:
 
   packages/plugins/deployment-neon:
     dependencies:
-      '@happier-dev/database-protocol':
-        specifier: 0.0.0
-        version: link:../../database-protocol
       '@happier-dev/databases':
         specifier: 0.0.0
         version: link:../../databases
@@ -3152,9 +3140,6 @@ importers:
 
   packages/plugins/deployment-supabase:
     dependencies:
-      '@happier-dev/database-protocol':
-        specifier: 0.0.0
-        version: link:../../database-protocol
       '@happier-dev/databases':
         specifier: 0.0.0
         version: link:../../databases

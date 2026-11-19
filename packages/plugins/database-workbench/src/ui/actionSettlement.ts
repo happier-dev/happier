@@ -1,4 +1,4 @@
-import { DatabaseOperationResultV1Schema, type DatabaseOperationResultV1 } from '@happier-dev/database-protocol';
+import { DatabaseOperationResultV1Schema, type DatabaseOperationResultV1 } from '@happier-dev/plugin-sdk/database';
 import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import type { PluginTranslate } from '@happier-dev/plugin-ui';

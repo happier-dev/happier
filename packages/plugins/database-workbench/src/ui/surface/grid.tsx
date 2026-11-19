@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DatabaseCellV1 } from '@happier-dev/database-protocol';
+import type { DatabaseCellV1 } from '@happier-dev/plugin-sdk/database';
 import type { PluginTranslate } from '@happier-dev/plugin-ui';
 import type { CollectionAnatomy, CollectionField } from '@happier-dev/plugin-ui/components';
 import type { projectColumn } from '../projections.js';

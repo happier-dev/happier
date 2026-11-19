@@ -1,4 +1,4 @@
-import type { DatabaseRowsBindingV1 } from '@happier-dev/database-protocol';
+import type { DatabaseRowsBindingV1 } from '@happier-dev/plugin-sdk/database';
 
 /** Project both request and continuation through the same wire-field order. */
 export function databaseRowsBindingV1(input: DatabaseRowsBindingV1): DatabaseRowsBindingV1 {

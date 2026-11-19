@@ -1,4 +1,4 @@
-import { DatabaseValueV1Schema, type DatabaseValueV1 } from '@happier-dev/database-protocol';
+import { DatabaseValueV1Schema, type DatabaseValueV1 } from '@happier-dev/plugin-sdk/database';
 
 export type ConsoleParameterInput = Readonly<{ type: DatabaseValueV1['type']; text: string; nativeType?: string }>;
 export function readConsoleParameter(input: ConsoleParameterInput): DatabaseValueV1 | undefined {

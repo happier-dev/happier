@@ -1,4 +1,4 @@
-import type { DatabaseStatsReadV1 } from '@happier-dev/database-protocol';
+import type { DatabaseStatsReadV1 } from '@happier-dev/plugin-sdk/database';
 import type { DatabaseStatsSqlPlanV1 } from '../stats.js';
 import { statsSqlPlan, statsText, statsCounter, statsNumber, statsBoolean, statsOptional, statsShape, statsRelation, statsSize, statsJsonObject, statsJsonArray } from '../stats.js';
 export function compileMysqlStatsV1(operation: DatabaseStatsReadV1): DatabaseStatsSqlPlanV1 {

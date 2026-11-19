@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { AutomationSubjectKind } from '@happier-dev/plugin-sdk/automations';
-import type { DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
+import type { DatabaseTargetsListInputV1 } from '@happier-dev/plugin-sdk/database';
 
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { WorkflowActionCallerContext } from './callWorkflowAction';
