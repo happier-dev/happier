@@ -5011,7 +5011,7 @@ describe('client Action declared SessionTarget admission', () => {
         { actionKind: 'bindingUpdate', change: 'narrowing', input: { bindingId: 'binding-1', expectedRevision: 5, inputMode: 'directMentionsOnly' } },
         { actionKind: 'bindingCreate', change: 'enabled creation', input: { enabled: true } },
         { actionKind: 'bindingSetEnabled', change: 'resuming', input: { bindingId: 'binding-1', expectedRevision: 5, enabled: true } },
-    ] as const)('uses the real Channels $actionKind click but retains ordinary Ask for agent/MCP $change', async ({ actionKind, input }) => {
+    ] as const)('uses the real Channels $actionKind click but retains ordinary Ask for agent/MCP/Plugin $change', async ({ actionKind, input }) => {
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/channels/src/manifest');
         const { CONVERSATION_MANAGEMENT_ACTION_IDS_V1 } = await import('@happier-dev/channels-protocol/v1');
         const parsed = parsePluginManifest(PLUGIN_MANIFEST);
@@ -5021,12 +5021,10 @@ describe('client Action declared SessionTarget admission', () => {
         );
         if (action === undefined) throw new Error('Expected the Channels binding Action');
         expect(pluginActionDeclarationRequiresConfirmationForInput(action, 'ui', input, 'present_user')).toBe(false);
-        for (const surface of ['agent', 'mcp']) {
+        for (const surface of ['agent', 'mcp', 'plugin'] as const) {
+            expect(action.surfaces).toContain(surface);
             expect(pluginActionDeclarationRequiresConfirmationForInput(action, surface, input)).toBe(true);
         }
-        // These declarations reject plugin-surface admission; a declaration
-        // default is not evidence that a plugin requester executed with Ask.
-        expect(action.surfaces).not.toContain('plugin');
         expect(pluginActionDeclarationRequiresConfirmationForInput(action, 'ui', input, 'account_automation')).toBe(true);
         // The click answers the default only; an explicit Ask preference remains with the host.
         expect(pluginActionRequiresPresentUserIntent({ ...action, approvalRequiredByActionSettings: true },
@@ -5037,7 +5035,8 @@ describe('client Action declared SessionTarget admission', () => {
         'admits the real Channels daemon Session operand before confirmation and serialized dispatch (%s)', async mode => {
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/channels/src/manifest');
         const { SessionIdSchema } = await import('@happier-dev/plugin-sdk/sessions');
-        const declaration = PLUGIN_MANIFEST.contributes?.actions?.find(action => action.id === 'session-pull-request-binding-v1');
+        const { SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1 } = await import('@happier-dev/channels-protocol/v1');
+        const declaration = PLUGIN_MANIFEST.contributes?.actions?.find(action => action.id === SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1);
         if (!declaration) throw new Error('Channels binding declaration is unavailable');
         const source = createClientActionActivation({ pluginId: PLUGIN_MANIFEST.id, localId: declaration.id,
             dangerLevel: declaration.dangerLevel, confirmationWhen: declaration.confirmationWhen,
@@ -5106,6 +5105,33 @@ describe('client Action declared SessionTarget admission', () => {
             approve();
         };
         try {
+            if (mode === 'presenter') {
+                // The host-presented call has no mounted plugin caller. It sends
+                // its confirmation through the Home's installed Machine transport.
+                const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+                const { ACTION_INVOKE_ACTION_ID_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+                const home = rpcHomes.get('server-client-action')!;
+                const machineId = CLIENT_ACTION_ORIGIN.materializationRef.machineId;
+                const boundary = await createExternalActionAccountHttpBoundary({
+                    serverUrl: home.serverUrl, serverIdentityId: 'srv_client_action', accountId: home.accountId,
+                    machineId, installationId: 'channels-fixture-installation', actionId: ACTION_INVOKE_ACTION_ID_V1,
+                    tokenEpoch: 0, requesterInvocation: 'required',
+                    execute: (input, { invocation, requestId }) => {
+                        const call = input as { input?: { kind?: string; sessionId?: unknown } };
+                        expect(call.input?.kind).toBe('attach');
+                        const sessionId = SessionIdSchema.parse(call.input?.sessionId);
+                        expect(invocation.presentUserConfirmation).toMatchObject({
+                            actionId: ACTION_INVOKE_ACTION_ID_V1, requestId, target: { kind: 'machine', machineId },
+                        });
+                        issued.push({ sessionId, invocation: undefined, serverId: home.id });
+                        return { kind: 'attached', bindingId: 'binding-exact-target' };
+                    },
+                });
+                network.setHttpResponder(async (url, init) => {
+                    const parsed = new URL(String(url));
+                    return await boundary.handle(parsed, init) ?? createEmptyAccountBootstrapHttpResponse(parsed.pathname, init);
+                });
+            }
             await wrapper.composition.unload();
             if (invocationSurface !== 'ui') await wrapper.composition.reconcile([wrapper.activation]);
             const binding = { resolveContributedAction: (identity: PluginContributionIdentityV1) =>
@@ -5144,8 +5170,8 @@ describe('client Action declared SessionTarget admission', () => {
                 expect(confirmations, JSON.stringify({ result, resolutions, issued })).toBe(1);
                 expect(issued).toEqual([]);
             } else if (mode === 'workers' || mode === 'foreignHome') {
-                expect(result).toMatchObject({ code: 'unavailable', diagnostics: [mode === 'workers'
-                    ? 'session_target_cardinality_mismatch' : 'session_target_home_mismatch'] });
+                const code = mode === 'workers' ? 'session_target_cardinality_mismatch' : 'session_target_home_mismatch';
+                expect(result).toMatchObject({ code, diagnostics: [code] });
                 expect(confirmations).toBe(0);
                 expect(issued).toEqual([]);
             } else {
