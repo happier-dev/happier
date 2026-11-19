@@ -442,7 +442,9 @@ only calls the relationship Action. Saved task detail reads the persisted origin
 and opens its exact error reference, including after a reload.
 
 In 0.3 development source, a Review selection uses the same task draft and
-`tasks/create-v1` Action with `originReview: { reviewId, findingIds }`. Before
+`tasks/create-v1` Action with `originReview: { reviewId, findingIds }`.
+`findingIds` contains the selected persisted ReviewComment IDs; engine-local
+finding IDs must first resolve through their Review comments. Before
 calling the task provider, the Action reads exactly those IDs through the
 authorized `reviews.comments.list` Action and rejects missing membership.
 The existing list page boundary and all-pages continuation apply. Task creation
