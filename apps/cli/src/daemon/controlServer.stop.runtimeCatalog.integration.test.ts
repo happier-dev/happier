@@ -6,6 +6,9 @@ import { accountSettingsParse } from '@happier-dev/protocol';
 
 import { createDaemonControlApp } from './controlServer';
 import { createDaemonShutdownController } from './lifecycle/shutdown';
+import { createBeforeShutdownDrain } from './lifecycle/createBeforeShutdownDrain';
+import { cleanupAndShutdown } from './lifecycle/cleanupAndShutdown';
+import { getDaemonShutdownWatchdogTimeoutMs } from './shutdownPolicy';
 import { createStopSession } from './sessions/stopSession';
 import { readProcessIdentityByPid } from './processIdentity';
 import { waitForTrackedRunnerProcessesExit } from './sessions/waitForTrackedRunnerProcessesExit';
@@ -151,7 +154,7 @@ describe('daemon control server: /stop', () => {
     }
   });
 
-  it('defers shutdown until beforeShutdown resolves (when provided)', async () => {
+  it('requests lifecycle shutdown while beforeShutdown is still draining', async () => {
     const calls: string[] = [];
     const barrier = createDeferred<void>();
 
@@ -188,14 +191,65 @@ describe('daemon control server: /stop', () => {
       expect(res.json()).toEqual({ status: 'stopping' });
 
       await new Promise((resolve) => setTimeout(resolve, 75));
-      expect(calls).toEqual(['beforeShutdown']);
+      expect(calls).toEqual(['beforeShutdown', 'shutdown']);
 
       barrier.resolve(undefined);
 
       await new Promise((resolve) => setTimeout(resolve, 75));
-      expect(calls).toEqual(['beforeShutdown', 'beforeShutdownDone', 'shutdown']);
+      expect(calls).toEqual(['beforeShutdown', 'shutdown', 'beforeShutdownDone']);
     } finally {
       await app.close();
+    }
+  });
+
+  it('keeps a blocked final drain inside the existing lifecycle shutdown budget', async () => {
+    const networkEntered = createDeferred<void>();
+    const networkReply = createDeferred<Response>();
+    // Hold only the network boundary; admission, drain, cleanup and watchdog are real.
+    vi.stubGlobal('fetch', async () => { networkEntered.resolve(); return await networkReply.promise; });
+    const beforeShutdown = createBeforeShutdownDrain({
+      spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+      shutdownSpawnDrainGraceMs: 0, shutdownSpawnDrainPollMs: 100,
+      getApiMachineForSessions: () => null,
+      buildUnexpectedSpawnResult: errorMessage => ({ type: 'error', errorCode: 'UNEXPECTED', errorMessage }),
+      drainBackgroundServerWork: async () => { await fetch('https://shutdown.invalid/drain'); },
+    });
+    const requested = createDeferred<void>();
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const cleanup = requested.promise.then(() => cleanupAndShutdown({
+      source: 'happier-cli', processEnv: {}, resolvePositiveIntEnv: (_raw, fallback) => fallback,
+      restartOnStaleVersionAndHeartbeat: null, connectedServiceRefreshLoopHandle: null,
+      connectedServiceQuotasLoopHandle: null, beforeShutdown,
+      apiMachine: null, machineConnectionStateCleanup: null, automationWorker: null, roleActivations: null,
+      trackedSessionCount: 1, stopDirectPeerServer: async () => {}, stopTailscaleTransferServeLifecycle: async () => {},
+      stopControlServer: async () => {}, stopKeepAwake: async () => {}, daemonLockHandle: null,
+      releaseDaemonLock: async () => {},
+    }));
+    const app = createDaemonControlApp({
+      getChildren: () => [], machineId: 'machine_local',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession: async () => ({ type: 'success' as const, sessionId: 'unused' }),
+      beforeShutdown, requestShutdown: () => requested.resolve(),
+      onHappySessionWebhook: () => {}, controlToken: 'test-token',
+    });
+    try {
+      await app.ready();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const response = await app.inject({ method: 'POST', url: '/stop',
+        headers: { 'x-happier-daemon-token': 'test-token' } });
+      expect(response.json()).toEqual({ status: 'stopping' });
+      await networkEntered.promise;
+      await vi.advanceTimersByTimeAsync(getDaemonShutdownWatchdogTimeoutMs());
+      // The lifecycle owner's watchdog already includes this final log-flush turn.
+      await vi.runOnlyPendingTimersAsync();
+      expect(exit).toHaveBeenCalledWith(0);
+    } finally {
+      networkReply.resolve(new Response(null, { status: 204 }));
+      await beforeShutdown();
+      await cleanup;
+      await app.close();
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
     }
   });
 

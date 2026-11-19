@@ -4568,10 +4568,12 @@ export function createDaemonControlApp({
           await beforeShutdown?.();
         } catch (error) {
           logger.debug('[CONTROL SERVER] beforeShutdown hook failed (best-effort)', error);
-        } finally {
-          requestShutdown();
         }
       })();
+      // Enter the lifecycle owner immediately: its existing watchdog must cover
+      // this drain too. Cleanup joins the same once-only daemon drain while the
+      // control runtime finishes retiring its own resources.
+      requestShutdown();
     };
     if (reply.raw.writableFinished || reply.raw.destroyed) {
       shutdownAfterResponse();
