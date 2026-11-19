@@ -70,10 +70,13 @@ export function useWorkflowEventAutomate(
   active: boolean,
 ): Readonly<{
   anchorRef: React.RefObject<View | null>;
+  /** The event's header: the builder opens below it, never over the event's subtitle. */
+  headerRef: React.RefObject<View | null>;
   open: (() => void) | null;
   builder: React.ReactNode;
 }> {
   const anchorRef = React.useRef<View | null>(null);
+  const headerRef = React.useRef<View | null>(null);
   const [opening, setOpening] = React.useState<Readonly<{
     lifetime: ServerAccountScopeLifetime;
     key: number;
@@ -102,6 +105,7 @@ export function useWorkflowEventAutomate(
       <WorkflowSentenceBuilder
         key={opening.key}
         anchorRef={anchorRef}
+        clearanceRef={headerRef}
         accountLifetime={opening.lifetime}
         intent={opening.intent}
         // The event being automated names the builder ("Automate A Machine came online").
@@ -109,7 +113,7 @@ export function useWorkflowEventAutomate(
         onRequestClose={() => setOpening(null)}
       />
     );
-  return { anchorRef, open: automatable ? open : null, builder };
+  return { anchorRef, headerRef, open: automatable ? open : null, builder };
 }
 
 /**
@@ -168,6 +172,7 @@ export const WorkflowEventDetailPage = React.memo(
     const openTarget = presentation.open;
     return (
       <ItemList testID="workflow-events:detail">
+        <View ref={automate.headerRef} collapsable={false}>
         <PageHeader
           testID="workflow-events:detail:header"
           title={presentation.title}
@@ -199,6 +204,7 @@ export const WorkflowEventDetailPage = React.memo(
             </View>
           }
         />
+        </View>
         <WorkflowEventCarries
           presentation={presentation}
           automatable={automate.open !== null}

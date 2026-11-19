@@ -47,7 +47,7 @@ import { useWorkflowDefinitionLibrary } from '../library/workflowLibraryReads';
 import { WorkflowTriggerRunHistory } from './WorkflowTriggerRunHistory';
 import { WorkflowTriggerBlock } from './WorkflowTriggerBlock';
 import { useWorkflowTriggerEventOptions } from './useWorkflowTriggerEventOptions';
-import { readWorkflowEventDraftSeed } from '../events/workflowEventFacts';
+import { formatWorkflowMachineEventTitle, readWorkflowEventDraftSeed } from '../events/workflowEventFacts';
 import { describeLegacyTriggerSet } from './sessionTriggerGroups';
 import { WorkflowRunRoles, workflowUsedRoleIds } from '../run/WorkflowRunRoles';
 import type { WorkflowEditorReadable } from '../editor/workflowEditorDraftStore';
@@ -310,9 +310,14 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
             ? catalog.events.length === 0 ? t('workflows.triggers.card.noPluginTriggersOn', { machine: catalogMachineName }) : null
             : catalog.status === 'unavailable' ? t('workflows.triggers.card.pluginTriggersUnavailable', { machine: catalogMachineName })
                 : t('workflows.triggers.card.pluginTriggersLoading', { machine: catalogMachineName });
-    // A pending Event is named by its declaration; until that resolves its When says why, never a blank pill.
-    const pendingTitle = (when: TriggerWhenValue) => startTitle(when)
-        || (when.kind === 'pluginEvent' ? catalogReason ?? t('automations.form.trigger.chooseEvent') : '');
+    // A pending Event is named by its declaration; until that resolves, by what was seeded (the event feed's own
+    // name for the fact), else "Choose an event". Never a blank pill, and never the catalog's state in the When.
+    const pendingTitle = (item: PendingStart) => startTitle(item.when)
+        || (item.nativeEvent === undefined ? '' : formatWorkflowMachineEventTitle(item.nativeEvent))
+        || (item.when.kind === 'pluginEvent' ? t('automations.form.trigger.chooseEvent') : '');
+    // Why a pending Event is not named by its declaration yet: said once, under the clause.
+    const pendingReason = resolvedPending.some((item) => item.when.kind === 'pluginEvent' && startTitle(item.when) === '')
+        ? catalogReason : null;
     // The When select's choice; a session event keeps its Session, and choosing the same start keeps the rows as they are.
     const selectStart = (when: TriggerWhenValue | null, id: string, apply: (next: TriggerWhenValue) => void) => {
         if (when !== null && readWorkflowTriggerStartId(when) === id) return;
@@ -374,7 +379,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         }),
         ...resolvedPending.map((item) => (
             <WorkflowTriggerBlock key={`new:${item.clientId}`} testID={`${props.testIDPrefix}-trigger:new:${item.clientId}`}
-                title={pendingTitle(item.when)} when={item.when} enabled={item.enabled ?? true} incomplete startOptions={startOptions}
+                title={pendingTitle(item)} when={item.when} enabled={item.enabled ?? true} incomplete startOptions={startOptions}
                 initialEventSeed={item.eventSeed}
                 onStartsOpenChange={demandCatalog}
                 onSelectStart={(id) => selectStart(item.when, id, (next) => editPending(item.clientId, next))}
@@ -412,7 +417,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     renderRows: () => blocks[index] };
             }),
             ...resolvedPending.map((item, index): WorkflowTriggerSentenceLine => ({ key: `new:${item.clientId}`,
-                startId: readWorkflowTriggerStartId(item.when), startTitle: pendingTitle(item.when), detail: null, enabled: item.enabled ?? true, incomplete: true,
+                startId: readWorkflowTriggerStartId(item.when), startTitle: pendingTitle(item), detail: null, enabled: item.enabled ?? true, incomplete: true,
                 onSelectStart: (id) => selectStart(item.when, id, (next) => editPending(item.clientId, next)),
                 onRemove: () => setPending(current => current.filter(candidate => candidate.clientId !== item.clientId)),
                 renderRows: () => blocks[rows.length + index] })),
@@ -420,7 +425,9 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         return (
             <WorkflowTriggerSentenceLines testIDPrefix={props.testIDPrefix} lines={lines} startOptions={startOptions}
                 onAdd={addStart} onStartsOpenChange={demandCatalog} addFooter={addFooter}
-                status={props.status === 'failed' ? readState : null} editable />
+                status={props.status === 'failed' ? readState : pendingReason === null ? null : (
+                    <Text testID={`${props.testIDPrefix}-triggers-pending-reason`} style={styles.menuFoot}>{pendingReason}</Text>
+                )} editable />
         );
     }
     const before = readState !== null || (props.stepsUnsaved && rows.length > 0);

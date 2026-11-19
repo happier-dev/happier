@@ -19,9 +19,9 @@ const nativeEvent = {
   coverage: 'live',
 } as const;
 
-describe('a seeded Machine event whose trigger catalog has not resolved (WF-ACCEPT-1119 fix 5)', () => {
+describe('a seeded Machine event whose trigger catalog has not resolved (WF-ACCEPT-1119 fix 5, 1119B fix 5)', () => {
   it.each(['sentence', 'card'] as const)(
-    'never draws an empty When: it names the catalog state on that Machine (%s)',
+    'names the seeded event in the When, never the catalog state; the reason reads once under the clause (%s)',
     async (presentation) => {
       const incomplete = createWorkflowTriggerIncompleteSeed({ nativeEvent })!;
       const screen = await renderScreen(
@@ -45,15 +45,22 @@ describe('a seeded Machine event whose trigger catalog has not resolved (WF-ACCE
         presentation === 'sentence'
           ? screen.findAll((node) => node.props.testID === `b-sentence-trigger:new:${clientId}-start` && typeof node.props.label === 'string')[0]?.props.label
           : screen.findByTestId(`b-trigger:new:${clientId}-title`)?.props.children;
-      // The Machine has no listed name in this harness; the reason still names it as the owner does.
+      // The When names what was seeded, as the event feed names it.
+      expect(String(title).toLowerCase()).toBe(t('workflows.events.machineOnline', { machine: t('workflows.events.someMachine') }).toLowerCase());
+      // The Machine has no listed name in this harness; the reason names it as the catalog owner does.
       const machine = t('machine.unnamedMachine');
       const reasons = [
         t('workflows.triggers.card.pluginTriggersLoading', { machine }),
         t('workflows.triggers.card.pluginTriggersUnavailable', { machine }),
         t('workflows.triggers.card.noPluginTriggersOn', { machine }),
-      ].map((reason) => reason.toLowerCase());
-      expect(typeof title === 'string' && title.trim().length > 0).toBe(true);
-      expect(reasons).toContain(String(title).toLowerCase());
+      ];
+      if (presentation === 'sentence') {
+        expect(screen.findByTestId('b-triggers-pending-reason')).not.toBeNull();
+        const text = screen.getTextContent();
+        const shown = reasons.filter((reason) => text.includes(reason));
+        expect(shown).toHaveLength(1);
+        expect(text.split(shown[0]!).length - 1).toBe(1);
+      }
     },
   );
 });

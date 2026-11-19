@@ -3,6 +3,7 @@ import { deriveAutomationOccurrenceKeyV1, type AutomationTriggerOccurrenceEviden
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import type { WorkflowActivityFact } from '@/sync/domains/workflows/workflowActivityTypes';
+import { t } from '@/text';
 import type { WorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import type { WorkflowTriggerEventOption } from '@/components/workflows/triggers/workflowTriggerStarts';
 import { resolveWorkflowProjectTargetOnMachine } from '@/components/workflows/screens/resolveContextualWorkflowTarget';
@@ -68,6 +69,12 @@ export function readWorkflowEventTrigger(
   return when === null
     ? null
     : buildTriggerDefinition({ when, enabled: true, sessionId: null });
+}
+
+/** What a Machine fact says happened ("A Machine came online"): the feed's title, and a seeded trigger's name. */
+export function formatWorkflowMachineEventTitle(fact: Readonly<{ event: 'online' | 'offline' }>): string {
+  return t(fact.event === 'online' ? 'workflows.events.machineOnline' : 'workflows.events.machineOffline',
+    { machine: t('workflows.events.someMachine') });
 }
 
 /**

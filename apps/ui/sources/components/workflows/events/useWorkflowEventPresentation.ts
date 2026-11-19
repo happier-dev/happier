@@ -21,7 +21,7 @@ import type { ExecutionRunHeaderReference } from '@/sync/runtime/executionRuns/e
 import type { WorkflowActivityFact } from '@/sync/domains/workflows/workflowActivityTypes';
 import type { WorkflowActivityProjection } from '@/sync/engine/workflows/workflowActivityProjection';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import { readWorkflowEventStartedRuns } from './workflowEventFacts';
+import { formatWorkflowMachineEventTitle, readWorkflowEventStartedRuns } from './workflowEventFacts';
 import { createMachineExecutionRunRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
@@ -186,12 +186,7 @@ export function useWorkflowEventPresentation(
           glyph: 'desktop',
           needsYou: false,
           subtitle: machineName,
-          title: t(
-            fact.event === 'online'
-              ? 'workflows.events.machineOnline'
-              : 'workflows.events.machineOffline',
-            { machine: t('workflows.events.someMachine') },
-          ),
+          title: formatWorkflowMachineEventTitle(fact),
           lines: [
             {
               key: 'machine',

@@ -60,6 +60,8 @@ export const WorkflowSentenceChip = React.memo(function WorkflowSentenceChip(
   props: WorkflowSentenceChipProps,
 ) {
   const { theme } = useUnistyles();
+  const rows = React.useContext(WorkflowSentenceRowsContext);
+  const inRowControl = React.useContext(WorkflowSentenceRowControlContext);
   const quiet = props.kind === 'add' || props.kind === 'placeholder';
   const filled =
     props.kind === 'verb' ||
@@ -94,7 +96,10 @@ export const WorkflowSentenceChip = React.memo(function WorkflowSentenceChip(
       />
     ));
   return (
-    <View ref={props.anchorRef} collapsable={false} style={styles.anchor}>
+    <View ref={props.anchorRef} collapsable={false}
+      // As labelled rows, an add chip on its own row ("or…", "Add a first step") hangs out by its unbordered
+      // content inset, so its glyph stands on the label edge with the row labels (lab 1116c pop-v-*-390).
+      style={[styles.anchor, rows && !inRowControl && props.kind === 'add' ? styles.anchorOnLabelEdge : null]}>
       <HappierComposerChip
         testID={props.testID}
         accessibilityLabel={
@@ -179,6 +184,8 @@ export function WorkflowSentenceWord(
  * and Folder down the label track instead of wrapping prose. Wide hosts keep the prose.
  */
 export const WorkflowSentenceRowsContext = React.createContext(false);
+/** Inside a labelled row's control column: its chips stay on that column. */
+const WorkflowSentenceRowControlContext = React.createContext(false);
 
 /**
  * A word and the chip it introduces, kept on one line so no "in" is stranded at a line's end. As labelled rows
@@ -189,7 +196,13 @@ export function WorkflowSentenceUnit(
 ) {
   const rows = React.useContext(WorkflowSentenceRowsContext);
   if (rows && props.rowLabel !== undefined) {
-    return <View style={styles.row}>{renderWorkflowCardFieldRow(props.rowLabel, props.rowLabel, props.children)}</View>;
+    return (
+      <View style={styles.row}>
+        {renderWorkflowCardFieldRow(props.rowLabel, props.rowLabel, (
+          <WorkflowSentenceRowControlContext.Provider value>{props.children}</WorkflowSentenceRowControlContext.Provider>
+        ))}
+      </View>
+    );
   }
   if (props.word === undefined) return <>{props.children}</>;
   return (
@@ -206,6 +219,10 @@ const styles = StyleSheet.create((theme) => ({
     maxWidth: '100%',
     flexShrink: 1,
     minWidth: 0,
+  },
+  // The chip's horizontal padding plus its (transparent) 1 px border.
+  anchorOnLabelEdge: {
+    marginLeft: -(theme.space.s10 + 1),
   },
   chip: {
     flexDirection: 'row',
