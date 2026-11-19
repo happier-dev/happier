@@ -3,7 +3,8 @@ import { CustodySchema, WorkspaceSyncManagedTargetCustodySchema, RequesterCreden
   requesterSessionCredentialPath, requesterSessionCredentialDirectory, requesterSessionCredentialFilePrefix } from './requesterSessionCustody';
 import type { ReadonlyTrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 export { REQUESTER_SESSION_CREDENTIAL_FILE_ENV, REQUESTER_SESSION_ID_ENV, type RequesterSessionCredentialBinding, requesterSessionCredentialPath, readRequesterSessionCredentialsForChild } from './requesterSessionCustody';
-import { readRequesterHomeWithinActionLifetime, recordRequesterCurrentnessRefusal, rethrowRequesterHomeReadFailure } from './requesterCurrentness';
+import { readRequesterHomeWithinActionLifetime, recordRequesterCurrentnessRefusal, rethrowRequesterHomeReadFailure,
+  type RequesterSessionCustodyRefusalCode } from './requesterCurrentness';
 
 import { basename, join } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -153,6 +154,22 @@ export type ResolveRequesterSessionRuntimeContext = (
   onPreparationRefused?: (refusal: RequesterSessionRecoveryRefusal) => Promise<void>,
 ) => Promise<RequesterSessionRuntimeContext | null>;
 
+type RequesterInstallationAttribution = Omit<RequesterWorkAttributionV1, 'accountId'>;
+
+function readRequesterInstallationMismatch(retained: RequesterInstallationAttribution, admitted: RequesterInstallationAttribution):
+  RequesterSessionCustodyRefusalCode | undefined {
+  if (retained.serverId !== admitted.serverId) return 'requester_session_custody_server_profile_mismatch';
+  if (retained.machineId !== admitted.machineId) return 'requester_session_custody_machine_mismatch';
+  if (retained.installationId !== admitted.installationId) return 'requester_session_custody_installation_mismatch';
+  return undefined;
+}
+
+function readRequesterAttributionMismatch(retained: RequesterWorkAttributionV1, admitted: RequesterWorkAttributionV1):
+  RequesterSessionCustodyRefusalCode | undefined {
+  return retained.accountId !== admitted.accountId ? 'requester_session_custody_account_mismatch'
+    : readRequesterInstallationMismatch(retained, admitted);
+}
+
 /** The daemon's one tracked/recovered requester selection and publication owner. */
 export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
   trackedSessions: ReadonlyTrackedSessionMap;
@@ -186,7 +203,7 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
     let stamp = tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1
       ?? context?.bootstrap.attribution ?? attribution;
     if (stamp && attribution && !isDeepStrictEqual(stamp, attribution)) {
-      recordRequesterCurrentnessRefusal('requester_session_custody_binding_mismatch');
+      recordRequesterCurrentnessRefusal(readRequesterAttributionMismatch(stamp, attribution) ?? 'requester_session_custody_binding_mismatch');
       return null;
     }
     const onRecoveryRefused = onPreparationRefused ?? input.onRecoveryRefused;
@@ -204,11 +221,9 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
         && (!currentStamp || isDeepStrictEqual(currentStamp, stamp));
     };
     if (context) {
-      const contextStamp = context.bootstrap.attribution;
-      if (contextStamp.serverId !== stamp.serverId || contextStamp.accountId !== stamp.accountId
-        || contextStamp.machineId !== stamp.machineId || contextStamp.installationId !== stamp.installationId
-        || context.bootstrap.getBoundSessionId() !== sessionId) {
-        recordRequesterCurrentnessRefusal('requester_session_custody_binding_mismatch');
+      const mismatch = readRequesterAttributionMismatch(context.bootstrap.attribution, stamp);
+      if (mismatch || context.bootstrap.getBoundSessionId() !== sessionId) {
+        recordRequesterCurrentnessRefusal(mismatch ?? 'requester_session_custody_session_mismatch');
         return null;
       }
       if (await context.isCurrent(signal)) {
@@ -703,7 +718,7 @@ export async function resolveRequesterSessionBootstrap(input: RequesterSessionCr
     const stored = await resolveRequesterSessionCustody({ ...input, onSessionReadRefused: () => { refused = true; } },
       async (candidate, signal) => {
         if (!candidate.homeServerIdentityId) {
-          recordRequesterCurrentnessRefusal('requester_session_custody_binding_mismatch');
+          recordRequesterCurrentnessRefusal('requester_session_custody_home_unavailable');
           return undefined;
         }
         refusalCredentials = candidate.credentials;
@@ -746,13 +761,21 @@ export async function resolveRequesterSessionBootstrapFromCustody(input: Readonl
   const boundary = input.machineAdmissionBoundary;
   const installation = boundary.readInstallation();
   const expected = input.expectedAttribution;
-  if (!installation || !boundary.isHomeCurrent()
-    || expected && (expected.serverId !== input.serverId || expected.machineId !== boundary.machineId
-      || expected.installationId !== installation.installationId)) {
-    recordRequesterCurrentnessRefusal('requester_session_custody_binding_mismatch');
+  if (!installation) {
+    recordRequesterCurrentnessRefusal('requester_session_custody_installation_unavailable');
+    return null;
+  }
+  if (!boundary.isHomeCurrent()) {
+    recordRequesterCurrentnessRefusal('requester_session_custody_home_unavailable');
     return null;
   }
   if (expected) {
+    const mismatch = readRequesterInstallationMismatch(expected, { serverId: input.serverId,
+      machineId: boundary.machineId, installationId: installation.installationId });
+    if (mismatch) {
+      recordRequesterCurrentnessRefusal(mismatch);
+      return null;
+    }
     // Known custody remains an exact read. Unrelated unreadable references
     // cannot withdraw this Session's authority or trigger a credential fallback.
     try {
@@ -820,16 +843,26 @@ export async function isAdmittedRequesterSessionBootstrapCurrent(context: Pick<R
 }
 
 async function readBoundCustody(path: string, expected: Pick<RequesterCredentialCustodyBinding, 'sessionId' | 'attribution' | 'scope' | 'endpointRole'>
-  & Readonly<{ workspace?: ManagedWorkspaceRefV2 }>) {
+  & Readonly<{ workspace?: ManagedWorkspaceRefV2 }>, reportRefusal?: (reason: RequesterSessionCustodyRefusalCode) => void) {
   const value = RequesterCredentialCustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown);
-  if (value.scope !== expected.scope || value.endpointRole !== expected.endpointRole
-    || value.sessionId !== expected.sessionId || !isDeepStrictEqual(value.attribution, expected.attribution)
-    || value.v === 2 && !isDeepStrictEqual(value.workspace, expected.workspace)) return null;
+  const refuse = (reason: RequesterSessionCustodyRefusalCode): null => {
+    reportRefusal?.(reason);
+    return null;
+  };
+  if (value.scope !== expected.scope || value.endpointRole !== expected.endpointRole) {
+    return refuse('requester_session_custody_scope_mismatch');
+  }
+  if (value.sessionId !== expected.sessionId) return refuse('requester_session_custody_session_mismatch');
+  if (!isDeepStrictEqual(value.attribution, expected.attribution)) {
+    return refuse(readRequesterAttributionMismatch(value.attribution, expected.attribution) ?? 'requester_session_custody_binding_mismatch');
+  }
+  if (value.v === 2 && !isDeepStrictEqual(value.workspace, expected.workspace)) return null;
   const credentials = decodeStoredCredentials(value.credentials);
   return credentials ? { credentials, homeServerIdentityId: value.homeServerIdentityId,
     executionIdentity: value.v === 1 ? value.executionIdentity : undefined,
     workspace: value.v === 2 ? value.workspace : undefined,
-    sourceExecutionIdentity: value.v === 2 ? value.sourceExecutionIdentity : undefined } : null;
+    sourceExecutionIdentity: value.v === 2 ? value.sourceExecutionIdentity : undefined }
+    : refuse('requester_session_custody_record_read_failed');
 }
 
 /** Constrain an independently authenticated Account/Session source. Only ENOENT
@@ -840,11 +873,18 @@ export async function readRequesterSessionExecutionCustodyForHost(input: Request
   homeServerIdentityId: string;
 }>): Promise<'absent' | 'retained' | 'unavailable'> {
   try {
-    const stored = await readBoundCustody(requesterSessionCredentialPath(input), input);
-    if (stored?.homeServerIdentityId === input.homeServerIdentityId
-      && sameStoredCredentials(stored.credentials, input.credentials)) return 'retained';
-    recordRequesterCurrentnessRefusal('requester_session_custody_binding_mismatch');
-    return 'unavailable';
+    const stored = await readBoundCustody(requesterSessionCredentialPath(input), input, recordRequesterCurrentnessRefusal);
+    if (!stored) return 'unavailable';
+    if (stored.homeServerIdentityId !== input.homeServerIdentityId) {
+      recordRequesterCurrentnessRefusal(stored.homeServerIdentityId
+        ? 'requester_session_custody_home_mismatch' : 'requester_session_custody_home_unavailable');
+      return 'unavailable';
+    }
+    if (!sameStoredCredentials(stored.credentials, input.credentials)) {
+      recordRequesterCurrentnessRefusal('requester_session_custody_credential_mismatch');
+      return 'unavailable';
+    }
+    return 'retained';
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return 'absent';
     recordRequesterCurrentnessRefusal('requester_session_custody_record_read_failed');
@@ -1111,7 +1151,8 @@ async function resolveRequesterSessionCustody(input: RequesterCredentialCustodyB
     // An opaque callback never supplies a reason to delete protected custody.
     if (input.scope !== 'workspace_sync_relationship' && !readMachineAdmissionCurrent
       && input.verifyMachineAdmissionCurrent && !await input.verifyMachineAdmissionCurrent(input.signal)) return null;
-    const stored = await readBoundCustody(requesterSessionCredentialPath(input), input).catch((error: unknown) => {
+    const stored = await readBoundCustody(requesterSessionCredentialPath(input), input,
+      input.scope ? undefined : recordRequesterCurrentnessRefusal).catch((error: unknown) => {
       const absent = error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT';
       if (!absent && !input.scope && !input.signal?.aborted) {
         recordRequesterCurrentnessRefusal('requester_session_custody_record_read_failed');
@@ -1119,10 +1160,14 @@ async function resolveRequesterSessionCustody(input: RequesterCredentialCustodyB
       throw error;
     });
     const boundary = input.machineAdmissionBoundary;
-    if (!stored || boundary && stored.homeServerIdentityId && boundary.getObservedServerIdentityId
-      && stored.homeServerIdentityId !== await boundary.getObservedServerIdentityId()) {
-      if (!input.scope) recordRequesterCurrentnessRefusal('requester_session_custody_binding_mismatch');
-      return null;
+    if (!stored) return null;
+    if (boundary && stored.homeServerIdentityId && boundary.getObservedServerIdentityId) {
+      const observedHome = await boundary.getObservedServerIdentityId();
+      if (stored.homeServerIdentityId !== observedHome) {
+        if (!input.scope) recordRequesterCurrentnessRefusal(observedHome
+          ? 'requester_session_custody_home_mismatch' : 'requester_session_custody_home_unavailable');
+        return null;
+      }
     }
     const callerVerifier = input.scope === 'workspace_sync_relationship' ? undefined : input.verifyMachineAdmissionCurrent;
     const verifyMachineAdmissionCurrent = callerVerifier ?? ((signal?: AbortSignal) =>

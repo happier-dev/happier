@@ -2385,6 +2385,12 @@ Recovery preserves and compares that retained Home; a historical record without
 it cannot acquire a Home identity from the currently selected profile. This is
 host-private custody, not a new public Session birth field or SDK serialization.
 
+Requester Session custody survives a daemon restart when the retained Session,
+Account, Machine, installation, server profile and Home still match current
+admission. In 0.3 development, spawn refusal diagnostics name the mismatching
+field or unavailable Home through the existing launch failure cause. They carry
+no identity values or credential material.
+
 Ordinary native owner Sessions can lack requester-child custody, including on
 resume, but absence of in-memory scope does not bypass an existing protected
 custody file. MCP and native Exec/SCM share the exact-file discriminator: only

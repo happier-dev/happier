@@ -1315,8 +1315,8 @@ describe('requester Session lifecycle custody', () => {
     const binding = { happyHomeDir: directory!, sessionId: 'session', attribution };
     await createRequesterSessionCredentialCustody({ ...binding, credentials, homeServerIdentityId: 'srv_original_home' });
     let observedHomeIdentity = 'srv_original_home';
-    const recover = () => requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody({
-      ...binding, serverId: attribution.serverId, expectedAttribution: attribution, serverHttpBaseUrl: origin,
+    const recover = (expectedAttribution = attribution) => requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody({
+      ...binding, serverId: attribution.serverId, expectedAttribution, serverHttpBaseUrl: origin,
       machineAdmissionBoundary: { ...host.boundary, getObservedServerIdentityId: () => observedHomeIdentity },
     });
 
@@ -1326,11 +1326,15 @@ describe('requester Session lifecycle custody', () => {
     await admitted.value?.dispose();
 
     observedHomeIdentity = 'srv_replacement_home';
-    await expect(captureRequesterCurrentnessRefusal(recover)).resolves.toEqual({
-      value: null, branch: 'requester_session_custody_binding_mismatch',
-    });
+    const homeRefusal = await captureRequesterCurrentnessRefusal(recover);
 
     observedHomeIdentity = 'srv_original_home';
+    const accountRefusal = await captureRequesterCurrentnessRefusal(() => recover({ ...attribution, accountId: 'another-account' }));
+    expect({ home: homeRefusal, account: accountRefusal }).toEqual({
+      home: { value: null, branch: 'requester_session_custody_home_mismatch' },
+      account: { value: null, branch: 'requester_session_custody_account_mismatch' },
+    });
+
     host.setUnavailablePath('/v2/sessions/session');
     const failedRecordRead = await captureRequesterCurrentnessRefusal(() => recover().catch((error: unknown) => error));
     expect(failedRecordRead).toMatchObject({

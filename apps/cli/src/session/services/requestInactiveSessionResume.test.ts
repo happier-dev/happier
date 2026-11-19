@@ -821,9 +821,12 @@ describe('requestInactiveSessionResume', () => {
     expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private native detail');
   });
 
-  it.each(['DAEMON_RPC_UNAVAILABLE', 'SPAWN_VALIDATION_FAILED'] as const)('keeps the named requester custody cause through %s', async errorCode => {
+  it.each([
+    ['DAEMON_RPC_UNAVAILABLE', 'requester_session_custody_home_mismatch'],
+    ['SPAWN_VALIDATION_FAILED', 'requester_session_custody_account_mismatch'],
+    ['DAEMON_RPC_UNAVAILABLE', 'requester_session_custody_binding_mismatch'],
+  ] as const)('keeps %s requester custody detail %s', async (errorCode, cause) => {
     const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
-    const cause = 'requester_session_custody_record_read_failed';
     const errorDetail = { kind: 'launch_error', code: 'requester_session_custody_unavailable',
       message: 'Requester Session custody unavailable', failureCause: { phase: 'client_start', failureReason: 'unknown', code: cause } };
     callMachineRpc.mockResolvedValueOnce({ type: 'error', errorCode, errorMessage: 'private file error', errorDetail });

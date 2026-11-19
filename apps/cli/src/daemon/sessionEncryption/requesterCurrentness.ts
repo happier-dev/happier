@@ -6,7 +6,19 @@ import { delayUnrefAbortable } from '@/utils/time';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 const REQUESTER_SESSION_CUSTODY_REFUSAL_CODES = [
+  // Prior daemons reported all binding and Home refusals under this code.
   'requester_session_custody_binding_mismatch',
+  'requester_session_custody_server_profile_mismatch',
+  'requester_session_custody_account_mismatch',
+  'requester_session_custody_machine_mismatch',
+  'requester_session_custody_installation_mismatch',
+  'requester_session_custody_installation_unavailable',
+  'requester_session_custody_session_mismatch',
+  'requester_session_custody_scope_mismatch',
+  'requester_session_custody_credential_mismatch',
+  'requester_session_custody_bootstrap_mismatch',
+  'requester_session_custody_home_mismatch',
+  'requester_session_custody_home_unavailable',
   'requester_session_custody_record_read_failed',
   'requester_session_custody_runtime_unavailable',
 ] as const;

@@ -4082,9 +4082,11 @@ export async function startDaemonSessionControlRuntime(
       let ordinaryAgentIsolationAccountSource: SessionAgentIsolationAccountSource | undefined;
       const suppliedRequesterRuntime = options.requesterSessionRuntimeContext;
       if (suppliedRequesterRuntime) {
-        if (suppliedRequesterRuntime.bootstrap !== options.requesterSessionBootstrap
-          || existingSessionId && suppliedRequesterRuntime.bootstrap.getBoundSessionId() !== existingSessionId) {
-          return requesterRuntimeUnavailable('requester_session_custody_binding_mismatch');
+        if (suppliedRequesterRuntime.bootstrap !== options.requesterSessionBootstrap) {
+          return requesterRuntimeUnavailable('requester_session_custody_bootstrap_mismatch');
+        }
+        if (existingSessionId && suppliedRequesterRuntime.bootstrap.getBoundSessionId() !== existingSessionId) {
+          return requesterRuntimeUnavailable('requester_session_custody_session_mismatch');
         }
         if (!await suppliedRequesterRuntime.isCurrent()) {
           return requesterRuntimeUnavailable('requester_session_custody_runtime_unavailable');
@@ -4103,7 +4105,7 @@ export async function startDaemonSessionControlRuntime(
       if (!options.requesterSessionBootstrap && existingSessionId && requesterRuntimeAccess) {
         if (requesterRuntime) {
           if (requesterRuntime.bootstrap.getBoundSessionId() !== existingSessionId) {
-            return requesterRuntimeUnavailable('requester_session_custody_binding_mismatch');
+            return requesterRuntimeUnavailable('requester_session_custody_session_mismatch');
           }
           if (!await requesterRuntime.isCurrent(shutdownCancellationDomains.daemonWorkSignal)) {
             return requesterRuntimeUnavailable('requester_session_custody_runtime_unavailable');
