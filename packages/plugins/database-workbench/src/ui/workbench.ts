@@ -223,6 +223,9 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
                         return foreignKeyNavigation(local.get('location'), foreignKey, result.columns.map(column => column.name), row.cells);
                     },
                     incomingForeignKeys: metadata.data.incomingForeignKeys ?? [],
+                    // The columns whose value alone tells rows apart: a whole-table unique index on that one column.
+                    uniqueColumns: metadata.data.indexes.flatMap(index => index.unique && !index.primary && index.predicate === undefined
+                        && index.columns.length === 1 && index.columns[0]!.kind === 'column' ? [index.columns[0]!.column] : []),
                     incomingForeignKey(rowKey: string, reference: DatabaseIncomingForeignKeyV1) {
                         const row = projected.rows.find(candidate => candidate.rowKey === rowKey);
                         if (!row) return { status: 'unavailable' as const, reason: 'missing_key' as const };

@@ -85,7 +85,7 @@ function connectionResourceHandlers() {
 }
 
 /** The daemon's Action results for a small Postgres database; the host Action boundary is the only fake. */
-function daemonAnswers(targets: readonly DatabaseDescriptorV1[], editableTextReference = false) {
+function daemonAnswers(targets: readonly DatabaseDescriptorV1[], editableTextReference = false, uniqueNumber = false) {
   return vi.fn(
     async ({ action }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> =>
       projectNativeJsonValueForTransport(
@@ -150,7 +150,7 @@ function daemonAnswers(targets: readonly DatabaseDescriptorV1[], editableTextRef
                     target: { schema: 'public', name: 'customers' }, targetColumns: ['code'] }] : [],
                   incomingForeignKeys: [{ name: 'invoice_lines_invoice', source: { schema: 'public', name: 'invoice_lines' },
                     sourceColumns: ['invoice_id'], targetColumns: ['id'] }],
-                  indexes: [],
+                  indexes: uniqueNumber ? [{ name: 'invoices_number_key', unique: true, primary: false, columns: [{ kind: 'column', column: 'number' }] }] : [],
                   capabilities: editableTextReference ? [{ operation: 'edits.apply', available: true }] : [],
                 },
               };
@@ -370,6 +370,29 @@ describe('Database workbench surfaces', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Review' }));
       expect(await fixture.getByText('New row')).toBeTruthy();
       expect(executeAction).not.toHaveBeenCalled();
+    } finally { await fixture.dispose(); }
+  });
+
+  it.each([
+    { unique: true, title: 'INV-2026-04812', subtitle: 'invoices · id 48212' },
+    { unique: false, title: 'id 48212', subtitle: null },
+  ])('titles an open row by its unique worded value, else by its key (unique number: $unique)', async ({ unique, title, subtitle }) => {
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: `row-title-${unique}`, mountNonce: `row-title-${unique}` },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'data/public/invoices',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ detailsPane: { available: true } }),
+      handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([descriptor], true, unique) },
+    });
+    try {
+      await settle(20);
+      await act(async () => { await fixture.press(await fixture.getByRole('button', { name: '48212' })); });
+      await settle(20);
+      // A status tells no row apart; only a unique worded value or the key names one.
+      expect(await fixture.getByRole('heading', { name: title })).toBeTruthy();
+      expect((await fixture.getAllByRole('group', { name: 'Details pane' })).length).toBe(1);
+      if (subtitle) expect(await fixture.getByText(subtitle)).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
 

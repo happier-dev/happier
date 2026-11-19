@@ -50,6 +50,7 @@ type PageColumn = ReturnType<typeof useRelationPage>['columns'][number];
 type PageRow = ReturnType<typeof useRelationPage>['rows'][number];
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
+const NO_UNIQUE: readonly string[] = [];
 const NO_INCOMING: readonly DatabaseIncomingForeignKeyV1[] = Object.freeze([]);
 
 
@@ -119,6 +120,8 @@ function RowDetail(
     tools: ValueTools;
     /** The other tables whose rows point at this table (D41). */
     incoming: readonly DatabaseIncomingForeignKeyV1[];
+    /** The columns a unique index makes a row's name. */
+    uniqueColumns: readonly string[];
     /** Beside the table the pane draws its own identity and Close; pushed or in the host pane the band does. */
     inlineHeader: Readonly<{ onClose: () => void }> | null;
   }>,
@@ -204,7 +207,7 @@ function RowDetail(
     props.relation,
     props.row.rowKey,
   ]);
-  const identityLine = rowIdentity(props.row, props.columns, props.relation, translate);
+  const identityLine = rowIdentity(props.row, props.columns, props.uniqueColumns, props.relation, translate);
   // The row's name and Close stay put; its fields scroll under them, so a long row (its JSON last) is always reachable.
   return (
     <Stack gap="medium" grow>
@@ -363,15 +366,19 @@ const INLINE_VALUE_MAX_CHARACTERS = 20;
 /** Text this long says its length on the name's line (lab longValue "78 characters"). */
 const LONG_TEXT_CHARACTERS = 40;
 
-/** What the pane names the open row by: its first worded value, then where it lives and its key (lab longValue). */
+/**
+ * What the pane names the open row by (lab longValue): the worded value that tells it apart, a text column a unique
+ * index covers, then where it lives and its key. Without one (a status tells no row apart) the key names it.
+ */
 function rowIdentity(
   row: PageRow,
   columns: readonly PageColumn[],
+  uniqueColumns: readonly string[],
   relation: DatabaseRelationV1,
   translate: PluginTranslate,
 ): Readonly<{ title: string; subtitle: string }> {
   const key = row.identity?.key.map((cell) => `${cell.column} ${presentCell(cell.value, translate, { identifier: true }).text}`).join(' · ');
-  const named = columns.findIndex((column) => column.kind === 'text' && !isIdentifierColumn(column)
+  const named = columns.findIndex((column) => column.kind === 'text' && uniqueColumns.includes(column.name)
     && row.cells[columns.indexOf(column)]?.type === 'text');
   const title = named >= 0 ? presentCell(row.cells[named], translate).text : key ?? row.rowKey;
   return { title, subtitle: [relation.name, named >= 0 ? key : null].filter(Boolean).join(' · ') };
@@ -603,7 +610,7 @@ export function RelationData(
   // Pushed (a phone) or in the host pane, the band names the row; beside the table the pane names it itself.
   const detailHeader = (key: string) => {
     const row = page.rows.find((candidate) => candidate.rowKey === key);
-    return row ? rowIdentity(row, page.columns, props.relation, translate) : { title: key };
+    return row ? rowIdentity(row, page.columns, page.uniqueColumns ?? NO_UNIQUE, props.relation, translate) : { title: key };
   };
   const first = location.page.offset + 1;
   const shownTo = location.page.offset + page.rows.length;
@@ -734,6 +741,7 @@ export function RelationData(
               relation={props.relation}
               tools={tools}
               incoming={page.incomingForeignKeys ?? NO_INCOMING}
+              uniqueColumns={page.uniqueColumns ?? NO_UNIQUE}
               inlineHeader={detailContext.headerHosted ? null : { onClose: closeRow }}
               editable={page.capabilities.edit}
               {...(page.capabilities.reason
