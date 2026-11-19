@@ -41,6 +41,7 @@ import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, 
   isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
   DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1,
+  DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
   DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, isDeploymentPromoteActionIdV1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentReadAdmissionV1Schema, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
   type DeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
@@ -1330,6 +1331,7 @@ export const ExternalActionWorkflowOriginV1Schema = lazyZodSchema(() => z.strict
 export function isExternalActionMachineWorkflowActionIdV1(actionId: string): boolean {
   return ManagedMachineActionIdV1Schema.safeParse(actionId).success
     || actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+    || actionId === DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1
     || actionId === 'deployments.prepare'
     || actionId === 'deployments.templates.instantiate'
     || actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1

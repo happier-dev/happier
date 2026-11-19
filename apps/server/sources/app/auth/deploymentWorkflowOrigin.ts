@@ -1,6 +1,7 @@
 import type { ExternalActionExecutionAuthorizationBindingV1, ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1,
+    DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
     DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isAutomationOriginRunPublisherTx } from '@/app/automations/automationTriggerCauseChain';
@@ -75,6 +76,8 @@ export async function hasCurrentDeploymentWorkflowOriginInTx(reader: Tx, input: 
     // Prepare is source/workspace work; its existing preparation admission owns
     // those operands and does not require an Environment to exist yet.
     if (input.actionId === 'deployments.prepare') return input.deploymentPreparationAdmission?.operation === 'prepare';
+    // Catalog Prepare shares the installed Run proof and the existing catalog admission.
+    if (input.actionId === DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1) return input.deploymentPreparationAdmission?.operation === 'catalog';
     // Create's mint owns Source admission; its installed Run may precede the child Environment.
     if (input.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1) return input.deploymentPreparationAdmission?.operation === 'create';
     if (input.actionId === 'deployments.templates.instantiate') {

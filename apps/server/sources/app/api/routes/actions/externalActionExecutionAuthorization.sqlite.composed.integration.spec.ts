@@ -1,5 +1,6 @@
 import { plainPrivateLabel, prepareE2eeAccountApiTokenLabel, preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import Fastify from "fastify";
 import axios from 'axios';
 import { SessionArchiveHttpBodyV1Schema } from '@happier-dev/protocol/sessions/control/contract';
@@ -2075,6 +2076,66 @@ describe("external Action execution authorization", () => {
             expect(await verify(selectedPath, 'deployments.environments.get', { serverId: homeId, environmentId: selected.environmentId })).not.toBeNull();
             expect(await verify(`/v1/artifacts/${selected.contentArtifactId}`, undefined, { id: selected.contentArtifactId })).toBeNull();
             expect(await verify(`/v1/artifacts/${unrelated}`, undefined, { id: unrelated })).not.toBeNull();
+        } finally { await app.close(); }
+    });
+
+    it('delivers catalog Publish Prepare from the assigned installed Workflow', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const { account, machine, keyPair } = fixture;
+        const homeId = await getOrCreateServerIdentityId();
+        const actionId = 'deployments.publish.prepare';
+        const input = { serverId: homeId, machineId: machine.id, installationId: machine.installationId!,
+            newProject: { name: 'Catalog Project', requestKey: crypto.randomUUID(), owner: { kind: 'account', accountId: account.id } },
+            templateRef: { sourceId: 'apps', itemId: 'app', version: '1',
+                ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } } };
+        await db.machine.update({ where: { id: machine.id }, data: { active: true, lastActiveAt: new Date(),
+            operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
+        const runId = crypto.randomUUID();
+        const snapshot = await materializeWorkflowAcceptedSnapshotFixture({ definition: { version: 1, inputs: [], defaults: {},
+            blocks: [{ kind: 'action', id: 'prepare-catalog', actionId, input: Object.fromEntries(Object.entries(input)
+                .map(([key, value]) => [key, { kind: 'literal', value }])) }] },
+            effects: { readActionContract: async () => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(actionId))) },
+            context: { source: { kind: 'inline' }, inputs: {}, machineId: machine.id, executionTarget: { kind: 'detached_run' },
+                workspaceTarget: { project: { machineId: machine.id, directory: '/repo', checkoutRootPath: '/repo' } },
+                origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } } });
+        await db.automationRun.create({ data: { id: runId, accountId: account.id, originKind: 'direct', causeKind: null,
+            workflowAcceptedSnapshotEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+                mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: account.id, runId }, acceptedSnapshot: snapshot })),
+            state: 'running', workflowCustodyState: 'pending', claimedByMachineId: machine.id,
+            scheduledAt: new Date(), dueAt: new Date(), assignments: { create: { machineId: machine.id } } } });
+        const forwarded: ExternalActionDaemonDispatchRequest[] = [];
+        const dispatch = createExternalActionDaemonDispatcher({ io: createSocketRoomDiscoveryHarness(async () => []),
+            forwardRpc: async ({ callParams }) => {
+                const request = callParams as ExternalActionDaemonDispatchRequest;
+                forwarded.push(request);
+                const prepared = prepareExternalActionResponseEnvelopeV1({ v: 1, actionId, requestId: request.envelope.requestId,
+                    execution: { ok: true, result: { kind: 'prepared' } } });
+                return { ok: true, result: createExternalActionDaemonDispatchResponse(prepared) };
+            } });
+        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const { app } = await createApp(fixture.team.id, false, undefined, dispatch);
+        const deliver = async (candidate = input, originRunId = runId) => {
+            const requestId = crypto.randomUUID();
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId,
+                target: { kind: 'machine', machineId: machine.id }, input: candidate });
+            const workflowActionOrigin = { runId: originRunId, requestId };
+            const installationProof = signMachineInstallationProof({ privateKey: keyPair.secretKey,
+                payload: { version: 1, accountId: account.id, machineId: machine.id, installationId: machine.installationId!,
+                    externalActionOrigin: { homeId, actionId, requestId, origin: workflowActionOrigin,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } } });
+            return app.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                headers: { authorization: `Bearer ${token}`, [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' },
+                payload: { v: 1, machineId: machine.id, envelope, workflowActionOrigin, installationProof } });
+        };
+        try {
+            const accepted = await deliver();
+            expect(accepted.statusCode, accepted.body).toBe(200);
+            expect(forwarded[0]?.executionAuthorization?.binding).toMatchObject({ actionId,
+                workflowActionOrigin: { runId }, deploymentPreparationAdmission: { operation: 'catalog', installationId: machine.installationId } });
+            expect((await deliver(input, crypto.randomUUID())).statusCode).toBe(403);
+            expect((await deliver({ ...input, installationId: crypto.randomUUID() })).statusCode).toBe(403);
+            expect(forwarded).toHaveLength(1);
         } finally { await app.close(); }
     });
 
