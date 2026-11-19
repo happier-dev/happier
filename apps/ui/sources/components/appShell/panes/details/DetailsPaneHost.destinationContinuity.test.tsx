@@ -78,6 +78,36 @@ describe('destination details presentation continuity', () => {
         }
     });
 
+    it('heads a details pane retained at full width with Back, and a pane beside the page with Close', async () => {
+        const { DetailsPaneHost } = await import('./DetailsPaneHost');
+        const { AppPaneProvider } = await import('../AppPaneProvider');
+        const closes: string[] = [];
+        const tree = () => <AppPaneProvider><DetailsPaneHost
+            testID="listing"
+            main={<div />}
+            details={{ header: { title: 'Theme' }, content: <div /> }}
+            onCloseDetails={() => { closes.push('closed'); }}
+        /></AppPaneProvider>;
+        const screen = await renderScreen(tree());
+        for (const [width, enabled] of [[390, true], [1440, false], [1440, true]] as const) {
+            host.width = width;
+            await act(async () => { setPanelsEnabled(enabled); });
+            await screen.update(tree());
+            const back = screen.findByTestId('listing.header.back');
+            const close = screen.findByTestId('listing.header.close');
+            if (width === 390 || !enabled) {
+                expect(back, `${width}/${enabled}: the full-width pane leads with Back`).not.toBeNull();
+                expect(close, `${width}/${enabled}: no second way out beside Back`).toBeNull();
+                await act(async () => { back!.props.onPress(); });
+            } else {
+                expect(back).toBeNull();
+                expect(close).not.toBeNull();
+                await act(async () => { close!.props.onPress(); });
+            }
+        }
+        expect(closes, 'Back and Close both close the same detail').toHaveLength(3);
+    });
+
     it('does not admit right or bottom auxiliary content into the destination-only presentation', async () => {
         const { PaneColumnsHost } = await import('../PaneColumnsHost');
         const { useOptionalAppPaneScopeLayout } = await import('../hooks/useAppPaneScopeLayout');

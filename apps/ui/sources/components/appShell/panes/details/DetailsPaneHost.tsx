@@ -5,6 +5,7 @@ import { View } from 'react-native';
 import { AppScopePaneHost } from '../AppScopePaneHost';
 import { PaneHeader, type PaneHeaderContent } from '../PaneHeader';
 import { PopoverScope } from '@/components/ui/popover';
+import { useDetailsPaneAvailable } from './detailsPaneAvailability';
 
 /** Content a destination opens in its details pane. Tabs are the content's own business. */
 export type DetailsPaneContent = Readonly<{
@@ -46,6 +47,10 @@ export const DetailsPaneContentView = React.memo(function DetailsPaneContentView
     const testID = props.testID ?? 'details-pane';
     // The details pane (header and body) is the boundary its menus and Add surfaces float inside.
     const paneBoundaryRef = React.useRef<View>(null);
+    // Where no pane fits beside the page the host keeps this detail at full width over it (a phone, panes off): it
+    // reads as the page a fresh open would push, so Back leads its band instead of a pane's Close.
+    const besidePage = useDetailsPaneAvailable();
+    const navigation = React.useMemo(() => besidePage ? undefined : { onBack: onClose }, [besidePage, onClose]);
     return (
         <View
             ref={paneBoundaryRef}
@@ -64,7 +69,8 @@ export const DetailsPaneContentView = React.memo(function DetailsPaneContentView
                     line={details.header.line}
                     actions={details.header.actions}
                     lineTrailing={details.header.lineTrailing}
-                    onClose={onClose}
+                    navigation={navigation}
+                    onClose={navigation ? undefined : onClose}
                 />
             ) : null}
             <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>{details.content}</View>
