@@ -25,7 +25,15 @@ beforeAll(async () => {
   await mkdir(bin, { recursive: true });
   // Mise is an external process boundary. The fixture preserves real environment
   // capture and command execution; it replaces only acquiring the vendor binary.
-  await writeFile(join(bin, 'mise'), '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2026.10.4 linux-x64"; exit; fi\nif [ "$1" = "exec" ]; then . "${MISE_OVERRIDE_CONFIG_FILENAMES%/*}/env.sh"; shift; shift; exec "$@"; fi\nexit 1\n', { mode: 0o755 });
+  await writeFile(join(bin, 'mise'), [
+    '#!/bin/sh',
+    'case "$1" in',
+    '  --version) printf "%s\\n" "2026.10.4 linux-x64 (2026-10-14)" ;;',
+    '  exec) . "${MISE_OVERRIDE_CONFIG_FILENAMES%/*}/env.sh"; shift 2; exec "$@" ;;',
+    '  *) exit 1 ;;',
+    'esac',
+    '',
+  ].join('\n'), { mode: 0o755 });
   fixture = await startProjectDaemonFixture({ testDir });
   account = await fixture.createAccount('setup-owner');
   const enrolled = await fixture.enrollDaemon(account, { env: { PATH: [bin, process.env.PATH].join(delimiter) } });
@@ -64,13 +72,25 @@ afterEach(async () => {
 }, 0);
 afterAll(async () => { await fixture?.stop(); }, 0);
 
+function personActionContext(serverId: string) {
+  return { surface: 'ui' as const, authority: 'present_user' as const, serverId,
+    serverIdentityId: fixture!.serverId, actionRequestId: randomUUID(), actionCaller: { kind: 'host' as const } };
+}
+
 async function executeAction(id: Parameters<NonNullable<typeof ui>['executePresented']>[0], input: unknown) {
   if (!ui) throw new Error('Person Action connection unavailable');
   if (id === 'projects.open') console.info('Setup consent phase', { phase: 'ui_open_started' });
-  const result = await ui.executePresented(id, input, { surface: 'ui', authority: 'present_user', serverId: ui.serverId,
-    actionRequestId: randomUUID(), actionCaller: { kind: 'host' } });
+  const result = await ui.executePresented(id, input, personActionContext(ui.serverId));
   if (id === 'projects.open') console.info('Setup consent phase', { phase: 'ui_open_completed' });
   return result;
+}
+
+async function prepareThroughInbox(input: unknown) {
+  const person = ui;
+  if (!person) throw new Error('Person Action connection unavailable');
+  // The mounted person retains the accepted checkout while answering the terminal's Ask.
+  return account.executeWithApproval('projects.prepare', input, artifactId =>
+    person.executeConfirmed('approval.request.decide', { artifactId, decision: 'approve' }, personActionContext(person.serverId)));
 }
 
 async function action(id: Parameters<NonNullable<typeof ui>['executePresented']>[0], input: unknown) {
@@ -80,10 +100,17 @@ async function action(id: Parameters<NonNullable<typeof ui>['executePresented']>
   return result.result;
 }
 
-async function observe(operationId: string) {
-  const result = ActionOperationGetV1ResponseSchema.parse(await action('action.operations.get', { serverId: ui!.serverId, machineId, operationId }));
+async function observe(operationId: string, waitForTerminal = false) {
+  const result = ActionOperationGetV1ResponseSchema.parse(await action('action.operations.get', {
+    serverId: ui!.serverId, machineId, operationId, ...(waitForTerminal ? { waitForTerminal: true } : {}),
+  }));
   if (result.kind !== 'found') throw new Error('Project operation not found');
   return result.operation;
+}
+
+async function expectSetupSucceeded(operationId: string, context: string) {
+  const operation = await observe(operationId, true);
+  expect(operation.state, `${context}: ${operation.error?.errorCode ?? operation.state}`).toBe('succeeded');
 }
 
 async function settledOrReview(operationId: string) {
@@ -153,7 +180,7 @@ it.skipIf(process.platform === 'win32').each(cases)('remembers setup consent the
   // can hold for the person's separate This time / Remember decision in the UI.
   // An initial own-UI press already consents to this invocation's setup effect.
   const prepare = async () => {
-    const result = await account.executeReviewed('projects.prepare', { workspace, phase: 'setup' });
+    const result = await prepareThroughInbox({ workspace, phase: 'setup' });
     expect(result.ok, JSON.stringify(result)).toBe(true);
     if (!result.ok) throw new Error(result.errorCode);
     return ProjectCommandActionOutputV1Schema.parse(result.result).operation;
@@ -165,7 +192,7 @@ it.skipIf(process.platform === 'win32').each(cases)('remembers setup consent the
   expect(controlReview.setupReview).toBeDefined();
   await action('projects.prepare', { workspace, phase: 'setup', heldOperationId: control.operationId,
     expectedEffectDigest: controlReview.setupReview!.reviewedEffectDigest, consentScope: 'thisTime' });
-  await waitFor(async () => (await observe(control.operationId)).state === 'succeeded', { context: 'same-fixture known-good setup control' });
+  await expectSetupSucceeded(control.operationId, 'same-fixture known-good setup control');
   expect(await readFile(join(root, 'control-effects'), 'utf8')).toBe('control');
   expect(await trust()).toEqual([]);
   await writeFile(manifestPath, JSON.stringify(manifest));
@@ -178,12 +205,12 @@ it.skipIf(process.platform === 'win32').each(cases)('remembers setup consent the
   if (scenario.name === 'literal script') {
     // The CLI decision must consume the same captured approval. Re-dispatching
     // prepare changes its signed origin and conflicts before Trust is written.
-    const rememberedConsent = await account.executeReviewed('projects.prepare', consent);
+    const rememberedConsent = await prepareThroughInbox(consent);
     expect(rememberedConsent.ok, JSON.stringify(rememberedConsent)).toBe(true);
     if (!rememberedConsent.ok) throw new Error(rememberedConsent.errorCode);
     expect(ProjectCommandActionOutputV1Schema.parse(rememberedConsent.result).operation.operationId).toBe(first.operationId);
   } else await action('projects.prepare', consent);
-  await waitFor(async () => (await observe(first.operationId)).state === 'succeeded', { context: 'approved setup succeeds' });
+  await expectSetupSucceeded(first.operationId, 'approved setup succeeds');
   expect(await readFile(join(root, 'effects'), 'utf8')).toBe('original');
   expect(await trust()).toMatchObject([{ value: { reviewedEffectDigest: digest } }]);
 
@@ -210,7 +237,7 @@ it.skipIf(process.platform === 'win32').each(cases)('remembers setup consent the
   expect(await trust()).toMatchObject([{ value: { reviewedEffectDigest: digest } }]);
   await action('projects.prepare', { workspace, phase: 'setup', heldOperationId: changed.operationId,
     expectedEffectDigest: refused.setupReview!.reviewedEffectDigest, consentScope: 'untilChanged' });
-  await waitFor(async () => (await observe(changed.operationId)).state === 'succeeded', { context: 'changed setup succeeds after fresh consent' });
+  await expectSetupSucceeded(changed.operationId, 'changed setup succeeds after fresh consent');
   expect(await readFile(join(root, 'effects'), 'utf8')).toBe('originalchanged');
   expect(await trust()).toMatchObject([{ value: { reviewedEffectDigest: refused.setupReview!.reviewedEffectDigest } }]);
   if (scenario.name === 'literal script') {
