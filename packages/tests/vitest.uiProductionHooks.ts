@@ -184,6 +184,7 @@ export function createUiProductionHooksVitestConfig(): UserConfig {
       env: {
         HAPPIER_FEATURE_POLICY_ENV: '',
         NODE_ENV: 'test',
+        VITEST_UI_SOURCES_DIR: uiSourcesRoot,
       },
     },
     resolve: {
