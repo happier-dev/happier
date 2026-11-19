@@ -177,6 +177,30 @@ describe('PRs & Issues route owner', () => {
     queue.dispose();
   });
 
+  it('settles retired route requests without allowing a saved-view continuation to write', async () => {
+    let finish!: (value: { subPath: string }) => void;
+    const hostWrite = new Promise<{ subPath: string }>((resolve) => { finish = resolve; });
+    const queue = createTriageRouteWriteQueueV1(hostApiWith({
+      methods: ['replacePageLocation'],
+      replace: async () => hostWrite,
+    }));
+    const settlements: Array<{ query: string; result: unknown; superseded: boolean }> = [];
+    const request = (query: string) => queue.write(lens({ query }), (settlement) => {
+      settlements.push({ query, result: settlement.result, superseded: settlement.superseded });
+    });
+    request('active');
+    request('pending');
+    queue.dispose();
+    request('retired');
+    finish({ subPath: 'q,active' });
+    await queue.whenSettled();
+    expect(settlements).toEqual([
+      { query: 'pending', result: null, superseded: true },
+      { query: 'retired', result: null, superseded: true },
+      { query: 'active', result: null, superseded: true },
+    ]);
+  });
+
   it('round-trips a complete lens through one canonical location', () => {
     const value = lens({
       order: 'oldest',

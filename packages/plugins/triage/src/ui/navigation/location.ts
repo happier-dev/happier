@@ -471,9 +471,9 @@ export type TriageRouteWriteQueueV1 = Readonly<{
 
 export type TriageRouteQueueSettlementV1 = Readonly<{
   requested: TriageRouteLensV1;
-  /** `null` means this not-yet-started intent was replaced before a host write. */
+  /** `null` means the request was replaced before dispatch or its queue was disposed. */
   result: TriageRouteWriteResultV1 | null;
-  /** A newer complete intent owns visible settlement. */
+  /** A newer intent or queue retirement prevents this request from owning visible settlement. */
   superseded: boolean;
 }>;
 
@@ -540,13 +540,11 @@ export function createTriageRouteWriteQueueV1(
         const result = await writeTriageRouteLensV1(hostApi, intent.lens, { signal: controller.signal });
         if (result.kind === 'settled') hostAt = result.subPath;
         if (activeWrite?.controller === controller) activeWrite = null;
-        if (!disposed) {
-          intent.onSettled?.({
-            requested: intent.lens,
-            result,
-            superseded: pending !== null,
-          });
-        }
+        intent.onSettled?.({
+          requested: intent.lens,
+          result: disposed ? null : result,
+          superseded: disposed || pending !== null,
+        });
       }
     } finally {
       activeWrite = null;
@@ -557,7 +555,10 @@ export function createTriageRouteWriteQueueV1(
 
   return Object.freeze({
     write(lens, onSettled) {
-      if (disposed) return;
+      if (disposed) {
+        onSettled?.({ requested: lens, result: null, superseded: true });
+        return;
+      }
       supersedePending({ lens, ...(onSettled === undefined ? {} : { onSettled }) });
       void drain();
     },
@@ -586,7 +587,7 @@ export function createTriageRouteWriteQueueV1(
     dispose() {
       if (disposed) return;
       disposed = true;
-      pending = null;
+      supersedePending(null);
       activeWrite?.controller.abort();
       settleWaiters();
     },
