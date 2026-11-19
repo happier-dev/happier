@@ -656,6 +656,7 @@ function ProjectCheckoutPicker(props: Readonly<{
             }}
             onRequestClose={applyClose}
             maxHeightCap={480}
+            anchor="field"
         />;
     }
     if (props.workspace !== undefined) {
@@ -688,6 +689,7 @@ function ProjectCheckoutPicker(props: Readonly<{
                         else void commands.invoke('close');
                     }}
                     maxHeightCap={480}
+                    anchor="field"
                 />}
             </>
         );
@@ -727,6 +729,7 @@ function ProjectCheckoutPicker(props: Readonly<{
                     else void commands.invoke('close');
                 }}
                 maxHeightCap={480}
+                anchor="field"
             />
         </>
     );

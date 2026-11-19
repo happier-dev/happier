@@ -399,6 +399,10 @@ describe('workflow project target control', () => {
 
         await screen.pressByTestIdAsync('workflow-editor-project-checkout');
         let popover = screen.findAllByType(AgentInputSelectionListPopover).find(node => node.props.open)!;
+        // WF-ACCEPT-1119B item 8b: the Workspace field's picker opens below its field when there is room, flipping
+        // only when short, as the Approval select does (the shared field-picker rule).
+        const { Popover } = await import('@/components/ui/popover/Popover');
+        expect(popover.findByType(Popover).props).toMatchObject({ placement: 'bottom', flip: true });
         let rootStep = popover.props.rootStep as SelectionListStep;
         // A workflow creates its worktree per run: "New worktree" selects in place, no branch or name steps.
         const quickActions = stepOptions(rootStep, 'worktree:quick-actions');
