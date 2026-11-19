@@ -261,20 +261,6 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     const rows = contentSized ? 0 : reservedRows;
     const rowHeight = useWidgetBodyRowHeight();
     const inheritedPresentation = useWidgetPresentation();
-    const [geometry, setGeometry] = React.useState<WidgetBodyPresentation['geometry']>();
-    const onViewportLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
-        const { width, height } = event.nativeEvent.layout;
-        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height < 0) return;
-        setGeometry(previous => previous?.width === width && previous.height === height ? previous : { width, height });
-    }, []);
-    const widgetPresentation = React.useMemo(() => props.widgetPresentation
-        ? { ...props.widgetPresentation, ...(geometry ? { geometry } : {}) } : inheritedPresentation,
-        [props.widgetPresentation, geometry, inheritedPresentation]);
-    // A widget lays itself out from its measured room (columns, strips, plot height). On the web a layout event
-    // reaches it only after the first paint, and a busy page can hold that event for seconds, so the first commit
-    // reads the room itself: nothing paints in a layout it is about to leave. A deferred body already
-    // has useful width at zero height; retry an unavailable room when that body activates.
-    const viewportContentRef = React.useRef<View | null>(null);
     const inset = resolveHappierWidgetFrameInsetPx(props.frameStyle);
     // Inside a group nothing clips (A6): a grid cell keeps its rows' room and grows; a phone's stack is its content.
     // Empty content changes the room, never the wrapper: remounting a body withdraws its empty-state
@@ -282,37 +268,41 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     // A Home card hugs what it shows, never an empty footprint; its host's `fill` lines a grid row up to the row's
     // tallest card (owner 2026-11-18). Other grid surfaces (the Board, the Companion) keep their fixed rows.
     const bodyHeight = props.bodyHeight ?? (props.grouped ? phone ? 'content' : 'grow' : props.placement === 'home' ? 'content' : 'fixed');
-    // A body that sizes itself (a grown or content-height cell) is told its own room: the box its content takes, at
-    // least the rows a grown cell keeps. Never the band's: a frame stretched by a taller partner column, or by a
-    // partner that grows while it refreshes, leaves that space empty instead of handing it to a chart (lab wgusage-CD).
-    const declaredBodyHeight = bodyHeight === 'grow' ? props.viewportHeight ?? rows * rowHeight : 0;
-    // A content-height body's own box is only what its content already draws, so a chart sized from it can never
-    // draw taller than its first frame (it settles at its floor). Its room is what its footprint declares, at
-    // least: nothing is stretched to it (no minHeight), a chart simply reads how tall its cell is meant to be.
-    // A phone stacks content with no cell to declare.
-    const declaredRoomHeight = bodyHeight === 'content' && !phone && props.widgetPresentation
-        ? props.viewportHeight ?? rows * rowHeight : declaredBodyHeight;
-    const onBodyBoxLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
-        const { width, height } = event.nativeEvent.layout;
+    const fixedBody = bodyHeight === 'fixed';
+    const declaredRoomHeight = props.viewportHeight ?? rows * rowHeight;
+    const [viewportLayout, setViewportLayout] = React.useState<Readonly<{ width: number; height?: number }>>();
+    const updateViewportLayout = React.useCallback(({ width, height }: NonNullable<WidgetBodyPresentation['geometry']>) => {
         if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height < 0) return;
-        const room = Math.max(height, declaredRoomHeight);
-        setGeometry(previous => previous?.width === width && previous.height === room ? previous : { width, height: room });
-    }, [declaredRoomHeight]);
+        // Only a fixed viewport supplies its own height. A content-sized body can draw a plot plus an
+        // axis or legend, so publishing that body's height back to it makes the plot grow on each layout.
+        const measuredViewportHeight = fixedBody ? height : undefined;
+        setViewportLayout(previous => previous?.width === width && previous.height === measuredViewportHeight
+            ? previous : { width, height: measuredViewportHeight });
+    }, [fixedBody]);
+    const onBodyLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
+        updateViewportLayout(event.nativeEvent.layout);
+    }, [updateViewportLayout]);
+    const width = viewportLayout?.width;
+    const height = fixedBody ? viewportLayout?.height : declaredRoomHeight;
+    const widgetPresentation = React.useMemo(() => props.widgetPresentation
+        ? { ...props.widgetPresentation, ...(width !== undefined && height !== undefined ? { geometry: { width, height } } : {}) }
+        : inheritedPresentation, [props.widgetPresentation, width, height, inheritedPresentation]);
+    // Read the first layout before paint on the web. A deferred body already has useful width at zero
+    // height. Retry when it activates if its width was unavailable.
+    const viewportContentRef = React.useRef<View | null>(null);
     React.useLayoutEffect(() => {
-        if (Platform.OS !== 'web' || geometry !== undefined) return;
-        // A fixed body's viewport is the scroll area that holds its content row; a sizing body's room is its own box.
+        if (Platform.OS !== 'web' || !props.widgetPresentation || widgetPresentation?.geometry) return;
         const content = viewportContentRef.current as unknown as Element | null;
-        const room = readViewportRoom(bodyHeight !== 'fixed' && props.widgetPresentation ? content
-            : content?.closest?.(`[data-testid="${props.testID}.viewport"]`) ?? null);
-        if (room) setGeometry(bodyHeight !== 'fixed' ? { ...room, height: Math.max(room.height, declaredRoomHeight) } : room);
-    }, [geometry, props.testID, props.widgetPresentation, props.body, bodyHeight, declaredRoomHeight]);
+        const room = readViewportRoom(fixedBody ? content?.closest?.(`[data-testid="${props.testID}.viewport"]`) : content);
+        if (room) updateViewportLayout(room);
+    }, [props.testID, props.widgetPresentation, props.body, fixedBody, widgetPresentation, updateViewportLayout]);
     // A fixed body whose rows run past it fades at the cut edge, so no line reads as cut off mid-height.
     const bodyFades = useScrollEdgeFades({ enabledEdges: FIXED_BODY_FADE_EDGES });
     const onFixedViewportLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
-        onViewportLayout(event);
+        onBodyLayout(event);
         // The fades read only `nativeEvent.layout`, which the portable layout event carries.
         bodyFades.onViewportLayout(event as unknown as LayoutChangeEvent);
-    }, [bodyFades.onViewportLayout, onViewportLayout]);
+    }, [bodyFades.onViewportLayout, onBodyLayout]);
     const onFixedContentLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
         bodyFades.onContentSizeChange(event.nativeEvent.layout.width, event.nativeEvent.layout.height);
     }, [bodyFades.onContentSizeChange]);
@@ -537,14 +527,11 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                 <WidgetFrameBodyOpenContext.Provider value={setLentOpen}>
                 <WidgetPresentationProvider value={widgetPresentation}>
                 {props.widgetPresentation && bodyHeight !== 'fixed' ? (
-                    // Nothing clips or scrolls here: the body is measured (its size and width still
-                    // reach it) and the frame takes the height that results. A frame stretched by its band
-                    // (a group's shorter column) grows this viewport, but the body keeps its own box: the
-                    // extra height stays empty under it, so nothing it draws stretches or jumps.
+                    // The frame grows with its content or its band's tallest cell.
                     <View testID={`${props.testID}.viewport`}
-                        style={{ minHeight: bodyHeight === 'grow' ? props.viewportHeight ?? rows * rowHeight : undefined, flexGrow: 1, minWidth: 0 }}>
-                        <View ref={viewportContentRef} testID={`${props.testID}.viewportBody`} onLayout={onBodyBoxLayout}
-                            style={{ minWidth: 0, ...(bodyHeight === 'grow' ? { minHeight: declaredBodyHeight } : {}) }}>
+                        style={{ minHeight: bodyHeight === 'grow' ? declaredRoomHeight : undefined, flexGrow: 1, minWidth: 0 }}>
+                        <View ref={viewportContentRef} testID={`${props.testID}.viewportBody`} onLayout={onBodyLayout}
+                            style={{ minWidth: 0, ...(bodyHeight === 'grow' ? { minHeight: declaredRoomHeight } : {}) }}>
                             <WidgetFrameBodyView testID={props.testID} body={body} rows={rows} />
                         </View>
                     </View>
@@ -552,7 +539,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                     <HappierScrollArea testID={`${props.testID}.viewport`} onLayout={onFixedViewportLayout}
                         onScroll={bodyFades.onScroll} scrollEventThrottle={16}
                         scrollEnabled={!contentSized}
-                        style={{ height: contentSized ? undefined : props.viewportHeight ?? rows * rowHeight, minWidth: 0,
+                        style={{ height: contentSized ? undefined : declaredRoomHeight, minWidth: 0,
                             ...(!contentSized && bodyFadeMask ? { maskImage: bodyFadeMask.maskImage, WebkitMaskImage: bodyFadeMask.WebkitMaskImage } : {}) }}
                         contentContainerStyle={{ minHeight: contentSized ? undefined : '100%' }}>
                         <View ref={viewportContentRef} testID={`${props.testID}.viewportContent`} onLayout={onFixedContentLayout} style={styles.fixedBodyContent}>

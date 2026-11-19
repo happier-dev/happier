@@ -245,16 +245,16 @@ describe('WidgetFrame', () => {
         expect(mounts).toBe(1);
         expect(screen.getTextContent()).toContain('all retained rows');
     });
-    it('lets a grouped widget grow with its rows instead of scrolling inside a fixed box, still telling the body its measured room', async () => {
+    it('lets a grouped widget grow with its rows while preserving its declared room', async () => {
         const { HappierScrollArea } = await import('@happier-dev/plugin-ui/presentation');
         let observed: ReturnType<typeof useWidgetPresentation>;
         function Body() { observed = useWidgetPresentation(); return <>every row</>; }
-        const screen = await renderScreen(<WidgetFrame testID="grouped" frameStyle="plain" grouped placement="home" title="Period summary"
+        const screen = await renderScreen(<WidgetFrame testID="grouped" frameStyle="plain" grouped placement="home" title="Period summary" viewportHeight={160}
             widgetPresentation={{ size: 'small', footprint: { columns: 2, columnSpan: 1, rowSpan: 1, height: 'compact', width: 'half' } }}
             body={{ kind: 'content', children: <Body /> }} />);
         expect(screen.root.findAllByType(HappierScrollArea)).toHaveLength(0);
         await act(async () => { screen.findByTestId('grouped.viewportBody')!.props.onLayout({ nativeEvent: { layout: { width: 330, height: 240 } } }); });
-        expect(observed).toMatchObject({ size: 'small', geometry: { width: 330, height: 240 } });
+        expect(observed).toMatchObject({ size: 'small', geometry: { width: 330, height: 160 } });
     });
     it('keeps a background refresh to the glyph, and says Refreshing in words only for the refresh the person started with Retry', async () => {
         const { useWidgetFrameResourceActivity } = await import('./widgetFrameResourceActivity');
@@ -312,13 +312,13 @@ describe('WidgetFrame', () => {
         const { HappierScrollArea } = await import('@happier-dev/plugin-ui/presentation');
         let observed: ReturnType<typeof useWidgetPresentation>;
         function Body() { observed = useWidgetPresentation(); return <>every row</>; }
-        const screen = await renderScreen(<WidgetFrame testID="core" frameStyle="card" placement="home" title="Daily usage" bodyHeight="content"
+        const screen = await renderScreen(<WidgetFrame testID="core" frameStyle="card" placement="home" title="Daily usage" bodyHeight="content" viewportHeight={232}
             widgetPresentation={{ size: 'wide', footprint: { columns: 2, columnSpan: 2, rowSpan: 2, height: 'regular', width: 'full' } }}
             body={{ kind: 'content', children: <Body /> }} />);
         // No fixed-height scroll viewport: the row is as tall as what it shows.
         expect(screen.root.findAllByType(HappierScrollArea)).toHaveLength(0);
         await act(async () => { screen.findByTestId('core.viewportBody')!.props.onLayout({ nativeEvent: { layout: { width: 900, height: 412 } } }); });
-        expect(observed).toMatchObject({ size: 'wide', footprint: { columnSpan: 2 }, geometry: { width: 900, height: 412 } });
+        expect(observed).toMatchObject({ size: 'wide', footprint: { columnSpan: 2 }, geometry: { width: 900, height: 232 } });
     });
     it('keeps a headerless frame headerless while its body refreshes: no empty header row, no lone spinner above the body', async () => {
         const { useWidgetFrameResourceActivity } = await import('./widgetFrameResourceActivity');
@@ -330,19 +330,32 @@ describe('WidgetFrame', () => {
         expect(screen.findByTestId('embed.refreshing')).toBeNull();
         expect(screen.getTextContent()).toContain('capacity');
     });
-    it('tells a body stretched by its band its own height, never the band\'s, so a chart keeps its height and the cell keeps the space', async () => {
+    it.each(['content', 'grow'] as const)('does not grow a chart from its own layout on a %s surface', async (bodyHeight) => {
         let observed: ReturnType<typeof useWidgetPresentation>;
-        function Body() { observed = useWidgetPresentation(); return <>a sized plot</>; }
-        const screen = await renderScreen(<WidgetFrame testID="daily" frameStyle="plain" grouped placement="home" title="Daily usage" bodyHeight="content"
+        let renders = 0;
+        function ChartBody() {
+            observed = useWidgetPresentation();
+            renders += 1;
+            return <Text>plot and axis</Text>;
+        }
+        const screen = await renderScreen(<WidgetFrame testID="chart" frameStyle="plain" grouped placement="home" title="Daily usage" bodyHeight={bodyHeight}
             widgetPresentation={{ size: 'medium', footprint: { columns: 2, columnSpan: 1, rowSpan: 2, height: 'regular', width: 'half' } }}
-            body={{ kind: 'content', children: <Body /> }} />);
-        // The body lays out at its own height first; then the taller partner column stretches the viewport.
-        await act(async () => { screen.findByTestId('daily.viewportBody')?.props.onLayout({ nativeEvent: { layout: { width: 560, height: 300 } } }); });
-        await act(async () => { screen.findByTestId('daily.viewport')!.props.onLayout?.({ nativeEvent: { layout: { width: 560, height: 700 } } }); });
-        expect(observed?.geometry).toEqual({ width: 560, height: 300 });
-        // A refresh that briefly grows the partner never ratchets the body's room up with it.
-        await act(async () => { screen.findByTestId('daily.viewport')!.props.onLayout?.({ nativeEvent: { layout: { width: 560, height: 888 } } }); });
-        expect(observed?.geometry).toEqual({ width: 560, height: 300 });
+            body={{ kind: 'content', children: <ChartBody /> }} />);
+        const layout = (width: number, height: number) => act(async () => {
+            screen.findByTestId('chart.viewportBody')!.props.onLayout({ nativeEvent: { layout: { width, height } } });
+        });
+        await layout(560, 120);
+        const plotHeight = observed!.geometry!.height;
+        const rendersAtFirstLayout = renders;
+        // The platform measures the plot together with its axis and legend on each layout pass.
+        for (const chrome of [24, 44, 24, 44]) {
+            await layout(560, observed!.geometry!.height + chrome);
+        }
+        expect(observed?.geometry).toEqual({ width: 560, height: plotHeight });
+        expect(renders - rendersAtFirstLayout).toBe(0);
+        await layout(480, plotHeight + 24);
+        expect(observed?.geometry).toEqual({ width: 480, height: plotHeight });
+        expect(renders - rendersAtFirstLayout).toBe(1);
     });
     it('tells a content-height body at least the room its footprint declares, so a chart in a tall cell is not sized from its own first frame', async () => {
         let observed: ReturnType<typeof useWidgetPresentation>;
