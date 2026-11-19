@@ -19,5 +19,5 @@ export async function admitNativeActionCompletionObservation(
     const result = await context.services.actions.execute('automation.event.admit', {
         ...projectNativeEventObservationAdmissionInput(observation), definitions: [],
     }, { signal: context.signal });
-    if ('ok' in result && !result.ok) throw new PluginError({ code: result.errorCode });
+    if ('ok' in result && !result.ok && 'errorCode' in result) throw new PluginError({ code: result.errorCode });
 }

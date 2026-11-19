@@ -3,7 +3,7 @@ import { admitNativeActionCompletionObservation } from './eventCompletion.js';
 export { projectNativeEventObservationAdmissionInput } from './eventCompletion.js';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createMachineOutcomeSummaryReader } from './machineOutcomeSummaryReader.js';
-import { defineProtocolLiteral, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { SCM_WORKTREE_CREATE_ACTION_ID_V1, SCM_WORKTREE_REMOVE_ACTION_ID_V1, PROJECT_PREPARE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema, MachinePressureEventV1ProtocolSchema, WorktreeRemovedEventV1ProtocolSchema, WorktreeCreatedEventV1ProtocolSchema,
     GuardStoppedEventV1ProtocolSchema, ConnectedServiceQuotaEventV1ProtocolSchema, ConnectedServiceCredentialHealthEventV1ProtocolSchema, ProjectSetupSettledEventV1ProtocolSchema,
     createPluginEventAutomationSetupResultV1JsonSchema, type MachineServiceObservationV1,
@@ -80,9 +80,9 @@ export const machineOutcomeEventActions = Object.fromEntries(eventIds.map(event 
     async run(value: unknown, context: PluginInvocationContext) {
         const selected = usesRetainedSummary(event) ? accountSetup.parse(value) : machineSetup.parse(value);
         const sourceConfig = sourceSchema.parse(selected);
-        if ('machineId' in selected) {
+        if (sourceConfig.machineId !== undefined) {
             const read = await context.services.actions.execute('machines.resources.policy.get', {
-                serverId: selected.serverId, machineId: selected.machineId,
+                serverId: sourceConfig.serverId, machineId: sourceConfig.machineId,
             }, { signal: context.signal });
             if (!('status' in read) || read.status !== 'ready') throw new PluginError({ code: 'target_unavailable', message: 'The Machine resource policy is unavailable.' });
         }
@@ -143,7 +143,7 @@ export function projectMachineServiceObservation(payload: MachineServiceObservat
         occurrenceId: computeCanonicalDomainSeparatedDigest('happier.machine.event-occurrence.v1',
             [fact.serverId, fact.machineId, fact.event, ...fact.identity]),
         occurredAt: fact.occurredAt, observationReceivedAt: observedAt, observedDelta: 1,
-        subjectContexts: subjectContextsFor(payload), payload: fact.payload,
+        subjectContexts: subjectContextsFor(payload), payload: projectNativeJsonValueForTransport(fact.payload),
         ...(originRunId ? { originRunId } : {}) };
 }
 

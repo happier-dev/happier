@@ -31,7 +31,7 @@ export function createMachineOutcomeSummaryReader(host: BackgroundServiceContext
                         serverId, ...(full ? {} : { keys }),
                     }, { signal: context.signal });
                     context.signal.throwIfAborted();
-                    if (result.status !== 'ready') throw new PluginError({ code: 'target_unavailable',
+                    if (!('status' in result) || result.status !== 'ready') throw new PluginError({ code: 'target_unavailable',
                         message: 'Retained Machine resource outcomes are unavailable.' });
                     // Invalidation arriving during this read stays dirty for the
                     // next finite read. Rows absent from a changed-key read vanish.
