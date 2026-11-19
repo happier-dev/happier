@@ -342,6 +342,33 @@ describe('mutateTriageSavedViews', () => {
             .toBeLessThanOrEqual(MAX_TRIAGE_SAVED_VIEWS_SERIALIZED_UTF8_BYTES_V1);
     });
 
+    it('refuses non-UUID ids and control characters without replacing the saved definition', async () => {
+        const fixture = createTestkitAccountKv();
+        const deps = createDeps(fixture);
+        const original = await create(fixture, deps, 'Existing view');
+        if (original.status !== 'applied') throw new Error('setup failed');
+        const value = fixture.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1);
+
+        const command = {
+            kind: 'update',
+            expectedRevision: original.revision,
+            query: 'updated lens',
+            filters: filters(),
+            order: 'newest',
+            smartPolicy: CORPUS_DEFAULT_SMART_POLICY_V1,
+        } as const;
+        expect(await mutateTriageSavedViews(deps, {
+            ...command, viewId: 'not-a-uuid', label: 'Other view',
+        })).toEqual({ status: 'unknownView' });
+        expect(await mutateTriageSavedViews(deps, {
+            ...command, viewId: original.viewId, label: 'Line one\nLine two',
+        })).toEqual({ status: 'rejected', reason: 'label' });
+        expect(await create(fixture, deps, 'Title\u0000with a control'))
+            .toEqual({ status: 'rejected', reason: 'label' });
+        expect(fixture.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1)).toEqual(value);
+        expect(fixture.setCallCount()).toBe(1);
+    });
+
     it('admits a thirty-third view when the serialized Account KV value still fits', async () => {
         const fixture = createTestkitAccountKv();
         const deps = createDeps(fixture);

@@ -6,6 +6,7 @@ import { PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 } from '@happier-dev/plugin-sdk/storag
 import { createProtocolStoredReadSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
     normalizeTriageSingleLineV1,
+    TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -175,8 +176,10 @@ function utf8ByteLength(value: string): number {
     return encoder.encode(value).byteLength;
 }
 
+const SAVED_VIEW_LABEL_PATTERN = new RegExp(TRIAGE_SINGLE_LINE_STRING_PATTERN_V1, 'u');
+
 function readSingleLineString(value: unknown): string | null {
-    if (typeof value !== 'string') return null;
+    if (typeof value !== 'string' || !SAVED_VIEW_LABEL_PATTERN.test(value)) return null;
     const normalized = normalizeTriageSingleLineV1(value);
     return normalized.length === 0 ? null : normalized;
 }
