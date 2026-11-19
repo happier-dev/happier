@@ -47,6 +47,7 @@ export interface HostedWebPluginUiClientRealm {
         documentElement?: PluginUiThemeVariableTarget & Readonly<{
             getBoundingClientRect(): Readonly<{ height: number }>;
             classList?: Readonly<{ toggle(token: string, force: boolean): boolean }>;
+            setAttribute?(name: string, value: string): void;
         }>;
         body?: Readonly<{ scrollHeight: number }> | null;
         head?: Readonly<{ append(element: HostedWebThemeStyleElement): void }>;
@@ -618,6 +619,8 @@ function createHostedWebBootstrapController(
                     const applyContext = (context: Awaited<ReturnType<typeof api.context>>) => {
                         if (state !== 'bootstrapped') return;
                         applyPluginUiThemeCssVariables(context.theme, root);
+                        // The scheme the host painted, for host-styled HTML (the kit's dark lifted parts).
+                        root.setAttribute?.('data-happier-scheme', context.colorScheme);
                         // Unstyled HTML inherits the theme's text colour, so it reads on either paper;
                         // the guest's own styles still win.
                         root.style.setProperty('color', context.theme.colors.text);

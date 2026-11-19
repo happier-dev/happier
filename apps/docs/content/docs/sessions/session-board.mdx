@@ -196,6 +196,38 @@ Public sharing can disable network for the viewer without modifying the saved
 visual. Copying to another Session or to an Artifact creates independent content
 under the destination's audience and normal approval policy.
 
+### Happier controls in authored HTML (in development)
+
+In 0.3 development source, hosted HTML (agent visuals and plugin HTML bundles) gets
+Happier's own look for a few controls without loading anything. The page keeps
+writing native HTML inside a `happier-*` wrapper, so its script reads names,
+values and events from the native elements exactly as before, and the page
+still works, plainly, where the wrapper is not styled (for example an exported
+copy):
+
+| Element | Wrap | Notes |
+| --- | --- | --- |
+| `happier-tabs` | `<label>`s holding radio inputs | Segmented choice of a few short options. |
+| `happier-slider` | one `<input type="range">` | `label` and `unit` attributes; shows the current value. |
+| `happier-select` | one `<select>` | Field select with the host chevron. |
+| `happier-toggle` | a `<label>` holding a checkbox | Drawn as a switch; add `role="switch"`. |
+| `happier-button` | one or more `<button>`s | `variant="primary"` for the one main action. |
+| `happier-stats` / `happier-stat` | a label, the figure in `<b>`, context in `<small>` | `tone` colours a figure only for a state. |
+| `happier-legend` | one child per series | Swatches follow `--happier-series-1` to `-3`, or `--happier-swatch`. |
+| `happier-table` | one `<table>` | First column names the row; other columns align as figures. |
+
+```html
+<happier-slider label="Base delay" unit="ms">
+  <input type="range" name="delay" min="100" max="2000" step="50" value="400">
+</happier-slider>
+```
+
+Colours follow the viewer's theme through the `--happier-plugin-color-*`
+properties the frame already receives; draw chart series with
+`var(--happier-series-1)` and its siblings so they match the legend. Nothing new
+crosses the host API. Typed declarative charts and tables remain the first choice
+for plain data.
+
 ## Related
 
 - [Working in a session](/sessions) — the rest of the session surface.
