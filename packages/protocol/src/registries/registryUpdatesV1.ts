@@ -1,7 +1,7 @@
 import type { RegistryHostDepsV1 } from './registryHostV1.js';
 import type { RegistryContentRefV1, RegistryProvenanceV1, RegistryRemoteProvenanceV1 } from './registryItemsV1.js';
 import { RegistryFetchErrorV1 } from './registryListV1.js';
-import { resolveLegacyRegistrySourceRefV1, type RegistrySourceDescriptorV1 } from './registrySourcesV1.js';
+import { resolveLegacyRegistrySourceRefV1, type RegistryRemoteSourceDescriptorV1, type RegistrySourceDescriptorV1 } from './registrySourcesV1.js';
 import type { RegistryFetchContextV1, RegistryFormatAdapterV1, RegistryHttpV1 } from './formats/registryFormatAdapterV1.js';
 import { REGISTRY_FORMAT_ADAPTERS_V1 } from './formats/index.js';
 import { compareRegistryContentRefV1, type RegistryUpstreamCheckV1 } from './registryUpstreamV1.js';
@@ -94,10 +94,15 @@ export async function checkRegistryAppUpdatesV1(ctx: RegistryFetchContextV1, inp
   }) };
 }
 
+type RegistryLatestRefsV1 = ReadonlyMap<string, RegistryContentRefV1 | 'removed' | RegistryFetchErrorV1>;
+
 export async function checkRegistryUpstreamV1(ctx: RegistryFetchContextV1, input: Readonly<{
   sources: readonly RegistrySourceDescriptorV1[];
   admitSource?: RegistryHostDepsV1['admitSource'];
   items: readonly Readonly<{ key: string; provenance: RegistryProvenanceV1 }>[];
+  /** The host can place reads on a carrier. This checker still owns source binding and comparison. */
+  readLatest?: (source: RegistryRemoteSourceDescriptorV1, items: readonly RegistryRemoteProvenanceV1[],
+    readDirect: () => Promise<RegistryLatestRefsV1>) => Promise<RegistryLatestRefsV1>;
 }>): Promise<ReadonlyMap<string, RegistryUpstreamCheckV1>> {
   ctx.signal?.throwIfAborted();
   const result = new Map<string, RegistryUpstreamCheckV1>();
@@ -132,7 +137,7 @@ export async function checkRegistryUpstreamV1(ctx: RegistryFetchContextV1, input
         getText: (...args) => transport(() => operationCtx.http.getText(...args)),
         getBytes: (...args) => transport(() => operationCtx.http.getBytes(...args)),
       };
-      let latest: ReadonlyMap<string, RegistryContentRefV1 | 'removed'>;
+      let latest: RegistryLatestRefsV1;
       if ('packageContent' in source) {
         const acquired = await readRegistryPackageAppCatalogV1(operationCtx, source);
         latest = latestHappierAppCatalogRefsV1({ sourceId: source.id, ...acquired,
@@ -142,13 +147,17 @@ export async function checkRegistryUpstreamV1(ctx: RegistryFetchContextV1, input
         if (!adapter) throw new RegistryFetchErrorV1({ state: 'newer_format', found: source.format });
         const remote = items.map(item => item.provenance).filter((provenance): provenance is RegistryRemoteProvenanceV1 =>
           provenance.sourceUrl !== undefined);
-        latest = await adapter.latest({ ...operationCtx, http }, remote, { source });
+        const readDirect = () => adapter.latest({ ...operationCtx, http }, remote, { source });
+        latest = await (input.readLatest ? input.readLatest(source, remote, readDirect) : readDirect());
       }
       ctx.signal?.throwIfAborted();
       for (const { key, provenance } of items) {
         const ref = latest.get(provenance.itemId);
-        result.set(key, ref === undefined ? { state: 'unchecked', reason: { state: 'invalid_source' } }
-          : { state: compareRegistryContentRefV1(provenance.ref, ref), ...(ref !== 'removed' ? { latest: ref } : {}) });
+        if (ref instanceof RegistryFetchErrorV1 || ref === undefined) {
+          result.set(key, { state: 'unchecked', reason: ref?.status ?? { state: 'invalid_source' } });
+        } else {
+          result.set(key, { state: compareRegistryContentRefV1(provenance.ref, ref), ...(ref !== 'removed' ? { latest: ref } : {}) });
+        }
       }
     } catch (error) {
       ctx.signal?.throwIfAborted();

@@ -16,7 +16,60 @@ import { normalizeComposeTemplateV1 } from './formats/composeTemplateNormalizati
 import { createRegistryHostV1 } from './registryHostV1.js';
 import { RegistryPackagedSourceDescriptorV1Schema } from './registrySourcesV1.js';
 import { REGISTRY_ACTION_INPUT_SCHEMAS_V1 } from './registryActionsV1.js';
+import { deriveMarketplaceSourceId } from '../marketplace/marketplaceSourceRegistryV1.js';
 import { checkRegistryAppUpdatesV1 } from './registryUpdatesV1.js';
+
+it('checks both installed faces of a custom catalog listing through its daemon when browser HTTP rejects', async () => {
+  const url = 'https://127.0.0.1:43985/catalog.json';
+  const id = deriveMarketplaceSourceId(url);
+  const source = { id, title: 'QA Themes local fixture', url, format: 'happier-catalog', kinds: ['theme'],
+    enabled: true, addedAt: 0, origin: { kind: 'user' }, removable: true } satisfies RegistrySourceDescriptorV1;
+  const itemId = 'qa-live3-neutral';
+  const includes = [{ key: 'light', label: 'Neutral Light', mode: 'light' },
+    { key: 'dark', label: 'Neutral Dark', mode: 'dark' }];
+  const catalog = {
+    source: { id, title: '127.0.0.1', kind: 'user', sourceUrl: url },
+    freshness: { state: 'fresh', fetchedAtMs: null },
+    entries: [], picks: [], diagnostics: [],
+    themes: [{ itemId, title: 'QA Neutral Pair', version: '2.0.0', listing: { includes, license: 'CC0-1.0' },
+      contentUrl: 'https://127.0.0.1:43985/face-bodies.json' }],
+  };
+  const unexpectedRead = async (): Promise<never> => { throw new Error('Unexpected content read'); };
+  const daemonReads: string[] = [];
+  const daemon = createRegistryHostV1({ host: 'node', readSources: async () => [source], http: {
+    getText: unexpectedRead, getBytes: unexpectedRead,
+    async getJson(requestUrl) {
+      daemonReads.push(requestUrl);
+      if (requestUrl !== url) return unexpectedRead();
+      return { ok: true, value: catalog, fetchedAt: 1 };
+    },
+  } });
+  const provenance = { sourceId: id, sourceUrl: url, format: source.format, itemId,
+    ref: { kind: 'version' as const, version: '1.0.0' }, importedAt: 1 };
+  const keys = ['11111111-1111-4111-8111-000000000000', '11111111-1111-4111-8111-000000000001'];
+  const deps = {
+    host: 'web' as const, readSources: async () => [source],
+    readThemeUpdateItems: async () => keys.map(key => ({ key, provenance })),
+    http: { getText: unexpectedRead, getBytes: unexpectedRead,
+      async getJson() { throw new TypeError('Failed to fetch'); } },
+  };
+  const host = createRegistryHostV1({ ...deps, daemonFetch: request => daemon.fetchRequest(request) });
+  const control = await host.execute('registries.items.read', { kind: 'theme', sourceId: id, itemId });
+  expect(control).toMatchObject({ item: { payload: { kind: 'theme', state: 'listing', version: '2.0.0' } } });
+  daemonReads.length = 0;
+
+  const demand = { kind: 'theme', keys };
+  await expect(host.execute('registries.updates.check', demand)).resolves.toMatchObject({
+    results: keys.map(key => ({ kind: 'theme', key, upstream: {
+      state: 'update_available', latest: { kind: 'version', version: '2.0.0' },
+    } })),
+  });
+  expect(daemonReads).toEqual([url]);
+
+  await expect(createRegistryHostV1(deps).execute('registries.updates.check', demand)).resolves.toMatchObject({
+    results: keys.map(key => ({ kind: 'theme', key, upstream: { state: 'unchecked', reason: { state: 'needs_machine' } } })),
+  });
+});
 
 const commit = '1'.repeat(40), next = '2'.repeat(40);
 const source: RegistrySourceDescriptorV1 = { id: 'repo', title: 'Repo', format: 'git', kinds: ['skill'],

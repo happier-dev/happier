@@ -1,6 +1,6 @@
 import type { RegistryThemeAcquisitionV1 } from './registryThemeV1.js';
 import { checkRegistryUpstreamV1 } from './registryUpdatesV1.js';
-import type { RegistryProvenanceV1 } from './registryItemsV1.js';
+import type { RegistryContentRefV1, RegistryProvenanceV1 } from './registryItemsV1.js';
 import { decodeBase64,encodeBase64 } from '../crypto/base64.js';
 import { REGISTRY_ACTION_INPUT_SCHEMAS_V1,REGISTRY_ACTION_OUTPUT_SCHEMAS_V1,type RegistryActionIdV1 } from './registryActionsV1.js';
 import { REGISTRY_FORMAT_ADAPTERS_V1 } from './formats/index.js';
@@ -144,6 +144,20 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       ? transport(() => fetch(request))
       : { op: 'error', status: { state: 'needs_machine' } };
   };
+  const withFetchPlacement = async <T>(source: RegistrySourceDescriptorV1,
+    intent: Pick<Parameters<typeof resolveRegistryFetchPlanV1>[0], 'op' | 'themeContent'>,
+    read: (placement: 'direct' | 'daemon') => Promise<T>): Promise<T> => {
+    const placements = resolveRegistryFetchPlanV1({ host: deps.host, adapter: adapterFor(source), source, ...intent });
+    for (const [index, placement] of placements.entries()) {
+      try {
+        return await read(placement);
+      } catch (error) {
+        if (error instanceof RegistryTransportFailureV1 && placement === 'direct' && index + 1 < placements.length) continue;
+        throw error;
+      }
+    }
+    throw new RegistryFetchErrorV1({ state: 'unreachable' });
+  };
   const sourceById=async(id:string)=>{
     deps.signal?.throwIfAborted();
     const source=(await deps.readSources()).find(source=>source.id===resolveLegacyRegistrySourceRefV1(id));
@@ -262,27 +276,15 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       const admittedCtx = await admitSource(source, operationCtx);
       const appTemplateHints = request.op === 'read' && request.kind === 'app' && !('packageContent' in source)
         ? readBuiltInRegistryAppTemplateHintsV1(source, request.itemId) : undefined;
-      const fetchSelected = async (operationCtx: RegistryFetchContextV1): Promise<RegistryFetchResponseV1> => {
-        const placements = resolveRegistryFetchPlanV1({
-          host: deps.host, adapter: adapterFor(source), source, op: request.op,
-          ...(request.op === 'read' && request.themeContent ? { themeContent: request.themeContent } : {}),
-        });
-        for (const [index, placement] of placements.entries()) {
-          try {
-            const response = placement === 'direct'
-              ? await direct(request, source, { ...operationCtx, appTemplateHints })
-              : await viaDaemon(request);
-            const admitted = admitRegistryFetchResponseV1(response);
-            return admitted.op === 'read' ? { ...admitted, item: applyRegistryAppTemplateHintsV1(admitted.item, appTemplateHints) } : admitted;
-          } catch (error) {
-            if (error instanceof RegistryTransportFailureV1 && placement === 'direct' && index + 1 < placements.length) {
-              continue;
-            }
-            throw error;
-          }
-        }
-        throw new RegistryFetchErrorV1({ state: 'unreachable' });
-      };
+      const fetchSelected = (operationCtx: RegistryFetchContextV1) => withFetchPlacement(source, {
+        op: request.op, ...(request.op === 'read' && request.themeContent ? { themeContent: request.themeContent } : {}),
+      }, async placement => {
+        const response = placement === 'direct'
+          ? await direct(request, source, { ...operationCtx, appTemplateHints })
+          : await viaDaemon(request);
+        const admitted = admitRegistryFetchResponseV1(response);
+        return admitted.op === 'read' ? { ...admitted, item: applyRegistryAppTemplateHintsV1(admitted.item, appTemplateHints) } : admitted;
+      });
       return await (admittedCtx.git?.withOperation
         ? admittedCtx.git.withOperation(git => fetchSelected({ ...admittedCtx, git }))
         : fetchSelected(admittedCtx));
@@ -619,7 +621,35 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
           const checkThemes = async () => {
             const items = (await readThemeItems()).filter(item => !args.keys || args.keys.includes(item.key));
             const sources = await deps.readSources();
-            const observations = await checkRegistryUpstreamV1(ctx, { sources, items, admitSource: deps.admitSource });
+            const observations = await checkRegistryUpstreamV1(ctx, { sources, items, admitSource: deps.admitSource,
+              readLatest: async (source, installed, readDirect) => {
+                try {
+                  return await withFetchPlacement(source, { op: 'read' }, async placement => {
+                    if (placement === 'direct') return readDirect();
+                    // Resolve only listing metadata on the carrier. Installed face IDs and bodies stay in the Account library.
+                    const itemIds = new Set(installed.map(item => item.itemId));
+                    return new Map<string, RegistryContentRefV1 | RegistryFetchErrorV1>(await Promise.all([...itemIds].map(async itemId => {
+                      const response = await viaDaemon({ op: 'read', sourceId: source.id, kind: 'theme', itemId }).catch(error => {
+                        deps.signal?.throwIfAborted();
+                        if (error instanceof RegistryTransportFailureV1) {
+                          return { op: 'error' as const, status: { state: 'unreachable' as const } };
+                        }
+                        throw error;
+                      });
+                      if (response.op === 'read' && response.item.payload.kind === 'theme') {
+                        return [itemId, { kind: 'version' as const, version: response.item.payload.version }] as const;
+                      }
+                      return [itemId, new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok'
+                        ? response.status : { state: 'invalid_source' })] as const;
+                    })));
+                  });
+                } catch (error) {
+                  deps.signal?.throwIfAborted();
+                  if (error instanceof RegistryTransportFailureV1) throw new RegistryFetchErrorV1({ state: 'unreachable' });
+                  throw error;
+                }
+              },
+            });
             return { checkedAt: Date.now(), results: items.map(item => ({ kind: 'theme' as const, key: item.key, upstream: observations.get(item.key)! })) };
           };
           if (args.kind === 'theme') output = await checkThemes();
