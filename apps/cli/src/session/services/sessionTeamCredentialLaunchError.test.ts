@@ -3,19 +3,29 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 import { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunchError';
 
 describe('Team credential launch refusal producer', () => {
-  it('retains the deciding launch phase when the daemon projects a refusal without a lower-level exception', () => {
-    const refusal = new SessionTeamCredentialLaunchUnavailableError('resource_unavailable', 'binding');
-    // The same refusal is printed by CLI launch adapters, so its message must
-    // give the person an explanation rather than only repeating the wire code.
-    expect(refusal.message).not.toBe(refusal.code);
-    expect(projectActionFailureCauseV1(refusal)).toMatchObject({
-      phase: 'providers.team_credential.binding', errorCode: 'resource_unavailable',
-    });
-  });
+  const code = 'resource_unavailable';
+  const originatingCause = projectActionFailureCauseV1(
+    Object.assign(new TypeError('private fixture'), { code: 'ECONNREFUSED' }),
+    'providers.source_open',
+  );
 
-  it('keeps the originating cause rather than relabelling it with the wrapping launch phase', () => {
-    const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private fixture'), { code: 'ECONNREFUSED' }), 'providers.source_open');
-    const refusal = new SessionTeamCredentialLaunchUnavailableError('resource_unavailable', 'binding', { failureCause });
-    expect(projectActionFailureCauseV1(refusal)).toEqual(failureCause);
+  it.each([
+    {
+      description: 'the deciding launch phase without a lower-level exception',
+      cause: undefined,
+      expectedCause: { phase: 'providers.team_credential.binding', errorClass: 'Error', errorCode: code, httpStatus: null },
+    },
+    {
+      description: 'the originating cause when wrapping a lower-level exception',
+      cause: { failureCause: originatingCause },
+      expectedCause: originatingCause,
+    },
+  ])('explains the refusal and preserves $description', ({ cause, expectedCause }) => {
+    const refusal = new SessionTeamCredentialLaunchUnavailableError(code, 'binding', cause);
+
+    expect(refusal.code).toBe(code);
+    expect(projectActionFailureCauseV1(refusal)).toEqual(expectedCause);
+    // CLI launch adapters print this message. It needs readable text beyond the wire code.
+    expect(refusal.message.replaceAll(code, '')).toMatch(/\p{L}/u);
   });
 });

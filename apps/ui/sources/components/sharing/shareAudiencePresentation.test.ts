@@ -1,39 +1,41 @@
 import { describe, expect, it } from 'vitest';
 
+import { t } from '@/text';
 import { presentShareAudience } from './sharePrincipalPresentation';
 
-const teamName = (id: string) => id === 'rows-od-176-r3-team' ? 'rows-od-176-r3-team' : null;
+const owner = { kind: 'team', teamId: 'source-team' } as const;
+const ownerName = 'Payments';
 
 describe('presentShareAudience', () => {
-    it('shows the owning Team without extra grants', () => {
-        expect(presentShareAudience({
-            owner: { kind: 'team', teamId: 'rows-od-176-r3-team' },
-            grants: [],
-            teamName,
-        })).toBe('rows-od-176-r3-team · everyone');
+    it.each([
+        { description: 'no grants', grants: [], teamName: ownerName },
+        { description: 'a grant to the owning Team', grants: [{ principal: owner }], teamName: ownerName },
+        { description: 'a Team name that has not loaded', grants: [], teamName: null },
+    ])('shows the owning Team once with $description', ({ grants, teamName }) => {
+        const name = teamName ?? t('shareSheet.team');
+        const summary = presentShareAudience({ owner, grants, teamName: () => teamName });
+
+        expect(summary).toBe(t('projects.sources.teamEveryone', { team: name }));
+        expect(summary.split(name)).toHaveLength(2);
     });
 
-    it('counts the owning Team alongside additional recipients', () => {
-        expect(presentShareAudience({
-            owner: { kind: 'team', teamId: 'rows-od-176-r3-team' },
-            grants: [{ principal: { kind: 'account', accountId: 'peer' } }],
-            teamName,
-        })).toBe('2 people and teams');
-    });
+    it('counts the owner and the additional recipient without counting a grant to the owner twice', () => {
+        const summary = presentShareAudience({
+            owner,
+            grants: [{ principal: owner }, { principal: { kind: 'account', accountId: 'peer' } }],
+            teamName: () => ownerName,
+        });
 
-    it('keeps the Team audience when its display name has not arrived', () => {
-        expect(presentShareAudience({
-            owner: { kind: 'team', teamId: 'unnamed-team' },
-            grants: [],
-            teamName,
-        })).toBe('Team · everyone');
+        expect(summary).toBe(t('projects.sources.audienceCount', { count: 2 }));
     });
 
     it('shows only me for a personal resource without extra grants', () => {
-        expect(presentShareAudience({
+        const summary = presentShareAudience({
             owner: { kind: 'account', accountId: 'me' },
             grants: [],
-            teamName,
-        })).toBe('Only me');
+            teamName: () => null,
+        });
+
+        expect(summary).toBe(t('projects.sources.onlyMe'));
     });
 });
