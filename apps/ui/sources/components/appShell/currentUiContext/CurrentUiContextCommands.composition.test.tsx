@@ -950,12 +950,14 @@ describe('mounted current-context descendant commands', () => {
             </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
         </InjectedAuthProvider>;
         const screen = await renderScreen(tree(false));
+        const capturedInvoke = intents.get('choices')!;
         const first = reader!.readCurrentUiContext()!.commands[0]!;
         const retirement = reader!.resolveCurrentUiCommand(first.id)!.retirementSignal;
         await screen.update(tree(true));
         expect(reader!.readCurrentUiContext()!.commands[0]!.id).toBe(first.id);
         expect(retirement.aborted).toBe(false);
-        await act(async () => { expect(await intents.get('choices')!('first')).toBe(true); });
+        // Deferred native menu selection keeps the callback from before the menu closes.
+        await act(async () => { expect(await capturedInvoke('first')).toBe(true); });
         expect(changes).toEqual(['latest']);
         const second = reader!.readCurrentUiContext()!.commands[1]!;
         const secondRetirement = reader!.resolveCurrentUiCommand(second.id)!.retirementSignal;
@@ -963,7 +965,11 @@ describe('mounted current-context descendant commands', () => {
         expect(reader!.readCurrentUiContext()!.commands[0]!.id).toBe(first.id);
         expect(reader!.resolveCurrentUiCommand(second.id)).toBeNull();
         expect(secondRetirement.aborted).toBe(true);
+        await act(async () => { expect(await capturedInvoke('second')).toBe(false); });
+        await act(async () => { expect(await capturedInvoke('first')).toBe(true); });
+        expect(changes).toEqual(['latest', 'original']);
         await screen.unmount();
+        expect(await capturedInvoke('first')).toBe(false);
         expect(retirement.aborted).toBe(true);
     });
 

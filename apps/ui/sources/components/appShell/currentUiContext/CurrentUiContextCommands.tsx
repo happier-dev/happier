@@ -356,7 +356,7 @@ export function useCurrentUiContextLocalCommands(commands: readonly CurrentUiCon
     React.useLayoutEffect(() => followSignal(eligible, (on) => on ? composition?.register(definitions, mountedDefinitions) : undefined),
         [composition, definitions, mountedDefinitions, eligible]);
     const binding = React.useMemo<{ current: LocalCommandInvocationState | null }>(() => ({ current: null }),
-        [composition, definitions, options?.unbound, reader]);
+        [composition, isCurrent, options?.contextKey, options?.unbound, reader]);
     React.useLayoutEffect(() => followSignal(eligible, (on) => {
         binding.current = on ? { composition, reader, definitions, commands, unbound: options?.unbound } : null;
         return () => { binding.current = null; };
