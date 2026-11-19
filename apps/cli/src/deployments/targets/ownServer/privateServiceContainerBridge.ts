@@ -5,7 +5,7 @@ import { BlockList, connect, createServer, isIPv4, type Socket } from 'node:net'
 import { platform } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { z } from 'zod';
-import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectActionFailureCauseV1, type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { NativeDockerEngineFacts } from '@happier-dev/cli-common/machineSetup';
 import type { ProjectNativeDockerPort } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import { readOwnServerDockerEndpoint } from './dockerEndpoint';
@@ -14,11 +14,24 @@ type UnavailableReason = 'docker_desktop_unsupported' | 'host_platform_unsupport
     | 'docker_endpoint_unobservable' | 'docker_network_inspect_failed' | 'docker_network_inspection_invalid'
     | 'docker_network_driver_unsupported' | 'listener_bind_failed' | 'relay_image_pull_failed' | 'relay_container_failed';
 
-export class PrivateServiceContainerBridgeUnavailableError extends PluginError {
-    constructor(readonly reason: UnavailableReason, readonly phase: 'platform' | 'network_inspect' | 'listener' | 'relay',
-        options?: ErrorOptions) {
-        super({ code: 'private_service_container_bridge_unavailable', message: reason, details: { reason, phase },
-            failureCause: { phase: `deployment.reference.${phase}`, errorClass: 'Error', errorCode: reason, httpStatus: null } }, options);
+type UnavailablePhase = 'platform' | 'network_inspect' | 'listener' | 'relay';
+
+export class PrivateServiceContainerBridgeUnavailableError extends Error implements ActionExecuteFailure {
+    readonly code = 'private_service_container_bridge_unavailable';
+    readonly ok = false;
+    readonly errorCode = this.code;
+    readonly error = this.code;
+    readonly details: Readonly<{ reason: UnavailableReason; phase: UnavailablePhase }>;
+    readonly failureCause: ActionFailureCauseV1;
+
+    constructor(readonly reason: UnavailableReason, readonly phase: UnavailablePhase, options?: ErrorOptions) {
+        super(reason, options);
+        this.details = { reason, phase };
+        const bridgePhase = `deployment.reference.${phase}`;
+        const nativeCause = projectActionFailureCauseV1(options?.cause, bridgePhase);
+        this.failureCause = nativeCause.phase === bridgePhase && nativeCause.errorCode === null && nativeCause.httpStatus === null
+            ? { phase: bridgePhase, errorClass: 'Error', errorCode: reason, httpStatus: null }
+            : nativeCause;
     }
 }
 

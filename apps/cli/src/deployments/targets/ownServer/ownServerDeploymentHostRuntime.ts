@@ -1,4 +1,4 @@
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { refuseDeploymentAuthorization } from '@/deployments/deploymentAuthorizationFailure';
 import { join } from 'node:path';
 import { nativeCaddyProfile, createNativeCaddySetupInput, createNativeCaddyBindings,
@@ -93,8 +93,9 @@ export type OwnServerDeploymentRuntimeHostInput = Readonly<{
     signal?: AbortSignal;
 }>;
 
-const refuse = (code: string, details?: unknown): never => {
-    throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { ...(details === undefined ? {} : { details }) });
+const refuse = (code: string, details?: unknown, failureCause?: ActionFailureCauseV1): never => {
+    throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code,
+        ...(details === undefined ? {} : { details }), ...(failureCause === undefined ? {} : { failureCause }) });
 };
 
 /** Installed host composition; the registry lends its one existing service owner. */
@@ -218,6 +219,13 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     address?: Awaited<ReturnType<typeof resolvePrivateServiceLocalContainerAddress>>;
                 }>();
                 let telemetryForward: ServiceExportMachineForward | undefined;
+                const releaseBridge = async (forward: ServiceExportMachineForward) => {
+                    try {
+                        // A failed acquisition has already settled and has no bridge to close.
+                        const bridge = await referenceBridges.get(forward)?.bridge?.catch(() => undefined);
+                        await bridge?.close();
+                    } finally { referenceBridges.delete(forward); }
+                };
                 const materializeBridge = async (forward: ServiceExportMachineForward) => {
                     const retained = referenceBridges.get(forward)!;
                     if (retained.local) return retained.address ?? forward;
@@ -231,8 +239,8 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     try { return await bridge; }
                     catch (error) {
                         if (forward === telemetryForward && error instanceof PrivateServiceContainerBridgeUnavailableError) return refuse('collector_unreachable', {
-                            reason: error.reason, nextActions: ['use_native_linux_docker', 'configure_public_collector_route'],
-                        });
+                            ...error.details, nextActions: ['use_native_linux_docker', 'configure_public_collector_route'],
+                        }, error.failureCause);
                         throw error;
                     }
                 };
@@ -257,8 +265,8 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     }
                     finally { signal.removeEventListener('abort', abort); }
                     const forward: ServiceExportMachineForward = { ...nativeForward, async close() {
-                        try { await (await referenceBridges.get(forward)?.bridge)?.close(); }
-                        finally { referenceBridges.delete(forward); await nativeForward.close(); }
+                        try { await releaseBridge(forward); }
+                        finally { await nativeForward.close(); }
                     } };
                     const routeKey = JSON.stringify([environmentInstanceId, materializationId, 'service',
                         selected.serviceExport.service.environmentId, selected.serviceExport.exportKey]);
@@ -308,10 +316,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                                         // A role restart may replace its ephemeral listener. The
                                         // existing bridge reads this address per TCP connection.
                                         get port() { const current = readEndpoint?.(); return Number(current ? new URL(current).port : initial.port); },
-                                        observedPath: 'direct', async close() {
-                                            try { await (await referenceBridges.get(forward)?.bridge)?.close(); }
-                                            finally { referenceBridges.delete(forward); }
-                                        } };
+                                        observedPath: 'direct', close: () => releaseBridge(forward) };
                                     referenceBridges.set(forward, { routeKey: JSON.stringify([environmentInstanceId, materializationId, 'telemetry']) });
                                     telemetryForward = referenceForwards.adopt(forward);
                                 }

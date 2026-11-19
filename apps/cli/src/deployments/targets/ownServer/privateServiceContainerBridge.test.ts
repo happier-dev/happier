@@ -2,6 +2,7 @@ import { stat } from 'node:fs/promises';
 import { once } from 'node:events';
 import { connect, createServer, type Socket } from 'node:net';
 import { afterEach, beforeEach, expect, it as test } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { acquirePrivateServiceContainerBridge } from './privateServiceContainerBridge';
 import { createRelayDockerFixture } from './privateServiceContainerBridge.testkit';
@@ -130,12 +131,22 @@ it('refuses a remote engine before acquiring any relay', async () => {
     });
 });
 
-it('reports an unavailable pinned relay image', async () => {
-    fixture.failPull = true;
-    await expect(acquirePrivateServiceContainerBridge({ docker: fixture.docker, engine, networkId, route,
-        forward: { host: '127.0.0.1', port: 12345 } })).rejects.toMatchObject({
+it('projects the native Docker cause alongside the unavailable pinned relay image', async () => {
+    const failureCause = { phase: 'deployment.native.command.deployment_network_unavailable',
+        errorClass: 'Error', errorCode: 'deployment_network_unavailable', httpStatus: null } as const;
+    fixture.pullFailure = new PluginError({ code: 'native_failed', message: 'Fixture private Docker output', failureCause });
+    const error = await acquirePrivateServiceContainerBridge({ docker: fixture.docker, engine, networkId, route,
+        forward: { host: '127.0.0.1', port: 12345 } }).catch((error: unknown) => error);
+    expect(error).toMatchObject({
         code: 'private_service_container_bridge_unavailable', reason: 'relay_image_pull_failed', phase: 'relay',
     });
+    const projected = projectDeploymentFailure('private_service_container_bridge_unavailable', error);
+    expect(projected).toMatchObject({
+        errorCode: 'private_service_container_bridge_unavailable',
+        failureCause,
+        details: { reason: 'relay_image_pull_failed', phase: 'relay' },
+    });
+    expect(JSON.stringify(projected)).not.toContain('Fixture private Docker output');
 });
 
 it('preserves an unsuccessful Docker inspection as its own failure phase', async () => {

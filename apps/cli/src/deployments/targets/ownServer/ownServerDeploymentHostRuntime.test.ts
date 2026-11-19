@@ -27,6 +27,7 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
 import { createRelayDockerFixture, readRelayHttpBody } from './privateServiceContainerBridge.testkit';
+import { projectDeploymentException } from '../../deploymentFailure';
 import { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
 import { sealMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
@@ -107,7 +108,7 @@ function physicalOwnerSourceRequester() {
 }
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
-it.skipIf(process.platform !== 'linux')('reaches its own collector through the retained private container bridge', async context => {
+it.skipIf(process.platform !== 'linux').for(['ready', 'Docker refused'] as const)('resolves the retained private collector route when the bridge is %s', async (bridgeState, context) => {
     const receiver = createServer((_request, response) => response.end('collector'));
     context.onTestFinished(() => new Promise<void>(resolve => receiver.close(() => resolve())));
     receiver.listen(0, '127.0.0.1');
@@ -156,6 +157,19 @@ it.skipIf(process.platform !== 'linux')('reaches its own collector through the r
         const fixture = createRelayDockerFixture('consumer');
         await acquired.prepareReferenceContainerNetwork!({ engine: { id: 'local', kind: 'native' },
             networkId: 'consumer', docker: fixture.docker });
+        if (bridgeState === 'Docker refused') {
+            fixture.pullFailure = Object.assign(new Error('Fixture private Docker output'), { code: 'EACCES' });
+            const error = await acquired.secrets.resolveNonSecret!({ kind: 'deploymentFact', fact: 'telemetryEndpoint' })
+                .catch((error: unknown) => error);
+            const projected = projectDeploymentException(error);
+            expect(projected).toMatchObject({
+                errorCode: 'collector_unreachable',
+                details: { reason: 'relay_image_pull_failed', phase: 'relay' },
+                failureCause: { errorCode: 'EACCES' },
+            });
+            expect(JSON.stringify(projected)).not.toContain('Fixture private Docker output');
+            return;
+        }
         const endpoint = await acquired.secrets.resolveNonSecret!({ kind: 'deploymentFact', fact: 'telemetryEndpoint' });
         expect(typeof endpoint).toBe('string');
         const route = new URL(String(endpoint));

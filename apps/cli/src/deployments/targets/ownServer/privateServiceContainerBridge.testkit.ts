@@ -12,7 +12,7 @@ export function createRelayDockerFixture(networkId: string, networkName = networ
         subnet: '172.22.0.0/16',
         gateway: '172.22.0.1' as string | undefined,
         failInspect: false,
-        failPull: false,
+        pullFailure: undefined as Error | undefined,
         failRemoval: false,
         hasRelay: (host: string) => relays.has(host),
         directory(host: string) {
@@ -39,8 +39,11 @@ export function createRelayDockerFixture(networkId: string, networkName = networ
                 return fixture.failInspect ? failure : ok(JSON.stringify([{ Id: networkId, Name: networkName,
                     Driver: fixture.driver, Scope: 'local', IPAM: { Config: [{ Subnet: fixture.subnet, Gateway: fixture.gateway }] } }]));
             }
-            if (resource === 'image' && operation === 'inspect') return fixture.failPull ? failure : ok();
-            if (resource === 'image' && operation === 'pull') return fixture.failPull ? failure : ok();
+            if (resource === 'image' && operation === 'inspect') return fixture.pullFailure ? failure : ok();
+            if (resource === 'image' && operation === 'pull') {
+                if (fixture.pullFailure) throw fixture.pullFailure;
+                return ok();
+            }
             if (resource === 'container' && operation === 'ls') {
                 const entry = [...relays].find(([host]) => args.includes(`name=^/${host}$`));
                 return entry ? ok(`${entry[1].id} ${entry[1].directory}`) : ok();
