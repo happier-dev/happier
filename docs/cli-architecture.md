@@ -5391,6 +5391,7 @@ Coverage settlement uses the admitted reviewer receipts, and the final
 Failed, partial or missing reviewer output cannot become complete-empty coverage.
 An explicit `then: fix` sends one fix request without starting another review;
 New round is a separate admission.
+New round and follow-up child Runs retain the original requester and authored Role id. Role content comes from the admitted Action's start context; an unavailable authored Role returns `target_unavailable` before implicit Role resolution (0.3 development).
 
 The start composer's “Report to this session” choice uses the existing optional boolean `notifyParentOnCompletion`. Review/Plan/Delegate Action starts and the rowless first-Send start preserve explicit `true` and `false`; malformed values are refused rather than silently dropped. When omitted, `resolveExecutionRunNotifyParentDefaultV1` defaults bounded work to On and long-lived conversations to the existing Account preference (Off unless enabled). The runtime uses that one resolved value for state and the daemon marker. `review.start` requests `retentionPolicy: 'resumable'`, but continuation still depends on the Agent's retained resume support.
 

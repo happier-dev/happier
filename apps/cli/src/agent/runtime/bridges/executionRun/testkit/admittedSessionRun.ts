@@ -113,6 +113,7 @@ type AdmittedSessionRunOptions = Readonly<{
   profile?: boolean;
   profileIntent?: 'memory_hints' | 'review';
   directOwner?: boolean;
+  reviewComments?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['reviewComments'];
   runReportPolicy?: import('@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1').FollowPolicyV1;
   runReportPreferencesUnavailable?: boolean;
   beforeRunReportPreferencesRead?: () => Promise<void>;
@@ -888,6 +889,7 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
   const workflowAbort = new AbortController();
   let bridge: ExecutionRunHostBridge | undefined;
   const createDirectBridge = () => options?.directOwner && session && parentPermissionHandler ? new ExecutionRunHostBridge({
+    ...(options.reviewComments ? { reviewComments: options.reviewComments } : {}),
     getPermissionRequestStore: () => session.getAgentStateRequestStore(),
     parentProvider: readAgentRoutingIdForContributionIdentity(indexAgentRoutingIdsByContributionIdentity(
       admittedFixture.registry.contributes.agents), agentIdentity)!,

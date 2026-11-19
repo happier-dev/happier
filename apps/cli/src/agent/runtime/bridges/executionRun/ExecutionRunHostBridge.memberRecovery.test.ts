@@ -28,6 +28,80 @@ import { createScmHostingProviderRuntimeServicesForTest } from '../../../../../.
 import { configuration } from '@/configuration';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { buildPendingScmDiffSummaryOutput } from './kinds/scmDiffSummary/publishSavedScmDiffSummaryTurn';
+import { createReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
+import { createInMemoryReviewRecordPortV1 } from '../../../../../../../packages/protocol/src/reviews/reviewArtifactV1.testkit';
+import { createExecutionRunRpcActionDeps } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
+import { resolveCliAgentStartContextV1 } from '@/session/actions/resolveCliAgentStartContextV1';
+import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
+import type { ResolvedRolesSnapshotV1 } from '@happier-dev/protocol';
+import { ExecutionRunActionResponseSchema } from '@happier-dev/protocol/execution/runs/index';
+
+it.each([undefined, 'custodian'])('starts a new Review round with retained requester and authored Role under ambient Account %s', async ambientAccountId => {
+  const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-review-round-account-' });
+  const records = createInMemoryReviewRecordPortV1();
+  const comments = createReviewRunCommentService({ cwd: repository.rootPath,
+    scope: { workspace: { machineId: 'machine', path: repository.rootPath } }, reviewRecords: records,
+    // Comment HTTP is unused while preparing a round; records and SCM owners remain real.
+    execute: async () => { throw new Error('Unexpected comment publication during round preparation'); } });
+  try {
+    await withAdmittedSessionRun({ directOwner: true, reviewComments: comments, run: async fixture => {
+      const requester = fixture.requesterWorkAttributionV1;
+      const role = resolveRoleSelectionV1({ roleId: 'custom-review', settingsRoles: { 'custom-review': {
+        name: 'Writable review', instructions: 'Inspect the selected comparison.', runsAs: { kind: 'background_run', intent: 'review' },
+        workspaceWrites: 'allow', secondOpinion: 'off', enabled: true,
+      } } });
+      if (!role.ok) throw new Error('Fixture custom Review Role is unavailable');
+      const sessionId = ambientAccountId ? fixture.session.sessionId : null;
+      const captured = await runWithScmAccountScope(requester.accountId, () => captureScmComparison({
+        cwd: repository.rootPath, ...(sessionId ? { sessionId } : {}), source: { kind: 'workingTree' } }));
+      const reviewRound = await records.start({ reviewId: 'requester-round-review', title: 'Review', subjectKind: 'comparison',
+        sourceKind: 'direct', reviewerIds: ['reviewer-1'], comparisonId: captured.comparison.id, startedAt: 1 });
+      const started = await fixture.start({ sessionId, intent: 'review', cwd: repository.rootPath,
+        modelId: 'review-fixture-model',
+        requesterWorkAttributionV1: requester, roleId: role.selection.roleId, resolvedRole: role.selection,
+        intentInput: { instructions: 'Inspect.', reviewers: [{ kind: 'engine', engineId: `${fixture.agentIdentity.pluginId}/${fixture.agentIdentity.localId}` }],
+          comparisonId: captured.comparison.id, reviewRound, reviewReviewerId: 'reviewer-1' } });
+      await fixture.bridge!.stop(started.runId);
+      await fixture.bridge!.waitForTerminal(started.runId);
+      await writeFile(join(repository.rootPath, repository.trackedPath), 'A fresh comparison for round two.\n');
+      let currentRoles: ResolvedRolesSnapshotV1 = { [role.selection.roleId]: role.selection };
+      const actions = createExecutionRunRpcActionDeps({ manager: fixture.bridge!, policy: resolveExecutionRunPolicy(),
+        isExecutionRunsEnabled: () => true, context: { sessionId, cwd: repository.rootPath,
+          // Account Role content and Session metadata are storage snapshots;
+          // the real Role/context resolver and every child-start owner run below.
+          resolveAgentStartContext: async context => resolveCliAgentStartContextV1({ sessionId: fixture.session.sessionId,
+            machineId: requester.machineId, directory: repository.rootPath, metadata: {}, roles: currentRoles,
+            backendTarget: readBackendTargetRefV2({ kind: 'builtInAgent', agentId: `${fixture.agentIdentity.pluginId}/${fixture.agentIdentity.localId}` }),
+            callerPermissionMode: context.callerPermissionMode ?? 'read-only', starterDepth: 0, turnDepth: 0, settings: null }),
+        } });
+      const startRound = () => actions.executionRunAction!(sessionId, { runId: started.runId, actionId: 'review.new_round', input: { fresh: true } }, {
+        requesterWorkAttributionV1: requester,
+        ...(sessionId ? { authority: 'account_automation' as const, surface: 'agent' as const,
+          actionCaller: { kind: 'session' as const, sessionId, starterDepth: 0, turnDepth: 0 } }
+          : { authority: 'present_user' as const, surface: 'rpc' as const }),
+      });
+      const next = ExecutionRunActionResponseSchema.parse(await (ambientAccountId ? runWithScmAccountScope(ambientAccountId, startRound) : startRound()));
+      expect(next, JSON.stringify(next)).toMatchObject({ ok: true, result: { runId: expect.any(String), reviewRound: { reviewId: reviewRound.reviewId, roundOrdinal: 2 } } });
+      if (!next.ok || !next.result || typeof next.result !== 'object' || !('runId' in next.result) || typeof next.result.runId !== 'string') {
+        throw new Error('New round did not return its Run');
+      }
+      const child = fixture.bridge!.get(next.result.runId);
+      expect(child).toMatchObject({ requesterWorkAttributionV1: requester, roleId: role.selection.roleId, workspaceWrites: 'allow',
+        intentInput: { reviewRound: { reviewId: reviewRound.reviewId, roundOrdinal: 2 }, comparison: { id: expect.any(String) } } });
+      await fixture.bridge!.stop(next.result.runId);
+      await fixture.bridge!.waitForTerminal(next.result.runId);
+      const input = child?.intentInput;
+      if (!input || typeof input !== 'object' || !('comparisonId' in input) || typeof input.comparisonId !== 'string') throw new Error('Child comparison is missing');
+      const comparisonId = input.comparisonId;
+      await expect(runWithScmAccountScope(requester.accountId, () => readCapturedScmComparison({
+        cwd: repository.rootPath, ...(sessionId ? { sessionId } : {}), comparisonId }))).resolves.toMatchObject({ comparison: { id: comparisonId } });
+      currentRoles = {};
+      expect(await startRound()).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    } });
+  } finally {
+    await rm(repository.rootPath, { recursive: true, force: true });
+  }
+});
 
 // Only installed-plugin publication and the native Agent are external fixtures.
 // The registry, bridge, sealed recovery, profile scope and comparison owners stay real.

@@ -432,6 +432,14 @@ async function startAdmittedExecutionRunInWorkspace(
     sessionConfigOptionOverrides: args.params.sessionConfigOptionOverrides,
   });
   try {
+    if (args.params.roleId && !args.params.resolvedRole) {
+      throw Object.assign(new Error('The requested role has no admitted start context.'), {
+        code: 'target_unavailable',
+        details: withExecutionRunStartFailureDetails({ executionRunStart: { v: 1, runCreation: 'noRunCreated',
+          refusal: { code: 'agent_start_context_unavailable', phase: 'agent_start_context' },
+        } }, 'noRunCreated'),
+      });
+    }
     const roleId = args.params.roleId ?? resolveExecutionRunImplicitRoleIdV1(args.params.intent);
     const frozenRole = args.params.resolvedRole ?? (roleId
       ? readSessionRolesV1(args.params.roleSessionMetadata)?.sessionRoles[roleId] : undefined);
@@ -457,14 +465,6 @@ async function startAdmittedExecutionRunInWorkspace(
       sessionMetadata: args.params.roleSessionMetadata,
       defaultEngine: { agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(args.params.backendTarget)) },
     });
-    if (args.params.roleId && !args.params.resolvedRole) {
-      throw Object.assign(new Error('The requested role has no admitted start context.'), {
-        code: 'target_unavailable',
-        details: withExecutionRunStartFailureDetails({ executionRunStart: { v: 1, runCreation: 'noRunCreated',
-          refusal: { code: 'agent_start_context_unavailable', phase: 'agent_start_context' },
-        } }, 'noRunCreated'),
-      });
-    }
     const inheritedMemory = args.params.sessionId && args.params.roleSessionMetadata
       ? await prepareSessionMemoryInheritance({ metadata: readRecord(args.params.roleSessionMetadata),
         credentials: args.params.promptCredentials })

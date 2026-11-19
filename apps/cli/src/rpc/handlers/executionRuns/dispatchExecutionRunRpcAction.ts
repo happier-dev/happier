@@ -1,3 +1,4 @@
+import { isReviewRunStartActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { readUnexpectedActionErrorDiagnosticV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
@@ -984,12 +985,20 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           },
         ));
       }
+      const childContext = runState && isReviewRunStartActionIdV1(parsed.actionId)
+        ? await prepareRoleStartContext(opts ?? {}, {
+            roleId: runState.roleId, intent: runState.intent, sessionId: runState.sessionId,
+            backendTarget: runState.backendTarget, cwd: runState.launch?.cwd,
+          }, params.context.resolveAgentStartContext)
+        : { ok: true as const, context: opts ?? {} };
+      if (!childContext.ok) return childContext;
       const acted = await params.manager.applyAction(parsed.runId, {
         actionId: parsed.actionId,
         input: parsed.input,
-      }, opts?.causalPermissionAuthority || opts?.effectiveCallerPermissionMode || params.context.projectLaunchContext
+      }, opts?.causalPermissionAuthority || opts?.effectiveCallerPermissionMode || params.context.projectLaunchContext || childContext.context.agentStartContext
         ? {
             ...(params.context.projectLaunchContext ? { projectLaunchContext: params.context.projectLaunchContext } : {}),
+            ...(childContext.context.agentStartContext ? { agentStartContext: childContext.context.agentStartContext } : {}),
             ...(opts?.causalPermissionAuthority
               ? { causalPermissionAuthority: opts.causalPermissionAuthority }
               : {}),
@@ -1103,6 +1112,39 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
   return actionDeps;
 }
 
+async function prepareRoleStartContext(
+  context: RpcActionExecutorContext,
+  input: Readonly<Record<string, unknown>>,
+  resolveAgentStartContext: ExecutionRunRpcHandlerContext['resolveAgentStartContext'],
+): Promise<Readonly<{ ok: true; context: RpcActionExecutorContext }> | Extract<Awaited<ReturnType<RpcActionExecutor['execute']>>, { ok: false }>> {
+  if (typeof input.roleId !== 'string' || context.agentStartContext) return { ok: true, context };
+  let refusal: NonNullable<ExecutionRunStartFailureDetailsV1['executionRunStart']['refusal']> = {
+    code: 'agent_start_context_unavailable', phase: 'agent_start_context',
+  };
+  let resolved: Awaited<ReturnType<NonNullable<ActionExecutorDeps['resolveAgentStartContext']>>> | undefined;
+  let errorCode = 'target_unavailable';
+  try {
+    resolved = await resolveAgentStartContext?.(context, undefined, input);
+  } catch (error) {
+    const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error ? error.code : undefined);
+    const reason = WorkflowTargetUnavailableReasonV1Schema.safeParse(
+      code === 'account_role_overrides_unavailable' ? 'role_overrides_unavailable' : code);
+    if (!reason.success) throw error;
+    refusal = { code: reason.data, phase: 'agent_start_context' };
+    errorCode = typeof code === 'string' ? code : 'target_unavailable';
+    context.recordActionStartDiagnostic?.({ phase: 'agent_start_context', refusalReason: reason.data });
+    resolved = null;
+  }
+  if (resolved && 'ok' in resolved) return { ...resolved,
+    details: withExecutionRunStartFailureDetails(resolved.details, 'noRunCreated') };
+  if (!resolved) return { ok: false, errorCode,
+    error: 'The selected role cannot be prepared for this Session. Check its Account and role availability.',
+    details: withExecutionRunStartFailureDetails({ executionRunStart: {
+      v: 1, runCreation: 'noRunCreated', refusal,
+    } }, 'noRunCreated') };
+  return { ok: true, context: { ...context, agentStartContext: resolved } };
+}
+
 export function createExecutionRunRpcActionExecutor(
   inputParams: ExecutionRunRpcActionDepsParams,
 ): RpcActionExecutor {
@@ -1161,34 +1203,10 @@ export function createExecutionRunRpcActionExecutor(
       const hostRoleStart = context?.authority === 'present_user'
         || context?.authority === 'account_automation' && context.surface === 'rpc'
           && (!context.actionCaller || context.actionCaller.kind === 'host');
-      if (hostRoleStart && context && isAgentStartActionV1(actionId)
-        && input && typeof input === 'object' && 'roleId' in input && typeof input.roleId === 'string'
-        && !context.agentStartContext) {
-        let refusal: NonNullable<ExecutionRunStartFailureDetailsV1['executionRunStart']['refusal']> = {
-          code: 'agent_start_context_unavailable', phase: 'agent_start_context',
-        };
-        let resolved: Awaited<ReturnType<NonNullable<ActionExecutorDeps['resolveAgentStartContext']>>> | undefined;
-        let errorCode = 'target_unavailable';
-        try {
-          resolved = await params.context.resolveAgentStartContext?.(context, undefined, input);
-        } catch (error) {
-          const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error ? error.code : undefined);
-          const reason = WorkflowTargetUnavailableReasonV1Schema.safeParse(
-            code === 'account_role_overrides_unavailable' ? 'role_overrides_unavailable' : code);
-          if (!reason.success) throw error;
-          refusal = { code: reason.data, phase: 'agent_start_context' };
-          errorCode = typeof code === 'string' ? code : 'target_unavailable';
-          context.recordActionStartDiagnostic?.({ phase: 'agent_start_context', refusalReason: reason.data });
-          resolved = null;
-        }
-        if (resolved && 'ok' in resolved) return { ...resolved,
-          details: withExecutionRunStartFailureDetails(resolved.details, 'noRunCreated') };
-        if (!resolved) return { ok: false, errorCode,
-          error: 'The selected role cannot be prepared for this Session. Check its Account and role availability.',
-          details: withExecutionRunStartFailureDetails({ executionRunStart: {
-            v: 1, runCreation: 'noRunCreated', refusal,
-          } }, 'noRunCreated') };
-        context = { ...context, agentStartContext: resolved };
+      if (hostRoleStart && context && isAgentStartActionV1(actionId) && input && typeof input === 'object') {
+        const prepared = await prepareRoleStartContext(context, input, params.context.resolveAgentStartContext);
+        if (!prepared.ok) return prepared;
+        context = prepared.context;
       }
       return await executor.execute(actionId, input, context);
     },

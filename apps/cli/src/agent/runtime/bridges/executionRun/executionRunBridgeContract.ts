@@ -158,6 +158,7 @@ export interface ExecutionRunHostBridgeContract {
       causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
       effectiveCallerPermissionMode?: string;
       projectLaunchContext?: import('@/agent/runtime/registry/engineRegistryTypes').ExecutionRunProjectLaunchContext;
+      agentStartContext?: import('@happier-dev/protocol/account/settings/admitAgentStartV1').AgentStartContextV1;
       resolveAccountSettingsSnapshot?: import('@/settings/accountSettings/activeAccountSettingsSnapshot').AccountSettingsSnapshotResolver;
     }>,
   ): Promise<ExecutionRunActionResult>;

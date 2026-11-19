@@ -4,7 +4,7 @@ import type { BackendTargetRefV1, SessionInputCausalPermissionAuthorityV1 } from
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import { ReviewFollowUpInputSchema } from '@happier-dev/protocol/reviews/reviewFollowUp';
 import { ReviewNativeNewRoundInputV1Schema, resolveReviewRunContinuityV1 } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
-import { REVIEW_NEW_ROUND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { REVIEW_NEW_ROUND_ACTION_ID_V1, isReviewRunStartActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { ReviewTriageOverlaySchema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
 import { isExecutionRunActive } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
@@ -93,7 +93,7 @@ export async function applyExecutionRunAction(args: Readonly<{
       : { ok: false, errorCode: 'execution_run_host_action_unavailable', error: 'Review narration host services are unavailable' };
   }
 
-  if (run.intent === 'review' && (args.params.actionId === 'review.follow_up' || args.params.actionId === REVIEW_NEW_ROUND_ACTION_ID_V1)) {
+  if (run.intent === 'review' && isReviewRunStartActionIdV1(args.params.actionId)) {
     // This stays runtime-owned because follow-up orchestration needs the live run and
     // startRun/retention plumbing, not just a pure profile transform.
     const current = projectExecutionRunPublicState(run, args.controllers.get(args.runId) ?? null);
@@ -109,6 +109,10 @@ export async function applyExecutionRunAction(args: Readonly<{
       ? { kind: 'new_round', ...newRound.data } : { kind: 'follow_up' });
     if (!continuity.ok) return continuity;
     const continueRetained = continuity.continuity === 'continues';
+    const retainedStartContext = {
+      ...(run.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: run.requesterWorkAttributionV1 } : {}),
+      ...(run.roleId ? { roleId: run.roleId } : {}),
+    };
 
     if (newRound?.success) {
       if (!args.reviewComments) return { ok: false, errorCode: 'review_record_unavailable', error: 'Review records are unavailable' };
@@ -125,7 +129,7 @@ export async function applyExecutionRunAction(args: Readonly<{
         reviewFindings: newRound.data.fresh ? null : readRetainedReviewFindings(run),
       };
       try {
-        const started = await args.startRun({ ...retainedStart, ...selection,
+        const started = await args.startRun({ ...retainedStart, ...selection, ...retainedStartContext,
           sessionId: run.sessionId, intent: 'review', backendTarget: run.backendTarget,
           instructions: run.instructions,
           intentInput: { ...((run.intentInput && typeof run.intentInput === 'object') ? run.intentInput : {}),
@@ -160,7 +164,7 @@ export async function applyExecutionRunAction(args: Readonly<{
 
     const threadId = parsed.data.threadId ?? `review_thread_${randomUUID()}`;
     let started: ExecutionRunStartResult;
-    try { started = await args.startRun({
+    try { started = await args.startRun({ ...retainedStartContext,
       sessionId: run.sessionId,
       intent: 'review',
       backendTarget: run.backendTarget,

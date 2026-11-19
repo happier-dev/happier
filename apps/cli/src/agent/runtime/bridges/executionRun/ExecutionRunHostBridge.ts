@@ -3707,6 +3707,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     opts?: Readonly<{
       causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
       effectiveCallerPermissionMode?: string;
+      agentStartContext?: import('@happier-dev/protocol/account/settings/admitAgentStartV1').AgentStartContextV1;
     } & Pick<ExecutionRunRuntimeCreateOptions, 'projectLaunchContext' | 'resolveAccountSettingsSnapshot'>>,
   ): Promise<ExecutionRunActionResult> {
     await this.recoverRetainedRuns();
@@ -3746,6 +3747,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         controllers: this.controllers,
         voiceAgentManager: this.voiceAgentManager,
         startRun: async (startParams) => {
+          startParams = { ...startParams,
+            ...(startParams.roleId ? { resolvedRole: opts?.agentStartContext?.roles[startParams.roleId] } : {}) };
           if (params.actionId === REVIEW_NEW_ROUND_ACTION_ID_V1 && startParams.resumeHandle === null) {
             return await this.startWithRetainedRuntime({ ...startParams,
               ...(opts?.projectLaunchContext ? { projectLaunchContext: opts.projectLaunchContext } : {}),
