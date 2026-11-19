@@ -15,6 +15,7 @@ import type { createRequesterSessionControlRuntimeFixture } from '../../testkit/
 import { admitRequesterSessionBootstrap } from '../../sessionEncryption/requesterSessionCredentials';
 import { createCliNotificationChannelStore } from '@/settings/notifications/notificationChannelStore';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { buildQualifiedConnectedAccountLocalSubjectId } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { sealNotificationChannelCatalogContentV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
@@ -78,10 +79,7 @@ import { resolveConnectedServiceAccountMode } from '@/cloud/connectedServices/re
 import { createDaemonServerWorkBudget, createDaemonServerWorkScheduler } from '@/daemon/serverWork';
 import type { Credentials, StoredCredentials } from '@/persistence';
 import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey';
-import type {
-  ConnectedAccountRuntimeEstablishedOperation,
-  ConnectedAccountRuntimeEstablishedResult,
-} from '@/plugins/runtime/connectedAccounts/runtimeInvoker';
+import type { ConnectedAccountRuntimeEstablishedResult } from '@/plugins/runtime/connectedAccounts/runtimeInvoker';
 import type { AccountPluginDataStorageHostDependencies } from '@/plugins/runtime/context/accountPluginDataStorage';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -114,10 +112,7 @@ import {
 } from '../accountGroups/switching/buildConnectedServiceAuthGroupSwitchStateFromAccountUsage';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
 import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
-import {
-  createQualifiedConnectedAccountEstablishedRuntimeOwner,
-  type QualifiedConnectedAccountEstablishedInvocationBasis,
-} from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
+import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { createQualifiedConnectedAccountDaemonPersistence } from '../qualifiedConnectedAccountDaemonPersistence';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { PluginConnectedAccountDescriptorContributionV2Schema, type PluginConnectedAccountDescriptorContributionV2 } from '@happier-dev/protocol';
@@ -139,6 +134,7 @@ async function createQualifiedQuotaRuntimeFixture(profile: QualifiedConnectedAcc
   resetAtMs?: number;
   retryAfterMsByProfileId?: Readonly<Record<string, number>>;
   remainingByProfileId?: Readonly<Record<string, number>>;
+  quotaLimitsByProfileId?: Readonly<Record<string, NonNullable<ConnectedAccountRuntimeEstablishedResult<{ kind: 'quota' }>>['limits']>>;
   profiles?: readonly QualifiedConnectedAccountProfileV4[];
   usageIdentity?: PluginConnectedAccountDescriptorContributionV2['usageIdentity'];
 }>) {
@@ -170,7 +166,7 @@ async function createQualifiedQuotaRuntimeFixture(profile: QualifiedConnectedAcc
           const backoff = ${JSON.stringify(options?.retryAfterMsByProfileId ?? {})}[context.account.accountId];
           if (backoff) throw Object.assign(new Error('Provider quota backoff'), { status: 429, retryAfterMs: backoff, quotaFetchErrorCode: 'provider_backoff' });
           if (${JSON.stringify(options?.unavailableProfileIds ?? [])}.includes(context.account.accountId)) throw new Error('Provider quota unavailable');
-          return { observedAtMs: ${now}, ${options?.failQuota ? `...(() => { throw new Error('Provider quota unavailable'); })(),` : ''} ${options?.organizationQuota ? `providerOrganizationId: await context.credentials.get('organizationUuid'),` : ''} limits: [{ id: 'weekly', used: 100 - (${JSON.stringify(options?.remainingByProfileId ?? {})}[context.account.accountId] ?? 75), remaining: ${JSON.stringify(options?.remainingByProfileId ?? {})}[context.account.accountId] ?? 75 }] };
+          return { observedAtMs: ${now}, ${options?.failQuota ? `...(() => { throw new Error('Provider quota unavailable'); })(),` : ''} ${options?.organizationQuota ? `providerOrganizationId: await context.credentials.get('organizationUuid'),` : ''} limits: ${JSON.stringify(options?.quotaLimitsByProfileId ?? {})}[context.account.accountId] ?? [{ id: 'weekly', used: 100 - (${JSON.stringify(options?.remainingByProfileId ?? {})}[context.account.accountId] ?? 75), remaining: ${JSON.stringify(options?.remainingByProfileId ?? {})}[context.account.accountId] ?? 75 }] };
         }
       });
     }` },
@@ -465,12 +461,12 @@ it('rechecks provider backoff when polling resumes after credential admission', 
     let entered: () => void = () => {};
     const pending = new Promise<void>(resolve => { release = resolve; });
     const started = new Promise<void>(resolve => { entered = resolve; });
-    let sourceInitialized = false;
     let held = false;
     const hold = async (): Promise<void> => { held = true; entered(); await pending; };
     const readCredential = fixture.readCredential.getMockImplementation()!;
     fixture.readCredential.mockImplementation(async input => {
-      if (sourceInitialized && !held) await hold();
+      // Only the configured provider budget supplies a signal in this direct tick.
+      if (input.signal && !held) await hold();
       return await readCredential(input);
     });
     const coordinator = new ConnectedServiceQuotasCoordinator({
@@ -478,14 +474,12 @@ it('rechecks provider backoff when polling resumes after credential admission', 
         getConnectedServiceQuotaSnapshotSealed: async () => null,
         getConnectedServiceCredentialSealed: async () => null } satisfies QuotaApi,
       credentials: fixture.credentials, quotaFetchers: [], discoveryEnabled: false,
+      fetchTimeoutMs: 60_000,
       now: () => now, randomBytes: length => new Uint8Array(length), accountUsageStore: createProviderAccountUsageStore(),
       qualifiedConnectedAccountRuntime: { resolvePeerClass: () => 'advertised_v4',
         establishedRuntimeOwner: fixture.owner, listScheduledAccounts: async () => [profile],
         listGroupQuotaTargets: async () => [{ profile, groupGeneration: 2 }], readQuota: async () => null,
-        writeProviderAccountUsage: async () => {
-          sourceInitialized = true;
-          return { success: true };
-        } },
+        writeProviderAccountUsage: async () => ({ success: true }) },
     });
     const serviceId = buildQualifiedPluginContributionKey(profile.ref.service);
     const current: ConnectedServiceAuthGroupSwitchState = {
@@ -502,7 +496,8 @@ it('rechecks provider backoff when polling resumes after credential admission', 
     const observe = () => switcher.observeCurrentGenerationForRecovery({ serviceId, groupId: 'team', observedProfileId: 'primary' });
     const polling = coordinator.tickOnce();
     try {
-      await started;
+      const providerReadStarted = await Promise.race([started.then(() => true), polling.then(() => false)]);
+      expect(providerReadStarted).toBe(true);
       expect(await observe()).toMatchObject({ status: 'quota_proof_unavailable', retryAtMs: 1_300_000 });
       expect(await readFile(fixture.marker, 'utf8')).toBe('backup\n');
       release();
@@ -606,15 +601,20 @@ it('cancels a quota tick blocked on provider preparation at its existing configu
   };
   const fixture = await createQualifiedQuotaRuntimeFixture(profile, 1000);
   const readCredential = fixture.readCredential.getMockImplementation()!;
+  let tickSignal: AbortSignal | undefined;
   let requestSignal: AbortSignal | undefined;
   let requestStarted = false;
   let release: () => void = () => {};
-  fixture.readCredential.mockImplementationOnce(async input => {
-    requestSignal = input.signal;
+  fixture.readCredential.mockImplementation(async input => {
+    const signal = input.signal;
+    // Let source registration settle under the loop signal, then block the bounded provider read.
+    if (!signal || signal === tickSignal || requestStarted) return await readCredential(input);
+    requestSignal = signal;
     requestStarted = true;
+    signal.throwIfAborted();
     await new Promise<void>((resolve, reject) => {
       release = resolve;
-      input.signal?.addEventListener('abort', () => reject(input.signal!.reason), { once: true });
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
     });
     return await readCredential(input);
   });
@@ -629,7 +629,11 @@ it('cancels a quota tick blocked on provider preparation at its existing configu
     qualifiedConnectedAccountRuntime: {
       resolvePeerClass: () => 'advertised_v4', establishedRuntimeOwner: fixture.owner,
       resolveUsageIdentity: fixture.resolveUsageIdentity, listScheduledAccounts: async () => [profile],
-      readQuota: async () => null,
+      readQuota: async ({ signal }) => {
+        tickSignal = signal;
+        return null;
+      },
+      writeProviderAccountUsage: async () => ({ success: true }),
     },
   });
   const loop = startConnectedServiceQuotasLoop({ enabled: true, tickMs: 10000, coordinator,
@@ -697,6 +701,7 @@ import {
 import type { ConnectedServiceQuotaFetcher } from './types';
 
 type QuotaApi = ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]['api'];
+type QualifiedProviderAccountUsageWriter = NonNullable<QualifiedConnectedAccountQuotaRuntime['writeProviderAccountUsage']>;
 type QualifiedProviderAccountUsageWriteArgs = Readonly<{
   token: string;
   write: import('zod/mini').output<typeof QualifiedProviderAccountUsageWriteV4Schema>;
@@ -1205,6 +1210,9 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         configurationReady: true, configurationRevision: null, providerIdentity: { accountId: 'provider-primary' },
         displayName: 'Primary', scopes: [],
       };
+      const fixture = await createQualifiedQuotaRuntimeFixture(profile, now, {
+        quotaLimitsByProfileId: { primary: [{ id: scenario === 'different_window' ? 'session' : 'weekly', used: 20, remaining: 80 }] },
+      });
       let group = buildQualifiedConnectedAccountGroupV4Fixture({ activeProfileId: 'primary',
         memberProfileIds: ['primary'], policy: { cooldownMs: 60_000 },
         memberStatesByProfileId: { primary: { lastFailureKind: 'usage_limit', lastFailureProviderLimitId: 'weekly',
@@ -1228,9 +1236,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         // The plugin invocation and remote group persistence are process/network boundaries.
         qualifiedConnectedAccountRuntime: {
           resolvePeerClass: () => 'advertised_v4',
-          establishedRuntimeOwner: { invokeWithReceipt: async () => ({ result: {
-            observedAtMs: now, limits: [{ id: scenario === 'different_window' ? 'session' : 'weekly', used: 20, remaining: 80 }],
-          }, basis: { credentialRevision, credentialConfigurationRevision: null, isCurrent: () => true } }) },
+          establishedRuntimeOwner: fixture.owner,
           listScheduledAccounts: async () => [profile],
           listGroupQuotaTargets: async () => [{ profile, groupGeneration: 1 }],
           readGroup: async () => group, readQuota: async () => null,
@@ -1585,17 +1591,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       subjectKind: 'account',
       quotaScope: 'account',
     };
-    const invokeWithReceipt = vi.fn(async () => ({
-      result: {
-        observedAtMs: now,
-        limits: [],
-      },
-      basis: {
-        credentialRevision: profile.credentialRevision,
-        credentialConfigurationRevision: null,
-        isCurrent: () => true,
-      },
-    }));
+    const fixture = await createQualifiedQuotaRuntimeFixture(profile, now);
     const readQuota = vi.fn(async () => ({
       ref: otherRef,
       sourceResolution: {
@@ -1632,14 +1628,13 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         status: 'ok' as const,
       },
     }));
-    const writeProviderAccountUsage = vi.fn(async () => ({
-      success: true as const,
-    }));
+    const writeProviderAccountUsage = vi.fn<QualifiedProviderAccountUsageWriter>(async () => ({ success: true }));
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api: {
-        getAccountEncryptionMode:
-          vi.fn(async () => 'plain' as const),
-      } as unknown as QuotaApi,
+        getAccountEncryptionMode: async () => 'plain',
+        getConnectedServiceQuotaSnapshotSealed: async () => null,
+        getConnectedServiceCredentialSealed: async () => null,
+      } satisfies QuotaApi,
       credentials: {
         token: 'happy-token',
         encryption: {
@@ -1655,11 +1650,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       accountUsageStore: createProviderAccountUsageStore(),
       qualifiedConnectedAccountRuntime: {
         resolvePeerClass: () => 'advertised_v4' as const,
-        establishedRuntimeOwner: { invokeWithReceipt },
+        establishedRuntimeOwner: fixture.owner,
         listScheduledAccounts: vi.fn(async () => [profile]),
         readQuota,
         writeProviderAccountUsage,
-      } as unknown as QualifiedConnectedAccountQuotaRuntime,
+      },
       quotaPersistenceMinFreshnessMs: 60_000,
     });
 
@@ -1671,8 +1666,12 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       requestPurpose: 'connected-accounts:quota-qualification',
       signal: undefined,
     });
-    expect(invokeWithReceipt).toHaveBeenCalledOnce();
-    expect(writeProviderAccountUsage).toHaveBeenCalledOnce();
+    await expect(readFile(fixture.marker, 'utf8')).resolves.toBe('account-a\n');
+    const source = { ref: profile.ref, bindingKind: 'account' };
+    expect(writeProviderAccountUsage.mock.calls.map(([{ write }]) => write)).toMatchObject([
+      { source, status: 'unavailable', snapshot: { state: 'not_loaded' } },
+      { source, status: 'ok', snapshot: { state: 'loaded_data' } },
+    ]);
   });
 
   it('targets only the requested advertised-v4 group candidates during a pre-turn probe', async () => {
@@ -1839,18 +1838,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     };
     const readQuota = vi.fn(async (input: Readonly<{ ref: QualifiedConnectedAccountProfileV4['ref'] }>) =>
       input.ref.accountId === 'backup' ? freshBackupResponse : null);
-    const invokeWithReceipt = vi.fn(async () => ({
-      result: {
-        observedAtMs: now,
-        limits: [{ id: 'weekly', used: 100, remaining: 0, resetsAtMs: resetAtMs }],
-      },
-      basis: {
-        credentialRevision,
-        credentialConfigurationRevision: null,
-        isCurrent: () => true,
-      },
-    }));
-    const writeProviderAccountUsage = vi.fn(async () => ({ success: true as const }));
+    const fixture = await createQualifiedQuotaRuntimeFixture(primaryProfile, now, {
+      profiles: [primaryProfile, backupProfile],
+      quotaLimitsByProfileId: { primary: [{ id: 'weekly', used: 100, remaining: 0, resetsAtMs: resetAtMs }] },
+    });
+    const writeProviderAccountUsage = vi.fn<QualifiedProviderAccountUsageWriter>(async () => ({ success: true }));
     const readGroup = vi.fn(async (): Promise<QualifiedConnectedAccountGroupV4> =>
       buildQualifiedConnectedAccountGroupV4Fixture({
         groupId: 'team',
@@ -1878,7 +1870,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       groupSwitchCheckJitterMs: 0,
       qualifiedConnectedAccountRuntime: {
         resolvePeerClass: () => 'advertised_v4' as const,
-        establishedRuntimeOwner: { invokeWithReceipt },
+        establishedRuntimeOwner: fixture.owner,
         listScheduledAccounts: vi.fn(async () => [backupProfile, primaryProfile]),
         listGroupQuotaTargets: vi.fn(async () => [
           { profile: backupProfile, groupGeneration: 1 },
@@ -1915,19 +1907,12 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     // The primary (missing/stale row) invoked the provider exactly once; the fresh backup row
     // never triggered a provider invocation or a server rewrite.
-    expect(invokeWithReceipt).toHaveBeenCalledTimes(1);
-    expect(invokeWithReceipt).toHaveBeenCalledWith(expect.objectContaining({
-      account: primaryProfile.ref,
-      operation: { kind: 'quota' },
-    }));
-    expect(writeProviderAccountUsage).toHaveBeenCalledTimes(1);
-    expect(writeProviderAccountUsage).toHaveBeenCalledWith(expect.objectContaining({
-      token: 'happy-token',
-      write: expect.objectContaining({
-        source: { ref: primaryProfile.ref, bindingKind: 'account' },
-        payloadMode: 'plain_json_v1',
-      }),
-    }));
+    await expect(readFile(fixture.marker, 'utf8')).resolves.toBe('primary\n');
+    const source = { ref: primaryProfile.ref, bindingKind: 'account' };
+    expect(writeProviderAccountUsage.mock.calls.map(([{ write }]) => write)).toMatchObject([
+      { source, payloadMode: 'plain_json_v1', status: 'unavailable' },
+      { source, payloadMode: 'plain_json_v1', status: 'ok' },
+    ]);
     expect(readQuota).toHaveBeenCalledWith({ token: 'happy-token', ref: backupProfile.ref,
       requestPurpose: 'connected-accounts:quota-qualification', signal: undefined });
 
@@ -1987,22 +1972,14 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     };
     const accountUsageStore = createProviderAccountUsageStore();
     const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
-    const invokeWithReceipt = vi.fn(async () => ({
-      result: {
-        observedAtMs: now,
-        limits: [{ id: 'weekly', used: 100, remaining: 0, resetsAtMs: resetAtMs }],
-      },
-      basis: {
-        credentialRevision,
-        credentialConfigurationRevision: null,
-        isCurrent: () => true,
-      },
-    }));
+    const fixture = await createQualifiedQuotaRuntimeFixture(primaryProfile, now, {
+      quotaLimitsByProfileId: { primary: [{ id: 'weekly', used: 100, remaining: 0, resetsAtMs: resetAtMs }] },
+    });
     let replaceSelectionForPid71: (() => void) | null = null;
-    const writeProviderAccountUsage = vi.fn(async () => {
-      // Replace session s1's selection generation while the quota write is in flight.
-      replaceSelectionForPid71?.();
-      return { success: true as const };
+    const writeProviderAccountUsage = vi.fn<QualifiedProviderAccountUsageWriter>(async ({ write }) => {
+      // Replace session s1's selection generation while the observed quota write is in flight.
+      if (QualifiedProviderAccountUsageWriteV4Schema.parse(write).status === 'ok') replaceSelectionForPid71?.();
+      return { success: true };
     });
     const readGroup = vi.fn(async (): Promise<QualifiedConnectedAccountGroupV4> =>
       buildQualifiedConnectedAccountGroupV4Fixture({
@@ -2029,7 +2006,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       groupSwitchCheckJitterMs: 0,
       qualifiedConnectedAccountRuntime: {
         resolvePeerClass: () => 'advertised_v4' as const,
-        establishedRuntimeOwner: { invokeWithReceipt },
+        establishedRuntimeOwner: fixture.owner,
         listScheduledAccounts: vi.fn(async () => [primaryProfile]),
         listGroupQuotaTargets: vi.fn(async () => [
           { profile: primaryProfile, groupGeneration: 1 },
@@ -2076,8 +2053,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       groupId: 'team',
       groupGeneration: 1,
     })).not.toBeNull();
-    expect(invokeWithReceipt).toHaveBeenCalledTimes(1);
-    expect(writeProviderAccountUsage).toHaveBeenCalledTimes(1);
+    await expect(readFile(fixture.marker, 'utf8')).resolves.toBe('primary\n');
+    expect(writeProviderAccountUsage.mock.calls.map(([{ write }]) => write)).toMatchObject([
+      { status: 'unavailable' },
+      { status: 'ok' },
+    ]);
 
     // Exactly one live lifecycle edge ran (the still-current s2 target); the replaced s1
     // predecessor acquired no lifecycle or switch authority after its selection changed.
@@ -2532,14 +2512,14 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       return [profile];
     });
     const recordKey: ProviderAccountUsageRecordKeyV1 = {
-      providerId: unconfiguredRegistration ? 'meta' : serviceKey, accountSubjectId: unconfiguredRegistration ? profile.ref.accountId : 'provider-account-a',
+      providerId: unconfiguredRegistration ? 'meta' : serviceKey, accountSubjectId: unconfiguredRegistration ? buildQualifiedConnectedAccountLocalSubjectId(profile.ref) : 'provider-account-a',
       subjectKind: unconfiguredRegistration ? 'unknown' : 'account', quotaScope: 'account',
     };
     const previous: ProviderAccountUsageSnapshotV1 = {
       v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
       providerId: recordKey.providerId,
       accountSubject: unconfiguredRegistration
-        ? { kind: 'provisionalLocalSubject', id: recordKey.accountSubjectId, mergeKey: JSON.stringify([service.pluginId, service.localId, profile.ref.accountId]) }
+        ? { kind: 'provisionalLocalSubject', id: recordKey.accountSubjectId, mergeKey: recordKey.accountSubjectId }
         : { kind: 'providerSubject', id: recordKey.accountSubjectId },
       observedAtMs: now - 70_000, fetchedAtMs: now - 70_000, staleAfterMs: 60_000,
       source: 'providerHttp', confidence: 'confirmed', state: 'loaded_empty', meters: [], subscription,
@@ -3614,42 +3594,12 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         { profile: primaryProfile, groupGeneration: 2 },
       ];
     });
-    const quotaLimits = [{ id: 'monthly', used: 100, remaining: 0, resetsAtMs: resetAtMs }];
-    const invokeWithReceiptCalls: Array<Readonly<{ account: QualifiedConnectedAccountProfileV4['ref'] }>> = [];
-    const invokeWithReceipt = vi.fn(async (input: Readonly<{
-      account: QualifiedConnectedAccountProfileV4['ref'];
-      operation: ConnectedAccountRuntimeEstablishedOperation;
-      signal?: AbortSignal;
-    }>): Promise<Readonly<{
-      result: {
-        observedAtMs: number;
-        limits: ReadonlyArray<Readonly<{ id: string; used: number; remaining: number; resetsAtMs: number }>>;
-      };
-      basis: QualifiedConnectedAccountEstablishedInvocationBasis;
-    }>> => {
-      if (input.operation.kind !== 'quota') {
-        throw new Error(`unexpected established operation: ${input.operation.kind}`);
-      }
-      invokeWithReceiptCalls.push({ account: input.account });
-      return {
-        result: { observedAtMs: now, limits: input.account.accountId === 'backup'
-          ? [{ id: 'monthly', used: 20, remaining: 80, resetsAtMs: resetAtMs }] : quotaLimits },
-        basis: {
-          credentialRevision,
-          credentialConfigurationRevision: null,
-          runtimeConfigurationRevision: 'configuration-1',
-          occurrenceId: 'generation-1',
-          sourceCustody: {
-            kind: 'managed',
-            immutableGenerationId: 'immutable-generation-1',
-            installSource: 'npm',
-          },
-          isCurrent: () => true,
-          prepareCredentialReplacement: () => {
-            throw new Error('quota poll must not prepare a credential replacement');
-          },
-        },
-      };
+    const fixture = await createQualifiedQuotaRuntimeFixture(primaryProfile, now, {
+      profiles: [backupProfile, primaryProfile],
+      quotaLimitsByProfileId: {
+        backup: [{ id: 'monthly', used: 20, remaining: 80, resetsAtMs: resetAtMs }],
+        primary: [{ id: 'monthly', used: 100, remaining: 0, resetsAtMs: resetAtMs }],
+      },
     });
     const readGroup = vi.fn(async () => qualifiedGroup());
     const readQuota = vi.fn(async () => null);
@@ -3680,7 +3630,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       recordDiagnostic: (event: unknown) => diagnostics.push(event),
       qualifiedConnectedAccountRuntime: {
         resolvePeerClass: () => 'advertised_v4' as const,
-        establishedRuntimeOwner: { invokeWithReceipt },
+        establishedRuntimeOwner: fixture.owner,
         listScheduledAccounts,
         listGroupQuotaTargets,
         readGroup,
@@ -3721,7 +3671,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       groupId: 'group-1',
       signal: expect.any(AbortSignal),
     });
-    expect(invokeWithReceiptCalls.map((call) => call.account.accountId).sort()).toEqual(['backup', 'primary']);
+    expect((await readFile(fixture.marker, 'utf8')).trim().split('\n').sort()).toEqual(['backup', 'primary']);
 
     // Canonical source linkage: the poll-written usage is resolvable under the qualified
     // group_member and profile sources, not just as an unlinked snapshot.
