@@ -14,7 +14,8 @@ const vcpus = defineProtocolUnion([defineProtocolLiteral(1), defineProtocolNumbe
 const image = defineProtocolString({ minLength: 1, maxLength: 255, pattern: '\\S' });
 // Vercel REST v4 + pricing limits, verified 2026-10-25. Team limits are checked separately.
 const timeoutMs = defineProtocolNumber({ integer: true, minimum: 1000, maximum: 86_400_000 });
-const snapshotExpirationMs = defineProtocolNumber({ integer: true, minimum: 0 });
+// Vercel accepts zero for no expiry and otherwise requires at least one day.
+const snapshotExpirationMs = defineProtocolUnion([defineProtocolLiteral(0), defineProtocolNumber({ integer: true, minimum: 86_400_000 })]);
 export const VercelLaunchSchema = defineProtocolObject({ image, region, vcpus, timeoutMs, snapshotExpirationMs, snapshotId: text.optional() }, closed);
 export const VercelOptionsSchema = defineProtocolObject({ image: image.optional(), region: region.optional(), vcpus: vcpus.optional(), timeoutMs: timeoutMs.optional(), snapshotExpirationMs: snapshotExpirationMs.optional() }, closed);
 export const VercelResourceSchema = defineProtocolObject({ name, createdAt: timestamp, managedId: text, teamId: text, projectId: text }, closed);

@@ -9455,7 +9455,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineVercel.projectId": "Project ID",
     "machineVercel.projectIdDescription": "Required for sandboxes and project-scoped tokens. Find it in Vercel, under Project settings.",
     "machineVercel.region": "Region",
-    "machineVercel.retentionDescription": "Use 0 for no expiry. Retained snapshots are billed after the sandbox stops.",
+    "machineVercel.retentionDescription": "Use 0 for no expiry, or at least 86,400,000 ms (one day). Retained snapshots are billed after the sandbox stops.",
     "machineVercel.snapshotExpiration": "Snapshot retention (milliseconds)",
     "machineVercel.snapshotStorage": "Snapshot storage (Pro / Enterprise)",
     "machineVercel.teamId": "Team ID",

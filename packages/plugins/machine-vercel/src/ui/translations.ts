@@ -10,7 +10,7 @@ const en = {
   "timeout": "Run timeout (milliseconds)",
   "snapshotExpiration": "Snapshot retention (milliseconds)",
   "timeoutDescription": "Leave empty to use your plan maximum: 45 minutes on Hobby; 24 hours on Pro and Enterprise. Enter a shorter duration if needed. Happier does not extend runs automatically.",
-  "retentionDescription": "Use 0 for no expiry. Retained snapshots are billed after the sandbox stops.",
+  "retentionDescription": "Use 0 for no expiry, or at least 86,400,000 ms (one day). Retained snapshots are billed after the sandbox stops.",
   "token": "Access token",
   "signIn": "Sign in with Vercel",
   "signInTeamIdDescription": "Leave empty to choose from your teams after you sign in.",

@@ -8,7 +8,7 @@
   "machineVercel.timeout": "Run timeout (milliseconds)",
   "machineVercel.snapshotExpiration": "Snapshot retention (milliseconds)",
   "machineVercel.timeoutDescription": "Leave empty to use your plan maximum: 45 minutes on Hobby; 24 hours on Pro and Enterprise. Enter a shorter duration if needed. Happier does not extend runs automatically.",
-  "machineVercel.retentionDescription": "Use 0 for no expiry. Retained snapshots are billed after the sandbox stops.",
+  "machineVercel.retentionDescription": "Use 0 for no expiry, or at least 86,400,000 ms (one day). Retained snapshots are billed after the sandbox stops.",
   "machineVercel.token": "Access token",
   "machineVercel.teamId": "Team ID",
   "machineVercel.projectId": "Project ID",

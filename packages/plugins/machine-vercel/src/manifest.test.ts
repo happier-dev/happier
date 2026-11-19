@@ -17,7 +17,7 @@ import { PLUGIN, PLUGIN_MANIFEST, MACHINE_PROVISIONER, ROLE_SCHEMAS } from './in
 import { activateAccount } from './manifest.js';
 import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { activate as activateAuthentication } from './account.js';
-import { reference, RECONCILIATION, VercelLaunchSchema } from './machine/schemas.js';
+import { reference, RECONCILIATION, VercelLaunchSchema, VercelOptionsSchema } from './machine/schemas.js';
 
 const scope = { teamId: 'team_one', projectId: 'prj_one' };
 const resource = { ...scope, name: 'happier-managed-1', managedId: 'managed-1', createdAt: 1000 };
@@ -320,6 +320,13 @@ describe('public Vercel provisioner composition', () => {
     expect(parsePluginManifest(PLUGIN_MANIFEST).ok).toBe(true);
     expect(MACHINE_PROVISIONER.retention.supportedIntents).toEqual(['start','stop','resume','delete']);
     expect(ROLE_SCHEMAS.acquireInput.safeParse({ managedId: resource.managedId, launch: { ...launch, token: 'not-public' } }).success).toBe(false);
+  });
+  it('rejects snapshot retention below Vercel’s one-day minimum unless expiry is disabled', () => {
+    for (const schema of [VercelOptionsSchema, VercelLaunchSchema]) {
+      expect(schema.safeParse({ ...launch, snapshotExpirationMs: 0 }).success).toBe(true);
+      expect(schema.safeParse({ ...launch, snapshotExpirationMs: 86_399_999 }).success).toBe(false);
+      expect(schema.safeParse({ ...launch, snapshotExpirationMs: 86_400_000 }).success).toBe(true);
+    }
   });
   it('does not invent a Vercel vCPU default in the authoring hints', () => {
     const manifest = parsePluginManifest(PLUGIN_MANIFEST);
