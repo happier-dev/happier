@@ -535,6 +535,53 @@ describe('additional constructible credential shapes', () => {
     expect(redactBugReportSensitiveText(listed)).toBe(listed);
   });
 
+  // Every value below is a fake built from its rule's own shape.
+  const lineStartSecrets = [
+    ['AWS access key id', 'AKIAFAKEFAKEFAKEFAKE', 'AKIAFAKEFAKEFAKEFAKE'],
+    ['GitHub token', 'ghp_FakeFakeFakeFakeFake0123', 'FakeFakeFakeFakeFake0123'],
+    ['GitHub fine-grained token', 'github_pat_Fake_Fake_Fake_Fake_Fake', 'Fake_Fake_Fake_Fake_Fake'],
+    ['GitLab token', 'glpat-Fake-Fake-Fake-Fake-Fake', 'Fake-Fake-Fake-Fake-Fake'],
+    ['npm token', 'npm_FakeFakeFakeFakeFake01', 'FakeFakeFakeFakeFake01'],
+    ['Docker token', 'dckr_pat_FakeFakeFakeFakeFake', 'FakeFakeFakeFakeFake'],
+    ['model-hub token', 'hf_FakeFakeFakeFakeFake01', 'FakeFakeFakeFakeFake01'],
+    ['model-provider key', 'sk-fake-fake-fake-fake-fake', 'fake-fake-fake-fake-fake'],
+    ['Slack token', 'xoxb-0000-fake-fake-fake', '0000-fake-fake-fake'],
+    ['Slack webhook', 'https://hooks.slack.com/services/T0FAKE/B0FAKE/fakefakefake', 'T0FAKE/B0FAKE/fakefakefake'],
+    ['Stripe secret key', 'sk_live_FakeFakeFakeFake01', 'FakeFakeFakeFake01'],
+    ['Google API key', `AIza${'Fake'.repeat(8)}Fak`, `${'Fake'.repeat(8)}Fak`],
+    ['Google OAuth token', 'ya29.Fake.Fake.Fake.Fake.Fake', 'Fake.Fake.Fake.Fake.Fake'],
+    ['bearer label', 'Bearer fakeBearerValue01', 'fakeBearerValue01'],
+    ['authorization label', 'authorization: bearer fakeAuthValue01', 'fakeAuthValue01'],
+    ['cookie label', 'cookie: sid=fakeCookieValue01', 'fakeCookieValue01'],
+    ['x-api-key label', 'x-api-key: fakeApiKeyValue01', 'fakeApiKeyValue01'],
+    ['api key label', 'api_key=fakeApiKeyValue02', 'fakeApiKeyValue02'],
+    ['npmrc label', '_authToken=fakeNpmrcValue01', 'fakeNpmrcValue01'],
+    ['AWS secret label', 'aws_session_token=fakeAwsValue01', 'fakeAwsValue01'],
+    ['token label', 'token=fakeTokenValue01', 'fakeTokenValue01'],
+    ['password label', 'password: fakePasswordValue01', 'fakePasswordValue01'],
+  ] as const;
+
+  it.each(['\n', '\t', '\r'].flatMap((whitespace) => lineStartSecrets.map((row) => [whitespace, ...row] as const)))(
+    'redacts a vendor or labelled secret that starts a JSON-escaped line after %j: %s',
+    (whitespace, _kind, text, secret) => {
+      // Escaped, the line break is the two characters `\` `n`, so the secret follows a word character.
+      const line = JSON.stringify(`Exit code: 1${whitespace}${text}${whitespace}done`);
+      const redacted = redactBugReportSensitiveText(line);
+      expect(redacted).not.toContain(secret);
+      expect(redacted.startsWith(JSON.stringify(`Exit code: 1${whitespace}`).slice(0, -1))).toBe(true);
+    },
+  );
+
+  it.each(['\n', '\t', '\r'])('keeps prose and prefix-only names that start a JSON-escaped line after %j', (whitespace) => {
+    const prose = JSON.stringify([
+      'hf_cache and dckr_pat_ are names',
+      'glpat-short and sk-learn and AIzaSy are not keys',
+      'tokenCount: 3, passwordless login, secretary=bob',
+      'rerunghp_FakeFakeFakeFakeFake0123 is not at a boundary',
+    ].join(whitespace));
+    expect(redactBugReportSensitiveText(prose)).toBe(prose);
+  });
+
   it('leaves real repository identifiers and prose near the new prefixes untouched', () => {
     // Each new rule keys on a distinctive literal prefix followed by a credential
     // -length body. Nothing this repository writes satisfies both.

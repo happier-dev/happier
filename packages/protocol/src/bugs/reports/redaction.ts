@@ -9,14 +9,20 @@ import {
   ACCOUNT_API_TOKEN_CREDENTIAL_V1_PREFIX,
 } from '../../auth/accountApiTokenFormatV1.js';
 
+// A provider transcript carries a tool result JSON-escaped, so a secret, or the
+// label naming one, that starts a line follows the literal `\n`, `\t` or `\r`,
+// whose letter denies `\b`. This is the one start-of-secret boundary every
+// prefix and label rule below uses; it also admits a preceding escape.
+const SECRET_TEXT_BOUNDARY = String.raw`(?:\b|(?<=\\[nrt]))`;
+function secretTextPattern(source: string, flags: string): RegExp {
+  return new RegExp(`${SECRET_TEXT_BOUNDARY}${source}`, flags);
+}
+
 // Happier's own Account API tokens have a fixed minted shape, so like the vendor
-// prefixes below they need no label: a provider transcript carries a tool result
-// JSON-escaped, where neither the quoted-field nor the `token:` rule can reach it.
-// There a token that starts a line follows the literal `\n`, `\t` or `\r`, whose
-// letter denies `\b`, so the boundary also admits a preceding escape.
-const ACCOUNT_API_TOKEN_TEXT_BOUNDARY = String.raw`(?:\b|(?<=\\[nrt]))`;
-const ACCOUNT_API_TOKEN_BEARER_V1_TEXT_PATTERN = new RegExp(`${ACCOUNT_API_TOKEN_TEXT_BOUNDARY}${ACCOUNT_API_TOKEN_BEARER_V1_SOURCE}`, 'g');
-const ACCOUNT_API_TOKEN_CREDENTIAL_V1_TEXT_PATTERN = new RegExp(`${ACCOUNT_API_TOKEN_TEXT_BOUNDARY}${ACCOUNT_API_TOKEN_CREDENTIAL_V1_PREFIX}[A-Za-z0-9_-]+`, 'g');
+// prefixes below they need no label: in a JSON-escaped tool result neither the
+// quoted-field nor the `token:` rule can reach them.
+const ACCOUNT_API_TOKEN_BEARER_V1_TEXT_PATTERN = secretTextPattern(ACCOUNT_API_TOKEN_BEARER_V1_SOURCE, 'g');
+const ACCOUNT_API_TOKEN_CREDENTIAL_V1_TEXT_PATTERN = secretTextPattern(`${ACCOUNT_API_TOKEN_CREDENTIAL_V1_PREFIX}[A-Za-z0-9_-]+`, 'g');
 
 /**
  * Arbitrary agent, plugin and provider text reaches this redactor, so the value
@@ -343,21 +349,21 @@ function redactJsonWebTokensInBase64UrlRun(run: string): string {
 function redactKnownSensitiveText(input: string): string {
   return redactSegmentAwareCredentialAssignments(
     redactQuotedCredentialAssignments(redactSensitiveDiagnosticUrls(input))
-      .replace(/\bauthorization\s*:\s*bearer\s+[^\r\n]+/gi, 'authorization: bearer [REDACTED]')
-      .replace(/\bauthorization\s*:\s*basic\s+[^\r\n]+/gi, 'authorization: basic [REDACTED]'),
+      .replace(secretTextPattern(String.raw`authorization\s*:\s*bearer\s+[^\r\n]+`, 'gi'), 'authorization: bearer [REDACTED]')
+      .replace(secretTextPattern(String.raw`authorization\s*:\s*basic\s+[^\r\n]+`, 'gi'), 'authorization: basic [REDACTED]'),
   )
-    .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]')
+    .replace(secretTextPattern(String.raw`bearer\s+[A-Za-z0-9._~+/=-]+`, 'gi'), 'Bearer [REDACTED]')
     .replace(
       QUOTED_SECRET_FIELD_PATTERN,
       (_match, keyQuote: string, key: string, valueQuote: string) =>
         `${keyQuote}${key}${keyQuote}: ${valueQuote}[REDACTED]${valueQuote}`,
     )
-    .replace(/\b(cookie|set-cookie)\s*:\s*[^\r\n]+/gi, (_match, key: string) => `${key.toLowerCase()}: [REDACTED]`)
-    .replace(/\bx-api-key\s*:\s*[^\r\n]+/gi, 'x-api-key: [REDACTED]')
-    .replace(/\b(api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|id[_-]?token|jwt|session(?:id)?|passphrase|private[_-]?key)\s*[:=]\s*[^\s&]+/gi, (_match, key: string) => `${key}: [REDACTED]`)
+    .replace(secretTextPattern(String.raw`(cookie|set-cookie)\s*:\s*[^\r\n]+`, 'gi'), (_match, key: string) => `${key.toLowerCase()}: [REDACTED]`)
+    .replace(secretTextPattern(String.raw`x-api-key\s*:\s*[^\r\n]+`, 'gi'), 'x-api-key: [REDACTED]')
+    .replace(secretTextPattern(String.raw`(api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|id[_-]?token|jwt|session(?:id)?|passphrase|private[_-]?key)\s*[:=]\s*[^\s&]+`, 'gi'), (_match, key: string) => `${key}: [REDACTED]`)
     // Legacy npmrc credentials carry no value prefix of their own, and the leading
     // underscore keeps the generic `password`/`token` rules from ever reaching them.
-    .replace(/\b(_(?:authToken|auth|password))\s*=\s*\S+/gi, (_match, key: string) => `${key}=[REDACTED]`)
+    .replace(secretTextPattern(String.raw`(_(?:authToken|auth|password))\s*=\s*\S+`, 'gi'), (_match, key: string) => `${key}=[REDACTED]`)
     // `scheme://user:secret@host` puts a live credential in an otherwise ordinary
     // clone/fetch/registry failure. Only the userinfo component is replaced, so the
     // host and path that make the failure diagnosable survive. The scheme length is
@@ -370,7 +376,7 @@ function redactKnownSensitiveText(input: string): string {
       (match) => `${match.slice(0, match.indexOf('://') + 3)}[REDACTED]@`,
     )
     .replace(
-      /\b(aws[_-]?(?:secret[_-]?access[_-]?key|session[_-]?token))\s*[:=]\s*[^\s&]+/gi,
+      secretTextPattern(String.raw`(aws[_-]?(?:secret[_-]?access[_-]?key|session[_-]?token))\s*[:=]\s*[^\s&]+`, 'gi'),
       (_match, key: string) => `${key}: [REDACTED]`,
     )
     .replace(
@@ -379,39 +385,39 @@ function redactKnownSensitiveText(input: string): string {
     )
     .replace(ACCOUNT_API_TOKEN_BEARER_V1_TEXT_PATTERN, '[REDACTED]')
     .replace(ACCOUNT_API_TOKEN_CREDENTIAL_V1_TEXT_PATTERN, '[REDACTED]')
-    .replace(/\b(A3T[A-Z0-9]{16}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16})\b/g, '[REDACTED]')
-    .replace(/\bgh[pousr]_[A-Za-z0-9]{20}[A-Za-z0-9]*\b/g, '[REDACTED]')
-    .replace(/\bgithub_pat_[A-Za-z0-9_]{20}[A-Za-z0-9_]*\b/g, '[REDACTED]')
+    .replace(secretTextPattern(String.raw`(A3T[A-Z0-9]{16}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16})\b`, 'g'), '[REDACTED]')
+    .replace(secretTextPattern(String.raw`gh[pousr]_[A-Za-z0-9]{20}[A-Za-z0-9]*\b`, 'g'), '[REDACTED]')
+    .replace(secretTextPattern(String.raw`github_pat_[A-Za-z0-9_]{20}[A-Za-z0-9_]*\b`, 'g'), '[REDACTED]')
     // GitLab is GitHub's peer here and its token was reaching reports whole: the
     // clone-URL rule only covers `https://oauth2:glpat-…@`, and the generic
     // `token` rule needs a word boundary that `GITLAB_TOKEN=` denies it, so a
     // bare token or an environment dump published the credential verbatim.
     // The body run ends the match rather than `\b`, because `-` and `_` are both
     // token characters and a trailing one would otherwise be left visible.
-    .replace(/\bglpat-[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*(?![A-Za-z0-9_-])/g, '[REDACTED]')
-    .replace(/\bnpm_[A-Za-z0-9]{20}[A-Za-z0-9]*\b/g, '[REDACTED]')
+    .replace(secretTextPattern(String.raw`glpat-[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*(?![A-Za-z0-9_-])`, 'g'), '[REDACTED]')
+    .replace(secretTextPattern(String.raw`npm_[A-Za-z0-9]{20}[A-Za-z0-9]*\b`, 'g'), '[REDACTED]')
     // A registry or model-hub credential in install output has the same standing
     // as the npm one above it. `hf_` is already one of the families the local
     // inventory advertises as redacted through `redactsProcessArgs`, so leaving
     // it here disclosed in a report what the process projection removes.
-    .replace(/\bdckr_pat_[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*(?![A-Za-z0-9_-])/g, '[REDACTED]')
-    .replace(/\bhf_[A-Za-z0-9]{20}[A-Za-z0-9]*\b/g, '[REDACTED]')
-    .replace(/\bsk-[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*\b/g, '[REDACTED]')
+    .replace(secretTextPattern(String.raw`dckr_pat_[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*(?![A-Za-z0-9_-])`, 'g'), '[REDACTED]')
+    .replace(secretTextPattern(String.raw`hf_[A-Za-z0-9]{20}[A-Za-z0-9]*\b`, 'g'), '[REDACTED]')
+    .replace(secretTextPattern(String.raw`sk-[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*\b`, 'g'), '[REDACTED]')
     // Slack issues app-level tokens under `xapp-`, which the bot/user `xox…`
     // prefix cannot match; both bodies are the same hyphenated alphabet.
-    .replace(/\b(?:xox[a-z]|xapp)-[A-Za-z0-9-]{10}[A-Za-z0-9-]*/g, '[REDACTED]')
+    .replace(secretTextPattern(String.raw`(?:xox[a-z]|xapp)-[A-Za-z0-9-]{10}[A-Za-z0-9-]*`, 'g'), '[REDACTED]')
     .replace(
-      /\bhttps:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/_-]+/gi,
+      secretTextPattern(String.raw`https://hooks\.slack\.com/services/[A-Za-z0-9/_-]+`, 'gi'),
       'https://hooks.slack.com/services/[REDACTED]',
     )
     // `pk_` is Stripe's publishable identifier and stays readable; only the secret
     // and restricted key prefixes name a credential.
-    .replace(/\b[sr]k_(?:live|test)_[A-Za-z0-9]{16}[A-Za-z0-9]*\b/g, '[REDACTED]')
-    .replace(/\bAIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g, '[REDACTED]')
+    .replace(secretTextPattern(String.raw`[sr]k_(?:live|test)_[A-Za-z0-9]{16}[A-Za-z0-9]*\b`, 'g'), '[REDACTED]')
+    .replace(secretTextPattern(String.raw`AIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])`, 'g'), '[REDACTED]')
     // Google's second credential prefix: an OAuth access token, which `AIza`
     // above cannot match. A dot is a token character here, so the body run
     // carries it and the match ends where the run does.
-    .replace(/\bya29\.[A-Za-z0-9._-]{20}[A-Za-z0-9._-]*(?![A-Za-z0-9._-])/g, '[REDACTED]')
+    .replace(secretTextPattern(String.raw`ya29\.[A-Za-z0-9._-]{20}[A-Za-z0-9._-]*(?![A-Za-z0-9._-])`, 'g'), '[REDACTED]')
     // A private key body is the one payload worth losing entirely from a report.
     // The body scan is lazy against an end marker and also closes at end of
     // input, so a log truncated mid-key surrenders nothing. That end-of-input
@@ -435,7 +441,7 @@ function redactKnownSensitiveText(input: string): string {
     // rule above; a label-free one is now reported verbatim.
     // A Saved Secret reference (`happier:shared-secret:v1:<resource>`) names stored
     // material; it is not the material, and rewriting it breaks every reuse.
-    .replace(/(?<!happier:shared-)\b(password|passphrase|private[_-]?key|token|secret)\s*[:=]\s*[^\s&]+/gi, (_match, key: string) => `${key}: [REDACTED]`);
+    .replace(secretTextPattern(String.raw`(?<!happier:shared-)(password|passphrase|private[_-]?key|token|secret)\s*[:=]\s*[^\s&]+`, 'gi'), (_match, key: string) => `${key}: [REDACTED]`);
 }
 
 /**
