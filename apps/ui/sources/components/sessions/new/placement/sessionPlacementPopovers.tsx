@@ -474,6 +474,8 @@ export function useSessionMachineChoicePopover(
         );
       },
       ...LARGE_PICKER_LAYOUT,
+      // A phone chooses the Machine in the bottom sheet (lab m-pick Ap, L12 review D1): a long, sectioned list with search.
+      phonePresentation: 'sheet',
       onRequestClose: machinePoolSelection.cancelPendingSelection,
     }),
     [machinePopoverRenderParamsRef, machinePopoverSignature],

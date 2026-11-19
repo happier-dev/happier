@@ -618,6 +618,9 @@ function PlacementPopover(
       {...(config.maxWidthCap === undefined
         ? {}
         : { maxWidthCap: config.maxWidthCap })}
+      {...(config.phonePresentation === undefined
+        ? {}
+        : { phonePresentation: config.phonePresentation })}
       {...(config.scrollEnabled === undefined
         ? {}
         : { scrollEnabled: config.scrollEnabled })}
