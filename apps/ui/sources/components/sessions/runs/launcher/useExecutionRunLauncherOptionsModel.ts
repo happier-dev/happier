@@ -26,7 +26,7 @@ import { resolveExecutionRunActionDefaultPermissionMode } from '@/sync/domains/a
 import { toExecutionRunActionPermissionMode } from '@/sync/domains/actions/executionRunActionPermissionMode';
 
 import { resolveExecutionRunLauncherActionId, resolveExecutionRunTargetFieldPath, type ExecutionRunIntent } from './executionRunLauncherModel';
-import { resolveExecutionRunLauncherBackendChoices, resolveInitialExecutionRunBackendTargetKey } from './resolveExecutionRunLauncherBackendChoices';
+import { isFreshExecutionRunBackendChoice, resolveExecutionRunLauncherBackendChoices, resolveInitialExecutionRunBackendTargetKey } from './resolveExecutionRunLauncherBackendChoices';
 import { doesExecutionRunProfileMatchSelectedBackends, resolveExecutionRunLauncherProfileChoices } from './resolveExecutionRunLauncherProfileChoices';
 import { resolveExecutionRunPermissionAgentId } from './resolveExecutionRunPermissionAgentId';
 import { readReviewLauncherReviewers, readReviewLauncherEngineIds, selectReviewLauncherEngines, useReviewLauncherEngineConfiguration } from './reviewLauncherSelection';
@@ -150,17 +150,16 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
         if (!catalogReady || !machineAnswered) return;
         if (params.intent === 'review' && readReviewLauncherReviewers(params.actionInput).length > 0) return;
         const valueOf = (choice: typeof backendChoices[number]) => params.intent === 'review' ? choice.reviewEngineId ?? choice.backendId : choice.targetKey;
-        const selectable = backendChoices.filter(choice => !choice.disabled);
-        const selectableValues = selectable.map(valueOf);
+        // A saved choice that is not ready on the Machine stays chosen (it says why); defaults pick only fresh ones.
+        const keptValues = backendChoices.filter((choice) => !choice.disabled).map(valueOf);
+        const fresh = backendChoices.filter(isFreshExecutionRunBackendChoice);
         const preserved = selectedValues
-            .filter((value) => selectableValues.includes(value))
+            .filter((value) => keptValues.includes(value))
             .slice(0, params.singleTarget ? 1 : undefined);
         const initialChoice = initialBackendTargetKey
-            ? selectable.find((choice) => choice.targetKey === initialBackendTargetKey)
+            ? fresh.find((choice) => choice.targetKey === initialBackendTargetKey)
             : null;
-        const preferred = initialChoice
-            ? (params.intent === 'review' ? initialChoice.reviewEngineId ?? initialChoice.backendId : initialChoice.targetKey)
-            : selectableValues[0];
+        const preferred = initialChoice ? valueOf(initialChoice) : fresh[0] ? valueOf(fresh[0]) : undefined;
         const next = preserved.length > 0
             ? preserved
             : targetField?.requireExplicitSelection === true && !params.singleTarget
@@ -230,6 +229,8 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
         (params.setUserActionInput ?? params.setActionInput)((previous) => {
             const currentRaw = getValueAtPath(previous, targetFieldPath);
             const current = params.intent === 'review' ? readReviewLauncherEngineIds(previous) : Array.isArray(currentRaw) ? currentRaw.map(String) : [];
+            // A not-ready Agent can be let go of, never newly picked (its row opens setup instead).
+            if (choice.setup && !current.includes(value)) return previous;
             const next = params.singleTarget
                 ? [value]
                 : current.includes(value)
@@ -244,7 +245,7 @@ export function useExecutionRunLauncherOptionsModel(rawParams: Readonly<{
     const onSelectProfile = React.useCallback((choice: (typeof profileChoices)[number]) => {
         if (!choice.compatibleAgentId) return;
         const backend = backendChoices.find((candidate) => candidate.backendId === choice.compatibleAgentId);
-        if (!backend || backend.disabled) return;
+        if (!backend || !isFreshExecutionRunBackendChoice(backend)) return;
         const value = params.intent === 'review' ? backend.reviewEngineId ?? backend.backendId : backend.targetKey;
         (params.setUserActionInput ?? params.setActionInput)((previous) => ({
             ...previous,

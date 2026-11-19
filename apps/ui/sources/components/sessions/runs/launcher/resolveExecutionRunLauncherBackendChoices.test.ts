@@ -10,6 +10,7 @@ vi.mock('@/text', async () => {
 
 import { resolveExecutionRunLauncherBackendChoices, resolveInitialExecutionRunBackendTargetKey } from './resolveExecutionRunLauncherBackendChoices';
 import { AcpCatalogRecordV1Schema, type AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import { readBundledAgentPresentation } from '@happier-dev/agents/presentation';
 
 const record = AcpCatalogRecordV1Schema.parse({
@@ -179,4 +180,37 @@ describe('resolveExecutionRunLauncherBackendChoices', () => {
         }));
     });
 
+    describe('Machine facts', () => {
+        const machineAgent = (overrides: Partial<MachineAgent>): MachineAgent => ({
+            agentId: 'claude', title: 'Claude', state: 'ready', installed: true, version: '1.0.0', latestVersion: null, update: null,
+            signIn: { status: 'unknown', via: null, nativeLogin: 'terminal', connectedServices: [] },
+            platform: { supported: true },
+            install: { available: true, mode: 'vendor_recipe', sizeBytes: null, guideUrl: null, requiresVendorConsent: false },
+            dependencies: [], job: null, stale: false, ...overrides,
+        });
+
+        it('reads not-ready Agents by the shared picker rule: placed and opening setup, never a fresh choice', () => {
+            const capabilities = { structuredNarration: true };
+            const reviewEngines = [{ engineId: 'claude', label: 'Claude', enabled: true, readiness: 'ready' as const, capabilities },
+                { engineId: 'codex', label: 'Codex', enabled: false, readiness: 'needsSignIn' as const, unavailableCode: 'needsSignIn', capabilities },
+                { engineId: 'opencode', label: 'OpenCode', enabled: false, readiness: 'notInstalled' as const, unavailableCode: 'notInstalled', capabilities }];
+            const choices = resolveExecutionRunLauncherBackendChoices({
+                enabledAgentIds: [], intent: 'review', executionRunsBackends: null, reviewEngines,
+                machineAgents: [
+                    machineAgent({ agentId: 'claude' }),
+                    machineAgent({ agentId: 'codex', state: 'needsSignIn', signIn: { status: 'signedOut', via: null, nativeLogin: 'terminal', connectedServices: [] } }),
+                    machineAgent({ agentId: 'opencode', state: 'notInstalled', installed: false, version: null }),
+                ],
+            });
+            // Readiness is decided by inventory; the shared picker supplies setup presentation.
+            expect(choices.map((choice) => [choice.backendId, choice.disabled, choice.setup?.placement.group ?? null,
+                choice.setup?.placement.marker ?? null])).toEqual([
+                ['claude', false, null, null],
+                ['codex', true, 'onMachine', 'needsSignIn'],
+                ['opencode', true, 'notOnMachine', 'download'],
+            ]);
+            // Never a fresh choice: the parent's not-ready Agent is not preselected.
+            expect(resolveInitialExecutionRunBackendTargetKey(choices.find((choice) => choice.backendId === 'codex')!.backendTarget, choices)).toBeNull();
+        });
+    });
 });

@@ -46,3 +46,16 @@ export function presentMachineAgentSetupRow(row: MachineAgentSetupRow, params: R
         } : {}),
     };
 }
+
+/**
+ * The same setup presentation for an inline list row (the run launcher's Who list), which has no
+ * sections: the placement reads as the row's subtitle and the setup state as its mark.
+ */
+export function presentMachineAgentSetupListRow(row: MachineAgentSetupRow): Readonly<{ disabled: false; subtitle?: string; titleAccessory: React.ReactNode }> {
+    return {
+        disabled: false,
+        ...(row.placement.group === 'notOnMachine' ? { subtitle: t('machineAgents.notOnThisMachineYet') }
+            : row.placement.group === 'cantRun' ? { subtitle: t('machineAgents.cantRunOnThisMachine') } : {}),
+        titleAccessory: <MachineAgentPickerMarker marker={row.placement.marker} />,
+    };
+}

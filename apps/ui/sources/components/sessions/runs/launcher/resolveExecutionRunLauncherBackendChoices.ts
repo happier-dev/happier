@@ -20,7 +20,7 @@ import { resolveReviewEngineTarget, type ExecutionRunsBackendSnapshotEntry } fro
 import { resolveExecutionRunAvailableBackends } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
 import { findMachineAgentForBackendTargetKey } from '@/agents/machineAgents/machineAgentCatalog';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
-import { resolveMachineAgentPickerPlacement } from '@/components/machines/agents/machineAgentPresentation';
+import { resolveMachineAgentSetupRow, type MachineAgentSetupRow } from '@/components/sessions/agentPicker/machineAgentSetupRow';
 
 export type ExecutionRunLauncherBackendChoice = Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
@@ -33,9 +33,17 @@ export type ExecutionRunLauncherBackendChoice = Readonly<{
     agentId: string;
     title: string;
     disabled: boolean;
-    /** Where the Machine's own inventory says this Agent is, when it is not ready to run there. */
-    unavailable?: 'notOnMachine' | 'cantRun';
+    /**
+     * The Machine's own inventory says this Agent is not ready there: the shared Agent-picker rule
+     * presents it placed and opening setup. It is never a fresh choice, but a saved one stays chosen.
+     */
+    setup?: MachineAgentSetupRow;
 }>;
+
+/** A choice a person (or a default) may newly pick: run-capable here and ready on the Machine. */
+export function isFreshExecutionRunBackendChoice(choice: ExecutionRunLauncherBackendChoice): boolean {
+    return choice.disabled !== true && choice.setup === undefined;
+}
 
 export function resolveInitialExecutionRunBackendTargetKey(
     initialTarget: PersistedBackendTargetRefV2 | null,
@@ -44,7 +52,7 @@ export function resolveInitialExecutionRunBackendTargetKey(
     if (!initialTarget) return null;
     const canonicalTargetKey = buildBackendTargetKeyV2(initialTarget);
     return choices.find((choice) => (
-        choice.disabled !== true
+        isFreshExecutionRunBackendChoice(choice)
         && buildBackendTargetKeyV2(choice.backendTarget) === canonicalTargetKey
     ))?.targetKey ?? null;
 }
@@ -114,13 +122,11 @@ function applyMachineFacts(
 ): readonly ExecutionRunLauncherBackendChoice[] {
     const unread = params.executionRunsBackends == null;
     return choices.map((choice) => {
-        const agent = findMachineAgentForBackendTargetKey(params.machineAgents ?? [], choice.targetKey);
-        const group = resolveMachineAgentPickerPlacement(agent).group;
-        const unavailable = group === 'onMachine' ? undefined : group;
+        const setup = resolveMachineAgentSetupRow(findMachineAgentForBackendTargetKey(params.machineAgents ?? [], choice.targetKey));
         return {
             ...choice,
-            disabled: choice.disabled || unread || unavailable !== undefined,
-            ...(unavailable ? { unavailable } : {}),
+            disabled: choice.disabled || unread,
+            ...(setup ? { setup } : {}),
         };
     });
 }
@@ -136,6 +142,10 @@ export function resolveExecutionRunLauncherBackendChoices(params: ResolveBackend
             const agentId = canonicalTarget.kind === 'agent'
                 ? resolveBundledAgentIdFromContributionIdentity(canonicalTarget.identity) ?? buildQualifiedPluginContributionKey(canonicalTarget.identity)
                 : params.mergedBackendProjectionById?.[backendId]?.agentId ?? backendId;
+            // Setup supplies the shared picker action. The daemon Review inventory owns availability.
+            const setup = item.enabled ? undefined : resolveMachineAgentSetupRow(
+                findMachineAgentForBackendTargetKey(params.machineAgents ?? [], targetKey),
+            );
             return {
                 reviewEngineId: item.engineId,
                 reviewInventoryItem: item,
@@ -145,6 +155,7 @@ export function resolveExecutionRunLauncherBackendChoices(params: ResolveBackend
                 agentId,
                 title: item.label,
                 disabled: !item.enabled,
+                ...(setup ? { setup } : {}),
             };
         });
     }
