@@ -144,17 +144,20 @@ const loader = createScopedSnapshotLoader<TeamsDirectoryTarget>({
     // reads the retained rows; only an actual Teams change or retirement reads again.
     subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
     load: async ({ scope, input, queryKey }, loadContext) => {
+        const loadedRowCount = getTeamsDirectorySnapshot(scope, queryKey)?.data?.length ?? 0;
         beginTeamsDirectoryLoad(scope, queryKey);
-        // A refresh always re-reads the first page: a cursor names a position in
-        // a sequence that may have moved, and replaying it would duplicate rows.
-        const result = await runTeamAction({
-            scope,
-            actionId: 'teams.list',
-            input: { ...input, cursor: null },
-            parse: value => TeamsPageV1Schema.parse(value),
-            signal: loadContext.signal,
+        const result = await loadTeamPageRange({
+            loadedRowCount,
+            loadPage: cursor => runTeamAction({
+                scope,
+                actionId: 'teams.list',
+                input: { ...input, cursor },
+                parse: value => TeamsPageV1Schema.parse(value),
+                signal: loadContext.signal,
+            }),
+            isCancelled: () => loadContext.signal.aborted,
         });
-        if (loadContext.signal.aborted) return;
+        if (result === null || loadContext.signal.aborted) return;
         if (result.kind === 'succeeded') {
             applyTeamsDirectoryPage({
                 scope,

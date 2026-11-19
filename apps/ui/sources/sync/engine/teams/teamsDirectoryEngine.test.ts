@@ -231,6 +231,46 @@ describe('teamsDirectoryEngine', () => {
         release();
     });
 
+    it('revalidates the loaded administered Teams range through fresh cursors on an Account change', async () => {
+        const homeA = await addHome('Home A', 'https://home-a.example');
+        await setActiveServerId(homeA, { scope: 'device' });
+        const scope = createServerAccountScope(homeA, 'account')!;
+        const input: TeamsListInputV1 = { ...listInput, scope: 'administered' };
+        const key = teamDirectoryQueryKeyV1(input);
+
+        runtimeFetchMock.mockResolvedValueOnce(page([team('t1'), team('removed')], 'old-1'));
+        const release = observeTeamsDirectory(scope, input);
+        try {
+            await waitForHomeGovernance(() => expect(getTeamsDirectorySnapshot(scope, key)?.nextCursor).toBe('old-1'));
+            runtimeFetchMock.mockResolvedValueOnce(page([team('selected-page-two')], 'old-2'));
+            await loadMoreTeamsDirectory(scope, input);
+            const previousRows = getTeamsDirectorySnapshot(scope, key)!.data!;
+            expect(previousRows.map(row => row.id)).toEqual(['t1', 'removed', 'selected-page-two']);
+
+            runtimeFetchMock
+                .mockResolvedValueOnce(page([team('t1', 'Renamed')], 'fresh-1'))
+                .mockResolvedValueOnce(page([team('selected-page-two'), team('t3')], 'fresh-2'));
+            publishHomeAccountChange(homeA, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            await waitForHomeGovernance(() => {
+                expect(getTeamsDirectorySnapshot(scope, key)).toMatchObject({ status: 'ready', stale: false });
+                expect(getTeamsDirectorySnapshot(scope, key)?.data?.[0]?.name).toBe('Renamed');
+            });
+            const refreshed = getTeamsDirectorySnapshot(scope, key)!;
+            expect(refreshed.data?.map(row => row.id)).toEqual(['t1', 'selected-page-two', 't3']);
+            expect(refreshed.data?.[1]).toBe(previousRows[2]);
+            expect(refreshed.nextCursor).toBe('fresh-2');
+            expect(requestedBodies().map(body => body.cursor)).toEqual([null, 'old-1', null, 'fresh-1']);
+
+            // The authoritative end may shorten the range; continuity must not retain removed Teams.
+            runtimeFetchMock.mockResolvedValueOnce(page([team('selected-page-two')], null));
+            publishHomeAccountChange(homeA, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            await waitForHomeGovernance(() => expect(getTeamsDirectorySnapshot(scope, key)?.nextCursor).toBeNull());
+            expect(getTeamsDirectorySnapshot(scope, key)?.data?.map(row => row.id)).toEqual(['selected-page-two']);
+        } finally {
+            release();
+        }
+    });
+
     it('does not lose a wake that arrives while its own load is still in flight', async () => {
         const homeA = await addHome('Home A', 'https://home-a.example');
         await setActiveServerId(homeA, { scope: 'device' });
