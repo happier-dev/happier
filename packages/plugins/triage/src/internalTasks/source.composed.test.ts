@@ -151,16 +151,20 @@ describe('registered internal Happier task source', () => {
 
   it.each(['notStarted', 'denied', 'cancelled', 'responseLost'] as const)('preserves the internal host write outcome for create, edit and transition: %s', async outcome => {
     await withSource(async (kit, calls) => {
-      const expected = outcome === 'notStarted'
-        // 8db81218583 preserves the host's author payload and retryability.
-        ? { kind: 'refused', reason: 'unavailable', details: {}, retryable: false }
-        : { kind: 'uncertain', failure: { class: 'unknown', code: outcome === 'responseLost' ? 'unavailable' : outcome } };
+      const code = outcome === 'denied' || outcome === 'cancelled' ? outcome : 'unavailable';
+      const expected = outcome === 'responseLost'
+        ? { kind: 'uncertain', failure: { class: 'unknown', code } }
+        : { kind: 'refused', reason: code, details: {}, retryable: false };
       expect(await kit.invokeAction('internal/tasks/create-v1', { v: 1, instance, kindId: 'task', fields: { title: 'Create' } })).toEqual(expected);
       expect(await kit.invokeAction('internal/tasks/edit-v1', { v: 1, instance, localRef, fields: { title: 'Edit' } })).toEqual(expected);
       expect(await kit.invokeAction('internal/tasks/transition-v1', { v: 1, instance, localRef, transitionId: 'started' })).toEqual(expected);
       expect(calls.map(call => call.id)).toEqual(['tasks.internal.create', 'tasks.internal.edit', 'tasks.internal.transition']);
     }, undefined, () => {
-      const error = new PluginError({ code: outcome === 'denied' || outcome === 'cancelled' ? outcome : 'unavailable', retryable: false });
+      const error = new PluginError({
+        code: outcome === 'denied' || outcome === 'cancelled' ? outcome : 'unavailable',
+        retryable: false,
+        ...(outcome === 'responseLost' ? { effectAttempted: true } : {}),
+      });
       // Host transport boundary: mirror registration/actionHandlerInvocation.ts's exception and serialized data.
       throw outcome === 'notStarted' ? Object.assign(error, { actionHandlerInvocation: 'notStarted',
         data: { ...error.data, actionHandlerInvocation: 'notStarted' } }) : error;
