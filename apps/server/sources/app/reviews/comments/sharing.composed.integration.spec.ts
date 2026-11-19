@@ -105,10 +105,15 @@ describe('Review comment audience through authenticated HTTP', () => {
         }, { authentication: 'real' });
     });
 
-    it.each(['plain', 'e2ee'] as const)('commits admitted %s resource content after withdrawal, then refuses a new request', async mode => {
+    it.each([
+        { mode: 'plain', recipientMode: 'plain' },
+        { mode: 'e2ee', recipientMode: 'plain' },
+        { mode: 'e2ee', recipientMode: 'e2ee' },
+    ] as const)('commits admitted $mode resource content for $recipientMode recipients after withdrawal, then refuses a new request', async ({ mode, recipientMode }) => {
         const owner = await db.account.create({ data: { encryptionMode: mode,
             ...(mode === 'e2ee' ? createSignedAccountContentBinding() : {}) } });
-        const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const recipient = await db.account.create({ data: { encryptionMode: recipientMode,
+            ...(recipientMode === 'e2ee' ? createSignedAccountContentBinding() : {}) } });
         await makeShareEligibleForTest(owner.id, [recipient.id]);
         const reviewId = randomUUID();
         await db.artifact.create({ data: { id: reviewId, accountId: owner.id, kind: 'v1:other:review.v1',
@@ -141,6 +146,13 @@ describe('Review comment audience through authenticated HTTP', () => {
         };
         const headers = { authorization: `Bearer ${await createAccountTokenForTests(recipient.id, { kind: 'account', authority: 'present_user' })}` };
         await withAuthenticatedTestApp(registerReviewCommentRoutes, async app => {
+            // Replay the Q19 captured prepare wire, substituting only the disposable Review id.
+            const capturedPrepare = await app.inject({ method: 'POST', url: '/v1/reviews/comments/mutations/prepare', headers,
+                payload: { v: 1, mutation: { actionId: 'reviews.comments.create', input: {
+                    reviewId, roundOrdinal: 1, clientMutationId: 'a86991ae-7ea2-4d61-a42d-0578eac7244b', anchorIndex: { kind: 'line' },
+                } }, contentCommitment: 'Bl0oISZbAS9gMibSHaEdaf2KsBOi3H4qsAQlrNTfYP8',
+                createRequestFingerprint: 'p3c5fiNF0WHxOuaA7SzKw929zJTL-ZxuR-x8YQL_u0U' } });
+            expect(capturedPrepare.statusCode, capturedPrepare.body).toBe(200);
             const result = await executeReviewCommentTransportV1({ actionId: 'reviews.comments.create',
                 input: { reviewId, roundOrdinal: 1, body: 'Recipient private finding', anchor: { kind: 'line', filePath: 'private.ts', line: 1 },
                     snapshot: { kind: 'none', capturedAt: 1 }, authorIntent: 'open', clientMutationId: randomUUID() },
