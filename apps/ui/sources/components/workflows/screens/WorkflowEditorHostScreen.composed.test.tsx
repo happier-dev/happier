@@ -98,6 +98,7 @@ import { decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } fr
 import { WorkflowDefinitionArtifactHeaderV1Schema, WorkflowDefinitionArtifactBodyV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { z } from 'zod/mini';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, type ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 
 type WorkflowEditorBodyProps = React.ComponentProps<
     typeof import('./WorkflowEditorBody').WorkflowEditorBody
@@ -872,7 +873,8 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
 } }), includeSavedArtifact = true, serverIdentityId?: string, settings?: Readonly<Record<string, unknown>>, accountMode: 'plain' | 'e2ee' = 'plain',
     triggerEvents: readonly Readonly<{ event: { pluginId: string; localId: string }; payloadSchema: PluginJsonSchemaV2 }>[] = [],
-    sourceRuns: readonly ReturnType<typeof createWorkflowRunSummaryFixture>[] = []) {
+    sourceRuns: readonly ReturnType<typeof createWorkflowRunSummaryFixture>[] = [],
+    actionIndex?: ReturnType<typeof ActionAutomationIndexV1Schema.parse>) {
     // The memory writer has a prepared HTTP boundary as well as the Home's
     // ordinary transport. Both consume this fixture's same explicit policy.
     if (settings) preparedMemorySettings = AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: settings }, version: 1 });
@@ -930,6 +932,7 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
         if (memoryResponse) return memoryResponse;
         const sessionResponse = await sessionBoundary.handle(request);
         if (sessionResponse) return sessionResponse;
+        if (request.path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 && actionIndex) return Response.json(actionIndex);
         if (request.path === '/v3/automations/runs/workflow-storage' && request.method === 'POST'
             && request.body !== null && typeof request.body === 'object' && 'operation' in request.body
             && request.body.operation === 'get' && 'runId' in request.body) {
@@ -1060,6 +1063,99 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
 }
 
 describe('WorkflowEditorHostScreen composition', () => {
+    it('presents the Account Action Machine Skip after native Save while agent Save retains its refusal without a dialog', async () => {
+        const boundary = await serveMountedDraftActionHome(undefined, true, undefined, undefined, 'plain', [], [], {
+            v: 1, rows: [{ automationId: 'save-check', triggerId: 'before-save', triggerRevision: 1,
+                workflowId: SAVED_TRIGGER_WORKFLOW_ID, workflowRevision: 1, ownerAccountId: 'account-a',
+                actionIds: ['workflow.definition.update'], phase: 'before', mode: 'wait' }],
+        });
+        const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
+        let mounted: ReturnType<typeof useMountedActionExecution> | undefined;
+        function Editor() {
+            mounted = useMountedActionExecution(boundary.scope);
+            return <WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />;
+        }
+        await renderRunEditor(<Editor />);
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Renamed saved workflow' }));
+        await saveDirectlyFromUi();
+        expect(boundary.updates).toHaveLength(1);
+        expect(WorkflowDefinitionArtifactHeaderV1Schema.parse(decodePlainArtifactStoredContent(boundary.artifact.header)).metadata.title)
+            .toBe('Renamed saved workflow');
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
+        expect(boundary.requests.some(request => request.path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1)).toBe(true);
+        expect(readAlert()).toMatchObject({ message: t('workflows.triggers.checks.skippedNeedsMachine', {
+            workflow: t('workflows.triggers.checks.aCheck'),
+        }) });
+        expect(visibleModals().filter(modal => modal.type === 'alert')).toHaveLength(1);
+        await pressAlertButton('cancel');
+        const { createFrontDoorActionExecute, createFrontDoorUiActionExecutor, createFrontDoorRuntimeActionExecutor } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+        const execute = createFrontDoorActionExecute();
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Agent renamed workflow' }));
+        const address = { scope: boundary.scope, draftId: readBodyProps()!.draftStore.get().draftId };
+        await act(async () => expect(await execute('workflow.authoring.draft.save', address, {
+            surface: 'agent', authority: 'account_automation', serverId: boundary.scope.serverId,
+            runtimeAccountId: boundary.scope.accountId,
+        })).toMatchObject({ ok: true, result: { status: 'refused', reason: expect.any(String) } }));
+        expect(boundary.updates).toHaveLength(1);
+        expect(readAlert()).toBeUndefined();
+
+        const nested = createFrontDoorActionExecute({ execute, executeConfirmed: execute.confirmed, prepare: execute.prepare });
+        const { getWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        for (const mode of ['confirmed', 'prepared'] as const) {
+            const current = await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
+            const input = { definitionId: current.definitionId, expectedRevision: current.revision,
+                definition: current.definition, metadata: { ...current.metadata, title: `${mode} Save` } };
+            const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: boundary.scope.serverId };
+            let rerun: (() => Promise<unknown>) | undefined;
+            await act(async () => {
+                if (mode === 'confirmed') expect(await nested.confirmed('workflow.definition.update', input, context)).toMatchObject({ ok: true,
+                    automationNotices: [expect.objectContaining({ code: 'action_automation_skipped', reason: 'machineRequired' })] });
+                else {
+                    const prepared = await nested.prepare('workflow.definition.update', input, context);
+                    if (prepared.kind !== 'ready') throw new Error(`Expected prepared Save: ${JSON.stringify(prepared)}`);
+                    rerun = prepared.invocation.run;
+                    expect(await rerun()).toMatchObject({ ok: true,
+                        automationNotices: [expect.objectContaining({ code: 'action_automation_skipped', reason: 'machineRequired' })] });
+                }
+            });
+            expect(readAlert()).toBeUndefined();
+            if (rerun) {
+                const updates = boundary.updates.length;
+                await act(async () => { expect(await rerun!()).toMatchObject({ ok: true }); });
+                expect(boundary.updates).toHaveLength(updates);
+                expect(readAlert()).toBeUndefined();
+            }
+        }
+
+        const host = { execute: nested, executeConfirmed: nested.confirmed, prepare: nested.prepare };
+        const executeUi = createFrontDoorUiActionExecutor(host, { serverId: boundary.scope.serverId });
+        const executeRuntimeUi = createFrontDoorRuntimeActionExecutor(host);
+        for (const mode of ['ui', 'runtime-ui', 'mounted-ui'] as const) {
+            const current = await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
+            const input = { definitionId: current.definitionId, expectedRevision: current.revision,
+                definition: current.definition, metadata: { ...current.metadata, title: `${mode} Save` } };
+            await act(async () => {
+                const result = mode === 'ui' ? await executeUi('workflow.definition.update', input)
+                    : mode === 'mounted-ui' ? await mounted!.executeValue('workflow.definition.update', input)
+                    : await executeRuntimeUi({ actionId: 'workflow.definition.update', input,
+                        context: { surface: 'ui', serverId: boundary.scope.serverId } });
+                expect(result).toMatchObject({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
+            });
+            expect(readAlert()).toMatchObject({ message: t('workflows.triggers.checks.skippedNeedsMachine', {
+                workflow: t('workflows.triggers.checks.aCheck'),
+            }) });
+            expect(visibleModals().filter(modal => modal.type === 'alert')).toHaveLength(1);
+            await pressAlertButton('cancel');
+        }
+        const current = await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
+        await act(async () => expect(await mounted!.executeForCaller('workflow.definition.update', {
+            definitionId: current.definitionId, expectedRevision: current.revision, definition: current.definition,
+            metadata: { ...current.metadata, title: 'Mounted caller Save' },
+        }, { surface: 'ui', authority: 'present_user', serverId: boundary.scope.serverId })).toMatchObject({ ok: true,
+            automationNotices: [expect.objectContaining({ code: 'action_automation_skipped', reason: 'machineRequired' })] }));
+        expect(readAlert()).toBeUndefined();
+    });
+
     it('keeps a managed Run source and target in the ordinary sentence draft through edit and Save', async () => {
         const boundary = await serveMountedDraftActionHome(undefined, false, undefined, undefined, 'plain', [], [
             createWorkflowRunSummaryFixture({ id: 'source-task-run', ownerAccountId: 'account-a', machineId: 'machine-a' }),

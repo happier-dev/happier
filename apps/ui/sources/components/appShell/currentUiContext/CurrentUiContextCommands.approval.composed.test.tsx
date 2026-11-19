@@ -17,6 +17,7 @@ import { deriveActionChildRequestIdV1 } from '@happier-dev/protocol/workflows/wo
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionAutomationNoticeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 installSettingsViewCommonModuleMocks({
     storage: 'real',
@@ -51,6 +52,50 @@ afterEach(async () => {
     await standardCleanup();
     vi.unstubAllGlobals();
     await homes.reset();
+});
+
+it('retains the mounted command Skip notice through successful and refused Action settlements', async () => {
+    vi.stubGlobal('crypto', globalThis.crypto ?? webcrypto);
+    const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+    setRuntimeFetch(homes.request);
+    await loadSyncSingletonForTests();
+    const serverUrl = 'https://mounted-skip.test';
+    const serverId = await homes.addHome({ name: 'Mounted Skip', serverUrl, serverIdentityId: 'srv_mounted_skip',
+        accountId: 'mounted_owner', currentAccount: true });
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    await restoreConnectionToActiveServer((await TokenStorage.getCredentialsForServerUrl(serverUrl))!);
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+    const notice = { code: 'action_automation_skipped', reason: 'machineRequired', workflowId: 'mounted-check',
+        automationId: 'mounted-automation', triggerId: 'mounted-trigger' } satisfies ActionAutomationNoticeV1;
+    let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+    function Commands() {
+        reader = useOptionalCurrentUiContextReader();
+        useCurrentUiContextLocalCommands([
+            { key: 'applied', title: 'Applied command', invoke: () => ({ ok: true, result: { status: 'applied' }, automationNotices: [notice] }) },
+            { key: 'refused', title: 'Refused command', invoke: () => ({ ok: false, code: 'denied', errorCode: 'permission_denied', automationNotices: [notice] }) },
+        ]);
+        return null;
+    }
+    function Publication() {
+        const commands = useCurrentUiContextComposedCommands();
+        usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+        return null;
+    }
+    const screen = await renderMountedCurrentUiContext(<CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+        <Publication /><Commands />
+    </CurrentUiContextCommandsProvider>);
+    try {
+        const executor = createDefaultActionExecutor();
+        for (const ok of [true, false]) {
+            const command = reader!.readCurrentUiContext()!.commands.find(row => row.title === (ok ? 'Applied command' : 'Refused command'))!;
+            await act(async () => expect(await executor.execute('ui.current_context.command.invoke', { commandId: command.id }, {
+                serverId, surface: 'agent', authority: 'account_automation',
+            })).toMatchObject({ ok, automationNotices: expect.arrayContaining([notice]) }));
+        }
+    } finally { await screen.unmount(); }
 });
 
 it.each(['agent', 'ui'] as const)('preserves %s authority with operation confirmation flags for the exact child', async surface => {

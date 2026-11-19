@@ -24,6 +24,7 @@ import { HappierDisclosureToggle } from '@happier-dev/plugin-ui/presentation';
 import { useCoreDisclosureToggleBinding } from '@/components/ui/lists/DisclosureCaret';
 import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
+import { formatAutomaticCheckSkipNotice } from './formatAutomaticCheckSkipNotice';
 
 /**
  * Which decision the card offers while an Action's before checks hold it (05 S6/S8/S9): a shared check waiting for
@@ -375,14 +376,9 @@ export const ApprovalAutomaticChecks = React.memo(
       ...skippedConsents.map((row) =>
         t('workflows.triggers.checks.skipped', { workflow: nameOf(row, 'inline') }),
       ),
-      ...skippedNotices.map(({ notice, reason }) => reason === 'machineRequired'
-        ? t('workflows.triggers.checks.skippedNeedsMachine', { workflow: nameOf(notice, 'inline') })
-        // A shared Bot asked by someone else: the line names the Account holder who has not allowed it.
-        : reason === 'actorConsentUnavailableForRequester' && props.automaticChecksExecutionAccountName
-          ? t('workflows.triggers.checks.skippedNotAllowedBy', { workflow: nameOf(notice, 'inline'),
-            name: props.automaticChecksExecutionAccountName })
-          : t('workflows.triggers.checks.skippedUnavailable', { workflow: nameOf(notice, 'inline') }),
-      ),
+      ...skippedNotices.map(({ notice, reason }) => formatAutomaticCheckSkipNotice({
+        reason, workflow: nameOf(notice, 'inline'), executionAccountName: props.automaticChecksExecutionAccountName,
+      })),
     ];
     if (!readApprovalAutomaticChecksShown(checks)) return null;
     return (

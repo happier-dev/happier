@@ -6,6 +6,7 @@ export { requireActionSuccess, readActionApprovalRequestCreatedError } from './a
 import type { createDefaultActionExecutor, UiActionExecutorContext } from './defaultActionExecutor';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { presentActionAutomationSkipNotice } from './actionAutomationSkipNotice';
 
 type ActionExecutorLike = Pick<ReturnType<typeof createDefaultActionExecutor>, 'execute'> &
   Partial<Pick<ReturnType<typeof createDefaultActionExecutor>, 'prepare' | 'executeConfirmed'>>;
@@ -124,6 +125,7 @@ export function createFrontDoorUiActionExecutor(
       ...(options?.capturePublicProfilePreview ? { capturePublicProfilePreview: options.capturePublicProfilePreview } : {}),
       ...(options?.publicProfilePreviewAdmission ? { publicProfilePreviewAdmission: options.publicProfilePreviewAdmission } : {}),
     });
+    presentActionAutomationSkipNotice(result);
     requireActionSuccess(result, actionId);
     return result.result;
   };
@@ -151,6 +153,7 @@ export function createFrontDoorRuntimeActionExecutor(
     // Presentation stays private to this invocation; the shared policy still decides whether to ask.
     const dispatch = options?.presentUserActionConfirmation ? createFrontDoorActionExecute(executor, options) : execute;
     const result = await dispatch(actionId, input, context);
+    if (context?.surface === 'ui') presentActionAutomationSkipNotice(result);
     return result.ok ? result.result : result;
   };
   return Object.assign(runtimeExecute, { actionExecute: execute });

@@ -4,7 +4,7 @@ import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugin
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { createPluginSurfaceActionFailureError } from '@/components/plugins/surfaces/actionFailure';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { withActionAutomationNoticesV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import type { CurrentUiContextVoiceToolPort, CurrentUiContextVoiceInvocationOutcome } from './currentUiContextVoiceToolPort';
 import type { PluginSurfaceActionInvocationSurface, PluginSurfaceHostActionBinding } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
@@ -134,11 +134,11 @@ export async function executeCurrentUiContextAction(
     const input = request.input as CurrentUiContextCommandInvokeInput;
     const outcome = await port.invokeCurrentUiCommand?.({ commandId: input.commandId, signal: request.context.signal,
         ...(input.input === undefined ? {} : { input: input.input }) });
-    if (outcome?.ok) return { ok: true, result: outcome.result ?? null };
+    if (outcome?.ok) return withActionAutomationNoticesV1({ ok: true, result: outcome.result ?? null }, outcome.automationNotices);
     const errorCode = outcome?.code === 'outcome_unknown' ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE
         : outcome?.errorCode ?? (outcome?.code === 'denied' ? 'permission_denied'
         : 'unsupported_action');
-    return { ok: false, errorCode, error: outcome?.code ?? 'current_ui_command_unavailable' };
+    return withActionAutomationNoticesV1({ ok: false, errorCode, error: outcome?.code ?? 'current_ui_command_unavailable' }, outcome?.automationNotices);
 }
 
 /** The generic executor borrows the mounted dispatcher, including its nested host services. */

@@ -7,6 +7,7 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { presentActionAutomationSkipNotice } from '@/sync/ops/actions/actionAutomationSkipNotice';
 
 import { WorkflowActionError } from './workflowActionError';
 
@@ -77,6 +78,7 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
     }
     const { executeChildAction, ...context } = params.context ?? {};
     const execute = params.execute ?? executeChildAction ?? resolveExecute();
+    const surface = params.context && 'surface' in params.context ? params.context.surface : 'ui';
     const result = await execute(params.actionId, params.input, {
         ...context,
         ...(activeLifetime ? {
@@ -84,7 +86,7 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
             runtimeAccountId: activeLifetime.scope.accountId,
         } : {}),
         // Admitted callers retain their attribution; native callers default to UI.
-        surface: params.context && 'surface' in params.context ? params.context.surface : 'ui',
+        surface,
         // A child has its own approval invocation, never its parent's request
         // identity or consent. Native UI callers retain the front door's id owner.
         ...(params.context && 'surface' in params.context ? { actionRequestId: randomUUID() } : {}),
@@ -93,6 +95,7 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
     if (activeLifetime && !activeLifetime.isCurrent()) {
         throw new WorkflowActionError({ message: 'action_account_scope_changed', rawCode: 'action_account_scope_changed' });
     }
+    if (!executeChildAction && surface === 'ui') presentActionAutomationSkipNotice(result);
     if (!result.ok) {
         const failure = WorkflowActionFailureV1Schema.safeParse(result);
         throw new WorkflowActionError({
