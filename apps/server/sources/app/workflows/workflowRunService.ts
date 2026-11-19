@@ -574,7 +574,9 @@ export async function admitWorkflowRun(params: AdmitWorkflowRunInput): Promise<{
 export async function attachAutomationWorkflowBodyTx(tx: Tx, params: Readonly<{
     accountId: string; runId: string; automationId: string; definitionEnvelope: string;
 }>): Promise<WorkflowRunSummaryV1> {
-    const mode = await loadAccountModeTx(tx, params.accountId, params.runId);
+    // Canonical Automation admission already acquired publication for the whole
+    // batch before inserting this Run. Retain its Account content fence here.
+    const mode = await loadAccountModeTx(tx, params.accountId);
     const definitionOuter = validateAutomationStoredContentEnvelopeOuterForMode({ raw: params.definitionEnvelope, mode });
     if (definitionOuter.kind !== "available") throw new WorkflowRunServiceError(definitionOuter.kind === "modeMismatch" ? "content_unavailable" : "invalid_input");
     const changed = await tx.automationRun.updateMany({

@@ -346,14 +346,18 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
   expect(operation.phase, 'Admission belongs to the archive transaction').toBe('db.transaction.callback');
   // Publication audience discovery can prepare candidates before admission
   // reuses it. Measure the containing transaction so that shared read is counted.
-  const descendants = new Set([operation.spanId]);
-  let previousSize: number;
-  do {
-    previousSize = descendants.size;
-    for (const row of requestTraces) {
-      if (row.parentSpanId !== undefined && descendants.has(row.parentSpanId)) descendants.add(row.spanId);
-    }
-  } while (descendants.size !== previousSize);
+  const descendantsOf = (spanId: number) => {
+    const descendants = new Set([spanId]);
+    let previousSize: number;
+    do {
+      previousSize = descendants.size;
+      for (const row of requestTraces) {
+        if (row.parentSpanId !== undefined && descendants.has(row.parentSpanId)) descendants.add(row.spanId);
+      }
+    } while (descendants.size !== previousSize);
+    return descendants;
+  };
+  const descendants = descendantsOf(operation.spanId);
   const queries = requestTraces.filter(row => descendants.has(row.spanId) && row.phase.startsWith('db.'));
   // Scoped-lock discovery and authoritative admission also read Trigger rows.
   // Only the candidate owner's query represents cross-scope selection cost.
@@ -362,7 +366,10 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
   expect(queries.filter(row => row.phase === 'db.AutomationTrigger.findMany'
     && row.parentSpanId !== undefined && candidateSpans.has(row.parentSpanId)),
     'One set-oriented candidate selection serves all four scopes').toHaveLength(1);
-  expect(queries.filter(row => row.phase === 'db.SessionGrant.findMany').length,
+  // Archive/activity publication and the source projection have their own
+  // audience censuses. Admission must not repeat its batch census per new Run.
+  const admissionDescendants = descendantsOf(root.spanId);
+  expect(queries.filter(row => admissionDescendants.has(row.spanId) && row.phase === 'db.SessionGrant.findMany').length,
     'The Session audience is resolved once, never once per matching trigger').toBeLessThanOrEqual(1);
   const reservations = requestTraces.filter(row => descendants.has(row.spanId)
     && row.phase === 'automation.sessionLifecycle.reserve');
