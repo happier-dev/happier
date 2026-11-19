@@ -144,19 +144,17 @@ export function TriagePullRequestReviewChooser(
     const settleReview = async (continuation: TriagePullRequestReviewContinuationOutcomeV1) => {
       if (operation.current !== currentOperation) return;
       if (continuation.kind === 'cancelled') { setPhase({ kind: 'choosing', options, selected }); return; }
-      const failure = continuation.kind === 'settled'
-        ? continuation.result.status === 'refused' ? continuation.result.failure : undefined
-        : continuation.failure;
+      const failure = continuation.kind === 'settled' ? continuation.result.failure : continuation.failure;
       if (failure !== undefined) void presentTriageMountedUiActionFailure(host, new PluginError({
         code: failure.codes[0] ?? 'unavailable',
         diagnostics: failure.codes.slice(1).map(code => ({ code, severity: 'error' })),
         ...(failure.requestId === undefined ? {} : { details: { requestId: failure.requestId } }),
       }), text);
       if (continuation.kind === 'unknown') { setPhase({ kind: 'failed', failure: 'reviewUnknown', options, selected }); return; }
-      if (continuation.kind !== 'settled' || continuation.result.status !== 'started') {
+      if (continuation.kind !== 'settled' || continuation.result.status === 'refused') {
         setPhase({ kind: 'failed', failure: 'reviewRefused', options, selected }); return;
       }
-      if (continuation.result.failedEngineIds.length > 0) {
+      if (continuation.result.status === 'started' && continuation.result.failedEngineIds.length > 0) {
         setPhase({ kind: 'failed', failure: 'reviewPartial', options, selected: [...continuation.result.failedEngineIds] }); return;
       }
       await openSession();

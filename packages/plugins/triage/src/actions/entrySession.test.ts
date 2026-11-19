@@ -36,6 +36,7 @@ import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import { startTriageEntrySession } from './entrySession.js';
 import {
     TESTKIT_LINK_DISPLAY,
+    TESTKIT_REVIEW_WORKFLOW_RECEIPT,
     TESTKIT_SPAWN_REQUEST,
     TESTKIT_OBSERVED_REVISION,
     TESTKIT_SELECTED_WORKSPACE,
@@ -60,6 +61,7 @@ import {
     TriageStartEntrySessionSettledDraftV1Schema,
     TriageStartPullRequestReviewInputV1Schema,
     TriageStartPullRequestReviewResultV1Schema,
+    TriagePreparePullRequestReviewResultV1Schema,
     TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1,
     TriageVerifyExistingReviewWorkspaceInputV1Schema,
     TriageVerifyExistingReviewWorkspaceResultV1Schema,
@@ -253,14 +255,14 @@ function reviewStartFanout(
         intent: 'review',
         sessionId: 'session-a',
         ...(reviewRound === undefined ? {} : { reviewRound }),
-        results: engineIds.map((key, index) => (outcomes[key] === 'started'
+        results: engineIds.map((engineId, index) => (outcomes[engineId] === 'started'
             ? {
                 key: keys[index],
                 ok: true,
                 result: {
-                    runId: `run-${key}`,
-                    callId: `call-${key}`,
-                    sidechainId: `sidechain-${key}`,
+                    runId: `run-${engineId}`,
+                    callId: `call-${engineId}`,
+                    sidechainId: `sidechain-${engineId}`,
                 },
             }
             : {
@@ -360,7 +362,7 @@ function createFormalReviewContext(input: Readonly<{
                         return input.captureResult;
                     }
                     expect(actionId).toBe('review.start');
-                    expect(actionInput).toEqual({
+                    expect(actionInput).toEqual(ReviewStartInputSchema.parse({
                         sessionId: 'session-a',
                         reviewers: reviewReviewersForEngineIdsV1(input.expectedEngineIds ?? ['engine-a', 'engine-b']),
                         instructions: 'Review the selected pull request.',
@@ -378,7 +380,7 @@ function createFormalReviewContext(input: Readonly<{
                             observed: TESTKIT_OBSERVED_REVISION,
                         },
                         ...input.expectedReviewInputs,
-                    });
+                    }));
                     return input.reviewStartResult ?? reviewStartFanout({
                         'engine-a': 'started',
                         'engine-b': 'started',
@@ -941,6 +943,84 @@ describe('the Session-start Action a mounted header can actually press', () => {
 });
 
 describe('the registered formal Review transition', () => {
+    it('prepares distinct occurrence PR targets through one saved source, Account and workspace selection', async () => {
+        const h = await createTriagePullRequestReviewActionTestkit();
+        const savedBytes = JSON.stringify(h.savedInput);
+        for (const number of [17, 18]) {
+            h.setPullRequestNumber(number);
+            const entryRef = { ...h.savedInput.request.entryRef, entryId: String(number) };
+            const comparisonSource = { ...h.savedInput.reviewTarget.comparisonSource,
+                locator: { ...h.savedInput.reviewTarget.comparisonSource.locator, number } };
+            const result = TriagePreparePullRequestReviewResultV1Schema.parse(await h.invoke('entries/prepare-pull-request-review-v1', {
+                ...h.savedInput, expectedHeadSha: TESTKIT_OBSERVED_REVISION.headSha,
+                reviewTarget: { entryRef, lastKnownLocator: h.savedInput.request.lastKnownLocator, comparisonSource },
+            }));
+            expect(result).toMatchObject({ status: 'prepared', review: {
+                entryRef, instance: h.savedInput.request.instance, workspace: h.savedInput.request.workspace,
+                pullRequest: { number }, observed: { headSha: TESTKIT_OBSERVED_REVISION.headSha },
+            }, comparisonSource });
+            expect(h.prepareInputs.at(-1)).toMatchObject({ entryRef,
+                instance: { instance: h.savedInput.request.instance.instance },
+                workspace: h.savedInput.request.workspace });
+            expect(h.executionOptions.at(-1)).toMatchObject({
+                expectedSelectedConnectedAccountRef: h.savedInput.prepareReviewWorkspaceSelection.credentialRef,
+            });
+            expect(h.captureInputs.at(-1)).toMatchObject({ source: comparisonSource });
+            expect(JSON.stringify(h.savedInput)).toBe(savedBytes);
+        }
+        expect(h.prepareInputs).toHaveLength(2);
+    });
+
+    it('admits an editable PR composition through the canonical Review owner and retains its keyed receipt', async () => {
+        const reviews: unknown[] = [];
+        const h = await createTriagePullRequestReviewActionTestkit({ executeReview: async raw => {
+            reviews.push(raw);
+            return { intent: 'review', sessionId: 'session-a', results:
+                reviewReviewerIdsForStartV1(ReviewStartInputSchema.parse(raw)).map(key => ({
+                    key, ok: true, result: { runId: `run-${key}` },
+                })) };
+        } });
+        const prepared = await h.invoke('entries/prepare-pull-request-review-v1', { ...h.savedInput, expectedHeadSha: TESTKIT_OBSERVED_REVISION.headSha });
+        const parsed = TriagePreparePullRequestReviewResultV1Schema.parse(prepared);
+        if (parsed.status !== 'prepared') throw new Error('Expected prepared PR');
+        const reviewInput = { reviewers: [
+            { kind: 'engine', engineId: 'engine-a', modelId: 'model-one' },
+            { kind: 'engine', engineId: 'engine-a', modelId: 'model-two' },
+        ], instructions: 'My editable review composition', outputs: ['walkthrough'] };
+        const answer = await h.invoke(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1, {
+            v: 1, sessionId: 'session-a', review: parsed.review,
+            reviewInput: { ...reviewInput, cwd: '/another-repository', scope: 'repository', comparisonId: 'another-comparison' },
+            comparisonId: parsed.comparisonId,
+        });
+        expect(TriageStartPullRequestReviewResultV1Schema.parse(answer)).toMatchObject({ status: 'accepted',
+            reviewResult: { intent: 'review', results: reviewReviewerIdsForStartV1(ReviewStartInputSchema.parse(reviewInput)).map(key => ({ key })) } });
+        expect(h.captureInputs).toHaveLength(1);
+        expect(reviews).toEqual([expect.objectContaining({ ...reviewInput,
+            sessionId: 'session-a', changeType: 'committed', scope: 'changes', cwd: parsed.review.repositoryPath,
+            scmPullRequestReviewScope: expect.objectContaining({ observed: parsed.review.observed }),
+        })]);
+        expect(reviews[0]).not.toHaveProperty('comparisonId', 'another-comparison');
+        expect(reviews[0]).toMatchObject({ comparisonId: parsed.comparisonId });
+    });
+
+    it.each(['composition', 'chooser'])('preserves an admitted steps Workflow receipt instead of claiming its reviewers already started (%s)', async mode => {
+        const receipt = TESTKIT_REVIEW_WORKFLOW_RECEIPT;
+        const review = receipt.reviewRound;
+        const h = await createTriagePullRequestReviewActionTestkit({ executeReview: async () => receipt });
+        const prepared = TriagePreparePullRequestReviewResultV1Schema.parse(await h.invoke('entries/prepare-pull-request-review-v1', { ...h.savedInput, expectedHeadSha: TESTKIT_OBSERVED_REVISION.headSha }));
+        if (prepared.status !== 'prepared') throw new Error('Expected prepared PR');
+        const answer = await h.invoke(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1, {
+            v: 1, sessionId: 'session-a', review: prepared.review,
+            ...(mode === 'chooser' ? { engineIds: ['engine-a', 'engine-b'], instructions: 'Review the pinned PR' }
+                : { comparisonId: prepared.comparisonId, reviewInput: { reviewers: [{ kind: 'engine', engineId: 'engine-a' }],
+                instructions: 'Review the pinned PR',
+                steps: [{ kind: 'review', reviewers: [{ kind: 'engine', engineId: 'engine-a' }], instructions: 'Review the pinned PR' }] } }),
+        });
+        expect(TriageStartPullRequestReviewResultV1Schema.parse(answer)).toEqual({ v: 1, status: 'accepted', reviewResult: receipt, review });
+        expect(await readAdmittedReview({ collections: h.collections, entryRef: prepared.review.entryRef })).toEqual(review);
+        expect(h.events.filter(event => event === 'review.start')).toHaveLength(1);
+    });
+
     it('refuses Account-data bindings before source verification or SCM review execution', async () => {
         const input = formalReviewInput();
         const review = { ...input.review, instance: { ...input.review.instance, binding: {
@@ -1167,6 +1247,44 @@ describe('the registered formal Review transition', () => {
         await handler(formalReviewInput(), context(reviewStartFanout({ 'engine-a': 'started', 'engine-b': 'started' },
             { reviewId: 'review-admitted', roundOrdinal: 2 })));
         expect(await readAdmittedReview({ collections, entryRef })).toEqual({ reviewId: 'review-admitted', roundOrdinal: 2 });
+    });
+
+    it.each(['exception', 'conflict'] as const)('retains an admitted Review and exposes its relation storage failure (%s)', async mode => {
+        const { collections } = createTestkitCorpusCollections();
+        // The persistent collection is the failing system boundary; relation derivation and writing stay real.
+        const failingCollections = { ...collections, userMarks: { ...collections.userMarks,
+            batch: async () => {
+                if (mode === 'exception') throw new PluginError({ code: 'unavailable' });
+                return { status: 'conflict' as const, conflicts: [] };
+            },
+        } };
+        const receipt = reviewStartFanout({ 'engine-a': 'started', 'engine-b': 'started' },
+            { reviewId: 'review-admitted', roundOrdinal: 2 });
+        const events: string[] = [];
+        const answer = await registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1)(formalReviewInput(),
+            createFormalReviewContext({ collections: failingCollections, events,
+                verifyResult: { kind: 'verified', pullRequest: { number: 17 } }, reviewStartResult: receipt }));
+        expect(TriageStartPullRequestReviewResultV1Schema.parse(answer)).toMatchObject({
+            status: 'started', review: { reviewId: 'review-admitted', roundOrdinal: 2 },
+            failure: { codes: [mode === 'exception' ? 'unavailable' : 'conflict'] },
+        });
+        expect(await readAdmittedReview({ collections, entryRef: formalReviewInput().review.entryRef })).toBeNull();
+        expect(events.filter(event => event === 'review.start')).toHaveLength(1);
+    });
+
+    it('reports the admitted Review and round of an editable composition beside its retained receipt', async () => {
+        const review = { reviewId: 'review-composed', roundOrdinal: 1 };
+        const receipt = reviewStartFanout({ 'engine-a': 'started' }, review);
+        const h = await createTriagePullRequestReviewActionTestkit({ executeReview: async () => receipt });
+        const prepared = TriagePreparePullRequestReviewResultV1Schema.parse(await h.invoke('entries/prepare-pull-request-review-v1', { ...h.savedInput, expectedHeadSha: TESTKIT_OBSERVED_REVISION.headSha }));
+        if (prepared.status !== 'prepared') throw new Error('Expected prepared PR');
+        const answer = await h.invoke(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1, {
+            v: 1, sessionId: 'session-a', review: prepared.review, comparisonId: prepared.comparisonId,
+            reviewInput: { reviewers: [{ kind: 'engine', engineId: 'engine-a' }], instructions: 'Review the pinned PR' },
+        });
+        expect(TriageStartPullRequestReviewResultV1Schema.parse(answer)).toEqual({
+            v: 1, status: 'accepted', reviewResult: receipt, review,
+        });
     });
 
     /**

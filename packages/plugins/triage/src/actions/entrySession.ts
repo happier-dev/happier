@@ -10,7 +10,7 @@ import { projectNativeJsonValueForTransport, pluginJsonValuesEqual } from '@happ
 import { readReviewStartActionResultV1, reviewReviewerIdsForStartV1, reviewReviewersForEngineIdsV1, ReviewStartInputSchema } from '@happier-dev/plugin-sdk/reviews';
 import { SessionIdSchema, SessionStatusActionResultV1Schema, SessionMessageSendResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/sessions';
 
-import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
+import { projectTriageNewSessionFailureV1, type TriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { configuredSourceInstanceIsOwnedBy, findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
@@ -340,55 +340,55 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
         if ('source' in input.review.instance.binding && input.review.instance.binding.source === 'accountData') {
             return { v: 1, status: 'refused', reason: 'scopeRefused' };
         }
-        if (new Set(input.engineIds).size !== input.engineIds.length) {
+        const composition = 'reviewInput' in input;
+        const compositionInput = composition && isJsonRecord(input.reviewInput) ? input.reviewInput : undefined;
+        if (composition && compositionInput === undefined) {
             return { v: 1, status: 'refused', reason: 'reviewRejected' };
         }
-        if (input.launchSelection !== undefined && !isJsonRecord(input.launchSelection)) {
+        if (!composition && (new Set(input.engineIds).size !== input.engineIds.length
+            || (input.launchSelection !== undefined && !isJsonRecord(input.launchSelection)))) {
             return { v: 1, status: 'refused', reason: 'reviewRejected' };
         }
-        const launchSelection: Readonly<Record<string, JsonValue>> = input.launchSelection ?? {};
-        // The public review owner alone admits outputs, narrator and credential
-        // selections, including nested keys and normalization. Triage only relays
-        // credential fields, never host-selected overrides of the PR review intent.
+        const launchSelection = !composition && input.launchSelection !== undefined && isJsonRecord(input.launchSelection)
+            ? input.launchSelection : {};
+        // The public Review owner admits every composition. The selected PR owns
+        // the Session and comparison; transient host choice only relays credentials.
         const admission = ReviewStartInputSchema.safeParse({
+            ...(composition ? compositionInput : {
+                reviewers: reviewReviewersForEngineIdsV1(input.engineIds), instructions: input.instructions,
+                ...(input.outputs === undefined ? {} : { outputs: input.outputs }),
+                ...(input.narrator === undefined ? {} : { narrator: input.narrator }),
+                secretReferenceOverlay: launchSelection.secretReferenceOverlay,
+                teamCredentialModel: launchSelection.teamCredentialModel,
+                teamCredentialSessionBindingConsent: launchSelection.teamCredentialSessionBindingConsent,
+            }),
+            ...(composition ? {
+                cwd: input.review.repositoryPath, scope: 'changes',
+                comparisonId: input.comparisonId, scmReviewScope: undefined, scmPullRequestReviewScope: undefined,
+            } : {}),
             sessionId: input.sessionId,
-            reviewers: reviewReviewersForEngineIdsV1(input.engineIds),
-            instructions: input.instructions,
-            ...(input.outputs === undefined ? {} : { outputs: input.outputs }),
-            ...(input.narrator === undefined ? {} : { narrator: input.narrator }),
-            secretReferenceOverlay: launchSelection.secretReferenceOverlay,
-            teamCredentialModel: launchSelection.teamCredentialModel,
-            teamCredentialSessionBindingConsent: launchSelection.teamCredentialSessionBindingConsent,
+            changeType: 'committed',
+            base: { kind: 'commit', baseCommit: input.review.observed.baseSha },
         });
         if (!admission.success) return { v: 1, status: 'refused', reason: 'reviewRejected' };
-        const verified = await verifyTriagePullRequestReviewWorkspace(input, context, admission.data.outputs?.includes('walkthrough') === true);
+        const verified = await verifyTriagePullRequestReviewWorkspace(input, context,
+            !composition && admission.data.outputs?.includes('walkthrough') === true);
         if (verified.status !== 'verified') {
             const { sourceResult: _sourceResult, ...refusal } = verified;
             return refusal;
         }
-        const scope = { scope: verified.scope };
-        const comparisonId = verified.comparisonId;
-
         const fanout = await context.services.actions.execute('review.start', {
-            sessionId: input.sessionId,
-            reviewers: admission.data.reviewers,
-            instructions: input.instructions,
-            changeType: 'committed',
-            base: { kind: 'commit', baseCommit: input.review.observed.baseSha },
-            scmPullRequestReviewScope: scope.scope,
-            ...(admission.data.outputs === undefined ? {} : { outputs: admission.data.outputs }),
-            ...(admission.data.narrator === undefined ? {} : { narrator: admission.data.narrator }),
-            ...(comparisonId === undefined ? {} : { comparisonId }),
-            ...(admission.data.secretReferenceOverlay === undefined ? {} : { secretReferenceOverlay: admission.data.secretReferenceOverlay }),
-            ...(admission.data.teamCredentialModel === undefined ? {} : { teamCredentialModel: admission.data.teamCredentialModel }),
-            ...(admission.data.teamCredentialSessionBindingConsent === undefined ? {} : { teamCredentialSessionBindingConsent: admission.data.teamCredentialSessionBindingConsent }),
+            ...admission.data,
+            scmPullRequestReviewScope: verified.scope,
+            ...(verified.comparisonId === undefined ? {} : { comparisonId: verified.comparisonId }),
         }, context.signal === undefined ? undefined : { signal: context.signal });
         const parsed = readReviewStartActionResultV1(fanout, admission.data);
-        if (parsed.kind === 'native' && parsed.reviewRound !== undefined) {
+        let relationFailure: TriageNewSessionFailureV1 | undefined;
+        if (parsed.kind !== 'outcome_unknown' && parsed.reviewRound !== undefined) {
             // The Review is admitted; its relation is recorded from the receipt so no reader has to infer it.
-            // A lost write leaves the answer below unchanged: it names the Review, and the next admission records it again.
+            // A failed relation write stays visible beside that receipt and cannot invite another Review start.
             try {
-                await setAdmittedReview({
+                const relation = await setAdmittedReview({
                     collections: bindCorpusCollections(requireTriageAccountStorage(context)),
                     entryRef: input.review.entryRef,
                     displayAtMark: { title: input.review.lastKnownLocator.displayPath ?? input.review.entryRef.entryId,
@@ -396,11 +396,17 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
                     admittedReview: parsed.reviewRound, nowMs: Date.now(),
                     ...(context.signal === undefined ? {} : { signal: context.signal }),
                 });
+                if (relation.status === 'conflict') relationFailure = { codes: ['conflict'] };
             } catch (error) {
-                if (context.signal?.aborted === true) throw error;
+                relationFailure = projectTriageNewSessionFailureV1(error) ?? { codes: ['action_failed'] };
             }
         }
-        if (parsed.kind !== 'native') {
+        if (parsed.kind !== 'outcome_unknown' && (composition || parsed.kind === 'workflow')) {
+            return { v: 1, status: 'accepted', reviewResult: projectNativeJsonValueForTransport(fanout),
+                ...(relationFailure === undefined ? {} : { failure: relationFailure }),
+                ...(parsed.reviewRound === undefined ? {} : { review: parsed.reviewRound }) };
+        }
+        if (parsed.kind !== 'native' || !('engineIds' in input)) {
             // The write happened and its per-engine effect is unknown. Failing
             // loudly reaches the caller's existing outcome-unknown state, which
             // offers only the idempotent Session open — never a blind second
@@ -434,6 +440,7 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
             status: 'started',
             startedEngineIds: started,
             failedEngineIds: failed,
+            ...(relationFailure === undefined ? {} : { failure: relationFailure }),
             ...(parsed.reviewRound === undefined ? {} : { review: parsed.reviewRound }),
         };
     };

@@ -26,6 +26,7 @@ import {
     TriageAdmittedReviewV1Schema,
     TriageEntryLocatorV1Schema,
     TriageEntryRefV1Schema,
+    TriagePullRequestReviewTargetV1Schema,
     TriageConfiguredSourceInstanceV1Schema,
     TriageReviewWorkspaceCurrentnessV1Schema,
     TriageReviewWorkspaceObservedRevisionV1Schema,
@@ -497,7 +498,7 @@ export const TriagePreparePullRequestReviewInputV1Schema = defineProtocolObject(
     prepareReviewWorkspaceSelection: TriageStartEntrySessionPrepareReviewWorkspaceSelectionV1Schema,
     expectedHeadSha: triageIdentifier,
     sessionId: triageSessionId,
-    comparisonSource: ScmComparisonSourceProtocolSchema,
+    reviewTarget: TriagePullRequestReviewTargetV1Schema,
 }, { policy: 'closed' });
 export type TriagePreparePullRequestReviewInputV1 = ReturnType<typeof TriagePreparePullRequestReviewInputV1Schema.parse>;
 export const TriagePreparePullRequestReviewResultV1Schema = defineProtocolUnion([
@@ -539,13 +540,22 @@ export const TriagePullRequestReviewChoiceV1Schema = defineProtocolObject(
 );
 export type TriagePullRequestReviewChoiceV1 = ReturnType<typeof TriagePullRequestReviewChoiceV1Schema.parse>;
 
-export const TriageStartPullRequestReviewInputV1Schema = defineProtocolObject({
+const TriageSelectedPullRequestReviewInputMembersV1 = {
     v: defineProtocolLiteral(1),
     sessionId: triageSessionId,
     review: TriageStartEntrySessionReviewContextV1Schema,
+} as const;
+
+export const TriageStartPullRequestReviewInputV1Schema = defineProtocolUnion([defineProtocolObject({
+    ...TriageSelectedPullRequestReviewInputMembersV1,
     instructions: triagePromptBody,
     ...TRIAGE_PULL_REQUEST_REVIEW_CHOICE_MEMBERS_V1,
-}, { policy: 'closed' });
+}, { policy: 'closed' }), defineProtocolObject({
+    ...TriageSelectedPullRequestReviewInputMembersV1,
+    /** The canonical review.start owner admits the complete editable composition. */
+    reviewInput: defineProtocolJsonValue(),
+    comparisonId: triageIdentifier,
+}, { policy: 'closed' })]);
 export type TriageStartPullRequestReviewInputV1 = ReturnType<
     typeof TriageStartPullRequestReviewInputV1Schema.parse
 >;
@@ -563,10 +573,20 @@ export type TriageStartPullRequestReviewInputV1 = ReturnType<
 export const TriageStartPullRequestReviewResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
         v: defineProtocolLiteral(1),
+        status: defineProtocolLiteral('accepted'),
+        /** Canonical Review admission receipt, including a workflow-backed composition. */
+        reviewResult: defineProtocolJsonValue(),
+        review: TriageAdmittedReviewV1Schema.optional(),
+        /** The Review is admitted even when recording its entry relation failed. */
+        failure: TriageNewSessionFailureV1Schema.optional(),
+    }, { policy: 'closed' }),
+    defineProtocolObject({
+        v: defineProtocolLiteral(1),
         status: defineProtocolLiteral('started'),
         startedEngineIds: defineProtocolArray(reviewEngineId, { minItems: 1 }),
         failedEngineIds: defineProtocolArray(reviewEngineId),
         review: TriageAdmittedReviewV1Schema.optional(),
+        failure: TriageNewSessionFailureV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),

@@ -39,6 +39,18 @@ import { createTestkitCorpusCollections } from '../../corpus/testkit/corpusColle
 import { testkitSnapshot, testkitViewer } from '../../corpus/testkit/observations.test-support.js';
 import { CORPUS_SOURCE_INSTANCES_COLLECTION_ID } from '../../corpus/collections/ids.js';
 
+/** A real Workflow admission receipt; engine launches have not happened yet. */
+export const TESTKIT_REVIEW_WORKFLOW_RECEIPT = { reviewRound: { reviewId: 'review-standard-workflow', roundOrdinal: 1 },
+    admission: 'created', run: {
+        id: 'review-workflow', sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
+        origin: { kind: 'direct' }, state: 'running', revision: 1, machineId: 'machine',
+        workflowCustodyState: 'pending', originDeliveryAckRevision: null,
+        availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
+        createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    },
+} as const;
+
 /** The Action transport accepts built-ins and exact qualified Triage self-calls. */
 export function testkitTriageActionId(ref: unknown): string {
     if (typeof ref === 'string') return ref;
@@ -388,6 +400,8 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
         declaredPurpose: request.instance.binding.purpose, request: { kind: 'create', draft: testkitSourceInstanceDraft() },
         nowMs: 1, mintSourceInstanceId: () => request.instance.instance.sourceInstanceId });
     let currentRevision = TESTKIT_OBSERVED_REVISION;
+    let currentEntryRef = request.entryRef;
+    let currentPullRequestNumber = 17;
     const events: string[] = [];
     const prepareInputs: unknown[] = [];
     const verifyInputs: unknown[] = [];
@@ -421,8 +435,8 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
                 signal.throwIfAborted();
                 if (operation === getOperation) {
                     events.push('source.get');
-                    return { kind: 'present', localRef: { kindId: request.entryRef.kindId,
-                        collisionScope: request.entryRef.collisionScope, entryId: request.entryRef.entryId },
+                    return { kind: 'present', localRef: { kindId: currentEntryRef.kindId,
+                        collisionScope: currentEntryRef.collisionScope, entryId: currentEntryRef.entryId },
                         locator: request.lastKnownLocator, nativeRevision: currentRevision.nativeRevision,
                         snapshot: testkitSnapshot({ reviewRevision: { baseSha: currentRevision.baseSha,
                             headSha: currentRevision.headSha, nativeRevision: currentRevision.nativeRevision } }), viewer: testkitViewer() };
@@ -444,7 +458,7 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
                 if (actionId === 'scm.diffSummary.capture') {
                     events.push('scm.diffSummary.capture'); captureInputs.push(input);
                     const source = { ...comparisonSource, locator: { ...comparisonSource.locator,
-                        baseOid: currentRevision.baseSha, headOid: currentRevision.headSha } };
+                        number: currentPullRequestNumber, baseOid: currentRevision.baseSha, headOid: currentRevision.headSha } };
                     return { success: true, comparison: { id: 'c'.repeat(64), source,
                         repository: { rootPath: preparedWorkspace.repositoryPath },
                         endpoints: { before: 'c'.repeat(40), after: currentRevision.headSha },
@@ -457,10 +471,17 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
             },
         },
     } } as unknown as PluginInvocationContext; // Host services and external source/SCM transports.
-    return { context, events, prepareInputs, verifyInputs, captureInputs, executionOptions, preparedWorkspace,
+    return { context, collections, events, prepareInputs, verifyInputs, captureInputs, executionOptions, preparedWorkspace,
         savedInput: { v: 1 as const, request, prepareReviewWorkspaceSelection: selected,
-            sessionId: 'session-a', comparisonSource },
+            sessionId: 'session-a', reviewTarget: { entryRef: request.entryRef,
+                lastKnownLocator: request.lastKnownLocator, comparisonSource } },
         setRevision: (revision: typeof TESTKIT_OBSERVED_REVISION) => { currentRevision = revision; },
+        setPullRequestNumber: (number: number) => {
+            currentPullRequestNumber = number;
+            currentEntryRef = { ...request.entryRef, entryId: String(number) };
+            preparedWorkspace.pullRequest.number = number;
+            preparedWorkspace.branch = `pr-${number}`;
+        },
         invoke: async (localId: string, input: JsonValue) => await registeredTriageActionHandler(localId)(input, context),
     };
 }

@@ -2,7 +2,7 @@ import { selectCurrentTargetedContribution, type JsonValue, type PluginInvocatio
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { pluginJsonValuesEqual, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { produceScmPullRequestReviewScope, type ScmPullRequestReviewScopeV1 } from '@happier-dev/plugin-sdk/reviews';
-import { ScmComparisonSchema, ScmComparisonSourceSchema } from '@happier-dev/plugin-sdk/scm';
+import { ScmComparisonSchema, ScmComparisonSourceSchema, type ScmComparisonSource } from '@happier-dev/plugin-sdk/scm';
 import { projectTriagePrepareReviewWorkspaceInputV1, type TriagePrepareReviewWorkspaceInputV1, type TriageVerifyReviewWorkspaceResultV1 } from '@happier-dev/triage-protocol/v1';
 import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
@@ -96,7 +96,8 @@ export async function readCurrentPrepareReviewWorkspace(
         execute: async (selectedOperation, expectedInput, options) => await context.services.actions
             .executeAdmittedTargetedOperation(selectedOperation,
                 pluginJsonValuesEqual(expectedInput, projectTriagePrepareReviewWorkspaceInputV1(request)) ? selectedInput : {
-                    ...selectedInput, observed: expectedInput.observed, lastKnownLocator: expectedInput.lastKnownLocator,
+                    ...selectedInput, entryRef: expectedInput.entryRef,
+                    observed: expectedInput.observed, lastKnownLocator: expectedInput.lastKnownLocator,
                 }, {
                 ...(selected.credentialRef === undefined ? {} : { expectedSelectedConnectedAccountRef: selected.credentialRef }),
                 ...(options?.signal === undefined ? {} : { signal: options.signal }),
@@ -131,7 +132,7 @@ export async function readCurrentVerifyReviewWorkspaceOperation(
 
 /** One final source verifier, strict scope producer and pinned comparison capture for every caller. */
 export async function verifyTriagePullRequestReviewWorkspace(
-    input: Pick<TriageStartPullRequestReviewInputV1, 'sessionId' | 'review' | 'comparisonSource'>,
+    input: Pick<TriageStartPullRequestReviewInputV1, 'sessionId' | 'review'> & Readonly<{ comparisonSource?: ScmComparisonSource }>,
     context: PluginInvocationContext,
     captureComparison: boolean,
 ): Promise<
@@ -247,12 +248,12 @@ export function createTriagePreparePullRequestReviewActionHandler(): ActionHandl
         }
         const reread = TriageReobserveEntryResultV1Schema.parse(await context.services.actions.execute({
             pluginId: 'happier.triage', localId: TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1,
-        }, { v: 1, entryRef: input.request.entryRef,
+        }, { v: 1, entryRef: input.reviewTarget.entryRef,
             sourceInstanceId: input.request.instance.instance.sourceInstanceId,
-            lastKnownLocator: input.request.lastKnownLocator }, { signal: context.signal }));
+            lastKnownLocator: input.reviewTarget.lastKnownLocator }, { signal: context.signal }));
         if (reread.kind !== 'observed') return { v: 1, status: 'unavailable', reason: 'sourceUnavailable',
             ...(reread.kind !== 'unavailable' || reread.failure === undefined ? {} : { failure: projectTriageNewSessionFailureV1(reread.failure) }) };
-        const preparation = observedReviewWorkspacePreparationFor(input.request.instance, input.request.entryRef, reread.observation);
+        const preparation = observedReviewWorkspacePreparationFor(input.request.instance, input.reviewTarget.entryRef, reread.observation);
         if (preparation === undefined) return { v: 1, status: 'unavailable', reason: 'revisionUnavailable' };
         const request = { ...input.request, ...preparation };
         if (request.observed.headSha !== input.expectedHeadSha) return { v: 1, status: 'refused', reason: 'revisionMismatch' };
@@ -270,8 +271,9 @@ export function createTriagePreparePullRequestReviewActionHandler(): ActionHandl
         const review = { instance: request.instance, entryRef: request.entryRef, lastKnownLocator: request.lastKnownLocator,
             observed: request.observed, workspace: request.workspace, repositoryPath: preparedWorkspace.repositoryPath,
             pullRequest: preparedWorkspace.pullRequest };
-        const comparisonSource = input.comparisonSource.kind === 'pullRequest' ? { ...input.comparisonSource,
-            locator: { ...input.comparisonSource.locator, baseOid: request.observed.baseSha, headOid: request.observed.headSha } } : input.comparisonSource;
+        const targetSource = input.reviewTarget.comparisonSource;
+        const comparisonSource = targetSource.kind === 'pullRequest' ? { ...targetSource,
+            locator: { ...targetSource.locator, baseOid: request.observed.baseSha, headOid: request.observed.headSha } } : targetSource;
         const verified = await verifyTriagePullRequestReviewWorkspace({ ...input, review, comparisonSource }, context, true);
         if (verified.status !== 'verified') return { ...verified, status: verified.reason === 'sourceUnavailable' ? 'unavailable' : 'refused' };
         if (verified.comparisonId === undefined) return { v: 1, status: 'unavailable', reason: 'sourceUnavailable' };

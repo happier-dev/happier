@@ -989,6 +989,34 @@ scope producer as manual review start and captures the pinned comparison.
 The prepared result carries that comparison and final-start continuation;
 review execution remains a separate Action. Cancellation follows the invoking
 workflow's existing signal throughout.
+The final `sessions/start-pull-request-review-v1` Action accepts an editable
+`reviewInput` composition and delegates roster, steps and launch admission to
+the canonical `review.start` schema. It binds that composition to the selected
+Session, prepared comparison ID and verified pinned PR scope, retaining the
+prepared comparison rather than capturing it a second time. Its `accepted` result retains the exact
+Review admission receipt, including a composed Workflow receipt; it does not
+claim that every reviewer has already started. Existing chooser requests retain
+their engine-start results through the same final verifier. A failed admitted
+Review relation write preserves that receipt and surfaces the existing failure
+warning while opening its Session; it does not invite another Review start. Matching 0.3
+development declarations and consumers reload together.
+
+The built-in PR review and its editable starter first select opened, reopened
+and synchronized occurrences; closed and merged occurrences finish without
+approval, preparation or Review effects. Active occurrences use the provider's normalized
+author association: internal authors take Quick review; external or unknown
+authors wait for ordinary workflow approval before any workspace preparation,
+then take Standard review. Both compositions remain editable inputs. Stopping
+the hold performs no preparation. Each admitted head retains its captured scope.
+Each lifecycle occurrence supplies its provider-owned `reviewTarget`: the exact
+entry reference, locator and comparison source. Preparation reobserves that
+target through the saved configured source and retains the saved Connected
+Account and workspace selection. A later occurrence can therefore review a
+different PR without changing those saved choices. A changed head after the
+approval hold is refused before workspace preparation.
+Publication candidates come from the entry's admitted Review when present;
+publication remains the provider's separately approved selected-findings Action.
+GitHub supplies the reviewable PR lifecycle Event.
 
 In unreleased 0.3, GitLab's authenticated Merge Request Hook supplies the
 reviewable lifecycle Event for opened, reopened and code-updated occurrences pinned to
@@ -997,7 +1025,6 @@ MR's `author_id` supplies the author identity, independently of the webhook acto
 unavailable login, account kind and association facts remain unknown, so the
 ordinary workflow approval hold applies. GitLab's existing push and completed
 merge Events retain their separate meanings.
-
 
 Bitbucket Cloud supplies opened,
 code-pushed, merged and declined PR occurrences through HMAC-verified repository
@@ -1017,6 +1044,8 @@ required native hook configuration. Both adapters preserve the PR author and
 pinned source head; missing author association remains unknown and uses the
 ordinary approval hold. These lifecycle sources are unreleased 0.3 behavior.
 
+Manual starts retain the same selected-source preparation
+and provider publication owners.
 Authentication/import and provider writes retain their existing placement and
 approval contracts. This placement change does not authorize a fallback from a
 failed Account credential to a machine's login.

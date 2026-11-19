@@ -27,7 +27,7 @@ import { TriagePullRequestReviewChooser } from './PullRequestReviewChooser.js';
 import { readTriageActionsForSurface } from '../../actions/actionsCatalog.js';
 import { mutateTriageAction, TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } from '../../settings/actions.js';
 import { createTestkitAccountKv } from '../../settings/testkit/accountKv.test-support.js';
-import { testkitTriageActionId } from '../../sessions/testkit/entrySessionTestkit.test-support.js';
+import { testkitTriageActionId, TESTKIT_REVIEW_WORKFLOW_RECEIPT } from '../../sessions/testkit/entrySessionTestkit.test-support.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -249,7 +249,7 @@ describe('the mounted selected-PR review chooser', () => {
     await settle();
     expect(events).toEqual(['verify', 'scm.diffSummary.capture', 'review.start']);
     expect(reviewInputs).toEqual([expect.objectContaining({
-      sessionId: PENDING.sessionId, engineIds: ['codex'], instructions: PENDING.instructions,
+      sessionId: PENDING.sessionId, reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: PENDING.instructions,
       ...credentials, comparisonId: 'c'.repeat(64),
       base: { kind: 'commit', baseCommit: PENDING.review.observed.baseSha },
       scmPullRequestReviewScope: expect.objectContaining({ pullRequest: { number: 17 } }),
@@ -277,8 +277,9 @@ describe('the mounted selected-PR review chooser', () => {
     expect(controls.presentation(failure === 'cancelled' ? 'Start review' : 'Try again')).toBeDefined();
   });
 
-  it('lists exact current engines, requires an explicit choice, starts once, then opens the stable Session', async () => {
+  it.each(['native', 'workflow', 'workflowWithWarning'])('lists exact current engines, requires an explicit choice, starts once, then opens the stable Session (%s)', async admission => {
     const calls: Array<Readonly<{ action: string; input: unknown }>> = [];
+    const notifications: string[] = [];
     const { fixture, focusedLabels, controls } = await mountChooser(async (action, input) => {
       calls.push({ action, input });
       if (action === 'review.engines.list') {
@@ -291,6 +292,9 @@ describe('the mounted selected-PR review chooser', () => {
         };
       }
       if (action === TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1) {
+        if (admission !== 'native') return { v: 1, status: 'accepted',
+          reviewResult: TESTKIT_REVIEW_WORKFLOW_RECEIPT, review: TESTKIT_REVIEW_WORKFLOW_RECEIPT.reviewRound,
+          ...(admission === 'workflowWithWarning' ? { failure: { codes: ['unavailable'], requestId: 'relation-write-17' } } : {}) };
         return {
           v: 1,
           status: 'started',
@@ -300,7 +304,7 @@ describe('the mounted selected-PR review chooser', () => {
       }
       if (action === 'session.open') return null;
       throw new Error(`Unexpected action ${action}`);
-    });
+    }, undefined, undefined, notifications);
 
     expect(focusedLabels.at(-1)).toBe('Codex');
     expect(calls.map((call) => call.action)).toEqual(['review.engines.list']);
@@ -327,6 +331,9 @@ describe('the mounted selected-PR review chooser', () => {
       narrator: { engineId: 'codex' },
       comparisonSource: PENDING.comparisonSource,
     });
+    if (admission === 'workflowWithWarning') {
+      expect(notifications.join(' ')).toContain('relation-write-17');
+    }
   });
 
   it('requires a real narration capability and permits the reader to choose findings only', async () => {
