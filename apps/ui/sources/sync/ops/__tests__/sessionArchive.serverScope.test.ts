@@ -62,6 +62,36 @@ describe('archive routing from canonical session-list rows', () => {
   const boundary = realArchiveBoundary;
   beforeEach(() => { boundary.resetRequests(); });
 
+  it.each(['offline', 'online'] as const)('applies direct Home Archive and presents only a receipted pending Stop (%s)', async machineState => {
+    const sessionId = `archive-receipt-${machineState}`;
+    const owner = await boundary.addHome(`https://${sessionId}.example`, sessionId);
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { createSessionListRenderableSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+    const { archiveSessionWithPendingState } = await import('@/components/sessions/sessionStopArchiveFlow');
+    const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+    const { t } = await import('@/text');
+    const { sessionArchiveWithServerScope } = await import('../sessions');
+    const address = { serverId: owner.id, sessionId };
+    const stopOutcome = { status: 'physical_stop_unconfirmed', reason: 'target_daemon_unavailable' } as const;
+    const receipt = { success: true, archivedAt: 42, ...(machineState === 'offline' ? { stopOutcome } : {}) };
+    storage.setState(storage.getInitialState(), true);
+    storage.getState().applyServerScopedSessionListRows(owner.id, [
+      createSessionListRenderableSessionFixture({ id: sessionId, archivedAt: null }),
+    ], { source: 'ordinary', mode: 'replace' });
+    boundary.setHttpResponder(async input => new URL(String(input)).pathname === `/v2/sessions/${sessionId}/archive`
+      ? Response.json(receipt) : null);
+    retirePresentationNotice();
+    try {
+      const result = await archiveSessionWithPendingState(address, () => sessionArchiveWithServerScope(sessionId, { serverId: owner.id }));
+      expect(storage.getState().sessionListRowsByServerId[owner.id]?.[sessionId]?.archivedAt).toBe(42);
+      expect(result).toEqual(receipt);
+      expect(readPresentationNotice()?.message ?? null)
+        .toBe(machineState === 'offline' ? t('workflows.run.stopWhenMachineReconnectsUnknown') : null);
+    } finally {
+      retirePresentationNotice();
+    }
+  });
+
   it.each(['archive', 'unarchive'] as const)('retains the Home database refusal through the real %s path without replaying it', async action => {
     const owner = await boundary.addHome(`https://database-refusal-${action}.example`, `database-refusal-${action}`);
     const { storage } = await import('@/sync/domains/state/storage');
@@ -85,49 +115,67 @@ describe('archive routing from canonical session-list rows', () => {
     expect(boundary.httpRequests.filter(({ url }) => new URL(url).pathname.endsWith(`/${action}`))).toHaveLength(1);
   });
 
-  it.each(['removed', 'offline', 'loading', 'active'] as const)('archives after unavailable Stop only for settled Machine access loss: %s', async machineState => {
+  it.each(['removed', 'offline', 'loading', 'active'] as const)('lets Home decide Archive after unavailable Stop on a removed or offline Machine: %s', async machineState => {
     const owner = await boundary.addHome(`https://archive-access-${machineState}.example`, `archive-access-${machineState}`);
     const { storage } = await import('@/sync/domains/state/storage');
     const { createSessionFixture, createPlainSessionCurrentProjectionRecordFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
     const { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
     const { sessionStopWithServerScope, sessionArchiveWithServerScope } = await import('../sessions');
     const { stopSessionAndMaybeArchive } = await import('@/components/sessions/sessionStopArchiveFlow');
+    const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+    const { t } = await import('@/text');
     const sessionId = `archive-access-${machineState}`;
     const metadata = { machineId: 'machine-1', path: '/repo', host: 'tester.local' };
     const session = createSessionFixture({ id: sessionId, serverId: owner.id, active: true, archivedAt: null, metadata });
-    const machines = machineState === 'offline' ? [createMachineFixture({ active: false })] : [];
+    const machines = machineState === 'offline' ? [createMachineFixture({ active: false, activeAt: 0 })] : [];
+    for (const machine of machines) publishMachineActivity(machine, machine, []);
     storage.setState(storage.getInitialState(), true);
     storage.setState({ sessions: { [sessionId]: session }, machineListByServerId: { [owner.id]: machines },
       machineListStatusByServerId: { [owner.id]: machineState === 'loading' ? 'loading' : 'idle' } });
     storage.getState().applyServerScopedSessionListRows(owner.id, [session], { source: 'ordinary', mode: 'replace' });
     boundary.setHttpResponder(async (input, init) => {
       const path = new URL(String(input)).pathname;
+      // The captured list can omit the Machine while the exact-Home control lookup can still resolve it.
       if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body,
-        id => machineState === 'offline' ? createPlainMachineRowFixture({ id, accountId: owner.accountId }) : null);
-      if (path === '/v1/machines/machine-1') return machineState === 'offline'
-        ? Response.json({ machine: createPlainMachineRowFixture({ id: 'machine-1', accountId: owner.accountId }) })
-        : Response.json({ error: 'not_found' }, { status: 404 });
+        id => createPlainMachineRowFixture({ id, accountId: owner.accountId }));
+      if (path === '/v1/machines/machine-1') return Response.json({
+        machine: createPlainMachineRowFixture({ id: 'machine-1', accountId: owner.accountId }),
+      });
       if (path === `/v2/sessions/${sessionId}`) return Response.json({ session:
         createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, active: true, metadata }) });
       if (path === `/v2/sessions/${sessionId}/archive`) return machineState === 'active'
         ? Response.json({ error: 'session-active' }, { status: 409 })
-        : Response.json({ success: true, archivedAt: 42 });
+        : Response.json({ success: true, archivedAt: 42, ...(machineState === 'offline' ? {
+          stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'target_daemon_unavailable' },
+        } : {}) });
       return null;
     });
-    // Default network ACK is METHOD_NOT_FOUND: the runner was retired, or is offline.
-    const stop = await sessionStopWithServerScope(sessionId, { serverId: owner.id, stopIntent: 'lifecycle_control' });
-    expect(stop, JSON.stringify(stop)).toMatchObject({ success: false, code: 'session_stop_control_unavailable' });
-    const run = stopSessionAndMaybeArchive({ address: { serverId: owner.id, sessionId },
-      hideInactiveSessions: false, isPinned: false, archiveAfterStop: 'always', stopSession: async () => stop,
-      archiveSession: () => sessionArchiveWithServerScope(sessionId, { serverId: owner.id }),
-      stopErrorMessage: 'Stop failed', archiveErrorMessage: 'Archive failed' });
-    if (machineState === 'removed') await expect(run).resolves.toBeUndefined();
-    else await expect(run).rejects.toMatchObject({ code: machineState === 'active' ? 'session_active' : 'session_stop_control_unavailable' });
-    expect(boundary.httpRequests.filter(({ url }) => new URL(url).pathname.endsWith('/archive')))
-      .toHaveLength(machineState === 'removed' || machineState === 'active' ? 1 : 0);
-    expect(storage.getState().sessionListRowsByServerId[owner.id]?.[sessionId]?.archivedAt)
-      .toBe(machineState === 'removed' ? 42 : null);
-    expect(storage.getState().sessionArchiveOperations).toEqual({});
+    retirePresentationNotice();
+    try {
+      const run = stopSessionAndMaybeArchive({ address: { serverId: owner.id, sessionId },
+        hideInactiveSessions: false, isPinned: false, archiveAfterStop: 'always',
+        stopSession: async () => {
+          // Default network ACK is METHOD_NOT_FOUND: the runner was retired, or is offline.
+          const stop = await sessionStopWithServerScope(sessionId, { serverId: owner.id, stopIntent: 'lifecycle_control' });
+          expect(stop, JSON.stringify(stop)).toMatchObject({ success: false, code: 'session_stop_control_unavailable' });
+          return stop;
+        },
+        archiveSession: () => sessionArchiveWithServerScope(sessionId, { serverId: owner.id }),
+        stopErrorMessage: 'Stop failed', archiveErrorMessage: 'Archive failed' });
+      const archived = machineState === 'removed' || machineState === 'offline';
+      if (archived) await expect(run).resolves.toBeUndefined();
+      else await expect(run).rejects.toMatchObject({ code: machineState === 'active' ? 'session_active' : 'session_stop_control_unavailable' });
+      expect(boundary.httpRequests.filter(({ url }) => new URL(url).pathname.endsWith('/archive')))
+        .toHaveLength(archived || machineState === 'active' ? 1 : 0);
+      expect(storage.getState().sessionListRowsByServerId[owner.id]?.[sessionId]?.archivedAt)
+        .toBe(archived ? 42 : null);
+      expect(readPresentationNotice()?.message ?? null)
+        .toBe(machineState === 'offline' ? t('workflows.run.stopWhenMachineReconnectsUnknown') : null);
+      expect(storage.getState().sessionArchiveOperations).toEqual({});
+    } finally {
+      retirePresentationNotice();
+    }
   });
 
 

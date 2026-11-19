@@ -1,4 +1,5 @@
 import { SessionArchiveTimeoutError, withSessionArchiveDeadline } from '@/sync/ops/sessionArchiveLifecycle';
+import type { SessionStopOutcome } from '@happier-dev/protocol/sessions/control/contract';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { HappyError } from '@/utils/errors/errors';
 import { storage } from '@/sync/domains/state/storage';
@@ -8,13 +9,16 @@ import type { SessionStopRecovery } from '@/sync/ops/sessionStopContract';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { readSessionArchivePending, type SessionArchiveOperation } from '@/sync/domains/session/listing/sessionArchiveState';
 import { resolveServerScopedMachineInventory } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { isMachineOnline } from '@/sync/domains/machines/reachability/machinePresence';
 import { resolveDisplayMachineIdForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
+import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 
 type SessionMutationResult = Readonly<{
     success: boolean;
     message?: string;
     code?: string;
     recovery?: SessionStopRecovery;
+    stopOutcome?: SessionStopOutcome;
     details?: unknown;
 }>;
 
@@ -68,7 +72,7 @@ export function isSessionArchivePending(address: SessionAddress): boolean {
     return readSessionArchivePending(storage.getState(), address);
 }
 
-function canAttemptArchiveAfterMachineAccessLoss(address: SessionAddress, result: SessionMutationResult): boolean {
+function canAttemptArchiveAfterUnavailableStop(address: SessionAddress, result: SessionMutationResult): boolean {
     if (result.code !== 'session_stop_control_unavailable') return false;
     const state = storage.getState();
     const machineId = resolveDisplayMachineIdForSessionFromState({ state, ...address });
@@ -78,19 +82,29 @@ function canAttemptArchiveAfterMachineAccessLoss(address: SessionAddress, result
         machineListByServerId: state.machineListByServerId,
         machineListStatusByServerId: state.machineListStatusByServerId,
     });
-    return inventory.status === 'idle' && inventory.machines !== null
-        && !inventory.machines.some(machine => machine.id === machineId);
+    if (inventory.status !== 'idle' || inventory.machines === null) return false;
+    const machine = inventory.machines.find(machine => machine.id === machineId);
+    return machine === undefined || isMachineOnline(machine) === false;
 }
 
 /** Call after confirmation; every archive entry point shares synchronous admission. */
-export async function archiveSessionWithPendingState<T>(
+export async function archiveSessionWithPendingState<T extends SessionMutationResult | undefined>(
     address: SessionAddress,
     archiveSession: (operation: SessionArchiveOperation) => Promise<T>,
 ): Promise<T | false> {
     const operation = storage.getState().beginSessionArchive(address);
     if (!operation) return false;
     try {
-        return await archiveSession(operation);
+        const result = await archiveSession(operation);
+        if (result?.success && result.stopOutcome?.status === 'physical_stop_unconfirmed'
+            && result.stopOutcome.reason === 'target_daemon_unavailable') {
+            publishPresentationNotice({
+                key: `session-stop:${operation.serverId}:${operation.sessionId}`,
+                severity: 'info',
+                message: t('workflows.run.stopWhenMachineReconnectsUnknown'),
+            });
+        }
+        return result;
     } finally {
         storage.getState().finishSessionArchive(operation);
     }
@@ -135,7 +149,7 @@ async function waitForEndActionReadiness(isReady: () => boolean, signal: AbortSi
 }
 
 /** Stop acknowledgements never prove end-action eligibility; each end action keeps its own guard. */
-export async function stopSessionAndRunAction(params: StopSessionAndRunActionParams): Promise<void> {
+export async function stopSessionAndRunAction(params: StopSessionAndRunActionParams): Promise<SessionMutationResult | undefined> {
     const stopResult = await params.stopSession();
     const targetMissing = stopResult.code === 'session_stop_not_found';
     const canProceed = params.endAction && (targetMissing || params.endAction.canRunAfterStopFailure?.(stopResult));
@@ -153,11 +167,12 @@ export async function stopSessionAndRunAction(params: StopSessionAndRunActionPar
             throw new HappyError(isSessionActiveArchiveResult(result) ? endAction.errorMessage
                 : result.message || endAction.errorMessage, false, { code: result.code, details: result.details });
         }
+        return result;
     };
     if (!endAction.readiness) return await run();
     try {
         // The existing end-stage owner supplies the budget; Stop itself is outside it.
-        await withSessionArchiveDeadline(endAction.readiness.signal, run);
+        return await withSessionArchiveDeadline(endAction.readiness.signal, run);
     } catch (error) {
         if (error instanceof SessionArchiveTimeoutError) throw new HappyError(endAction.errorMessage, false, { code: 'session_end_action_timeout' });
         throw error;
@@ -171,10 +186,11 @@ export async function stopSessionAndMaybeArchive(params: StopSessionAndMaybeArch
         ...(params.archiveAfterStop === 'always' ? { endAction: {
             run: () => params.archiveSession(operation),
             errorMessage: params.archiveErrorMessage,
-            canRunAfterStopFailure: (result: SessionMutationResult) => canAttemptArchiveAfterMachineAccessLoss(params.address, result),
+            canRunAfterStopFailure: (result: SessionMutationResult) => canAttemptArchiveAfterUnavailableStop(params.address, result),
         } } : {}),
     });
-    return params.archiveAfterStop === 'always'
+    const result = await (params.archiveAfterStop === 'always'
         ? archiveSessionWithPendingState(params.address, run)
-        : run();
+        : run());
+    return result === false ? false : undefined;
 }

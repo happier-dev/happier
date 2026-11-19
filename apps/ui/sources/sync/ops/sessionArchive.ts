@@ -1,4 +1,5 @@
 import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
+import { SessionStopOutcomeSchema, type SessionStopOutcome } from '@happier-dev/protocol/sessions/control/contract';
 import { apiSocket } from '../api/session/apiSocket';
 import { storage } from '../domains/state/storage';
 import { nowServerMs } from '../runtime/time';
@@ -16,6 +17,7 @@ import { SessionArchiveTimeoutError, withSessionArchiveDeadline } from './sessio
 export interface SessionArchiveResponse {
     success: boolean;
     archivedAt?: number | null;
+    stopOutcome?: SessionStopOutcome;
     message?: string;
     code?: string;
 }
@@ -106,7 +108,9 @@ export async function sessionArchiveWithServerScope(
                 throwIfAborted(signal);
                 const archivedAt = json && typeof json === 'object' && 'archivedAt' in json && typeof json.archivedAt === 'number'
                     ? json.archivedAt : null;
-                return { success: true, archivedAt };
+                const stopOutcome = json && typeof json === 'object' && 'stopOutcome' in json
+                    ? SessionStopOutcomeSchema.safeParse(json.stopOutcome) : undefined;
+                return { success: true, archivedAt, ...(stopOutcome?.success ? { stopOutcome: stopOutcome.data } : {}) };
             });
             try {
                 throwIfAborted(signal);

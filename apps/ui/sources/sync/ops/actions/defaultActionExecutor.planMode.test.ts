@@ -2733,6 +2733,32 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(homes.requests.filter(request => request.path === path)).toHaveLength(1);
   });
 
+  it.each(['offline', 'online'] as const)('presents pending Stop from the real Archive Action receipt only (%s)', async machineState => {
+    installActionSettings({ 'session.archive': { disabledSurfaces: [], approvalRequiredSurfaces: [] } });
+    const session = createSessionFixture({ id: `archive-action-receipt-${machineState}`, serverId, owner: 'alice', active: false, archivedAt: null });
+    storage.getState().applySessions([session]);
+    const row = createPlainSessionCurrentProjectionRecordFixture({ id: session.id, active: false, archivedAt: null });
+    homes.answer(serverId, `/v2/sessions/${session.id}`, { body: { session: row } });
+    homes.answer(serverId, `/v2/sessions/${session.id}/archive`, { body: { success: true, archivedAt: 42,
+      ...(machineState === 'offline' ? { stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'target_daemon_unavailable' } } : {}),
+    } });
+    const { createSessionActionTarget } = await import('@/components/sessions/actions/sessionActionContext');
+    const { executeSessionAction } = await import('@/components/sessions/actions/sessionActionExecution');
+    const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+    const { t } = await import('@/text');
+    retirePresentationNotice();
+    try {
+      await executeSessionAction({ actionId: 'ui.session.archive', target: createSessionActionTarget({
+        session, serverId, currentUserId: 'alice', isConnected: true, isPinned: false,
+      }) });
+      expect(storage.getState().sessions[session.id]?.archivedAt).toBe(42);
+      expect(readPresentationNotice()?.message ?? null)
+        .toBe(machineState === 'offline' ? t('workflows.run.stopWhenMachineReconnectsUnknown') : null);
+    } finally {
+      retirePresentationNotice();
+    }
+  });
+
   it('keeps the owned archive timeout code and uses the translated UI failure through the real Action front door', async () => {
     installActionSettings({ 'session.archive': { disabledSurfaces: [], approvalRequiredSurfaces: [] } });
     const session = createSessionFixture({ id: 'archive-timeout-localized', serverId, owner: 'alice', active: false, archivedAt: null });
@@ -2945,12 +2971,13 @@ describe('default Action executor mode and catalog contracts', () => {
     } });
     const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
     const { archiveSessionWithPendingState } = await import('@/components/sessions/sessionStopArchiveFlow');
+    const { executeSessionLifecycleAction } = await import('@/components/sessions/actions/sessionActionExecution');
     const canonicalId = 'srv_archive_proof_promoted';
     const pending = archiveSessionWithPendingState({ serverId: legacyId, sessionId }, async operation => {
       expect(operation.serverId).toBe(legacyId);
       await setServerProfileIdentityForUrl(serverUrl, canonicalId);
-      const result = await createDefaultActionExecutor().execute('session.archive', { sessionId }, {
-        surface: 'ui', serverId: canonicalId, archiveOperation: operation,
+      const result = await executeSessionLifecycleAction('session.archive', sessionId, {
+        serverId: canonicalId, archiveOperation: operation,
       });
       // The inner Action borrows the exact proof; its caller still owns completion.
       expect(storage.getState().sessionArchiveOperations[legacyId]?.[sessionId]).toBe(operation);
@@ -2965,7 +2992,7 @@ describe('default Action executor mode and catalog contracts', () => {
     }
     const outcome = await pending;
     if ('error' in outcome) throw outcome.error;
-    expect(outcome.result).toMatchObject({ ok: true, result: { success: true, sessionId } });
+    expect(outcome.result).toMatchObject({ success: true, sessionId });
     expect(archiveRequests).toBe(1);
     expect(storage.getState().sessionArchiveOperations).toEqual({});
   });
