@@ -72,6 +72,26 @@ describe('ActionOperationLedgerView', () => {
     });
 
 
+    it('keeps a long setup failure under the run title with its progress context', async () => {
+        const reason = 'Required native fact initialization is unavailable. Check this Machine’s administrator access and run setup again.';
+        const snapshot = ActionOperationSnapshotV1Schema.parse({
+            version: 1, operationId: 'failed-setup', revision: 1, actionId: 'session.spawn_new', state: 'failed',
+            scope: { accountId: 'account', machineId: 'machine' }, title: 'Machine setup',
+            createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'unsupported',
+            error: { errorCode: 'internal_error', error: reason },
+        });
+        const screen = await renderScreen(<ActionOperationRows operations={[{
+            serverId: homeA, snapshot, observation: 'available', isUnavailableProjection: false,
+        }]} runCard={() => ({ title: 'Apply machine setup', line: 'Stopped at step 4 of 5' })} onOpenOperation={() => {}} />);
+
+        const [row] = screen.findAllByType(Item);
+        expect(row.props.title).toBe('Apply machine setup');
+        expect(row.props.subtitle).toContain('Stopped at step 4 of 5');
+        expect(row.props.subtitle).toContain(reason);
+        expect(row.props.detail).toBeUndefined();
+        expect(row.props.accessibilityLabel).toContain(reason);
+    });
+
     it('names the execution worker when operation custody stays on the Source Machine', async () => {
         const machines = [
             createMachineFixture({ id: 'source', metadata: { ...createMachineFixture().metadata!, host: 'Source computer' } }),

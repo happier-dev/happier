@@ -127,7 +127,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
         : runCard?.line ?? sourceTitle;
     const openOperation = () => props.onOpenOperation(props.operation);
     const failureReason = snapshot.state === 'failed' ? presentFailure(snapshot)?.reason : undefined;
-    const detailText = runCard ? failureReason ?? '' : joinHappierFacts(failureReason, ...(inboxPresentation
+    const detailText = runCard ? '' : joinHappierFacts(...(inboxPresentation
         ? [determinateProgress, sourceContext.contextLine]
         : [
             props.operation.followUpAttention,
@@ -135,6 +135,8 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
             determinateProgress,
             sourceContext.contextLine,
         ]));
+    const accessibleDetail = failureReason ? joinHappierFacts(failureReason, detailText) : detailText;
+    const accessibilityLabel = `${snapshot.title}, ${props.operation.followUpAttention ?? statusLabel}, ${accessibleDetail}${sourceContext.accessibilityContext ? `, ${sourceContext.accessibilityContext}` : ''}`;
     const active = classifyActionOperationSection(snapshot, observation, props.operation.followUpAttention) === 'inProgress';
     const canDismiss = Boolean(props.onDismissOperation) && canDismissActionOperation(
         snapshot, props.operation.isUnavailableProjection, Boolean(props.operation.followUpAttention),
@@ -177,7 +179,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
         phase={workStatus.bucket === 'working' ? 'live' : workStatus.bucket === 'needs_you' ? 'attention' : 'finished'}
         status={workStatus}
         accessibilityLiveRegion="polite"
-        accessibilityLabel={`${snapshot.title}, ${props.operation.followUpAttention ?? statusLabel}, ${detailText}${sourceContext.accessibilityContext ? `, ${sourceContext.accessibilityContext}` : ''}`}
+        accessibilityLabel={accessibilityLabel}
         mark={<Icon name={status.tone === 'success' ? 'check-circle' : status.tone === 'danger' ? 'warning-circle' : 'clock'} size={ICON_SIZE.md} color={iconColor} />}
         trailingAccessory={canDismiss && props.onDismissOperation
             ? <InboxDismissRowMenu testID={`action-operation-dismiss.${snapshot.operationId}`} onDismiss={dismiss} /> : undefined}
@@ -188,9 +190,9 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
         <Item
             testID={`inbox.action-operation.${snapshot.operationId}`}
             title={title}
-            subtitle={subtitleText}
+            subtitle={failureReason ? `${subtitleText}\n${failureReason}` : subtitleText}
             detail={detailText || undefined}
-            accessibilityLabel={`${snapshot.title}, ${props.operation.followUpAttention ?? statusLabel}, ${detailText}${sourceContext.accessibilityContext ? `, ${sourceContext.accessibilityContext}` : ''}`}
+            accessibilityLabel={accessibilityLabel}
             accessibilityLiveRegion="polite"
             density="compact"
             leftElement={active && observation === 'available'
