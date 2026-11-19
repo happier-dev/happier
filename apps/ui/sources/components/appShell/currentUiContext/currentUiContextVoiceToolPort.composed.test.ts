@@ -456,6 +456,7 @@ function clientActionIdentity(): PluginReactNativeBundleCacheIdentity {
 
 function createCurrentUiClientActionFixture(input: Readonly<{
     handler: PluginClientActionHandler;
+    occurrenceId?: string;
     scopes?: PluginProjectedActionV2['scopes'];
     surfaces?: PluginProjectedActionV2['surfaces'];
     serverId?: string;
@@ -464,10 +465,11 @@ function createCurrentUiClientActionFixture(input: Readonly<{
     placementBindings?: PluginProjectedActionV2['placementBindings'];
 }>) {
     actionSchemasByQualifiedId.set(`${CLIENT_ACTION_ID.pluginId}/${CLIENT_ACTION_ID.localId}`, { inputSchema: {} });
+    const occurrenceId = input.occurrenceId ?? CLIENT_ACTION_OCCURRENCE_ID;
     const action = PluginProjectedActionV2Schema.parse({
         id: CLIENT_ACTION_ID.localId,
         pluginId: CLIENT_ACTION_ID.pluginId,
-        occurrenceId: CLIENT_ACTION_OCCURRENCE_ID,
+        occurrenceId,
         title: 'Retiring client action',
         scopes: input.scopes ?? ['global'],
         surfaces: input.surfaces ?? ['voice'],
@@ -483,7 +485,9 @@ function createCurrentUiClientActionFixture(input: Readonly<{
         dangerLevel: input.dangerLevel ?? 'safe',
         ...(input.dangerLevel && input.dangerLevel !== 'safe' ? { confirmation: input.confirmation ?? { title: 'Confirm client mutation' } } : {}),
         available: true,
-        authorization: CLIENT_ACTION_AUTHORIZATION,
+        authorization: { ...CLIENT_ACTION_AUTHORIZATION, generation: {
+            targetGeneration: occurrenceId, desiredGeneration: occurrenceId, appliedGeneration: occurrenceId,
+        } },
         ...(input.placementBindings ? { placementBindings: input.placementBindings } : {}),
     });
     const hostOrigin = { ...CLIENT_ACTION_HOST_ORIGIN, serverId: input.serverId ?? CLIENT_ACTION_HOST_ORIGIN.serverId };
@@ -1256,6 +1260,93 @@ describe('current UI context Voice tool port', () => {
         } finally {
             controller.abort(); await pending; await screen.unmount();
             await replacement?.dispose(); await installed.dispose(); await connection.dispose();
+        }
+    });
+
+    it('enables the investigation controls when Retry outlasts Machine client Action replacement', async () => {
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { AppShellPluginUiProjectionValueProvider, useAppShellPluginUiProjection } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+        const { CurrentUiContextBridge } = await import('./CurrentUiContextProvider');
+        const { CurrentUiContextActionHost } = await import('./currentUiContextVoiceToolPort');
+        const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+        const { createAccountNoticeInvestigation } = await import('@/hooks/inbox/accountNoticeInvestigation');
+        const { useBoundFailureInvestigation } = await import('@/hooks/inbox/useInvestigateFailure');
+        const { InvestigationAgentActionButtons } = await import('@/components/inbox/detail/InvestigationAgentActionButtons');
+        const { AgentActionButton, Button } = await import('@happier-dev/plugin-ui/components');
+        const { waitForTestEvent } = await import('@/dev/testkit');
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://current-ui-client.test',
+            accountId: 'current-ui-account', request: homes.request });
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected current Account');
+        const retired = createCurrentUiClientActionFixture({
+            surfaces: ['ui'], handler: async () => ({ kind: 'presentation',
+                outcome: { kind: 'unavailable', code: 'plugin_action_generation_retired' } }),
+        });
+        const choices = [
+            { actionId: 'investigate', label: 'Investigate', launchMode: 'start', startable: true },
+            { actionId: 'fix', label: 'Fix this deploy', launchMode: 'review', startable: true },
+        ] as const;
+        const successor = createCurrentUiClientActionFixture({
+            occurrenceId: 'replacement-catalog', surfaces: ['ui'],
+            handler: async () => ({ kind: 'actions', actions: choices.map(choice => ({ ...choice })) }),
+        });
+        const owner = createAccountNoticeInvestigation({ scope: lifetime.scope, isCurrent: lifetime.isCurrent,
+            execute: createFrontDoorActionExecute(),
+            binding: { pluginId: CLIENT_ACTION_ID.pluginId, action: CLIENT_ACTION_ID.localId },
+        });
+        const subject = { kind: 'deploymentReceipt', serverId: lifetime.scope.serverId,
+            environmentId: 'environment', deploymentId: 'failed-receipt' } as const;
+        const investigation = {
+            readAgentActions: owner.readAgentActions.bind(null, subject),
+            launch: owner.launch.bind(null, subject),
+        };
+        const reader = { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} };
+        let fixture = retired;
+        let establishing = false;
+        let status: ReturnType<typeof useBoundFailureInvestigation> | undefined;
+        function Controls() {
+            const state = useBoundFailureInvestigation(investigation, { agentActions: 'withDefault' });
+            status = state;
+            return React.createElement(InvestigationAgentActionButtons, {
+                actions: state.actions ?? [], pending: state.pending,
+                catalogOutcome: state.catalogOutcome, onRetry: state.retryCatalog, compact: false, onLaunch() {},
+            });
+        }
+        function Shell() {
+            const defaults = useAppShellPluginUiProjection();
+            return React.createElement(AppShellPluginUiProjectionValueProvider, { declarationReady: true,
+                value: { ...defaults, pluginUiProjection: fixture.projection, phase: 'current',
+                    clientExecutableActivation: { status: establishing ? 'establishing' : 'ready' },
+                    accountLifetime: lifetime, serverId: lifetime.scope.serverId },
+                children: React.createElement(CurrentUiContextBridge, { publisher: null, reader },
+                    React.createElement(React.Fragment, null, React.createElement(CurrentUiContextActionHost), React.createElement(Controls))),
+            });
+        }
+        const { composition } = retired;
+        await composition.reconcile([retired.activation]);
+        const screen = await renderScreen(React.createElement(Shell));
+        try {
+            await act(async () => { await waitForTestEvent(screen.subscribe, () => status?.catalogOutcome?.kind === 'unavailable', Boolean); });
+            expect(status?.catalogOutcome).toEqual({ kind: 'unavailable', code: 'plugin_action_generation_retired' });
+            await composition.invalidatePlugin(CLIENT_ACTION_ID.pluginId);
+            fixture = successor;
+            establishing = true;
+            await screen.update(React.createElement(Shell));
+            await screen.pressByTestIdAsync('investigation.agentActions.unavailable-action');
+            expect(status?.catalogOutcome).toEqual({ kind: 'loading' });
+            expect(screen.findByTestId('investigation.agentActions.loading-action')).not.toBeNull();
+            expect(screen.findAllByType(AgentActionButton)).toHaveLength(0);
+            await act(async () => { await composition.reconcile([successor.activation]); });
+            await act(async () => { await waitForTestEvent(screen.subscribe, () => status?.actions, Array.isArray); });
+            const faces = screen.findAllByType(Button).filter(button =>
+                choices.some(choice => choice.label === button.props.title));
+            expect(faces.map(button => [button.props.title, button.props.disabled, button.props.busy]))
+                .toEqual([['Investigate', false, false], ['Fix this deploy', false, false]]);
+        } finally {
+            await screen.unmount();
+            await composition.unload();
+            await connection.dispose();
         }
     });
 

@@ -35,6 +35,10 @@ export function resolveCurrentContributedAction(readProjection: () => PluginUiPr
     }
     const origin = action ? readPluginUiContributionOrigin(action) : null;
     if (!action || !origin || origin.phase !== 'current' || origin.interactionEnabled !== true) return null;
+    // A Machine can publish its new declaration before AppShell registers its executable.
+    if (action.execution.target === 'client' && !resolvePluginUiClientActionRegistration({
+        action, platform: resolvePluginUiClientExecutablePlatform(),
+    })) return null;
     return Object.freeze({ kind: 'machine', action, origin });
 }
 
@@ -97,12 +101,6 @@ export async function acquireCurrentContributedAction(input: Readonly<{
     }
 }
 
-export function hasCurrentClientActionRegistration(resolved: CurrentContributedAction): boolean {
-    return resolved.action.execution.target !== 'client' || resolvePluginUiClientActionRegistration({
-        action: resolved.action, platform: resolvePluginUiClientExecutablePlatform(),
-    }) !== null;
-}
-
 export function isResolvedContributedActionCurrent(readProjection: () => PluginUiProjectionModel | null,
     identity: PluginContributionIdentityV1, resolved: CurrentContributedAction): boolean {
     const current = resolveCurrentContributedAction(readProjection, identity);
@@ -113,8 +111,7 @@ export function isResolvedContributedActionCurrent(readProjection: () => PluginU
         && current.origin.serverId === resolved.origin.serverId
         && (current.origin.executionOrigin === resolved.origin.executionOrigin
             || (current.origin.executionOrigin !== null && resolved.origin.executionOrigin !== null
-                && arePluginMachineExecutionOriginsEqual(current.origin.executionOrigin, resolved.origin.executionOrigin)))
-        && hasCurrentClientActionRegistration(current);
+                && arePluginMachineExecutionOriginsEqual(current.origin.executionOrigin, resolved.origin.executionOrigin)));
 }
 
 /** An explicit host scope needs no mounted command, navigation reader or plugin caller identity. */

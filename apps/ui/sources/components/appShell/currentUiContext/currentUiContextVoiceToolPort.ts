@@ -52,7 +52,7 @@ import { PluginActionSurfaceV2Schema } from '@happier-dev/protocol/plugins/actio
 import { unavailable } from './currentUiContextVoiceToolBinding';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveCurrentContributedAction as resolveCurrentAction, isResolvedContributedActionCurrent as isResolvedActionCurrent,
-    acquireCurrentContributedAction, hasCurrentClientActionRegistration,
+    acquireCurrentContributedAction,
     type CurrentContributedAction as CurrentUiContextVoiceResolvedAction } from './contributedActionInvocation';
 export { bindCurrentUiContextVoiceToolPortToAdmission } from './currentUiContextVoiceToolBinding';
 
@@ -167,9 +167,7 @@ function isVoiceListedAction(
         pluginId: action.pluginId,
         localId: action.id,
     });
-    return resolved?.action === action && hasCurrentClientActionRegistration(resolved)
-        ? resolved
-        : null;
+    return resolved?.action === action ? resolved : null;
 }
 
 /**
@@ -227,7 +225,7 @@ function listCurrentContributedActionDefinitions(
             if (surface === 'voice') return isVoiceListedAction(readSnapshot, action) !== null;
             if (!isPluginProjectedActionExecutable(action) || surface !== 'allSurfaces' && !action.surfaces.includes(surface)) return false;
             const resolved = resolveCurrentAction(readSnapshot, { pluginId: action.pluginId, localId: action.id });
-            return resolved !== null && hasCurrentClientActionRegistration(resolved);
+            return resolved !== null;
         })
         .map((action) => projectedActionToDefinition(action, projection))
         .sort((left, right) => left.id.localeCompare(right.id));
@@ -278,7 +276,7 @@ export function createCurrentUiContextVoiceToolPort(
         const resolved = await acquireCurrentContributedAction({ readProjection: input.readProjection,
             identity: request.action, admission: input.clientExecutableAdmission, scope,
             signal: request.signal, isCurrent: isCallerCurrent });
-        if (!resolved || !hasCurrentClientActionRegistration(resolved)) return unavailable();
+        if (!resolved) return unavailable();
         if (request.expectedContributorOccurrenceId !== undefined && request.expectedContributorOccurrenceId !== resolved.action.occurrenceId) {
             return { ok: false, code: 'stale_surface', errorCode: 'plugin_action_generation_retired', actionHandlerInvocation: 'notStarted' };
         }
@@ -652,7 +650,7 @@ export function createCurrentUiContributedActionRpcHandler(input: Readonly<{
         const resolved = resolveCurrentAction(input.readProjection, request.action);
         if (!input.isCurrent() || context?.signal.aborted || !resolved || resolved.kind !== 'machine' || resolved.action.execution.target !== 'client'
             || resolved.origin.machineId !== input.machineId || resolved.origin.serverId !== input.serverId
-            || resolved.action.occurrenceId !== request.expectedContributorOccurrenceId || !hasCurrentClientActionRegistration(resolved)) {
+            || resolved.action.occurrenceId !== request.expectedContributorOccurrenceId) {
             return { ok: false, errorCode: 'contributed_action_unavailable', error: 'current_ui_action_unavailable', actionHandlerInvocation: 'notStarted' };
         }
         try {
