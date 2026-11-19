@@ -171,7 +171,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
       // Requester identity in editable Artifact content is not an immutable
       // subject unless the original installation signed that exact subject.
       if (request?.v === 2 && request.requesterConfirmation && !externalAuthorization) return stale('credential_changed');
-      let hasVerifiedManagedGuestSource = false;
+      let hasVerifiedRemoteSessionSource = false;
       if (externalAuthorization) {
         const binding = externalAuthorization.binding;
         const sessionOrigin = 'authentication' in binding ? binding.sessionActionOrigin : undefined;
@@ -227,17 +227,14 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
             ? { retainedDiscussionSource } : {}),
           ...(signal ? { signal } : {}),
         }))) return stale('credential_changed');
-        // The managed child is executed on a new guest, while its accepted
-        // Session source remains on the controller. Home's current verifier
-        // rechecks that exact source installation/Session/publisher together
-        // with the managed creation tuple; the guest cannot host its runner.
-        // This replaces only local source custody. Permission, causal ceiling
-        // and Account spawn policy still pass their ordinary owners below.
-        hasVerifiedManagedGuestSource = acceptedSession
-          && binding.actionId === 'session.spawn_new'
-          && binding.managedContinuation !== undefined
+        // The verified Home binding owns the remote Session source for an
+        // exact same-Account Machine relay or a retained managed creation.
+        hasVerifiedRemoteSessionSource = acceptedSession
           && binding.sessionActionSource !== undefined
-          && binding.sessionActionSource.machineId !== input.machineId;
+          && binding.sessionActionSource.machineId !== input.machineId
+          && ((binding.actionId === 'session.spawn_new' && binding.managedContinuation !== undefined)
+            || (binding.accountId === binding.custodianAccountId && binding.target.kind === 'machine'
+              && binding.actionId === origin.actionId));
         // The signature above binds the approved Action and input; plugin presence was decided above.
         if (origin.caller.kind === 'plugin') return true;
         // Home admitted the exact original turn. Accepted Session work still
@@ -318,7 +315,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
       // Posting a person's reviewed Discussion body consumes durable original
       // input custody, not a new Agent turn. The publisher still reopens the
       // executing Artifact and Home rechecks its source and owning Machine.
-      if (origin.caller.kind === 'session' && !hasVerifiedManagedGuestSource && !retainedDiscussionSource) {
+      if (origin.caller.kind === 'session' && !hasVerifiedRemoteSessionSource && !retainedDiscussionSource) {
         if (!input.isSessionCallerCurrent) return stale('session_changed');
         if (!await input.isSessionCallerCurrent({ caller: origin.caller,
           ...(signal ? { signal } : {}) })) return stale('session_changed');

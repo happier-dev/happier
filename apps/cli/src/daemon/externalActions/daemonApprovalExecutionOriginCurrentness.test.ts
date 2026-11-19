@@ -23,6 +23,7 @@ import { createActionAutomationHttpPortV1 } from '@happier-dev/protocol/actions/
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import { PrivateLabelReadV1Schema } from '@happier-dev/protocol/crypto/privateLabelV1';
 
+import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
@@ -63,6 +64,85 @@ describe('daemon approval execution-origin currentness', () => {
       accountId: 'account-1', machineId: 'machine-1', ...changed }, reportStale: value => reasons.push(value) })).toBe(false);
     expect(reasons).toEqual([reason]);
   });
+  it.each([
+    { source: 'controller', locallyTracked: false, homeCurrent: true, staleReason: null },
+    { source: 'receiver', locallyTracked: true, homeCurrent: true, staleReason: null },
+    { source: 'receiver', locallyTracked: false, homeCurrent: true, staleReason: 'session_changed' },
+    { source: 'controller', locallyTracked: false, homeCurrent: false, staleReason: 'credential_changed' },
+  ])('replays an approved terminal list from $source (local=$locallyTracked, Home=$homeCurrent)', async ({
+    source, locallyTracked, homeCurrent, staleReason,
+  }) => {
+    const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(91));
+    const actionId = 'machines.terminal.list';
+    const target = { kind: 'machine' as const, machineId: 'receiver' };
+    const actionArgs = { serverId: 'home-1', machineId: target.machineId };
+    const caller = { kind: 'session' as const, sessionId: 'source-session', starterDepth: 0, turnDepth: 0 };
+    const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1, caller, sourceTurnId: 'source-turn',
+      requestId: 'terminal-list', callerPermissionMode: 'yolo' });
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-terminal-list-proof', binding: {
+      serverIdentityId: 'home-1', accountId: 'account-1', custodianAccountId: 'account-1', machineId: target.machineId,
+      installationId: 'receiver-installation', authentication: { kind: 'account', tokenEpoch: 1 }, actionId,
+      requestId: sessionActionOrigin.requestId, requestEnvelopeDigest: 'a'.repeat(43), target, sessionActionOrigin,
+      sessionActionSource: { machineId: source, installationId: `${source}-installation` },
+    } });
+    const executionOrigin = buildApprovalExecutionOriginV1({ actionId, input: actionArgs, targetSessionId: null, context: {
+      surface: 'agent', authority: 'account_automation', actionCaller: caller, serverId: 'profile', serverIdentityId: 'home-1',
+      runtimeAccountId: 'account-1', actionRequestId: sessionActionOrigin.requestId, externalActionTarget: target,
+      externalActionExecutionAuthorization: authorization, callerPermissionMode: sessionActionOrigin.callerPermissionMode,
+      sessionInputSource: { sourceSessionId: caller.sessionId, sourceTurnId: sessionActionOrigin.sourceTurnId, via: 'action' },
+      signExternalActionApprovalInput: ({ input, target: signedTarget }) => signExternalActionApprovalInputV1({
+        authorizationToken: authorization.token, actionId, input, target: signedTarget, privateKey: keys.secretKey }),
+    } });
+    let request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'system' }, actionId, actionArgs, summary: 'List terminals', executionOriginV1: executionOrigin,
+      approval: { flow: 'deferred', result: 'required' } });
+    const currentness = createDaemonApprovalExecutionOriginCurrentness({
+      accountId: 'account-1', machineId: target.machineId, serverId: 'profile', externalActionMachinePublicKey: keys.publicKey,
+      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'home-1', machineId: target.machineId }),
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'receiver-token', encryption: null } }),
+      isAccountCurrent: async () => true, listAccountApiTokens: async () => ({ tokens: [] }),
+      isSessionCallerCurrent: async ({ caller: candidate }) => locallyTracked && candidate.sessionId === caller.sessionId,
+      resolveCurrentPermissionMode: async () => 'yolo',
+      resolveCurrentSessionAgentSpawnPolicyV1: async () => SessionAgentSpawnPolicyV1Schema.parse({}),
+      verifyExternalExecutionAuthorization: args => verifyExternalActionExecutionAuthorizationCurrent({ ...args,
+        privateKey: keys.secretKey, installationId: 'receiver-installation', serverHttpBaseUrl: 'https://home.example' }),
+    });
+    const terminalList = { ok: true, terminals: [] };
+    const terminalRead = vi.fn(async () => terminalList);
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsGet: async () => request,
+      approvalsUpdate: async ({ request: value }) => {
+        const transition = decideApprovalRequestTransition(request, value);
+        if (!transition.ok) return transition;
+        request = ApprovalRequestV2Schema.parse(value);
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: currentness,
+      machineTerminalAction: terminalRead,
+      sessionSendMessage: async ({ localId }) => SessionInputAdmissionResultV1Schema.parse({ status: 'accepted', localId }),
+    });
+    // Only Home HTTP, the daemon's live Session and terminal reads, and Artifact storage are substituted.
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(url).toBe(`https://home.example/v1/actions/${actionId}/execution-authorization/verify`);
+      expect(body).toMatchObject({ binding: authorization.binding });
+      return { status: homeCurrent ? 200 : 403, data: homeCurrent ? { ok: true } : {} };
+    });
+    try {
+      const result = await executor.execute('approval.request.decide', { artifactId: 'terminal-list-approval', decision: 'approve' },
+        { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'account-1',
+          serverId: 'profile', serverIdentityId: 'home-1' });
+      if (staleReason) {
+        expect(result).toMatchObject({ ok: false, errorCode: 'approval_stale', details: { reason: staleReason },
+          effectAttempted: false });
+        expect(terminalRead).not.toHaveBeenCalled();
+      } else {
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(terminalRead).toHaveBeenCalledWith(expect.objectContaining({ actionId, input: actionArgs }));
+      }
+    } finally {
+      post.mockRestore();
+    }
+  });
+
   it.each((['ui', 'session', 'external'] as const).flatMap(kind => [
     { kind, widening: false }, { kind, widening: true },
   ]))('executes only an admitted signed $kind narrowed process subset (widening: $widening)', async ({ kind, widening }) => {

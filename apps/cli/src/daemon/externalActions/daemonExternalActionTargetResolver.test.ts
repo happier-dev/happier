@@ -7,6 +7,7 @@ import axios from 'axios';
 import { buildApprovalExecutionOriginV1, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
@@ -354,9 +355,10 @@ describe('createDaemonExternalActionTargetResolver', () => {
     let currentPolicy = spawnPolicy;
     // Only Home HTTP and the current identity/permission/settings reads are
     // substituted. Signature verification, source selection and policy stay real.
-    vi.spyOn(axios, 'post').mockImplementation(async url => {
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       expect(url).toBe('https://home.example/v1/actions/session.spawn_new/execution-authorization/verify');
-      return { status: homeCurrent ? 200 : 403, data: homeCurrent ? { ok: true } : {} };
+      const admitted = homeCurrent && sameStrictJsonValue(body.binding, authorization.binding);
+      return { status: admitted ? 200 : 403, data: admitted ? { ok: true } : {} };
     });
     const isCurrent = createDaemonApprovalExecutionOriginCurrentness({
       accountId: 'account-1', machineId: 'guest', serverId: 'home-profile',
@@ -389,8 +391,7 @@ describe('createDaemonExternalActionTargetResolver', () => {
     await expect(check()).resolves.toBe(false);
     expect(staleReasons.at(-1)).toBe('spawn_policy_changed');
     currentPolicy = spawnPolicy;
-    // A signed Session invocation without the managed-child tuple still needs
-    // its incumbent local source owner; Home signature alone is not a waiver.
+    // Home refuses a supplied binding that drops the signed managed-child tuple.
     await expect(isCurrent({ origin: { ...origin, externalActionExecutionAuthorization: {
       ...authorization, binding: { ...authorization.binding, managedContinuation: undefined },
     } }, actionInput: spawnInput })).resolves.toBe(false);
