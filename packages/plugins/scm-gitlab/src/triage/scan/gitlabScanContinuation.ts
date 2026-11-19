@@ -45,7 +45,6 @@ const ROOT_KEYS = Object.freeze([
   'v', 'scanLimit', 'nativePageSize', 'nextLaneIndex', 'walkHealth', 'lanes', 'provenance',
 ]);
 const LANE_KEYS = Object.freeze(['key', 'nextUrl', 'ended', 'cycleProbe']);
-const CYCLE_PROBE_KEYS = Object.freeze(['cursor', 'stepsSince', 'interval']);
 const PROVENANCE_KEYS = Object.freeze(['plane', 'sourceInstanceId', 'configuredBaseUrl']);
 
 export type GitlabScanContinuationProvenance = Readonly<{
@@ -222,9 +221,9 @@ function readLanes(
       : buildGitlabScanLaneUrl(input.origin, request, nativePageSize);
     if (nextUrl === null || !isGitlabPageWithinResource(nextUrl, resourceUrl, request.sort !== undefined)) return null;
     const rawProbe = readRecord(record.cycleProbe);
-    if (rawProbe === null || !hasExactKeys(rawProbe, CYCLE_PROBE_KEYS)) return null;
+    if (rawProbe === null) return null;
     const cycleProbe = readCursorCycleProbeV1(rawProbe);
-    if (cycleProbe === null) return null;
+    if (cycleProbe === null || !hasExactKeys(rawProbe, Object.keys(cycleProbe))) return null;
     const admittedProbeCursor = admitForgeRequestUrl(cycleProbe.cursor, input.origin.normalized);
     if (admittedProbeCursor === null || !isGitlabPageWithinResource(admittedProbeCursor, resourceUrl, request.sort !== undefined)) return null;
     lanes.push({
