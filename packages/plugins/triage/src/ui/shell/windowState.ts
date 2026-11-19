@@ -373,9 +373,16 @@ export function readTriageListFailureNotice(
 }
 
 /** A source that sent its own deadline says when it may be read again, in the pacing notice's words. */
-function withRetryAt(reason: string, source: TriageListSourceFailureV1, text: TriageTextResolverV1, locale?: string): string {
+function withRetryAt(reason: string, source: Pick<TriageListSourceFailureV1, 'retryNotBeforeMs'>, text: TriageTextResolverV1, locale?: string): string {
   if (source.retryNotBeforeMs === undefined) return reason;
   return `${reason} ${readRetryAtSentence(text, locale ?? 'en', source.retryNotBeforeMs)}`;
+}
+
+/** The one deadline a shared throttle reason can name: the latest, and only when every source sent one. */
+function latestRetryDeadline(sources: readonly TriageListSourceFailureV1[]): Pick<TriageListSourceFailureV1, 'retryNotBeforeMs'> {
+  const deadlines = sources.map((source) => source.retryNotBeforeMs);
+  return deadlines.every((ms): ms is number => ms !== undefined) && deadlines.length > 0
+    ? { retryNotBeforeMs: Math.max(...deadlines) } : {};
 }
 
 /** "Try again at <time>." as one translated sentence, so each locale places the time and punctuation itself. */
@@ -439,7 +446,7 @@ export function readTriageListFailureLine(
     ? text('plugins.triage.surface.failure.unreachableSuffix', 'could not be reached')
     : text('plugins.triage.surface.failure.suffix', 'could not be read')}`;
   return Object.freeze({
-    label: `${title}. ${text('plugins.triage.surface.failure.retained', 'Their entries may be missing or out of date.')}${oneReason && !unreachable ? ` ${resolveSourceFailureReason(text, lineReason(first!))}` : ''}`,
+    label: `${title}. ${text('plugins.triage.surface.failure.retained', 'Their entries may be missing or out of date.')}${oneReason && !unreachable ? ` ${withRetryAt(resolveSourceFailureReason(text, lineReason(first!)), latestRetryDeadline(failure.sources), text, locale)}` : ''}`,
     recovery: failure.sources.every((source) => source.needsConnectionChange === true) ? 'manageSources' : 'retry',
   });
 }

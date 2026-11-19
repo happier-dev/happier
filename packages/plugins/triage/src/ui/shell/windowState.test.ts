@@ -127,6 +127,8 @@ describe('resolveTriageListShellState', () => {
     const jaAt = formatTriageTimestampV1('ja', retryNotBeforeMs, 'absolute', retryNotBeforeMs);
     expect(readTriageSourceFailureRowV1(source, ja, 'ja').reason).toMatch(new RegExp(`${jaAt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}以降に再試行できます。$`));
     expect(readTriageRefreshPacingNotice('sourceRetryDeadline', retryNotBeforeMs, 'ja', ja).description).toMatch(/以降に再試行できます。$/);
+    // The line beside the rows is where the reader is, so it names the time too (TRIAGE-UI-ACCEPT-1119 §4).
+    expect(readTriageListFailureLine(state.failure, undefined, 'en-US').label).toMatch(new RegExp(`Try again at ${retryAt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.$`));
   });
 
   // VIEW-HEALTH-1109: the selected view owns the body; the whole scan owns Manage sources.
