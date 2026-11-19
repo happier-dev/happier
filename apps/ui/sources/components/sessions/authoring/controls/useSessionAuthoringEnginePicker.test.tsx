@@ -26,7 +26,7 @@ const { resetDynamicModelProbeCacheForTests } = await import('@/sync/domains/mod
 const account = createProviderSettingsAccountHarness();
 afterEach(async () => { await standardCleanup(); await account.reset(); });
 
-it('honors supplied unavailable rows and retains existing fields on a current-engine reselect', async () => {
+it('honors unavailable rows and stages only the engine when choosing an existing-Session option', async () => {
     const { serverId } = await account.restore();
     const entries = getResolvedBackendCatalogEntries({ enabledAgentIds: ['codex', 'claude'] });
     const agentTargets = entries.flatMap(entry => entry.backendTarget.kind === 'agent' ? [{
@@ -40,7 +40,7 @@ it('honors supplied unavailable rows and retains existing fields on a current-en
         values: {},
         facts: { agentTargets, agentPickerContext: { machineId: 'm1', serverId, directory: '/repo' } },
         engineOptions: [
-            { id: current.id, label: current.label, preserveCurrentFields: true },
+            { id: current.id, label: current.label },
             { id: blocked.id, label: blocked.label, disabled: true, subtitle: t('workflows.input.unavailable') },
         ],
         onChangeFields,
@@ -54,6 +54,46 @@ it('honors supplied unavailable rows and retains existing fields on a current-en
     picker.onSelect(current.id);
     expect(onChangeFields).toHaveBeenCalledWith({ agentTarget: current.target,
         modelSelection: undefined, acpSessionModeId: undefined, sessionConfigOptionOverrides: undefined });
+});
+
+it.each(['same engine', 'mixed engines'] as const)('stages a model without clearing running modes or configuration for %s', async (recipients) => {
+    const { serverId } = await account.restore();
+    resetDynamicModelProbeCacheForTests();
+    const { planExistingSessionChanges } = await import('@happier-dev/protocol/sessions/authoring/existingSessionPlanner');
+    const entry = getResolvedBackendCatalogEntries({ enabledAgentIds: ['codex'] })[0]!;
+    if (entry.backendTarget.kind !== 'agent') throw new Error('expected_agent_target');
+    const agentTarget = entry.backendTarget;
+    const onChangeFields = vi.fn();
+    const hook = await renderHook(() => useSessionAuthoringEnginePicker({
+        values: WorkflowSessionAuthoringSelectionSchema.parse({
+            agentTarget,
+            profileId: 'workflow-profile',
+            runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer' } },
+            connectedServices: { v: 2, bindingsByServiceId: {
+                'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'served-pool' },
+            } },
+        }), onChangeFields,
+        facts: { agentPickerContext: { machineId: 'm1', serverId, directory: '/repo' },
+            agentTargets: [{ id: entry.backendTargetKey, label: 'Codex', target: agentTarget, agentId: 'codex', pickerEntry: entry }] },
+        engineOptions: [{ id: entry.backendTargetKey, label: 'Codex' }],
+    }));
+    const detail = hook.getCurrent().options[0]?.renderDetailContent?.({ onRequestClose: () => {} });
+    if (!React.isValidElement(detail)) throw new Error('missing_picker_detail');
+    const screen = await renderScreen(detail);
+    const optionId = 'model-picker-overlay-option:' + JSON.stringify([entry.backendTargetKey, null, 'terra']);
+    await vi.waitFor(() => expect(screen.findByTestId(optionId)).not.toBeNull());
+    await screen.pressByTestIdAsync(optionId);
+
+    const current = { address: { serverId, sessionId: 'already-codex' }, agentId: 'happier.agent.codex/codex',
+        machineId: 'm1', availableModeIds: [],
+        sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 1, overrides: { reasoning_effort: { value: 'high', updatedAt: 1 } } } };
+    const other = { ...current, address: { serverId, sessionId: 'other' },
+        agentId: recipients === 'mixed engines' ? 'happier.agent.claude/claude' : current.agentId };
+    expect(onChangeFields).toHaveBeenCalled();
+    const plan = planExistingSessionChanges(onChangeFields.mock.lastCall?.[0], [current, other], 'Hello');
+    expect(plan.stages.map(stage => stage.actionId)).toEqual(recipients === 'mixed engines'
+        ? ['session.agent.transition', 'session.message.send'] : ['session.message.send']);
+    expect(plan.stages.at(-1)).toMatchObject({ targets: [current.address, other.address], input: { message: 'Hello', modelOverride: 'terra' } });
 });
 
 it('offers models probed with the authored service, profile and runtime instead of Account defaults', async () => {

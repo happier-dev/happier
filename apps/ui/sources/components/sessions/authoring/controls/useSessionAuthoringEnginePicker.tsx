@@ -25,7 +25,7 @@ function readSessionAuthoringReadinessLabel(readiness: MachineAgentExecutionStat
 export function useSessionAuthoringEnginePicker(params: Readonly<{
     values: WorkflowStepExecutionSelection;
     facts?: SessionAuthoringControlFacts;
-    /** A host's field model may narrow the catalog and supply per-engine presentation. */
+    /** The allowed engines for staging changes to existing Sessions. */
     engineOptions?: readonly SessionAuthoringFieldOption[];
     disabled?: boolean;
     onChangeFields?: (fields: Partial<WorkflowStepExecutionSelection>) => void;
@@ -74,32 +74,41 @@ export function useSessionAuthoringEnginePicker(params: Readonly<{
                         .flatMap(([id, override]) => typeof override.value === 'string' ? [[id, override.value] as const] : [])) : {},
                 };
             };
-            const apply = (selection: SessionAgentPickerSelection, sourceFields?: Partial<WorkflowStepExecutionSelection>) => {
+            const apply = (selection: SessionAgentPickerSelection | undefined, sourceFields?: Partial<WorkflowStepExecutionSelection>) => {
                 if (latest.current.disabled || !latest.current.onChangeFields) return;
                 const values = latest.current.values;
                 const matches = values.agentTarget !== undefined && values.agentTarget !== null
                     && buildBackendTargetKeyV2(values.agentTarget) === buildBackendTargetKeyV2(option.target);
                 // Typed overrides of the same Agent stay authored; changing Agent clears them.
-                latest.current.onChangeFields({ agentTarget: option.target, ...resolveSessionAgentPickerSelectionFields({
+                const fields = selection && resolveSessionAgentPickerSelectionFields({
                     agentTarget: option.target, selection, updatedAt: Date.now(),
                     retainedOverrides: matches ? values.sessionConfigOptionOverrides : null,
-                }), ...(matches && sourceFields?.teamCredentialBindings === undefined
-                    && readTeamCredentialProviderModelSelection(values) ? { modelSelection: null } : {}),
-                ...(!matches && values.teamCredentialBindings?.some(binding => binding.slot.kind === 'provider_model')
-                    ? { teamCredentialBindings: replaceProviderModelCredentialBinding(values.teamCredentialBindings,
-                        { v: 1, slot: { kind: 'provider_model' }, resourceId: null }) } : {}),
-                ...sourceFields });
+                });
+                // An empty detail snapshot represents absent settings in an existing-Session change set.
+                const authoredFields = fieldOption ? {
+                    modelSelection: fields?.modelSelection,
+                    acpSessionModeId: fields?.acpSessionModeId ?? undefined,
+                    sessionConfigOptionOverrides: fields?.sessionConfigOptionOverrides ?? undefined,
+                } : fields;
+                latest.current.onChangeFields({
+                    agentTarget: option.target,
+                    ...authoredFields,
+                    ...(matches && sourceFields?.teamCredentialBindings === undefined
+                        && readTeamCredentialProviderModelSelection(values) ? { modelSelection: null } : {}),
+                    ...(!matches && values.teamCredentialBindings?.some(binding => binding.slot.kind === 'provider_model')
+                        ? { teamCredentialBindings: replaceProviderModelCredentialBinding(values.teamCredentialBindings,
+                            { v: 1, slot: { kind: 'provider_model' }, resourceId: null }) } : {}),
+                    ...sourceFields,
+                });
             };
             const backendTarget: PersistedBackendTargetRefV2 = option.backendTarget ?? option.target;
             return {
                 closeOnSelectImmediate: false,
                 onSelectImmediate: () => {
-                    if (!fieldOption?.preserveCurrentFields) return apply(readSelection());
-                    const current = latest.current;
-                    if (current.disabled || !current.onChangeFields) return;
-                    if (current.values.agentTarget && buildBackendTargetKeyV2(current.values.agentTarget) === option.id) return;
-                    current.onChangeFields({ agentTarget: option.target, modelSelection: undefined,
-                        acpSessionModeId: undefined, sessionConfigOptionOverrides: undefined });
+                    if (!fieldOption) return apply(readSelection());
+                    const target = latest.current.values.agentTarget;
+                    if (target && buildBackendTargetKeyV2(target) === option.id) return;
+                    apply(undefined);
                 },
                 renderDetailContent: () => <SessionAuthoringEngineDetail values={latest.current.values}
                     onSelectionChange={apply} detail={{

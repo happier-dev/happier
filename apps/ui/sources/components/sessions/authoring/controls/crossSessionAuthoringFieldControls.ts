@@ -83,7 +83,7 @@ export function resolveCrossSessionAuthoringFieldControl(params: Readonly<{
             if (application.via === 'unavailable') {
                 return { ...option, disabled: true, subtitle: t('workflows.input.unavailable') };
             }
-            return application.via === 'keep' ? { ...option, preserveCurrentFields: true } : option;
+            return option;
         }) };
     }
     if (first.kind === 'optionGroups') {

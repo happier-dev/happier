@@ -74,7 +74,7 @@ describe('Session-specific field intersection', () => {
         const unchanged = resolveCrossSessionAuthoringFieldControl({ ...base, field: 'agentTarget', targets: [current] });
         expect(unchanged).toMatchObject({ kind: 'options', selectedOptionId: options[1]!.id, options: [
             { id: options[0]!.id, disabled: true },
-            { id: options[1]!.id, preserveCurrentFields: true },
+            { id: options[1]!.id },
         ] });
         if (unchanged.kind !== 'options') throw new Error('Current engine must be selectable');
         expect(unchanged.options[1]?.disabled).toBeUndefined();
