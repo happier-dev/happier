@@ -1,11 +1,16 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { FileDownloadResultV1 } from '@happier-dev/plugin-sdk/protocol';
 import type { GithubHttpInvocationContextV1 } from '../observations/githubHttpInvocation.js';
 import { ForgeReleaseActionInputSchemasV1, type ForgeReleaseOperationIdV1, type ForgeReleaseActionInputByOperationV1, type ForgeReleaseActionResultByOperationV1 } from '@happier-dev/triage-protocol/releases/v1';
 import { admitReleaseInvocation, readReleaseResource, type AdmittedReleaseInvocation } from './nativeReads.js';
 import { generateReleaseNotes, mutateReleaseDraft, readReleaseNotesContext } from './drafts.js';
 
+// Download returns the native receiver receipt. The Action contribution projects it for transport.
+type GithubReleaseOperationResult<K extends ForgeReleaseOperationIdV1> =
+    K extends 'downloadAsset' ? FileDownloadResultV1 : ForgeReleaseActionResultByOperationV1[K];
+
 const handlers: { readonly [K in ForgeReleaseOperationIdV1]: (admitted: AdmittedReleaseInvocation,
-    input: ForgeReleaseActionInputByOperationV1[K], context: GithubHttpInvocationContextV1) => Promise<ForgeReleaseActionResultByOperationV1[K]> } = {
+    input: ForgeReleaseActionInputByOperationV1[K], context: GithubHttpInvocationContextV1) => Promise<GithubReleaseOperationResult<K>> } = {
     listReleases: (admitted, input) => readReleaseResource(admitted, 'listReleases', input),
     readLatestRelease: (admitted, input) => readReleaseResource(admitted, 'readLatestRelease', input),
     readRelease: (admitted, input) => readReleaseResource(admitted, 'readRelease', input),
@@ -24,15 +29,15 @@ export type GithubReleaseInvocationContextV1<K extends ForgeReleaseOperationIdV1
 
 /** Every provider entry consumes the canonical closed input and exact-account client. */
 export async function executeGithubReleaseOperationV1<K extends ForgeReleaseOperationIdV1>(operation: K, input: unknown,
-    context: GithubReleaseInvocationContextV1<K>): Promise<ForgeReleaseActionResultByOperationV1[K]> {
+    context: GithubReleaseInvocationContextV1<K>): Promise<GithubReleaseOperationResult<K>> {
     // The operation-indexed executable map establishes this exact input/result correlation.
     const parsed = ForgeReleaseActionInputSchemasV1[operation].parse(input) as ForgeReleaseActionInputByOperationV1[K];
     const admitted = await admitReleaseInvocation(parsed, context);
     if ('kind' in admitted) {
         if (operation === 'downloadAsset') return { success: false, status: context.signal.aborted ? 'cancelled' : 'failed',
-            error: 'The release asset repository could not be admitted.', errorCode: admitted.failure.code } as ForgeReleaseActionResultByOperationV1[K];
+            error: 'The release asset repository could not be admitted.', errorCode: admitted.failure.code } as GithubReleaseOperationResult<K>;
         return (['createReleaseDraft', 'editReleaseDraft', 'publishReleaseDraft'].includes(operation)
-            ? { kind: 'rejected', failure: admitted.failure } : admitted) as ForgeReleaseActionResultByOperationV1[K];
+            ? { kind: 'rejected', failure: admitted.failure } : admitted) as GithubReleaseOperationResult<K>;
     }
     return handlers[operation](admitted, parsed, context);
 }

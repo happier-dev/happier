@@ -15,6 +15,7 @@ import { projectUsagePageCost } from '@happier-dev/plugin-sdk/usage';
 import { localCaptureBackground } from './background.js';
 import type { CaptureRuntime } from './runtime.js';
 import type { CaptureSummary } from './store/capture.js';
+import type { TelemetryEnvironmentMetricsReadInputV1 } from '@happier-dev/database-protocol';
 import { telemetryPartition } from './telemetry/assignments.js';
 import { analyzeKeyFlow, evaluateKeyFlow, keyFlowRouteKey, type KeyFlowMeasurements } from './analysis/keyFlows.js';
 import { analyzeMetricWindow, type MetricInterval } from './analysis/metrics.js';
@@ -223,7 +224,7 @@ export const telemetryHealthActions: Record<string, PluginActionDefinition> = {
     [databaseActionLocalIdV1(TELEMETRY_METRICS_READ_ACTION_ID_V1)]: {
         ...metadata(TELEMETRY_METRICS_READ_ACTION_ID_V1), inputSchema: keyFlowReadInputSchema, resultSchema: keyFlowReadResultSchema,
         async run(value: unknown, context: PluginInvocationContext) {
-            const input = keyFlowReadInputSchema.parse(value);
+            const input: KeyFlowReadInput | TelemetryEnvironmentMetricsReadInputV1 = keyFlowReadInputSchema.parse(value);
             if (input.until <= input.since) throw new PluginError({ code: 'invalid_parameters' });
             const admit = context.services.deploymentDatabases?.admitTelemetryRead;
             if (!admit) throw new PluginError({ code: 'deployment_target_role_unavailable' });
