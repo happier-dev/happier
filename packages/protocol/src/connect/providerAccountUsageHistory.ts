@@ -10,7 +10,7 @@ import { deriveProviderAccountUsageEarlierWindowCurves, deriveProviderAccountUsa
 import type { UsagePacingTargetsV1Schema } from '../account/settings/usagePacingPreferencesV1.js';
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 import type { ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
-import { openProviderAccountUsageEncryptedContentV4 } from './accountUsage.js';
+import { createProviderAccountUsageEncryptedContentOpenerV4 } from './accountUsage.js';
 import type { ProviderAccountSubscriptionMonthlyPriceV1 } from './accountSubscription.js';
 import { PROVIDER_ACCOUNT_USAGE_DAY_MS, type ProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummary.js';
 import {
@@ -148,26 +148,28 @@ export class ProviderAccountUsageReadErrorV1 extends Error {
 
 export function openProviderAccountUsageRecordV4(input: Readonly<{ recordId: string; enteredMonthlyPrice?: ProviderAccountSubscriptionMonthlyPriceV1; accountMode: 'plain' | 'e2ee'; material?: AccountScopedCryptoMaterial; record: unknown }>): ProviderAccountUsageSnapshotV1 {
   const record = QualifiedProviderAccountUsageRecordResponseV4Schema.parse(input.record);
-  return openAdmittedUsageRecord({ ...input, record });
+  return createAdmittedUsageRecordOpener(input, input.enteredMonthlyPrice)(record);
 }
 
-/** Exact pages already admitted their envelopes at HTTP; payloads still open here. */
-function openAdmittedUsageRecord(input: Readonly<{ recordId: string; enteredMonthlyPrice?: ProviderAccountSubscriptionMonthlyPriceV1;
-  accountMode: 'plain' | 'e2ee'; material?: AccountScopedCryptoMaterial;
-  record: z.infer<typeof QualifiedProviderAccountUsageRecordResponseV4Schema> }>): ProviderAccountUsageSnapshotV1 {
-  const { record } = input;
-  if ((input.accountMode === 'plain') !== (record.content.t === 'plain')) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_mode_mismatch');
-  let snapshot: ProviderAccountUsageSnapshotV1 | null;
-  if (record.content.t === 'plain') {
-    try { snapshot = parseBuiltInLegacyProviderAccountUsageSnapshotV1(record.content.v); }
-    catch { snapshot = null; }
-  } else {
-    if (!input.material) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
-    snapshot = openProviderAccountUsageEncryptedContentV4({ material: input.material, content: record.content });
-  }
-  if (!snapshot) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
-  if (snapshot.recordId !== input.recordId || snapshot.fetchedAtMs !== record.metadata.fetchedAt || snapshot.staleAfterMs !== record.metadata.staleAfterMs) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
-  return projectProviderAccountUsageEnteredPriceV1(snapshot, input.enteredMonthlyPrice);
+type UsageRecordOpenScope = Readonly<{ recordId: string; accountMode: 'plain' | 'e2ee'; material?: AccountScopedCryptoMaterial }>;
+
+/** Exact pages already admitted their envelopes at HTTP. Authenticate and validate every payload here. */
+function createAdmittedUsageRecordOpener({ recordId, accountMode, material }: UsageRecordOpenScope,
+  enteredMonthlyPrice?: ProviderAccountSubscriptionMonthlyPriceV1) {
+  const openEncrypted = accountMode === 'e2ee' && material ? createProviderAccountUsageEncryptedContentOpenerV4(material) : undefined;
+  return (record: z.infer<typeof QualifiedProviderAccountUsageRecordResponseV4Schema>): ProviderAccountUsageSnapshotV1 => {
+    if ((accountMode === 'plain') !== (record.content.t === 'plain')) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_mode_mismatch');
+    let snapshot: ProviderAccountUsageSnapshotV1 | null;
+    if (record.content.t === 'plain') {
+      try { snapshot = parseBuiltInLegacyProviderAccountUsageSnapshotV1(record.content.v); }
+      catch { snapshot = null; }
+    } else {
+      snapshot = openEncrypted?.(record.content) ?? null;
+    }
+    if (!snapshot) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
+    if (snapshot.recordId !== recordId || snapshot.fetchedAtMs !== record.metadata.fetchedAt || snapshot.staleAfterMs !== record.metadata.staleAfterMs) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
+    return projectProviderAccountUsageEnteredPriceV1(snapshot, enteredMonthlyPrice);
+  };
 }
 
 /** Attach the independent admitted user price without inventing provider subscription evidence. */
@@ -184,10 +186,18 @@ export function projectProviderAccountUsageEnteredPriceV1(snapshot: ProviderAcco
   return snapshot;
 }
 
-export function openProviderAccountUsageHistoryPageV4(input: Readonly<{ recordId: string; accountMode: 'plain' | 'e2ee'; material?: AccountScopedCryptoMaterial; page: z.infer<typeof QualifiedProviderAccountUsageHistoryResponseV4Schema> }>): z.infer<typeof OpenedProviderAccountUsageHistoryPageV1Schema> {
-  return { entries: input.page.entries.map(entry => {
-    const snapshot = openAdmittedUsageRecord({ ...input, record: entry.record });
+type AdmittedUsageHistoryPage = z.infer<typeof QualifiedProviderAccountUsageHistoryResponseV4Schema>;
+
+/** @internal Open independently scheduled entries from one finite, fixed-material history read. */
+export function createProviderAccountUsageHistoryEntryOpenerV4(scope: UsageRecordOpenScope) {
+  const openRecord = createAdmittedUsageRecordOpener(scope);
+  return (entry: AdmittedUsageHistoryPage['entries'][number]) => {
+    const snapshot = openRecord(entry.record);
     if (snapshot.fetchedAtMs !== entry.observedAtMs) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
     return { id: entry.id, observedAtMs: entry.observedAtMs, snapshot };
-  }), nextCursor: input.page.nextCursor };
+  };
+}
+
+export function openProviderAccountUsageHistoryPageV4(input: UsageRecordOpenScope & Readonly<{ page: AdmittedUsageHistoryPage }>): z.infer<typeof OpenedProviderAccountUsageHistoryPageV1Schema> {
+  return { entries: input.page.entries.map(createProviderAccountUsageHistoryEntryOpenerV4(input)), nextCursor: input.page.nextCursor };
 }

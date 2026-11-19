@@ -10,7 +10,7 @@ import { backoff } from '@/utils/timing/time';
 import { ProviderAccountUsageRecordIdSchema, type ProviderAccountUsageRecordId, type ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { QualifiedProviderAccountUsageReadErrorV4Schema, QualifiedProviderAccountUsageRecordResponseV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { z } from 'zod/mini';
-import { ConnectedServiceQuotaGetInputV1Schema, QualifiedProviderAccountUsageHistoryRequestV4Schema, QualifiedProviderAccountUsageHistoryResponseV4Schema, openProviderAccountUsageRecordV4, openProviderAccountUsageHistoryPageV4, projectProviderAccountUsageEnteredPriceV1, projectProviderAccountUsageQuotaReadV1, ProviderAccountUsageReadErrorV1, type ConnectedServiceQuotaGetInputV1, type ConnectedServiceQuotaGetResultV1, type ProviderAccountUsageHistoryWitnessV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
+import { ConnectedServiceQuotaGetInputV1Schema, QualifiedProviderAccountUsageHistoryRequestV4Schema, QualifiedProviderAccountUsageHistoryResponseV4Schema, openProviderAccountUsageRecordV4, createProviderAccountUsageHistoryEntryOpenerV4, projectProviderAccountUsageEnteredPriceV1, projectProviderAccountUsageQuotaReadV1, ProviderAccountUsageReadErrorV1, type ConnectedServiceQuotaGetInputV1, type ConnectedServiceQuotaGetResultV1, type ProviderAccountUsageHistoryWitnessV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { QualifiedConnectedServiceUsageSourceResolveV4Schema, QualifiedConnectedServiceUsageSourceResolutionV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
@@ -238,12 +238,13 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
         });
         try {
             await Promise.all([(async () => {
+                const openHistoryPage = createHistoryPageOpenerWithYield(resolution.recordId, { ...options, material });
                 await drainProviderAccountUsageHistory(credentials, { recordId: resolution.recordId, history: historyRequest }, options, async page => {
                     // A parallel read may have failed while this response was
                     // pending. Its settled producer cannot open/publish another
                     // page or acquire the next cursor.
                     if (!active) throw Object.assign(new Error('Usage history read ended'), { name: 'AbortError' });
-                    const opened = await openHistoryPageWithYield({ recordId: resolution.recordId, accountMode: options.accountMode, material, page }, options);
+                    const opened = await openHistoryPage(page);
                     if (!active) throw Object.assign(new Error('Usage history read ended'), { name: 'AbortError' });
                     publish(opened);
                 });
@@ -259,7 +260,10 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
     const { nowMs, waitingWork } = options.includePendingWork === false
         ? { nowMs: options.nowMs ?? Date.now(), waitingWork: undefined }
         : await readProviderAccountUsageWaitingWork(credentials, request, current, options);
-    const result = projectProviderAccountUsageQuotaReadV1({ input: request, current, daySummaries: daySummaries?.summaries ?? (request.history ? [] : undefined), ...(request.history ? { history: page && resolution ? await openHistoryPageWithYield({ recordId: resolution.recordId, accountMode: options.accountMode, material, page }, options) : { entries: [], nextCursor: null } } : {}), nowMs, targets: options.targets, waitingWork });
+    const history = request.history ? page && resolution
+        ? await createHistoryPageOpenerWithYield(resolution.recordId, { ...options, material })(page)
+        : { entries: [], nextCursor: null } : undefined;
+    const result = projectProviderAccountUsageQuotaReadV1({ input: request, current, daySummaries: daySummaries?.summaries ?? (request.history ? [] : undefined), ...(history ? { history } : {}), nowMs, targets: options.targets, waitingWork });
     const views = options.readAllHistory?.views;
     if (views) options.readAllHistory?.onProgress(result, new Map(views.map(view => [view.key, result])));
     return result;
@@ -376,11 +380,12 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
         publish();
     }) : Promise.resolve();
     const openPage = createProviderAccountUsagePageProjectionOpenerV1();
+    const openHistoryPage = createHistoryPageOpenerWithYield(recordId, options);
     const readDailyRange = async (range: HistoryRange): Promise<NonNullable<ConnectedServiceQuotaGetResultV1['history']>['entries']> => {
         const entries: NonNullable<ConnectedServiceQuotaGetResultV1['history']>['entries'] = [];
         await drainProviderAccountUsageHistory(credentials, { recordId, history: { range, pageSize: 100 } }, options, async page => {
             if (!active) throw Object.assign(new Error('Usage history read ended'), { name: 'AbortError' });
-            const opened = await openHistoryPageWithYield({ recordId, accountMode: options.accountMode, material: options.material, page }, options);
+            const opened = await openHistoryPage(page);
             if (!active) throw Object.assign(new Error('Usage history read ended'), { name: 'AbortError' });
             // Intern the admitted frame. The drain owns continuation and requires the terminal cursor.
             const admittedPage = openPage(packProviderAccountUsagePageProjectionV1(
@@ -572,7 +577,7 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                         await drainProviderAccountUsageHistory(credentials, { recordId,
                             history: { range, pageSize: 100, ...(stored?.frontier ? { cursor: stored.frontier } : {}) } }, options, async page => {
                             if (!active) throw Object.assign(new Error('Usage history read ended'), { name: 'AbortError' });
-                            const next = await openHistoryPageWithYield({ recordId, accountMode: options.accountMode, material: options.material, page }, options);
+                            const next = await openHistoryPage(page);
                             if (!active) throw Object.assign(new Error('Usage history read ended'), { name: 'AbortError' });
                             // Raw fallback pages carry full copies of unchanged provider
                             // inventory and meter definitions. Admit them into the same
@@ -742,17 +747,18 @@ async function requestProviderAccountUsageProjection(credentials: AuthCredential
     return read;
 }
 
-async function openHistoryPageWithYield(input: Parameters<typeof openProviderAccountUsageHistoryPageV4>[0],
-    options: Pick<ProviderAccountUsageQuotaReadOptions, 'signal' | 'assertCurrent'>) {
+function createHistoryPageOpenerWithYield(recordId: string,
+    options: Pick<ProviderAccountUsageQuotaReadOptions, 'accountMode' | 'material' | 'signal' | 'assertCurrent'>) {
+    const openEntry = createProviderAccountUsageHistoryEntryOpenerV4({ recordId, accountMode: options.accountMode, material: options.material });
     const assertCurrent = () => { throwIfAborted(options.signal); options.assertCurrent?.(); };
-    const entries = await mapCryptoBatchWithYield(input.page.entries, entry => {
+    return async (page: z.infer<typeof QualifiedProviderAccountUsageHistoryResponseV4Schema>) => {
+        const entries = await mapCryptoBatchWithYield(page.entries, entry => {
+            assertCurrent();
+            return openEntry(entry);
+        });
         assertCurrent();
-        // Preserve the Protocol opener's record, mode, timestamp and page-entry
-        // validation. Schedule it through the incumbent crypto batch owner.
-        return openProviderAccountUsageHistoryPageV4({ ...input, page: { entries: [entry], nextCursor: null } }).entries[0]!;
-    });
-    assertCurrent();
-    return { entries, nextCursor: input.page.nextCursor };
+        return { entries, nextCursor: page.nextCursor };
+    };
 }
 
 async function readProviderAccountUsageWaitingWork(credentials: AuthCredentials, input: ConnectedServiceQuotaGetInputV1, current: ProviderAccountUsageSnapshotV1 | null,
@@ -945,7 +951,8 @@ async function requestProviderAccountUsageDaySummaries(credentials: AuthCredenti
 export async function getProviderAccountUsageHistoryWitness(credentials: AuthCredentials, input: Readonly<{ recordId: ProviderAccountUsageRecordId; witness: ProviderAccountUsageHistoryWitnessV1 }>, options: ProviderAccountUsageQuotaReadOptions) {
     const page = await requestProviderAccountUsageHistoryPage(credentials, input, options, true);
     if (!page) return null;
-    const opened = await openHistoryPageWithYield({ recordId: input.recordId, accountMode: options.accountMode, material: options.accountMode === 'e2ee' ? options.material ?? resolveAccountScopedCryptoMaterialFromCredentials(credentials) : undefined, page }, options);
+    const material = options.accountMode === 'e2ee' ? options.material ?? resolveAccountScopedCryptoMaterialFromCredentials(credentials) : undefined;
+    const opened = await createHistoryPageOpenerWithYield(input.recordId, { ...options, material })(page);
     const entry = opened.entries.find(entry => entry.id === input.witness.id && entry.observedAtMs === input.witness.observedAtMs);
     if (!entry && opened.entries.length) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
     return entry?.snapshot ?? null;

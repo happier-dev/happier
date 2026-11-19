@@ -169,6 +169,57 @@ describe('opened accepted provider history', () => {
           content: { t: 'plain', v: { ...snapshot, providerId: 'wrong' } } } }] } })).toThrow();
     } finally { parse.mockRestore(); }
   });
+  it('sets up one encrypted history key per page while authenticating every record and facet', () => {
+    const machineKey = new Uint8Array(32).fill(7);
+    const sealingMaterial = { type: 'dataKey' as const, machineKey };
+    const encoder = new TextEncoder();
+    let nonce = 0;
+    const observations = [4, 16].map(recordCount => {
+      const expectedEntries = Array.from({ length: recordCount }, (_, index) => {
+        const at = snapshot.fetchedAtMs + index;
+        return { id: `witness-${index}`, observedAtMs: at, snapshot: ProviderAccountUsageSnapshotV1Schema.parse({
+          ...snapshot,
+          observedAtMs: at,
+          fetchedAtMs: at,
+          subscription: index % 2 === 1 ? { ...snapshot.subscription, observedAtMs: at } : undefined,
+          recoveryCreditDetails: index % 4 === 0 ? { grant: { remainingCount: index + 1 } } : undefined,
+        }) };
+      });
+      const entries = expectedEntries.map(({ id, observedAtMs, snapshot }) => {
+        const sealed = sealProviderAccountUsageSnapshot({ material: sealingMaterial, snapshot,
+          randomBytes: length => new Uint8Array(length).fill(++nonce) });
+        return { id, observedAtMs, record: { metadata: { ...metadata, fetchedAt: observedAtMs }, sources: [],
+          content: { t: 'encrypted' as const, c: sealed.ciphertext, subscription: sealed.subscription,
+            recoveryCreditDetails: sealed.recoveryCreditDetails } } };
+      });
+      const lastEntry = entries.at(-1)!;
+      const nextCursor = { id: lastEntry.id, observedAtMs: lastEntry.observedAtMs };
+      const page = QualifiedProviderAccountUsageHistoryResponseV4Schema.parse({ entries, nextCursor });
+      let keyReads = 0;
+      // On this data-key path, the cipher reads material.machineKey to derive the blob-kind key.
+      // The getter returns the real key so every envelope still traverses the real authenticated open.
+      const openingMaterial = { type: 'dataKey' as const, get machineKey() { keyReads++; return machineKey; } };
+      const input = { recordId: snapshot.recordId, accountMode: 'e2ee' as const, page };
+      const opened = openProviderAccountUsageHistoryPageV4({ ...input, material: openingMaterial });
+      expect(opened).toEqual({ entries: expectedEntries, nextCursor });
+      expect(() => openProviderAccountUsageHistoryPageV4({ ...input, accountMode: 'plain' }))
+        .toThrowError(expect.objectContaining({ code: 'provider_account_usage_content_mode_mismatch' }));
+      const subscription = lastEntry.record.content.subscription!;
+      const { ciphertext } = subscription;
+      const at = Math.floor(ciphertext.length / 2);
+      const tampered = ciphertext.slice(0, at) + (ciphertext[at] === 'A' ? 'B' : 'A') + ciphertext.slice(at + 1);
+      const tamperedPage = QualifiedProviderAccountUsageHistoryResponseV4Schema.parse({ nextCursor,
+        entries: [...entries.slice(0, -1), { ...lastEntry, record: { ...lastEntry.record,
+          content: { ...lastEntry.record.content, subscription: { ...subscription, ciphertext: tampered } } } }] });
+      expect(() => openProviderAccountUsageHistoryPageV4({ ...input, material: sealingMaterial, page: tamperedPage }))
+        .toThrowError(expect.objectContaining({ code: 'provider_account_usage_content_unavailable' }));
+      return { recordCount, keyReads, decodedPageBytes: encoder.encode(JSON.stringify(page)).byteLength,
+        subscriptionFacets: entries.filter(entry => entry.record.content.subscription).length,
+        recoveryFacets: entries.filter(entry => entry.record.content.recoveryCreditDetails).length };
+    });
+    console.info(JSON.stringify({ kind: 'usage-history-key-setup', observations }));
+    expect(observations.map(observation => observation.keyReads)).toEqual([1, 1]);
+  });
   it('projects retained plain fields through the same stored reader as encrypted snapshots while keeping writes strict', () => {
     const retained = { ...snapshot, retired: true, recordKey: { ...snapshot.recordKey, retired: true },
       accountSubject: { ...snapshot.accountSubject, retired: true }, subscription: { ...snapshot.subscription, retired: true } };

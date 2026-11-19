@@ -5,6 +5,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 import {
+    createAccountScopedBlobOpener,
     openAccountScopedBlobCiphertext,
     sealAccountScopedBlobCiphertext,
     type AccountScopedCryptoMaterial,
@@ -318,27 +319,36 @@ export function sealProviderAccountUsageSnapshot(params: Readonly<{
     };
 }
 
+type ProviderAccountUsageEncryptedContentV4 = Readonly<{ t: 'encrypted'; c: string }>
+    & Omit<SealedProviderAccountUsageSnapshotV1, 'format' | 'ciphertext'>;
+
+/** @internal Share key setup within one finite reader with fixed Account material. */
+export function createProviderAccountUsageEncryptedContentOpenerV4(material: AccountScopedCryptoMaterial) {
+    const openCiphertext = createAccountScopedBlobOpener({ kind: 'provider_account_usage_snapshot', material });
+    return (content: ProviderAccountUsageEncryptedContentV4): ProviderAccountUsageSnapshotV1 | null =>
+        openSealedUsageSnapshot({ ...content, format: 'account_scoped_v1', ciphertext: content.c }, openCiphertext);
+}
+
 /** Open the V4 encrypted transport through the same supplemental-envelope owner. */
 export function openProviderAccountUsageEncryptedContentV4(params: Readonly<{
-    material: AccountScopedCryptoMaterial;
-    content: Readonly<{ t: 'encrypted'; c: string }> & Omit<SealedProviderAccountUsageSnapshotV1, 'format' | 'ciphertext'>;
+    material: AccountScopedCryptoMaterial; content: ProviderAccountUsageEncryptedContentV4;
 }>): ProviderAccountUsageSnapshotV1 | null {
-    return openSealedProviderAccountUsageSnapshot({
-        material: params.material,
-        sealed: { ...params.content, format: 'account_scoped_v1', ciphertext: params.content.c },
-    });
+    return createProviderAccountUsageEncryptedContentOpenerV4(params.material)(params.content);
 }
 
 export function openSealedProviderAccountUsageSnapshot(params: Readonly<{
     material: AccountScopedCryptoMaterial;
     sealed: SealedProviderAccountUsageSnapshotV1;
 }>): ProviderAccountUsageSnapshotV1 | null {
-    const sealed = createStoredReadSchema(SealedProviderAccountUsageSnapshotV1Schema).safeParse(params.sealed);
+    return openSealedUsageSnapshot(params.sealed,
+        createAccountScopedBlobOpener({ kind: 'provider_account_usage_snapshot', material: params.material }));
+}
+
+function openSealedUsageSnapshot(input: SealedProviderAccountUsageSnapshotV1,
+    openCiphertext: (ciphertext: string) => AccountScopedOpenResult): ProviderAccountUsageSnapshotV1 | null {
+    const sealed = createStoredReadSchema(SealedProviderAccountUsageSnapshotV1Schema).safeParse(input);
     if (!sealed.success) return null;
-    const opened = openProviderAccountUsageSnapshotCiphertext({
-        material: params.material,
-        ciphertext: sealed.data.ciphertext,
-    });
+    const opened = openCiphertext(sealed.data.ciphertext);
     let snapshot: ProviderAccountUsageSnapshotV1;
     try {
         snapshot = parseBuiltInLegacyProviderAccountUsageSnapshotV1(opened?.value);
@@ -347,16 +357,13 @@ export function openSealedProviderAccountUsageSnapshot(params: Readonly<{
     }
     const result = { ...snapshot };
     if (sealed.data.recoveryCreditDetails) {
-        const facet = openProviderAccountUsageSnapshotCiphertext({ material: params.material, ciphertext: sealed.data.recoveryCreditDetails.ciphertext });
+        const facet = openCiphertext(sealed.data.recoveryCreditDetails.ciphertext);
         const parsedFacet = createStoredReadSchema(ProviderAccountUsageRecoveryCreditDetailsFacetV1Schema).safeParse(facet?.value);
         if (!parsedFacet.success || parsedFacet.data.recordId !== snapshot.recordId || parsedFacet.data.fetchedAtMs !== snapshot.fetchedAtMs) return null;
         result.recoveryCreditDetails = parsedFacet.data.recoveryCreditDetails;
     }
     if (!sealed.data.subscription) return result;
-    const facet = openProviderAccountUsageSnapshotCiphertext({
-        material: params.material,
-        ciphertext: sealed.data.subscription.ciphertext,
-    });
+    const facet = openCiphertext(sealed.data.subscription.ciphertext);
     const parsedFacet = createStoredReadSchema(ProviderAccountUsageSubscriptionFacetV1Schema).safeParse(facet?.value);
     if (!parsedFacet.success || parsedFacet.data.recordId !== snapshot.recordId) return null;
     const subscription = parsedFacet.data.subscription;
