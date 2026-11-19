@@ -94,10 +94,12 @@ export async function startTeamSetupFFixture(params: Readonly<{
     return { ...core,
       createAccount, enrollDaemon, assertKnownGoodMachineControl,
       async assertKnownGoodSessionControl(account: Awaited<ReturnType<typeof createAccount>>,
-        machine: Parameters<typeof core.assertKnownGoodSessionControl>[1]) {
-        const control = await core.assertKnownGoodSessionControl(account, machine);
+        machine: Parameters<typeof core.assertKnownGoodSessionControl>[1],
+        agent?: Readonly<{ target: NonNullable<Parameters<typeof core.assertKnownGoodSessionControl>[2]>;
+          prompt: string; assistantSubstring: string }>) {
+        const control = await core.assertKnownGoodSessionControl(account, machine, agent?.target);
         const sent = await account.execute('session.message.send', {
-          sessionId: control.sessionId, message: 'Confirm the Team setup F control reaches its enrolled Agent.', reply: 'none',
+          sessionId: control.sessionId, message: agent?.prompt ?? 'Confirm the Team setup F control reaches its enrolled Agent.', reply: 'none',
         });
         if (!sent.ok) throw new Error(`F baseline Agent turn refused (${sent.errorCode})`);
         const admission = SessionMessageSendResultV1Schema.parse(sent.result);
@@ -110,7 +112,7 @@ export async function startTeamSetupFFixture(params: Readonly<{
         await waitForAssistantMessageContaining({ baseUrl: server.baseUrl, token: account.auth.token,
           sessionId: control.sessionId, secret: sessionCrypto.selectedSecret,
           encryptionVariant: sessionCrypto.selectedUsesDataKeyVariant ? 'dataKey' : 'legacy',
-          requiredSubstring: 'FAKE_CLAUDE_OK_', timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS });
+          requiredSubstring: agent?.assistantSubstring ?? 'FAKE_CLAUDE_OK_', timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS });
         return control;
       },
       createSessionFromArgv(machine: Awaited<ReturnType<typeof enrollDaemon>>, args: string[], label: string) {

@@ -6,6 +6,7 @@ import { getCACertificates, setDefaultCACertificates } from 'node:tls';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
@@ -172,12 +173,13 @@ export async function startProjectDaemonFixture(params: Readonly<{
         return observations;
       },
       async assertKnownGoodSessionControl(account: Awaited<ReturnType<typeof createAccount>>,
-      machine: Readonly<{ target: Readonly<{ serverId: string; machineId: string }>; workspaceDir: string }>) {
+      machine: Readonly<{ target: Readonly<{ serverId: string; machineId: string }>; workspaceDir: string }>,
+      agentTarget?: AgentExecutionTargetV1) {
       const updatedAtMs = Date.now();
       const result = await account.execute('session.spawn_new', {
         executionTarget: machine.target,
         directory: { kind: 'path', path: machine.workspaceDir },
-        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        agentTarget: agentTarget ?? { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
         permissionMode: 'read-only', approvalProfileId: null,
         configuration: { mode: { value: null, updatedAtMs }, model: { value: null, updatedAtMs, selectionSource: 'explicit' },
           permissionIntent: { value: 'read-only', updatedAtMs }, options: {} },

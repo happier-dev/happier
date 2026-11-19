@@ -1,6 +1,6 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
@@ -19,6 +19,7 @@ import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
 import { readWorkflowChildSession, waitForWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 import { createRunDirs } from '../../src/testkit/runDir';
+import { repoRootDir } from '../../src/testkit/paths';
 import { createTempDirHandle, type TempDirHandle } from '../../src/testkit/fs/tempDir';
 import { createWorkflowRunStorageClient } from '../../../../apps/cli/src/daemon/workflows/workflowRunStorageClient';
 import { buildWorkflowActionContext } from '../../../../apps/cli/src/daemon/workflows/workflowActionContext';
@@ -58,12 +59,24 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
   const actor = await fixture.createAccount('habit-owner');
   const machine = await fixture.enrollDaemon(actor, {
     workspaceDir: join(workspaceRoot.path, 'habit-owner', 'workspace'),
-    env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } })
+    env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
+      HAPPIER_OHMYPI_PATH: resolve(repoRootDir(), 'packages/tests/fixtures/acp-stub-provider/acp-stub-provider.mjs'),
+      PI_CODING_AGENT_DIR: join(workspaceRoot.path, 'ohmypi'),
+      GEMINI_API_KEY: 'e2e-fake-gemini-api-key',
+    } })
     .catch(cause => { throw new Error('F2 prerequisite daemon enrollment failed', { cause }); });
   const person = (actionId: ActionId, input: unknown, context: Parameters<typeof actor.execute>[2] = {}) =>
     actor.executeAsPerson(actionId, input, {
       externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
       presentUserConfirmation: { actionId }, ...context,
+    });
+  const addContinuation = (sessionId: string) =>
+    person('workflow.trigger.add', { lifetimeSession: { sessionId },
+      target: { kind: 'workflow', ref: 'builtin:keep-going' },
+      project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
+      trigger: { kind: 'sessionLifecycle', enabled: true,
+        subject: { kind: 'session', serverId: fixture!.serverId, sessionId },
+        events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' } },
     });
   const openProject = async () => {
     const opened = await person('projects.open', { ...machine.target,
@@ -85,7 +98,14 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
     expect(response.status).toBe(200);
     return V2SessionByIdResponseSchema.parse(response.data).session;
   };
-  const lifetime = await fixture.assertKnownGoodSessionControl(actor, machine);
+  // Keep going is intentionally unavailable on native Goal owners. Use the
+  // real ACP runtime without that facet for the two Goal-clear lifetimes.
+  const continuationAgent = {
+    target: { kind: 'agent', identity: { pluginId: 'happier.agent.ohmypi', localId: 'ohmypi' } },
+    prompt: 'ACP_STUB_USAGE_UPDATE=f2-continuation',
+    assistantSubstring: 'ACP_STUB_USAGE_UPDATE_DONE f2-continuation',
+  } as const;
+  const lifetime = await fixture.assertKnownGoodSessionControl(actor, machine, continuationAgent);
   const watched = await fixture.assertKnownGoodSessionControl(actor, machine);
   const sessionSubject = { kind: 'session', serverId: fixture.serverId, sessionId: watched.sessionId } as const;
   type Scope = Readonly<{ name: string; subject?: AutomationSubjectV1;
@@ -128,6 +148,7 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
     .catch(cause => { throw new Error(`F2 Session Project association unavailable: ${JSON.stringify({
       expectedProjectKey: projectKey, observedProjectKey,
     })}`, { cause }); });
+  expect(await addContinuation(watched.sessionId)).toMatchObject({ ok: false, errorCode: 'native_goal_owner' });
   for (const scope of scopes.slice(1)) await addScope(scope);
   for (const scope of scopes.slice(1)) {
     const invalid = await person('workflow.trigger.add', {
@@ -198,7 +219,7 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
     automationId: cleanupSaved.set.automationId, expectedRevision: siblingSaved.set.revision,
     patch: { inputs: { automationId: cleanupSaved.set.automationId } },
   })).toMatchObject({ ok: true });
-  const neighborLifetime = await fixture.assertKnownGoodSessionControl(actor, machine);
+  const neighborLifetime = await fixture.assertKnownGoodSessionControl(actor, machine, continuationAgent);
   const neighbor = await person('workflow.trigger.add', {
     lifetimeSession: { sessionId: neighborLifetime.sessionId }, target: target('another lifetime'),
     project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
@@ -462,13 +483,7 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
     triggerId: saved[0]!.triggerId }, { presentUserConfirmation: { actionId: 'workflow.trigger.remove' } })).toMatchObject({ ok: true });
   expect(await readRuns(0), 'Removing a habit retains its authoritative Run history').toHaveLength(1);
   const attachContinuation = async (sessionId: string) => {
-    const added = await person('workflow.trigger.add', { lifetimeSession: { sessionId },
-      target: { kind: 'workflow', ref: 'builtin:keep-going' },
-      project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
-      trigger: { kind: 'sessionLifecycle', enabled: true,
-        subject: { kind: 'session', serverId: fixture!.serverId, sessionId },
-        events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' } },
-    });
+    const added = await addContinuation(sessionId);
     expect(added.ok, JSON.stringify(added)).toBe(true);
     if (!added.ok) throw new Error(`Continuation habit refused (${added.errorCode})`);
     return WorkflowTriggerWriteResultV1Schema.parse(added.result);
