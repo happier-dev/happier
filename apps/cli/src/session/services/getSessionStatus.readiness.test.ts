@@ -8,6 +8,7 @@ import * as sessionSockets from '@/api/session/sockets';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { MachinesAgentsListOutputSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { UNSUPPORTED_AGENT_SESSION_CAPABILITIES } from '@happier-dev/agents';
+import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 
 beforeEach(() => {
   // Direct owner reads may maintain their display projection. Keep that HTTP
@@ -69,6 +70,45 @@ it.each([
     idOrPrefix: sessionId, live: false, readiness: true,
     readReadinessInventory: async () => inventory });
   expect(result).toMatchObject({ ok: true, readiness: { agent: { agentId, current: true, state } } });
+  if (result.ok) expect(SessionStatusResultSchema.parse(result)).toEqual(result);
+});
+
+it('projects the accepted Team revision for inactive Session readiness without borrowing native sign-in', async () => {
+  const sessionId = 'c123456789012345678901234';
+  const team = { teamId: 'muse-team', resourceId: 'muse-resource', deliveryMode: 'brokered' } as const;
+  const row = createSessionRecordFixture({ id: sessionId, active: false, encryptionMode: 'plain',
+    metadata: JSON.stringify({ machineId: 'machine-1', flavor: 'codex', path: '/workspace',
+      modelSelectionIntentV2: { v: 2, updatedAt: 10, ref: { source: 'team_resource', ...team,
+        expectedResourceRevision: 2, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'muse-spark-1.3-contributor' } } }),
+    acceptedTeamCredentialBinding: { v: 1, slot: { kind: 'provider_model' }, ...team, expectedResourceRevision: 4 },
+    effectiveAccess: { v: 1, level: 'owner', sources: [],
+      capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } });
+  const inventory = MachinesAgentsListOutputSchema.parse({ items: [{ agentId: 'codex', title: 'Codex',
+    installed: true, version: null, latestVersion: null, update: { supported: false, command: null },
+    signIn: { status: 'signedOut', loginSupport: 'login_terminal' }, platform: { supported: true }, dependencies: [],
+    install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null } }] });
+  vi.spyOn(axios, 'get').mockImplementation(async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+    if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: row } };
+    if (path === '/v1/machines/machine-1') return { status: 200, data: { machine: { id: 'machine-1', active: true,
+      revokedAt: null, replacedByMachineId: null, access: { custodian: { accountId: 'owner', displayName: 'Owner' },
+        role: 'manage', resourceMode: 'plain', accessState: 'ready' } } } };
+    throw new Error(`Unexpected HTTP read ${path}`);
+  });
+  const resource: TeamCredentialResourceCatalogEntryV1 = {
+    id: team.resourceId, teamId: team.teamId, resourceRevision: 4, displayName: null, sourceOwnerDisplayName: null,
+    readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+    allowedRoutes: ['brokered'], directMaterialState: 'never_delivered', sessionUsePolicy: null,
+    sourcePresentation: null, providerModels: [], connectedServiceSelections: [],
+  };
+  const readers = { readReadinessInventory: async () => inventory,
+    readReadinessTeamProviderResources: async () => [resource] };
+  const result = await getSessionStatus({ credentials: { token: 'token', encryption: null },
+    idOrPrefix: sessionId, live: false, readiness: true, ...readers });
+  expect(result).toMatchObject({ ok: true, readiness: { status: 'ready', cause: null,
+    credential: { kind: 'team', teamId: team.teamId, resourceId: team.resourceId, readiness: { kind: 'available' } },
+    agent: { agentId: 'codex', state: 'ready', repair: null } } });
   if (result.ok) expect(SessionStatusResultSchema.parse(result)).toEqual(result);
 });
 

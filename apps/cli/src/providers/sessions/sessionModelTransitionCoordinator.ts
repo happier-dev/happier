@@ -6,6 +6,7 @@ import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaq
 import type { SessionModelMutationExpectedV1, SessionModelMutationScopeV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
+import { resolveRetainedTeamProviderBindingRevisionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import type { SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 import { projectPluginFailureMessage } from '@/plugins/runtime/lifecycle/utils';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
@@ -154,11 +155,7 @@ function sameTeamResourceBinding(
 ): boolean {
   return applied != null
     && desired.agentTargetKey === applied.agentTargetKey
-    && desired.resourceId === applied.resourceId
-    && desired.teamId === applied.teamId
-    && desired.expectedResourceRevision === applied.expectedResourceRevision
-    && desired.deliveryMode === applied.deliveryMode
-    && isDeepStrictEqual(desired.nativeDelivery ?? null, applied.nativeDelivery ?? null);
+    && resolveRetainedTeamProviderBindingRevisionV1(desired, applied) !== null;
 }
 
 function sameTeamRoute(

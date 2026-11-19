@@ -118,6 +118,15 @@ export function createCliSessionStatusActionDeps(
         // A credential-only external root has no requester Machine projection. Never use host custody instead.
         ...(!context?.externalActionCredential || context.externalActionExecutionAuthorization ? {
           readReadinessInventory: input => machinesAgentsList(input, context ?? { surface: 'cli' }),
+          readReadinessTeamProviderResources: async ({ teamId, resourceId }) => {
+            const homeDomainAction = readHomeDomainAction();
+            if (!homeDomainAction) return [];
+            const { readSpawnConnectedServicesTeamResources } = await import('./sessionTeamCredentialCatalog');
+            return readSpawnConnectedServicesTeamResources({
+              homeDomainAction: request => homeDomainAction({ ...request, context: context ?? request.context }),
+              teamIds: [teamId], resourceId, serverId, signal: operationSignal,
+            });
+          },
           readReadinessCredential: async ({ machineId, purpose, machineAccess, teamSelection }) => {
             const currentContext = context ?? { surface: 'cli' as const };
             const described = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await callMachineAction({

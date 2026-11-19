@@ -9469,6 +9469,7 @@ describe('runHostSessionRuntime', () => {
     expect(failure).toMatchObject({ code: 'provider_binding_changed', message: expect.stringContaining('restart_required') });
     expect(harness.session.observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
       localId: 'startup-model-refusal', kind: 'rejected_before_effect',
+      retryable: false, reason: 'provider_rejected_before_acceptance',
       diagnostic: expect.objectContaining({ code: 'provider_binding_changed' }),
     }));
     expect(harness.session.enqueueSessionTurnMutation).toHaveBeenCalledWith(expect.objectContaining({

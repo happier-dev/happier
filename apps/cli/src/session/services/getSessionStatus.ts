@@ -15,7 +15,8 @@ import {
 
 import { resolveSessionTransportContext } from './resolveSessionTransportContext';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { readSessionReadiness, type SessionReadinessInventoryReader, type SessionReadinessCredentialReader } from './readSessionReadiness';
+import { readSessionReadiness, type SessionReadinessInventoryReader, type SessionReadinessCredentialReader,
+  type SessionReadinessTeamProviderResourcesReader } from './readSessionReadiness';
 import type { SessionReadinessV1 } from '@happier-dev/protocol/sessions/control/sessionReadinessV1';
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import type { QualifiedConnectedAccountPurposeTeamResourceSelectionV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
@@ -80,6 +81,7 @@ export async function getSessionStatus(params: Readonly<{
   credentialTeamSelection?: QualifiedConnectedAccountPurposeTeamResourceSelectionV1;
   readReadinessInventory?: SessionReadinessInventoryReader;
   readReadinessCredential?: SessionReadinessCredentialReader;
+  readReadinessTeamProviderResources?: SessionReadinessTeamProviderResourcesReader;
   serverHttpBaseUrl?: string;
   signal?: AbortSignal;
   authorization?: ExternalActionExecutionAuthorizationV1;
@@ -207,6 +209,7 @@ export async function getSessionStatus(params: Readonly<{
       ...(params.credentialTeamSelection ? { credentialTeamSelection: params.credentialTeamSelection } : {}),
       ...(params.readReadinessInventory ? { readInventory: params.readReadinessInventory } : {}),
       ...(params.readReadinessCredential ? { readCredential: params.readReadinessCredential } : {}),
+      ...(params.readReadinessTeamProviderResources ? { readTeamProviderResources: params.readReadinessTeamProviderResources } : {}),
       ...(params.serverHttpBaseUrl ? { serverHttpBaseUrl: params.serverHttpBaseUrl } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
       ...(params.authorization ? { authorization: params.authorization } : {}),

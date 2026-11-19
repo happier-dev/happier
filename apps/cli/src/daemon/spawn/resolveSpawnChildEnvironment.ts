@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from 'node:util';
+import { resolveRetainedTeamProviderBindingRevisionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
@@ -828,10 +828,8 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     const retainedModel = readSessionModelSelectionV2FromMetadata(params.existingSessionMetadata);
     if (params.options.existingSessionId && retainedModel?.ref.source === 'team_resource'
       && (acceptedTeamBinding?.slot.kind !== 'provider_model'
-        || acceptedTeamBinding.resourceId !== retainedModel.ref.resourceId
-        || acceptedTeamBinding.teamId !== retainedModel.ref.teamId
-        || acceptedTeamBinding.deliveryMode !== retainedModel.ref.deliveryMode
-        || !isDeepStrictEqual(acceptedTeamBinding.nativeDelivery ?? null, retainedModel.ref.nativeDelivery ?? null)
+        || acceptedTeamBinding.resourceId === null
+        || resolveRetainedTeamProviderBindingRevisionV1(retainedModel.ref, acceptedTeamBinding) === null
         || (retainedModel.ref.deliveryMode === 'vendor-native' && (!retainedModel.ref.nativeDelivery || !acceptedTeamBinding.nativeDelivery))
         || (retainedModel.ref.deliveryMode === 'direct' && !params.providerBindingContext))) {
       return {

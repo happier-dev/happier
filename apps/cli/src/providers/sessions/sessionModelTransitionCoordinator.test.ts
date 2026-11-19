@@ -339,7 +339,7 @@ function createHarness(params?: Readonly<{
   const coordinator = createSessionModelTransitionCoordinator({
     ...(params?.ownerScope ? { ownerScope: params.ownerScope } : {}),
     runId: 'run-1',
-    agentTargetKey: 'agent:happier.agent.claude/claude',
+    agentTargetKey: current.agentTargetKey,
     initialActiveTarget: params?.initialTarget ?? authorized(current),
     initialActiveTargetConfirmed: params?.initialActiveTargetConfirmed ?? true,
     readModelSelectionIntent: params?.readModelSelectionIntent ?? (() => null),
@@ -715,6 +715,35 @@ describe('createSessionModelTransitionCoordinator', () => {
           dispatch: async () => { expect(appliedTeam).toBeNull(); } }); },
       })).resolves.toMatchObject({ ok: true });
       expect(harness.publishIntent).toHaveBeenCalledWith(ref);
+    } finally { await harness.coordinator.dispose(); }
+  });
+
+  it.each([['codex', 'brokered'], ['codex', 'direct'], ['claude', 'direct'],
+    ['pi', 'brokered'], ['opencode', 'brokered']] as const)(
+    'keeps the %s %s binding opened at revision 4 when startup echoes retained revision 2', async (agentId, deliveryMode) => {
+    const selection = { ...native('muse-spark-1.3-contributor'), agentTargetKey: `agent:happier.agent.${agentId}/${agentId}` };
+    const opened: TeamCredentialProviderModelSelectionV1 = {
+      kind: 'team_credential_provider_model', resourceId: 'muse-resource', teamId: 'muse-team',
+      expectedResourceRevision: 4, deliveryMode, agentTargetKey: selection.agentTargetKey, modelId: selection.modelId,
+    };
+    const intent = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 42, ref: {
+      source: 'team_resource', resourceId: opened.resourceId, teamId: opened.teamId,
+      deliveryMode, expectedResourceRevision: 2, agentTargetKey: selection.agentTargetKey, modelId: selection.modelId,
+    } });
+    const initialTarget = { ...authorized(selection), readAppliedTeamCredentialModel: () => opened };
+    const authorize = createSessionModelTransitionAuthorizer({ sessionId: 'session-1', machineId: 'machine-1',
+      agentId, agentTargetKey: selection.agentTargetKey, nativeModelApplyPolicy: 'restart_session',
+      readActiveTarget: () => initialTarget });
+    const harness = createHarness({ initialTarget, authorize, readModelSelectionIntent: () => intent });
+    try {
+      await expect(harness.coordinator.submit(intent.ref, { source: 'metadata', reuseInitialAdmission: true }))
+        .resolves.toMatchObject({ ok: true, status: 'already_active' });
+      expect(harness.coordinator.readArmedSelection()).toBeNull();
+      const dispatch = vi.fn(async () => undefined);
+      await expect(harness.coordinator.submit(selection, { source: 'prompt', runWithActiveSelection: async transfer => {
+        await transfer({ abortSignal: new AbortController().signal, dispatch });
+      } })).resolves.toMatchObject({ ok: true, status: 'already_active' });
+      expect(dispatch).toHaveBeenCalledOnce();
     } finally { await harness.coordinator.dispose(); }
   });
 

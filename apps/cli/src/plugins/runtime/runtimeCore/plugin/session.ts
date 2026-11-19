@@ -10,7 +10,7 @@ import type {
     HostSessionRuntimeStartupSeed,
     HostSessionRuntimeRunOptions,
 } from '@/agent/runtime/session/loop/runHostSessionRuntime';
-import { isDeepStrictEqual } from 'node:util';
+import { resolveRetainedTeamProviderBindingRevisionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { repositoryCheckpointPhaseUnavailable } from '@/scm/checkpoints/repositoryCheckpointPhase';
 import { resolveSessionModelSelectionFromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
@@ -783,20 +783,19 @@ export function resolvePublicSessionModelSelection(params: Readonly<{
         const requested = intentV2.ref;
         // A model tuple cannot grant a different source. This generation may
         // open only the Team binding accepted by its launch/attach handoff.
-        if (!accepted || accepted.slot.kind !== 'provider_model' || accepted.resourceId === null
-            || accepted.resourceId !== requested.resourceId
-            || (accepted.teamId ?? params.sessionInput.primaryTeamId) !== requested.teamId
-            || accepted.expectedResourceRevision < requested.expectedResourceRevision
-            || (requested.deliveryMode === 'vendor-native' && accepted.expectedResourceRevision !== requested.expectedResourceRevision)
-            || accepted.deliveryMode !== requested.deliveryMode
-            || !isDeepStrictEqual(accepted.nativeDelivery ?? null, requested.nativeDelivery ?? null)) {
+        const revision = accepted?.slot.kind === 'provider_model' && accepted.resourceId !== null
+            ? resolveRetainedTeamProviderBindingRevisionV1(requested, {
+                ...accepted, teamId: accepted.teamId ?? params.sessionInput.primaryTeamId,
+            })
+            : null;
+        if (revision === null) {
             throw new SessionTeamCredentialLaunchUnavailableError();
         }
         // Broker/direct admission reopens the same resource at its current revision.
         // The retained model intent supplies the model, while the handoff supplies the revision.
-        return accepted.expectedResourceRevision === requested.expectedResourceRevision ? intentV2 : {
+        return revision === requested.expectedResourceRevision ? intentV2 : {
             ...intentV2,
-            ref: { ...requested, expectedResourceRevision: accepted.expectedResourceRevision },
+            ref: { ...requested, expectedResourceRevision: revision },
         };
     }
     return selection ?? undefined;

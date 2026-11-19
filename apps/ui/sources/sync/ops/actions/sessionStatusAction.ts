@@ -1,4 +1,5 @@
 import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
+import { resolveRetainedTeamProviderBindingRevisionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { buildMachineAgentInventoryKey } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
@@ -128,7 +129,8 @@ export function createUiSessionStatusGet(account: LazyActionAccountContext | nul
     let teamRoute = effectiveRoute && 'source' in effectiveRoute && effectiveRoute.source === 'team_resource'
       ? { kind: 'team_credential_provider_model' as const, resourceId: effectiveRoute.resourceId, teamId: effectiveRoute.teamId,
         expectedResourceRevision: effectiveRoute.expectedResourceRevision, deliveryMode: effectiveRoute.deliveryMode,
-        agentTargetKey: effectiveRoute.agentTargetKey, modelId: effectiveRoute.modelId }
+        agentTargetKey: effectiveRoute.agentTargetKey, modelId: effectiveRoute.modelId,
+        ...(effectiveRoute.nativeDelivery ? { nativeDelivery: effectiveRoute.nativeDelivery } : {}) }
       : null;
     const acceptedTeamProviderBinding = session.acceptedTeamCredentialBinding?.slot.kind === 'provider_model'
       && session.acceptedTeamCredentialBinding.resourceId !== null
@@ -139,20 +141,18 @@ export function createUiSessionStatusGet(account: LazyActionAccountContext | nul
         expectedResourceRevision: acceptedTeamProviderBinding.expectedResourceRevision,
         deliveryMode: acceptedTeamProviderBinding.deliveryMode,
         agentTargetKey: disposition.contextSelection.agentTargetKey,
-        modelId: disposition.contextSelection.modelId };
+        modelId: disposition.contextSelection.modelId,
+        ...(acceptedTeamProviderBinding.nativeDelivery ? { nativeDelivery: acceptedTeamProviderBinding.nativeDelivery } : {}) };
     }
-    const acceptedRouteBinding = teamRoute && acceptedTeamProviderBinding?.teamId
-      && acceptedTeamProviderBinding.resourceId === teamRoute.resourceId
-      && acceptedTeamProviderBinding.teamId === teamRoute.teamId
-      && acceptedTeamProviderBinding.deliveryMode === teamRoute.deliveryMode
-      && (!session.active && teamRoute.deliveryMode !== 'vendor-native'
-        ? acceptedTeamProviderBinding.expectedResourceRevision >= teamRoute.expectedResourceRevision
-        : acceptedTeamProviderBinding.expectedResourceRevision === teamRoute.expectedResourceRevision)
-      ? acceptedTeamProviderBinding : null;
-    if (teamRoute && acceptedRouteBinding) {
+    const acceptedRevision = teamRoute
+      ? resolveRetainedTeamProviderBindingRevisionV1(teamRoute, acceptedTeamProviderBinding,
+        { requireExactRevision: session.active })
+      : null;
+    const acceptedRouteBinding = acceptedRevision === null ? null : acceptedTeamProviderBinding;
+    if (teamRoute && acceptedRevision !== null) {
       // Home already projected the accepted revision. Use it for the catalog
       // lookup while preserving the retained model and the running route.
-      teamRoute.expectedResourceRevision = acceptedRouteBinding.expectedResourceRevision;
+      teamRoute.expectedResourceRevision = acceptedRevision;
     }
     const routeProviderConnectionId = effectiveRoute
       ? 'providerConnectionId' in effectiveRoute ? effectiveRoute.providerConnectionId

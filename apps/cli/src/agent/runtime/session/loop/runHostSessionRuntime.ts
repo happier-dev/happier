@@ -1,6 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { resolvePermissionModeForQueueingUserMessage } from '@/agent/runtime/permissions/modeFromUserMessage';
 import { SessionModelSelectionSchema, readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import { resolveSessionMcpNativeLaunchMaterial } from '@/mcp/runtime/sessionMcpNativeLaunchMaterial';
 import { randomUUID } from 'node:crypto';
 import { readRunnerAgentSessionBootstrap } from '@/agent/runtime/session/process/runnerAgentSessionBootstrap';
@@ -4461,8 +4462,10 @@ async function runHostedSessionRuntime(
               throw error;
             }
           }
-          const serving = serveRefusedStartupInputs(startupInputRefusal, retireAfterInput,
-            retireAfterInput && !isAgentSessionContinuationUnreachableError(error)).then(async receivedInput => {
+          const providerRefusal = ProviderErrorCodeV1Schema.safeParse(startupInputRefusal.code);
+          const retryable = retireAfterInput && !isAgentSessionContinuationUnreachableError(error)
+            && (!providerRefusal.success || createProviderErrorV1(providerRefusal.data).retryable);
+          const serving = serveRefusedStartupInputs(startupInputRefusal, retireAfterInput, retryable).then(async receivedInput => {
             if (receivedInput) {
               // Outcome normalization starts the canonical Pending settlement.
               // Drain its existing writes before retiring this failed receiver.

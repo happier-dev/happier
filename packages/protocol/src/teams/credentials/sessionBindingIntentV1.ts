@@ -10,6 +10,7 @@ import { TeamCredentialRouteV1Schema, SessionTeamCredentialNativeDeliveryV1Schem
 export { SessionTeamCredentialNativeDeliveryV1Schema, type SessionTeamCredentialNativeDeliveryV1 } from './deliveryV1.js';
 import { ProviderAgentTargetKeySchema, ProviderModelIdSchema, ProviderMachineIdSchema } from '../../providers/ids.js';
 import { ProviderBrokerApplicationBindingV1Schema } from '../../providers/brokerRouteGrantV1.js';
+import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 
 export const SessionTeamCredentialNativeSourceV1Schema = lazyZodSchema(() => z.strictObject({
   sourceRevision: z.string().check(z.minLength(1), z.maxLength(512)),
@@ -73,6 +74,27 @@ export const SessionTeamCredentialBindingIntentV1Schema = lazyZodSchema(() => z.
   z.strictObject({ v: z.literal(1), slot: SessionTeamCredentialSlotV1Schema, resourceId: z.null() }),
 ]));
 export type SessionTeamCredentialBindingIntentV1 = z.infer<typeof SessionTeamCredentialBindingIntentV1Schema>;
+
+type TeamProviderBinding = Pick<TeamCredentialProviderModelSelectionV1,
+  'resourceId' | 'teamId' | 'deliveryMode' | 'expectedResourceRevision' | 'nativeDelivery'>;
+
+/** Continuity of an already accepted Session binding. Home admission still requires the current revision. */
+export function resolveRetainedTeamProviderBindingRevisionV1(
+  retained: TeamProviderBinding,
+  accepted: (Omit<TeamProviderBinding, 'teamId'> & { teamId?: string | null }) | null | undefined,
+  options?: Readonly<{ requireExactRevision?: boolean }>,
+): number | null {
+  if (!accepted || accepted.resourceId !== retained.resourceId || accepted.teamId !== retained.teamId
+    || accepted.deliveryMode !== retained.deliveryMode) return null;
+  if (accepted.expectedResourceRevision < retained.expectedResourceRevision
+    || ((options?.requireExactRevision || retained.deliveryMode === 'vendor-native')
+      && accepted.expectedResourceRevision !== retained.expectedResourceRevision)) return null;
+  const retainedNative = retained.nativeDelivery ?? null;
+  const acceptedNative = accepted.nativeDelivery ?? null;
+  if (retainedNative !== acceptedNative
+    && createCanonicalJsonSigningInput(retainedNative) !== createCanonicalJsonSigningInput(acceptedNative)) return null;
+  return accepted.expectedResourceRevision;
+}
 
 export function sessionTeamCredentialSlotKeyV1(slot: SessionTeamCredentialSlotV1): string {
   const parsed = SessionTeamCredentialSlotV1Schema.parse(slot);

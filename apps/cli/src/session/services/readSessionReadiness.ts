@@ -5,7 +5,11 @@ import { MachinesAgentsListOutputSchema, buildMachineAgentInventoryKey, resolveM
 import type { MachinesAgentsListInput } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents/runtime/identity/resolveAgentIdFromSessionMetadata';
 import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
-import { resolveAmbientProviderConnectionForModelIntent } from '@happier-dev/agents/session/state/metadataReaders';
+import { readSessionModelSelectionV2FromMetadata, resolveAmbientProviderConnectionForModelIntent } from '@happier-dev/agents/session/state/metadataReaders';
+import { resolveRetainedTeamProviderBindingRevisionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
+import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
+import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import { tryDecryptSessionOwnerMetadataView, readSessionOwnerLocality } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -18,6 +22,9 @@ import type { QualifiedConnectedAccountPurposeTeamResourceSelectionV1 } from '@h
 import type { AccessibleMachineAccessV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
 export type SessionReadinessInventoryReader = (input: MachinesAgentsListInput) => Promise<unknown>;
+export type SessionReadinessTeamProviderResourcesReader = (input: Readonly<{
+  teamId: string; resourceId: string;
+}>) => Promise<readonly TeamCredentialResourceCatalogEntryV1[]>;
 export type SessionReadinessCredentialReader = (input: Readonly<{
   machineId: string; purpose: QualifiedConnectedAccountPurposeV1; machineAccess: AccessibleMachineAccessV1 | null;
   teamSelection?: QualifiedConnectedAccountPurposeTeamResourceSelectionV1;
@@ -29,6 +36,7 @@ export async function readSessionReadiness(input: Readonly<{
   target: Extract<ResolveSessionTransportContextResult, { ok: true }>;
   readInventory?: SessionReadinessInventoryReader;
   readCredential?: SessionReadinessCredentialReader;
+  readTeamProviderResources?: SessionReadinessTeamProviderResourcesReader;
   operation?: 'conversation' | 'credential';
   credentialPurpose?: QualifiedConnectedAccountPurposeV1;
   credentialTeamSelection?: QualifiedConnectedAccountPurposeTeamResourceSelectionV1;
@@ -43,6 +51,12 @@ export async function readSessionReadiness(input: Readonly<{
   let machine: SessionReadinessV1['machine'] = machineId ? { status: 'unknown', machineId } : null;
   let agent: SessionReadinessAgentV1 | null = null;
   const invocation = input.target.rawSession.effectiveAccess ?? null;
+  const model = invocation?.capabilities.submitAgentInput && input.operation !== 'credential' && !input.target.rawSession.active
+    ? readSessionModelSelectionV2FromMetadata(metadata)?.ref : null;
+  const teamModel = model?.source === 'team_resource' ? model : null;
+  let credential: SessionCredentialReadinessV1 = teamModel
+    ? { kind: 'team', teamId: teamModel.teamId, resourceId: teamModel.resourceId, readiness: null, recoveryAction: null }
+    : { kind: input.operation === 'credential' ? 'unknown' : 'not_required' };
   let canReadCredential = false;
   let credentialMachineAccess: AccessibleMachineAccessV1 | null = null;
   // A denied invocation needs no Machine census, credentials or Agent probe.
@@ -81,9 +95,31 @@ export async function readSessionReadiness(input: Readonly<{
               agentTargetKey: buildBackendTargetKeyV2(backendTarget), sessionActive: input.target.rawSession.active }) : null;
             const native = isSessionReadinessNativeSelectionV1({ metadata,
               providerConnectionId: ambientProvider?.status === 'resolved' ? ambientProvider.providerConnectionId : undefined });
+            let teamProviderAuthReady = false;
+            if (teamModel && canReadCredential && input.readTeamProviderResources
+              && backendTarget && buildBackendTargetKeyV2(backendTarget) === teamModel.agentTargetKey) {
+              const binding = input.target.rawSession.acceptedTeamCredentialBinding;
+              const revision = binding?.slot.kind === 'provider_model' && binding.resourceId !== null
+                ? resolveRetainedTeamProviderBindingRevisionV1(teamModel, binding) : null;
+              if (revision !== null) {
+                try {
+                  const resources = await input.readTeamProviderResources({ teamId: teamModel.teamId, resourceId: teamModel.resourceId });
+                  const resource = resources.find(row => row.id === teamModel.resourceId
+                    && row.teamId === teamModel.teamId && row.resourceRevision === revision);
+                  if (resource) {
+                    const readiness = readTeamCredentialDeliveryReadinessV1(resource.readiness, teamModel.deliveryMode);
+                    credential = { kind: 'team', teamId: teamModel.teamId, resourceId: teamModel.resourceId,
+                      readiness, recoveryAction: resource.recoveryAction };
+                    const connected = ConnectedServiceBindingsV2IngressSchema.safeParse(metadata?.connectedServices);
+                    teamProviderAuthReady = readiness.kind === 'available' && (metadata?.connectedServices === undefined
+                      || connected.success && Object.keys(connected.data.bindingsByServiceId).length === 0);
+                  }
+                } catch { input.signal?.throwIfAborted(); }
+              }
+            }
             const state = facts ? resolveMachineAgentExecutionStateV1({ ...facts,
               signIn: { status: native ? facts.signIn.status : 'unknown', native: facts.signIn },
-              known: !unavailable, ...(native ? {} : { authenticationRequired: true }) }) : 'unknown';
+              known: !unavailable, ...(native ? {} : { authenticationRequired: !teamProviderAuthReady }) }) : 'unknown';
             agent = { agentId, ...(definitionId ? { definitionId } : {}), current: Boolean(facts && !unavailable),
               observedAtMs: facts && !unavailable ? Date.now() : null, state,
               repair: state === 'needsSignIn' && native && target.access?.role === 'manage'
@@ -97,7 +133,6 @@ export async function readSessionReadiness(input: Readonly<{
       // Incomplete inventory is unknown. A timeout or unsupported inventory never asserts offline.
     }
   }
-  let credential: SessionCredentialReadinessV1 = { kind: input.operation === 'credential' ? 'unknown' : 'not_required' };
   if (input.operation === 'credential' && input.credentialPurpose && input.readCredential
     && canReadCredential && (invocation?.level === 'owner'
       || input.credentialTeamSelection && invocation?.capabilities.submitAgentInput === true)) {
@@ -106,5 +141,5 @@ export async function readSessionReadiness(input: Readonly<{
     catch { input.signal?.throwIfAborted(); }
   }
   return composeSessionReadinessV1({ configured: true, operation: input.operation ?? 'conversation', machine, agent,
-    invocation, credential });
+    invocation, credential }, { credentialRequiredForConversation: teamModel !== null });
 }
