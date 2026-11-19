@@ -11,7 +11,7 @@ import {
 
 import { createNoPersistenceTriageFixture } from '../../projection/noPersistence.test-support.js';
 import { TriageListEntriesInputV1Schema } from '../../actions/listEntriesProtocol.js';
-import { administerConfiguredSourceInstance } from '../../corpus/configuration/administerConfiguredSourceInstance.js';
+import { administerConfiguredSourceInstance, type CorpusSourceInstanceAdministrationV1 } from '../../corpus/configuration/administerConfiguredSourceInstance.js';
 import { TESTKIT_SOURCE_INSTANCE_ID, TRIAGE_TESTKIT_SOURCE, testkitLocator, testkitSnapshot, testkitViewer } from '../../corpus/testkit/observations.test-support.js';
 import type { TriageRefreshTriggerV1 } from '../../refresh/refreshEligibility.js';
 import { createTriageEphemeralSharedScopeOriginFixture } from './ephemeralSharedScope.test-support.js';
@@ -43,27 +43,54 @@ async function configuredMount() {
             return fixture.readEntries(TriageListEntriesInputV1Schema.parse(rawInput), options);
         },
     };
-    const configured = await administerConfiguredSourceInstance({
+    const administer = (request: CorpusSourceInstanceAdministrationV1) => administerConfiguredSourceInstance({
         collections, source: TRIAGE_TESTKIT_SOURCE, declaredPurpose: 'triage-source',
-        request: { kind: 'create', draft: TriageSourceInstanceDraftV1Schema.parse({
-            v: 1, binding: { purpose: 'triage-source', account: {
-                service: { pluginId: TRIAGE_TESTKIT_SOURCE.pluginId, localId: 'accounts' }, accountId: 'account-1',
-            } }, localInstanceKey: 'example/repository', keyStability: 'stable',
-            configuration: { v: 1, token: 'routing-token' }, locator: { v: 1, displayLabel: 'example/repository' },
-        }) }, nowMs: clock.nowMs, mintSourceInstanceId: () => TESTKIT_SOURCE_INSTANCE_ID,
+        request, nowMs: clock.nowMs, mintSourceInstanceId: () => TESTKIT_SOURCE_INSTANCE_ID,
     });
+    const draft = TriageSourceInstanceDraftV1Schema.parse({
+        v: 1, binding: { purpose: 'triage-source', account: {
+            service: { pluginId: TRIAGE_TESTKIT_SOURCE.pluginId, localId: 'accounts' }, accountId: 'account-1',
+        } }, localInstanceKey: 'example/repository', keyStability: 'stable',
+        configuration: { v: 1, token: 'routing-token' }, locator: { v: 1, displayLabel: 'example/repository' },
+    });
+    const configured = await administer({ kind: 'create', draft });
     expect(configured).toEqual({ kind: 'active', sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID });
     expect(pages).toEqual([]);
     const lifetime = createTriageEphemeralSharedScopeOriginFixture();
     const scope = lifetime.forExecutionOrigin('daemon-a');
     const lease = acquireTriageListWindow(host, scope);
     const store = readTriageListWindowReadOwner(host, scope)!;
-    return { clock, pages, state, store,
+    return { administer, clock, draft, pages, state, store,
         refresh: (trigger: TriageRefreshTriggerV1) => refreshTriageListWindow(trigger, host, scope),
         loadMore: () => loadMoreTriageListWindow(host, scope),
         dispose() { lease.release(); lifetime.retire(); dateNow.mockRestore(); },
     };
 }
+
+it('routes the exact reactivated source tuple through the first manual demand', async () => {
+    const fixture = await configuredMount();
+    const sourceInstanceId = TESTKIT_SOURCE_INSTANCE_ID;
+    const draft = { ...fixture.draft, configuration: { v: 1 as const, token: 'reactivated-routing-token' } };
+    const observed: TriageScanInputV1['instance'][] = [];
+    fixture.state.scan = async input => {
+        observed.push(input.instance);
+        return { kind: 'complete', evidence: { kind: 'walkFinished' }, observations: [present('reactivated')] };
+    };
+    try {
+        expect(await fixture.administer({ kind: 'remove', sourceInstanceId })).toEqual({ kind: 'removed', sourceInstanceId });
+        expect(await fixture.administer({ kind: 'reactivate', sourceInstanceId, draft })).toEqual({ kind: 'reactivated', sourceInstanceId });
+        expect(observed).toEqual([]);
+        await fixture.refresh('manual');
+        expect(observed).toEqual([{
+            v: 1, instance: { source: TRIAGE_TESTKIT_SOURCE, sourceInstanceId },
+            binding: draft.binding, localInstanceKey: draft.localInstanceKey,
+            configuration: draft.configuration, locator: draft.locator,
+        }]);
+        expect(fixture.store.getSnapshot().window?.rows.map(row => row.entryRef.entryId)).toEqual(['reactivated']);
+    } finally {
+        fixture.dispose();
+    }
+});
 
 it('coalesces populated mount and host reactivation demands with one queued manual follow-up', async () => {
     const fixture = await configuredMount();
