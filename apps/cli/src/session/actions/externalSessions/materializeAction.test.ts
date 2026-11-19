@@ -4863,7 +4863,7 @@ describe('external session materialize action', () => {
     expect(successor.progress.operationId).not.toBe(cancelled.progress.operationId);
   });
 
-  it('cooperatively stops an active capture after durable cancel intent without beginning the next staging effect', async () => {
+  it.each(['page returned', 'page rejected', 'import begin rejected'] as const)('settles active Cancel when the %s after the cancel intent', async (outcome) => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-materialize-active-cancel-'));
     roots.push(activeServerDir);
     const operationExclusion = createExternalSessionOperationExclusion({
@@ -4885,9 +4885,16 @@ describe('external session materialize action', () => {
     const nextPage = new Promise<void>((resolve) => {
       releaseNextPage = resolve;
     });
-    const sendHistoricalCommand = vi.fn(
-      inspectOnlyCommandHandler(machineOnlyPriorStableStorage),
-    );
+    const inspect = inspectOnlyCommandHandler(machineOnlyPriorStableStorage);
+    const sendHistoricalCommand = vi.fn(async (command: ExternalSessionOperationSocketCommandV1) => {
+      if (outcome === 'import begin rejected' && command.kind === 'begin') {
+        markWaitingForNextPage();
+        await nextPage;
+        throw new Error('External session historical import command timed out.');
+      }
+      return inspect(command);
+    });
+    const phase = outcome === 'import begin rejected' ? 'importing' : 'staging';
     const semanticRequest = {
       ...request(),
       idempotencyKey: 'materialize-active-cancel',
@@ -4916,11 +4923,15 @@ describe('external session materialize action', () => {
             sourceGeneration: 'source-1',
             revision: 'revision-1',
             relationshipToCapture: 'same',
-            eof: false,
+            eof: outcome === 'import begin rejected',
           },
         } as const;
+        if (outcome === 'import begin rejected') return;
         markWaitingForNextPage();
         await nextPage;
+        if (outcome === 'page rejected') {
+          throw new ExternalSessionMaterializeSourceInterruptionError('source_unavailable', 'Source read ended.');
+        }
         yield {
           groupId: 'must-not-be-staged',
           items: [item('must-not-be-staged')],
@@ -4943,7 +4954,7 @@ describe('external session materialize action', () => {
     const observed = await executor.start({ request: semanticRequest });
     expect(observed).toMatchObject({
       ok: true,
-      progress: { status: 'running', phase: 'staging' },
+      progress: { status: 'running', phase },
     });
     if (!observed.ok) throw new Error('Expected active operation claim.');
 
@@ -4955,17 +4966,20 @@ describe('external session materialize action', () => {
     if (!cancelRequested.ok) throw new Error('Expected durable active cancellation intent.');
     await expect(executor.cancel(operationReference(cancelRequested)))
       .resolves.toEqual(cancelRequested);
+    if (outcome === 'import begin rejected') {
+      expect(cancelRequested.progress.revision).toBe(3);
+    }
     releaseNextPage();
     const cancelled = await runningPromise;
     expect(cancelled).toMatchObject({
       ok: true,
-      progress: { status: 'cancelled', phase: 'staging' },
+      progress: { status: 'cancelled', phase },
     });
     if (!cancelled.ok) throw new Error('Expected active cancellation to settle.');
     await expect(staging.readReplayState(cancelled.progress.operationId)).resolves.toMatchObject({
       status: 'discard_required',
     });
-    expect(sendHistoricalCommand).toHaveBeenCalledOnce();
+    expect(sendHistoricalCommand).toHaveBeenCalledTimes(outcome === 'import begin rejected' ? 2 : 1);
     expect(sendHistoricalCommand.mock.calls[0]?.[0]).toMatchObject({ kind: 'inspect' });
   });
 

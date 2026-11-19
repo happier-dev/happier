@@ -1070,6 +1070,26 @@ export function createExternalSessionMaterializeActionExecutor(
     return success(terminal.record);
   };
 
+  const settleInterruptedExecution = async (
+    record: ExternalSessionOperationRecordV1,
+    error: unknown,
+    retryTargetPhase: ExternalSessionOperationRecordV1['phase'],
+    accountScope: ExternalSessionOperationAccountScope | undefined,
+    admissionContext?: ExternalSessionMaterializeAccountAdmission,
+  ): Promise<ExternalSessionOperationActionResponseV1> => {
+    try {
+      throwIfCancellationRequested(record.operationId);
+      if (error instanceof MaterializeCancellationRequestedError) throw error;
+      return success(await writeInterruptedRecord(
+        record, error, retryTargetPhase, accountScope, admissionContext,
+      ));
+    } catch (settlementError) {
+      // Cancel can also commit while the interrupted progress write is in flight.
+      if (!(settlementError instanceof MaterializeCancellationRequestedError)) throw settlementError;
+      return await finalizeCancellation(record.operationId, accountScope, admissionContext);
+    }
+  };
+
   const continueHistoricalImport = async (
     initialRecord: ExternalSessionOperationRecordV1,
     commandKind: 'begin' | 'resume',
@@ -2335,15 +2355,12 @@ export function createExternalSessionMaterializeActionExecutor(
           && record.status === 'awaiting_user_resume';
         if (reachedAdmission) return success(record);
       }
-      if (error instanceof MaterializeCancellationRequestedError) {
-        return await finalizeCancellation(current.operationId, accountScope, accountAdmission);
-      }
       if (error instanceof ExternalSessionPersistedTakeoverPreflightError) {
         return failure(error.actionCode, error.message);
       }
 
       try {
-        record = await writeInterruptedRecord(
+        return await settleInterruptedExecution(
           record,
           error,
           isStagingResume ? 'staging' : record.phase,
@@ -2362,7 +2379,6 @@ export function createExternalSessionMaterializeActionExecutor(
         }
         throw writeError;
       }
-      return success(record);
     } finally {
       if (takeoverPreparation && !reachedAdmission) {
         await takeoverPreparation.resumeFollowOnFailure().catch(() => undefined);
@@ -3015,10 +3031,6 @@ export function createExternalSessionMaterializeActionExecutor(
             );
           }
         }
-        if (error instanceof MaterializeCancellationRequestedError) {
-          return await finalizeCancellation(operationId, accountScope, sourceAdmission);
-        }
-
         if (
           error instanceof Error
           && error.message ===
@@ -3035,8 +3047,7 @@ export function createExternalSessionMaterializeActionExecutor(
             'Materialization failed.',
           );
         }
-        const failed = await writeInterruptedRecord(record, error, record.phase, accountScope);
-        return success(failed);
+        return await settleInterruptedExecution(record, error, record.phase, accountScope, sourceAdmission);
       } finally {
         dependencies.releaseSourceCapture?.(request, accountScope);
         if (activeCancellationByOperationId.get(operationId) === cancellation) {
