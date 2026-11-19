@@ -13,7 +13,13 @@ import type { AppWindowRecord } from '@/desktop/window/appWindowBoot';
 /** Above the palette and rail so every workspace launcher reaches the same owner. */
 export function WorkspaceAppShellProvider(props: Readonly<{ children: React.ReactNode; browserWindow?: AppWindowRecord | null }>) {
     const { destinations: catalog, ready, accountLifetime } = useCompactAppDestinationCatalog();
-    const presentation = useWorkspacePresentation();
+    const requestedPresentation = useWorkspacePresentation();
+    const hasWorkspace = requestedPresentation !== null;
+    const [hadWorkspace, setHadWorkspace] = React.useState(hasWorkspace);
+    // Give the live public route its credential-publication layout before the workspace
+    // takes its place. The route can then capture the outgoing workflow at its own commit.
+    const presentation = hadWorkspace || requestedPresentation === 'entry' ? requestedPresentation : null;
+    React.useLayoutEffect(() => { setHadWorkspace(hasWorkspace); }, [hasWorkspace]);
     const accountScope = useActiveServerAccountScope();
     const dataReady = useIsDataReady();
     const admittedLifetime = React.useRef<typeof accountLifetime | undefined>(undefined);

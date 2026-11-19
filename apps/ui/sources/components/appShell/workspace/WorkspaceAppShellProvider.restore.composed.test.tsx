@@ -21,15 +21,42 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 }));
 
 await initializeRealAppRuntimeForTests();
-const { AuthProvider } = await import('@/auth/context/AuthContext');
+const { AuthProvider, InjectedAuthProvider, useAuth } = await import('@/auth/context/AuthContext');
 const { AppShellPluginUiProjectionProvider } = await import('../plugins/AppShellPluginUiProjection');
 const { WorkspaceAppShellProvider } = await import('./WorkspaceAppShellProvider');
+const { WorkspaceRouteEntry } = await import('./createWorkspaceRouteEntry');
 const { useOptionalWorkspaceNavigation } = await import('./WorkspaceNavigationContext');
 const { storage } = await import('@/sync/domains/state/storage');
 const { profileDefaults } = await import('@/sync/domains/profiles/profile');
 const { sync } = await import('@/sync/sync');
 const { publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 afterAll(() => vi.unstubAllGlobals());
+
+it('lets the live signed-out route commit its landing before the workspace takes over Home', async () => {
+    const events: string[] = [];
+    function Route() {
+        const { isAuthenticated } = useAuth();
+        React.useLayoutEffect(() => {
+            if (isAuthenticated) events.push('first arrival');
+        }, [isAuthenticated]);
+        React.useLayoutEffect(() => () => { events.push('route removed'); }, []);
+        return React.createElement('PublicRoute');
+    }
+    const app = (credentials: Readonly<{ token: string }> | null) => <InjectedAuthProvider credentials={credentials}>
+        <AppShellPluginUiProjectionProvider><WorkspaceAppShellProvider>
+            <WorkspaceRouteEntry Body={Route} />
+        </WorkspaceAppShellProvider></AppShellPluginUiProjectionProvider>
+    </InjectedAuthProvider>;
+    const screen = await renderScreen(app(null));
+    try {
+        expect(screen.root.findAllByType('PublicRoute')).toHaveLength(1);
+        await screen.update(app({ token: 'first-arrival' }));
+        expect(events).toEqual(['first arrival', 'route removed']);
+        expect(screen.root.findAllByType('PublicRoute')).toHaveLength(0);
+    } finally {
+        await screen.unmount();
+    }
+});
 
 it('admits the first Account workspace after real cold Sync restore reaches data-ready', async () => {
     const accountId = 'first-shell-restore';
