@@ -69,8 +69,12 @@ describe('/reviews live host', () => {
             await waitForHomeGovernance(() => expect(getReviewListSnapshot(key).items?.[0]?.reviewId).toBe('review-live'));
             await reportCollectionLayout(screen, 'reviews:list');
             await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:row:review-live')).not.toBeNull());
+            const totalLabel = t('reviewWalkthrough.detail.findingsCount', { count: 3 });
+            const pendingLabel = t('reviewWalkthrough.detail.glanceToDecide', { count: 1 });
+            expect(screen.getTextContent()).toContain(totalLabel);
+            expect(screen.getTextContent()).toContain(pendingLabel);
             expect(screen.findHostByTestId('reviews:row:review-live')?.props.accessibilityLabel)
-                .toBe(`${t('detailsSurface.review.title')} · ${formatRelativeTimeShort(1, Date.now())}`);
+                .toBe(`${t('detailsSurface.review.title')} · ${totalLabel} · ${pendingLabel} · ${formatRelativeTimeShort(1, Date.now())}`);
             await screen.pressByTestIdAsync('reviews-space-filter-open');
             expect(screen.getTextContent()).toContain(t('sessionsList.conditionCountPartial', { count: 1 }));
             await screen.pressByTestIdAsync('reviews:row:review-live');

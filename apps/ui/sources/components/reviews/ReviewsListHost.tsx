@@ -34,6 +34,10 @@ import {
 } from './list/useReviewsCollectionView';
 
 const keyOf = (item: ReviewListItemV1) => item.reviewId;
+const reviewCountsLabel = (item: ReviewListItemV1) => [
+    t('reviewWalkthrough.detail.findingsCount', { count: item.counts.total }),
+    t('reviewWalkthrough.detail.glanceToDecide', { count: item.counts.needsDecision }),
+].join(' · ');
 const passThrough = (children: React.ReactNode) => children;
 const EMPTY_ITEMS: readonly ReviewListItemV1[] = Object.freeze([]);
 
@@ -72,7 +76,8 @@ export function ReviewsListHost(): React.ReactElement {
         </WorkspaceDestinationRow>,
         glyph: () => null, loadingGlyph: false, title: () => reviewLabel,
         columnTitles: { title: reviewLabel },
-        accessibilityLabel: item => `${reviewLabel} · ${formatRelativeTimeShort(item.createdAt, Date.now())}`,
+        accessibilityLabel: item => `${reviewLabel} · ${reviewCountsLabel(item)} · ${formatRelativeTimeShort(item.createdAt, Date.now())}`,
+        titleMeta: reviewCountsLabel,
         byline: item => [reviewSubjectLabel(item.subjectKind), reviewStateLabel(item.state),
             formatRelativeTimeShort(item.createdAt, Date.now())].join(' · '),
         action: item => <ReviewRowSpaceMenu item={item} view={view} />,
