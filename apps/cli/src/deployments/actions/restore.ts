@@ -17,8 +17,12 @@ import { projectDeploymentException } from '../deploymentFailure';
 import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { AdmittedDeploymentRestoreUpload } from '@/transfers/targets/deploymentRestoreUpload';
 import { DeploymentRestoreRecoveryPointV1Schema } from '@happier-dev/deployment-protocol';
-import { DatabaseReadStatementInputV1Schema, type DatabaseReadStatementInputV1,
-    type DatabaseDeploymentServiceTargetV1, type DatabaseOperationResultV1 } from '@happier-dev/database-protocol';
+import {
+    DatabaseReadStatementInputV1Schema,
+    type DatabaseReadStatementInputV1,
+    type DatabaseDeploymentServiceTargetV1,
+    type DatabaseOperationResultV1,
+} from '@happier-dev/plugin-sdk/database';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 type Confirm = Extract<DeploymentBackupRestoreInputV1, { mode: 'confirm' }>;

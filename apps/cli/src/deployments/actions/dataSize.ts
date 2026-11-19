@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { DeploymentDataSizeInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
-import type { DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
+import type { DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { readDeploymentDatabaseSizesV1 } from '@happier-dev/deployments';
 import { projectDeploymentException } from '../deploymentFailure';
 import { openOwnServerDatabaseConnectionForHost } from '../targets/ownServer/databaseConnection';
