@@ -352,6 +352,20 @@ describe('Review work follows file and control demand', () => {
             await act(async () => { await viewed.refresh(); });
             expect(cellRenders).toBe(0);
 
+            const totalFiles = paths.length + 2;
+            await screen.update(<ChangedFilesReview {...props} hideViewed fileViewedTotal={totalFiles} />);
+            const visibleAfterHiding = screen.tree.root.findByType(DiffFilesListView).props.files;
+            expect(visibleAfterHiding).toHaveLength(paths.length - 3);
+            expect(visibleAfterHiding[0]?.key).toBe(paths[3]);
+            expect(screen.tree.root.findByType(ScmComparisonFactSentence).props.counts).toEqual([3, totalFiles]);
+            remote.set(paths[0]!, 'dismissed');
+            remote.set(paths[3]!, 'viewed');
+            await act(async () => { await viewed.refresh(); });
+            const visibleAfterPush = screen.tree.root.findByType(DiffFilesListView).props.files;
+            expect(visibleAfterPush).toHaveLength(paths.length - 3);
+            expect(visibleAfterPush[0]?.key).toBe(paths[0]);
+            await screen.update(<ChangedFilesReview {...props} />);
+
             // Only the expanded file consumes hunk controls. Collapsed headers stay quiet.
             await screen.pressByTestIdAsync('scm-change-collapse-src_f3-0.ts');
             cellRenders = 0;

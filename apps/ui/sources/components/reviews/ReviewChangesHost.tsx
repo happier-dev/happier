@@ -52,6 +52,7 @@ export type ReviewChangesHostProps = Readonly<{
     /** Hydrated comments already filtered by the detail's selected round and reviewers. */
     comments: readonly ReviewCommentV1[];
     view: ReviewChangesView;
+    hideViewed?: boolean;
     onSelectView: (view: ReviewChangesView) => void;
     onOpenComment: (commentId: string) => void;
     /** The opened Review's finding rows, sharing its decisions and row identities. */
@@ -193,6 +194,7 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
         activeReviewFile={activeReviewFile} onVisibleFileRowCountChange={setIndexPageSize}
         explain={false} onExplainChange={ignore} filesState={filesState}
         renderFiles={(chrome) => index.comparison ? <CapturedComparisonFilesView comparison={index.comparison}
+            hideViewed={props.hideViewed}
             comparisonChrome={props.renderFileNotes ? { ...chrome, renderFileNotes: props.renderFileNotes } : chrome}
             host={host} comparisonSessionId={sessionId} serverId={serverId}
             workspaceScope={workspaceScope} activeReviewFile={activeReviewFile} marks={marks}

@@ -81,6 +81,8 @@ export type ReviewDetailViewProps = Readonly<{
   primaryAction?: PageHeaderPrimaryAction | null;
   menu: readonly PageHeaderMenuAction[];
   glance: ReviewDetailGlance | null;
+  quality?: import('@happier-dev/protocol/reviews/reviewArtifactV1').ReviewRoundQualityV1 | null;
+  viewedFilter?: Readonly<{ hidden: boolean; onHiddenChange: (hidden: boolean) => void }>;
   /** One line under the glance when part of the round failed or the Home is offline (with its retry). */
   notice?: React.ReactNode;
   rounds: readonly ReviewDetailRound[];

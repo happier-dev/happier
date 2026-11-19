@@ -77,6 +77,7 @@ import { ChangedFilesReviewMoreMenu, useChangedFilesReviewDisplayMenu } from './
 import type { ScmComparisonMenuSection } from '@/components/sessions/files/comparison/ScmComparisonPhoneHeader';
 import { useLentHeaderMenuSection } from '@/components/sessions/files/comparison/ScmComparisonMoreMenu';
 import { ScmFileViewedFact, ScmFileViewedMark } from '@/components/sessions/files/comparison/ScmFileViewedMark';
+import { useScmFileViewed } from '@/components/sessions/files/comparison/useScmFileViewed';
 import type { ScmFileViewedSource } from '@/sync/domains/scm/fileViewed';
 import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
 import { DiffFileActionsMenu, type DiffFileSourceLink } from '@/components/ui/code/diff/DiffFileActionsMenu';
@@ -220,6 +221,8 @@ type ChangedFilesReviewProps = {
     hunkReview?: ReviewBlockHunkReview | null;
     /** A source's Viewed facts without Keep / Discard (a plugin's pull request); `hunkReview.fileViewed` otherwise. */
     fileViewed?: ScmFileViewedSource | null;
+    hideViewed?: boolean;
+    fileViewedTotal?: number;
     /** A file on its source (a pull request's file on GitHub), offered in the file's ⋯ beside Copy path. */
     fileSourceLink?: ((path: string) => DiffFileSourceLink | null) | null;
     theme: ChangedFilesReviewTheme;
@@ -566,7 +569,23 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
 
     const tooLarge = reviewFiles.length > maxFiles || totalsChangedLines(snapshot, diffArea) > maxChangedLines;
 
+    const capturedComparison = props.hunkReview?.source.kind === 'captured' ? props.hunkReview.source.comparison : null;
+    const reviewEnabled = Boolean(props.hunkReview);
+    const fileViewedActive = props.hunkReview?.active !== false && props.activeReviewFile?.presented !== false;
+    const suppliedFileViewed = props.fileViewed === undefined ? props.hunkReview?.fileViewed : props.fileViewed;
+    const ownedFileViewed = useScmFileViewed({ comparison: capturedComparison, host: props.hunkReview?.host ?? null,
+        serverId: props.hunkReview?.serverId ?? null, enabled: suppliedFileViewed === undefined && reviewEnabled,
+        active: reviewEnabled && fileViewedActive, refreshToken: capturedComparison });
+    const fileViewed = suppliedFileViewed === undefined ? ownedFileViewed : suppliedFileViewed;
+    const filterViewed = props.hideViewed && fileViewedActive && fileViewed?.getViewedPathsRevision ? fileViewed : null;
+    const viewedRevision = React.useSyncExternalStore(
+        React.useCallback(listener => filterViewed?.subscribeChanges(listener) ?? (() => {}), [filterViewed]),
+        React.useCallback(() => filterViewed?.getViewedPathsRevision?.() ?? 0, [filterViewed]),
+        () => 0,
+    );
+
     const reviewFileEntries = React.useMemo(() => {
+        const viewed = filterViewed?.getViewedPaths();
         const out: Array<{
             key: string;
             sectionKey: string;
@@ -579,11 +598,11 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         let fileIndex = 0;
         for (const section of sections) {
             if (!section || section.files.length === 0) continue;
-            for (let indexInSection = 0; indexInSection < section.files.length; indexInSection++) {
-                const file = section.files[indexInSection];
+            let indexInSection = 0;
+            for (const file of section.files) {
                 const path = file?.fullPath;
                 if (!path) continue;
-                if (seen.has(path)) continue;
+                if (seen.has(path) || viewed?.has(path)) continue;
                 seen.add(path);
                 out.push({
                     key: path,
@@ -594,10 +613,11 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                     file,
                 });
                 fileIndex += 1;
+                indexInSection += 1;
             }
         }
         return out;
-    }, [sections]);
+    }, [sections, filterViewed, viewedRevision]);
 
     const { reviewListFiles, reviewFileIndex } = React.useMemo(() => {
         const files = reviewFileEntries.map((entry) => entry.file);
@@ -1097,7 +1117,6 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         columnWidth: props.comparisonChrome.hunkNotesColumnWidth ?? 0,
         render: props.comparisonChrome.renderHunkNotes,
     } : null, [props.comparisonChrome?.renderHunkNotes, props.comparisonChrome?.indexPlacement, props.comparisonChrome?.hunkNotesColumnWidth]);
-    const reviewEnabled = Boolean(props.hunkReview);
     const reviewDiffs = React.useSyncExternalStore(
         React.useCallback(listener => reviewEnabled ? diffStateSource.subscribeAll(listener) : () => {}, [reviewEnabled, diffStateSource]),
         React.useCallback(() => reviewEnabled ? diffStateSource.getSnapshot() : null, [reviewEnabled, diffStateSource]),
@@ -1113,7 +1132,6 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     const publishedControllerFiles = React.useRef<readonly LiveReviewFile[] | undefined>(undefined);
     const reviewControllerFiles = React.useMemo(() => publishedControllerFiles.current = buildLiveReviewFiles(
         publishedControllerFiles.current, navigationPaths, reviewDiffs), [navigationPaths, reviewDiffs]);
-    const capturedComparison = props.hunkReview?.source.kind === 'captured' ? props.hunkReview.source.comparison : null;
     const capturedFileByPath = useCapturedFileByPath(capturedComparison);
     const activeDiff = activeReviewPath ? capturedComparison
         ? capturedFileByPath?.get(activeReviewPath)?.evidence
@@ -1122,7 +1140,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         : activeDiff?.state === 'available' ? activeDiff.unifiedDiff : '';
     const controller = useHunkReviewController({
         ...props.hunkReview,
-        ...(props.fileViewed === undefined ? {} : { fileViewed: props.fileViewed }),
+        fileViewed,
         enabled: reviewEnabled,
         active: props.hunkReview?.active !== false && props.activeReviewFile?.presented !== false,
         source: props.hunkReview?.source ?? { kind: 'live', root: workspaceScope?.rootPath ?? '' },
@@ -1206,13 +1224,12 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     const phoneHeaderSpaceStyle = phoneFileControl ? phoneControlSpace : null;
     const renderComparisonHeader = comparisonChrome?.renderHeader ?? null;
     // The source's Viewed facts (GitHub): one count in the header, one mark per file header row.
-    const fileViewed = controller.fileViewed;
     const setFileViewed = controller.setFileViewed;
-    const fileViewedActive = props.hunkReview?.active !== false && props.activeReviewFile?.presented !== false;
+    const viewedTotal = props.fileViewedTotal ?? coverage.fileCount;
     const streamHeader = React.useMemo(
         () => (renderComparisonHeader ? renderComparisonHeader(coverage, { viewed: fileViewed
-            ? <ScmFileViewedFact source={fileViewed} total={coverage.fileCount} active={fileViewedActive} /> : null }) : null),
-        [coverage, renderComparisonHeader, fileViewed, fileViewedActive],
+            ? <ScmFileViewedFact source={fileViewed} total={viewedTotal} active={fileViewedActive} /> : null }) : null),
+        [coverage, renderComparisonHeader, fileViewed, viewedTotal, fileViewedActive],
     );
     // The stream's index rows are the list's own leading rows (one scroll; only rows on screen mount).
     // While any of them is on screen the index is still in view; the jump menu takes over past it.
@@ -1522,8 +1539,8 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         props.evidenceOnly,
         highlightedPath,
         fileViewed,
-        setFileViewed,
         fileViewedActive,
+        setFileViewed,
         hunkReviewSource,
         fileSourceLink,
     ]);

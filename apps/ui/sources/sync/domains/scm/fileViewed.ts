@@ -16,6 +16,7 @@ export function createScmFileViewedState() {
     const changeListeners = new Set<(path: string) => void>();
     const statusListeners = new Set<() => void>();
     let snapshot = IDLE_SCM_FILE_VIEWED;
+    let viewedPathsRevision = 0;
     const getFile = (path: string) => files.get(path) ?? UNKNOWN_SCM_FILE_VIEWED;
     const setStatus = (status: ScmFileViewedSnapshot['status'], headOid = snapshot.headOid, errorCode: string | null = null) => {
         if (snapshot.status === status && snapshot.headOid === headOid && snapshot.errorCode === errorCode) return;
@@ -26,7 +27,10 @@ export function createScmFileViewedState() {
         const previous = getFile(path);
         if (previous.state === next.state && previous.pending === next.pending && previous.errorCode === next.errorCode) return;
         if (next === UNKNOWN_SCM_FILE_VIEWED) files.delete(path); else files.set(path, next);
-        if (next.state === 'viewed') viewedPaths.add(path); else viewedPaths.delete(path);
+        if ((previous.state === 'viewed') !== (next.state === 'viewed')) {
+            if (next.state === 'viewed') viewedPaths.add(path); else viewedPaths.delete(path);
+            viewedPathsRevision += 1;
+        }
         if (previous.state !== next.state) for (const listener of changeListeners) listener(path);
         for (const listener of fileListeners.get(path) ?? []) listener();
     };
@@ -34,6 +38,7 @@ export function createScmFileViewedState() {
         getFile,
         getSnapshot: () => snapshot,
         getViewedPaths: (): ReadonlySet<string> => viewedPaths,
+        getViewedPathsRevision: () => viewedPathsRevision,
         subscribeFile: (path: string, listener: () => void) => {
             let listeners = fileListeners.get(path);
             if (!listeners) fileListeners.set(path, listeners = new Set());
@@ -55,6 +60,7 @@ export function createScmFileViewedState() {
         },
         applyFile,
         retire: () => {
+            if (viewedPaths.size > 0) viewedPathsRevision += 1;
             files.clear(); viewedPaths.clear(); fileListeners.clear(); changeListeners.clear(); statusListeners.clear();
             snapshot = IDLE_SCM_FILE_VIEWED;
         },

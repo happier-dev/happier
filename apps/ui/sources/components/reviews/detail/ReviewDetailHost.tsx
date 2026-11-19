@@ -1,6 +1,7 @@
 import * as React from 'react';
 import {
   openReviewArtifactV1,
+  projectReviewRoundQualityV1,
   REVIEW_ARTIFACT_KIND_V1,
   type ReviewArtifactV1,
   type ReviewRoundStateV1,
@@ -45,6 +46,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useSetting } from '@/sync/store/settingsReadHooks';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
@@ -224,17 +226,21 @@ export function ReviewDetailHost(props: Readonly<{
   const [tab, setTab] = React.useState<ReviewDetailTabId>('findings');
   const [openFinding, setOpenFinding] = React.useState<string | null>(props.focusThreadId ?? null);
   const [changesView, setChangesView] = React.useState<'files' | 'walkthrough'>('files');
+  const [hideViewed, setHideViewed] = React.useState(false);
   const [submitOpen, setSubmitOpen] = React.useState(false);
   const principals = React.useMemo(() => humanPrincipals(human), [human]);
   const { names } = useSharePrincipalNames(principals.length > 0 ? principals : null, scope?.serverId ?? null);
   const humanActions = useReviewHumanActions(scope, human);
   const round = record?.rounds.find((item) => item.ordinal === selectedRound) ?? record?.rounds.at(-1);
+  const qualityAggregation = useSetting('reviewQualityAggregation');
   const rounds = React.useMemo(() => record?.rounds.map(item => {
     const projected = projectRound(item);
     const people = human ? projectPeople({ human, round: item.ordinal, names, viewerAccountId: scope?.accountId ?? null }) : null;
     return people ? { ...projected, groups: [...projected.groups, people] } : projected;
   }) ?? [], [human, names, record, scope?.accountId]);
   const capture = round?.comparisonCapture ?? null;
+  const canFilterViewed = capture?.input.source?.kind === 'pullRequest'
+    && capture.input.source.locator.fileViewedActions !== undefined;
   const tabs = React.useMemo((): readonly ReviewDetailTab[] => [
     { id: 'findings' },
     { id: 'changes' },
@@ -328,6 +334,8 @@ export function ReviewDetailHost(props: Readonly<{
         { id: 'copy-fix-prompt', testID: 'review-detail:copy-fix-prompt', title: t('reviewWalkthrough.detail.copyFixPrompt'),
         disabled: findings.implement.destinationDisabled, onSelect: async () => { await findings.implement.copyPrompt(); } }, ...menu]}
       glance={projectReviewGlance(round, review)}
+      quality={projectReviewRoundQualityV1(round, qualityAggregation)}
+      viewedFilter={canFilterViewed ? { hidden: hideViewed, onHiddenChange: setHideViewed } : undefined}
       rounds={rounds}
       selectedRound={selectedRound}
       onSelectRound={setSelected}
@@ -382,7 +390,8 @@ export function ReviewDetailHost(props: Readonly<{
       </> : null}
       {activeTab === 'changes' && scope ? (
         <ReviewChangesHost reviewId={record.reviewId} roundOrdinal={selectedRound} scope={scope} capture={capture}
-          comments={roundComments} view={changesView} onSelectView={setChangesView} onOpenComment={openComment} />
+          comments={roundComments} view={changesView} onSelectView={setChangesView} onOpenComment={openComment}
+          hideViewed={canFilterViewed && hideViewed} />
       ) : null}
       {activeTab === 'runs' && round ? <ReviewRoundRuns round={round} scope={scope} /> : null}
       {activeTab === 'activity' ? <>
