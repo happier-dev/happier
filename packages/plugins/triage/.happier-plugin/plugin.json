@@ -416477,7 +416477,7 @@
           ]
         },
         {
-          "artifact": "triage-tasks-page-native",
+          "artifact": "triage-list-page-native",
           "id": "tasks-page",
           "kind": "reactNative",
           "requiredHostMethods": [
