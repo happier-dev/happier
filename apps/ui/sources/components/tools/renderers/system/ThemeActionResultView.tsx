@@ -497,6 +497,7 @@ function ThemeOptions(props: ThemeActionResultViewProps) {
   return (
     <SelectionTiles
       variant="card"
+      scroll="page"
       selectionMark="outline"
       options={tiles}
       value={props.currentOptionKey ?? null}
@@ -505,7 +506,7 @@ function ThemeOptions(props: ThemeActionResultViewProps) {
       }}
       renderOptionFooter={renderFooter}
       {...(phone
-        ? { density: 'compact', maximumColumns: 1, previewWidth: 96, previewAspectRatio: 1, footerPlacement: 'trailing', subtitleLines: 3 } as const
+        ? { density: 'compact', maximumColumns: 1, tileGap: 'tight', previewWidth: 96, previewAspectRatio: 1, footerPlacement: 'trailing', subtitleLines: 3 } as const
         : { descriptionPlacement: 'below', maximumColumns: 3, subtitleLines: 2 } as const)}
       accessibilityLabel={t('themeCard.options')}
       testIdPrefix={testID ? `${testID}:option` : undefined}

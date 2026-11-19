@@ -138,10 +138,33 @@ describe('ThemeActionResultView', () => {
     await screen.unmount();
   });
 
+  it('windows a data-sized set of proposed themes without losing selection or the try operation', async () => {
+    const input = props({ options: Array.from({ length: 200 }, (_, index) => ({
+      key: `choice-${index}`, name: `Choice ${index}`, description: 'Proposal', miniature: MINIATURE,
+    })), currentOptionKey: 'choice-0' });
+    const screen = await renderResultInTranscript(input);
+    await act(async () => {
+      for (const node of screen.tree.findAll(node => typeof node.type === 'string'
+        && node.props.role === 'radiogroup' && typeof node.props.onLayout === 'function')) {
+        node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 960, height: 600 } } });
+      }
+    });
+    const choices = screen.tree.findAll(node => typeof node.type === 'string'
+      && typeof node.props.testID === 'string' && /^card:option:choice-\d+$/.test(node.props.testID));
+    expect(choices.length).toBeGreaterThan(0);
+    expect(choices.length).toBeLessThan(200);
+    console.info('[theme-window-cost] transcript', { source: input.options!.length, mounted: choices.length });
+    const next = screen.tree.findAll(node => node.props.testID === 'card:option:choice-1' && typeof node.props.onPress === 'function')[0];
+    await pressTestInstanceAsync(next!);
+    expect(input.onTryOption).toHaveBeenCalledWith('choice-1');
+    expect(input.onTryOption).toHaveBeenCalledTimes(1);
+    await screen.unmount();
+  });
+
   describe.each([
-    { form: 'desktop', width: 960, columns: 3 },
-    { form: 'phone', width: 358, columns: 1 },
-  ] as const)('B3 options on $form', ({ form, width, columns }) => {
+    { form: 'desktop', width: 960, columns: 3, gap: 10 },
+    { form: 'phone', width: 358, columns: 1, gap: 8 },
+  ] as const)('B3 options on $form', ({ form, width, columns, gap }) => {
     it('draws each candidate as a card with its own Try, and Try tries that one without choosing for the card', async () => {
       phoneWindow.on = form === 'phone';
       const options = (['notebook', 'linen', 'kraft'] as const).map((key) => ({
@@ -166,7 +189,7 @@ describe('ThemeActionResultView', () => {
           }
           return undefined;
         };
-        expect(options.map(option => tileWidth(option.key))).toEqual(Array(3).fill(Math.floor((width - 10 * (columns - 1)) / columns)));
+        expect(options.map(option => tileWidth(option.key))).toEqual(Array(3).fill(Math.floor((width - gap * (columns - 1)) / columns)));
         // Tried candidates carry no Try; the others each try themselves, and nothing is kept or saved.
         expect(has(screen, 'card:option:linen:try')).toBe(false);
         const tryKraft = screen.tree.findAll(node => node.props.testID === 'card:option:kraft:try' && typeof node.props.onPress === 'function')[0];

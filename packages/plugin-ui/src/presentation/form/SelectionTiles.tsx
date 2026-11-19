@@ -262,11 +262,14 @@ type HappierChoiceTilesBaseProps<T extends string, I extends string> = HappierSe
    */
   renderOptionAccessory?: (params: Readonly<{ option: HappierSelectionTileOption<T, I>; selected: boolean; revealed: boolean }>) => ReactNode;
   /**
-   * Visual variant. `page`: the picker scrolls with the page around it and its options scale with the person's data
-   * (a theme library), so it draws only the lines of tiles near the page's window, by the page Collection's one
-   * windowing rule. Absent, every tile is drawn.
+   * Visual and card variants. `page`: the group scrolls with the page around it and its options scale with the person's
+   * data (a theme library, an agent's theme candidates), so it draws only the lines of tiles near the page's window, by
+   * the page Collection's one windowing rule. Absent, every tile is drawn. A card group windowed this way keeps every
+   * option in its column (no `span`).
    */
   scroll?: 'page';
+  /** Card variant: the space between tiles, by role. `regular` (default) or `tight` (phone option rows, Themes B3P). */
+  tileGap?: 'regular' | 'tight';
 }>;
 
 export type HappierSingleSelectionTilesProps<T extends string, I extends string = string> =
@@ -546,8 +549,8 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
     const estimate = (measuredPreview ? previewWidth / aspectRatio : VISUAL_PREVIEW_HEIGHT_PX)
       + 2 * (VISUAL_RING_GAP_PX + VISUAL_RING_WIDTH_PX) + VISUAL_CAPTION_ESTIMATE_PX;
     return (
-      <PageWindowedVisualTiles tracker={pageTracker} options={props.options} columns={columns} columnWidth={columnWidth}
-        estimate={estimate} pinnedIndex={selectedIndex} renderTile={renderTile} style={styles.visualGrid}
+      <PageWindowedTiles tracker={pageTracker} options={props.options} columns={columns} columnWidth={columnWidth}
+        gap={VISUAL_GRID_GAP_PX} estimate={estimate} pinnedIndex={selectedIndex} renderTile={renderTile} style={styles.visualGrid}
         onGridLayout={onGridLayout} semantics={choiceGroupSemantics(props)} />
     );
   }
@@ -561,25 +564,27 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
 const NO_TILE_HEIGHTS: ReadonlyMap<string, number> = new Map();
 
 /**
- * A page-scrolled visual picker's tiles, wrapped into its columns and drawn only where their lines are near the page's
+ * A page-scrolled tile group's tiles (visual pickers and card groups), wrapped into its columns and drawn only where their lines are near the page's
  * window (`usePageWindow`, the page Collection's rule): each run of far lines stands as one full-width spacer of their
  * exact height, so the page keeps its length and scroll position. Every drawn tile stays a child of this one wrapped
  * row, so a re-flow never remounts it; the chosen tile's line (the group's tab stop) stays drawn wherever it is.
  */
-function PageWindowedVisualTiles<T extends string, I extends string>(props: Readonly<{
+function PageWindowedTiles<T extends string, I extends string>(props: Readonly<{
   tracker: PluginUiScrollActivityTracker;
   options: readonly HappierSelectionTileOption<T, I>[];
   columns: number;
   /** A tile's measured height belongs to the column width it was drawn at. */
   columnWidth: number;
+  /** The space between lines, the group's own gap. */
+  gap: number;
   estimate: number;
   pinnedIndex: number;
   renderTile: (option: HappierSelectionTileOption<T, I>, index: number, onHeight: (key: string, height: number) => void) => ReactElement;
-  style: ViewStyle;
+  style: ViewStyle | ViewStyle[];
   onGridLayout: (event: { nativeEvent: { layout: { width: number } } }) => void;
   semantics: ReturnType<typeof choiceGroupSemantics>;
 }>): ReactElement {
-  const { options, columns, columnWidth, estimate } = props;
+  const { options, columns, columnWidth, estimate, gap } = props;
   const { root, measure, near } = usePageWindow(props.tracker);
   const [measured, setMeasured] = useState<Readonly<{ columnWidth: number; heights: ReadonlyMap<string, number> }>>(
     () => ({ columnWidth, heights: NO_TILE_HEIGHTS }),
@@ -602,10 +607,10 @@ function PageWindowedVisualTiles<T extends string, I extends string>(props: Read
       const end = Math.min(options.length, start + perLine);
       const height = Math.max(...options.slice(start, end).map((option) => heights.get(option.id) ?? fallback));
       result.push({ start, end, offset, height });
-      offset += height + VISUAL_GRID_GAP_PX;
+      offset += height + gap;
     }
     return result;
-  }, [columns, estimate, heights, options]);
+  }, [columns, estimate, gap, heights, options]);
   const pinnedLine = props.pinnedIndex < 0 ? -1 : Math.floor(props.pinnedIndex / Math.max(1, columns));
   const content: ReactNode[] = [];
   let skipFrom = -1;
@@ -883,6 +888,10 @@ function ActionSelectionCards<T extends string, I extends string>(props: Happier
 }
 
 const CARD_GAP_PX = 10;
+/** `tileGap="tight"`: phone option rows (Themes B3P). */
+const CARD_GAP_TIGHT_PX = 8;
+/** A card line not measured yet (the page window's estimate only): a regular and a compact card's minimum height. */
+const CARD_LINE_ESTIMATE_PX = { regular: 92, compact: 48 } as const;
 const FILL_TILE_FRAME: ViewStyle = { width: '100%' };
 
 function CardSelectionTiles<T extends string, I extends string>(props: HappierChoiceSelectionTilesProps<T, I>) {
@@ -897,7 +906,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
   const selectionAccessibilityRole = props.selectionMode === 'multiple' ? 'checkbox' : 'radio';
   const tileKeyboardProps = useChoiceTilesKeyboard(props);
   const sheet = props.surface === 'sheet';
-  const gap = sheet ? 0 : CARD_GAP_PX;
+  const gap = sheet ? 0 : props.tileGap === 'tight' ? CARD_GAP_TIGHT_PX : CARD_GAP_PX;
   const density = props.density ?? 'regular';
   const compact = density === 'compact';
   const minimumColumns = useMemo(
@@ -966,16 +975,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
   // the same shape and choosing one never changes the group's layout.
   const anySubtitle = props.options.some((option) => typeof option.subtitle === 'string' && option.subtitle.trim().length > 0);
 
-  return (
-    <View
-      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
-      style={[
-        styles.grid,
-        { flexDirection: 'row', flexWrap: 'wrap', gap },
-      ]}
-      {...choiceGroupSemantics(props)}
-    >
-      {props.options.map((option, index) => {
+  const renderTile = (option: HappierSelectionTileOption<T, I>, index: number, onHeight?: (key: string, height: number) => void): ReactElement => {
         const selected = isSelected(props, option.id);
         const disabled = option.disabled === true;
         const glyph: HappierSelectionTileGlyph<I> | null = option.icon
@@ -1006,6 +1006,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
         return (
           <View
             key={option.id}
+            {...(onHeight === undefined ? {} : { onLayout: (event: { nativeEvent: { layout: { height: number } } }) => onHeight(option.id, event.nativeEvent.layout.height) })}
             style={sheet ? [
               styles.sheetCell,
               tileWidth ? { width: tileWidth } : fallbackTileWidthStyle,
@@ -1116,7 +1117,20 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
             ) : null}
           </View>
         );
-      })}
+  };
+  const gridStyle: ViewStyle[] = [styles.grid, { flexDirection: 'row', flexWrap: 'wrap', gap }];
+  const onGridLayout = (event: { nativeEvent: { layout: { width: number } } }) => setWidth(event.nativeEvent.layout.width);
+  const pageTracker = useOptionalPluginUiScrollActivityTracker();
+  if (props.scroll === 'page' && pageTracker !== null) {
+    return (
+      <PageWindowedTiles tracker={pageTracker} options={props.options} columns={fittedColumns} columnWidth={tileWidth ?? 0}
+        gap={gap} estimate={CARD_LINE_ESTIMATE_PX[density]} pinnedIndex={props.options.findIndex((option) => isSelected(props, option.id))}
+        renderTile={renderTile} style={gridStyle} onGridLayout={onGridLayout} semantics={choiceGroupSemantics(props)} />
+    );
+  }
+  return (
+    <View onLayout={onGridLayout} style={gridStyle} {...choiceGroupSemantics(props)}>
+      {props.options.map((option, index) => renderTile(option, index))}
     </View>
   );
 }

@@ -428,6 +428,44 @@ describe('SelectionTiles', () => {
     } finally { mount.unmount(); }
   });
 
+  it('spaces card tiles by their named gap role, regular unless a group asks for tight', () => {
+    // Themes B3P: phone option rows stand 8 apart; every other card group keeps the regular 10.
+    const gapOf = (tileGap?: 'regular' | 'tight') => {
+      const mount = mountThroughReactNativeWeb(<HappierSelectionTiles
+        accessibilityLabel="Options" value="a" onChange={() => {}} {...(tileGap ? { tileGap } : {})}
+        options={[{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }]}
+        colors={TILE_COLORS} renderText={({ text }) => <span>{text}</span>} renderGlyph={() => null}
+      />);
+      try { const group = mount.container.querySelector<HTMLElement>('[role="radiogroup"]')!; return group.style.gap || getComputedStyle(group).gap; } finally { mount.unmount(); }
+    };
+    expect(gapOf()).toBe('10px');
+    expect(gapOf('regular')).toBe('10px');
+    expect(gapOf('tight')).toBe('8px');
+  });
+
+  it('draws a page-scrolled card group only near the page window, keeping the chosen card', async () => {
+    const options = Array.from({ length: 200 }, (_, index) => ({ id: `c${index}`, title: `Choice ${index}`, subtitle: 'Proposal' }));
+    const pageWindow = { top: 0, bottom: 400 };
+    const tracker: PluginUiScrollActivityTracker = {
+      onScroll() {}, onLayout() {}, onContentSizeChange() {}, invalidateLayout() {},
+      getLayoutRevision: () => 0, getWindow: () => pageWindow,
+      subscribe: () => () => {}, measureSpan: async () => ({ top: 0 }),
+    };
+    const mount = mountThroughReactNativeWeb(<PluginUiScrollActivityProvider tracker={tracker}>
+      <HappierSelectionTiles scroll="page" maximumColumns={1} accessibilityLabel="Options" testIdPrefix="opt" value="c150" onChange={() => {}}
+        options={options} colors={TILE_COLORS} renderText={({ text }) => <span>{text}</span>} renderGlyph={() => null} />
+    </PluginUiScrollActivityProvider>);
+    try {
+      const group = mount.container.querySelector<HTMLElement>('[role="radiogroup"]')!;
+      const handler = Reflect.get(group, '__reactLayoutHandler');
+      await act(async () => { handler({ nativeEvent: { layout: { x: 0, y: 0, width: 360, height: 400 } } }); });
+      const drawn = radios(mount.container);
+      expect(drawn.length).toBeGreaterThan(0);
+      expect(drawn.length).toBeLessThan(200);
+      expect(mount.container.querySelector('[data-testid="opt:c150"]')?.getAttribute('aria-checked')).toBe('true');
+    } finally { mount.unmount(); }
+  });
+
   it('drops picture columns before a filling tile would fall under its minimum width', async () => {
     // A theme listing's faces in a 420 px pane (Themes C2): two large previews per row, never four thumbnails.
     const options = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id, title: id.toUpperCase() }));

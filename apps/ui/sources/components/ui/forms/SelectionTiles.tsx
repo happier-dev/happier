@@ -113,8 +113,10 @@ type SelectionTilesBaseProps<T extends string> = {
     footerPlacement?: 'below' | 'trailing';
     /** Visual only: a tile's own quiet operations (its "…"), over the preview's corner; `revealed` on hover or when chosen. */
     renderOptionAccessory?: (params: Readonly<{ option: SelectionTile<T>; selected: boolean; revealed: boolean }>) => React.ReactNode;
-    /** Visual only: `page` draws only the lines of tiles near the page's window (options that scale with the person's data). */
+    /** Visual and card: `page` draws only the lines of tiles near the page's window (options that scale with the person's data). */
     scroll?: 'page';
+    /** Card variant: the space between tiles by role; `tight` for phone option rows. */
+    tileGap?: 'regular' | 'tight';
 };
 
 type SingleSelectionTilesProps<T extends string> = SelectionTilesBaseProps<T> & {
