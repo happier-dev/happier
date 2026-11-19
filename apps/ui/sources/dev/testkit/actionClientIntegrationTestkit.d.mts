@@ -1,5 +1,6 @@
 import type { AuthCredentials } from '../../auth/storage/authCredentials.js';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { AccountEncryptionModeResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaration } from '../../sync/domains/plugins/availability/bundledPluginUiArtifactInventory.js';
@@ -70,6 +71,7 @@ export function connectUiPersonActionClient(params: Readonly<{
     serverUrl: string;
     addressAnchorUrl?: string;
     accountSecret: Uint8Array;
+    accountEncryptionMode?: AccountEncryptionModeResponse['mode'];
     withAppShellActions?: boolean;
     withCurrentUiActionPort?: boolean;
     withAccountLifecycle?: boolean;
@@ -81,7 +83,10 @@ export function connectUiTriageActionClient(params: Parameters<typeof connectUiP
         manifest: import('@happier-dev/plugin-sdk/manifest').PluginManifest;
         activate(api: import('@happier-dev/plugin-sdk').PluginAccountApi): void | Promise<void>;
     }>[];
-}>): ReturnType<typeof connectUiActionClient>;
+}>): Promise<Awaited<ReturnType<typeof connectUiActionClient>> & Readonly<{
+    collectionClients(contracts: readonly import('@happier-dev/protocol/plugins/data/collectionsV1').NormalizedPluginAccountCollectionContractV1[]):
+        Promise<import('../../sync/api/plugins/data/activePluginCollectionClient.js').ActivePluginCollectionClientV1[]>;
+}>>;
 export function prepareUiTriageActionPluginsForTest(
     additionalPlugins?: Parameters<typeof connectUiTriageActionClient>[0]['additionalPlugins'],
 ): Promise<void>;

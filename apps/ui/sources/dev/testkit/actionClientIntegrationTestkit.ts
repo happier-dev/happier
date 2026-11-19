@@ -4,6 +4,7 @@ import { createModalModuleMock } from './mocks/modal';
 import { installNativeRuntimeFetchBoundary } from './harness/nativeRuntimeFetch';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { RegistryKindV1 } from '@happier-dev/protocol/registries';
+import type { AccountEncryptionModeResponse } from '@happier-dev/protocol/account/encryptionMode';
 import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
 import { encodeBase64 } from '@/encryption/base64';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
@@ -212,6 +213,8 @@ export async function connectUiPersonActionClient(params: Readonly<{
     serverUrl: string;
     addressAnchorUrl?: string;
     accountSecret: Uint8Array;
+    /** Persisted fixture mode; signing in to a plain Account installs no Account encryption material. */
+    accountEncryptionMode?: AccountEncryptionModeResponse['mode'];
     /** Triage fixtures provide their own Account projection and executable port. */
     withAppShellActions?: boolean;
     withCurrentUiActionPort?: boolean;
@@ -226,7 +229,9 @@ export async function connectUiPersonActionClient(params: Readonly<{
         requireExistingAccount: true,
     });
     const client = await connectUiActionClient({ serverUrl: params.serverUrl, addressAnchorUrl: params.addressAnchorUrl,
-        credentials: { ...credentials, secret: encodeBase64(params.accountSecret) } });
+        credentials: params.accountEncryptionMode === 'plain'
+            ? { token: credentials.token }
+            : { ...credentials, secret: encodeBase64(params.accountSecret) } });
     let unmount: (() => Promise<void>) | undefined;
     try {
         const [{ renderHook }, { createMountedCurrentUiContextWrapper }, { createElement, Fragment },

@@ -1,3 +1,5 @@
+import type { NormalizedPluginAccountCollectionContractV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+
 import { connectUiPersonActionClient } from './actionClientIntegrationTestkit';
 import type { SourceDeclaredAccountPluginFixture } from './harness/portableAccountPlugin';
 import { installNativeRuntimeFetchBoundaryForTest } from './harness/nativeRuntimeFetch';
@@ -5,7 +7,7 @@ import { installNativeRuntimeFetchBoundaryForTest } from './harness/nativeRuntim
 /** A native UI Account runtime with real Triage activation and services at physical loader/HTTP boundaries. */
 export async function connectUiTriageActionClient(
     params: Parameters<typeof connectUiPersonActionClient>[0] & Readonly<{ additionalPlugins?: readonly SourceDeclaredAccountPluginFixture[] }>,
-): ReturnType<typeof connectUiPersonActionClient> {
+) {
     installNativeRuntimeFetchBoundaryForTest();
     const install = await prepareUiTriageAccountRuntime(params.additionalPlugins);
     const client = await connectUiPersonActionClient({ ...params, withAppShellActions: false, withCurrentUiActionPort: false,
@@ -16,12 +18,19 @@ export async function connectUiTriageActionClient(
         const account = await captureLazyActionAccountContext(client.serverId);
         disposeAccount = account.dispose;
         const installed = await install({ accountLifetime: account.accountLifetime, publishProjection: true });
-        return { ...client, async close() {
-            try { await installed.dispose(); } finally {
-                account.dispose();
-                await client.close();
-            }
-        } };
+        return {
+            ...client,
+            async collectionClients(contracts: readonly NormalizedPluginAccountCollectionContractV1[]) {
+                const { createActivePluginCollectionClient } = await import('@/sync/api/plugins/data/activePluginCollectionClient');
+                return contracts.map(contract => createActivePluginCollectionClient({ contract, accountLifetime: account.accountLifetime }));
+            },
+            async close() {
+                try { await installed.dispose(); } finally {
+                    account.dispose();
+                    await client.close();
+                }
+            },
+        };
     } catch (error) {
         disposeAccount?.();
         await client.close();
