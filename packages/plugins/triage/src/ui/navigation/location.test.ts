@@ -394,7 +394,7 @@ describe('PRs & Issues route owner', () => {
     }))).toBe('');
   });
 
-  it('drops only the invalid facet value and never another still-valid one', () => {
+  it('drops an invalid entry and invalid facet values while retaining the valid lens', () => {
     const parsed = parseTriageRouteSubPathV1([
       'fst,open,sideways,unresolved',
       'fa,required,loud',
@@ -402,9 +402,11 @@ describe('PRs & Issues route owner', () => {
       `ft,${encodeURIComponent(SOURCE.pluginId)},${encodeURIComponent(SOURCE.localId)}`,
       `ft,${encodeURIComponent(SOURCE.pluginId)},${encodeURIComponent(SOURCE.localId)},issue`,
       'sp,sideways',
+      'e,acme.scm,github,issue,acme%2Fweb',
       'q,keep%20me',
     ].join('/'));
 
+    expect(parsed.selection).toBeNull();
     expect(parsed.filters.states).toEqual(['open', 'unresolved']);
     expect(parsed.filters.attention).toEqual(['required']);
     expect(parsed.filters.types).toEqual([{ source: SOURCE, kindId: 'issue' }]);
