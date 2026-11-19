@@ -19,10 +19,10 @@ export function presentProjectSourceIssue(
         tone: 'neutral',
       };
     case 'source_access_denied':
+    case 'action_forbidden':
       return {
-        title: t('projects.sources.unavailable'),
-        description: t('projects.sources.unavailableBody'),
-        tone: 'neutral',
+        title: t('errors.permissionDenied'),
+        tone: 'warning',
       };
     case 'outcome_unknown':
       return {

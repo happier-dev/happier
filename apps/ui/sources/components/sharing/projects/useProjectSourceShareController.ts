@@ -20,6 +20,7 @@ export function presentProjectSourceShareFailure(code: string): string | null {
         case 'source_conflict': return t('projects.sources.changed');
         case 'outcome_unknown': return t('projects.sources.outcomeUnknown');
         case 'source_access_denied':
+        case 'action_forbidden': return t('errors.permissionDenied');
         case 'source_unavailable': return t('projects.sources.unavailable');
         case 'home_unreachable': return t('projects.sources.offlineReason', { home: t('common.home') });
         case 'source_backend_unavailable': return t('projects.sources.backendUnavailable');

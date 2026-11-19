@@ -9,6 +9,7 @@ import { presentProjectSourceShareFailure, useProjectSourceShareController } fro
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { getStorage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { presentProjectSourceIssue } from '@/components/projects/sources/projectSourceIssue';
 import { ProjectSourcesUpdateInputV1Schema, type ProjectSourceRepositorySelectorV1,
     type ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -108,10 +109,18 @@ describe('Source audience ShareSheet controller', () => {
         } finally { await reopened.unmount(); }
     });
 
-    it('keeps typed Source mutation reasons in the row presentation', () => {
+    it('distinguishes Source write permission refusals from Source withdrawal', () => {
         expect(presentProjectSourceShareFailure('source_conflict')).toBe(t('projects.sources.changed'));
         expect(presentProjectSourceShareFailure('outcome_unknown')).toBe(t('projects.sources.outcomeUnknown'));
-        expect(presentProjectSourceShareFailure('source_access_denied')).toBe(t('projects.sources.unavailable'));
+        for (const code of ['source_access_denied', 'action_forbidden']) {
+            expect(presentProjectSourceIssue(code, 'Home')).toEqual({ title: t('errors.permissionDenied'), tone: 'warning' });
+        }
+        expect(presentProjectSourceShareFailure('source_access_denied')).toBe(t('errors.permissionDenied'));
+        expect(presentProjectSourceShareFailure('action_forbidden')).toBe(t('errors.permissionDenied'));
+        expect(presentProjectSourceShareFailure('source_unavailable')).toBe(t('projects.sources.unavailable'));
+        expect(presentProjectSourceIssue('source_unavailable', 'Home')).toEqual({
+            title: t('projects.sources.unavailable'), description: t('projects.sources.unavailableBody'), tone: 'neutral',
+        });
         expect(presentProjectSourceShareFailure('source_save_failed')).toBe(t('projects.sources.saveFailed'));
         expect(presentProjectSourceShareFailure('future_source_failure')).toBeNull();
     });
