@@ -59,6 +59,21 @@ describe('Automations everywhere: selected attached summaries', () => {
     await assertAutomationStatusPublicationEconomy({ fixture, owner, machine, censusPath });
     const ownerId = readAccountIdFromToken(owner.credentials.token);
     const readerId = readAccountIdFromToken(reader.credentials.token);
+    // New resource grants admit friends or teammates. These fresh Accounts
+    // establish that relationship through the same person Actions as the app.
+    for (const [account, id] of [[owner, ownerId], [reader, readerId]] as const) {
+      const username = `f4${id.replaceAll('-', '').slice(0, 12)}`;
+      const named = await account.executeAsPerson('account.username.set', { username });
+      expect(named, JSON.stringify(named)).toMatchObject({ ok: true, result: { username } });
+    }
+    const requested = await owner.executeAsPerson('friends.add', { uid: readerId });
+    expect(requested, JSON.stringify(requested)).toMatchObject({
+      ok: true, result: { user: { id: readerId, status: 'requested' } },
+    });
+    const accepted = await reader.executeAsPerson('friends.add', { uid: ownerId });
+    expect(accepted, JSON.stringify(accepted)).toMatchObject({
+      ok: true, result: { user: { id: ownerId, status: 'friend' } },
+    });
     const subject = { kind: 'machine', serverId: fixture.serverId, machineId: machine.target.machineId };
     const machineGrant = await owner.executeAsPerson('machines.access.grant.set', { ...machine.target,
       principal: { kind: 'account', accountId: readerId }, level: 'view' });
@@ -147,7 +162,8 @@ describe('Automations everywhere: selected attached summaries', () => {
     const ownPage = WorkflowTriggerListResultV1Schema.parse(own.result);
     expect(ownPage.sets).toEqual([]);
     expect(ownPage.attached?.filter(row => row.relation === 'direct')).toHaveLength(5);
-    expect(ownPage.attached?.filter(row => row.relation === 'context')).toHaveLength(1);
+    // Machine selection has no implicit Account-wide Action context (P01 R8).
+    expect(ownPage.attached?.filter(row => row.relation === 'context')).toHaveLength(0);
     expect(ownPage.skippedNotSharedCount).toBe(0);
     // The same local Machine id on another Home is a different subject.
     expect(await reader.execute('workflow.trigger.list', {
@@ -158,8 +174,9 @@ describe('Automations everywhere: selected attached summaries', () => {
     const actorMachine = await fixture.enrollDaemon(reader, { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
     const actorSession = await fixture.assertKnownGoodSessionControl(reader, actorMachine);
     const actorSubject = { kind: 'machine', ...actorMachine.target };
-    expect(await reader.executeAsPerson('machines.access.grant.set', { ...actorMachine.target,
-      principal: { kind: 'account', accountId: ownerId }, level: 'manage' })).toMatchObject({ ok: true });
+    const actorGrant = await reader.executeAsPerson('machines.access.grant.set', { ...actorMachine.target,
+      principal: { kind: 'account', accountId: ownerId }, level: 'admin' });
+    expect(actorGrant, JSON.stringify(actorGrant)).toMatchObject({ ok: true, result: { kind: 'saved' } });
     const directWorkflowId = randomUUID();
     expect(await owner.executeAsPerson('workflow.definition.create', { definitionId: directWorkflowId,
       metadata: { title: 'Direct person command check' }, definition: { version: 1,
@@ -167,8 +184,11 @@ describe('Automations everywhere: selected attached summaries', () => {
         blocks: [{ kind: 'step', id: 'review', document: {
           text: 'Check this command and finish successfully.', references: [], attachments: [] } }],
       } })).toMatchObject({ ok: true });
-    expect(await owner.executeAsPerson('artifact.access.grants.set', { artifactId: directWorkflowId,
-      principal: { kind: 'account', accountId: readerId }, accessLevel: 'view' })).toMatchObject({ ok: true });
+    const directWorkflowGrant = await owner.executeAsPerson('artifact.access.grants.set', { artifactId: directWorkflowId,
+      principal: { kind: 'account', accountId: readerId }, accessLevel: 'view' });
+    expect(directWorkflowGrant, JSON.stringify(directWorkflowGrant)).toMatchObject({
+      ok: true, result: { changed: true },
+    });
     expect(await owner.execute('workflow.definition.get', { definitionId: directWorkflowId })).toMatchObject({ ok: true });
     const directTriggers = [];
     for (const enabled of [true, false]) {
