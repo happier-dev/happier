@@ -105,6 +105,8 @@ Lume requires an Apple silicon Mac, a qualified image with a private SSH setup p
 
 In 0.3 development source, a custom Lume image can declare its prepared Linux or macOS SSH account explicitly. It must support Lume's native default-password setup path; choosing an operating system does not infer a login or qualify an arbitrary image. Setup checks the observed guest operating system before installing the controller-held public key. CPU, memory, disk size and storage remain reviewed inputs rather than guessed hardware presets.
 
+With Lume 0.6.1, if macOS rejects the guest's memory setting after Lume accepts the start, Lume does not report the failure to Happier. The guest stays in the starting state until you select **Cancel**. Then select **Delete** for the failed guest before creating it again with a supported memory setting.
+
 In this development version, Happier enables Lume's image cache during host preparation before creating a guest, keeping any cache directory you already configured. The Lume card reports whether caching is enabled, disabled or unavailable to check. If enabling it fails, creation continues with a warning; Lume can still download the image normally.
 
 For qualified published macOS images, **Prepare** installs the CLI and reusable Setup steps in a separate base VM, then stops it. Each sandbox clones that base. The base contains no Happier sign-in or controller SSH key; its SSH host keys are removed so macOS generates a fresh host identity in each clone. Guest access uses the image's published initial login after SSH host trust is approved. Each clone receives its own controller-held key, then disables password SSH. An interrupted build can be inspected and deleted without treating an incomplete VM as ready.
