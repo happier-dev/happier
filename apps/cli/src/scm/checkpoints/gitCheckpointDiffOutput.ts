@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { ScmExecResult } from '../runtime';
 import { runGitCheckpointCommand } from './gitCheckpointCommands';
 
-/** Git owns streaming output to disk; command stdout limits must not discard readable objects. */
+/** The command owner streams stdout to disk without discarding readable objects at collection limits. */
 export async function readGitCheckpointDiffOutput(input: Readonly<{
     cwd: string;
     args: readonly string[];
@@ -13,8 +13,8 @@ export async function readGitCheckpointDiffOutput(input: Readonly<{
     const directory = await mkdtemp(join(tmpdir(), 'happier-checkpoint-diff-'));
     const outputPath = join(directory, 'diff');
     try {
-        const result = await runGitCheckpointCommand({ cwd: input.cwd, env: input.env,
-            args: ['diff', '--no-ext-diff', '--no-textconv', '--no-color', `--output=${outputPath}`, ...input.args] });
+        const result = await runGitCheckpointCommand({ cwd: input.cwd, env: input.env, stdoutFilePath: outputPath,
+            args: ['diff', '--no-ext-diff', '--no-textconv', '--no-color', ...input.args] });
         if (!result.success) return result;
         // Decode once into a contiguous string. readFile's UTF-8 chunk decoder
         // builds a rope that the raw/patch parser flattens into another full diff.

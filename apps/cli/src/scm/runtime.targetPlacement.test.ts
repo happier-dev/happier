@@ -1,7 +1,8 @@
 import { execFileSync, spawn } from 'node:child_process';
+import { renameSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Duplex } from 'node:stream';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -88,7 +89,28 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         const indexBefore = await readFile(join(repository, '.git/index'));
         const source = createHolderWorkspaceSource({ id: 'checkpoint-copy', rootPath: addressedRoot,
             guestRootPath: root, holder, helperPath: helperExecutable! });
-        await runWithWorkspaceSource(source, async () => {
+        const isolatedSource = { ...source, spawn: (request: Parameters<typeof source.spawn>[0]) => {
+            const output = request.args.find(argument => argument.startsWith('--output='));
+            if (!output) return source.spawn(request);
+            // This holder shares the test host's filesystem. Hide the controller's
+            // temporary directory at the OS boundary to model the guest namespace.
+            const outputDirectory = dirname(output.slice('--output='.length));
+            const hiddenDirectory = `${outputDirectory}.controller`;
+            renameSync(outputDirectory, hiddenDirectory);
+            let restored = false;
+            const restore = () => {
+                if (restored) return;
+                restored = true;
+                renameSync(hiddenDirectory, outputDirectory);
+            };
+            try {
+                const child = source.spawn(request);
+                child.once('close', restore);
+                child.once('error', restore);
+                return child;
+            } catch (error) { restore(); throw error; }
+        } };
+        await runWithWorkspaceSource(isolatedSource, async () => {
             const context = await resolveGitCheckpointBackendContext({ cwd: addressedRepository });
             expect(context?.detection.rootPath).toBe(addressedRepository);
             if (!context?.checkpointGitPaths) throw new Error('Checkpoint repository paths unavailable');
