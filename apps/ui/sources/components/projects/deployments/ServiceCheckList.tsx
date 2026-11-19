@@ -617,10 +617,11 @@ const CheckByline = React.memo(function CheckByline(
       </View>
     );
   }
-  // Why a check fails is the row's message: it takes a second line rather than ending mid-cause ("checked fr…",
-  // PAGE-ACCEPT-176 R2-D13); what a healthy check is stays one line.
+  // Why a check fails is the row's message: in the table it takes a second line rather than ending mid-cause
+  // ("checked fr…", PAGE-ACCEPT-176 R2-D13); what a healthy check is stays one line. A narrow list's line follows its
+  // state word on the same line, so it stays one line there.
   return line ? (
-    <Text style={meta} numberOfLines={failing || (stale && observer) ? 2 : 1}>
+    <Text style={meta} numberOfLines={props.columns && (failing || (stale && observer)) ? 2 : 1}>
       {line}
     </Text>
   ) : null;
