@@ -2,6 +2,7 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 import { ExecutionRunHostActionApprovalSettlementV1Schema, StoredExecutionRunHostActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { CliActionDepsParams } from '../cliActionDeps/types';
 import type { StoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
@@ -14,6 +15,7 @@ export function createExecutionRunHostApprovalReplay(params: Readonly<{
   serverId: string;
   serverHttpBaseUrl: string;
   isCurrent: () => Promise<boolean>;
+  resolveServerFeaturesSnapshot?: CliActionDepsParams['resolveServerFeaturesSnapshot'];
 }>): NonNullable<ActionExecutorDeps['executionRunHostActionApprovalReplay']> {
   const store = createCliApprovalsArtifactStore(params);
   const failure = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
@@ -31,7 +33,8 @@ export function createExecutionRunHostApprovalReplay(params: Readonly<{
     };
     if (!await assertCurrent()) return failure('credential_scope_retired');
     const transport = await resolveSessionTransportContext({ reason: 'session-action', credentials: params.credentials,
-      idOrPrefix: request.sessionId, ...(signal ? { signal } : {}) });
+      idOrPrefix: request.sessionId, serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.(),
+      ...(signal ? { signal } : {}) });
     if (!transport.ok || transport.sessionId !== request.sessionId) return failure('approval_origin_unavailable');
     if (!await assertCurrent()) return failure('credential_scope_retired');
     const raw = await callSessionRpc({ ...transport, token: params.credentials.token, sessionId: request.sessionId,

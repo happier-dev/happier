@@ -1389,7 +1389,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           }) satisfies NonNullable<ActionExecutorDeps['targetActionApprovalReplay']> }
           : {}),
       ...(!machineAdmissionTransport && params.pluginActionExecutionOwner !== 'current_process' ? {
-        executionRunHostActionApprovalReplay: createExecutionRunHostApprovalReplay({ credentials,
+        executionRunHostActionApprovalReplay: createExecutionRunHostApprovalReplay({ credentials, resolveServerFeaturesSnapshot,
           serverId: approvalServerId, serverHttpBaseUrl: approvalServerApiUrl,
           isCurrent: async () => hasStoredSessionCredentialProvenance(credentials)
             && !invocationSignal?.aborted,
@@ -1426,6 +1426,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           if (!serverIdentityId || request.executionOriginV1?.serverIdentityId !== serverIdentityId) return actionFailure('approval_stale');
           const result = await runWithServerHttpBaseUrl(approvalServerApiUrl, async () => {
             const transport = await resolveSessionTransportContext({ reason: 'session-action', credentials, idOrPrefix: subject.personaSessionRef.sessionId,
+              serverFeaturesSnapshot: await resolveServerFeaturesSnapshot(),
               ...(signal ? { signal } : {}) });
             if (!transport.ok || transport.sessionId !== subject.personaSessionRef.sessionId) return actionFailure('approval_stale');
             onReplayDispatched?.();
@@ -2055,6 +2056,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         const transport = await resolveSessionTransportContext({
           reason: 'session-action',
           credentials, idOrPrefix: sessionTarget,
+          serverFeaturesSnapshot: await resolveServerFeaturesSnapshotForCredentials(credentials),
           ...(signal ? { signal } : {}),
         });
         if (!transport.ok) return { context,
@@ -2446,9 +2448,11 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           const readMetadata = createCliBoundSessionMetadataReader({
             credentials, token: credentials.token, sessionId: catalogSessionId,
             ...(ctx ? { mode: 'e2ee' as const, ctx } : { mode: 'plain' as const, ctx: null }),
-            resolveTransportForSession: (sessionId) => resolveSessionTransportContext({
+            resolveTransportForSession: async (sessionId) => resolveSessionTransportContext({
               reason: 'session-action',
-              credentials, idOrPrefix: sessionId, ...(signal ? { signal } : {}),
+              credentials, idOrPrefix: sessionId,
+              serverFeaturesSnapshot: await resolveServerFeaturesSnapshotForCredentials(credentials),
+              ...(signal ? { signal } : {}),
             }),
           });
           const metadata = await readMetadata();

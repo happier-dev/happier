@@ -1,7 +1,7 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
+import { deriveAccountMachineKeyFromRecoverySecret, deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import { ExternalActionRequestEnvelopeSchema, ExternalActionResponseEnvelopeV1Schema, openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -9,7 +9,8 @@ import { configuration } from '@/configuration';
 import { writeDaemonState } from '@/persistence';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { reconcileExternalActionTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
-import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { createCurrentSessionProjectionRecordFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 
@@ -92,7 +93,11 @@ describe('original CLI Session Action delivery', () => {
                 return { status: 503, data: { error: 'admission_unavailable' } };
             });
             const daemonRequests: string[] = [];
-            vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+            vi.stubGlobal('fetch', async (url: string | URL | Request, options?: RequestInit) => {
+                if (String(url) === 'https://home.test/v1/features/authenticated') {
+                    expect(new Headers(options?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+                    return Response.json({ features: {}, capabilities: {} });
+                }
                 daemonRequests.push(String(url));
                 return Response.json({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' });
             });
@@ -190,6 +195,82 @@ describe('original CLI Session Action delivery', () => {
             expect(await createCliActionExecutorFromCredentials({ ...options, machineId: 'machine-a' }).execute(actionId, input, { surface: 'cli' }))
                 .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
             expect(delivered).toHaveLength(1);
+        });
+    });
+
+    it('opens Team-only E2EE detail and sends as the authenticated member', async () => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-cli-team-send-' }, async () => {
+            const accountId = 'team-member';
+            const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 4,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const machineKey = new Uint8Array(32).fill(34);
+            const publicKey = deriveBoxPublicKeyFromSeed(machineKey);
+            const credentials = { token, credentialProvenance: 'stored_session' as const,
+                encryption: { type: 'dataKey' as const, machineKey, publicKey } };
+            const sessionId = 'cmwiqxdcs00r2mcnz01awx7f5';
+            const ctx = { encryptionKey: new Uint8Array(32).fill(35), encryptionVariant: 'dataKey' as const };
+            const session = createCurrentSessionProjectionRecordFixture({
+                id: sessionId, active: true, encryptionMode: 'e2ee', metadataLayoutVersion: 1,
+                metadata: encryptSessionPayload({ ctx, payload: { v: 1 } }),
+                dataEncryptionKey: Buffer.from(sealEncryptedDataKeyEnvelopeV1({ dataKey: ctx.encryptionKey,
+                    recipientPublicKey: publicKey, randomBytes: length => new Uint8Array(length).fill(36) })).toString('base64'),
+                effectiveAccess: { v: 1, level: 'edit', sources: [{ kind: 'team', teamId: 'team', requiredByTeamPolicy: false }],
+                    capabilities: projectSessionAccessCapabilitiesV1({ owner: false,
+                        grants: [{ accessLevel: 'edit', canApprovePermissions: false }] }) },
+            });
+            vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
+                if (url !== 'https://home.test/v1/features/authenticated') return new Response(null, { status: 404 });
+                expect(new Headers(options?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+                return Response.json({ features: { sharing: { session: { enabled: true } } }, capabilities: {} });
+            });
+            vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+                const { pathname, searchParams } = new URL(url);
+                if (pathname === `/v2/sessions/${sessionId}`) {
+                    expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
+                    return searchParams.get('accessProjectionVersion') === '1'
+                        ? { status: 200, data: { session } }
+                        : { status: 404, data: { error: 'session-not-found' } };
+                }
+                if (pathname === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'e2ee', version: 1,
+                    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+                if (pathname === '/v1/account/encryption') return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
+                if (pathname === '/v2/sessions' || pathname === '/v2/sessions/archived') {
+                    return { status: 200, data: { sessions: [], nextCursor: null, hasNext: false } };
+                }
+                throw new Error(`Unexpected Home read: ${url}`);
+            });
+            const machineId = 'team-session-publisher';
+            const actionId = 'session.message.send';
+            const input = { sessionId, message: 'Team-only input', reply: 'none', localId: 'team-input',
+                requestedAction: { v: 1, kind: 'enqueue' } };
+            const delivered = vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
+                if (url.endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
+                expect(url).toBe(`https://home.test/v1/actions/${actionId}`);
+                expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
+                const envelope = ExternalActionRequestEnvelopeSchema.parse(body);
+                if (envelope.v !== 2) throw new Error('Expected encrypted Session delivery');
+                const target = { kind: 'session' as const, sessionId };
+                expect(envelope.target).toEqual(target);
+                const binding = { serverIdentityId: 'srv_home', accountId,
+                    authentication: { kind: 'account' as const, tokenEpoch: 4 }, actionId, requestId: envelope.requestId, target };
+                const material = { type: 'dataKey' as const, machineKey };
+                expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                    envelope, binding, material })?.input).toEqual(input);
+                return { status: 200, data: prepareExternalActionResponseV2({ request: envelope, binding, material,
+                    executedMachineId: machineId, randomBytes: length => new Uint8Array(length).fill(37),
+                    execution: { ok: true, result: { status: 'accepted', localId: input.localId } } }).response };
+            });
+            const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true, machineId,
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({
+                    v: 1, approvalWaivedSurfaces: { [actionId]: ['cli'] },
+                }) } });
+            expect(await executor.execute('session.status.get', { sessionId, live: false }, { surface: 'cli' }))
+                .toMatchObject({ ok: true, result: { session: { id: sessionId } } });
+            const result = await executor.execute(actionId, input, { surface: 'cli' });
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
+                result: { status: 'accepted', localId: input.localId } });
+            expect(delivered.mock.calls.filter(([url]) => url.endsWith(`/v1/actions/${actionId}`))).toHaveLength(1);
         });
     });
 });

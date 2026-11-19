@@ -13,6 +13,7 @@ import type { summarizeSessionRecord } from '@/cli/output/session/sessionSummary
 import type { projectCliSessionAwarenessFromMaterialV1, projectCliSessionAwarenessUnavailableMaterialV1 } from '@/cli/output/session/sessionAwareness';
 import type { SessionTransportEncryptionMaterial } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { CliActionDepsParams } from './cliActionDeps/types';
 import { createSessionFollowPreview } from './followPreview';
 import type { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { readRequesterHomeWithinActionLifetime } from '@/daemon/sessionEncryption/requesterCurrentness';
@@ -172,6 +173,7 @@ export function createSessionListActionDeps(params: Readonly<{
   credentials: StoredCredentials;
   isCredentialCurrent?: () => boolean | Promise<boolean>;
   resolveAccountSettings?: () => AccountSettings | null;
+  resolveServerFeaturesSnapshot?: CliActionDepsParams['resolveServerFeaturesSnapshot'];
   serverHttpBaseUrl?: string;
 }> & ExternalActionHomeBinding): Pick<ActionExecutorDeps, 'sessionFollowPreview'> & Required<Pick<ActionExecutorDeps, 'sessionList' | 'sessionRead'>> {
   const serverId = params.serverId ?? configuration.activeServerId;
@@ -269,6 +271,8 @@ export function createSessionListActionDeps(params: Readonly<{
       ...(qualifiedProject ? { project: qualifiedProject, workspaceRefs: await params.readWorkspaceRefs?.({ context, project: qualifiedProject, signal }) } : {}),
       ...(filterCandidates ? { filterCandidates, workspaceRefs, accountSettings: params.resolveAccountSettings?.() ?? null } : {}),
       credentials: requester?.credentials ?? params.credentials,
+      serverFeaturesSnapshot: (includeLastMessagePreview || allowedSessionIds) && !requester
+        ? await params.resolveServerFeaturesSnapshot?.() : undefined,
       resolveAuthorizationHeaders,
       ...(externalActionAccountSettings !== undefined
         ? { accountSettings: externalActionAccountSettings }

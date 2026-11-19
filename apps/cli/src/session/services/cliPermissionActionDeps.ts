@@ -337,6 +337,7 @@ export function createCliPermissionActionDeps(
             reason: 'session-action',
             credentials: params.credentials,
             idOrPrefix: sessionId,
+            serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.(),
             resolveAuthorizationHeaders,
             ...(signal ? { signal } : {}),
           })
@@ -478,6 +479,7 @@ export function createCliPermissionActionDeps(
             reason: 'session-action',
             credentials: params.credentials,
             idOrPrefix: sessionId,
+            serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.(),
             resolveAuthorizationHeaders,
             ...(signal ? { signal } : {}),
           })

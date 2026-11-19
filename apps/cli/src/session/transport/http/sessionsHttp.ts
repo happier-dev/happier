@@ -342,15 +342,13 @@ async function getSessionByIdResponse(params: Readonly<{
   reason: SessionSnapshotRefreshReason;
   signal?: AbortSignal;
   deadlineAtMs?: number;
-  accessProjectionVersion?: 1;
-  serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
+  accessProjectionVersion: 1 | undefined;
   projection?: typeof SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION;
 }>): Promise<SessionByIdHttpResponse> {
   const serverUrl = params.serverUrl ?? resolveServerHttpBaseUrl();
   const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
-  const accessProjectionVersion = resolveRequestedSessionDetailAccessProjectionVersion(params);
   const queryParams = [
-    ...(accessProjectionVersion === 1 ? ['accessProjectionVersion=1'] : []),
+    ...(params.accessProjectionVersion === 1 ? ['accessProjectionVersion=1'] : []),
     ...(params.projection ? [`projection=${params.projection}`] : []),
   ];
   const query = queryParams.length > 0 ? `?${queryParams.join('&')}` : '';

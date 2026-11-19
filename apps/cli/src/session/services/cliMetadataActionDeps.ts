@@ -70,9 +70,10 @@ export function createCliMetadataActionDeps(
         });
       }
       const { fetchSessionById } = await import("@/session/transport/http/sessionsHttp");
-      const read = () => fetchSessionById({
+      const read = async () => fetchSessionById({
         reason: 'session-action',
         token: params.token, sessionId: params.sessionId,
+        serverFeaturesSnapshot: await readServerFeaturesSnapshot(),
         ...(context.signal ? { signal: context.signal } : {}),
         resolveAuthorizationHeaders: (request) => resolveServerRequestHeaders(context, 'session.update.post', request),
       });
@@ -160,8 +161,9 @@ export function createCliMetadataActionDeps(
       if (!credentials) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       if (params.serverId !== undefined && serverId != null && !isSameActionHomeId(serverId)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
       const { updateSessionMetadataForTarget } = await import("@/session/services/updateSessionMetadataForTarget");
-      const mutate = () => updateSessionMetadataForTarget({
+      const mutate = async () => updateSessionMetadataForTarget({
         credentials, idOrPrefix: sessionId,
+        serverFeaturesSnapshot: await readServerFeaturesSnapshot(),
         resolveAuthorizationHeaders: (request) => resolveServerRequestHeaders(context, 'session.approval_reviewer.set', request),
         updater: (metadata) => writeSessionApprovalReviewerOverrideV1(metadata, enabled),
       });

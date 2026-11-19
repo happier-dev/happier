@@ -11,7 +11,7 @@ import type { callExactMachineRpc, callMachineRpc } from '@/session/transport/rp
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 export function createCliMemoryActionDeps(
-  params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'serverHttpBaseUrl'>,
+  params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'resolveServerFeaturesSnapshot' | 'serverHttpBaseUrl'>,
   { callMachineAction, isMachineActionServerScopeCurrent, notSupported }: Readonly<{
     callMachineAction: CliMachineActionCall;
     isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent;
@@ -81,6 +81,7 @@ export function createCliMemoryActionDeps(
       const sessionIds = [...new Set(result.hits.flatMap((hit) =>
         isMemorySessionSearchHitV1(hit) ? [hit.sessionId] : [],
       ))];
+      const serverFeaturesSnapshot = sessionIds.length ? await params.resolveServerFeaturesSnapshot?.() : undefined;
       const { fetchSessionById } = await import("@/session/transport/http/sessionsHttp");
       await Promise.all(sessionIds.map(async (sessionId) => {
         try {
@@ -88,6 +89,7 @@ export function createCliMemoryActionDeps(
             reason: 'session-action',
             token: credentials.token,
             sessionId,
+            serverFeaturesSnapshot,
             ...(exactScopeRequired ? { serverUrl } : {}),
             ...(signal ? { signal } : {}),
           });
@@ -132,6 +134,7 @@ export function createCliMemoryActionDeps(
         reason: 'session-action',
         token: params.credentials.token,
         sessionId,
+        serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.(),
         ...(signal ? { signal } : {}),
       });
       const visibleThroughSeq = session?.seq;

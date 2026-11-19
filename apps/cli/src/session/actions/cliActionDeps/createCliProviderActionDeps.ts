@@ -3,6 +3,7 @@ import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/pro
 import { createProviderActionExecuteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
 import { resolveProviderActionRpcEffectV1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import type { CliActionDepsParams } from './types';
 import type { StoredCredentials } from '@/persistence';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -21,6 +22,7 @@ import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/session
 /** Provider Actions share admitted Account custody; only machine effects use exact-Machine RPC. */
 export function createCliProviderActionExecuteV1(params: Readonly<{
   credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string;
+  resolveServerFeaturesSnapshot?: CliActionDepsParams['resolveServerFeaturesSnapshot'];
   operationContext?: SavedSecretOperationContextV1;
   preparedSavedSecret?: Parameters<typeof createCliAccountProviderActionExecuteV1>[0]['preparedSavedSecret'];
   isCredentialCurrent?(): boolean | Promise<boolean>;
@@ -43,7 +45,7 @@ export function createCliProviderActionExecuteV1(params: Readonly<{
     },
     readSessionMetadata: async ({ sessionId }, context) => {
       const target = await resolveSessionTransportContext({ reason: 'session-action', credentials: params.credentials,
-        idOrPrefix: sessionId, exact: true, signal: context.signal });
+        idOrPrefix: sessionId, exact: true, signal: context.signal, serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.() });
       if (!target.ok || readSessionAccessProjectionRoleV1(target.rawSession) !== 'owner') return null;
       return tryDecryptSessionOwnerMetadataView({ credentials: params.credentials,
         accountEncryptionMode: target.accountEncryptionCurrentness.mode, rawSession: target.rawSession });

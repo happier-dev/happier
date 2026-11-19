@@ -65,6 +65,7 @@ export async function setSessionArchivedState(params: Readonly<{
       credentials: params.credentials,
       idOrPrefix: resolved.sessionId,
       stopIntent: 'lifecycle_control',
+      serverFeaturesSnapshot: params.serverFeaturesSnapshot,
       ...(signal ? { signal } : {}),
       ...(params.externalAction ? { externalAction: { ...params.externalAction, effectActionId: 'session.stop',
         context: { ...params.externalAction.context,
@@ -79,6 +80,7 @@ export async function setSessionArchivedState(params: Readonly<{
     result = await archiveSessionOnceInactive({
       token: params.credentials.token,
       sessionId: resolved.sessionId,
+      serverFeaturesSnapshot: params.serverFeaturesSnapshot,
       ...(params.originRunId !== undefined ? { originRunId: params.originRunId } : {}),
       ...(signal ? { signal } : {}),
       ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),

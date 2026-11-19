@@ -990,6 +990,7 @@ type AssistantCompletionObservationParams = Readonly<{
   signal?: AbortSignal;
   resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
   initialSession?: RawSessionRecord;
+  serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
   onAttentionRequired?: (required: boolean) => Promise<void>;
 }>;
 type ReplyObservation = Readonly<{
@@ -1114,6 +1115,7 @@ export async function readSessionInputResult(params: Readonly<{
   credentials: StoredCredentials; serverId?: string; idOrPrefix: string; localId: string;
   projection?: 'reply';
   callerPluginId?: string; signal?: AbortSignal; resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
+  serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
 }>): Promise<SessionInputResultGetResultV1> {
   const localId = readPendingLocalId(params.localId);
   if (!localId) return { ok: false, code: 'invalid_local_id' };
@@ -1479,6 +1481,7 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
       materializedContent: promptDelivery.message.content,
       ctx: sessionTarget.ctx,
       deadlineMs: acceptedDeadlineMs,
+      serverFeaturesSnapshot: params.serverFeaturesSnapshot,
       ...(params.onAttentionRequired ? { initialSession: sessionTarget.rawSession,
         onAttentionRequired: params.onAttentionRequired } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
@@ -2375,6 +2378,7 @@ export async function sendSessionMessage(
         reason: 'session-control',
         token: params.credentials.token,
         sessionId,
+        serverFeaturesSnapshot,
       });
       if (refreshedSession) {
         waitSessionSnapshot = refreshedSession;
@@ -2416,6 +2420,7 @@ export async function sendSessionMessage(
             reason: 'session-control',
             token: params.credentials.token,
             sessionId,
+            serverFeaturesSnapshot,
           });
           const projectedCurrentTurnStatus = readProjectedCurrentTurnStatus({
             session: refreshedSession,
@@ -2449,6 +2454,7 @@ export async function sendSessionMessage(
         reason: 'session-control',
         token: params.credentials.token,
         sessionId,
+        serverFeaturesSnapshot,
       });
       if (refreshedSession) {
         finalSessionSnapshot = refreshedSession;

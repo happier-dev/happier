@@ -590,6 +590,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   };
   const { sessionList, sessionRead, sessionFollowPreview } = params.credentials
     ? createSessionListActionDeps({
+        resolveServerFeaturesSnapshot: readServerFeaturesSnapshot,
         ...(params.isCredentialCurrent ? { isCredentialCurrent: params.isCredentialCurrent } : {}),
         readWorkspaceRefs: async input => {
           const denied = await projectAccountAdmission(input.project?.serverId, input.context);
@@ -1469,6 +1470,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         const read = async () => {
           const { resolveSessionTransportContext } = await import("@/session/services/resolveSessionTransportContext");
           const target = await resolveSessionTransportContext({ reason: 'session-action', credentials: params.credentials!, idOrPrefix: ref.sessionId,
+            serverFeaturesSnapshot: await readServerFeaturesSnapshot(),
             signal: context.signal, resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, 'memory.remember', request) });
           if (!target.ok || target.sessionId !== ref.sessionId) throw Object.assign(new Error('session_target_unavailable'), { code: 'session_target_unavailable' });
           // Legacy metadata is readable by recipients too. Only an explicit
@@ -1690,6 +1692,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     ...inventoryDeps,
     ...(params.credentials && approvalsStore ? createCliSessionCapabilitiesActionDeps({ credentials: params.credentials,
       serverId: params.serverId ?? configuration.activeServerId, serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+      resolveServerFeaturesSnapshot: readServerFeaturesSnapshot,
       operationContext: params.savedSecretOperationContext,
       skillRulesForContext: context => skillRulesForContext(context, 'session.capabilities.set') ?? approvalsStore.skillRules,
       callMachineAction,
@@ -1936,6 +1939,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         reason: 'session-action',
         credentials: params.credentials,
         idOrPrefix: sessionId,
+        serverFeaturesSnapshot: await readServerFeaturesSnapshot(),
         resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, actionId, request),
         ...(context.signal ? { signal: context.signal } : {}),
       });

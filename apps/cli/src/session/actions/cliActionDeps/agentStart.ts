@@ -14,7 +14,7 @@ import { readPreparedAccountRoleOverrides } from '@/session/roles/sessionRoleCon
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 export function createCliAgentStartContext(
-  params: Pick<CliActionDepsParams, 'actionsSettingsProvider' | 'credentials' | 'getAgentStartRunCaller' | 'getCurrentAppliedChildSelection' | 'getCurrentTurnWorkDepth' | 'getSessionRoleContext' | 'readAgentStartPolicy' | 'savedSecretOperationContext' | 'sessionId' | 'token' | 'workflowStepRoleDefaultEngine'>,
+  params: Pick<CliActionDepsParams, 'actionsSettingsProvider' | 'credentials' | 'getAgentStartRunCaller' | 'getCurrentAppliedChildSelection' | 'getCurrentTurnWorkDepth' | 'getSessionRoleContext' | 'readAgentStartPolicy' | 'resolveServerFeaturesSnapshot' | 'savedSecretOperationContext' | 'sessionId' | 'token' | 'workflowStepRoleDefaultEngine'>,
   { prepareAccountRoleOverrides, readReadyAccountRoleOverrides, readRoleSources, resolveActionCallerSession, readWorkflowActionStartContext }: Readonly<{
     prepareAccountRoleOverrides: (signal?: AbortSignal) => Promise<void>;
     readReadyAccountRoleOverrides: (signal?: AbortSignal) => ReturnType<typeof readPreparedAccountRoleOverrides>;
@@ -62,7 +62,8 @@ export function createCliAgentStartContext(
     if (starterDepth === undefined && !runCaller) {
       try {
         const { fetchSessionById } = await import("@/session/transport/http/sessionsHttp");
-        const persisted = await fetchSessionById({ reason: 'session-action', token: params.token, sessionId: session.sessionId });
+        const persisted = await fetchSessionById({ reason: 'session-action', token: params.token, sessionId: session.sessionId,
+          serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.() });
         if (persisted && 'workDepth' in persisted) starterDepth = persisted.workDepth;
       } catch { return refuse('caller_depth_unavailable'); }
     }

@@ -70,11 +70,13 @@ async function readSessionInactive(params: Readonly<{
   sessionId: string;
   signal?: AbortSignal;
   resolveAuthorizationHeaders?: Parameters<typeof fetchSessionByIdCompat>[0]['resolveAuthorizationHeaders'];
+  serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
 }>): Promise<boolean | null> {
   const session = await fetchSessionByIdCompat({
     reason: 'session-control',
     token: params.token,
     sessionId: params.sessionId,
+    serverFeaturesSnapshot: params.serverFeaturesSnapshot,
     ...(params.signal ? { signal: params.signal } : {}),
     ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
   }).catch((error: unknown) => {
@@ -86,13 +88,9 @@ async function readSessionInactive(params: Readonly<{
   return session ? session.active === false : null;
 }
 
-async function stopOutcomeFromAttemptResult(params: Readonly<{
+async function stopOutcomeFromAttemptResult(params: Parameters<typeof readSessionInactive>[0] & Readonly<{
   result: Exclude<StopSessionAttemptResult, { status: 'stopped' }>;
-  token: string;
-  sessionId: string;
   targetKind?: 'caller_local' | 'owning_machine';
-  signal?: AbortSignal;
-  resolveAuthorizationHeaders?: Parameters<typeof fetchSessionByIdCompat>[0]['resolveAuthorizationHeaders'];
 }>): Promise<SessionStopOutcome> {
   const { result } = params;
   if (result.status === 'incomplete') {
@@ -223,12 +221,7 @@ async function stopSessionOnOwningMachine(params: Readonly<{
   }
 }
 
-async function waitForSessionStopResult(params: Readonly<{
-  token: string;
-  sessionId: string;
-  signal?: AbortSignal;
-  resolveAuthorizationHeaders?: Parameters<typeof fetchSessionByIdCompat>[0]['resolveAuthorizationHeaders'];
-}>): Promise<boolean> {
+async function waitForSessionStopResult(params: Parameters<typeof readSessionInactive>[0]): Promise<boolean> {
   // A fresh inactive row already satisfies this owner's predicate. Open the
   // event transport only when a later observation is actually necessary.
   if (await readSessionInactive(params) === true) return true;
@@ -511,6 +504,7 @@ export async function requestSessionStop(params: Readonly<{
             result: physicalStopResult,
             token: params.credentials.token,
             sessionId: resolved.sessionId,
+            serverFeaturesSnapshot: params.serverFeaturesSnapshot,
             targetKind: 'owning_machine',
             ...(signal ? { signal } : {}),
             ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
@@ -521,6 +515,7 @@ export async function requestSessionStop(params: Readonly<{
       const stopped = await runTracedExternalActionStage(actionId, traceRequestId, 'stop.inactive_projection', () => waitForSessionStopResult({
         token: params.credentials.token,
         sessionId: resolved.sessionId,
+        serverFeaturesSnapshot: params.serverFeaturesSnapshot,
         ...(signal ? { signal } : {}),
         ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
       }));
@@ -584,6 +579,7 @@ export async function requestSessionStop(params: Readonly<{
           result: physicalStopResult,
           token: params.credentials.token,
           sessionId: resolved.sessionId,
+          serverFeaturesSnapshot: params.serverFeaturesSnapshot,
           ...(signal ? { signal } : {}),
         }),
       };
@@ -592,6 +588,7 @@ export async function requestSessionStop(params: Readonly<{
     const stopped = await waitForSessionStopResult({
       token: params.credentials.token,
       sessionId: resolved.sessionId,
+      serverFeaturesSnapshot: params.serverFeaturesSnapshot,
       ...(signal ? { signal } : {}),
     });
     if (stopped) {

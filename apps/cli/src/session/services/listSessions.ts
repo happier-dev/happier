@@ -2,6 +2,7 @@ import { createExternalActionHeaderRefusalError } from '@/api/externalActionHead
 import type { VendorResumeEligibilityReasonCode } from '@happier-dev/agents';
 import type { AccountSettings } from '@happier-dev/protocol';
 
+import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { StoredCredentials } from '@/persistence';
 import { summarizeSessionRow, type SessionSummary } from '@/cli/output/session/sessionSummary';
 import { buildCliSessionRowModel, type CliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
@@ -158,11 +159,13 @@ async function loadLastMessagePreview(params: Readonly<{
   /** Already-bound Home Account snapshot for proof-bound Action execution. */
   accountSettings?: AccountSettings | null;
   sessionId: string;
+  serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
   resolveAuthorizationHeaders?: ListSessionsParams['resolveAuthorizationHeaders'];
 }>): Promise<ListSessionsLastMessagePreview | undefined> {
   try {
     const res = await getSessionTranscript({
       credentials: params.credentials,
+      serverFeaturesSnapshot: params.serverFeaturesSnapshot,
       ...(params.resolveAuthorizationHeaders
         ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
         : {}),
@@ -188,6 +191,7 @@ async function readAdmittedSessionsPage(params: Readonly<{
   token: string;
   sessionIds: readonly string[];
   query?: SessionListQueryV1;
+  serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
   resolveAuthorizationHeaders?: ListSessionsParams['resolveAuthorizationHeaders'];
   signal?: AbortSignal;
 }>): Promise<Readonly<{
@@ -204,6 +208,7 @@ async function readAdmittedSessionsPage(params: Readonly<{
     reason: 'session-query',
     token: params.token,
     sessionId,
+    serverFeaturesSnapshot: params.serverFeaturesSnapshot,
     ...(params.resolveAuthorizationHeaders
       ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
       : {}),
@@ -232,6 +237,7 @@ type ListSessionsParams = Readonly<{
   credentials: StoredCredentials;
   /** Already-bound Account snapshot; external Actions must not fetch Account-wide settings. */
   accountSettings?: AccountSettings | null;
+  serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
   resolveAuthorizationHeaders?: (request: Readonly<{
     method: 'GET' | 'POST'; path: string; body?: unknown;
   }>) => Readonly<Record<string, string>> | null;
@@ -276,6 +282,7 @@ export async function listSessions(params: ListSessionsParams): Promise<ListSess
       ? readAdmittedSessionsPage({
           token: params.credentials.token,
           sessionIds: [...allowedSessionIds],
+          serverFeaturesSnapshot: params.serverFeaturesSnapshot,
           ...(params.query ? { query: params.query } : {}),
           ...(params.resolveAuthorizationHeaders
             ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
@@ -519,6 +526,7 @@ export async function listSessions(params: ListSessionsParams): Promise<ListSess
       await loadLastMessagePreview({
         credentials: params.credentials,
         sessionId: session.id,
+        serverFeaturesSnapshot: params.serverFeaturesSnapshot,
         ...(params.resolveAuthorizationHeaders
           ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
           : {}),

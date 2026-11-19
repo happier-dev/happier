@@ -322,6 +322,7 @@ export function createCliSessionLifecycleActionDeps(
       const effectActionId = archived ? 'session.archive' : 'session.unarchive';
       const { setSessionArchivedState } = await import("@/session/services/setSessionArchivedState");
       return await setSessionArchivedState({ credentials: params.credentials, sessionId, archived: archived === true,
+        serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.(),
         ...(archived && context?.actionCaller?.kind === 'workflowRun' ? { originRunId: context.actionCaller.runId } : {}),
         ...(context?.signal ? { signal: context.signal } : {}),
         resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, effectActionId, request),

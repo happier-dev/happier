@@ -5,6 +5,7 @@ import { readCapabilityLaunchRestartFromMetadataV1 } from '@happier-dev/protocol
 import { readPendingCapabilityApplyV1, readCapabilitySelectionApplyV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import type { SkillRulesActionPortV1 } from '@happier-dev/protocol/prompts/library/skillRulesActionsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { CliActionDepsParams } from './types';
 import type { StoredCredentials } from '@/persistence';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -25,6 +26,7 @@ type CapabilityDeps = Pick<ActionExecutorDeps, 'sessionCapabilities' | 'sessionC
 /** Account selection writes and exact-machine previews retain the invocation's captured Home. */
 export function createCliSessionCapabilitiesActionDeps(params: Readonly<{
   credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string;
+  resolveServerFeaturesSnapshot?: CliActionDepsParams['resolveServerFeaturesSnapshot'];
   operationContext?: SavedSecretOperationContextV1;
   skillRulesForContext: (context: ActionExecutorContext) => SkillRulesActionPortV1;
   resolveAuthorizationHeaders: (actionId: 'session.capabilities.set' | 'session.capabilities.get', context: ActionExecutorContext, request: Readonly<{
@@ -39,7 +41,8 @@ export function createCliSessionCapabilitiesActionDeps(params: Readonly<{
     context.signal?.throwIfAborted();
     if (context.serverId && !await isServerProfileHomeIdentity(params.serverId, context.serverId)) return null;
     const [{ resolveSessionTransportContext }, { tryDecryptSessionOwnerMetadataView }] = await Promise.all([import("@/session/services/resolveSessionTransportContext"), import("@/session/transport/encryption/sessionEncryptionContext")]);
-    const transport = await withinHome(() => resolveSessionTransportContext({ reason: 'session-action', credentials: params.credentials, idOrPrefix: sessionId,
+    const transport = await withinHome(async () => resolveSessionTransportContext({ reason: 'session-action', credentials: params.credentials, idOrPrefix: sessionId,
+      serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.(),
       resolveAuthorizationHeaders: request => params.resolveAuthorizationHeaders(actionId, context, request), signal: context.signal }));
     if (!transport.ok) {
       if (transport.code === 'session_not_found') return null;
@@ -151,6 +154,7 @@ export function createCliSessionCapabilitiesActionDeps(params: Readonly<{
         const { updateSessionMetadataForTarget } = await import("@/session/services/updateSessionMetadataForTarget");
         result = await updateSessionMetadataForTarget({ credentials: params.credentials, idOrPrefix: input.sessionId,
           expectedSessionId: input.sessionId,
+          serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.(),
           currentness: { signal: context.signal },
           resolveAuthorizationHeaders: request => params.resolveAuthorizationHeaders('session.capabilities.set', context, request),
           updater: metadata => ({ ...input.update(metadata) }) }); }

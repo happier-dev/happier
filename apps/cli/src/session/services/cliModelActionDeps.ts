@@ -26,7 +26,8 @@ export function createCliSessionModelActionDeps(
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
       const { setSessionModel } = await import("@/session/services/setSessionModel");
-      const mutate = () => setSessionModel({ credentials: params.credentials!, idOrPrefix: sessionId, serverId: projectHomeId, unarm: true,
+      const mutate = async () => setSessionModel({ credentials: params.credentials!, idOrPrefix: sessionId, serverId: projectHomeId, unarm: true,
+        serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.(),
         ...(externalRequest ? { resolveAuthorizationHeaders } : {}),
         ...(externalRequest && params.externalActionMachineInstallationId && params.externalActionMachineRequestPrivateKey ? {
           externalAction: { context, effectActionId: 'session.model.unarm', installationId: params.externalActionMachineInstallationId,
@@ -55,8 +56,9 @@ export function createCliSessionModelActionDeps(
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
       const { setSessionModel } = await import("@/session/services/setSessionModel");
-      const mutate = () => setSessionModel({
+      const mutate = async () => setSessionModel({
         credentials,
+        serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.(),
         idOrPrefix: sessionId,
         serverId: projectHomeId,
         ...(applyTiming ? { applyTiming } : {}),

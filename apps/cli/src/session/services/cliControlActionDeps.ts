@@ -232,6 +232,7 @@ export function createCliControlActionDeps(
       }
       const { requestSessionStop } = await import("@/session/services/requestSessionStop");
       return await requestSessionStop({ credentials: params.credentials, idOrPrefix: sessionId, stopIntent,
+        serverFeaturesSnapshot: await readServerFeaturesSnapshot(),
         invokeMachineRpc: request => callMachineAction({ machineId: request.machineId, method: request.method,
           request: request.request, requestId: request.requestId, timeoutMs: request.timeoutMs,
           ...(request.authorization ? { authorization: request.authorization } : {}),

@@ -190,6 +190,7 @@ export function createCliSessionStatusActionDeps(
 	        credentials: params.credentials,
 	        idOrPrefix: sessionId,
 	        timeoutMs: Math.max(1, Math.floor(normalizedTimeoutSeconds * 1000)),
+	        serverFeaturesSnapshot: await readServerFeaturesSnapshot(),
 	        ...(signal ? { signal } : {}),
 	      });
 	    },

@@ -3,7 +3,7 @@ import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/pro
 import type { getSessionEvents } from '@/session/services/getSessionEvents';
 import type { getSessionTranscript } from '@/session/services/getSessionTranscript';
 export function createCliTranscriptActionDeps(
-  params: Pick<CliActionDepsParams, 'credentials'>,
+  params: Pick<CliActionDepsParams, 'credentials' | 'resolveServerFeaturesSnapshot'>,
   { resolveServerRequestHeaders }: Readonly<{
     resolveServerRequestHeaders: (context: ActionExecutorContext | undefined, effectActionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
   }>,
@@ -22,6 +22,7 @@ export function createCliTranscriptActionDeps(
 	      const { getSessionEvents } = await import("@/session/services/getSessionEvents");
 	      return await getSessionEvents({
 	        credentials: params.credentials,
+	        serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.(),
 	        idOrPrefix: sessionId,
 	        limit: normalizedLimit,
 	        format: normalizedFormat,
@@ -34,6 +35,7 @@ export function createCliTranscriptActionDeps(
       if (!params.credentials) return { ok: false, code: 'result_read_failed' };
       const { readSessionInputResult } = await import('@/session/services/sendSessionMessage');
       return readSessionInputResult({ credentials: params.credentials, idOrPrefix: sessionId, localId,
+        serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.(),
         ...(projection ? { projection } : {}),
         ...(callerPluginId ? { callerPluginId } : {}), ...(serverId ? { serverId } : {}), ...(signal ? { signal } : {}),
         resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context,
@@ -77,6 +79,7 @@ export function createCliTranscriptActionDeps(
       const { getSessionTranscript } = await import("@/session/services/getSessionTranscript");
       return await getSessionTranscript({
         credentials: params.credentials,
+        serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.(),
         resolveAuthorizationHeaders,
         idOrPrefix: sessionId,
         ...(messageId !== undefined ? { messageId } : {}),
@@ -122,6 +125,7 @@ export function createCliTranscriptActionDeps(
       const { getSessionEvents } = await import("@/session/services/getSessionEvents");
       return await getSessionEvents({
         credentials: params.credentials,
+        serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.(),
         idOrPrefix: sessionId,
         ...(typeof limit === 'number' ? { limit } : {}),
         ...(cursor !== undefined ? { cursor } : {}),
@@ -146,6 +150,7 @@ export function createCliTranscriptActionDeps(
       const { getSessionTranscript } = await import("@/session/services/getSessionTranscript");
       return await getSessionTranscript({
         credentials: params.credentials,
+        serverFeaturesSnapshot: await params.resolveServerFeaturesSnapshot?.(),
         idOrPrefix: sessionId,
         ...(typeof limit === 'number' ? { limit } : {}),
         ...(Object.prototype.hasOwnProperty.call({ cursor }, 'cursor') ? { cursor: cursor ?? null } : {}),

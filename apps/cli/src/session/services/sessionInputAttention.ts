@@ -8,6 +8,7 @@ export function createSessionInputAttentionObserver(params: Readonly<{
   sessionId: string;
   initialSession?: RawSessionRecord;
   signal?: AbortSignal;
+  serverFeaturesSnapshot?: Parameters<typeof fetchSessionById>[0]['serverFeaturesSnapshot'];
   resolveAuthorizationHeaders?: Parameters<typeof fetchSessionById>[0]['resolveAuthorizationHeaders'];
   onAttentionRequired: (required: boolean) => Promise<void>;
 }>) {
@@ -32,7 +33,8 @@ export function createSessionInputAttentionObserver(params: Readonly<{
         const beforeRead = pendingRequests;
         try {
           const session = await fetchSessionById({ reason: 'session-control', token: params.token,
-            sessionId: params.sessionId, ...(params.signal ? { signal: params.signal } : {}),
+            sessionId: params.sessionId, serverFeaturesSnapshot: params.serverFeaturesSnapshot,
+            ...(params.signal ? { signal: params.signal } : {}),
             ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}) });
           // A push received during the snapshot read owns the newer counts.
           if (session && pendingRequests === beforeRead) pendingRequests = {

@@ -10,6 +10,7 @@ export async function archiveSessionOnceInactive(params: Readonly<{
   originRunId?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  serverFeaturesSnapshot?: Parameters<typeof fetchSessionByIdCompat>[0]['serverFeaturesSnapshot'];
   resolveAuthorizationHeaders?: Parameters<typeof resolveSessionIdOrPrefix>[0]['resolveAuthorizationHeaders'];
 }>): Promise<Readonly<{ archivedAt: number | null }>> {
   params.signal?.throwIfAborted();
@@ -42,6 +43,7 @@ export async function archiveSessionOnceInactive(params: Readonly<{
         reason: 'session-control',
         token: params.token,
         sessionId: params.sessionId,
+        serverFeaturesSnapshot: params.serverFeaturesSnapshot,
         ...(params.signal ? { signal: params.signal } : {}),
         ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
       }).catch(() => { params.signal?.throwIfAborted(); return null; });

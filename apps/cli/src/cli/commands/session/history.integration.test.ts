@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
-import { createAccountEncryptionCurrentnessFixture, createCompactSessionListQueryResponseFixture, createSessionNotificationContextFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createCompactSessionListQueryResponseFixture, createCurrentSessionProjectionRecordFixture, createSessionNotificationContextFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { SessionMessagesPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
+import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 import {
@@ -13,6 +14,10 @@ import {
 } from '@happier-dev/protocol';
 
 describe('happier session history (integration)', () => {
+  const memberToken = 'team_recipient';
+  const memberMachineKey = new Uint8Array(32).fill(11);
+  const memberPublicKey = deriveBoxPublicKeyFromSeed(memberMachineKey);
+  const sessionId = 'sess_integration_history_123';
   const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR'] as const;
   let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
@@ -21,7 +26,6 @@ describe('happier session history (integration)', () => {
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-history-');
 
-    const sessionId = 'sess_integration_history_123';
     const dek = new Uint8Array(32).fill(3);
     const machineKeySeed = new Uint8Array(32).fill(8);
     const recipientPublicKey = deriveBoxPublicKeyFromSeed(machineKeySeed);
@@ -137,8 +141,31 @@ describe('happier session history (integration)', () => {
       attentionNextCursor: null, attentionHasNext: false,
     });
 
+    const teamSession = createCurrentSessionProjectionRecordFixture({
+      ...sessionRow,
+      encryptionMode: 'e2ee',
+      metadataLayoutVersion: 1,
+      share: undefined,
+      dataEncryptionKey: encodeBase64Session(sealEncryptedDataKeyEnvelopeV1({
+        dataKey: dek,
+        recipientPublicKey: memberPublicKey,
+        randomBytes: length => new Uint8Array(length).fill(12),
+      }), 'base64'),
+      effectiveAccess: {
+        v: 1, level: 'edit', sources: [{ kind: 'team', teamId: 'team', requiredByTeamPolicy: false }],
+        capabilities: projectSessionAccessCapabilitiesV1({ owner: false,
+          grants: [{ accessLevel: 'edit', canApprovePermissions: false }] }),
+      },
+    });
+
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      const teamMember = req.headers.authorization === `Bearer ${memberToken}`;
+      if (req.method === 'GET' && url.pathname === '/v1/features/authenticated' && teamMember) {
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ features: { sharing: { session: { enabled: true } } }, capabilities: {} }));
+        return;
+      }
       if (req.method === 'POST' && url.pathname === '/v2/sessions/lookup-by-tags') {
         req.resume();
         res.statusCode = 200;
@@ -156,7 +183,7 @@ describe('happier session history (integration)', () => {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(
-          JSON.stringify(sessionListResponse),
+          JSON.stringify(teamMember ? { ...sessionListResponse, sessions: [] } : sessionListResponse),
         );
         return;
       }
@@ -167,11 +194,16 @@ describe('happier session history (integration)', () => {
         return;
       }
       if (req.method === 'GET' && url.pathname === `/v2/sessions/${sessionId}`) {
+        if (teamMember && url.searchParams.get('accessProjectionVersion') !== '1') {
+          res.statusCode = 404;
+          res.end();
+          return;
+        }
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(
           JSON.stringify({
-            session: sessionRow,
+            session: teamMember ? teamSession : sessionRow,
           }),
         );
         return;
@@ -401,6 +433,26 @@ describe('happier session history (integration)', () => {
             },
           }),
         }),
+      }));
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('decrypts history when a Team grant is the only Session access', async () => {
+    const { handleSessionCommand } = await import('./index');
+    const output = captureConsoleJsonOutput();
+    try {
+      await handleSessionCommand(['history', sessionId, '--limit', '10', '--json'], {
+        readCredentialsFn: async () => ({
+          token: memberToken,
+          encryption: { type: 'dataKey', machineKey: memberMachineKey, publicKey: memberPublicKey },
+        }),
+      });
+      const parsed = output.json();
+      expect(parsed.ok, JSON.stringify(parsed)).toBe(true);
+      expect(parsed.data?.messages).toContainEqual(expect.objectContaining({
+        seq: 5, role: 'agent', text: 'CODEX_LUNA_LOW_READY',
       }));
     } finally {
       output.restore();
