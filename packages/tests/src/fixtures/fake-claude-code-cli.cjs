@@ -1336,6 +1336,13 @@ async function runSdkStreamUntilEof() {
     const sessionActionIndex = promptText.indexOf(sessionActionMarker);
     if (sessionActionIndex >= 0) {
       const request = JSON.parse(promptText.slice(sessionActionIndex + sessionActionMarker.length).trim());
+      const toolUseId = randomUUID();
+      const proposal = createAssistantMessage([{ type: 'tool_use', id: toolUseId,
+        name: 'mcp__happier__action_execute', input: { actionId: request.actionId, input: request.input } }]);
+      proposal.message.stop_reason = 'tool_use';
+      // Native model readback comes from the causing assistant packet. A tool
+      // cannot precede that packet, as it did in this fixture's first MCP turn.
+      emitSdk(proposal);
       const { tsImport } = require('tsx/esm/api');
       const { executeSessionMcpAction } = await tsImport(
         path.resolve(__dirname, '../../../../apps/cli/src/cli/commands/toolsSessionMcp.ts'),
@@ -1345,6 +1352,8 @@ async function runSdkStreamUntilEof() {
       const result = await executeSessionMcpAction(request.actionId, request.input);
       safeAppendJsonl(logPath, { type: 'session_mcp_action_result', invocationId,
         requestId: request.requestId, result, pid: process.pid, ts: Date.now() });
+      emitSdk(createUserMessage([{ type: 'tool_result', tool_use_id: toolUseId,
+        content: JSON.stringify(result), is_error: !result.ok }]));
       emitSdk(createAssistantMessage([{ type: 'text', text: `FAKE_CLAUDE_OK_${turn}` }]));
       emitSdk(createResultSuccess());
       continue;

@@ -22,6 +22,36 @@ function parseJsonLines(raw: string): any[] {
 }
 
 describe('fake Claude CLI fixture', () => {
+  it('publishes the causing assistant model and tool use before executing a Session MCP Action', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-mcp-order-'));
+    try {
+      const fixture = await createIsolatedFakeClaudeControlShim({ testDir: dir,
+        invocationId: 'mcp-event-order', captureEnvironmentKeys: [], logFullStdin: false });
+      const request = { requestId: 'mcp-order-request', actionId: 'actions.policy.get', input: { profiles: true } };
+      const input = JSON.stringify({ type: 'message', message: { role: 'user', content: [
+        { type: 'text', text: `SESSION_MCP_ACTION_JSON:${JSON.stringify(request)}` },
+      ] } });
+      const env = { ...process.env };
+      delete env.HAPPIER_SESSION_MCP_CONTEXT_FILE;
+      const result = spawnSync(process.execPath, [fixture.executablePath,
+        '--output-format', 'stream-json', '--input-format', 'stream-json'], {
+        cwd: dir, env, input: `${input}\n`, encoding: 'utf8',
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const events = parseJsonLines(await readFile(fixture.logPath, 'utf8'));
+      const invocation = events.findIndex(event => event.type === 'session_mcp_action_result'
+        && event.requestId === request.requestId);
+      expect(invocation).toBeGreaterThanOrEqual(0);
+      expect(events.slice(0, invocation)).toContainEqual(expect.objectContaining({
+        type: 'sdk_stdout', messageType: 'assistant',
+      }));
+      expect(parseJsonLines(result.stdout).find(event => event.type === 'assistant')).toMatchObject({
+        message: { model: 'fake-claude', content: [{ type: 'tool_use',
+          name: 'mcp__happier__action_execute', input: { actionId: request.actionId, input: request.input } }] },
+      });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('uses scenario-owned controls when the parent fake-control environment is filtered', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-shim-'));
     try {

@@ -122,8 +122,9 @@ describe('Shared approval profiles: recipients', () => {
     expect(session.type).toBe('success');
     if (session.type !== 'success') throw new Error('Shared-profile Session did not start');
     expect((await recipient.readSessionMetadata(session.sessionId)).approvalProfileId).toBe(profile.id);
-    expect(await recipient.executeReviewed('actions.policy.set', { profileChange: { kind: 'update', id: profile.id,
-      expectedRevision: profile.revision, profile: { name: 'Recipient rewrite' } } })).toMatchObject({
+    expect(await recipient.executeWithApproval('actions.policy.set', { profileChange: { kind: 'update', id: profile.id,
+      expectedRevision: profile.revision, profile: { name: 'Recipient rewrite' } } }, artifactId =>
+      ui!.executeConfirmed('approval.request.decide', { artifactId, decision: 'approve' }, context))).toMatchObject({
       ok: false, errorCode: 'forbidden',
     });
     expect(await ui!.executeConfirmed('actions.policy.set', { profileChange: { kind: 'update', id: profile.id,
