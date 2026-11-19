@@ -9,6 +9,21 @@ function listOverrides(...args: Parameters<typeof buildCodexAppServerConfigOverr
 }
 
 describe('buildCodexAppServerConfigOverrides', () => {
+    it('preserves native image generation for an unrestricted Create-a-pet skill delivery', () => {
+        // Create-a-pet includes hatch-pet without an allowedTools/unlistedTools policy.
+        const overrides = listOverrides({}, {
+            skills: {
+                pluginRoot: '/session-skills',
+                skillsRoot: '/session-skills/skills',
+                items: [{ name: 'hatch-pet', skillId: 'happier:hatch-pet', digest: 'hatch-pet-digest',
+                    directory: '/session-skills/skills/hatch-pet' }],
+                nativeDisables: [],
+            },
+        });
+
+        expect(overrides.some(override => override.startsWith('features.image_generation='))).toBe(false);
+    });
+
     it.each(['no_tools', 'read_only'] as const)('projects normalized %s Run configuration into native launch restrictions', (permissionMode) => {
         const configuration = permissionMode === 'no_tools'
             ? { allowedTools: [], unlistedTools: 'deny' as const }
@@ -51,6 +66,7 @@ describe('buildCodexAppServerConfigOverrides', () => {
         expect(overrides).toEqual(expect.arrayContaining([
             'features.shell_tool=false',
             'features.view_image=false',
+            'features.image_generation=false',
             'features.apps=false',
             'features.multi_agent=false',
             'features.multi_agent_v2=false',
