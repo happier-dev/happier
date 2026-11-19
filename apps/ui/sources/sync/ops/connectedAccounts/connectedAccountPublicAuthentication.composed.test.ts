@@ -272,20 +272,32 @@ it.each([
         modeIds: inventories.antigravity.modeIds, machineModeIds: ['native-import'], declarationLoads: 0, beginStatus: 'awaitingOAuth' },
     { provider: 'Codex', service: inventories.codex.service, defaultModeId: inventories.codex.modeId,
         modeIds: inventories.codex.modeIds, machineModeIds: ['native-import'], declarationLoads: 0, beginStatus: 'awaitingOAuth' },
-    { provider: 'Vercel', service: inventories.vercel, defaultModeId: 'token', modeIds: ['token'], declarationLoads: 0 },
+    { provider: 'Vercel', service: inventories.vercel, defaultModeId: 'oauth', modeIds: ['oauth', 'token'], declarationLoads: 0,
+        beginStatus: 'starting', publicClient: 'fixture-vercel-client' },
 ])('demands $provider Account authentication through the service description wrapper', async testCase => {
-    const { service, defaultModeId, modeIds, declarationLoads } = testCase;
+    const { service, defaultModeId, modeIds, declarationLoads, publicClient } = testCase;
     const priorDeclarationLoads = coldDeclarationLoads;
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const { replacePluginAccountAvailabilityProjection, readPluginAccountAvailability } = await import('@/sync/domains/plugins/availability/projection');
     const { createPluginUiCommonJsLoaderBackend } = await import('@/components/plugins/reactNative/commonJsLoaderBackend');
-    const { describeConnectedAccountAuthenticationService } = await import('./connectedAccountDaemon');
+    const { describeConnectedAccountAuthenticationService, runConnectedAccountAuthenticationAction } = await import('./connectedAccountDaemon');
     const { QualifiedConnectedAccountListResponseV4Schema } = await import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4');
     const accountId = 'public-auth-cold';
     const credentials = { token: createAccountTokenForTests(accountId) };
     const url = 'https://public-auth-cold.test';
     const serverId = await homes.addHome({ name: 'Cold public authentication', serverUrl: url,
         accountId, credentials, accountEncryptionMode: 'plain' });
+    if (publicClient !== undefined) {
+        const baseline = createRootLayoutFeaturesResponse();
+        const features = createRootLayoutFeaturesResponse({ capabilities: {
+            server: { webappUrl: url },
+            connectedServices: { ...baseline.capabilities.connectedServices, publicOAuthClients: [{
+                service, clientId: publicClient, scopesByMode: { oauth: ['openid', 'offline_access'] },
+            }] },
+        } });
+        homes.answer(serverId, '/v1/features', { body: features });
+        homes.answer(serverId, '/v1/features/authenticated', { body: features });
+    }
     homes.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
     const bootstrapMachineRead = createDeferred<void>();
     let machineReads = 0;
@@ -378,6 +390,21 @@ it.each([
         const result = begin.ok && begin.result && typeof begin.result === 'object' ? begin.result : {};
         expect({ ok: begin.ok, status: 'status' in result ? result.status : undefined,
             ...('code' in result ? { code: result.code } : {}) }).toEqual({ ok: true, status: testCase.beginStatus });
+        if (publicClient !== undefined) {
+            if (!('attemptId' in result) || typeof result.attemptId !== 'string') throw new Error('Missing Vercel OAuth attempt');
+            const attemptId = result.attemptId;
+            const read = () => runConnectedAccountAuthenticationAction({ serverId, expectedAccountId: accountId,
+                command: { operation: 'read', attemptId } });
+            await expect.poll(async () => (await read()).status).toBe('awaitingOAuth');
+            const pending = await read();
+            if (pending.status !== 'awaitingOAuth' || !pending.authorizationUrl) throw new Error('Missing Vercel authorize URL');
+            const authorize = new URL(pending.authorizationUrl);
+            expect(`${authorize.origin}${authorize.pathname}`).toBe('https://vercel.com/oauth/authorize');
+            expect(authorize.searchParams.get('client_id')).toBe(publicClient);
+            expect(authorize.searchParams.get('redirect_uri')).toBe(`${url}/oauth/connected-account/callback`);
+            expect(authorize.searchParams.get('code_challenge_method')).toBe('S256');
+            expect(transactions.get(attemptId)?.scope.phase).toBe('awaitingOAuth');
+        }
         expect([...transactions.values()].map(value => value.scope.machineId)).toEqual([undefined]);
     }
     expect(vendorRequests).toBe(0);

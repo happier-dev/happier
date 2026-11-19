@@ -207,6 +207,32 @@ describe('ConnectedAccountConfigurationOwner', () => {
         expect(resumed.mode.configuration?.fields.map(field => field.id)).toEqual(['accountId', 'clientId']);
     });
 
+    it('admits and restores an attempt with only deferred fields until stored configuration replaces its basis', async () => {
+        const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({
+            id: 'browser', kind: 'oauthAuthorizationCode', pkce: 'required', outcomeReconciliation: 'none',
+            postAuthenticationFieldIds: ['accountId'],
+            configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
+                { id: 'accountId', title: 'Account', schema: { type: 'string' } },
+            ] },
+        });
+        const target = { kind: 'attempt' as const, attemptId: 'deferred-attempt', service, modeId: mode.id };
+        const { owner, setRecord } = createHarness([]);
+        const input = { intent: 'connect' as const, service, mode, attemptId: target.attemptId, ...generation };
+
+        const view = await owner.inspect({ target, mode, ...generation });
+        expect(view).toMatchObject({ status: 'ready', revision: null });
+        expect(PluginConnectedAccountAuthenticationModeV2Schema.safeParse(view.mode).success).toBe(true);
+        const admitted = await owner.admit(input);
+        if (admitted.status !== 'ready') throw new Error(`Unexpected admission: ${admitted.status}`);
+        const restore = () => owner.admit({ ...input, expectedConfigurationRevision: admitted.snapshot.revision });
+        await expect(restore()).resolves.toMatchObject({ status: 'ready' });
+        await expect(owner.isCurrent(admitted.snapshot)).resolves.toBe(true);
+
+        setRecord(target, { revision: 'picked-account', values: { accountId: 'selected' }, secretRefs: {} });
+        await expect(restore()).resolves.toMatchObject({ status: 'conflict', code: 'connected_account_configuration_changed' });
+        await expect(owner.isCurrent(admitted.snapshot)).resolves.toBe(false);
+    });
+
     it.each([false, true])('resolves Home client configuration once per owner operation (configured=%s)', async (configured) => {
         const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({
             id: 'browser', kind: 'oauthAuthorizationCode', callbackUrl: 'https://provider.example/callback',

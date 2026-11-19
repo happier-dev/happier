@@ -31,6 +31,7 @@ type ConnectedAccountModeConfiguration =
 type ConnectedAccountConfigurationField =
     NonNullable<ConnectedAccountModeConfiguration>['fields'][number];
 type PublicOAuthClient = Awaited<ReturnType<NonNullable<PluginConnectedAccountRuntimeConfiguration['getPublicOAuthClient']>>>;
+const UNCONFIGURED_REVISION = 'unconfigured';
 
 export type ConnectedAccountConfigurationTarget =
     PluginConnectedAccountRuntimeConfiguration['target'];
@@ -701,18 +702,15 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 },
             };
         }
-        const deferredFields = mode.kind === 'oauthAuthorizationCode' ? mode.postAuthenticationFieldIds : undefined;
-        const displayMode = mode.kind === 'oauthAuthorizationCode' && target.kind === 'attempt'
-            && deferredFields?.length && mode.configuration
-            ? {
-                ...mode,
-                postAuthenticationFieldIds: [],
-                configuration: {
-                    ...mode.configuration,
-                    fields: mode.configuration.fields.filter(field => !deferredFields.includes(field.id)),
-                },
-            }
-            : mode;
+        let displayMode: PluginConnectedAccountAuthenticationModeV2 = mode;
+        if (mode.kind === 'oauthAuthorizationCode' && target.kind === 'attempt'
+            && mode.configuration && mode.postAuthenticationFieldIds?.length) {
+            const { configuration, postAuthenticationFieldIds, ...base } = mode;
+            const fields = configuration.fields.filter(field => !postAuthenticationFieldIds.includes(field.id)
+                || field.id === base.clientConfiguration?.clientIdFieldId
+                || field.id === base.clientConfiguration?.scopesFieldId);
+            displayMode = fields.length > 0 ? { ...base, configuration: { ...configuration, fields } } : base;
+        }
         return { mode, displayMode, publicOAuthClient };
     }
 
@@ -1063,7 +1061,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                     target,
                     mode: input.mode,
                     runtimeIdentity,
-                    revision: 'unconfigured',
+                    revision: UNCONFIGURED_REVISION,
                     values: Object.freeze({}),
                     secretRefs: Object.freeze({}),
                     unconfigured: true,
@@ -1086,6 +1084,11 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             }
             await assertRuntimeCurrent(input.service, runtimeIdentity);
             const normalized = await normalize({ target, mode: effective.mode, record });
+            // When all fields are deferred, the first authorization can start
+            // before there is any stored configuration for this attempt.
+            const revision = normalized.revision ?? (
+                modeConfiguration(effective.displayMode) ? null : UNCONFIGURED_REVISION
+            );
             if (!await isTargetRevisionCurrent(
                 input.service,
                 runtimeIdentity,
@@ -1099,7 +1102,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             }
             if (
                 input.expectedConfigurationRevision !== undefined
-                && normalized.revision !== input.expectedConfigurationRevision
+                && revision !== input.expectedConfigurationRevision
             ) {
                 return Object.freeze({
                     status: 'conflict',
@@ -1113,7 +1116,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                     missingFieldIds: normalized.missingFieldIds,
                 });
             }
-            if (normalized.revision === null) {
+            if (revision === null) {
                 return Object.freeze({
                     status: 'configurationRequired',
                     target,
@@ -1124,8 +1127,8 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 target,
                 mode: effective.mode,
                 runtimeIdentity,
-                revision: normalized.revision,
-                values: normalized.values,
+                revision,
+                values: normalized.revision === null ? Object.freeze({}) : normalized.values,
                 secretRefs: normalized.secretRefs,
                 secretValues: normalized.secretValues,
                 publicOAuthClient: effective.publicOAuthClient,
@@ -1135,7 +1138,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 status: 'ready',
                 snapshot,
                 secretReader,
-                ...(target.kind === 'attempt' ? {
+                ...(target.kind === 'attempt' && normalized.revision !== null ? {
                     stagedAccountConfigurationContent: Object.freeze({
                         values: normalized.values,
                         secretRefs: normalized.secretRefs,
@@ -1249,12 +1252,11 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             try {
                 // Configuration belongs to its exact target and stored revision.
                 // Publishing new plugin code does not replace that record.
-                // This marks a mode with no configuration declaration, not an
-                // absent record. Declared configuration must have a revision
-                // before admission can produce a ready snapshot.
+                // A mode with no configuration declaration has no stored basis.
+                // A deferred-only attempt still tracks replacement of its basis.
                 if (metadata.unconfigured) return true;
                 const record = await params.read(metadata.target);
-                const current = record?.revision === metadata.revision;
+                const current = (record?.revision ?? UNCONFIGURED_REVISION) === metadata.revision;
                 if (!current) revokeCurrentnessFence(metadata.target, metadata.revision);
                 return current;
             } catch {
