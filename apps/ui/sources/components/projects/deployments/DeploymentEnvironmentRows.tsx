@@ -340,6 +340,8 @@ export function ServicesPageList<Item>(props: Readonly<{
   groupAction?: (groupKey: string) => CollectionGroupAction | null;
   /** A row's ⋯ (Collection `useRowActions`: one stable module-level hook). */
   useRowActions?: (item: Item) => CollectionRowActions;
+  /** A row's current facts at the row boundary (Collection `useRowItem`: one stable module-level hook). */
+  useRowItem?: (item: Item) => Item;
   /** Rows by default; Monitoring can show its checks as the Collection's cards. */
   presentation?: 'list' | 'grid';
   /** The table's Columns choice and the columns its width admits (Services → Apps). */
@@ -364,6 +366,7 @@ export function ServicesPageList<Item>(props: Readonly<{
         preferredListRatio={1}
         {...(props.groupAction ? { groupAction: props.groupAction } : {})}
         {...(props.useRowActions ? { useRowActions: props.useRowActions } : {})}
+        {...(props.useRowItem ? { useRowItem: props.useRowItem } : {})}
         {...(props.columns ? { columns: { collectionId: props.columns.collectionId } } : {})}
         {...(props.columns?.onColumnsFit ? { onColumnsFit: props.columns.onColumnsFit } : {})}
       />

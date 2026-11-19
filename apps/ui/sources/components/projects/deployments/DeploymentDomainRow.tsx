@@ -144,7 +144,8 @@ export function DeploymentDomainsList<Item extends DomainRowItem>(props: Readonl
         ? <DomainByline item={item} context={context} columns={layout?.fieldColumns === true} environment={environmentTitle?.(item) ?? null} />
         : null,
     // The recovery an address needs stands beside it, not only in ⋯ (DEPLOY-REACCEPT-1113): it ends the byline.
-    titleControls: (item) => isBuiltInAddress(item) ? null : <DomainRowControls item={item} context={context} />,
+    titleControls: (item) => isBuiltInAddress(item) || (item as DomainRowWithControls).domainRowControls === false ? null
+      : <DomainRowControls item={item} context={context} />,
     // A phone folds the columns; the state and ⋯ keep the row's end.
     titleMeta: (item) => isBuiltInAddress(item) ? <BuiltInAddressEnd row={item} context={context} /> : <DomainRowEnd item={item} context={context} />,
     titleMetaAlign: 'row',
@@ -173,8 +174,10 @@ export function DeploymentDomainsList<Item extends DomainRowItem>(props: Readonl
   }), [context, environmentTitle, routed, theme.colors.text.secondary]);
   return (
     // The Services page's one list shell (Apps, Databases, Checks, Watched): the same bands, column bar and phone rows.
-    <ServicesPageList<Item | BuiltInAddressRow> testID={props.testID} model={model} anatomy={anatomy}
-      accessibilityLabel={t('projects.deployments.tabDomains')} />
+    <DomainRowContextScope.Provider value={context}>
+      <ServicesPageList<Item | BuiltInAddressRow> testID={props.testID} model={model} anatomy={anatomy}
+        accessibilityLabel={t('projects.deployments.tabDomains')} useRowItem={useDomainRowItem} />
+    </DomainRowContextScope.Provider>
   );
 }
 
@@ -227,9 +230,21 @@ function domainReadKey(serverId: string, accountId: string, machineId: string, o
 
 /** The shared Domain owner's lifecycle and recovery facts for one row; a legacy capture keeps its desired state. */
 function useDomainRowFacts(item: DomainRowItem, context: DomainRowContext) {
+  return readDomainRowFacts(item, context, useDomainRowOperation(item));
+}
+
+type DomainRowFacts = ReturnType<typeof readDomainRowFacts>;
+
+/** The row's exact operation record from the pushed store (none for a row without an operation address). */
+function useDomainRowOperation(item: DomainRowItem | null) {
+  const address = item?.domain.operationAddress ?? null;
+  const serverId = address ? resolveServerProfileScopeIdForIdentifier(address.serverId) : null;
+  return useActionOperation({ serverId, operationId: address?.operationId ?? '' });
+}
+
+function readDomainRowFacts(item: DomainRowItem, context: DomainRowContext, record: ReturnType<typeof useActionOperation>) {
   const address = item.domain.operationAddress ?? null;
   const serverId = address ? resolveServerProfileScopeIdForIdentifier(address.serverId) : null;
-  const record = useActionOperation({ serverId, operationId: address?.operationId ?? '' });
   const missingRead = address && serverId !== null
     ? context.notFound.get(domainReadKey(serverId, context.accountId, address.machineId, address.operationId)) ?? null : null;
   const observation = !address ? null : missingRead ?? (record ? { kind: 'found' as const, operation: record.snapshot } : null);
@@ -237,6 +252,38 @@ function useDomainRowFacts(item: DomainRowItem, context: DomainRowContext) {
   const missing = context.actions?.missingCredentials?.(item) ?? NO_ROLES;
   // One state per row, from the Domain attention owner the live address reads too.
   return { ...facts, missing, attention: deploymentDomainAttention(item, facts.state, item.attached, missing) };
+}
+
+/**
+ * Whether a row has controls to draw beside its host (DomainRowControls' one predicate): titleControls asks it at the
+ * row boundary, so a row with none passes no controls slot and stays one line, unruled (PRIMITIVES-DESIGN ruling
+ * 2026-11-19 03:14Z: no Collection change, the facts go through `useRowItem`).
+ */
+function domainRowControlsShown(item: DomainRowItem, facts: DomainRowFacts, context: DomainRowContext): boolean {
+  const { attention, state, failure } = facts;
+  if (failure || attention?.variant === 'danger') return true;
+  const failureDetails: unknown = failure?.details;
+  const recovery = DeploymentDomainCloudflareRecoveryV1Schema.safeParse(isRecord(failureDetails) ? failureDetails.recovery : undefined);
+  const adoptTunnel = Boolean(context.actions?.adopt) && recovery.success && state !== 'removing';
+  const checkAgain = !adoptTunnel && Boolean(attention) && attention?.checkAgain !== false && Boolean(context.actions?.verify)
+    && state !== 'removing';
+  const observation = item.content.providerObservation;
+  const addRecords = Boolean(context.actions?.addDnsRecords) && state !== 'removing' && observation?.state === 'pending'
+    && observation.dns.length > 0;
+  return adoptTunnel || checkAgain || addRecords || Boolean(observation?.failureCause);
+}
+
+/** The list's row context, for the module-level row hook. */
+const DomainRowContextScope = React.createContext<DomainRowContext | null>(null);
+type DomainRowWithControls = Readonly<{ domainRowControls?: boolean }>;
+
+/** Collection `useRowItem`: the row's facts at its boundary, carried as whether its controls slot has anything. */
+function useDomainRowItem<Row extends DomainRowItem | BuiltInAddressRow>(row: Row): Row {
+  const context = React.useContext(DomainRowContextScope);
+  const domain = context && !isBuiltInAddress(row) ? row : null;
+  const record = useDomainRowOperation(domain);
+  const shown = domain && context ? domainRowControlsShown(domain, readDomainRowFacts(domain, context, record), context) : false;
+  return React.useMemo(() => domain ? { ...row, domainRowControls: shown } : row, [domain, row, shown]);
 }
 
 /** State: what needs the person, in its colour; a settled healthy address says it is serving, quietly. */
@@ -366,7 +413,8 @@ function DomainByline(props: Readonly<{ item: DomainItem; context: DomainRowCont
 /** Check again beside an address that needs the person, then its investigation and a failed change's details. */
 function DomainRowControls(props: Readonly<{ item: DomainRowItem; context: DomainRowContext }>) {
   const { item, context } = props;
-  const { attention, state, failure } = useDomainRowFacts(item, context);
+  const facts = useDomainRowFacts(item, context);
+  const { attention, state, failure } = facts;
   const id = `project-deployments.environment.domains.${item.domain.id}`;
   const verify = context.actions?.verify;
   const failureDetails: unknown = failure?.details;
@@ -399,7 +447,7 @@ function DomainRowControls(props: Readonly<{ item: DomainRowItem; context: Domai
   const providerCause = observation?.failureCause;
   const providerDetails = providerCause ? presentActionFailureTechnicalDetails({ error: providerCause.errorCode ?? providerCause.phase,
     errorCode: providerCause.errorCode ?? providerCause.phase, failureCause: providerCause }, 'deployment') : null;
-  if (!adoptTunnel && !checkAgain && !addRecords && !investigate && !failure && !providerDetails) return null;
+  if (!domainRowControlsShown(item, facts, context)) return null;
   const actions = adoptTunnel || addRecords || checkAgain || investigate ? <View style={styles.controls}>
     {adoptTunnel}
     {addRecords}
