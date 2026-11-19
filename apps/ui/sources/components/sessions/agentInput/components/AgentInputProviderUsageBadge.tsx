@@ -1,3 +1,4 @@
+import { AgentInputProviderQuotaLabel } from './AgentInputProviderQuotaLabel';
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -50,6 +51,7 @@ function areProviderUsageMeterRowsEqual(
             || leftRow.usedLimitSemantics !== rightRow.usedLimitSemantics
             || leftRow.usedLimitLabel !== rightRow.usedLimitLabel
             || leftRow.resetLabel !== rightRow.resetLabel
+            || leftRow.resetAtMs !== rightRow.resetAtMs
             || leftRow.tone !== rightRow.tone
         ) {
             return false;
@@ -294,7 +296,12 @@ export const AgentInputProviderUsageBadge = React.memo(function AgentInputProvid
                                         {row.label}
                                     </Text>
                                     <Text style={styles.meterRight} numberOfLines={1}>
-                                        {row.detailRightLabel}
+                                        <AgentInputProviderQuotaLabel
+                                            resetAtMs={row.resetAtMs}
+                                            remainingPct={row.remainingPct}
+                                            detailLabel={row.detailRightLabel}
+                                            presented={open}
+                                        />
                                     </Text>
                                 </View>
                                 {row.remainingPct !== null ? <MeterBar

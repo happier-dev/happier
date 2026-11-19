@@ -83,6 +83,31 @@ function viewModel(): ConnectedServiceQuotaGaugeViewModel {
 }
 
 describe('AgentInputProviderUsageBadge', () => {
+    it('ticks only the visible quota details and keeps one timer for two deadlines', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_700_000_000_000);
+        try {
+            const vm = viewModel();
+            const resetAtMs = Date.now() + 10_000;
+            const screen = await renderScreen(<AgentInputProviderUsageBadge viewModel={{
+                ...vm,
+                allMeterRows: [
+                    { ...vm.allMeterRows[0]!, resetAtMs },
+                    { ...vm.allMeterRows[0]!, meterId: 'second', resetAtMs },
+                ],
+            }} />);
+            const closedTimers = vi.getTimerCount();
+            act(() => screen.findByTestId('agent-input-provider-usage-badge')?.props.onPress?.());
+            const firstLabel = screen.getTextContent();
+            const openTimers = vi.getTimerCount();
+            await act(async () => { vi.advanceTimersByTime(2_000); });
+            expect(screen.getTextContent()).not.toBe(firstLabel);
+            expect(openTimers - closedTimers).toBe(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('keeps unmeasured usage details without drawing a fabricated empty percentage bar', async () => {
         const vm = computeConnectedServiceQuotaGaugeViewModel({
             snapshot: { v: 1, serviceId: 'openai-codex', profileId: 'work', fetchedAt: 1_000, staleAfterMs: 60_000,

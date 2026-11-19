@@ -3122,6 +3122,7 @@ localTailscale: {
       usageCount: ({ used, limit }: { used: number; limit: number }) =>
         `${used}/${limit} 使用済み`,
       duration: {
+        seconds: ({ seconds }: { seconds: number }) => `${seconds}秒`,
         now: "今",
         outdated: "古い",
         daysHours: ({ days, hours }: { days: number; hours: number }) =>
@@ -5756,8 +5757,8 @@ localTailscale: {
         overloadAttempt: ({ attempt }: { attempt: number }) => `${attempt}回目`,
       title: "使用制限に達しました",
       readyTitle: "使用制限がリセットされました",
-      resetBody: ({ time }: { time: string }) =>
-        `このプロバイダーは、続行する前に ${time} まで待機するよう求めています。`,
+      resetBody: ({ time, duration }: { time: string; duration?: string }) =>
+        `このプロバイダーは、続行する前に ${time}${duration ? ` (${duration})` : ''} まで待機するよう求めています。`,
       genericBody: "このプロバイダーは、続行する前に待機するよう求めています。",
       stoppedBody: "自動リカバリーは停止し、自動では再試行しません。下から再試行してください。",
       resetCreditBody: ({ count }: { count: number }) =>

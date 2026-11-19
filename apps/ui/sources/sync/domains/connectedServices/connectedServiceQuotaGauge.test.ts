@@ -1053,6 +1053,45 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
         expect(selected?.snapshot.meters[0]?.remainingPct).toBe(18);
     });
 
+    it.each([
+        { profileId: 'backup', runtimeProfileId: 'backup', sourceKind: 'connected_service_profile' },
+        { profileId: 'native:other', runtimeProfileId: 'backup', sourceKind: 'native_runtime_evidence' },
+        { profileId: 'acct:unproved', runtimeProfileId: null, sourceKind: 'native_runtime_evidence' },
+    ])('arbitrates a newer reading for $profileId only by proved profile identity', ({ profileId, runtimeProfileId, sourceKind }) => {
+        const launchTimeProfileSnapshot = snapshot([
+            meter({ meterId: 'weekly', label: 'Weekly', used: 10, limit: 100 }),
+        ]);
+        const selected = selectConnectedServiceSessionProviderUsageGaugeSource({
+            providerId: 'codex',
+            connectedServiceSnapshot: { ...launchTimeProfileSnapshot, profileId, fetchedAt: 3_000, fetchedAtMs: 3_000 },
+            connectedServiceRefProvenance: 'connected_binding_profile',
+            runtimeIssue: {
+                v: 1,
+                scope: 'primary_session',
+                status: 'failed',
+                code: 'usage_limit',
+                source: 'usage_limit',
+                occurredAt: 2_000,
+                provider: 'codex',
+                usageLimit: {
+                    v: 1,
+                    resetAtMs: 3_000,
+                    retryAfterMs: null,
+                    quotaScope: 'account',
+                    recoverability: 'wait',
+                    limitCategory: 'usage_limit',
+                    ...(runtimeProfileId ? {
+                        quotaSnapshotRef: { serviceId: 'openai-codex', profileId: runtimeProfileId, groupId: 'main', fetchedAtMs: 2_000 },
+                    } : {}),
+                    effectiveMeterId: 'weekly',
+                    effectiveRemainingPct: 18,
+                },
+            },
+        });
+
+        expect(selected?.sourceKind).toBe(sourceKind);
+    });
+
     it('keeps fresher connected account usage ahead of stale runtime quota evidence', () => {
         const freshProfileSnapshot: ConnectedServiceQuotaSnapshotV1 = {
             ...snapshot([

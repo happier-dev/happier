@@ -2745,6 +2745,7 @@ export const pl: TranslationStructure = {
       usageCount: ({ used, limit }: { used: number; limit: number }) =>
         `${used}/${limit} użyto`,
       duration: {
+        seconds: ({ seconds }: { seconds: number }) => `${seconds} s`,
         now: "teraz",
         outdated: "nieaktualne",
         daysHours: ({ days, hours }: { days: number; hours: number }) =>
@@ -5495,8 +5496,8 @@ export const pl: TranslationStructure = {
         overloadAttempt: ({ attempt }: { attempt: number }) => `Próba ${attempt}`,
       title: "Osiągnięto limit użycia",
       readyTitle: "Limit użycia został zresetowany",
-      resetBody: ({ time }: { time: string }) =>
-        `Ten dostawca prosi sesję o czekanie do ${time} przed kontynuacją.`,
+      resetBody: ({ time, duration }: { time: string; duration?: string }) =>
+        `Ten dostawca prosi sesję o czekanie do ${time}${duration ? ` (${duration})` : ''} przed kontynuacją.`,
       genericBody: "Ten dostawca prosi sesję o czekanie przed kontynuacją.",
       stoppedBody: "Automatyczne odzyskiwanie zostało zatrzymane i nie ponowi się samo. Spróbuj ponownie poniżej.",
       resetCreditBody: ({ count }: { count: number }) =>

@@ -2813,6 +2813,7 @@ export const es: TranslationStructure = {
       usageCount: ({ used, limit }: { used: number; limit: number }) =>
         `${used}/${limit} usado`,
       duration: {
+        seconds: ({ seconds }: { seconds: number }) => `${seconds} s`,
         now: "ahora",
         outdated: "desactualizado",
         daysHours: ({ days, hours }: { days: number; hours: number }) =>
@@ -5474,8 +5475,8 @@ export const es: TranslationStructure = {
         overloadAttempt: ({ attempt }: { attempt: number }) => `Intento ${attempt}`,
       title: "Límite de uso alcanzado",
       readyTitle: "El límite de uso se restableció",
-      resetBody: ({ time }: { time: string }) =>
-        `Este proveedor pide esperar hasta ${time} antes de continuar.`,
+      resetBody: ({ time, duration }: { time: string; duration?: string }) =>
+        `Este proveedor pide esperar hasta ${time}${duration ? ` (${duration})` : ''} antes de continuar.`,
       genericBody: "Este proveedor pide esperar antes de continuar.",
       stoppedBody: "La recuperación automática se detuvo y no se reintentará sola. Vuelve a intentarlo abajo.",
       resetCreditBody: ({ count }: { count: number }) =>

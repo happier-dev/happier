@@ -1386,6 +1386,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 `剩餘 ${percent} · ${reset} 後重置`,
             usageCount: ({ used, limit }: { used: number; limit: number }) => `${used}/${limit} 已用`,
             duration: {
+                seconds: ({ seconds }: { seconds: number }) => `${seconds}秒`,
                 now: '現在',
                 outdated: '已過期',
                 daysHours: ({ days, hours }: { days: number; hours: number }) => `${days}天 ${hours}小時`,
@@ -4831,7 +4832,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               overloadAttempt: ({ attempt }: { attempt: number }) => `第${attempt}次`,
             title: '已達到使用限制',
             readyTitle: '使用限制已重設',
-            resetBody: ({ time }: { time: string }) => `此提供者要求工作階段等到 ${time} 後再繼續。`,
+            resetBody: ({ time, duration }: { time: string; duration?: string }) => `此提供者要求工作階段等到 ${time}${duration ? ` (${duration})` : ''} 後再繼續。`,
             genericBody: '此提供者要求工作階段等待後再繼續。',
             stoppedBody: '自動復原已停止，不會自行重試。請在下方重試。',
             resetCreditBody: ({ count }: { count: number }) => `${count} 次使用重設可用。`,

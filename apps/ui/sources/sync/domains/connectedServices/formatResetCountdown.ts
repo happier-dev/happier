@@ -18,6 +18,7 @@ export type ResetCountdownFormatter = Readonly<{
     durationDaysHours: (params: Readonly<{ days: number; hours: number }>) => string;
     durationHoursMinutes: (params: Readonly<{ hours: number; minutes: number }>) => string;
     durationHours: (params: Readonly<{ hours: number }>) => string;
+    durationSeconds?: (params: Readonly<{ seconds: number }>) => string;
     durationMinutes: (params: Readonly<{ minutes: number }>) => string;
 }>;
 
@@ -42,6 +43,9 @@ export function formatResetCountdown(
     if (!Number.isFinite(delta)) return formatter.durationOutdated();
     if (delta < 0) return formatter.durationOutdated();
     if (delta === 0) return formatter.durationNow();
+    if (delta < MINUTE_MS && formatter.durationSeconds) {
+        return formatter.durationSeconds({ seconds: Math.ceil(delta / 1_000) });
+    }
 
     const totalMinutes = Math.floor(delta / MINUTE_MS);
     const days = Math.floor(totalMinutes / (60 * 24));

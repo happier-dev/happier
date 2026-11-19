@@ -2668,6 +2668,7 @@ export const ru: TranslationStructure = {
       usageCount: ({ used, limit }: { used: number; limit: number }) =>
         `${used}/${limit} использовано`,
       duration: {
+        seconds: ({ seconds }: { seconds: number }) => `${seconds} с`,
         now: "сейчас",
         outdated: "устарело",
         daysHours: ({ days, hours }: { days: number; hours: number }) =>
@@ -6031,8 +6032,8 @@ export const ru: TranslationStructure = {
         overloadAttempt: ({ attempt }: { attempt: number }) => `Попытка ${attempt}`,
       title: "Достигнут лимит использования",
       readyTitle: "Лимит использования сброшен",
-      resetBody: ({ time }: { time: string }) =>
-        `Этот провайдер просит сессию подождать до ${time} перед продолжением.`,
+      resetBody: ({ time, duration }: { time: string; duration?: string }) =>
+        `Этот провайдер просит сессию подождать до ${time}${duration ? ` (${duration})` : ''} перед продолжением.`,
       genericBody: "Этот провайдер просит сессию подождать перед продолжением.",
       stoppedBody: "Автоматическое восстановление остановлено и не будет повторяться само. Повторите попытку ниже.",
       resetCreditBody: ({ count }: { count: number }) =>

@@ -67,6 +67,7 @@ export type SessionUsageLimitRecoveryActionPresentation = Readonly<{
 
 export type SessionUsageLimitRecoveryBannerPresentation = Readonly<{
     temporaryThrottle?: Readonly<{ nextCheckAtMs: number | null; attemptCount: number }>;
+    quotaWait?: Readonly<{ deadlineMs: number; renderBody: (duration: string) => string }>;
     actionsDisabled?: boolean;
     testID: string;
     title: string;
@@ -128,7 +129,7 @@ export type SessionUsageLimitRecoveryTranslationKey =
     | 'session.usageLimitRecovery.resetCreditBody'
     | 'session.usageLimitRecovery.resetCreditExpiresBody';
 
-type SessionUsageLimitRecoveryTranslationParams = Readonly<{ count?: number; time?: string }>;
+type SessionUsageLimitRecoveryTranslationParams = Readonly<{ count?: number; time?: string; duration?: string }>;
 
 type SessionUsageLimitRecoveryParameterizedTranslationKey = {
     [K in SessionUsageLimitRecoveryTranslationKey]: [TranslationParams<K>] extends [never] ? never : K;
@@ -146,7 +147,7 @@ export type SessionUsageLimitRecoveryTranslate = (
 
 const parameterizedSessionUsageLimitRecoveryTranslations = {
     'session.usageLimitRecovery.resetBody': (params: SessionUsageLimitRecoveryTranslationParams) => (
-        t('session.usageLimitRecovery.resetBody', { time: params.time ?? '' })
+        t('session.usageLimitRecovery.resetBody', { time: params.time ?? '', duration: params.duration })
     ),
     'session.usageLimitRecovery.statusWaitingUntil': (params: SessionUsageLimitRecoveryTranslationParams) => (
         t('session.usageLimitRecovery.statusWaitingUntil', { time: params.time ?? '' })
@@ -553,6 +554,19 @@ export function buildSessionUsageLimitRecoveryPresentation(
                 ? params.translate('session.usageLimitRecovery.readyTitle')
                 : params.translate('session.usageLimitRecovery.title'),
             body: bodyWithRecoveryCredits,
+            ...(!stopped && !ready && waitUntilMs !== null ? {
+                quotaWait: {
+                    deadlineMs: waitUntilMs,
+                    renderBody: (duration: string) => appendRecoveryCreditSummaryBody({
+                        body: params.translate('session.usageLimitRecovery.resetBody', {
+                            time: params.formatTime(waitUntilMs), duration,
+                        }),
+                        summary: recoveryCreditSummary,
+                        translate: params.translate,
+                        formatTime: params.formatTime,
+                    }),
+                },
+            } : {}),
             primaryAction,
             secondaryActions: [
                 ...(!ready && recoveryCreditSummary && checkNowSupported ? [
@@ -565,6 +579,9 @@ export function buildSessionUsageLimitRecoveryPresentation(
                 ] : []),
                 ...(shouldOfferCheckNowSecondary({ ready, stopped, checkNowSupported, primaryAction }) ? [
                     buildAction('check_now', 'session.usageLimitRecovery.checkNowAction', 'session-usageLimit-recovery-checkNow', params.translate),
+                ] : []),
+                ...(!checkNowSupported && !ready && !stopped && resetAtMs === null && params.hasInterruptedWorkToResume ? [
+                    buildAction('resume_now', 'session.usageLimitRecovery.resumeNowAction', 'session-usageLimit-recovery-resumeNow', params.translate),
                 ] : []),
                 params.rememberedMode === 'auto_wait'
                     ? buildAction('forget', 'session.usageLimitRecovery.forgetAction', 'session-usageLimit-recovery-forget', params.translate)

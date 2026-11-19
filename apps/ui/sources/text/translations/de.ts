@@ -2584,6 +2584,7 @@ export const de: TranslationStructure = {
             remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) => `${percent} übrig · Reset in ${reset}`,
             usageCount: ({ used, limit }: { used: number; limit: number }) => `${used}/${limit} genutzt`,
             duration: {
+                seconds: ({ seconds }: { seconds: number }) => `${seconds} s`,
                 now: 'jetzt',
                 outdated: 'veraltet',
                 daysHours: ({ days, hours }: { days: number; hours: number }) => `${days}T ${hours}Std`,
@@ -5132,7 +5133,7 @@ export const de: TranslationStructure = {
             overloadAttempt: ({ attempt }: { attempt: number }) => `Versuch ${attempt}`,
             title: 'Nutzungslimit erreicht',
             readyTitle: 'Nutzungslimit zurückgesetzt',
-            resetBody: ({ time }: { time: string }) => `Dieser Provider bittet die Session zu warten bis ${time} bevor es weitergeht.`,
+            resetBody: ({ time, duration }: { time: string; duration?: string }) => `Dieser Provider bittet die Session zu warten bis ${time}${duration ? ` (${duration})` : ''} bevor es weitergeht.`,
             genericBody: 'Dieser Provider bittet die Session, vor dem Weitermachen zu warten.',
             stoppedBody: 'Die automatische Wiederherstellung wurde beendet und versucht es nicht selbst erneut. Versuche es unten erneut.',
             resetCreditBody: ({ count }: { count: number }) => `${count} Nutzungs-Resets ${count === 1 ? 'Reset ist' : 'Resets sind'} verfügbar.`,

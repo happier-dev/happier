@@ -1,3 +1,4 @@
+import { useLiveQuotaMeterLabel } from '../useLiveQuotaMeterLabel';
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import {
@@ -351,6 +352,23 @@ function resolveSubscriptionEndsLabel(nowMs: number, endAtMs: number): string {
     return endTime.kind === 'relativeDays'
         ? t('connectedServices.subscription.endsInDays', { days: endTime.days })
         : t('connectedServices.subscription.ends', { date: endTime.date });
+}
+
+function AccountUsageMeter({ row, meterTestID, presented }: Readonly<{
+    row: AccountUsageRow;
+    meterTestID: string;
+    presented: boolean;
+}>) {
+    const caption = useLiveQuotaMeterLabel({
+        resetAtMs: row.resetAtMs,
+        remainingPct: row.remaining === null ? null : row.remaining * 100,
+        detailLabel: row.detailLabel,
+        surface: 'account',
+        presented,
+    });
+    return row.remaining === null
+        ? <Text style={stylesheet.subscriptionMeta}>{caption}</Text>
+        : <MeterBar testID={meterTestID} tone={row.tone} fillFraction={row.remaining} caption={caption} />;
 }
 
 export const AccountBlockView = React.memo<AccountBlockViewProps>((props) => {
@@ -733,16 +751,11 @@ export const AccountBlockView = React.memo<AccountBlockViewProps>((props) => {
                                             />
                                     </Pressable>
                                 </View>
-                                {row.remaining !== null ? (
-                                    <MeterBar
-                                        testID={`${testID}:meter:${row.meterId}`}
-                                        tone={row.tone}
-                                        // Remaining-first fill: matches the row's "% left" label and the
-                                        // capacity rings (battery model — see accountBlockModel).
-                                        fillFraction={row.remaining}
-                                        caption={row.detailLabel}
-                                    />
-                                ) : <Text style={styles.subscriptionMeta}>{row.detailLabel}</Text>}
+                                <AccountUsageMeter
+                                    row={row}
+                                    meterTestID={`${testID}:meter:${row.meterId}`}
+                                    presented={expanded}
+                                />
                             </View>
                         </ItemGroupColumn>
                     ))}

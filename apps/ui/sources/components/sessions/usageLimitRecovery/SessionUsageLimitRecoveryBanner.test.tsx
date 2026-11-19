@@ -22,6 +22,27 @@ import { SessionUsageLimitRecoveryBanner } from './SessionUsageLimitRecoveryBann
 describe('overload recovery countdown', () => {
     let restoreAppState: (() => void) | null = null;
     afterEach(() => { restoreAppState?.(); vi.useRealTimers(); });
+    it('renders the translated quota wait with live time inputs only while visible', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_700_000_000_000);
+        const appState = createReactNativeAppStateEmitter();
+        restoreAppState = appState.install(AppState);
+        const deadlineMs = Date.now() + 5_000;
+        const quotaWait = { deadlineMs, renderBody: (duration: string) => `At 10:00 (${duration})\n1 credit` };
+        const props = { testID: 'recovery', title: 'Quota exhausted', body: 'At 10:00\n1 credit', quotaWait };
+        const screen = await renderScreen(<SessionUsageLimitRecoveryBanner {...props} surfaceFocused />);
+        expect(screen.getTextContent()).toContain('At 10:00 (5');
+        await act(async () => { vi.advanceTimersByTime(2_000); });
+        expect(screen.getTextContent()).toContain('At 10:00 (3');
+        expect(screen.getTextContent()).toContain('1 credit');
+        await act(async () => { screen.tree.update(<SessionUsageLimitRecoveryBanner {...props} surfaceFocused={false} />); });
+        expect(vi.getTimerCount()).toBe(0);
+        await act(async () => { screen.tree.update(<SessionUsageLimitRecoveryBanner {...props} surfaceFocused />); });
+        await act(async () => { vi.advanceTimersByTime(3_000); });
+        expect(screen.getTextContent()).not.toContain('At 10:00 (');
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
     it('updates only the banner leaf and removes its timer when no scheduled retry remains', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_700_000_000_000);

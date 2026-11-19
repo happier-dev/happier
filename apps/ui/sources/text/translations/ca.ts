@@ -2670,6 +2670,7 @@ export const ca: TranslationStructure = {
             remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) => `${percent} restant · es reinicia d'aquí a ${reset}`,
             usageCount: ({ used, limit }: { used: number; limit: number }) => `${used}/${limit} utilitzat`,
             duration: {
+                seconds: ({ seconds }: { seconds: number }) => `${seconds} s`,
                 now: 'ara',
                 outdated: 'obsolet',
                 daysHours: ({ days, hours }: { days: number; hours: number }) => `${days}d ${hours}h`,
@@ -5148,7 +5149,7 @@ deps: {
             overloadAttempt: ({ attempt }: { attempt: number }) => `Intent ${attempt}`,
             title: 'S’ha assolit el límit d’ús',
             readyTitle: 'El límit d’ús s’ha restablert',
-            resetBody: ({ time }: { time: string }) => `Aquest proveïdor demana esperar fins a ${time} abans de continuar.`,
+            resetBody: ({ time, duration }: { time: string; duration?: string }) => `Aquest proveïdor demana esperar fins a ${time}${duration ? ` (${duration})` : ''} abans de continuar.`,
             genericBody: 'Aquest proveïdor demana esperar abans de continuar.',
             stoppedBody: 'La recuperació automàtica s’ha aturat i no es tornarà a intentar sola. Torna-ho a provar a sota.',
             resetCreditBody: ({ count }: { count: number }) => `${count} ${count === 1 ? 'restabliment d’ús disponible' : 'restabliments d’ús disponibles'}.`,

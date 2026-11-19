@@ -2585,6 +2585,7 @@ export const en = {
             remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) => `${percent} left · resets in ${reset}`,
             usageCount: ({ used, limit }: { used: number; limit: number }) => `${used}/${limit} used`,
             duration: {
+                seconds: ({ seconds }: { seconds: number }) => `${seconds}s`,
                 now: 'now',
                 outdated: 'outdated',
                 daysHours: ({ days, hours }: { days: number; hours: number }) => `${days}d ${hours}h`,
@@ -5153,7 +5154,7 @@ export const en = {
             overloadAttempt: ({ attempt }: { attempt: number }) => `Attempt ${attempt}`,
             title: 'Usage limit reached',
             readyTitle: 'Usage limit reset',
-            resetBody: ({ time }: { time: string }) => `This provider is asking the session to wait until ${time} before continuing.`,
+            resetBody: ({ time, duration }: { time: string; duration?: string }) => `This provider is asking the session to wait until ${time}${duration ? ` (${duration})` : ''} before continuing.`,
             genericBody: 'This provider is asking the session to wait before continuing.',
             stoppedBody: 'Automatic recovery stopped and won’t retry on its own. Try again below.',
             resetCreditBody: ({ count }: { count: number }) => `${count} usage ${count === 1 ? 'reset is' : 'resets are'} available.`,

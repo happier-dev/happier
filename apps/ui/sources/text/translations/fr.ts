@@ -2584,6 +2584,7 @@ export const fr: TranslationStructure = {
             remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) => `${percent} restants · réinit. dans ${reset}`,
             usageCount: ({ used, limit }: { used: number; limit: number }) => `${used}/${limit} utilisés`,
             duration: {
+                seconds: ({ seconds }: { seconds: number }) => `${seconds} s`,
                 now: 'maintenant',
                 outdated: 'obsolète',
                 daysHours: ({ days, hours }: { days: number; hours: number }) => `${days}j ${hours}h`,
@@ -5132,7 +5133,7 @@ export const fr: TranslationStructure = {
             overloadAttempt: ({ attempt }: { attempt: number }) => `Tentative ${attempt}`,
             title: 'Limite d’utilisation atteinte',
             readyTitle: 'Limite d’utilisation réinitialisée',
-            resetBody: ({ time }: { time: string }) => `Ce provider demande à la session d’attendre jusqu’à ${time} avant de continuer.`,
+            resetBody: ({ time, duration }: { time: string; duration?: string }) => `Ce provider demande à la session d’attendre jusqu’à ${time}${duration ? ` (${duration})` : ''} avant de continuer.`,
             genericBody: 'Ce provider demande à la session d’attendre avant de continuer.',
             stoppedBody: 'La récupération automatique s’est arrêtée et ne réessaiera pas d’elle-même. Réessayez ci-dessous.',
             resetCreditBody: ({ count }: { count: number }) => `${count} ${count === 1 ? 'réinitialisation de quota' : 'réinitialisations de quota'} en attente.`,

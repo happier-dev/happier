@@ -40,6 +40,7 @@ export type AccountUsageRow = Readonly<{
      */
     remaining: number | null;
     detailLabel: string;
+    resetAtMs?: number | null;
 }>;
 
 function clamp01(value: number): number {
@@ -65,6 +66,7 @@ export function resolveAccountUsageRows(
         tone: resolveQuotaTone(row.remainingPct),
         remaining: row.remainingPct === null ? null : clamp01(row.remainingPct / 100),
         detailLabel: row.detailRightLabel,
+        resetAtMs: row.resetAtMs,
     }));
 }
 

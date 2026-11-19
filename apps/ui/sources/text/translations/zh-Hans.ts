@@ -2641,6 +2641,7 @@ export const zhHans: TranslationStructure = {
       usageCount: ({ used, limit }: { used: number; limit: number }) =>
         `${used}/${limit} 已用`,
       duration: {
+        seconds: ({ seconds }: { seconds: number }) => `${seconds}秒`,
         now: "现在",
         outdated: "已过期",
         daysHours: ({ days, hours }: { days: number; hours: number }) =>
@@ -5299,8 +5300,8 @@ export const zhHans: TranslationStructure = {
         overloadAttempt: ({ attempt }: { attempt: number }) => `第${attempt}次`,
       title: "已达到使用限制",
       readyTitle: "使用限制已重置",
-      resetBody: ({ time }: { time: string }) =>
-        `此提供方要求会话等到 ${time} 后再继续。`,
+      resetBody: ({ time, duration }: { time: string; duration?: string }) =>
+        `此提供方要求会话等到 ${time}${duration ? ` (${duration})` : ''} 后再继续。`,
       genericBody: "此提供方要求会话等待后再继续。",
       stoppedBody: "自动恢复已停止，不会自行重试。请在下方重试。",
       resetCreditBody: ({ count }: { count: number }) =>

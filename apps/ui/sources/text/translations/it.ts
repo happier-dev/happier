@@ -3164,6 +3164,7 @@ export const it: TranslationStructure = {
       usageCount: ({ used, limit }: { used: number; limit: number }) =>
         `${used}/${limit} usato`,
       duration: {
+        seconds: ({ seconds }: { seconds: number }) => `${seconds} s`,
         now: "ora",
         outdated: "non aggiornato",
         daysHours: ({ days, hours }: { days: number; hours: number }) =>
@@ -5829,8 +5830,8 @@ export const it: TranslationStructure = {
         overloadAttempt: ({ attempt }: { attempt: number }) => `Tentativo ${attempt}`,
       title: "Limite di utilizzo raggiunto",
       readyTitle: "Limite di utilizzo reimpostato",
-      resetBody: ({ time }: { time: string }) =>
-        `Questo provider chiede alla sessione di attendere fino a ${time} prima di continuare.`,
+      resetBody: ({ time, duration }: { time: string; duration?: string }) =>
+        `Questo provider chiede alla sessione di attendere fino a ${time}${duration ? ` (${duration})` : ''} prima di continuare.`,
       genericBody: "Questo provider chiede alla sessione di attendere prima di continuare.",
       stoppedBody: "Il recupero automatico si è interrotto e non riproverà da solo. Riprova qui sotto.",
       resetCreditBody: ({ count }: { count: number }) =>

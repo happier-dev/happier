@@ -6336,6 +6336,7 @@ function SessionViewLoaded({
                 <ComposerAuxiliaryFrame>
                     <SessionUsageLimitRecoveryBanner
                         temporaryThrottle={visibleUsageLimitRecoveryPresentation.banner.temporaryThrottle}
+                        quotaWait={visibleUsageLimitRecoveryPresentation.banner.quotaWait}
                         surfaceFocused={surfaceFocused}
                         testID={visibleUsageLimitRecoveryPresentation.banner.testID}
                         actionTestID={visibleUsageLimitRecoveryPresentation.banner.primaryAction.testID}

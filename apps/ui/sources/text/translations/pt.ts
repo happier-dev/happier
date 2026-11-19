@@ -2838,6 +2838,7 @@ export const pt: TranslationStructure = {
       usageCount: ({ used, limit }: { used: number; limit: number }) =>
         `${used}/${limit} usado`,
       duration: {
+        seconds: ({ seconds }: { seconds: number }) => `${seconds} s`,
         now: "agora",
         outdated: "desatualizado",
         daysHours: ({ days, hours }: { days: number; hours: number }) =>
@@ -5594,8 +5595,8 @@ export const pt: TranslationStructure = {
         overloadAttempt: ({ attempt }: { attempt: number }) => `Tentativa ${attempt}`,
       title: "Limite de uso atingido",
       readyTitle: "Limite de uso redefinido",
-      resetBody: ({ time }: { time: string }) =>
-        `Este provedor pede que a sessão espere até ${time} antes de continuar.`,
+      resetBody: ({ time, duration }: { time: string; duration?: string }) =>
+        `Este provedor pede que a sessão espere até ${time}${duration ? ` (${duration})` : ''} antes de continuar.`,
       genericBody: "Este provedor pede que a sessão espere antes de continuar.",
       stoppedBody: "A recuperação automática parou e não tentará novamente sozinha. Tente novamente abaixo.",
       resetCreditBody: ({ count }: { count: number }) =>

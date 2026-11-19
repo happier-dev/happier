@@ -52,6 +52,7 @@ export type ConnectedServiceQuotaGaugeMeterRow = Readonly<{
     usedLimitSemantics: 'used' | null;
     usedLimitLabel: string | null;
     resetLabel: string | null;
+    resetAtMs?: number | null;
     tone: ConnectedServiceQuotaGaugeTone;
 }>;
 
@@ -329,29 +330,36 @@ function resolveTone(remainingPct: number | null): ConnectedServiceQuotaGaugeTon
     return mapMeterToneToGaugeTone(resolveQuotaTone(remainingPct));
 }
 
+export function formatQuotaMeterRemaining(
+    remainingPct: number | null,
+    resetLabel: string | null,
+    formatter: Pick<ConnectedServiceQuotaGaugeLabelFormatter, 'unavailable' | 'remaining' | 'remainingWithReset'>,
+): string {
+    const percent = remainingPct === null ? '—' : `${Math.round(remainingPct)}%`;
+    if (resetLabel) return formatter.remainingWithReset({ percent, reset: resetLabel });
+    return remainingPct === null ? formatter.unavailable() : formatter.remaining({ percent });
+}
+
 function buildMeterRow(
     meter: ConnectedServiceQuotaMeterV1,
     nowMs: number,
     formatter: ConnectedServiceQuotaGaugeLabelFormatter,
 ): ConnectedServiceQuotaGaugeMeterRow {
     const { usedPct, remainingPct, used, limit } = deriveQuotaMeterValues(meter);
-    const remainingLabel = remainingPct === null ? '—' : `${Math.round(remainingPct)}%`;
+    const resetAtMs = meter.resetAtMs ?? meter.resetsAt;
     // An elapsed reset boundary means the snapshot predates its own reset — fall back to the plain
     // remaining label instead of composing the nonsense phrase "resets in outdated".
-    const resetLabel = isResetCountdownOutdated(nowMs, meter.resetAtMs ?? meter.resetsAt)
+    const resetLabel = isResetCountdownOutdated(nowMs, resetAtMs)
         ? null
-        : formatResetCountdown(nowMs, meter.resetAtMs ?? meter.resetsAt, formatter);
+        : formatResetCountdown(nowMs, resetAtMs, formatter);
     return {
         meterId: meter.meterId,
         label: meter.label,
         remainingPct,
         usedPct,
         detailRightSemantics: 'remaining',
-        detailRightLabel: remainingPct === null && resetLabel === null
-            ? formatter.unavailable()
-            : resetLabel
-            ? formatter.remainingWithReset({ percent: remainingLabel, reset: resetLabel })
-            : formatter.remaining({ percent: remainingLabel }),
+        resetAtMs,
+        detailRightLabel: formatQuotaMeterRemaining(remainingPct, resetLabel, formatter),
         usedLimitSemantics: typeof used === 'number' && typeof limit === 'number'
             ? 'used'
             : null,
@@ -729,11 +737,15 @@ function quotaSnapshotFetchedAtMs(snapshot: ConnectedServiceQuotaSnapshotV1): nu
 function shouldPreferRuntimeIssueQuotaSnapshot(params: Readonly<{
     runtimeSnapshot: ConnectedServiceQuotaSnapshotV1;
     connectedSnapshot: ConnectedServiceQuotaSnapshotV1 | null;
+    hasExplicitRuntimeProfile: boolean;
 }>): boolean {
     if (!params.connectedSnapshot) return true;
     const runtimeFetchedAtMs = quotaSnapshotFetchedAtMs(params.runtimeSnapshot);
-    const runtimeStaleAtMs = runtimeFetchedAtMs + params.runtimeSnapshot.staleAfterMs;
     const connectedFetchedAtMs = quotaSnapshotFetchedAtMs(params.connectedSnapshot);
+    if (params.hasExplicitRuntimeProfile && snapshotsIdentifySameQuotaProfile(params.runtimeSnapshot, params.connectedSnapshot)) {
+        return runtimeFetchedAtMs >= connectedFetchedAtMs;
+    }
+    const runtimeStaleAtMs = runtimeFetchedAtMs + params.runtimeSnapshot.staleAfterMs;
     return runtimeFetchedAtMs >= connectedFetchedAtMs || runtimeStaleAtMs >= connectedFetchedAtMs;
 }
 
@@ -755,6 +767,8 @@ export function selectConnectedServiceSessionProviderUsageGaugeSource(params: Re
     if (runtimeIssueQuotaSnapshot && shouldPreferRuntimeIssueQuotaSnapshot({
         runtimeSnapshot: runtimeIssueQuotaSnapshot,
         connectedSnapshot: params.connectedServiceSnapshot,
+        hasExplicitRuntimeProfile: Boolean(params.runtimeIssue?.usageLimit?.quotaSnapshotRef?.profileId?.trim()
+            || params.runtimeIssue?.usageLimit?.connectedService?.profileId?.trim()),
     })) {
         const recoveryCredits = params.connectedServiceSnapshot
             && snapshotsIdentifySameQuotaProfile(runtimeIssueQuotaSnapshot, params.connectedServiceSnapshot)
