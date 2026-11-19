@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Session } from 'node:inspector/promises';
 import type { HeapProfiler, Profiler } from 'node:inspector';
-import { Writable } from 'node:stream';
+import { Socket } from 'node:net';
 import nacl from 'tweetnacl';
 import { createLogRetentionOwner } from '@/utils/logs/logRetention';
 import { localCaptureBackground } from '../../../../packages/plugins/telemetry/src/background';
@@ -120,6 +120,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
     // Accounts exercise that Home rather than inventing a second process identity.
     const serverId = `srv_${randomUUID().replaceAll('-', '')}`;
     describe.skipIf(process.env.HAPPIER_RUN_DBW_TELEMETRY_F14 !== '1')('F14 native production telemetry setup and deploy', () => {
+        // The disposable DB-contract runner owns this native journey's deadline.
         it.each(['plain', 'e2ee'] as const)('reads deployed SDK queries and traces through admitted Actions in %s mode', async encryptionMode => {
             expect(process.platform, 'F14 requires native Linux Docker').toBe('linux');
             const native = await execute('docker', ['info', '--format', '{{.OSType}}']);
@@ -393,7 +394,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     serverId: home.serverId, daemonHomeDir: configuration.happyHomeDir });
                 const document = JSON.stringify({ services: {
                     db: { image: 'postgres:17', environment: { POSTGRES_USER: 'fixture', POSTGRES_PASSWORD: 'fixture', POSTGRES_DB: 'fixture' },
-                        healthcheck: { test: ['CMD-SHELL', 'pg_isready -U fixture -d fixture'], interval: '1s' } },
+                        healthcheck: { test: ['CMD', 'pg_isready', '-h', '127.0.0.1', '-U', 'fixture', '-d', 'fixture'] } },
                     web: { image, ports: ['127.0.0.1::3000'], depends_on: { db: { condition: 'service_healthy' } },
                         healthcheck: { test: ['CMD', 'node', '-e',
                             "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"], interval: '1s' },
@@ -884,7 +885,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 vi.unstubAllEnvs();
                 if (failures.length) throw new AggregateError(failures, 'F14 fixture cleanup failed');
             }
-        }, 180_000);
+        }, 0);
     });
 }
 
@@ -908,7 +909,8 @@ function getReadyRoles(value: unknown) {
 async function measureReceiverWork<T>(operation: () => Promise<T>) {
     const session = new Session();
     session.connect();
-    const writes = vi.spyOn(Writable.prototype, 'write');
+    // Docker-host database-worker stdin is a Socket with its own write method.
+    const writes = vi.spyOn(Socket.prototype, 'write');
     try {
         await session.post('Profiler.enable');
         await session.post('Profiler.start');
