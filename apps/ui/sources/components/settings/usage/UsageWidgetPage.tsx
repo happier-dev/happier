@@ -79,7 +79,7 @@ import {
 } from './widgets/usageWidgetBatch';
 import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
 import type { UsagePageHistoryFact } from './useUsageWidgetPageContext';
-import { describeUsagePageFailedSources, isUsagePageFailureOnlyWork, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageAsOfMs } from './widgets/usageBodyKit';
+import { describeUsagePageFailedSources, isUsagePageFailureOnlyWork, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFreshness, usageSourceTitle } from './widgets/usageBodyKit';
 
 const PRESET_ICON: Readonly<Record<UsageWidgetPresetId, IconName>> = {
   overview: 'squares-four',
@@ -524,7 +524,11 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
 /** Select only facts rendered by page chrome; widget evidence stays with its body. */
 function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilterFallback: boolean) {
   const accounting = slices.find(slice => slice.accounting)?.accounting;
-  const observedAt = accounting ? readUsagePageAsOfMs(slices) : null;
+  const freshness = accounting ? readUsagePageFreshness(slices) : null;
+  const observedAt = freshness?.asOfMs ?? null;
+  const olderReadAtMs = freshness?.retainedAccountingReadAtMs
+    ?? (observedAt !== null && isUsageObservationFromEarlierDay(observedAt) ? observedAt : null);
+  const olderSource = freshness?.olderSource ?? null;
   return {
     // Until unfiltered inventory answers, keep the existing displayed-result choices.
     filterFallback: needsFilterFallback ? slices : null,
@@ -536,7 +540,8 @@ function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilte
       partial: describeUsagePagePartialSources(slices),
       // The displayed minute, not the raw clock: a refresh within the same minute changes nothing on screen.
       observedAtMs: observedAt === null ? null : Math.floor(observedAt / 60_000) * 60_000,
-      olderReading: observedAt !== null && isUsageObservationFromEarlierDay(observedAt),
+      olderReadAtMs: olderReadAtMs === null ? null : Math.floor(olderReadAtMs / 60_000) * 60_000,
+      olderSource: olderSource ? { ...olderSource, asOfMs: Math.floor(olderSource.asOfMs / 60_000) * 60_000 } : null,
       machines: accounting?.breakdowns?.machine?.length ?? null,
       agents: accounting?.breakdowns?.agent?.length ?? null,
       coverageIncomplete: slices.some(slice => readUsageCoverageGaps(slice, ['accounting']).length > 0),
@@ -632,9 +637,13 @@ function UsagePageHeader(
   // never an ellipsis mid-word (USAGE-ACCEPT #16).
   const [noticeOpen, setNoticeOpen] = React.useState(false);
   const sessionTitle = useSessionDisplayTitles(React.useMemo(() => props.sessionId ? [{ sessionId: props.sessionId }] : [], [props.sessionId]))[0] ?? null;
-  const { observedAtMs, olderReading, machines, agents } = props.facts;
+  const { observedAtMs, olderReadAtMs, olderSource, machines, agents } = props.facts;
   const openNewSession = useOpenNewSession();
   const startSession = React.useCallback(() => { openNewSession(); }, [openNewSession]);
+  const counts = React.useMemo((): PageHeaderMetaFact[] => [
+    ...(machines ? [{ key: 'machines', text: t('usage.board.page.machinesCount', { count: machines }) }] : []),
+    ...(agents ? [{ key: 'agents', text: t('usage.board.page.agentsCount', { count: agents }) }] : []),
+  ], [machines, agents]);
   // Unchanged page facts keep the same notice element, so the header does not redraw for a body-only change.
   const notice = React.useMemo(() => {
     // The page's reads wait on the Home: the header says why once, in the facts line's own slot, so the views,
@@ -648,37 +657,44 @@ function UsagePageHeader(
     );
     const resolved = resolveUsagePageNotice(props.appsShown ? { ...props.facts, nothingRecorded: false } : props.facts,
       retry, history, layouts, startSession);
+    if (!resolved && olderReadAtMs === null && !olderSource) return null;
+    const testID = resolved?.testID ?? 'usage-page.header.freshness';
     const shortened = phone && resolved?.short && !resolved.action ? resolved.short : null;
+    const detail = shortened || olderReadAtMs !== null || olderSource ? { label: noticeOpen ? t('usage.showLess') : t('common.details'), testID: `${testID}.detail`,
+      onPress: () => setNoticeOpen(open => !open) } : null;
+    const expanded = detail !== null && noticeOpen;
+    const reason = [
+      shortened && !expanded ? shortened : resolved?.reason ?? counts.map(count => count.text).join(' · '),
+      olderReadAtMs !== null ? t('usage.board.coach.staleEvidence') : null,
+      expanded && olderReadAtMs !== null ? `${usageSourceTitle('accounting')} (${t('usage.board.page.asOf', { time: formatUsageObservedAt(olderReadAtMs) })})` : null,
+      expanded && olderSource ? `${t('usage.board.page.oldestSourceUpdate', { time: formatUsageObservedAt(olderSource.asOfMs) })} (${usageSourceTitle(olderSource.source, undefined, 'coverage')})` : null,
+    ].filter(Boolean).join(' · ');
     // A plain line under the purpose, on the title's edge: the page header is not a surface to band. It is drawn as
     // tall as the facts line it replaces, its Retry right after the sentence, so no view's header is taller (R139).
-    return resolved ? (
+    return (
       <SurfaceFreshnessOnSheetProvider>
         <View style={styles.headerLine}>
         <SurfaceFreshnessLine
-          presentation={shortened && noticeOpen ? 'line' : 'inline'}
-          {...(shortened && noticeOpen ? { glyph: 'clock' as const } : {})}
-          testID={resolved.testID}
+          presentation={expanded ? 'line' : 'inline'}
+          {...(expanded ? { glyph: 'clock' as const } : {})}
+          testID={testID}
           asOf={props.facts.observedAtMs}
-          reason={[shortened && !noticeOpen ? shortened : resolved.reason,
-            olderReading ? t('usage.board.coach.staleEvidence') : null].filter(Boolean).join(' · ')}
-          tone={resolved.tone}
-          {...(resolved.busy ? { busy: true } : {})}
-          {...(resolved.action ? { action: resolved.action } : shortened ? { action: {
-            label: noticeOpen ? t('usage.showLess') : t('common.details'), testID: `${resolved.testID}.detail`,
-            onPress: () => setNoticeOpen(open => !open) } } : {})}
+          reason={reason}
+          tone={resolved?.tone}
+          {...(resolved?.busy ? { busy: true } : {})}
+          {...(detail ? { actions: resolved?.action ? [detail, resolved.action] : [detail] }
+            : resolved?.action ? { action: resolved.action } : {})}
         />
         </View>
       </SurfaceFreshnessOnSheetProvider>
-    ) : null;
-  }, [props.facts, props.homeUnavailable, props.appsShown, retry, history, layouts, startSession, phone, noticeOpen, olderReading]);
+    );
+  }, [props.facts, props.homeUnavailable, props.appsShown, retry, history, layouts, startSession, phone, noticeOpen, olderReadAtMs, olderSource, counts]);
   const facts = React.useMemo((): PageHeaderMetaFact[] => [
     ...(observedAtMs !== null
-      ? [{ key: 'asOf', icon: 'clock' as const, text: [t('usage.board.page.asOf', { time: formatUsageObservedAt(observedAtMs) }),
-        olderReading ? t('usage.board.coach.staleEvidence') : null].filter(Boolean).join(' · ') }]
+      ? [{ key: 'asOf', icon: 'clock' as const, text: t('usage.board.page.asOf', { time: formatUsageObservedAt(observedAtMs) }) }]
       : []),
-    ...(machines ? [{ key: 'machines', text: t('usage.board.page.machinesCount', { count: machines }) }] : []),
-    ...(agents ? [{ key: 'agents', text: t('usage.board.page.agentsCount', { count: agents }) }] : []),
-  ], [observedAtMs, olderReading, machines, agents]);
+    ...counts,
+  ], [observedAtMs, counts]);
   // The header insets its own text to the page column; the page's views, filters and cards share that
   // edge, so the header bleeds back by the same step instead of indenting twice (lab d2top, QA-V F23).
   return (

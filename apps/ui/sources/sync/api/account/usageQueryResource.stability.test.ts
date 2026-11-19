@@ -24,7 +24,7 @@ import { invalidateUsageQueryResources, readUiUsageQueryBatch } from './usageQue
 import { computePluginUiArtifactSha256Digest } from '@/sync/domains/plugins/ui/artifactIntegrity';
 import * as platformDigest from '@/platform/digest';
 import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { describeUsagePagePendingSources, readUsagePageAsOfMs } from '@/components/settings/usage/widgets/usageBodyKit';
+import { describeUsagePagePendingSources, readUsagePageFreshness } from '@/components/settings/usage/widgets/usageBodyKit';
 
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 afterEach(async () => {
@@ -165,7 +165,8 @@ it('publishes one delivered burst without preparing unconsumed Resource transpor
 });
 
 it('reuses contribution references across equal refetches without whole-population equality', async () => {
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_900_000_000_000);
+    const initialReadAt = 1_900_000_000_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(initialReadAt);
     const tokens = { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 };
     const cost = { reportedUsd: 1, estimatedUsd: 0, currency: 'USD' };
     const population = Array.from({ length: 3600 }, (_, index) => ({ id: String(index), observedAtMs: 1500,
@@ -197,11 +198,15 @@ it('reuses contribution references across equal refetches without whole-populati
         }, false);
         try {
             for (let index = 0; index < 3; index++) {
-                clock.mockReturnValue(1_900_000_000_000 + (index + 1) * 30_000);
+                clock.mockReturnValue(initialReadAt + (index + 1) * 30_000);
                 await entry.refresh();
             }
         } finally { stopObserving(); }
         const after = decodeUsageQueryResource(entry.getSnapshot().value!);
+        expect(readUsagePageFreshness(after.results).asOfMs).toBe(initialReadAt + 90_000);
+        expect(readUsagePageFreshness(before.results).asOfMs).toBe(initialReadAt);
+        const restored = UsageQueryBatchResultSchema.parse(JSON.parse(JSON.stringify(after)));
+        expect(readUsagePageFreshness(restored.results).asOfMs).toBeNull();
         expect(after.results[0]?.accounting).toBe(before.results[0]?.accounting);
         expect(publishedAccounting.has(before.results[0]!.accounting!)).toBe(true);
         expect(publishedAccounting.size, 'a changed admission clock must not replace equal accounting during intermediate publications').toBe(1);
@@ -233,7 +238,7 @@ it('keeps completed source dates and a quiet header while the same query rereads
     const query = normalizeUsageQuery({ period: { startMs: 1000, endMs: 2000 } });
     const input = { queries: [query] };
     const settled = await readUiUsageQueryBatch(captured, input);
-    const asOf = readUsagePageAsOfMs(settled.results);
+    const asOf = readUsagePageFreshness(settled.results).asOfMs;
     expect(asOf).not.toBeNull();
     hold = true;
     invalidateUsageQueryResources(captured.accountLifetime);
@@ -246,7 +251,7 @@ it('keeps completed source dates and a quiet header while the same query rereads
     try {
         await progress.promise;
         expect(shown.results[0]?.pending).toBe(true);
-        expect.soft(readUsagePageAsOfMs(shown.results)).toBe(asOf);
+        expect.soft(readUsagePageFreshness(shown.results).asOfMs).toBe(asOf);
         expect.soft(describeUsagePagePendingSources(shown.results)).toBeNull();
         expect.soft(shown.results[0]?.sources.find(source => source.source === 'how_you_work')?.asOfMs)
             .toBe(settled.results[0]?.sources.find(source => source.source === 'how_you_work')?.asOfMs);
@@ -557,6 +562,7 @@ it.each(['all_personal_history', 'public_eligible_personal'] as const)('retains 
 });
 
 it('seeds the same accounting query from its Account facts when a route mounts a different batch', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_900_000_000_000);
     const pending = createDeferred<void>();
     let hold = false;
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-batch-retention.test', accountId: 'account-a' }],
@@ -581,8 +587,11 @@ it('seeds the same accounting query from its Account facts when a route mounts a
     const initial = store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
     const release = initial.subscribe(() => {}, false);
     await expect.poll(() => initial.getSnapshot().pending).toBe('idle');
-    const before = decodeUsageQueryResource(initial.getSnapshot().value!).results[0]!.accounting;
+    const before = decodeUsageQueryResource(initial.getSnapshot().value!).results[0]!;
+    const admittedAt = readUsagePageFreshness([before]).asOfMs;
+    expect(admittedAt).toBe(1_900_000_000_000);
     release();
+    clock.mockReturnValue(1_900_000_060_000);
     hold = true;
     const returning = store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query,
         normalizeUsageQuery({ ...query, agents: ['claude'] })] }) });
@@ -590,8 +599,9 @@ it('seeds the same accounting query from its Account facts when a route mounts a
     try {
         await expect.poll(() => returning.getSnapshot().value !== undefined).toBe(true);
         const shown = decodeUsageQueryResource(returning.getSnapshot().value!).results.find(slice => slice.key === getUsageQueryKey(query))!;
-        expect(shown.accounting).toEqual(before);
-        expect(shown.sources.find(source => source.source === 'accounting')?.status).toBe('pending');
+        expect(shown.accounting).toEqual(before.accounting);
+        expect(shown.sources.find(source => source.source === 'accounting')?.status).toBe('available');
+        expect(readUsagePageFreshness([shown]).asOfMs).toBe(admittedAt);
         expect(decodeUsageQueryResource(returning.getSnapshot().value!).results.find(slice => slice.key !== getUsageQueryKey(query))?.accounting,
             'a differently filtered query cannot inherit these facts').toBeUndefined();
     } finally { pending.resolve(); stop(); }

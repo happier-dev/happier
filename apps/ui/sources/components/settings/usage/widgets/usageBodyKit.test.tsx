@@ -26,7 +26,7 @@ import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
 import { clearProjectedAgentUiBehaviorDescriptors, publishProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
 import { isUsageObservationFromEarlierDay } from '@/sync/domains/usage/usageCalendarPresentation';
-import { describeUsagePageFailedSources, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageAsOfMs, readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useUsageAnalyticsView } from './usageBodyKit';
+import { describeUsagePageFailedSources, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageFreshness, readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useUsageAnalyticsView } from './usageBodyKit';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -478,15 +478,19 @@ describe('shared Usage identity and dependent coverage', () => {
             sources: usageSourceTitle('work'), witnessed: usageSourceTitle('how_you_work') }));
     });
     it('keeps admitted sources quiet during background refresh while naming an unanswered sibling', () => {
+        const query = normalizeUsageQuery({ period: { startMs: 1, endMs: 100 } });
+        const [accounting] = resolveUsagePageAggregation({ queries: [query], accounting: [
+            { query, status: 'pending', value: usageQaAccountingFixture(), asOfMs: 90, readAtMs: 100 },
+        ] }, bundledUsageModelPriceCatalog).results;
         const sources: UsageQueryResultSlice['sources'] = [
-            { source: 'accounting', status: 'pending', asOfMs: 100 },
+            { source: 'accounting', status: 'pending', asOfMs: 90 },
             { source: 'work', status: 'pending', asOfMs: 100 },
             { source: 'how_you_work', status: 'pending', asOfMs: 100 },
             { source: 'quota', status: 'available', asOfMs: 100 },
             { source: 'quota:answered', status: 'pending', asOfMs: 100 },
         ];
         expect(describeUsagePagePendingSources([{ sources }])).toBeNull();
-        expect(readUsagePageAsOfMs([{ sources }])).toBe(100);
+        expect(readUsagePageFreshness([{ ...accounting!, sources }]).asOfMs).toBe(100);
         expect(describeUsagePagePendingSources([{ sources: [...sources, { source: 'quota:unanswered', status: 'pending' }] }]))
             .toBe(t('usage.board.page.coveragePending', { sources: usageSourceTitle('quota') }));
     });
@@ -514,22 +518,36 @@ describe('shared Usage identity and dependent coverage', () => {
             sources: [usageSourceTitle('work'), usageSourceTitle('how_you_work')].join(', '),
         }));
     });
-    it('dates accounting pages by the accounting observation even when a view reads newer private facts or quota', () => {
-        const sources: UsageQueryResultSlice['sources'] = [
-            { source: 'accounting', status: 'available', asOfMs: 100 },
-            { source: 'historic-source', status: 'partial', asOfMs: 50 },
-            { source: 'quota', status: 'available', asOfMs: 200 },
-        ];
-        expect(readUsagePageAsOfMs([{ sources }])).toBe(100);
-        expect(readUsagePageAsOfMs([{ sources }, { sources: [
-            { source: 'how_you_work', status: 'available', asOfMs: 300 },
-            { source: 'work', status: 'available', asOfMs: 400 },
-        ] }])).toBe(100);
-        expect(readUsagePageAsOfMs([{ sources }, { sources: [{ source: 'accounting', status: 'partial', asOfMs: 80 }] }])).toBe(80);
-        expect(readUsagePageAsOfMs([{ sources: [
+    it('dates the header by a fresh accounting read beside a retained older scope and newer quota', () => {
+        const olderRead = new Date(2026, 10, 19, 9).getTime();
+        const currentRead = new Date(2026, 10, 19, 12).getTime();
+        const oldObservation = Date.UTC(2026, 9, 10, 2, 6);
+        const earlier = normalizeUsageQuery({ period: { startMs: Date.UTC(2026, 10, 12) } });
+        const current = normalizeUsageQuery({ period: { startMs: Date.UTC(2026, 10, 13) } });
+        const value = usageQaAccountingFixture();
+        const previous = resolveUsagePageAggregation({ queries: [earlier], accounting: [
+            { query: earlier, value, status: 'available', asOfMs: oldObservation, readAtMs: olderRead },
+        ] }, bundledUsageModelPriceCatalog);
+        const { results } = resolveUsagePageAggregation({ queries: [earlier, current], previous, accounting: [
+            { query: earlier, status: 'error', errorCode: 'usage_query_failed' },
+            { query: current, value, status: 'available', asOfMs: currentRead - 1, readAtMs: currentRead },
+        ], quota: { status: 'available', asOfMs: currentRead + 100 },
+        sources: [{ source: 'how_you_work', status: 'available', asOfMs: currentRead + 200 }] },
+        bundledUsageModelPriceCatalog);
+        expect(readUsagePageFreshness(results)).toMatchObject({ asOfMs: currentRead, retainedAccountingReadAtMs: olderRead });
+        expect(readUsagePageFreshness([previous.results[0]!, results[1]!])).toMatchObject({
+            asOfMs: currentRead, retainedAccountingReadAtMs: null,
+        });
+        expect(readUsagePageFreshness([results[0]!]).asOfMs).toBe(olderRead);
+        expect(results[0]?.sources.find(source => source.source === 'accounting')?.asOfMs).toBe(oldObservation);
+        expect(readUsagePageFreshness([{ sources: [
             { source: 'accounting', status: 'pending' },
-            { source: 'quota', status: 'available', asOfMs: 200 },
-        ] }])).toBeNull();
+            { source: 'quota', status: 'available', asOfMs: currentRead },
+        ] }]).asOfMs).toBeNull();
+        expect(readUsagePageFreshness([{ accounting: value, sources: [
+            { source: 'accounting', status: 'available', asOfMs: oldObservation },
+            { source: 'quota', status: 'available', asOfMs: currentRead },
+        ] }]).asOfMs).toBeNull();
         const today = new Date(2026, 10, 18, 16).getTime();
         expect(isUsageObservationFromEarlierDay(new Date(2026, 10, 13, 6).getTime(), today)).toBe(true);
         expect(isUsageObservationFromEarlierDay(new Date(2026, 10, 18, 6).getTime(), today)).toBe(false);
@@ -547,9 +565,9 @@ describe('shared Usage identity and dependent coverage', () => {
         const query = normalizeUsageQuery({ period: { startMs: 100 } });
         const slices = resolveUsagePageAggregation({ queries: [query], quota: { status: 'partial', asOfMs: 100,
             value: [readAt('older', 100), readAt('newer', 200)] } }, bundledUsageModelPriceCatalog).results;
-        expect(readUsagePageAsOfMs(slices)).toBe(200);
+        expect(readUsagePageFreshness(slices).asOfMs).toBe(200);
         expect(slices[0]?.sources.find(source => source.source === 'quota')?.asOfMs).toBe(100);
-        expect(readUsagePageAsOfMs([{ sources: [], quota: [readAt('never', 0, 'not_loaded')] }])).toBeNull();
+        expect(readUsagePageFreshness([{ sources: [], quota: [readAt('never', 0, 'not_loaded')] }]).asOfMs).toBeNull();
     });
     it('humanizes unknown qualified producer identities without replacing a supplied display title', () => {
         const producer = 'third.party/research:remote';

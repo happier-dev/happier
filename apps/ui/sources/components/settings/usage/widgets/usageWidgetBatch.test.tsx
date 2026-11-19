@@ -39,7 +39,7 @@ import { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture,
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { HappierDataMetric, HappierDataRows, RankedRows, StackedSeriesChart, UsageBreakdownsBody } from '@happier-dev/plugin-ui/presentation';
-import { useUsageAnalyticsView } from './usageBodyKit';
+import { readUsagePageFreshness, useUsageAnalyticsView } from './usageBodyKit';
 import { createUsageWidgetPresets } from '@happier-dev/protocol/widgets/usageWidgetPresetsV1';
 import { flattenWidgetLayoutWidgetsV1, WidgetLayoutItemsV1Schema } from '@happier-dev/protocol/widgets';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
@@ -538,19 +538,27 @@ describe('Usage page batch', () => {
     // QA reload88 held 6,933 accounting events. Their mounted summary stays
     // bounded while leaving and revisiting a view must not rebuild its model.
     const eventCount = 6_933;
+    const windowStart = Date.UTC(2026, 10, 12);
+    const activityAt = Date.UTC(2026, 10, 19, 9);
+    const windowEnd = Date.UTC(2026, 10, 19, 12);
     let amount = 1;
-    let historyAsOf = 90_000;
+    let historyAsOf = Date.UTC(2026, 9, 10, 2, 6);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(windowEnd);
+    let accountingUnavailable = false;
     const response = (): UsageAnalyticsQueryResponse => {
       const totals = { eventCount,
         tokens: { ...accounting.totals.tokens, input: 10 * eventCount, output: 5 * eventCount, total: 15 * eventCount },
         cost: { reportedUsd: amount, estimatedUsd: 0, currency: 'USD', costSource: 'provider_reported' as const } };
       return { v: 1, totals, breakdowns: { agent: [{ key: 'codex', ...totals }] },
-        activity: { calendarDays: [{ date: '1970-01-01', eventCount }] },
+        activity: { calendarDays: [{ date: '2026-11-19', eventCount }] },
         coverage: { status: 'partial', reasons: ['incomplete_history'], missingDimensions: [], ranked: [],
-          range: { startMs: 1_000, endMs: historyAsOf, complete: false },
-          sources: [{ source: 'runtime', path: 'runtime', status: 'partial', eventCount, asOfMs: historyAsOf, historyComplete: false }] },
+          range: { startMs: windowStart, endMs: windowEnd, complete: false },
+          sources: [
+            { source: 'claude-sdk-result', path: 'runtime', status: 'partial', eventCount: 1, asOfMs: historyAsOf, historyComplete: false },
+            { source: 'runtime', path: 'runtime', status: 'available', eventCount, asOfMs: activityAt, historyComplete: true },
+          ] },
         contributions: [{
-          id: 'recorded-events', eventCount, sessionId: null, turnId: null, observedAtMs: 1_500,
+          id: 'recorded-events', eventCount, sessionId: null, turnId: null, observedAtMs: activityAt,
           agentId: 'codex', modelId: null, machineId: null, projectKey: null, workspaceId: null,
           source: 'runtime', tokens: totals.tokens, cost: totals.cost,
         }] };
@@ -559,6 +567,7 @@ describe('Usage page batch', () => {
       route: request => request.path === '/v1/features' || request.path === '/v1/features/authenticated'
         ? Response.json(createRootLayoutFeaturesResponse())
         : request.path === '/v2/usage/query-batch' ? (() => {
+        if (accountingUnavailable) return Response.json({}, { status: 503 });
         const input = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
         return Response.json(collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery({ v: 1,
           results: input.queries.map(query => ({ query, value: repriceUsageAnalyticsResponse(response(), bundledUsageModelPriceCatalog, {}, query.costMode) })),
@@ -573,7 +582,7 @@ describe('Usage page batch', () => {
     const views = new Set<NonNullable<ReturnType<typeof useUsageAnalyticsView>>>();
     let selectedModel: UsageWidgetBodyModel | null = null;
     let selectedView: ReturnType<typeof useUsageAnalyticsView> = null;
-    const warmScope = { ...scope, period: { startMs: 1_000, endMs: 100_000 } };
+    const warmScope = { ...scope, period: { startMs: windowStart, endMs: windowEnd } };
     const costsInput = { ...warmScope, metric: 'cost', breakdown: ['agent'] };
     function Projection(props: Readonly<{ model: UsageWidgetBodyModel; query: NonNullable<ReturnType<typeof useUsageWidgetModel>['query']> }>) {
       const view = useUsageAnalyticsView(props.model.slice!, props.query);
@@ -601,6 +610,9 @@ describe('Usage page batch', () => {
       await expect.poll(visibleCost).toBeCloseTo(1);
       await expect.poll(() => selectedModel?.pending).toBe(false);
       await flushHookEffects({ cycles: 20 });
+      const pageReadTime = () => readUsagePageFreshness(selectedModel?.slice ? [selectedModel.slice] : []).asOfMs;
+      expect(pageReadTime()).toBe(windowEnd);
+      expect(selectedModel!.slice!.accounting!.coverage!.sources[0]?.asOfMs).toBe(historyAsOf);
       const retainedAccounting = selectedModel!.slice!.accounting;
       const retainedView = selectedView;
       const builtViews = views.size;
@@ -614,6 +626,11 @@ describe('Usage page batch', () => {
       expect(home.httpRequests.filter(request => request.path === '/v2/usage/query-batch')).toHaveLength(reads);
       expect(views.size - builtViews, 'unchanged reopen builds no new Costs analytics model').toBe(0);
       expect(selectedModel!.slice!.accounting).toBe(retainedAccounting);
+      expect(selectedView).toBe(retainedView);
+      expect(pageReadTime()).toBe(windowEnd);
+      clock.mockReturnValue(windowEnd + 60_000);
+      await act(async () => { await selectedModel!.refresh(); });
+      expect(pageReadTime()).toBe(windowEnd + 60_000);
       expect(selectedView).toBe(retainedView);
       historyAsOf++;
       await act(async () => { await selectedModel!.refresh(); });
@@ -636,6 +653,12 @@ describe('Usage page batch', () => {
       await flushHookEffects({ cycles: 20 });
       expect(views.size - builtViews, 'a real accounting change builds exactly one new Costs analytics model').toBe(1);
       expect(selectedView).not.toBe(retainedView);
+      accountingUnavailable = true;
+      clock.mockReturnValue(windowEnd + 120_000);
+      await act(async () => { await selectedModel!.refresh(); });
+      await expect.poll(() => selectedModel?.slice?.sources.find(source => source.source === 'accounting')?.status).toBe('error');
+      expect(pageReadTime()).toBe(windowEnd + 60_000);
+      expect(visibleCost()).toBeCloseTo(2);
     } finally { await screen.unmount(); }
   });
   it.each([false, true])('preserves best-available money across HTTP summary delivery and every Costs body (unpriced=%s)', async unpriced => {

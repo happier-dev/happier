@@ -7,9 +7,11 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { UsageAccountingMetricSchema, type UsageAccountingMetric, type UsageHistoryReadState, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
-import type {
-  UsageQueryResultSlice,
-  UsageQuerySourceState,
+import {
+  readUsageAccountingReadAtMs,
+  readUsageOldestAccountingObservation,
+  type UsageQueryResultSlice,
+  type UsageQuerySourceState,
 } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
@@ -34,7 +36,7 @@ import { wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/
 import { type UsagePageCostProjection} from '@happier-dev/protocol/usage/usageCostFacts';
 import { type UsageAnalyticsCoverage } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
-import { formatUsageCalendarPeriod, formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
+import { formatUsageCalendarPeriod, formatUsageObservedAt, isUsageObservationFromEarlierDay } from '@/sync/domains/usage/usageCalendarPresentation';
 import { usageSourceTitle } from '@/sync/domains/usage/usageLabels';
 import { getUsageHistoryReadOperation } from '@/sync/api/account/usageHistoryReadState';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
@@ -945,17 +947,28 @@ export function describeUsagePagePartialSources(slices: readonly Pick<UsageQuery
   return t('usage.board.page.coverageWitnessed', { sources: names.join(', ') });
 }
 
-export function readUsagePageAsOfMs(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'quota'>[]): number | null {
-  // The page dates its displayed accounting scopes by their oldest witnessed accounting observation.
-  // Quota-only reads can still describe their own clock without lending it to accounting.
+export function readUsagePageFreshness(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'quota' | 'accounting'>[]) {
   let hasAccounting = false;
   let accountingAsOf: number | null = null;
+  let retainedAccountingReadAtMs: number | null = null;
+  let olderSource: { source: string; asOfMs: number } | null = null;
   let quotaAsOf: number | null = null;
   for (const slice of slices) {
+    hasAccounting ||= slice.accounting !== undefined;
     for (const source of slice.sources) {
       if (source.source === 'accounting' && source.status !== 'not_loaded') {
         hasAccounting = true;
-        if (source.asOfMs !== undefined) accountingAsOf = accountingAsOf === null ? source.asOfMs : Math.min(accountingAsOf, source.asOfMs);
+        const readAtMs = readUsageAccountingReadAtMs(slice);
+        if (readAtMs !== undefined) {
+          accountingAsOf = accountingAsOf === null ? readAtMs : Math.max(accountingAsOf, readAtMs);
+          if (slice.accounting && (source.status === 'error' || source.status === 'stale')) {
+            retainedAccountingReadAtMs = retainedAccountingReadAtMs === null ? readAtMs : Math.min(retainedAccountingReadAtMs, readAtMs);
+          }
+          if (slice.accounting && source.asOfMs !== undefined && (olderSource === null || source.asOfMs < olderSource.asOfMs)
+            && isUsageObservationFromEarlierDay(source.asOfMs, readAtMs)) {
+            olderSource = readUsageOldestAccountingObservation(slice.accounting) ?? olderSource;
+          }
+        }
       } else if ((source.source === 'quota' || source.source.startsWith('quota:')) && source.asOfMs !== undefined) {
         quotaAsOf = quotaAsOf === null ? source.asOfMs : Math.max(quotaAsOf, source.asOfMs);
       }
@@ -968,7 +981,9 @@ export function readUsagePageAsOfMs(slices: readonly Pick<UsageQueryResultSlice,
       }
     }
   }
-  return hasAccounting ? accountingAsOf : quotaAsOf;
+  // Only a successful accounting read dates an accounting page. Older reads
+  // and source observations remain separate facts for its Details.
+  return { asOfMs: hasAccounting ? accountingAsOf : quotaAsOf, retainedAccountingReadAtMs, olderSource };
 }
 
 export function describeUsagePagePendingSources(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'accounting'>[]): string | null {

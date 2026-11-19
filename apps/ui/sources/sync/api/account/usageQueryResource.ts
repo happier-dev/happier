@@ -12,7 +12,7 @@ import type { ResourceContent, ResourceSubscriptionEvent } from '@happier-dev/pl
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
 import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
-import { resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageQuotaSourceSnapshot, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageQuotaSourceSnapshot, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
@@ -1435,9 +1435,10 @@ export async function readUiUsageQueryBatch(
         }
     }
     const priorAccounting = new Map(previous?.results.flatMap(slice => [
-        [slice.key, { value: slice.accounting, asOfMs: slice.sources.find(source => source.source === 'accounting')?.asOfMs }] as const,
+        [slice.key, { value: slice.accounting, asOfMs: slice.sources.find(source => source.source === 'accounting')?.asOfMs,
+            readAtMs: readUsageAccountingReadAtMs(slice) }] as const,
         ...(slice.comparison ? [[getUsageQueryKey(slice.comparison.query), { value: slice.comparison.accounting,
-            asOfMs: slice.comparison.source.asOfMs }] as const] : []),
+            asOfMs: slice.comparison.source.asOfMs, readAtMs: undefined }] as const] : []),
     ]));
     const accountingAnswers = new Map<string, UsageAccountingAnswer>();
     const accountingReads = new Map<string, UsageAccountingAnswer | Promise<UsageAccountingAnswer>>();
@@ -1445,7 +1446,7 @@ export async function readUiUsageQueryBatch(
     const snapshotForAnswer = (query: UsageQuery, answer: UsageAccountingAnswer): UsageAccountingSourceSnapshot => {
         const asOfMs = resolveUsageAccountingAsOfMs(answer.value);
         return { query, period: periods.get(getUsageQueryKey(query)), value: answer.value, status: 'available',
-            ...(asOfMs === undefined ? {} : { asOfMs }) };
+            readAtMs: answer.readAtMs, ...(asOfMs === undefined ? {} : { asOfMs }) };
     };
     const accounting = new Map<string, UsageAccountingSourceSnapshot>(requests.map(query => {
         const key = getUsageQueryKey(query);
@@ -1469,7 +1470,7 @@ export async function readUiUsageQueryBatch(
         }
         const retained = priorAccounting.get(key);
         return [key, { query, period: periods.get(key), status: 'pending' as const,
-            ...(retained?.value ? { value: retained.value } : {}),
+            ...(retained?.value ? { value: retained.value, readAtMs: retained.readAtMs } : {}),
             ...(retained?.asOfMs === undefined ? {} : { asOfMs: retained.asOfMs }) } satisfies UsageAccountingSourceSnapshot] as const;
     }));
     const evidenceQueries = queries.filter(query => query.includeAccounting && query.includeSessionEvidence);
@@ -1582,7 +1583,7 @@ export async function readUiUsageQueryBatch(
             // Detail/Work membership must see the same retained accounting as
             // aggregation, rather than shrinking to the currently hydrated Sessions.
             snapshot = retainAccountingOnReadFailure({ query, period: periods.get(getUsageQueryKey(query)), status: 'error', errorCode },
-                retained?.value, retained?.asOfMs)!;
+                retained?.value, retained?.asOfMs, retained?.readAtMs)!;
         }
         requireCurrent(context, signal);
         accounting.set(getUsageQueryKey(query), snapshot);
@@ -1795,6 +1796,7 @@ function withExplicitAllowanceRefresh(store: PluginUiResourceStore,
 }
 type UsageAccountingAnswer = {
     readonly value: Awaited<ReturnType<typeof queryUsageAnalytics>>;
+    readonly readAtMs: number;
     /** Protocol validates the prepared operand, cost basis and overrides before reuse. */
     prepared?: PreparedUsageAccountingSnapshot;
 };
@@ -2105,7 +2107,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     const { sessionIds: _sessions, sessionMembership: _turns, ...summary } = projected;
                     selected = summary;
                 }
-                const projectedAnswer = { value: selected };
+                const projectedAnswer = { value: selected, readAtMs: answer.readAtMs };
                 admitted.answers.set(key, projectedAnswer);
                 return projectedAnswer;
             }
@@ -2125,6 +2127,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // answer, including preparation completed by an earlier borrower.
                     const sharedAnswer = isAdmitted() ? admitted!.answers.get(key) : undefined;
                     if (sharedAnswer) return sharedAnswer;
+                    const readAtMs = Date.now();
                     let result = value;
                     if (value.contributions !== undefined && (value.summary || includeContributions || includeSessionIds)) {
                         const { contributions: _rows, sessionIds: _members, sessionMembership: _turns, ...summary } = value;
@@ -2138,13 +2141,13 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                             result = includeContributions ? { ...detail, ...membership }
                                 : includeSessionIds ? { ...summary, ...membership } : summary;
                             if (isAdmitted()) {
-                                admitted!.answers.set(getUsageAccountingReadKey(request, false), { value: summary });
-                                admitted!.answers.set(getUsageAccountingReadKey(request, false, true), { value: { ...summary, ...membership } });
+                                admitted!.answers.set(getUsageAccountingReadKey(request, false), { value: summary, readAtMs });
+                                admitted!.answers.set(getUsageAccountingReadKey(request, false, true), { value: { ...summary, ...membership }, readAtMs });
                             }
                         } else result = { ...value, ...membership };
                     }
                     // A replacement during this read means the answer may predate it.
-                    const answer = { value: result };
+                    const answer = { value: result, readAtMs };
                     if (isAdmitted()) admitted!.answers.set(key, answer);
                     return answer;
                 } finally { cancellation.dispose(); }
