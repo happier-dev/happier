@@ -2050,8 +2050,8 @@ describe('Azure DevOps final review-workspace verification', () => {
   function providerRow(overrides: Record<string, unknown> = {}) {
     return pullRequest(17, {
       sourceRefName: 'refs/heads/feature',
-      sourceRepository: {
-        id: REPOSITORY_ID,
+      repository: {
+        ...repository(),
         remoteUrl: 'https://dev.azure.com/acme/Payments/_git/checkout',
       },
       lastMergeSourceCommit: { commitId: 'b3f1c0a9d2e4789012345678901234567890abcd' },
@@ -2060,7 +2060,7 @@ describe('Azure DevOps final review-workspace verification', () => {
     });
   }
 
-  it.each([false, true])('rereads the exact PR and asks the canonical SCM owner to verify the local HEAD (accepted checkout: %s)', async (acceptedCheckout) => {
+  it.each([false, true])('verifies the local HEAD for a same-repository Azure PR (accepted checkout: %s)', async (acceptedCheckout) => {
     const recorder = createRecorder((request) => {
       if (!request.url.includes('/pullrequests/17?')) throw new Error(`unexpected request: ${request.url}`);
       return { body: providerRow() };
@@ -2107,6 +2107,21 @@ describe('Azure DevOps final review-workspace verification', () => {
       { signal },
     );
   });
+
+  it.each([null, { name: 'refs/heads/feature' }])(
+    'refuses unresolved fork source data (%j) before local SCM',
+    async (forkSource) => {
+      const recorder = createRecorder(() => ({ body: providerRow({ forkSource }) }));
+      const execute = vi.fn();
+
+      await expect(runAzureTriageVerifyReviewWorkspace({
+        services: { ...recorder.services, actions: { execute } as unknown as ActionsService },
+        request: input(),
+        signal: new AbortController().signal,
+      })).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+      expect(execute).not.toHaveBeenCalled();
+    },
+  );
 
   it('refuses a changed provider revision before touching local SCM', async () => {
     const recorder = createRecorder(() => ({

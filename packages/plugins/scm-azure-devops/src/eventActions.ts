@@ -46,7 +46,7 @@ export async function setupAzureDevOpsPullRequestEvent(input: unknown, context: 
   if (sourceInstanceId === null) {
     throw new PluginError({
       code: 'azure-devops/event-source-address-unsupported',
-      message: 'The Azure DevOps deployment and repository address exceeds the webhook endpoint identity limit.',
+      message: 'The Azure DevOps deployment and repository cannot be represented as a review target identity.',
     });
   }
 

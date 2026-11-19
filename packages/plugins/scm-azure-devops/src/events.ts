@@ -86,10 +86,7 @@ export function buildAzureDevOpsEventSourceInstanceId(
   changes: AzureDevOpsPullRequestChanges,
 ): string | null {
   const repositoryScope = buildAzureCollisionScope({ origin, repositoryId });
-  if (!repositoryScope) return null;
-  const sourceInstanceId = `${repositoryScope}:${changes}`;
-  // The existing webhook endpoint protocol accepts up to 128 ASCII characters.
-  return sourceInstanceId.length <= 128 ? sourceInstanceId : null;
+  return repositoryScope === null ? null : `${repositoryScope}:${changes}`;
 }
 
 /** Azure filters update subtypes at the Service Hook subscription, before sending JSON. */

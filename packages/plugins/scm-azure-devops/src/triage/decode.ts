@@ -223,22 +223,19 @@ export function decodeAzurePullRequestRow(raw: unknown): AzurePullRequestRow | n
 }
 
 /**
- * Azure keeps the editable source repository separate from `repository`, which is always the
- * pull request target. A fork's nested `forkSource.repository` is authoritative when present;
- * falling through to `sourceRepository` after a malformed fork record would quietly check out
- * the target-side source instead, so it deliberately yields no source URL.
+ * Azure 7.1 puts the source of a fork PR in `forkSource.repository`. Its same-repository
+ * example omits `forkSource` and supplies `repository`. Preserve an explicit
+ * `sourceRepository` and keep unresolved fork data unresolved.
  */
 function readAzurePullRequestSourceRepositoryCloneUrl(
   record: Readonly<Record<string, unknown>>,
 ): string | null {
   const forkSourceValue = record.forkSource;
-  const sourceRepository = forkSourceValue === undefined || forkSourceValue === null
-    ? readRecord(record.sourceRepository)
-    : (() => {
-      const forkSource = readRecord(forkSourceValue);
-      return forkSource === null ? null : readRecord(forkSource.repository);
-    })();
-  return sourceRepository === null ? null : readString(sourceRepository.remoteUrl);
+  const explicitSource = forkSourceValue === undefined || forkSourceValue === null
+    ? record.sourceRepository
+    : readRecord(forkSourceValue)?.repository;
+  const sourceRepository = readRecord(explicitSource ?? (forkSourceValue === undefined ? record.repository : undefined));
+  return readString(sourceRepository?.remoteUrl);
 }
 
 /**

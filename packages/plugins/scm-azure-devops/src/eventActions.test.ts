@@ -42,7 +42,7 @@ const sourceInput = {
   changes: 'sourceBranch',
 };
 
-async function createHarness() {
+async function createHarness(configuredBase = baseUrl) {
   const setup = AZURE_DEVOPS_PLUGIN.manifest.contributes.events?.find(({ id }) => id === 'automation/pull-request-lifecycle-v1')?.automation?.source;
   expect(setup, 'Azure DevOps should offer a pull-request lifecycle Event source').toBeDefined();
   if (!setup) throw new Error('Azure DevOps pull-request lifecycle Event is missing');
@@ -53,14 +53,17 @@ async function createHarness() {
   const request = vi.fn(async () => ({
     status: 200,
     headers: { 'content-type': 'application/json' },
-    body: new TextEncoder().encode(JSON.stringify(repository)),
+    body: new TextEncoder().encode(JSON.stringify({
+      ...repository, remoteUrl: `${configuredBase}/Engineering/_git/Widget`,
+    })),
   }));
   // Connected Account and provider HTTP calls cross host and network boundaries.
   const connectedAccounts = {
     listAccounts: async () => ({
       status: 'complete',
       accounts: [
-        { account, displayName: 'Personal', state: 'connected', connectedAccountBases: [baseUrl], connectedAccountOrigins: ['https://dev.azure.com'] },
+        { account, displayName: 'Personal', state: 'connected',
+          connectedAccountBases: [configuredBase], connectedAccountOrigins: [new URL(configuredBase).origin] },
         { account: { ...account, accountId: 'other-connection' }, displayName: 'Other', state: 'connected',
           connectedAccountBases: ['https://dev.azure.com/Other'], connectedAccountOrigins: ['https://dev.azure.com'] },
       ],
@@ -138,6 +141,20 @@ describe('Azure DevOps pull-request lifecycle Event', () => {
         .rejects.toMatchObject({ details: { cause: 'azure-devops/configured-base-stale' } });
       expect(request).toHaveBeenCalledTimes(1);
       expect(materializeListedAccount).toHaveBeenCalledTimes(1);
+    } finally {
+      await kit.dispose();
+    }
+  });
+
+  it('returns the exact source config for a long Azure Server collection address', async () => {
+    const collection = 'https://azure.example.test/company/engineering/tfs/Fabrikam';
+    const { kit, setup } = await createHarness(collection);
+    try {
+      await expect(kit.invokeAction(setup.setupActionRef.localId, { ...sourceInput, baseUrl: collection }))
+        .resolves.toMatchObject({
+          webhookDelivery: 'required',
+          sourceConfig: { credentialRef: account, repository: { id: repository.id, baseUrl: collection } },
+        });
     } finally {
       await kit.dispose();
     }
