@@ -206,6 +206,7 @@ export type InvokeTargetActionParams = Readonly<{
     /** Original host-admitted source, distinct from immediate plugin capability identity. */
     approvalContext?: import('@happier-dev/protocol').ActionExecutorContext & Readonly<{
         machineAdmission?: Pick<SocketRpcMachineAdmissionContextV1, 'actorAccountId' | 'machineId' | 'installationId'>;
+        authenticatedLocalRootCustody?: import('@/api/rpc/types').RpcLocalActionContext['authenticatedLocalRootCustody'];
     }>;
     /** Account custody retained by the admitted containing Session. */
     requesterAccount?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
@@ -848,8 +849,10 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         : serviceBinding;
                     const services = params.createServices(seed, effectiveServiceBinding);
                     const admittedContext = invocation.approvalContext;
-                    const requesterAccountId = admittedContext?.machineAdmission?.actorAccountId ?? admittedContext?.runtimeAccountId;
-                    const chosenMachine = admittedContext?.machineAdmission;
+                    const localCustody = admittedContext?.authenticatedLocalRootCustody;
+                    const requesterAccountId = admittedContext?.machineAdmission?.actorAccountId
+                        ?? localCustody?.accountId ?? admittedContext?.runtimeAccountId;
+                    const chosenMachine = admittedContext?.machineAdmission ?? localCustody;
                     const context: PluginInvocationContext = Object.freeze({
                         plugin: seed.plugin,
                         contribution: seed.contribution,

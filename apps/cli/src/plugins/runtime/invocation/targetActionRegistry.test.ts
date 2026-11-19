@@ -146,6 +146,22 @@ function reviewedActionContext(pluginId: string, localId: string, input: unknown
 }
 
 describe('target action invocation registry', () => {
+    it('projects authenticated local host custody for plugin Actions without remote Machine admission', async () => {
+        const registry = createRegistry({ actions: [{ ...action(), handler: async (_input, context) => ({
+            echoed: JSON.stringify({ account: context.requesterAccount, machine: context.chosenMachine }),
+        }) }] });
+        try {
+            await expect(registry.invoke({ pluginId: 'acme.alpha', localId: 'run', surface: 'cli',
+                input: { value: JSON.stringify({ accountId: 'other-account', machineId: 'other-machine' }) },
+                approvalContext: { surface: 'cli', authority: 'present_user', runtimeAccountId: 'alice',
+                    authenticatedLocalRootCustody: { serverIdentityId: 'home', accountId: 'alice',
+                        machineId: 'local-machine', installationId: 'local-installation' } },
+            })).resolves.toMatchObject({ status: 'executed', value: { echoed: JSON.stringify({
+                account: { accountId: 'alice' }, machine: { machineId: 'local-machine', installationId: 'local-installation' },
+            }) } });
+        } finally { registry.dispose(); }
+    });
+
     it('projects authenticated Account and Machine custody independently of Action operands', async () => {
         const registry = createRegistry({
             actions: [{ ...action(), handler: async (_input, context) => ({ echoed: JSON.stringify({
