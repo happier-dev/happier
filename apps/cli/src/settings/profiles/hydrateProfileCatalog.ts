@@ -1,6 +1,5 @@
 import { $ZodError } from 'zod/v4/core';
 import { isRetryableAccountEncryptionCurrentnessError } from '@/api/client/accountEncryptionCurrentness';
-import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import type { StoredCredentials } from '@/persistence';
 import { readStoredCredentials } from '@/persistence';
@@ -220,12 +219,11 @@ export function refreshActiveApprovalProfileCatalog(input: Readonly<{
           } else catalog = await loadReadableApprovalProfilesV1(store.list, input.signal);
         } catch (error) {
           input.signal?.throwIfAborted();
-          const { kind } = classifyServerEndpointError(error);
-          if (kind === 'network' || kind === 'timeout' || kind === 'server_error') {
-            if (prior) return prior;
-            throw error;
-          }
-          catalog = [];
+          // Only a successful read can withdraw a profile. A failed re-read keeps the held
+          // catalog; a failed first read leaves none, so admission refuses rather than
+          // deciding on Account settings without the Session's profile.
+          if (prior) return prior;
+          throw error;
         }
         if (!current()) return [];
         if (!context && reobserveApprovalProfilesAfterPending.has(key)) {

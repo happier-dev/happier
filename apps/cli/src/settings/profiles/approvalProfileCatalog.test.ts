@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot } from '../accountSettings/activeAccountSettingsSnapshot';
@@ -11,8 +11,107 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import * as persistence from '@/persistence';
 import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { DeploymentReceiptAcceptedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+
+describe('a failed approval profile re-read never withdraws a Session profile', () => {
+  const credentials = { token: 'approval-profile-refresh-failure', encryption: null };
+  const snapshot = { source: 'network' as const, scopeKey: resolveAccountSettingsScopeKey(credentials),
+    settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [] };
+  // The Account waives agent deploy approval; the Session's Team profile turns deploys Off.
+  const accountPolicy = normalizeActionsSettingsV1({ v: 1, actions: {}, approvalWaivedSurfaces: { 'deployments.deploy': ['agent'] } });
+  const teamProfileRow = { id: 'team-no-deploys', ownerAccountId: 'team-owner', access: 'owner', encryptionMode: 'plain',
+    dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+    header: encodePlainArtifactStoredContent({ kind: 'approval-profile.v1', name: 'No agent deploys' }),
+    body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'approval-profile.v1',
+      profile: { name: 'No agent deploys', actions: { 'deployments.deploy': { enabled: false } } } }) }) };
+  const deployInput = { serverId: 'home', environmentId: 'environment', expectedRevision: 3, requestKey: 'deploy-request',
+    targetLinkId: 'link', expectedTargetLinkRevision: 4, contentArtifactId: 'definition', contentHeaderVersion: 1, contentBodyVersion: 1 };
+
+  /** Home's HTTP answers are the only boundary: Artifact codec, catalog owner and admission stay real. */
+  function serveHome(home: { rows: (typeof teamProfileRow)[]; listStatus?: number; readStatus?: number }) {
+    vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+    vi.spyOn(axios, 'get').mockImplementation(async input => {
+      const url = String(input);
+      const path = new URL(url).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path === '/v1/artifacts') {
+        return home.listStatus ? { status: home.listStatus, data: { error: 'refused' } }
+          : { status: 200, data: artifactListResponse(url, home.rows.map(row => ({ ...row, body: undefined }))) };
+      }
+      const row = home.rows.find(candidate => path === `/v1/artifacts/${candidate.id}`);
+      if (home.readStatus) return { status: home.readStatus, data: { error: 'refused' } };
+      return row ? { status: 200, data: { ...row, publicAudience: 'none' } } : { status: 404, data: { error: 'Artifact not found' } };
+    });
+    vi.spyOn(axios, 'post').mockImplementation(async (_url, body) =>
+      artifactReadResponse(body, id => home.rows.find(row => row.id === id) ?? null));
+  }
+
+  /** The next Action admission, with the CLI's own approval profile reader. */
+  async function deployFromSession(): Promise<Readonly<{ result: unknown; effects: number }>> {
+    const readApprovalProfile = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'session-with-team-profile',
+      serverHttpBaseUrl: 'http://approval-refresh.test' }).readApprovalProfile as ActionExecutorDeps['readApprovalProfile'];
+    let effects = 0;
+    const executor = createActionExecutor({
+      // The Session metadata store and the deployment provider are process boundaries.
+      readActionApprovalProfileId: async () => ({ approvalProfileId: teamProfileRow.id, approvalProfileTeamOrGroupDerived: true }),
+      readApprovalProfile,
+      resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'environment' } }),
+      prepareDeploymentAction: async () => ({ input: deployInput, preview: { sourceMethod: 'gitIntegration' } }),
+      deploymentAction: async () => { effects++; return DeploymentReceiptAcceptedResultV1Schema.parse({ ok: true,
+        environmentId: 'environment', revision: 4, kind: 'pending', actionOperationId: 'operation' }); },
+    });
+    const result = await executor.execute('deployments.deploy', deployInput, { surface: 'agent', authority: 'account_automation',
+      serverId: 'home', interactivePresentation: 'unavailable', actionsSettings: accountPolicy });
+    return { result, effects };
+  }
+
+  async function hydrateTeamProfile() {
+    setActiveAccountSettingsSnapshot(snapshot);
+    serveHome({ rows: [teamProfileRow] });
+    await runWithServerHttpBaseUrl('http://approval-refresh.test', () => refreshActiveApprovalProfileCatalog({ credentials }));
+    expect(await deployFromSession()).toEqual({ result: expect.objectContaining({ ok: false, errorCode: 'action_disabled' }), effects: 0 });
+    vi.restoreAllMocks();
+  }
+
+  it.each([
+    { name: 'rate limited list', listStatus: 429 },
+    { name: 'unauthorized list', listStatus: 401 },
+    { name: 'forbidden list', listStatus: 403 },
+    { name: 'conflicting list', listStatus: 409 },
+    { name: 'rate limited changed-profile read', readStatus: 429, artifactIds: [teamProfileRow.id] },
+  ])('keeps the ready Team profile after a $name and the next admission still applies it', async ({ listStatus, readStatus, artifactIds }) => {
+    await hydrateTeamProfile();
+    serveHome({ rows: [teamProfileRow], listStatus, readStatus });
+    // The Session runner's connect/change path re-reads the demanded catalog.
+    await runWithServerHttpBaseUrl('http://approval-refresh.test', () =>
+      refreshDemandedActiveApprovalProfileCatalog({ token: credentials.token, ...(artifactIds ? { artifactIds } : {}) }));
+    expect(getActiveAccountSettingsSnapshot()?.approvalProfileCatalog?.map(row => row.id)).toEqual([teamProfileRow.id]);
+    expect(await deployFromSession()).toEqual({ result: expect.objectContaining({ ok: false, errorCode: 'action_disabled' }), effects: 0 });
+  });
+
+  it('refuses admission as approval_context_unavailable when the first read fails', async () => {
+    setActiveAccountSettingsSnapshot(snapshot);
+    serveHome({ rows: [teamProfileRow], listStatus: 429 });
+    expect(await deployFromSession()).toEqual({ result: expect.objectContaining({ ok: false, errorCode: 'approval_context_unavailable' }), effects: 0 });
+    expect(getActiveAccountSettingsSnapshot()?.approvalProfileCatalog).toBeUndefined();
+  });
+
+  it('withdraws a profile that a successful re-read no longer returns', async () => {
+    await hydrateTeamProfile();
+    serveHome({ rows: [] });
+    await runWithServerHttpBaseUrl('http://approval-refresh.test', () =>
+      refreshDemandedActiveApprovalProfileCatalog({ token: credentials.token }));
+    expect(getActiveAccountSettingsSnapshot()?.approvalProfileCatalog).toEqual([]);
+    expect(await deployFromSession()).toEqual({ result: expect.objectContaining({ ok: true }), effects: 1 });
+  });
+});
 
 it('retains opened approval profiles across a preference revision and retires them with the Account', () => {
   const snapshot = { source: 'network' as const, scopeKey: 'first', settings: accountSettingsParse({}),
