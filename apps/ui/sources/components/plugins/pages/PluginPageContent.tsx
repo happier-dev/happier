@@ -269,8 +269,7 @@ export function PluginPageContent(props: Readonly<{
     const pageLaunchInput = launch?.input;
     const surfaceInput = React.useMemo(() => ({
         ...(pageLaunchInput === undefined ? {} : { launchInput: pageLaunchInput }), subPath: props.subPath,
-        ...(props.reviewContext ? { review: props.reviewContext } : {}),
-    }), [pageLaunchInput, props.subPath, props.reviewContext]);
+    }), [pageLaunchInput, props.subPath]);
     const detailNavigation = usePluginDetailNavigation({ identity: `${props.pluginId}/${props.localId}`,
         lifetime: accountLifetime, scope: accountLifetime?.scope ?? null, live: pageIsLive,
         presented: isFocused && isVisible, title: page?.label ?? props.pluginId, openSurface, surfaceInput });
