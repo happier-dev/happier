@@ -19643,6 +19643,8 @@ settingsSession: {
         stateWaitingApproval: "Ждёт подтверждения",
         stateRunning: "Развёртывается",
         stateUnverified: "Работает, не проверено",
+        stateUnverifiedShort: "Не проверено",
+        stateUnknownShort: "Не подтверждено",
         stateSucceeded: "Развёрнуто",
         stateFailed: "Ошибка",
         stateCancelled: "Отменено",

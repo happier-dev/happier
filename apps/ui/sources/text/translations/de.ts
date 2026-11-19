@@ -19803,6 +19803,8 @@ settingsSession: {
             stateWaitingApproval: "Wartet auf Freigabe",
             stateRunning: "Wird bereitgestellt",
             stateUnverified: "Läuft, nicht geprüft",
+            stateUnverifiedShort: "Nicht geprüft",
+            stateUnknownShort: "Unbestätigt",
             stateSucceeded: "Bereitgestellt",
             stateFailed: "Fehlgeschlagen",
             stateCancelled: "Abgebrochen",

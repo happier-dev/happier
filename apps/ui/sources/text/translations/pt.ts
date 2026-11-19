@@ -19796,6 +19796,8 @@ settingsSession: {
         stateWaitingApproval: "Aguardando aprovação",
         stateRunning: "Implantando",
         stateUnverified: "Rodando, não verificado",
+        stateUnverifiedShort: "Não verificado",
+        stateUnknownShort: "Não confirmado",
         stateSucceeded: "Implantado",
         stateFailed: "Falhou",
         stateCancelled: "Cancelado",

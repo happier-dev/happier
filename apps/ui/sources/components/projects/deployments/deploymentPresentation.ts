@@ -306,9 +306,12 @@ export function deploymentRailState(
     case 'failed':
       return { tone: 'danger', text: deploymentStateLabel(state) };
     // Running without a health check needs the person (lab d1 rail `unverified`): amber, like an unknown outcome.
+    // A row's end is narrow (a column row keeps its name first): the amber states say their short word there, so
+    // neither the word nor the name is cut ("Runnin…", PAGE-ACCEPT-176 R2-D13); the page keeps the full label.
     case 'outcome_unknown':
+      return { tone: 'warning', text: t('projects.deployments.stateUnknownShort') };
     case 'running_unverified':
-      return { tone: 'warning', text: deploymentStateLabel(state) };
+      return { tone: 'warning', text: t('projects.deployments.stateUnverifiedShort') };
     case 'queued':
     case 'running':
       return { tone: null, text: deploymentStateLabel(state) };

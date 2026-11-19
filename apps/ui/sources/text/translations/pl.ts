@@ -19515,6 +19515,8 @@ settingsSession: {
         stateWaitingApproval: "Czeka na zatwierdzenie",
         stateRunning: "Wdrażanie",
         stateUnverified: "Działa, niezweryfikowane",
+        stateUnverifiedShort: "Niezweryfikowane",
+        stateUnknownShort: "Niepotwierdzone",
         stateSucceeded: "Wdrożono",
         stateFailed: "Niepowodzenie",
         stateCancelled: "Anulowano",

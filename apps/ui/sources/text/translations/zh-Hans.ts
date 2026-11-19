@@ -19309,6 +19309,8 @@ settingsSession: {
         stateWaitingApproval: "等待批准",
         stateRunning: "正在部署",
         stateUnverified: "运行中，未验证",
+        stateUnverifiedShort: "未验证",
+        stateUnknownShort: "未确认",
         stateSucceeded: "已部署",
         stateFailed: "失败",
         stateCancelled: "已取消",

@@ -23088,6 +23088,8 @@ const enProjects = {
       stateWaitingApproval: "Waiting for approval",
       stateRunning: "Deploying",
       stateUnverified: "Running, not verified",
+      stateUnverifiedShort: "Not verified",
+      stateUnknownShort: "Unconfirmed",
       stateSucceeded: "Deployed",
       stateFailed: "Failed",
       stateCancelled: "Cancelled",

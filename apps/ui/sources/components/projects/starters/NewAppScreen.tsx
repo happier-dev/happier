@@ -1092,6 +1092,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             kind: 'card' as const,
             // Each step, and each settled phase of Describe your app, is its own screen: the card fits it.
             screenKey: step === 'auto' ? `auto:${autoKind}` : deployStep ? `deploy:${deployStep}` : step,
+            // The source step holds the card's full bound from its first frame, so its sections settle inside it
+            // rather than growing the card (PAGE-ACCEPT-176 R3-D3); every later step fits its own content.
+            scrollHost: step === 'start' ? 'body' as const : 'bounded' as const,
             title: headingTitle,
             subtitle: headingDescription,
             actions: <WizardStepDots currentStepIndex={stepIndex} stepCount={stepCount} />,

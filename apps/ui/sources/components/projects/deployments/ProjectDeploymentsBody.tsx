@@ -495,6 +495,7 @@ const ProjectDeploymentsPage = React.memo(
     const detail =
       selection.defaults ? <ProjectDeploymentDefaultsSettings key={`${props.serverId}:${props.accountId}:${props.sourceId}`}
         lifetime={props.lifetime} sourceId={props.sourceId} demand={props.demand} environments={triggerEnvironments}
+        project={sourceRead.source ? { name: sourceRead.source.source.name, onOpen: openHostProject } : null}
         onOpenEnvironment={openEnvironmentTriggers} onOpenPreviews={openEnvironmentPreviews} /> : draft ?? (environmentId === null ? null : selection.deploymentId ? (
         <DeploymentReceiptDetail
           key={`${environmentId}:${selection.deploymentId}`}

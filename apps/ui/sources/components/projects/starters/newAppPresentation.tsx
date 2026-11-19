@@ -41,13 +41,18 @@ export function useOpenNewApp(onClone?: (() => void) | null): (starterId?: strin
     Modal.show({
       component: NewAppDialog,
       props: { onClone: onClone ?? null, starterId: starterId ?? null, machine: machine ?? null, projectSourceId: context?.projectSourceId ?? null, previewEnvironmentId: context?.previewEnvironmentId ?? null, startOn: context?.startOn ?? null, suggestion: context?.suggestion ?? null },
-      ...newAppDialogPresentation(),
+      ...newAppDialogPresentation(!context?.suggestion && context?.startOn !== 'describe'),
     });
   }, [onClone]);
 }
 
-/** The New app dialog's presentation, shared with the dev specimen that opens the same dialog over fixtures. */
-export function newAppDialogPresentation() {
+/**
+ * The New app dialog's presentation, shared with the dev specimen that opens the same dialog over fixtures.
+ * `sourceStep`: the dialog opens on the source step, which fills the card's bound once its sections settle, so the card
+ * takes that height from its first frame (while the screen's code loads too) instead of growing as they arrive
+ * (PAGE-ACCEPT-176 R3-D3). The screen keeps the same choice per step through its own chrome.
+ */
+export function newAppDialogPresentation(sourceStep = true) {
   return {
     // The draft is the person's writing: a stray click outside never throws it away.
     closeOnBackdrop: false,
@@ -55,7 +60,7 @@ export function newAppDialogPresentation() {
       kind: 'card' as const,
       title: t('newApp.title'),
       testID: 'newApp.dialog',
-      scrollHost: 'bounded' as const,
+      scrollHost: sourceStep ? 'body' as const : 'bounded' as const,
       phonePresentation: 'sheet' as const,
       dimensions: { width: 640, maxHeightRatio: 0.88, size: 'lg' as const },
     },

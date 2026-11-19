@@ -19564,6 +19564,8 @@ settingsSession: {
         stateWaitingApproval: "En attente d’approbation",
         stateRunning: "Déploiement en cours",
         stateUnverified: "En cours, non vérifié",
+        stateUnverifiedShort: "Non vérifié",
+        stateUnknownShort: "Non confirmé",
         stateSucceeded: "Déployé",
         stateFailed: "Échec",
         stateCancelled: "Annulé",

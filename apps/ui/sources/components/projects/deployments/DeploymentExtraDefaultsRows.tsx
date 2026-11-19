@@ -195,7 +195,9 @@ export function DeploymentDefaultsEditorSections(props: Readonly<{
         awayMachinesChoosable disabled={props.disabled} onSelectMachine={machine => change('previewMachineId', machine.id)} />
       <SegmentedChoiceItem<'none' | 'own' | 'branch'> testIDPrefix="deployment-defaults.previewDatabase"
         title={t('projects.deployments.settingsSections.previewsData')}
-        subtitle={origin(resolved.sources.previewDatabase)} disabled={props.disabled}
+        // No default anywhere: each Environment's setup asks, and the row says so instead of an empty control.
+        subtitle={previewDatabase === null ? t('projects.deployments.defaultsEditor.askedAtSetup')
+          : origin(resolved.sources.previewDatabase)} disabled={props.disabled}
         value={previewDatabase} valueSource={inherited('previewDatabase')}
         options={[
           { id: 'none', label: t('projects.deployments.settingsSections.previewsDataNone') },
@@ -217,7 +219,8 @@ export function DeploymentDefaultsEditorSections(props: Readonly<{
           detailFormatter: selected => destinationId === 'inherit' ? inheritedDestinationName : selected?.title ?? null,
           itemProps: { disabled: props.disabled, accessoryLayout: 'adaptive' } }} />
       <SegmentedChoiceItem<'off' | 'custom'> testIDPrefix="deployment-defaults.backupSchedule"
-        title={t('workflows.triggers.kind.schedule')} subtitle={origin(resolved.sources.backupSchedule)}
+        title={t('workflows.triggers.kind.schedule')} subtitle={schedule === undefined
+          ? t('projects.deployments.defaultsEditor.askedAtSetup') : origin(resolved.sources.backupSchedule)}
         disabled={props.disabled} value={schedule === undefined ? null : schedule === null ? 'off' : 'custom'}
         valueSource={inherited('backupSchedule')}
         options={[{ id: 'off', label: t('common.off') }, { id: 'custom', label: t('common.on') }]}
@@ -231,18 +234,13 @@ export function DeploymentDefaultsEditorSections(props: Readonly<{
           const trigger = buildTriggerDefinition({ when, enabled: true, sessionId: null });
           if (trigger?.kind === 'schedule') change('backupSchedule', trigger.schedule);
         }} /> : null}
-      <SegmentedChoiceItem testIDPrefix="deployment-defaults.backupRetention"
-        title={t('projects.deployments.backupKeeps')}
-        // What the counts do is said once, here, not under each count row (sibling rows never repeat a sentence).
+      {/* Keeps is one decision, made with the counts below (all at 0 keeps every backup): the row says the rule and what a
+          new Environment keeps now, never a second control for the same choice (PAGE-ACCEPT-176 R3-D6). */}
+      <Item testID="deployment-defaults.backupRetention" title={t('projects.deployments.backupKeeps')}
         subtitle={[origin(resolved.sources.backupRetention), t('projects.deployments.settingsSections.keepDescription')]
-          .filter(Boolean).join(' · ')} disabled={props.disabled}
-        value={retention.kind === 'keepEverything' ? 'all' : 'counts'} valueSource={inherited('backupRetention')}
-        options={[{ id: 'all', label: t('projects.deployments.backupKeepEverything') },
-          { id: 'counts', label: t('projects.deployments.settingsSections.keepTitle'), disabled: true }]}
-        onChange={value => {
-          if (value === 'counts') return;
-          change('backupRetention', { kind: 'keepEverything' });
-        }} />
+          .filter(Boolean).join(' · ')}
+        detail={retention.kind === 'keepEverything' ? t('projects.deployments.backupKeepEverything') : undefined}
+        mode="info" showChevron={false} />
       {deploymentBackupKeepFields.map(field => <FieldValueItem key={field} testID={`deployment-defaults.backupRetention.${field}`}
         title={t(`projects.deployments.settingsSections.${deploymentBackupKeepLabels[field]}`)}
         kind="integer" allowEmpty disabled={props.disabled}

@@ -19692,6 +19692,8 @@ settingsSession: {
         stateWaitingApproval: "In attesa di approvazione",
         stateRunning: "Distribuzione in corso",
         stateUnverified: "In esecuzione, non verificato",
+        stateUnverifiedShort: "Non verificato",
+        stateUnknownShort: "Non confermato",
         stateSucceeded: "Distribuito",
         stateFailed: "Non riuscito",
         stateCancelled: "Annullato",

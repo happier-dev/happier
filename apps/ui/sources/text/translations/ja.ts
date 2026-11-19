@@ -19604,6 +19604,8 @@ settingsSession: {
         stateWaitingApproval: "承認待ち",
         stateRunning: "デプロイ中",
         stateUnverified: "稼働中・未検証",
+        stateUnverifiedShort: "未確認",
+        stateUnknownShort: "結果不明",
         stateSucceeded: "デプロイ済み",
         stateFailed: "失敗",
         stateCancelled: "キャンセル済み",

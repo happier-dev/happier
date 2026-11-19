@@ -30,7 +30,9 @@ export function ProjectDeploymentDefaultsSettings(props: Readonly<{ lifetime: Se
     /** This page's Environments: triggers belong to each one, so the Project leads to theirs (ORCH-TOP 11-07 15:13). */
     environments?: readonly Readonly<{ id: string; title: string; previewTemplateConfigured?: boolean }>[];
     onOpenEnvironment?: (environmentId: string) => void;
-    onOpenPreviews?: (environmentId: string) => void; }>) {
+    onOpenPreviews?: (environmentId: string) => void;
+    /** The Project these defaults belong to: the header names it (PAGE-ACCEPT-176 R3-D6), as the Account page names its Home. */
+    project?: Readonly<{ name: string; onOpen: () => void }> | null; }>) {
     const { theme } = useUnistyles();
     const { lifetime, sourceId } = props;
     const presented = isDeploymentReadDemandActiveV1(props.demand);
@@ -96,7 +98,9 @@ export function ProjectDeploymentDefaultsSettings(props: Readonly<{ lifetime: Se
     };
     return <ItemList testID="project-deployment-defaults" style={{ paddingTop: 0 }}>
         <PageHeader title={t('projects.deployments.defaultsEditor.projectTitle')}
-            description={t('projects.deployments.defaultsEditor.projectDescription')} />
+            description={t('projects.deployments.defaultsEditor.projectDescription')}
+            meta={props.project ? [{ key: 'project', text: props.project.name, onPress: props.project.onOpen,
+                accessibilityLabel: props.project.name }] : []} />
         {execution.approval.approvalPending ? <ActionApprovalPendingNotice message={t('approvals.waitingForYou')}
             summary={execution.approval.approvalSummary} onOpenApproval={execution.approval.openApproval} /> : null}
         {error ? <SurfaceStateCard kind="error" title={t('projects.deployments.loadErrorTitle')}
