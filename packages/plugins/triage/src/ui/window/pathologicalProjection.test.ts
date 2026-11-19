@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import {
+    MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     TriageScanResultV1Schema,
 } from '@happier-dev/triage-protocol/v1';
@@ -40,8 +41,14 @@ it('keeps an oversized first-party mapped entry present through Corpus, its moun
         kind: 'complete', evidence: { kind: 'walkFinished' }, observations: [observation],
     });
     expect(observation.snapshot.projectionTruncated).toBe(true);
-    expect(new TextEncoder().encode(observation.snapshot.title).byteLength)
-        .toBeLessThanOrEqual(MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+    const encode = new TextEncoder();
+    const titleBytes = encode.encode(observation.snapshot.title).byteLength;
+    expect(titleBytes).toBeLessThanOrEqual(MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+    expect(titleBytes).toBeGreaterThan(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 - encode.encode('ß').byteLength);
+    expect(view.labelNames).toHaveLength(300);
+    const labelFact = observation.snapshot.facts?.find(fact => fact.id === 'github/labels')?.value;
+    if (labelFact?.kind !== 'text') throw new Error('The oversized labels lost their summary');
+    expect(encode.encode(labelFact.value).byteLength).toBe(MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1);
 
     // The existing fixture supplies admitted operation handles and throws at
     // every Account/daemon storage write. Its read/apply/fold path stays real.
@@ -64,6 +71,7 @@ it('keeps an oversized first-party mapped entry present through Corpus, its moun
         expect(row.presence.kind).toBe('present');
         expect(row.content?.outcome.snapshot.projectionTruncated).toBe(true);
         expect(row.content?.outcome.snapshot.title).toBe(observation.snapshot.title);
+        expect(row.content?.outcome.snapshot.facts?.find(fact => fact.id === 'github/labels')?.value).toEqual(labelFact);
         expect(window?.lanes.filter(lane => lane.source.localId === 'example-forge')
             .map(lane => lane.health)).toEqual([{ kind: 'walkFinished' }, { kind: 'walkFinished' }]);
         const list = projectTriageWindowRow(row, new Map());
