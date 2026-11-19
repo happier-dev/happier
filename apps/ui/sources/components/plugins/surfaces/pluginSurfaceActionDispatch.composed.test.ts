@@ -3281,6 +3281,73 @@ describe('Account Action placement through the executable dispatcher', () => {
         } finally { await activation.composition.unload(); accountLifetime.retire(); }
     });
 
+    it('carries the host health Notice origin to the native failure Action catalog', async () => {
+        const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+        const { handleTriageNativeFailure } = await import('../../../../../../packages/plugins/triage/src/actions/nativeFailure');
+        const { createAccountNoticeInvestigation } = await import('@/hooks/inbox/accountNoticeInvestigation');
+        const { createServiceHealthNoticeArtifactFixture } = await import('@/dev/testkit/fixtures/usageNoticeFixtures');
+        const { readAccountNoticeArtifactHeader } = await import('@/sync/domains/artifacts/usageNoticeArtifacts');
+        const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+        const lifetime = clientAccountLifetime();
+        const scope = lifetime.scope;
+        const pluginId = 'acme.notice-origin';
+        const catalogId = 'actions/read-v1';
+        const catalogAnswer = { v: 1, kind: 'choices' as const, defaultActionId: null, actions: [] };
+        const catalog = createClientActionActivation({ pluginId, localId: catalogId, accountPlacement: true,
+            accountLifetime: lifetime, surfaces: ['ui', 'plugin'], readOnly: true, accountHandler: () => catalogAnswer,
+            artifactGraph: PluginUiArtifactsManifestEntryV2Schema.parse({ ...CLIENT_ACTION_ARTIFACT_GRAPH,
+                digest: `sha256:${'b'.repeat(64)}` }) });
+        const parent = createClientActionActivation({ pluginId, localId: 'native-failure/handle-v1', accountLifetime: lifetime,
+            handler: handleTriageNativeFailure });
+        const projection = { ...parent.projection,
+            actionsById: { ...parent.projection.actionsById, ...catalog.projection.actionsById },
+            reactNativeBundlesById: { ...parent.projection.reactNativeBundlesById, ...catalog.projection.reactNativeBundlesById },
+        };
+        const createPort = (invocationSurface: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['invocationSurface'],
+            hostAction?: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['hostAction']) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction, readProjection: () => projection, readNavigationBinding: () => null,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+        });
+        let catalogCaller: unknown;
+        let catalogAuthority: unknown;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            listContributedActionDefinitions: () => createPort('ui').listCurrentContributedActionDefinitions?.('allSurfaces') ?? [],
+            invokeContributedAction: request => {
+                if (request.action.localId === catalogId) {
+                    catalogCaller = request.context.actionCaller;
+                    catalogAuthority = request.context.authority;
+                }
+                return executeCurrentUiContextContributedAction(request, {
+                    execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
+                });
+            },
+        }));
+        const execute = createFrontDoorActionExecute(executor);
+        const unregister = registerCurrentUiContextActionPort(createPort);
+        const withdrawProjection = publishCommittedAppShellPluginUiProjection(() => projection);
+        const artifact = createServiceHealthNoticeArtifactFixture(scope.serverId, { ownerAccountId: scope.accountId });
+        const entry = { artifact, header: readAccountNoticeArtifactHeader(artifact, scope.accountId)! };
+        const investigation = createAccountNoticeInvestigation({ scope, execute, isCurrent: () => lifetime.isCurrent(),
+            binding: { pluginId, action: parent.action.id } });
+        await parent.composition.unload();
+        try {
+            expect((await parent.composition.reconcile([parent.activation, catalog.activation])).map(attempt => attempt.result))
+                .toEqual([{ ok: true }, { ok: true }]);
+            await expect(execute('action.invoke', { action: { pluginId, localId: catalogId }, input: {} },
+                { surface: 'ui', serverId: scope.serverId })).resolves.toMatchObject({ ok: true, result: catalogAnswer });
+            expect(investigation.isEligible(entry)).toBe(true);
+            await expect(investigation.launch(entry, {})).resolves.toMatchObject({
+                kind: 'unavailable', code: 'configuredActionUnavailable', recovery: 'configure',
+            });
+            expect(catalogCaller).toMatchObject({ kind: 'plugin', pluginId, originSurface: 'ui' });
+            expect(catalogAuthority).toBe('account_automation');
+            await expect(createPort('plugin').invokeAction!({ action: { pluginId, localId: catalogId }, input: {} }))
+                .resolves.toMatchObject({ ok: false, errorCode: 'plugin_action_origin_unavailable' });
+        } finally {
+            unregister(); withdrawProjection(); await parent.composition.unload(); lifetime.retire();
+        }
+    });
+
     it('preserves the public failure metadata of a nested Account Action', async () => {
         const accountLifetime = clientAccountLifetime();
         const target = createClientActionActivation({ pluginId: 'acme.account-failure', accountPlacement: true,

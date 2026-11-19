@@ -1386,16 +1386,15 @@ async function prepareContributedActionInvocation(
     if (!prepare) return clientActionFailure('action_prepare_unavailable');
     const caller = resolveMountedPluginActionCaller(input);
     const clientCaller = input.invocation?.kind === 'clientPluginAction' ? input.invocation.clientActionBinding : null;
-    const inheritedContext = mountedHostActionContext(input, caller, clientCaller, 'action.invoke');
+    const originSurface = readActionOriginSurface(input);
+    const inheritedContext = mountedHostActionContext(input, caller, clientCaller, 'action.invoke', originSurface);
     const context = input.sessionAddress === undefined ? inheritedContext
         : routePluginActionSessionContext(inheritedContext, input.sessionAddress);
     if (!context) return failure('unavailable', 'action_scope_restricted');
     const invocationSurface = input.invocationSurface ?? 'ui';
-    const originSurface = readActionOriginSurface(input);
     if (!originSurface) return clientActionFailure('plugin_action_origin_unavailable');
     const actionContext: PluginSurfaceActionExecutorContext = {
         ...context, surface: invocationSurface, authority: invocationAuthority,
-        ...(context.actionCaller?.kind === 'plugin' ? { actionCaller: { ...context.actionCaller, originSurface } } : {}),
         expectedContributedActionOccurrenceId: projectedAction.occurrenceId,
         contributedActionInvocation: { contributedAction: input.contributedAction, clientAction: input.clientAction,
             listContributedActionDefinitions: selection => {
@@ -2279,7 +2278,10 @@ async function executeHostAction(
 
     const clientCaller = input.invocation?.kind === 'clientPluginAction' ? input.invocation.clientActionBinding : null;
 
-    let context = mountedHostActionContext(input, caller, clientCaller, actionId);
+    // Generic Action invocation can re-enter contributed admission after this
+    // bridge changes the immediate surface to 'plugin'. Preserve its root.
+    const originSurface = actionId === 'action.invoke' ? readActionOriginSurface(input) : null;
+    let context = mountedHostActionContext(input, caller, clientCaller, actionId, originSurface);
     if (input.sessionAddress !== undefined) {
         const address = validateActionSessionAddressV1({ sessionTarget: getActionSpec(actionId).sessionTarget,
             input: input.input, sessionAddress: input.sessionAddress });
@@ -2320,7 +2322,7 @@ async function executeHostAction(
 /** Execution and Resource admission stamp exactly the same mounted caller. */
 function mountedHostActionContext(input: DispatchPluginSurfaceActionInput, caller: MountedPluginActionCaller | null,
     clientCaller: Extract<NonNullable<DispatchPluginSurfaceActionInput['invocation']>, { kind: 'clientPluginAction' }>['clientActionBinding'] | null,
-    actionId: ActionId): ActionExecutorContext {
+    actionId: ActionId, originSurface?: ReturnType<typeof readActionOriginSurface>): ActionExecutorContext {
     const declarationBinding = caller?.mountedBinding ?? clientCaller;
     const sourceCustody = input.callerSourceCustody ?? declarationBinding?.sourceCustody;
     const { sessionListAccess, resourceActionInvocation: _resourceActionInvocation, ...hostContext } = input.hostAction?.context ?? {};
@@ -2328,7 +2330,7 @@ function mountedHostActionContext(input: DispatchPluginSurfaceActionInput, calle
     // A mounted read belongs to one invocation. Re-derive it at each entry;
     // a nested autonomous Action cannot retain its parent's UI read scope.
     const inheritedSessionListAccess = sessionListAccess === 'mounted_ui' ? undefined : sessionListAccess;
-    return {
+    const context: ActionExecutorContext = {
         ...hostContext,
         ...(caller && input.contributedAction && hostContext.externalActionTarget === undefined
             ? { externalActionTarget: { kind: 'machine' as const, machineId: input.contributedAction.machineId },
@@ -2374,6 +2376,9 @@ function mountedHostActionContext(input: DispatchPluginSurfaceActionInput, calle
             }
             : {}),
     };
+    return originSurface && context.actionCaller?.kind === 'plugin'
+        ? { ...context, actionCaller: { ...context.actionCaller, originSurface } }
+        : context;
 }
 
 /** Admit a borrowed host Resource without invoking the read effect. */
