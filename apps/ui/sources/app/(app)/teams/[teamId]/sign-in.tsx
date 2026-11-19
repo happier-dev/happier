@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
@@ -281,6 +282,12 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
         serverId,
         postAuthInvitation: expectsPostAuthInvitation,
     });
+    const leaveMethod = () => runStepMove({ layer: 'workflow', kind: 'back', commit: () => setSelection(null) });
+    const selectMethod = (next: TeamAuthEntrySelection) =>
+        runStepMove({ layer: 'workflow', kind: 'step', commit: () => setSelection(next) });
+    const recoverIdentity = (recovering: boolean) => runStepMove({
+        layer: 'workflow', kind: recovering ? 'step' : 'back', commit: () => setRecoveringIdentity(recovering),
+    });
     if (selection && selected) {
         // A Home-origin mTLS action still needs the exact Team-bound native
         // continuation. Unlike ordinary Home mTLS, the native callback must
@@ -289,7 +296,7 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
         const requiresTeamContinuation = selection.action.origin === 'team'
             || selected.execution.kind === 'mtls';
         return (
-            <TeamAuthenticationStep selection={selection} onBack={() => setSelection(null)}>
+            <TeamAuthenticationStep selection={selection} onBack={leaveMethod}>
                 <HomeAuthenticationFlow
                     target={home.target}
                     actions={[selected]}
@@ -300,7 +307,7 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
                         accountSelection: recoveringIdentity ? 'another' : 'current',
                     } : undefined}
                     onAuthenticated={() => router.replace(returnTo)}
-                    onBack={() => setSelection(null)}
+                    onBack={leaveMethod}
                 />
             </TeamAuthenticationStep>
         );
@@ -316,8 +323,8 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
                 serverId: scopeResolution.scope.serverId,
                 teamId,
             }))}
-            onRecoverIdentity={() => setRecoveringIdentity(true)}
-            onSelectAction={(next) => setSelection(next)}
+            onRecoverIdentity={() => recoverIdentity(true)}
+            onSelectAction={selectMethod}
         />
     );
     return (
@@ -326,8 +333,8 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
             target={home.target}
             onBack={goBackHome}
             accountServiceReturnTo={returnTo}
-            onUseCurrentAccount={recoveringIdentity ? () => setRecoveringIdentity(false) : undefined}
-            onSelectAction={(next) => setSelection(next)}
+            onUseCurrentAccount={recoveringIdentity ? () => recoverIdentity(false) : undefined}
+            onSelectAction={selectMethod}
         />
     );
 }

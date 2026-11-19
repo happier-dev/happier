@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useStepFocal } from '@/components/ui/motion/stepMotion/useStepFocal';
 import { Platform, ScrollView, View } from 'react-native';
 import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
 import Constants from 'expo-constants';
@@ -261,6 +262,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
             : pairingDecision.state;
 
     const [phase, setPhase] = React.useState<'idle' | 'requesting' | 'securing'>('idle');
+    const scannerFocal = useStepFocal();
     const [enrollmentResult, setEnrollmentResult] = React.useState<ScannerEnrollmentResult | null>(null);
     // A pasted terminal link that expired is a link, not a QR: its message says so.
     const [expiredTerminalLink, setExpiredTerminalLink] = React.useState(false);
@@ -1153,6 +1155,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     if (phase === 'idle' && !enrollmentResult) {
         return (
             <QrCodeScannerView
+                previewRef={scannerFocal}
                 active={isFocused}
                 testIDPrefix="restore-scan"
                 title={t('connect.scanExistingHomeQrTitle')}

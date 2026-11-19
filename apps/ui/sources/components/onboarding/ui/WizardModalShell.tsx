@@ -10,10 +10,7 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
-import {
-    StepTransitionFrame,
-    type StepTransitionDirection,
-} from '@/components/ui/motion/StepTransitionFrame';
+import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 
 import { shouldUseWizardFullscreenPresentation } from './wizardPresentation';
 
@@ -47,13 +44,8 @@ export type WizardModalShellProps = Readonly<{
     testID?: string;
     contentStyle?: StyleProp<ViewStyle>;
     scrollable?: boolean;
-    /**
-     * Optional transition key for animated step body changes. When provided,
-     * step body content is wrapped in a `StepTransitionFrame` so step changes
-     * animate consistently with `StoryDeck` and other paged surfaces.
-     */
+    /** Provided by the first-run wizard when this shell hosts its workflow. */
     contentTransitionKey?: string | number;
-    contentTransitionDirection?: StepTransitionDirection;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -202,7 +194,7 @@ export function WizardModalShell(props: WizardModalShellProps) {
                 : null}
             <View style={styles.footerButtons}>
                 {showBack && props.onBack ? (
-                    <View style={styles.footerButton}>
+                    <View style={styles.footerButton} nativeID={`${props.testID ?? 'wizard'}-back`}>
                         <RoundButton
                             testID={`${props.testID ?? 'wizard'}-back`}
                             size="normal"
@@ -248,19 +240,7 @@ export function WizardModalShell(props: WizardModalShellProps) {
         </View>
     );
 
-    const wrappedBody = props.contentTransitionKey != null
-        ? (
-            <StepTransitionFrame
-                transitionKey={props.contentTransitionKey}
-                direction={props.contentTransitionDirection ?? 'forward'}
-                testID={props.testID ? `${props.testID}-body-transition` : undefined}
-            >
-                {body}
-            </StepTransitionFrame>
-        )
-        : body;
-
-    return (
+    const shell = (
         <FlowSurfaceChrome
             testID={props.testID}
             scrollable={shouldUseInternalScrollHost}
@@ -279,7 +259,13 @@ export function WizardModalShell(props: WizardModalShellProps) {
             titleScale="wizard"
             contentStyle={props.contentStyle}
         >
-            {wrappedBody}
+            {body}
         </FlowSurfaceChrome>
+    );
+    return props.contentTransitionKey == null ? shell : (
+        <StepMotionLayer layerKey="workflow" stepKey={props.contentTransitionKey} compact={wantsFullscreen}
+            backTestID={`${props.testID ?? 'wizard'}-back`}>
+            {shell}
+        </StepMotionLayer>
     );
 }

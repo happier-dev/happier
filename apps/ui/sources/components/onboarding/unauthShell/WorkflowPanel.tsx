@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
-import type { StepTransitionDirection } from '@/components/ui/motion/StepTransitionFrame';
 import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import { useModalCardDimensions } from '@/modal/components/card/useModalCardDimensions';
@@ -83,7 +82,6 @@ export type WorkflowPanelProps = Readonly<{
     onOpenRelayCustomFlow: () => void;
     onBack?: () => void;
     transitionKey: string;
-    transitionDirection: StepTransitionDirection;
     presentation?: WorkflowPanelPresentation;
     /**
      * One trailing control at the pane's bottom right (the signed-out Updates entry): the end of

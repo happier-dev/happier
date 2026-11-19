@@ -13,10 +13,6 @@ import type { AccountContinuationIntent } from '@happier-dev/cli-common/accountS
 import type { WelcomeAuthenticationMethod } from '@/components/onboarding/preAuth/composeWelcomeEntryModel';
 import { Text } from '@/components/ui/text/Text';
 import { ActiveRelaySummary } from '@/components/onboarding/ui/ActiveRelaySummary';
-import {
-    resolveStepTransitionDirection,
-    type StepTransitionDirection,
-} from '@/components/ui/motion/StepTransitionFrame';
 import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import type { WizardAction } from '../state/wizardTypes';
 import { t } from '@/text';
@@ -124,7 +120,6 @@ export type OnboardingWizardController = Readonly<{
     stepId: WizardStepId;
     currentStepIndex: number;
     stepCount: number;
-    contentTransitionDirection: StepTransitionDirection;
     showBack: boolean;
     showSkip: boolean | undefined;
     navigationLocked: boolean;
@@ -227,7 +222,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         });
     });
     const currentState = React.useRef(state);
-    const dispatch = React.useCallback((action: WizardAction) => {
+    const dispatch = React.useCallback((action: WizardAction, kind?: 'back' | 'notice') => {
         const previous = currentState.current;
         const next = wizardReducer(previous, action);
         if (next === previous) return;
@@ -241,7 +236,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         }
         runStepMove({
             layer: 'workflow',
-            kind: action.type === 'wizard/back' ? 'back' : 'step',
+            kind: kind ?? (action.type === 'wizard/back' ? 'back' : 'step'),
             fromWelcome: previous.currentStepId === 'welcome',
             toWelcome: next.currentStepId === 'welcome',
             commit,
@@ -403,47 +398,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     ]);
     const progress = getWizardProgress(state.context, stepId);
     const currentStepIndex = Math.max(0, progress.current - 1);
-    const transitionSnapshotRef = React.useRef<Readonly<{
-        stepId: WizardStepId;
-        stepIndex: number;
-        historyLength: number;
-        direction: StepTransitionDirection;
-    }>>({
-        stepId,
-        stepIndex: currentStepIndex,
-        historyLength: state.history.length,
-        direction: 'replace',
-    });
-    const previousTransition = transitionSnapshotRef.current;
-    let contentTransitionDirection = previousTransition.direction;
-    if (previousTransition.stepId !== stepId) {
-        const indexTransitionDirection = resolveStepTransitionDirection({
-            previousIndex: previousTransition.stepIndex,
-            nextIndex: currentStepIndex,
-        });
-        contentTransitionDirection = indexTransitionDirection !== 'replace'
-            ? indexTransitionDirection
-            : state.history.length > previousTransition.historyLength
-                ? 'forward'
-                : state.history.length < previousTransition.historyLength
-                    ? 'backward'
-                    : 'forward';
-        transitionSnapshotRef.current = {
-            stepId,
-            stepIndex: currentStepIndex,
-            historyLength: state.history.length,
-            direction: contentTransitionDirection,
-        };
-    } else if (
-        previousTransition.stepIndex !== currentStepIndex
-        || previousTransition.historyLength !== state.history.length
-    ) {
-        transitionSnapshotRef.current = {
-            ...previousTransition,
-            stepIndex: currentStepIndex,
-            historyLength: state.history.length,
-        };
-    }
     const welcomeHasExplicitRelaySelection = stepId === 'welcome'
         && (
             state.history.length > 0
@@ -844,7 +798,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     }, [stepId]);
 
     const handleBackToWelcome = React.useCallback(() => {
-        dispatch({ type: 'wizard/goToStep', stepId: 'welcome' });
+        dispatch({ type: 'wizard/goToStep', stepId: 'welcome' }, 'back');
     }, []);
 
     const handleOpenConnectHome = React.useCallback(() => {
@@ -1536,7 +1490,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         onChooseAccountService: props.onSelectAccountService ? handleOpenAccountServiceSelection : undefined,
         onContinueWithHomeAuthentication: handleContinueWithHomeAuthentication,
         onSelectAccountService: handleSelectAccountService,
-        onAccountServiceSelectionBack: () => dispatch({ type: 'wizard/goToStep', stepId: 'welcome' }),
+        onAccountServiceSelectionBack: handleBackToWelcome,
         onAccountDirectoryKeyBack: () => {
             setAccountDirectoryHomeRecovery(null);
             setAccountDirectoryKeyRequest(null);
@@ -1577,7 +1531,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         stepId,
         currentStepIndex,
         stepCount: Math.max(1, progress.total),
-        contentTransitionDirection,
         showBack: Boolean(resolvedOnBack),
         showSkip: activeSkipOverride ? !activeSkipOverride.hidden : undefined,
         navigationLocked: restoreNavigationLocked,

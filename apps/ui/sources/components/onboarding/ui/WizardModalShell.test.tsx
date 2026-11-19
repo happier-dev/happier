@@ -32,7 +32,7 @@ describe('WizardModalShell', () => {
         standardCleanup();
     });
 
-    it('uses the routine motion preset for ordinary wizard steps', async () => {
+    it('does not retain a routine slide frame for first-run wizard steps', async () => {
         const { WizardModalShell } = await import('./WizardModalShell');
         const screen = await renderScreen(
             <WizardModalShell
@@ -42,11 +42,12 @@ describe('WizardModalShell', () => {
                 title="Title"
                 contentTransitionKey="step-one"
             >
-                <Text>Body</Text>
+                <Text testID="step-body">Body</Text>
             </WizardModalShell>,
         );
 
-        expect(screen.findByType(SoftSlideTransitionFrame as never).props.preset).toBe('routine');
+        expect(screen.findAllByType(SoftSlideTransitionFrame as never)).toHaveLength(0);
+        expect(screen.findByTestId('step-body')).toBeTruthy();
     });
 
     it('renders the body without an internal scroll view (the wizard layout owns scrolling)', async () => {

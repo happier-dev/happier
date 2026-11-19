@@ -301,7 +301,6 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             }}
             onBrandHeroGetStarted={applyBrandHeroSeen}
             onBack={controller.onBack ?? undefined}
-            transitionDirection={controller.contentTransitionDirection}
             workflowPresentation={controller.stepId === 'scan_code' ? 'fullBleed' : 'padded'}
             footerAccessory={workflowFooterAccessory}
             testID={shellTestID}

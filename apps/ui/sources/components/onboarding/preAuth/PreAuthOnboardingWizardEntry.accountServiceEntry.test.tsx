@@ -71,7 +71,6 @@ const wizardControllerMock = vi.hoisted(() => {
             stepId: 'welcome',
             currentStepIndex: 0,
             stepCount: 4,
-            contentTransitionDirection: 'replace',
             showBack: false,
             showSkip: undefined,
             navigationLocked: false,

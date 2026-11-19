@@ -63,7 +63,6 @@ const wizardControllerMock = vi.hoisted(() => {
             stepId: 'welcome',
             currentStepIndex: 0,
             stepCount: 4,
-            contentTransitionDirection: 'replace',
             showBack: false,
             showSkip: undefined,
             onBack: null,
@@ -266,7 +265,6 @@ describe('PreAuthOnboardingWizardEntry', () => {
         wizardControllerMock.current = {
             ...wizardControllerMock.current,
             stepId: 'welcome',
-            contentTransitionDirection: 'replace',
             showBack: false,
             onBack: null,
             body: React.createElement('WizardBody', { testID: 'wizard-body' }),

@@ -15,7 +15,7 @@ const NOOP = () => {};
  */
 export function UnauthenticatedRouteShell(props: Readonly<{
     testID: string;
-    /** Identifies the step; a change fades one step into the next. */
+    /** Identifies what the workflow pane presents. */
     stepId: string;
     onBack?: () => void;
     children: React.ReactNode;

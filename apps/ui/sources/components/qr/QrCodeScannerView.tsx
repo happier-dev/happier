@@ -112,6 +112,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 export interface QrCodeScannerViewProps {
+    previewRef?: React.Ref<View>;
     active?: boolean;
     title: string;
     subtitle?: string;
@@ -297,12 +298,16 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
                     : null,
             ]}
         >
-            <CameraView
-                style={styles.camera}
-                barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                onBarcodeScanned={onBarcodeScanned}
-                testID={`${props.testIDPrefix}-camera`}
-            />
+            <View ref={props.previewRef} style={StyleSheet.absoluteFill} collapsable={props.previewRef == null}
+                accessible={props.previewRef != null} accessibilityRole={props.previewRef ? 'image' : undefined}
+                accessibilityLabel={props.previewRef ? props.title : undefined}>
+                <CameraView
+                    style={styles.camera}
+                    barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                    onBarcodeScanned={onBarcodeScanned}
+                    testID={`${props.testIDPrefix}-camera`}
+                />
+            </View>
             <View style={styles.overlay} pointerEvents="box-none">
                 <View style={styles.topRow} pointerEvents="box-none">
                     {onCancel ? (

@@ -412,7 +412,6 @@ describe('OnboardingWizardSurface', () => {
 
         controller = hook.getCurrent();
         expect(controller.stepId).toBe('relay_select');
-        expect(controller.contentTransitionDirection).toBe('forward');
         expect(controller.showBack).toBe(true);
         expect(controller.onBack).toEqual(expect.any(Function));
         expect(controller.skipLabel).toBe('common.skip');
@@ -424,7 +423,6 @@ describe('OnboardingWizardSurface', () => {
 
         controller = hook.getCurrent();
         expect(controller.stepId).toBe('welcome');
-        expect(controller.contentTransitionDirection).toBe('backward');
     });
 
     it('keeps the shared Open {Home} card when a Home sign-in from the wizard continuation enrolls the Home', async () => {
@@ -524,7 +522,7 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        expect(screen.findByType(WizardModalShell as never).props.contentTransitionDirection).toBe('forward');
+        expect(screen.findByType(WizardModalShell as never).props.contentTransitionKey).toBe('relay_select');
 
         const backButton = screen.findByTestId('onboarding-wizard-back')!;
         await act(async () => {
@@ -532,7 +530,7 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        expect(screen.findByType(WizardModalShell as never).props.contentTransitionDirection).toBe('backward');
+        expect(screen.findByType(WizardModalShell as never).props.contentTransitionKey).toBe('welcome');
     });
 
     it('renders a shell chrome accessory when the pre-auth host provides one', async () => {

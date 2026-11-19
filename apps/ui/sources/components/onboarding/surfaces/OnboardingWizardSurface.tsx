@@ -56,7 +56,6 @@ export function OnboardingWizardSurfacePresentation(props: OnboardingWizardSurfa
                     stepIndex={controller.currentStepIndex}
                     stepCount={controller.stepCount}
                     contentTransitionKey={controller.stepId}
-                    contentTransitionDirection={controller.contentTransitionDirection}
                     showScrim={props.wizardChromeMode === 'embedded' ? false : undefined}
                     layoutPresentation={props.wizardLayoutPresentation}
                     titleLeading={controller.stepId === 'welcome' ? <WizardLogotype height={45} testID={`${testID}-logotype`} /> : undefined}
@@ -127,8 +126,6 @@ function BareOnboardingWorkflowContent(props: BareOnboardingWorkflowContentProps
             ) : null}
             title={controller.bodyOwnsHeading ? undefined : controller.title}
             subtitle={controller.bodyOwnsHeading ? undefined : controller.subtitle}
-            bodyTransitionKey={controller.stepId}
-            bodyTransitionDirection={controller.contentTransitionDirection}
             footer={hasFooter ? (
                 <>
                     {controller.onPrimary ? (

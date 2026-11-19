@@ -2,7 +2,6 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import type { StepTransitionDirection } from '@/components/ui/motion/StepTransitionFrame';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 
 import { BrandPanel } from './BrandPanel';
@@ -68,11 +67,6 @@ export type UnauthenticatedSplitShellProps = Readonly<{
     onBack?: () => void;
 
     /**
-     * Direction of the most recent step transition. Default 'forward'.
-     */
-    transitionDirection?: StepTransitionDirection;
-
-    /**
      * Controls the workflow pane's mobile padding. Use `fullBleed` only for
      * camera/scanner-style steps that own their own overlay controls and need
      * to fill the entire native viewport. Normal form/list steps stay padded.
@@ -108,7 +102,6 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
 
     const allowMobileBrandHero = props.allowMobileBrandHero ?? props.isWelcomeStep;
     const layout = useUnauthShellLayout({ allowMobileBrandHero });
-    const transitionDirection: StepTransitionDirection = props.transitionDirection ?? 'forward';
 
     if (layout === 'mobile-hero') {
         return (
@@ -141,7 +134,6 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
                 onOpenRelayCustomFlow={props.onOpenRelayCustomFlow}
                 onBack={props.onBack}
                 transitionKey={props.stepId}
-                transitionDirection={transitionDirection}
                 presentation={props.workflowPresentation ?? 'padded'}
                 footerAccessory={props.footerAccessory}
             >

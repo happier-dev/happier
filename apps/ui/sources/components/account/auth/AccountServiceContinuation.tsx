@@ -7,6 +7,8 @@ import { PairingLinkEntryForm } from '@/components/account/restore/PairingLinkEn
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { parseHomeQrInviteDeepLink } from '@/auth/pairing/pairingUrl';
 import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
+import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { StepTransitionFrame, resolveStepTransitionDirection, type StepTransitionDirection } from '@/components/ui/motion/StepTransitionFrame';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -56,13 +58,18 @@ export function AccountServiceContinuation(props: Readonly<{
     const [recovery, setRecovery] = React.useState<Readonly<{ view: RecoveryView; direction: StepTransitionDirection }>>(
         { view: 'key', direction: 'replace' });
     const recoveryView = recovery.view;
-    const setRecoveryView = (view: RecoveryView) => setRecovery((current) => current.view === view ? current : {
-        view,
-        direction: resolveStepTransitionDirection({ previousIndex: RECOVERY_VIEW_ORDER[current.view], nextIndex: RECOVERY_VIEW_ORDER[view] }),
-    });
     const router = useRouter();
     const auth = useAuth();
     const activeHome = useActiveServerSnapshot();
+    const setRecoveryView = (view: RecoveryView) => {
+        if (view === recoveryView) return;
+        const direction = resolveStepTransitionDirection({
+            previousIndex: RECOVERY_VIEW_ORDER[recoveryView], nextIndex: RECOVERY_VIEW_ORDER[view],
+        });
+        const commit = () => setRecovery({ view, direction });
+        if (auth.isAuthenticated) commit();
+        else runStepMove({ layer: 'account-recovery', kind: direction === 'backward' ? 'back' : 'step', commit });
+    };
     const hasAuthenticatedHomeAccount = auth.isAuthenticated && auth.credentialAuthorityKind === 'account';
     const mountedAction = useMountedActionExecution(hasAuthenticatedHomeAccount ? activeHome.serverId : null);
     const currentContext = useOptionalCurrentUiContextReader();
@@ -360,5 +367,6 @@ export function AccountServiceContinuation(props: Readonly<{
             {...(secondaryAction ? { secondaryAction } : {})} />
         </View>;
     }
+    if (!auth.isAuthenticated) return <StepMotionLayer layerKey="account-recovery" stepKey={recoveryView}>{content}</StepMotionLayer>;
     return <StepTransitionFrame transitionKey={recoveryView} direction={recovery.direction}>{content}</StepTransitionFrame>;
 }
