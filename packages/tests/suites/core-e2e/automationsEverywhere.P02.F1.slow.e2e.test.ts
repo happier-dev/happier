@@ -10,14 +10,18 @@ import { PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/acti
 import { AutomationMachineSubjectV1Schema } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { readRecordListProperty } from '@happier-dev/protocol/inputs/inputRecords';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
+import { ApprovalExecutionV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { fetchJson } from '../../src/testkit/http';
+import { fetchSessionV2 } from '../../src/testkit/sessions';
 import { waitFor } from '../../src/testkit/timing';
 import { connectStdioMcp, parseToolJson } from '../../src/testkit/externalMcp';
 import { repoRootDir } from '../../src/testkit/paths';
-import { ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1, AutomationActionAdmitResultV1Schema } from '../../../protocol/src/automations/automationActionOccurrenceV1';
 
@@ -76,22 +80,35 @@ describe('Automations everywhere: after commit', () => {
     await writeFile(join(machine.workspaceDir, 'review.txt'), 'after\n');
     fixture.takeRequestObservations();
     const commitRequestId = 'after-commit-review-request';
-    const requested = await actor.execute(commitActionId, { cwd: machine.workspaceDir,
-      message: 'feat: review fixture', scope: { kind: 'all-pending' } }, {
+    let commitApprovalArtifactId: string | undefined;
+    const committed = await actor.executeWithApproval(commitActionId, { cwd: machine.workspaceDir,
+      message: 'feat: review fixture', scope: { kind: 'all-pending' } }, async artifactId => {
+      commitApprovalArtifactId = artifactId;
+      const read = await actor.execute('approval.request.get', { artifactId });
+      expect(read.ok, JSON.stringify(read)).toBe(true);
+      if (!read.ok) throw new Error(read.errorCode);
+      const { request } = ApprovalRequestGetResultV1Schema.parse(read.result);
+      expect(request.executionOriginV1, 'ordinary approval retains its admitted Session Machine')
+        .toMatchObject({ machineId: machine.target.machineId });
+      const decision = await actor.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' });
+      expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
+      return decision;
+    }, {
       defaultSessionId: session.sessionId, actionRequestId: commitRequestId,
       authority: 'account_automation', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
         actions: { [commitActionId]: { approvalRequiredSurfaces: ['cli'] } } }),
     });
-    expect(requested).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    if (!requested.ok || !requested.result || typeof requested.result !== 'object'
-      || !('artifactId' in requested.result) || typeof requested.result.artifactId !== 'string') {
-      throw new Error('The commit did not retain its ordinary approval');
-    }
-    const committed = await actor.executeAsPerson('approval.request.decide', {
-      artifactId: requested.result.artifactId, decision: 'approve',
-    });
-    expect(committed, JSON.stringify(committed)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    expect(committed, JSON.stringify(committed)).toMatchObject({ ok: true });
+    expect(commitApprovalArtifactId, 'the original CLI retains its ordinary Inbox Ask').toBeTypeOf('string');
+    if (!commitApprovalArtifactId) throw new Error('The commit did not retain its ordinary approval');
     expect(git('log', '-1', '--format=%s')).toBe('feat: review fixture');
+    const occurrence = fixture.readActionOccurrences().find(value => value.evidence.requestId === commitRequestId);
+    expect(occurrence, JSON.stringify({ notices: committed.automationNotices,
+      requests: fixture.requestProxy?.entries().map(({ method, path, statusCode }) => ({ method, path, statusCode })) }))
+      .toBeDefined();
+    if (!occurrence) throw new Error('Missing original commit occurrence');
+    let latestRunStates: unknown = [];
+    let reviewRunId: string | undefined;
     await waitFor(async () => {
       const response = await fetchJson<unknown>(`${fixture!.server.baseUrl}/v3/automations/${encodeURIComponent(saved.set.automationId)}/runs`, {
         headers: { Authorization: `Bearer ${actor.credentials.token}`,
@@ -99,16 +116,35 @@ describe('Automations everywhere: after commit', () => {
       });
       expect(response.status).toBe(200);
       const runs = AutomationV3RunListResponseSchema.parse(response.data).runs;
+      latestRunStates = runs.map(({ id, state, errorCode, producedSessionId }) => ({ id, state, errorCode, producedSessionId }));
       expect(runs.length).toBeLessThanOrEqual(1);
-      return runs.length === 1 && typeof runs[0]!.producedSessionId === 'string';
-    }, { failFast: true, context: 'After-commit review Run starts a Session' });
+      reviewRunId = runs[0]?.id;
+      return runs.length === 1 && runs[0]!.state === 'succeeded';
+    }, { failFast: true, context: 'After-commit review Run completes its Agent step' }).catch(error => {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}; runs=${JSON.stringify(latestRunStates)}; notices=${JSON.stringify(committed.automationNotices)}`);
+    });
+    if (!reviewRunId) throw new Error('After-commit review Run missing');
+    const invocations = await actor.execute('workflow.run.invocations.list', { runId: reviewRunId, includeContent: true });
+    expect(invocations.ok, JSON.stringify(invocations)).toBe(true);
+    if (!invocations.ok) throw new Error(invocations.errorCode);
+    const reviewSteps = WorkflowInvocationListResultV1Schema.parse(invocations.result).invocationDetails
+      ?.filter(row => row.progress.blockKind === 'step');
+    expect(reviewSteps).toHaveLength(1);
+    const execution = reviewSteps?.[0]?.progress.execution;
+    if (execution?.kind !== 'session') throw new Error('After-commit review did not run in a Session');
+    expect(execution.sessionId).not.toBe(session.sessionId);
+    // Managed Workflow Sessions name their Run; the legacy producedSessionId stays null.
+    expect(await fetchSessionV2(fixture.server.baseUrl, actor.auth.token, execution.sessionId))
+      .toMatchObject({ origin: { kind: 'run_step', runId: reviewRunId } });
+    expect(await actor.readSessionMetadata(execution.sessionId)).toMatchObject({
+      machineId: machine.target.machineId, path: machine.workspaceDir,
+    });
+    await fixture.assertSessionAgentOutput(actor, execution.sessionId);
 
-    expect(await actor.replayApprovedApprovalRequest(requested.result.artifactId)).toMatchObject({ ok: true });
-    const occurrence = fixture.readActionOccurrences().find(value => value.evidence.requestId === commitRequestId);
+    expect(await actor.replayApprovedApprovalRequest(commitApprovalArtifactId)).toMatchObject({ ok: true });
     expect(fixture.takeRequestObservations().filter(request => request.method === 'POST'
       && request.path === AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1)).toHaveLength(1);
     expect(occurrence, 'the material commit publishes its retained invocation identity').toBeDefined();
-    if (!occurrence) throw new Error('Missing original commit occurrence');
     expect(occurrence.evidence).toMatchObject({ actionId: commitActionId, phase: 'after', status: 'succeeded' });
     expect(JSON.stringify(occurrence)).not.toContain('feat: review fixture');
     expect(JSON.stringify(occurrence)).not.toContain(machine.workspaceDir);
@@ -145,12 +181,11 @@ describe('Automations everywhere: after commit', () => {
       expect(discoveredAction).toMatchObject({ id: commitActionId, automation: { after: true } });
       // Plan 01's Machine subject read is the ordinary machines.list Action.
       // Only the real Account-authorized inventory supplies the selected id.
-      const machines = ActionExecuteResultSchema.parse(parseToolJson(await mcp.client.callTool({
+      const machines = await mcp.client.callTool({
         name: 'action_execute', arguments: { actionId: 'machines.list', input: { serverId: machine.target.serverId } },
-      })));
-      expect(machines.ok, JSON.stringify(machines)).toBe(true);
-      if (!machines.ok) throw new Error(`MCP Machine discovery refused (${machines.errorCode})`);
-      const inventory = PUBLIC_ACTION_OUTPUT_SCHEMAS['machines.list'].parse(machines.result);
+      });
+      expect(machines.isError, JSON.stringify(machines)).not.toBe(true);
+      const inventory = PUBLIC_ACTION_OUTPUT_SCHEMAS['machines.list'].parse(parseToolJson(machines));
       const selectedMachine = readRecordListProperty(inventory, 'items')
         .find(item => item.machineId === machine.target.machineId);
       expect(selectedMachine, 'The enrolled Machine must be selectable from the permitted inventory').toBeDefined();
@@ -158,7 +193,7 @@ describe('Automations everywhere: after commit', () => {
       expect(selectedMachine.serverId).toBe(machine.target.serverId);
       const subject = AutomationMachineSubjectV1Schema.parse({ kind: 'machine',
         serverId: machine.target.serverId, machineId: selectedMachine.machineId });
-      const parityInput = { name: 'Parity review',
+      const parityInput = {
         target: { kind: 'inline', definition: { version: 1,
           defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
           blocks: [{ kind: 'step', id: 'review', document: { text: 'Review the latest commit.',
@@ -172,21 +207,18 @@ describe('Automations everywhere: after commit', () => {
       expect(uiAuthored.ok, JSON.stringify(uiAuthored)).toBe(true);
       if (!uiAuthored.ok) throw new Error(`UI authoring refused (${uiAuthored.errorCode})`);
       const uiSet = WorkflowTriggerWriteResultV1Schema.parse(uiAuthored.result).set;
-      const submitted = ActionExecuteResultSchema.parse(parseToolJson(await mcp.client.callTool({
+      const submitted = await mcp.client.callTool({
         name: 'action_execute', arguments: { actionId: 'workflow.trigger.add', input: parityInput },
-      })));
-      expect(submitted).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-      if (!submitted.ok || !submitted.result || typeof submitted.result !== 'object'
-        || !('artifactId' in submitted.result) || typeof submitted.result.artifactId !== 'string') {
-        throw new Error('MCP trigger write did not retain its ordinary approval');
-      }
+      });
+      expect(submitted.isError, JSON.stringify(submitted)).not.toBe(true);
+      const requested = ActionApprovalRequestCreatedResultSchema.parse(parseToolJson(submitted));
       const decided = await actor.executeAsPerson('approval.request.decide', {
-        artifactId: submitted.result.artifactId, decision: 'approve',
+        artifactId: requested.artifactId, decision: 'approve',
       });
       expect(decided).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
       if (!decided.ok || !decided.result || typeof decided.result !== 'object'
         || !('execution' in decided.result)) throw new Error('MCP authoring did not execute after approval');
-      const execution = ActionExecuteResultSchema.parse(decided.result.execution);
+      const execution = ApprovalExecutionV2Schema.parse(decided.result.execution);
       if (!execution.ok) throw new Error(`MCP authoring refused (${execution.errorCode})`);
       const mcpSet = WorkflowTriggerWriteResultV1Schema.parse(execution.result).set;
       const matching = (set: typeof uiSet) => set.triggers.map(trigger => {
