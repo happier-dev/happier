@@ -315,6 +315,40 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
         } finally { clock.mockRestore(); stream.destroy(); }
     });
 
+    it('admits a capped 45-byte binary upload and returns typed document and Account refusals', async () => {
+        vi.stubEnv('HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST', 'none');
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const bytes = new TextEncoder().encode('STACK-PROBE-ENV-1119 capped export recovery.\n');
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const upload = async () => {
+                const id = crypto.randomUUID(), blobId = crypto.randomUUID();
+                const metadata = { kind: 'create', artifactId: id, blobId, t: 'plain', sizeBytes: bytes.length,
+                    header: encodePlainArtifactStoredContent({ title: 'Capped recovery.txt' }),
+                    body: encodePlainArtifactStoredContent({ body: { blobId, mime: 'text/plain', sizeBytes: bytes.length,
+                        sha256: createHash('sha256').update(bytes).digest('hex') } }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER };
+                return app.inject({ method: 'POST', url: '/v1/artifacts/content/upload',
+                    headers: { ...headers(owner.id), 'content-type': 'application/vnd.happier.artifact-upload-v1' },
+                    payload: Buffer.concat([Buffer.from(`${JSON.stringify(metadata)}\n`), bytes]) });
+            };
+            // Same real upload path is the control before either cap is enabled.
+            const control = await upload();
+            expect(control.statusCode, control.body).toBe(200);
+            vi.stubEnv('HAPPIER_ARTIFACT_DOCUMENT_LIMIT_BYTES', '1024');
+            vi.stubEnv('HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES', '4096');
+            const admitted = await upload();
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            vi.stubEnv('HAPPIER_ARTIFACT_DOCUMENT_LIMIT_BYTES', '1');
+            const document = await upload();
+            expect(document.statusCode, document.body).toBe(413);
+            expect(document.json()).toMatchObject({ error: 'quota_exceeded', budget: 'document' });
+            vi.stubEnv('HAPPIER_ARTIFACT_DOCUMENT_LIMIT_BYTES', '1024');
+            vi.stubEnv('HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES', '1');
+            const account = await upload();
+            expect(account.statusCode, account.body).toBe(413);
+            expect(account.json()).toMatchObject({ error: 'quota_exceeded', budget: 'account' });
+        });
+    });
+
     it('uploads binary bytes beyond the JSON body boundary through authenticated finite chunks', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const id = crypto.randomUUID();
