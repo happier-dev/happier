@@ -4913,6 +4913,13 @@ provide a resolver reachable from that network. Authored networking and DNS are
 never rewritten. Lookup probes use native resolver budgets; missing `getent`
 does not establish a DNS diagnosis. No extra Home reachability probe is added.
 
+A non-Personal Home behind Tailscale Serve can be unreachable from a Devcontainer
+guest even when Serve runs on the controller host and the guest resolves the Home
+hostname. In that case, an HTTPS enrollment connection failure appears in
+Managed Machines as a Home reachability error. Check that the Home URL is
+reachable from the guest, or use an authored Devcontainer configuration with
+host networking where the container runtime supports it.
+
 Agent download failures retain the canonical content-free `failureCause` through
 the machine/member install job outcome. The install presenter shows its typed
 network code (for example `ENOTFOUND` or `ETIMEDOUT`), keeping private download
