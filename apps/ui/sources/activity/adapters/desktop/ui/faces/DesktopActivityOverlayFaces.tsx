@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { BotFaceMarker } from '@/components/sessions/bots/BotFaceMarker';
 import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
-import { AppRailBadge } from '@/components/navigation/shell/appRail/AppRailBadge';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -26,6 +25,7 @@ import type { DesktopActivityOverlayAttentionMark } from '../../presentation/mod
 import { resolveNotchRestMarkShiftPx, resolveNotchRestMarks } from './notchRestMarks';
 import { createDesktopActivityOverlayFocusRingStyle } from '../DesktopActivityOverlayChrome';
 import { useNotchPlanePaint } from '../notch/NotchShape';
+import { DesktopActivityOverlayNeedsYouMark } from '../DesktopActivityOverlayNeedsYouMark';
 import { DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE, DESKTOP_ACTIVITY_OVERLAY_ROW_LEADING_SIZE, DesktopActivityOverlaySessionRow } from '../DesktopActivityOverlaySessionRow';
 import type { DesktopActivityOverlayPressableInteractionState } from '../DesktopActivityOverlayPressableInteractionState';
 
@@ -251,35 +251,26 @@ function NotchFaceButton(props: Readonly<{
  */
 function NotchSessionMark(props: Readonly<{ mark: DesktopActivityOverlayAttentionMark }>) {
   const { theme } = useUnistyles();
-  const notchPlane = useNotchPlanePaint();
   const { mark } = props;
-  const size = mark.botFace ? NOTCH_FACE_WING_SIZE : NOTCH_AGENT_MARK_SIZE;
   return (
     <View testID={`desktop-activity-overlay-rest-mark-${mark.sessionId}`} style={styles.markSlot}>
-      <View style={{ width: size, height: size }}>
+      {/* The dot anchors to the fixed slot, so a face and an Agent mark carry it on one line (R2 N5). */}
+      <DesktopActivityOverlayNeedsYouMark slotSize={NOTCH_FACE_WING_SIZE} needsYou>
         {mark.botFace ? (
-          <SessionBotFace facts={mark.botFace} size={size} mood="needsYou" />
+          <SessionBotFace facts={mark.botFace} size={NOTCH_FACE_WING_SIZE} mood="needsYou" />
         ) : (
           <SessionAgentCatalogIdentityIcon
             agentId={mark.agentId ?? ''}
             machineId={mark.machineId}
             serverId={mark.serverId}
             color={theme.colors.text.secondary}
-            size={size}
+            size={NOTCH_AGENT_MARK_SIZE}
           />
         )}
-        <AppRailBadge
-          signal={NEEDS_YOU_DOT}
-          glyphSizePx={size}
-          corner="bottomRight"
-          ringColor={notchPlane}
-        />
-      </View>
+      </DesktopActivityOverlayNeedsYouMark>
     </View>
   );
 }
-
-const NEEDS_YOU_DOT = Object.freeze({ kind: 'dot', tone: 'attention' } as const);
 
 /**
  * A side dock at rest (lab `ntshape` R): a slim column of what needs you, Bots by their face and Sessions by

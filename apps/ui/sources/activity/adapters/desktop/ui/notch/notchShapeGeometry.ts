@@ -320,3 +320,30 @@ export function resolveNotchCameraSeamStops(rowHeight: number): Readonly<{
   return { height, stops };
 }
 
+
+/**
+ * Where a closing island starts: the body it drew, held inside the planner's island while it was open. A
+ * conversation can ask for more than the planner grants, so starting from the ask would first grow the
+ * island to the padded window before it shrinks (taste R2 N1).
+ */
+export function resolveNotchCloseStart(current: NotchSize, openClamp: NotchSize | null): NotchSize {
+  if (!openClamp) return current;
+  return { width: Math.min(current.width, openClamp.width), height: Math.min(current.height, openClamp.height) };
+}
+
+/** The island casts its shadow on Floating, while open, and while it leaves open until the shape settles. */
+export function resolveNotchCastsShadow(dock: NotchDock, form: NotchForm, settledForm: NotchForm): boolean {
+  return !isNotchEdgeDock(dock) || form === 'open' || settledForm === 'open';
+}
+
+/**
+ * How far the open shape has grown from rest toward the panel, 0 to 1, on the axis that has grown least:
+ * the open content's opacity follows it, so content arrives with the shape and is never cut by its moving
+ * edge (taste R2 N6). An axis that does not grow never holds content back.
+ */
+export function resolveNotchOpenContentProgress(size: NotchSize, rest: NotchSize, open: NotchSize): number {
+  'worklet';
+  const axis = (value: number, from: number, to: number) =>
+    to - from <= 0 ? 1 : Math.min(1, Math.max(0, (value - from) / (to - from)));
+  return Math.min(axis(size.width, rest.width, open.width), axis(size.height, rest.height, open.height));
+}

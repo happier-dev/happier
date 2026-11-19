@@ -1,6 +1,7 @@
 import { t } from '@/text';
 import { activityInstanceKey, normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import { buildSessionPermissionChoiceActionAnswer, isRefusingPermissionChoice, selectPrimaryPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
+import { buildSessionPermissionChoiceActionAnswer, isRefusingPermissionChoice, resolveSessionPermissionChoiceShortLabel,
+    selectPrimaryPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
 
 import type { DesktopActivityOverlayExpandedCard, DesktopActivityOverlaySessionRowModel } from './desktopActivityOverlayModelTypes';
 import type { DesktopActivityOverlaySnapshot } from '../snapshot/desktopActivityOverlaySnapshotTypes';
@@ -80,9 +81,11 @@ function buildPermissionActions(
     const primaryId = selectPrimaryPermissionChoice(choices);
     const actions = choices.map((choice) => {
         const response = buildSessionPermissionChoiceActionAnswer(choice);
+        const label = resolveSessionPermissionChoiceShortLabel(choice);
         return {
             id: choice.id,
-            label: choice.label,
+            label,
+            ...(label !== choice.label ? { accessibilityLabel: choice.label } : {}),
             actionIdentifier: choice.catalog ? 'overlay-mcp-always-allow' : 'session.permission.respond',
             data: withServerScope({ requestId: request.requestId,
                 ...(request.turnId ? { turnId: request.turnId } : {}), sessionId: request.sessionId, ...response }, request.serverId),

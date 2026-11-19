@@ -30,6 +30,9 @@ import {
   resolveNotchFootFinish,
   resolveNotchMaterialRect,
   resolveNotchPaintInsets,
+  resolveNotchCastsShadow,
+  resolveNotchCloseStart,
+  resolveNotchOpenContentProgress,
   isNotchEdgeDock,
   isNotchVerticalDock,
   resolveNotchBodySize,
@@ -243,17 +246,35 @@ export function NotchShape(
   };
 
   const { onPresent } = props;
-  const castsShadow = !isNotchEdgeDock(props.dock) || props.form === 'open';
+  // The form the shape last settled in: leaving open, the island keeps its shadow (and the window its
+  // margin) until the shape has settled, so it never shows as a hollow slab (taste R2 N1).
+  const [settledForm, setSettledForm] = React.useState<NotchForm>(props.form);
+  const formRef = React.useRef(props.form);
+  formRef.current = props.form;
+  const castsShadow = resolveNotchCastsShadow(props.dock, props.form, settledForm);
   const paintInsets = resolveNotchPaintInsets(props.dock, castsShadow ? CAST_SHADOW_PAINT_INSETS : null);
+  // While open, the island draws inside the planner's island; remember it for the close (R2 N1).
+  const openClampRef = React.useRef<NotchSize | null>(null);
+  if (props.form === 'open' && props.islandRect) {
+    const padXOpen = props.dock === 'top' ? 1 : 0;
+    const padYOpen = vertical ? 1 : 0;
+    openClampRef.current = {
+      width: Math.max(0, props.islandRect.width - 2 * padXOpen * shoulder),
+      height: Math.max(0, props.islandRect.height - 2 * padYOpen * shoulder),
+    };
+  }
+  const drawnBody = props.form === 'open' ? resolveNotchCloseStart(body, openClampRef.current) : body;
   const present = React.useCallback(
     // Nothing is framed until the content has been measured: native needs a real extent.
-    (settled: boolean) =>
-      body.width > 0 && body.height > 0
-        ? onPresent({ extent, cameraOffset, settled, material: resolveNotchMaterialRect(props.dock, body, extent, shoulder, corner, paintInsets), paintInsets })
-        : undefined,
+    (settled: boolean) => {
+      if (body.width <= 0 || body.height <= 0) return undefined;
+      if (settled) setSettledForm(formRef.current);
+      return onPresent({ extent, cameraOffset, settled, paintInsets,
+        material: resolveNotchMaterialRect(props.dock, drawnBody, extent, shoulder, corner, paintInsets) });
+    },
     // The frame is read when motion asks for it, never on its own.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [onPresent, extent.width, extent.height, body.width, body.height, cameraOffset, props.dock, shoulder, corner,
+    [onPresent, extent.width, extent.height, body.width, body.height, drawnBody.width, drawnBody.height, cameraOffset, props.dock, shoulder, corner,
       paintInsets.top, paintInsets.right, paintInsets.bottom, paintInsets.left],
   );
 
@@ -263,6 +284,17 @@ export function NotchShape(
     reduceMotion,
     present,
   });
+  // Leaving open, start from the island that was shown, not from the larger ask (R2 N1). A layout effect
+  // runs before the motion's own effect starts the close spring.
+  const previousFormRef = React.useRef(props.form);
+  React.useLayoutEffect(() => {
+    const was = previousFormRef.current;
+    previousFormRef.current = props.form;
+    if (was !== 'open' || props.form === 'open') return;
+    const start = resolveNotchCloseStart({ width: motion.width.value, height: motion.height.value }, openClampRef.current);
+    motion.width.value = start.width;
+    motion.height.value = start.height;
+  }, [motion, props.form]);
 
   // A retained window can cover a previous frame or Extract flight. Lay out open
   // controls in the island that native accepts input for, even in a larger window.
@@ -363,8 +395,14 @@ export function NotchShape(
       transform: [{ translateX }],
     };
   });
+  // The open content fades in with the shape's growth, so its edge never crops it (R2 N6); no timer.
+  const restSize = standardContent;
+  const openSize = drawnBody;
+  const opening = props.form === 'open';
   const openLayerStyle = useAnimatedStyle(() => ({
-    opacity: motion.openOpacity.value,
+    opacity: motion.openOpacity.value * (opening
+      ? resolveNotchOpenContentProgress({ width: bodyWidth.value, height: bodyHeight.value }, restSize, openSize)
+      : 1),
   }));
   const castShadow = castsShadow;
   const openMaxHeight = Math.max(0, windowHeight - statusRowOffset - 2 * padY * openShoulder);

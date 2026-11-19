@@ -23,6 +23,7 @@ import type { DesktopActivityOverlayFocusTargetRef } from '../resolveDesktopActi
 import type { DesktopActivityOverlayVisualModeForTestID as DesktopActivityOverlayVisualMode } from '../shared/desktopActivityOverlaySelectors';
 import type { DesktopActivityOverlayActionOutcome } from '../shared/desktopActivityOverlayUiModel';
 import { readDesktopActivityOverlayActionFailureReason } from '../shared/readDesktopActivityOverlayActionFailureReason';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { setDesktopActivityOverlayKeyboardWanted } from '../../runtime/desktopActivityOverlayBridge';
@@ -168,6 +169,8 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                     returnKeyType="send"
                     style={[
                         styles.input,
+                        // In flight, the words that went out dim; anything typed meanwhile stays the draft.
+                        sending ? styles.inputSending : null,
                         createDesktopActivityOverlayInteriorSurfaceStyle(theme, {
                             visualMode: props.visualMode,
                             kind: 'field',
@@ -180,6 +183,7 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                     testID="desktop-activity-overlay-quick-reply-send"
                     accessibilityRole="button"
                     accessibilityLabel={t('common.send')}
+                    accessibilityState={{ disabled: !canSendDraft, busy: sending }}
                     disabled={!canSendDraft}
                     onPress={(event) => {
                         event?.stopPropagation?.();
@@ -192,11 +196,19 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                         }),
                         styles.sendButton,
                         I18nManager.isRTL ? styles.sendButtonRtl : null,
-                        !canSendDraft ? styles.disabledAction : null,
+                        // The session composer's pending send (`PrimaryCircleIconButton` loading): the well
+                        // stays lit and holds progress, so a send in flight never reads as an empty field.
+                        !canSendDraft && !sending ? styles.disabledAction : null,
                         createDesktopActivityOverlayFocusRingStyle(theme, (state as DesktopActivityOverlayPressableInteractionState).focused),
                     ]}
                 >
-                    <Icon name="arrow-up" size={SEND_GLYPH_SIZE} color={theme.colors.text.primary} />
+                    {sending ? (
+                        <View testID="desktop-activity-overlay-quick-reply-sending">
+                            <ActivitySpinner size={SEND_GLYPH_SIZE} color={theme.colors.text.primary} />
+                        </View>
+                    ) : (
+                        <Icon name="arrow-up" size={SEND_GLYPH_SIZE} color={theme.colors.text.primary} />
+                    )}
                 </Pressable>
             </View>
             {props.phrases.length > 0 ? (
@@ -270,6 +282,9 @@ const styles = StyleSheet.create((theme) => ({
     sendButtonRtl: {
         right: undefined,
         left: theme.space.s4,
+    },
+    inputSending: {
+        color: theme.colors.text.secondary,
     },
     disabledAction: {
         opacity: 0.45,

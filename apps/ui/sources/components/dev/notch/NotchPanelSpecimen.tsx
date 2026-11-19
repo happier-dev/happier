@@ -286,6 +286,7 @@ export function NotchPanelSpecimen(props: Readonly<{ only: string | null }>) {
       ) : null}
       {show('conversation') ? <ConversationSpecimen room={640} /> : null}
       {show('conversation') ? <ConversationSpecimen room={360} /> : null}
+      {show('sending') ? <ConversationSpecimen room={360} sending /> : null}
       {show('idle') ? (
         <Panel title="Nothing selected">
           <DesktopActivityOverlayExpandedCards
@@ -311,7 +312,7 @@ const TURNS = [
 ].map((text, index) => ({ id: `t${index}`, role: index % 2 === 0 ? 'user' as const : 'agent' as const, text }));
 
 /** The pinned conversation at a tall island's room: it grows with its turns and scrolls only past it. */
-function ConversationSpecimen(props: Readonly<{ room: number }>) {
+function ConversationSpecimen(props: Readonly<{ room: number; sending?: boolean }>) {
   const [natural, setNatural] = React.useState(0);
   const conversation = React.useMemo(() => ({ serverId: SERVER_ID, sessionId: 's-ask', accountId: 'specimen',
     reply: { state: 'ready' as const, messages: TURNS }, refreshing: false, reachable: true }), []);
@@ -322,8 +323,8 @@ function ConversationSpecimen(props: Readonly<{ room: number }>) {
       <DesktopActivityOverlayExpanded visualMode="notch_integrated" maxHeight={props.room} onNaturalHeight={setNatural}
         onOpenSession={() => {}} model={{ expanded: { title: '', rows: [], cards: [] } }}
         content={<DesktopActivityOverlayConversation conversation={conversation} face={null} row={row} cards={[]}
-          phrases={['Continue', 'OK']} draft="" draftWriteError={null} onRetryDraft={() => {}}
-          onDraftChange={() => {}} onSend={async () => true} onBack={() => {}} onUnpin={() => {}}
+          phrases={['Continue', 'OK']} draft={props.sending ? 'Ship it once CI is green' : ''} draftWriteError={null} onRetryDraft={() => {}}
+          onDraftChange={() => {}} onSend={props.sending ? () => new Promise<boolean>(() => {}) : async () => true} onBack={() => {}} onUnpin={() => {}}
           onExtract={async () => true} onAction={() => {}} onDismissKey={() => {}} />} />
     </Panel>
   );

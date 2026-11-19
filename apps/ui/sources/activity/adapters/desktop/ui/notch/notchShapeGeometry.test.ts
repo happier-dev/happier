@@ -7,6 +7,9 @@ import {
   resolveNotchExtent,
   resolveNotchFootFinish,
   resolveNotchMaterialRect,
+  resolveNotchCastsShadow,
+  resolveNotchCloseStart,
+  resolveNotchOpenContentProgress,
   resolveNotchPaintInsets,
   resolveNotchShoulder,
   resolveNotchStatusRowShift,
@@ -223,6 +226,28 @@ describe('notch material', () => {
       .toEqual({ x: 28, y: 32, width: 482, height: 300, radius: 18 });
     expect(resolveNotchMaterialRect('floating', body, body, 0, 18, shadow))
       .toEqual({ x: 28, y: 24, width: 464, height: 300, radius: 18 });
+  });
+
+  it('closes from the island it showed, keeping its cast shadow until the shape settles (R2 N1)', () => {
+    // A tall conversation asked for 931 pt; the planner granted 859. Closing must start from 859, not grow first.
+    expect(resolveNotchCloseStart({ width: 464, height: 931 }, { width: 464, height: 859 })).toEqual({ width: 464, height: 859 });
+    expect(resolveNotchCloseStart({ width: 464, height: 300 }, { width: 464, height: 859 })).toEqual({ width: 464, height: 300 });
+    expect(resolveNotchCloseStart({ width: 464, height: 931 }, null)).toEqual({ width: 464, height: 931 });
+    expect(resolveNotchCastsShadow('left', 'open', 'standard')).toBe(true);
+    expect(resolveNotchCastsShadow('left', 'standard', 'open')).toBe(true);
+    expect(resolveNotchCastsShadow('left', 'standard', 'standard')).toBe(false);
+    expect(resolveNotchCastsShadow('floating', 'standard', 'standard')).toBe(true);
+  });
+
+  it('fades the open content in with the shape, not ahead of it (R2 N6)', () => {
+    const rest = { width: 32, height: 140 };
+    const open = { width: 464, height: 600 };
+    expect(resolveNotchOpenContentProgress(rest, rest, open)).toBe(0);
+    expect(resolveNotchOpenContentProgress({ width: 248, height: 600 }, rest, open)).toBeCloseTo(0.5);
+    expect(resolveNotchOpenContentProgress({ width: 464, height: 370 }, rest, open)).toBeCloseTo(0.5);
+    expect(resolveNotchOpenContentProgress(open, rest, open)).toBe(1);
+    // An axis that does not grow (or overshoots in the spring) never holds content back.
+    expect(resolveNotchOpenContentProgress({ width: 480, height: 140 }, rest, { width: 464, height: 140 })).toBe(1);
   });
 
   it('holds the black row at the hardware, then eases it away with no step', () => {

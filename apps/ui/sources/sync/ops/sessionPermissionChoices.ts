@@ -58,6 +58,20 @@ export function selectPrimaryPermissionChoice(choices: readonly SessionPermissio
     return primary?.id ?? null;
 }
 
+/**
+ * A choice's name on a compact surface (the notch's pill): a lasting grant is named by the scope it grants,
+ * never by the producer's rule text, which a pill would cut mid-scope. Callers keep `choice.label` as the
+ * accessible name so the full consequence is still read.
+ */
+export function resolveSessionPermissionChoiceShortLabel(choice: SessionPermissionChoice): string {
+    if (isRefusingPermissionChoice(choice)) return choice.label;
+    switch (choice.scope) {
+        case 'session': return t('capabilities.session.ask.allowSession');
+        case 'localPersistent': return t('capabilities.session.toolAsk.alwaysAllow');
+        default: return choice.label;
+    }
+}
+
 /** Yes grants this occurrence; No prefers Deny, otherwise the offered Stop. */
 export function selectSessionPermissionChoiceForDecision(
     choices: readonly SessionPermissionChoice[],

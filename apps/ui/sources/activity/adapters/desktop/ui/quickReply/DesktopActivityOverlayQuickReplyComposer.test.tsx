@@ -102,6 +102,23 @@ describe('DesktopActivityOverlayQuickReplyComposer', () => {
     expect(composer.draft()).toBe('');
   });
 
+  it('reads as sending while the reply is in flight, not as an empty field', async () => {
+    const pending = deferred<DesktopActivityOverlayActionOutcome>();
+    const composer = await renderComposer(vi.fn(() => pending.promise));
+    const send = () => composer.screen.findByTestId('desktop-activity-overlay-quick-reply-send');
+
+    await composer.type('Quarantine it');
+    expect(send()?.props.accessibilityState?.busy ?? false).toBe(false);
+    await composer.send();
+    // The session composer's pending send: the well stays lit and busy, with progress in it.
+    expect(send()?.props.accessibilityState?.busy).toBe(true);
+    expect(composer.screen.findByTestId('desktop-activity-overlay-quick-reply-sending')).toBeTruthy();
+
+    await act(async () => { pending.resolve({ ok: true }); });
+    await flushHookEffects();
+    expect(composer.screen.findByTestId('desktop-activity-overlay-quick-reply-sending')).toBeNull();
+  });
+
   it('sends once while a send is in flight', async () => {
     const pending = deferred<DesktopActivityOverlayActionOutcome>();
     const onSend = vi.fn(() => pending.promise);

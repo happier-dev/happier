@@ -339,6 +339,27 @@ describe('buildDesktopActivityOverlayModel', () => {
         expect(request(undefined)?.filter(([, tone]) => tone === 'primary')).toEqual([['allow', 'primary']]);
     });
 
+    it('names a lasting grant by its scope and keeps the producer\'s full rule as the accessible name', () => {
+        const rule = 'Always allow in this workspace: ls -la src/components/very/long/path';
+        const permissionChoices = resolveSessionPermissionChoices({ toolName: 'Bash', nativeChoices: {
+            requirementId: 'native-lasting', source: 'codex', choices: [
+                { id: 'opaque:once', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+                { id: 'opaque:always', label: rule, decision: 'approved', scope: 'localPersistent', response: { approved: true, decision: 'approved' } },
+            ],
+        } });
+        const model = buildDesktopActivityOverlayModel({ snapshot: createSnapshot({ permissionRequests: [{
+            kind: 'permission_request', requestId: 'native-lasting', serverId: 'server-1', sessionId: 'session-primary',
+            title: 'Approve command', summary: 'ls', toolLabel: 'Bash', questionText: null, count: 1,
+            openActionIdentifier: 'open-session:session-primary', allowActionIdentifier: 'session.permission.respond',
+            denyActionIdentifier: 'session.permission.respond', directOptions: [], permissionChoices,
+        }] }), policy: createPolicy() });
+        const always = model.expanded.cards?.[0]?.actions?.find(action => action.id === 'opaque:always');
+        expect(always?.label).not.toBe(rule);
+        expect(always?.label.length).toBeLessThan(20);
+        expect(always?.accessibilityLabel).toBe(rule);
+        expect(model.expanded.cards?.[0]?.actions?.find(action => action.id === 'opaque:once')?.label).toBe('Allow once');
+    });
+
     it('marks offered native refusals by their kind rather than their opaque IDs', () => {
         const permissionChoices = resolveSessionPermissionChoices({ toolName: 'Bash', nativeChoices: {
             requirementId: 'native-refusals', source: 'codex', choices: [

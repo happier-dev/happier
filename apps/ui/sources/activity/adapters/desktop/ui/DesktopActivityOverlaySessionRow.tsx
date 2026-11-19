@@ -16,6 +16,7 @@ import type { DesktopActivityOverlayPressableInteractionState } from './DesktopA
 import type { DesktopActivityOverlayVisualModeForTestID as DesktopActivityOverlayVisualMode } from './shared/desktopActivityOverlaySelectors';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { DesktopActivityOverlayConversationLiftContext } from './conversation/conversationLift';
+import { DesktopActivityOverlayNeedsYouMark } from './DesktopActivityOverlayNeedsYouMark';
 
 /** A Bot face leading a row, at the Session list's compact row size. */
 const IDENTITY_MARK_SIZE = 16;
@@ -144,20 +145,29 @@ export function DesktopActivityOverlaySessionRow(props: Readonly<{
                 ];
             }}
         >
-            <View style={props.leading ? styles.leading : styles.mark}>
-                {props.leading ? props.leading : props.botFace ? (
-                    <SessionBotFace facts={props.botFace} size={IDENTITY_MARK_SIZE} />
-                ) : props.agentId ? (
-                    <SessionAgentCatalogIdentityIcon
-                        agentId={props.agentId}
-                        machineId={props.machineId ?? null}
-                        serverId={props.serverId ?? null}
-                        color={theme.colors.text.secondary}
-                        size={DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE}
-                        testID={props.testID ? `${props.testID}-identity` : undefined}
-                    />
-                ) : null}
-            </View>
+            {props.leading ? (
+                <View style={styles.leading}>{props.leading}</View>
+            ) : (
+                // The island's one needs-you mark (R2 N2): the same slot and dot as the rest marks and Bot rows.
+                <DesktopActivityOverlayNeedsYouMark
+                    testID={props.testID ? `${props.testID}-mark` : undefined}
+                    slotSize={DESKTOP_ACTIVITY_OVERLAY_ROW_LEADING_SIZE}
+                    needsYou={tone === 'attention' || asking !== null}
+                >
+                    {props.botFace ? (
+                        <SessionBotFace facts={props.botFace} size={IDENTITY_MARK_SIZE} />
+                    ) : props.agentId ? (
+                        <SessionAgentCatalogIdentityIcon
+                            agentId={props.agentId}
+                            machineId={props.machineId ?? null}
+                            serverId={props.serverId ?? null}
+                            color={theme.colors.text.secondary}
+                            size={DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE}
+                            testID={props.testID ? `${props.testID}-identity` : undefined}
+                        />
+                    ) : null}
+                </DesktopActivityOverlayNeedsYouMark>
+            )}
             <View style={styles.textWrap}>
                 {/* The quiet meta ends the first line, on the name's baseline (DESIGN: meta closes line 1). */}
                 <View style={styles.titleLine}>
@@ -215,12 +225,6 @@ const styles = StyleSheet.create((theme) => ({
     },
     hovered: {
         backgroundColor: theme.colors.surface.hover,
-    },
-    mark: {
-        width: DESKTOP_ACTIVITY_OVERLAY_ROW_LEADING_SIZE,
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
     },
     leading: {
         alignItems: 'center',
