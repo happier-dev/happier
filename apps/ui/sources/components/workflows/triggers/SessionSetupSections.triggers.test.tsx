@@ -153,11 +153,13 @@ let finishRunRead: (() => Promise<void>) | undefined;
 let workflowInventoryReads = 0;
 let subjectQueries: unknown[] = [];
 
-/** What the Home attaches to a Session subject: each trigger of a set whose lifetime is that Session. */
+/** The Home returns direct Session attachments and inherited all-Session Account habits. */
 function attachedTo(sessionId: string) {
-  return rows.filter(row => row.scopeSessionId === sessionId).flatMap(row => row.triggers.map(trigger => ({
+  return rows.flatMap(row => row.triggers.filter(trigger => row.scopeSessionId === sessionId
+    || (row.scopeSessionId === null && trigger.kind === 'sessionLifecycle' && trigger.subject === undefined)).map(trigger => ({
     automationId: row.id, triggerId: trigger.id, workflowDefinitionId: row.workflowDefinitionId,
-    relation: 'direct' as const, enabled: row.enabled && trigger.enabled, revision: trigger.revision,
+    relation: row.scopeSessionId === sessionId ? 'direct' as const : 'context' as const,
+    enabled: row.enabled && trigger.enabled, revision: trigger.revision,
     summary: trigger.kind === 'schedule'
       ? { kind: 'schedule' as const, schedule: trigger.schedule, remainingOccurrences: null }
       : { kind: 'sessionLifecycle' as const, events: ['parentTurnCompleted' as const] },
@@ -445,6 +447,18 @@ describe('the Session Info page Automations section', () => {
     expect(queries.filter(query => query.scopeSessionId === undefined && query.scope === undefined)).toHaveLength(1);
     expect(queries.filter(query => query.scopeSessionId === 'session-1')).toHaveLength(1);
     expect(subjectQueries).toHaveLength(1);
+  });
+
+  it('shows an all-Session Account habit as an inherited row without Session mutation controls', async () => {
+    const { subject: _subject, ...allSessions } = lifecycleTrigger('account-habit', true);
+    answer([WorkflowTriggerSetV1Schema.parse({ ...triggerSet([]), scopeSessionId: null,
+      triggers: [allSessions] })]);
+    rows = rows.map(row => ({ ...row, scopeSessionId: null }));
+    const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
+    await settle();
+    await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-read-only:set-1:account-habit')).not.toBeNull());
+    expect(screen.findByTestId('subject-triggers:set-1:account-habit-switch')).toBeNull();
+    expect(screen.findByTestId('subject-triggers:set-1:account-habit')).toBeNull();
   });
 
   it('keeps destination-only Habit content mounted through a Machine flap and recovers when the Machine returns', async () => {
