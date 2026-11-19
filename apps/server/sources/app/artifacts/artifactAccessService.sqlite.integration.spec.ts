@@ -21,6 +21,7 @@ import { deleteArtifact, migrateArtifactAccountEncryptionInTx, updateArtifactTx 
 import { applyArtifactRecipientKeyEnvelopesInTx, readArtifactHeaderForCallerInTx,
     isArtifactAudienceContainedInTx, setArtifactAccessGrantInTx, removeArtifactAccessGrantInTx } from './artifactAccessService';
 import { observePrismaReads } from '@/testkit/observePrismaReads';
+import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { withSqliteReadSnapshot } from '@/storage/prisma';
 import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, readWidgetSurfaceArtifactHeaderV1 } from '@happier-dev/protocol/widgets';
 import { ArtifactReadHeadersBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
@@ -53,6 +54,15 @@ describe("Artifact document grants (real SQLite)", () => {
     }
 
     const protocolHeaders = { "x-happier-account-stored-content-protocol": String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) };
+
+    function observeArtifactReads(after: (operation: string,
+        args: NonNullable<Parameters<typeof db.artifact.findMany>[0]>, result: unknown) => void | Promise<void>) {
+        return observeSqliteRequests({ after: async (request, result) => {
+            if (request.model !== 'Artifact') return;
+            // Prisma's request-adapter boundary exposes untyped query arguments.
+            await after(request.action, request.args as NonNullable<Parameters<typeof db.artifact.findMany>[0]>, result);
+        } });
+    }
 
     it('keeps required Review Team grants while ordinary Team grants remain removable', async () => {
         const owner = await plainAccount();
@@ -667,16 +677,15 @@ describe("Artifact document grants (real SQLite)", () => {
             kind: 'v1:skill:prompt_bundle.v2', updatedAt: new Date(0) } });
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
             const headers = { 'x-test-user-id': owner.id, ...protocolHeaders };
-            const delegate = (await withSqliteReadSnapshot(async tx => tx)).artifact;
             const reads: string[] = [];
             let bodies = 0;
-            const original = delegate.findMany.bind(delegate);
-            Object.defineProperty(delegate, 'findMany', { configurable: true, writable: true, value: async (...args: Parameters<typeof original>) => {
-                const rows = await original(...args);
-                if (args[0]?.select?.header) reads.push(...rows.map(row => row.id));
-                if (args[0]?.select?.body) bodies += rows.length;
-                return rows;
-            } });
+            const stopObserving = observeArtifactReads((operation, args, result) => {
+                if (operation !== 'findMany') return;
+                // The real Artifact query selects ids alongside these projected bytes.
+                const rows = result as Array<{ id: string }>;
+                if (args.select?.header) reads.push(...rows.map(row => row.id));
+                if (args.select?.body) bodies += rows.length;
+            });
             try {
                 // Eight coarse families per exact kind crosses SQLite's portable bind boundary.
                 const query = encodeURIComponent(JSON.stringify(['account_notice.v1', 'prompt_bundle.v2',
@@ -704,7 +713,7 @@ describe("Artifact document grants (real SQLite)", () => {
                     expect((await app.inject({ method: 'GET', url: `/v1/artifacts?${suffix}`, headers })).statusCode).toBe(400);
                 }
             } finally {
-                Object.defineProperty(delegate, 'findMany', { configurable: true, writable: true, value: original });
+                stopObserving();
             }
         });
     });
@@ -748,22 +757,18 @@ describe("Artifact document grants (real SQLite)", () => {
         await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.id, accountId: reader.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
-            const delegate = (await withSqliteReadSnapshot(async tx => tx)).artifact;
-            const original = delegate.findMany.bind(delegate);
             let enter!: () => void;
             let resume!: () => void;
             const reached = new Promise<void>(resolve => { enter = resolve; });
             const release = new Promise<void>(resolve => { resume = resolve; });
             let reads = 0;
             let bodyReads = 0;
-            Object.defineProperty(delegate, 'findMany', { configurable: true, writable: true,
-                value: async (...args: Parameters<typeof original>) => {
-                    if (args[0]?.select?.body === true) bodyReads++;
-                    const rows = await original(...args);
-                    reads++;
-                    if (reads === 1) { enter(); await release; }
-                    return rows;
-                } });
+            const stopObserving = observeArtifactReads(async (operation, args) => {
+                if (operation !== 'findMany') return;
+                if (args.select?.body === true) bodyReads++;
+                reads++;
+                if (reads === 1) { enter(); await release; }
+            });
             const request = { method: 'POST' as const, url: '/v1/artifacts/read',
                 headers: { 'x-test-user-id': reader.id, ...protocolHeaders },
                 payload: { artifactIds: [artifact.id], projection: 'headers' } };
@@ -783,7 +788,7 @@ describe("Artifact document grants (real SQLite)", () => {
                 expect(bodyReads).toBe(0);
             } finally {
                 resume(); await response;
-                Object.defineProperty(delegate, 'findMany', { configurable: true, writable: true, value: original });
+                stopObserving();
             }
         });
     });
@@ -845,6 +850,16 @@ describe("Artifact document grants (real SQLite)", () => {
                 expect(item.recipientCensus.recipients.map((row: { recipientAccountId: string }) => row.recipientAccountId))
                     .toEqual([owner.id, ...recipients.slice(index * 500, (index + 1) * 500)].sort());
             }
+            await db.artifactGrant.createMany({ data: recipients.slice(500).map(accountId => ({
+                principalKind: 'account', artifactId: artifactIds[0]!, accountId,
+                accessLevel: 'view' as const, createdByAccountId: owner.id,
+            })) });
+            const census = await app.inject({ method: 'GET', url: `/v1/artifacts/${artifactIds[0]}/access/recipients`,
+                headers: { 'x-test-user-id': owner.id, ...protocolHeaders } });
+            expect(census.statusCode, census.body).toBe(200);
+            expect(census.json().dataEncryptionKey).toBe(privacyKit.encodeBase64(envelope));
+            expect(census.json().recipients.map((row: { recipientAccountId: string }) => row.recipientAccountId))
+                .toEqual([owner.id, ...recipients].sort());
         });
     });
 
@@ -944,20 +959,16 @@ describe("Artifact document grants (real SQLite)", () => {
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1 } });
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
             const headers = { 'x-test-user-id': owner.id, ...protocolHeaders };
-            const delegate = (await withSqliteReadSnapshot(async tx => tx)).artifact;
-            const original = delegate.findMany.bind(delegate);
             let enter!: () => void;
             let resume!: () => void;
             const reached = new Promise<void>(resolve => { enter = resolve; });
             const release = new Promise<void>(resolve => { resume = resolve; });
             let paused = false;
             // Pause the real first filtered DB query, then classify through the canonical transaction owner.
-            Object.defineProperty(delegate, 'findMany', { configurable: true, writable: true,
-                value: async (...args: Parameters<typeof original>) => {
-                    const rows = await original(...args);
-                    if (!paused && args[0]?.where?.OR?.some(predicate => predicate.kind === 'skill')) { paused = true; enter(); await release; }
-                    return rows;
-                } });
+            const stopObserving = observeArtifactReads(async (operation, args) => {
+                if (operation !== 'findMany') return;
+                if (!paused && args.where?.OR?.some(predicate => predicate.kind === 'skill')) { paused = true; enter(); await release; }
+            });
             const response = app.inject({ method: 'GET', url: '/v1/artifacts?kind=skill', headers });
             try {
                 expect(await Promise.race([reached.then(() => 'barrier'), response.then(() => 'response')])).toBe('barrier');
@@ -971,7 +982,7 @@ describe("Artifact document grants (real SQLite)", () => {
                 expect(page.hasUnclassified || page.items.some((row: { id: string }) => row.id === artifact.id)).toBe(true);
             } finally {
                 resume(); await response;
-                Object.defineProperty(delegate, 'findMany', { configurable: true, writable: true, value: original });
+                stopObserving();
             }
         });
     });
@@ -983,19 +994,15 @@ describe("Artifact document grants (real SQLite)", () => {
         await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.id, accountId: reader.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
-            const delegate = (await withSqliteReadSnapshot(async tx => tx)).artifact;
-            const original = delegate.count.bind(delegate);
             let enter!: () => void;
             let resume!: () => void;
             const reached = new Promise<void>(resolve => { enter = resolve; });
             const release = new Promise<void>(resolve => { resume = resolve; });
             let paused = false;
-            Object.defineProperty(delegate, 'count', { configurable: true, writable: true,
-                value: async (...args: Parameters<typeof original>) => {
-                    const count = await original(...args);
-                    if (!paused) { paused = true; enter(); await release; }
-                    return count;
-                } });
+            const stopObserving = observeArtifactReads(async operation => {
+                if (operation !== 'aggregate') return;
+                if (!paused) { paused = true; enter(); await release; }
+            });
             const request = { method: 'GET' as const, url: '/v1/artifacts?kinds=%5B%22workflow-definition.v1%22%5D',
                 headers: { 'x-test-user-id': reader.id, ...protocolHeaders } };
             const response = app.inject(request);
@@ -1018,7 +1025,7 @@ describe("Artifact document grants (real SQLite)", () => {
                 expect(next.json().items.map((row: { id: string }) => row.id)).toEqual(transition === 'revoked' ? [] : [artifact.id]);
             } finally {
                 resume(); await response;
-                Object.defineProperty(delegate, 'count', { configurable: true, writable: true, value: original });
+                stopObserving();
             }
         });
     });
@@ -1031,22 +1038,18 @@ describe("Artifact document grants (real SQLite)", () => {
         await db.artifactGrant.createMany({ data: [first, second].map(artifact => ({ principalKind: 'account', artifactId: artifact.id,
             accountId: recipient.id, accessLevel: 'view' as const, createdByAccountId: owner.id })) });
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
-            const delegate = (await withSqliteReadSnapshot(async tx => tx)).artifact;
-            const original = delegate.count.bind(delegate);
             let enter!: () => void;
             let resume!: () => void;
             const reached = new Promise<void>(resolve => { enter = resolve; });
             const release = new Promise<void>(resolve => { resume = resolve; });
             let paused = false;
             // Revoke a grant after the real aggregate snapshot, preserving a second live grant.
-            Object.defineProperty(delegate, 'count', { configurable: true, writable: true,
-                value: async (...args: Parameters<typeof original>) => {
-                    const count = await original(...args);
-                    if (!paused && args[0]?.where?.kind === null) {
-                        paused = true; enter(); await release;
-                    }
-                    return count;
-                } });
+            const stopObserving = observeArtifactReads(async (operation, args) => {
+                if (operation !== 'aggregate') return;
+                if (!paused && args.where?.kind === null) {
+                    paused = true; enter(); await release;
+                }
+            });
             const response = app.inject({ method: 'GET', url: '/v1/artifacts?kind=skill',
                 headers: { 'x-test-user-id': recipient.id, ...protocolHeaders } });
             try {
@@ -1058,7 +1061,7 @@ describe("Artifact document grants (real SQLite)", () => {
                 expect(result.json()).toEqual({ items: [], hasUnclassified: true });
             } finally {
                 resume(); await response;
-                Object.defineProperty(delegate, 'count', { configurable: true, writable: true, value: original });
+                stopObserving();
             }
         });
     });
@@ -1133,24 +1136,18 @@ describe("Artifact document grants (real SQLite)", () => {
             const url = `/v1/artifacts/${artifact.id}`;
             const headers = { 'x-test-user-id': recipient.id, ...protocolHeaders };
             expect((await app.inject({ method: 'GET', url, headers })).statusCode).toBe(200);
-            const { withSqliteReadSnapshot } = await import('@/storage/prisma');
-            const reader = await withSqliteReadSnapshot(async tx => tx);
-            const delegate = reader.artifact;
-            const original = delegate.findFirst.bind(delegate);
             let enter!: () => void;
             let resume!: () => void;
             const reached = new Promise<void>(resolve => { enter = resolve; });
             const release = new Promise<void>(resolve => { resume = resolve; });
             let paused = false;
             // Pause after the genuine DB row capture; all policy and bytes stay real.
-            Object.defineProperty(delegate, 'findFirst', { configurable: true, writable: true,
-                value: async (...args: Parameters<typeof original>) => {
-                    const row = await original(...args);
-                    if (!paused && args[0]?.select?.body === true) {
-                        paused = true; enter(); await release;
-                    }
-                    return row;
-                } });
+            const stopObserving = observeArtifactReads(async (operation, args) => {
+                if (operation !== 'findFirst') return;
+                if (!paused && args.select?.body === true) {
+                    paused = true; enter(); await release;
+                }
+            });
             const response = app.inject({ method: 'GET', url, headers });
             try {
                 expect(await Promise.race([reached.then(() => 'barrier'), response.then(() => 'response')])).toBe('barrier');
@@ -1162,7 +1159,7 @@ describe("Artifact document grants (real SQLite)", () => {
                 expect(decodePlainArtifactStoredContent(result.json().body)).toEqual({ value: 'original' });
             } finally {
                 resume(); await response;
-                Object.defineProperty(delegate, 'findFirst', { configurable: true, writable: true, value: original });
+                stopObserving();
             }
         });
     });
