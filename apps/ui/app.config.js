@@ -573,7 +573,8 @@ const baseExpoConfig = {
             [
                 "expo-image-picker",
                 {
-                    photosPermission: "Allow $(PRODUCT_NAME) to access your photo library so you can attach images."
+                    photosPermission: "Allow $(PRODUCT_NAME) to access your photo library so you can attach images.",
+                    cameraPermission: "Allow $(PRODUCT_NAME) to access your camera so you can attach photos."
                 }
             ],
             [

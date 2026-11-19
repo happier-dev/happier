@@ -35,6 +35,11 @@ export const en = {
         // this device permanently rather than waiting for a reconnect.
         unsupported: 'Not synced — this Home can’t sync this draft',
         startInterrupted: 'Start interrupted',
+        storageError: 'This device couldn’t save the draft locally.',
+        cryptoError: 'This device couldn’t sync the draft because it couldn’t encrypt or open it.',
+        transportError: 'This device couldn’t sync the draft with its Home.',
+        cleanupError: 'The draft was removed from its Home, but this device couldn’t finish cleaning up its local copy.',
+        unknownError: 'This device couldn’t finish saving or syncing the draft.',
     },
     availability: {
         machineUnavailable: 'Machine unavailable',

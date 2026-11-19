@@ -14122,6 +14122,11 @@ const es: typeof en = {
         conflict: 'Necesita revisión',
         unsupported: 'Sin sincronizar — este Home no puede sincronizar este borrador',
         startInterrupted: 'Inicio interrumpido',
+        storageError: 'Este dispositivo no pudo guardar el borrador localmente.',
+        cryptoError: 'Este dispositivo no pudo sincronizar el borrador porque no pudo cifrarlo o abrirlo.',
+        transportError: 'Este dispositivo no pudo sincronizar el borrador con su Home.',
+        cleanupError: 'El borrador se eliminó de su Home, pero este dispositivo no pudo eliminar la copia local.',
+        unknownError: 'Este dispositivo no pudo terminar de guardar o sincronizar el borrador.',
     },
     availability: {
         machineUnavailable: 'Máquina no disponible',

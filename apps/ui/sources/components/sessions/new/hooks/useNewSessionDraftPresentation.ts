@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { getSessionDraftSnapshot, subscribeSessionDraft, type SessionDraftSnapshot, type SessionDraftStatus } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
-import { selectSessionDraftSyncBadgeStatus } from '@/components/sessions/drafts/sessionDraftStatusPresentation';
+import { getSessionDraftSnapshot, subscribeSessionDraft, type SessionDraftSnapshot } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { selectSessionDraftSyncBadgeStatus, type SessionDraftSyncBadgeStatus } from '@/components/sessions/drafts/sessionDraftStatusPresentation';
 import { getSessionDraftDocumentFieldValue } from '@/sync/ops/sessionDrafts/sessionDraftDocumentFields';
 import {
     buildNewSessionDraftTitle,
@@ -14,7 +14,7 @@ import {
 type NewSessionDraftPresentation = Readonly<Pick<SessionDraftSnapshot, 'materialized' | 'conflict'> & {
     intro?: NonNullable<SessionDraftSnapshot['localSupplement']['newSessionLocalState']>['intro'];
     /** Only the status the badge shows: `pending` flips with every remote flush of a typing burst. */
-    badgeStatus: SessionDraftStatus | null;
+    badgeStatus: SessionDraftSyncBadgeStatus | null;
     launchUserAttemptId: string | null;
     authoringOrigin: NonNullable<SessionDraftSnapshot['localSupplement']['newSessionLocalState']>['authoringOrigin'];
     /** The item the draft was opened from: its first attached item's label (pasted media is not an item). */
@@ -54,7 +54,7 @@ export function useNewSessionDraftPresentation(scope: ServerAccountScope | null,
             intro: snapshot.localSupplement.newSessionLocalState.intro,
         }),
         materialized: snapshot.materialized,
-        badgeStatus: selectSessionDraftSyncBadgeStatus(snapshot.status),
+        badgeStatus: selectSessionDraftSyncBadgeStatus(snapshot),
         conflict: snapshot.conflict,
         launchUserAttemptId: snapshot.localSupplement.launchUserAttemptId ?? null,
         authoringOrigin: snapshot.localSupplement.newSessionLocalState?.authoringOrigin,

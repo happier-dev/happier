@@ -8,6 +8,7 @@ export type AttachmentFilePickerHandle = Readonly<{
     open: () => void;
     openFiles: () => void;
     openImages: () => void;
+    takePhoto?: () => void;
 }>;
 
 export type PickedAttachment = AttachmentsUploadFileSource;

@@ -3178,6 +3178,9 @@ const enCommon = {
   send: 'Send',
   attach: 'Attach',
   addImage: 'Add image',
+  takePhoto: 'Take photo',
+  cameraPermissionForPhoto: 'Allow camera access in Settings to take a photo.',
+  takePhotoFailed: 'Couldn’t take a photo. Try again.',
   imageInputUnsupported: ({ agent }: { agent: string }) => `${agent} can't read images`,
   addFile: 'Add file',
   linkFile: 'Link file',
@@ -15703,6 +15706,7 @@ const enSettingsSession = {
     messageTimestampsTitle: 'Show time and date below messages',
     showTurnDurationTitle: "Show turn duration",
     showTurnDurationSubtitle: "“Worked for 1m 12s” at the end of each finished turn",
+    linkAgentNamesTitle: 'Link agent names in messages',
     messageTimestampsSubtitle:
       'Display each user and assistant message timestamp under the message.',
     messageTimestamps: {
@@ -19307,7 +19311,6 @@ const enSetupOnboarding = {
   handoffPlatformMacosLabel: 'macOS',
   handoffPlatformLinuxLabel: 'Linux',
   handoffPlatformWindowsLabel: 'Windows',
-  orDividerLabel: 'or',
   webDesktopOnlySetupCommandTitle: 'Set up this machine using the CLI',
   webDesktopOnlySetupCommandSubtitle:
     'Run this interactive command to connect the machine to the selected Home and install the background service.',

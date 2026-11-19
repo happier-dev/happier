@@ -14170,6 +14170,11 @@ const ja: typeof en = {
         conflict: '確認が必要',
         unsupported: '未同期 — この Home はこの下書きを同期できません',
         startInterrupted: '開始が中断されました',
+        storageError: 'このデバイスに下書きを保存できませんでした。',
+        cryptoError: 'このデバイスで下書きを暗号化または開けなかったため、同期できませんでした。',
+        transportError: 'このデバイスで下書きを Home と同期できませんでした。',
+        cleanupError: '下書きは Home から削除されましたが、このデバイスのコピーを削除できませんでした。',
+        unknownError: 'このデバイスで下書きの保存または同期を完了できませんでした。',
     },
     availability: {
         machineUnavailable: 'マシンを利用できません',

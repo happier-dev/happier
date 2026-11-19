@@ -52,6 +52,7 @@ import { AttachmentFilePicker } from '@/components/sessions/attachments/Attachme
 import {
     openAttachmentFilePickerFiles,
     openAttachmentFilePickerImages,
+    takeAttachmentPhoto,
 } from '@/components/sessions/attachments/attachmentFilePickerActions';
 import {
     clearSessionAttachmentDrafts,
@@ -294,7 +295,7 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
     // Only the badge status: the repository republishes this draft on every keystroke.
     const readRunDraftBadgeStatus = React.useCallback(() => (
         runDraftScope && runDraftAddress
-            ? selectSessionDraftSyncBadgeStatus(getSessionDraftSnapshot(runDraftScope, runDraftAddress)?.status ?? 'clean')
+            ? selectSessionDraftSyncBadgeStatus(getSessionDraftSnapshot(runDraftScope, runDraftAddress))
             : null
     ), [runDraftAddress, runDraftScope]);
     const runDraftBadgeStatus = React.useSyncExternalStore(
@@ -937,6 +938,7 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
         ? createAttachmentActionChip({
             onPickFile: () => openAttachmentFilePickerFiles(transferDraftManager.filePickerRef.current),
             onPickImage: () => openAttachmentFilePickerImages(transferDraftManager.filePickerRef.current),
+            onTakePhoto: () => takeAttachmentPhoto(transferDraftManager.filePickerRef.current),
             disabled: isUploadingAttachments || !attachmentsUploadsTransferAvailable,
             disabledReason: !attachmentsUploadsTransferAvailable ? t('files.transfers.uploadUnavailable') : undefined,
         })

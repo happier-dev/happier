@@ -22,6 +22,7 @@ const SCREEN_CAPTURE_LABELS = {
 function buildAttachmentRootStep(params: Readonly<{
     onPickFile: () => void;
     onPickImage: () => void;
+    onTakePhoto?: () => void;
     onPasteImage?: () => void;
     disabled?: boolean;
     imageInputDisabledReason?: string;
@@ -51,6 +52,13 @@ function buildAttachmentRootStep(params: Readonly<{
                         subtitle: params.imageInputDisabledReason,
                         onSelect: () => { if (!params.imageInputDisabledReason) params.onPickImage(); },
                     },
+                    ...(params.onTakePhoto ? [{
+                        id: 'take-photo',
+                        label: t('common.takePhoto'),
+                        disabled: params.disabled || Boolean(params.imageInputDisabledReason),
+                        subtitle: params.imageInputDisabledReason,
+                        onSelect: () => { if (!params.disabled && !params.imageInputDisabledReason) params.onTakePhoto?.(); },
+                    }] : []),
                     {
                         id: 'add-file',
                         label: t('common.addFile'),
@@ -75,6 +83,7 @@ function buildAttachmentRootStep(params: Readonly<{
 export function createAttachmentActionChip(params: Readonly<{
     onPickFile: () => void;
     onPickImage: () => void;
+    onTakePhoto?: () => void;
     onPasteImage?: () => void;
     disabled?: boolean;
     disabledReason?: string;
@@ -83,7 +92,8 @@ export function createAttachmentActionChip(params: Readonly<{
     screenCapture?: readonly ScreenCaptureAttachmentAction[];
 }>): AgentInputExtraActionChip {
     const screenCapture = params.screenCapture ?? [];
-    const showChooser = Platform.OS === 'ios' || Platform.OS === 'android' || screenCapture.length > 0;
+    const mobile = Platform.OS === 'ios' || Platform.OS === 'android';
+    const showChooser = mobile || screenCapture.length > 0;
     const disabled = params.disabled === true || Boolean(params.disabledReason);
     // Per-chip instance guard (avoid cross-screen/test interference from module-level state).
     let lastWebPickerOpenAtMs = 0;
@@ -125,6 +135,7 @@ export function createAttachmentActionChip(params: Readonly<{
                 rootStep: buildAttachmentRootStep({
                     onPickFile: params.onPickFile,
                     onPickImage: params.onPickImage,
+                    onTakePhoto: mobile ? params.onTakePhoto : undefined,
                     onPasteImage: params.onPasteImage,
                     disabled,
                     imageInputDisabledReason: params.imageInputDisabledReason,

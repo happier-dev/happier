@@ -1,5 +1,8 @@
 import * as React from 'react';
 
+import { Modal } from '@/modal';
+import { t } from '@/text';
+
 import type { AttachmentFilePickerHandle, AttachmentFilePickerProps, PickedAttachment } from './AttachmentFilePicker.types';
 import { nativePickFiles } from '@/utils/files/nativePickFiles';
 import { nativePickImages } from '@/utils/files/nativePickImages';
@@ -23,9 +26,19 @@ export const AttachmentFilePicker = React.forwardRef<AttachmentFilePickerHandle,
             })();
         }, [props.multiple]);
 
+        const takePhoto = React.useCallback(() => {
+            void nativePickImages({
+                source: 'camera',
+                onPermissionDenied: () => Modal.alert(t('common.permissionRequired'), t('common.cameraPermissionForPhoto')),
+            }).then(
+                picked => { if (picked.length > 0) onPickedRef.current(picked); },
+                () => Modal.alert(t('common.error'), t('common.takePhotoFailed')),
+            );
+        }, []);
+
         const open = openFiles;
 
-        React.useImperativeHandle(ref, () => ({ open, openFiles, openImages }), [open, openFiles, openImages]);
+        React.useImperativeHandle(ref, () => ({ open, openFiles, openImages, takePhoto }), [open, openFiles, openImages, takePhoto]);
 
         return null;
     }

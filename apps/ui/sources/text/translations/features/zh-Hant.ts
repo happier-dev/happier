@@ -14110,6 +14110,11 @@ const zhHant: typeof en = {
         conflict: '需要檢查',
         unsupported: '未同步 — 此 Home 無法同步這個草稿',
         startInterrupted: '啟動已中斷',
+        storageError: '此裝置無法在本機儲存草稿。',
+        cryptoError: '此裝置無法加密或開啟草稿，因此無法同步。',
+        transportError: '此裝置無法與 Home 同步草稿。',
+        cleanupError: '草稿已從 Home 刪除，但此裝置無法刪除本機副本。',
+        unknownError: '此裝置未能完成草稿儲存或同步。',
     },
     availability: {
         machineUnavailable: '機器無法使用',

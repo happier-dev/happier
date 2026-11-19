@@ -14249,6 +14249,11 @@ const pl: typeof en = {
         conflict: 'Wymaga przeglądu',
         unsupported: 'Niezsynchronizowany — ten Home nie może zsynchronizować tego szkicu',
         startInterrupted: 'Uruchomienie przerwane',
+        storageError: 'To urządzenie nie mogło zapisać wersji roboczej lokalnie.',
+        cryptoError: 'To urządzenie nie mogło zsynchronizować wersji roboczej, ponieważ nie mogło jej zaszyfrować lub otworzyć.',
+        transportError: 'To urządzenie nie mogło zsynchronizować wersji roboczej z Home.',
+        cleanupError: 'Usunięto wersję roboczą z Home, ale to urządzenie nie mogło usunąć jej lokalnej kopii.',
+        unknownError: 'To urządzenie nie mogło dokończyć zapisywania lub synchronizowania wersji roboczej.',
     },
     availability: {
         machineUnavailable: 'Maszyna niedostępna',

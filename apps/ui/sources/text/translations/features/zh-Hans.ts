@@ -14110,6 +14110,11 @@ const zhHans: typeof en = {
         conflict: '需要检查',
         unsupported: '未同步 — 此 Home 无法同步该草稿',
         startInterrupted: '启动已中断',
+        storageError: '此设备无法在本地保存草稿。',
+        cryptoError: '此设备无法加密或打开草稿，因此无法同步。',
+        transportError: '此设备无法与 Home 同步草稿。',
+        cleanupError: '草稿已从 Home 删除，但此设备无法删除本地副本。',
+        unknownError: '此设备未能完成草稿保存或同步。',
     },
     availability: {
         machineUnavailable: '机器不可用',

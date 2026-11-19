@@ -14217,6 +14217,11 @@ const pt: typeof en = {
         conflict: 'Precisa de revisão',
         unsupported: 'Não sincronizado — este Home não consegue sincronizar este rascunho',
         startInterrupted: 'Início interrompido',
+        storageError: 'Este dispositivo não conseguiu salvar o rascunho localmente.',
+        cryptoError: 'Este dispositivo não conseguiu sincronizar o rascunho porque não conseguiu criptografá-lo ou abri-lo.',
+        transportError: 'Este dispositivo não conseguiu sincronizar o rascunho com seu Home.',
+        cleanupError: 'O rascunho foi removido do Home, mas este dispositivo não conseguiu remover a cópia local.',
+        unknownError: 'Este dispositivo não conseguiu concluir o salvamento ou a sincronização do rascunho.',
     },
     availability: {
         machineUnavailable: 'Máquina indisponível',

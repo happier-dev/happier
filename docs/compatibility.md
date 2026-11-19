@@ -7801,6 +7801,9 @@ autosave cost does not grow with the number of drafts an Account holds. The scop
 keeps only opaque envelope fields (`v: 3`, such as 0.2's `ordinaryEntryDraftId`) and is absent when
 there are none. Each draft record uses the compact v2 replica form: equal base/local documents and
 pending fields are stored once and reconstructed on read; independent conflict values are retained.
+A replica can carry an optional device-local failure reason for encryption, transport, or cleanup.
+Clients display a general draft error when a stored reason is absent or unfamiliar. Browser storage
+failures are reported from the active repository scope.
 A whole-scope `v: 1`/`v: 2` record written by 0.2 or an earlier build is moved into per-draft
 records on first read, with each draft's bytes unchanged and envelope fields kept; browser startup
 does this in one IndexedDB transaction per scope, and native/in-memory storage on first scope load.

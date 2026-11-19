@@ -36,7 +36,7 @@ import { projectAgentInputAttachmentRowItems } from "@/components/sessions/agent
 import { AttachmentFilePicker } from "@/components/sessions/attachments/AttachmentFilePicker";
 import { readSessionImageInputAvailability } from '@/sync/domains/session/media/sessionImageInputAvailability';
 import type { AttachmentDraft } from "@/components/sessions/attachments/attachmentDraftModel";
-import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from "@/components/sessions/attachments/attachmentFilePickerActions";
+import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages, takeAttachmentPhoto } from "@/components/sessions/attachments/attachmentFilePickerActions";
 import { useSessionAgentInputExtraActionChips } from "@/components/sessions/agentInput/sessionActions/useSessionAgentInputExtraActionChips";
 import { useSessionWorkflowRunChip } from "@/components/sessions/agents/launch/useSessionWorkflowRunChip";
 import { useSessionAccessComposerChip } from "@/components/sessions/access/useSessionAccessComposerChip";
@@ -2952,7 +2952,7 @@ export function useSessionComposerController({
         [getCurrentSessionDraftSnapshot],
     );
     const readCurrentSessionDraftStatus = React.useCallback(
-        () => selectSessionDraftSyncBadgeStatus(getCurrentSessionDraftSnapshot()?.status ?? 'clean'),
+        () => selectSessionDraftSyncBadgeStatus(getCurrentSessionDraftSnapshot()),
         [getCurrentSessionDraftSnapshot],
     );
     const currentSessionDraftConflict = React.useSyncExternalStore(
@@ -4829,6 +4829,9 @@ export function useSessionComposerController({
         const pickComposerAttachmentImage = React.useCallback(() => {
             openAttachmentFilePickerImages(filePickerRef.current);
         }, [filePickerRef]);
+        const takeComposerAttachmentPhoto = React.useCallback(() => {
+            takeAttachmentPhoto(filePickerRef.current);
+        }, [filePickerRef]);
         const appendComposerLinkedPath = React.useCallback((path: string) => {
             setVisibleComposerDraftValue((prev) => {
                 const base = prev ?? '';
@@ -4852,6 +4855,7 @@ export function useSessionComposerController({
             isUploadingAttachments,
             onPickAttachmentFile: pickComposerAttachmentFile,
             onPickAttachmentImage: pickComposerAttachmentImage,
+            onTakeAttachmentPhoto: takeComposerAttachmentPhoto,
             onAttachmentsPicked: addPickedAttachments,
             onPasteAttachmentImage: pasteAttachmentImage,
             onAppendLinkedPath: appendComposerLinkedPath,

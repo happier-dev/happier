@@ -14223,6 +14223,11 @@ const ca: typeof en = {
         conflict: 'Cal revisar-ho',
         unsupported: 'Sense sincronitzar — aquest Home no pot sincronitzar aquest esborrany',
         startInterrupted: 'Inici interromput',
+        storageError: 'Aquest dispositiu no ha pogut desar l’esborrany localment.',
+        cryptoError: 'Aquest dispositiu no ha pogut sincronitzar l’esborrany perquè no l’ha pogut xifrar o obrir.',
+        transportError: 'Aquest dispositiu no ha pogut sincronitzar l’esborrany amb el seu Home.',
+        cleanupError: 'L’esborrany s’ha eliminat del Home, però aquest dispositiu no ha pogut eliminar la còpia local.',
+        unknownError: 'Aquest dispositiu no ha pogut acabar de desar o sincronitzar l’esborrany.',
     },
     availability: {
         machineUnavailable: 'Ordinador no disponible',

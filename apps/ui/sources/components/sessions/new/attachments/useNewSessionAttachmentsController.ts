@@ -25,7 +25,7 @@ import {
     type ComposerSubmissionSnapshot,
 } from '@/components/sessions/composer/composerSubmissionCoordinator';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
-import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
+import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages, takeAttachmentPhoto } from '@/components/sessions/attachments/attachmentFilePickerActions';
 import { attachRecoverableAttachmentDrafts } from '@/components/sessions/attachments/recoverableAttachmentDrafts';
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
 import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
@@ -252,6 +252,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
             chips.push(createAttachmentActionChip({
                 onPickFile: () => openAttachmentFilePickerFiles(filePickerRef.current),
                 onPickImage: () => openAttachmentFilePickerImages(filePickerRef.current),
+                onTakePhoto: () => takeAttachmentPhoto(filePickerRef.current),
                 onPasteImage: pasteAttachmentImage,
                 disabled: params.isCreating,
             }));

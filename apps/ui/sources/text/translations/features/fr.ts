@@ -14242,6 +14242,11 @@ const fr: typeof en = {
         conflict: 'À examiner',
         unsupported: 'Non synchronisé — ce Home ne peut pas synchroniser ce brouillon',
         startInterrupted: 'Démarrage interrompu',
+        storageError: 'Cet appareil n’a pas pu enregistrer le brouillon localement.',
+        cryptoError: 'Cet appareil n’a pas pu synchroniser le brouillon, car il n’a pas pu le chiffrer ou l’ouvrir.',
+        transportError: 'Cet appareil n’a pas pu synchroniser le brouillon avec son Home.',
+        cleanupError: 'Le brouillon a été supprimé de son Home, mais cet appareil n’a pas pu supprimer sa copie locale.',
+        unknownError: 'Cet appareil n’a pas pu terminer l’enregistrement ou la synchronisation du brouillon.',
     },
     availability: {
         machineUnavailable: 'Machine indisponible',

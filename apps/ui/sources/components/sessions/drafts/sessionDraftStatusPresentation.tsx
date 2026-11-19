@@ -2,7 +2,10 @@ import type { TranslationKey } from '@/text';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
-import type { SessionDraftStatus } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { Popover } from '@/components/ui/popover/Popover';
+import { Text } from '@/components/ui/text/Text';
+import { StyleSheet } from 'react-native-unistyles';
+import type { SessionDraftErrorReason, SessionDraftSnapshot, SessionDraftStatus } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 export function resolveSessionDraftStatusKey(status: SessionDraftStatus): TranslationKey | null {
     switch (status) {
@@ -20,13 +23,27 @@ export function resolveSessionDraftStatusKey(status: SessionDraftStatus): Transl
  * state of every edit until its remote flush and `conflict` has its own banner, so a host that
  * selects this instead of the raw status does not render for each sync of a typing burst.
  */
-export function selectSessionDraftSyncBadgeStatus(status: SessionDraftStatus): SessionDraftStatus | null {
-    return status === 'clean' || status === 'pending' || status === 'conflict' ? null : status;
+const errorExplanations = {
+    storage: 'sessionDrafts.status.storageError',
+    crypto: 'sessionDrafts.status.cryptoError',
+    transport: 'sessionDrafts.status.transportError',
+    cleanup: 'sessionDrafts.status.cleanupError',
+    unknown: 'sessionDrafts.status.unknownError',
+} as const satisfies Record<SessionDraftErrorReason | 'unknown', TranslationKey>;
+
+export type SessionDraftSyncBadgeStatus = 'offline' | 'unsupported' | typeof errorExplanations[keyof typeof errorExplanations];
+
+export function selectSessionDraftSyncBadgeStatus(
+    snapshot: Pick<SessionDraftSnapshot, 'status' | 'errorReason'> | null | undefined,
+): SessionDraftSyncBadgeStatus | null {
+    if (snapshot?.status === 'error') return errorExplanations[snapshot.errorReason ?? 'unknown'];
+    return snapshot?.status === 'offline' || snapshot?.status === 'unsupported' ? snapshot.status : null;
 }
 
-export function buildSessionDraftSyncStatusBadge(input: SessionDraftStatus | null): AgentInputStatusBadge | null {
-    const status = input === null ? null : selectSessionDraftSyncBadgeStatus(input);
-    if (status === null) return null;
+export function buildSessionDraftSyncStatusBadge(input: SessionDraftSyncBadgeStatus | null): AgentInputStatusBadge | null {
+    if (input === null) return null;
+    const explanation = input === 'offline' || input === 'unsupported' ? null : t(input);
+    const status = input === 'offline' || input === 'unsupported' ? input : 'error';
     const statusKey = resolveSessionDraftStatusKey(status);
     if (!statusKey) return null;
     const label = t(statusKey);
@@ -34,6 +51,15 @@ export function buildSessionDraftSyncStatusBadge(input: SessionDraftStatus | nul
         key: 'draft-sync-status',
         label,
         accessibilityLabel: label,
+        ...(explanation ? {
+            accessibilityHint: explanation,
+            renderPopover: ({ open, anchorRef, onRequestClose }) => (
+                <Popover open={open} anchorRef={anchorRef} onRequestClose={onRequestClose} placement="top"
+                    containerStyle={styles.explanation}>
+                    {() => <Text variant="body">{explanation}</Text>}
+                </Popover>
+            ),
+        } satisfies Pick<AgentInputStatusBadge, 'accessibilityHint' | 'renderPopover'> : {}),
         testID: 'session-draft-sync-status-badge',
         // A Home that cannot sync this draft is a standing condition, not a
         // failure to retry, so it reads like `offline` rather than an error.
@@ -48,3 +74,7 @@ export function buildSessionDraftSyncStatusBadge(input: SessionDraftStatus | nul
         ),
     };
 }
+
+const styles = StyleSheet.create(theme => ({
+    explanation: { padding: theme.space.s3 },
+}));

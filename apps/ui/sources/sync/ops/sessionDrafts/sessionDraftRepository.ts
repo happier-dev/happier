@@ -50,6 +50,9 @@ export type SessionDraftRepositoryScope = ServerAccountScope;
  * truthful copy instead of the generic sync error.
  */
 export type SessionDraftStatus = 'clean' | 'pending' | 'offline' | 'conflict' | 'error' | 'unsupported';
+const SESSION_DRAFT_REPLICA_ERROR_REASONS = ['crypto', 'transport', 'cleanup'] as const;
+type SessionDraftReplicaErrorReason = typeof SESSION_DRAFT_REPLICA_ERROR_REASONS[number];
+export type SessionDraftErrorReason = 'storage' | SessionDraftReplicaErrorReason;
 /**
  * `seededContext`: an opener's placement/context for a New Session (Machine, folder, checkout, Project, copied
  * setup). It is held as a device-local, unlisted, unsynced replica of this process until the person authors
@@ -160,6 +163,7 @@ export type SessionDraftSnapshot = Readonly<{
     /** One local atomic document revision shared by mounted and unmounted adapters. */
     revision: number;
     status: SessionDraftStatus;
+    errorReason?: SessionDraftErrorReason;
     conflict: SessionDraftConflict | null;
     createdAt: number;
     updatedAt: number;
@@ -456,6 +460,7 @@ type PersistedReplica = {
     documentRevision?: number;
     pendingFieldMutations: DraftFieldMutationV1[];
     status: SessionDraftStatus;
+    errorReason?: SessionDraftReplicaErrorReason;
     conflict: SessionDraftConflict | null;
     createdAt: number;
     updatedAt: number;
@@ -1198,6 +1203,7 @@ export class SessionDraftRepository {
             ...replica,
             address,
             localRawDocument,
+            errorReason: SESSION_DRAFT_REPLICA_ERROR_REASONS.find(reason => reason === replica.errorReason),
             // Records omit only exact duplicates (v2 compaction).
             baseRawDocument: !Object.prototype.hasOwnProperty.call(replica, 'baseRawDocument')
                 ? localRawDocument
@@ -1326,7 +1332,7 @@ export class SessionDraftRepository {
             const state = this.getScopeState(scope);
             const replicaKey = canonicalSessionDraftAddressV2(removed.address);
             if (!state.replicas.has(replicaKey)) {
-                state.replicas.set(replicaKey, { ...removed.replica, status: 'error' });
+                state.replicas.set(replicaKey, { ...removed.replica, status: 'error', errorReason: 'cleanup' });
                 if (isNewSessionListAddress(removed.address)) this.newListProjectionCache.delete(this.scopeKey(scope));
                 this.persist(scope);
                 this.notify(scope, removed.address);
@@ -1384,7 +1390,8 @@ export class SessionDraftRepository {
     }
 
     private writeReplica(scope: SessionDraftRepositoryScope, replica: PersistedReplica): void {
-        this.getScopeState(scope).replicas.set(canonicalSessionDraftAddressV2(replica.address), replica);
+        const next = replica.status !== 'error' && replica.errorReason ? { ...replica, errorReason: undefined } : replica;
+        this.getScopeState(scope).replicas.set(canonicalSessionDraftAddressV2(replica.address), next);
         if (isNewSessionListAddress(replica.address)) this.newListProjectionCache.delete(this.scopeKey(scope));
         if (this.recordMutation(scope, replica.address)) return;
         this.persist(scope);
@@ -1394,10 +1401,11 @@ export class SessionDraftRepository {
     private writeLatestReplicaStatus(
         scope: SessionDraftRepositoryScope,
         address: SessionDraftAddressV2,
-        status: 'offline' | 'error' | 'unsupported',
+        presentation: Readonly<{ status: 'offline' | 'unsupported' }>
+            | Readonly<{ status: 'error'; errorReason: SessionDraftReplicaErrorReason }>,
     ): void {
         const latest = this.readReplica(scope, address);
-        if (latest) this.writeReplica(scope, { ...latest, status });
+        if (latest) this.writeReplica(scope, { ...latest, ...presentation });
     }
 
     private deleteReplica(
@@ -1434,12 +1442,15 @@ export class SessionDraftRepository {
         if (!replica?.localRawDocument) return null;
         const cached = this.snapshotCache.get(replica);
         const status = this.projectedStatus(scope, replica);
-        if (cached?.snapshot.status === status) return cached;
+        const errorReason = status !== 'error' ? undefined
+            : this.getScopeState(scope).persistenceError ? 'storage' : replica.errorReason;
+        if (cached?.snapshot.status === status && cached.snapshot.errorReason === errorReason) return cached;
         const snapshot: SessionDraftSnapshot = {
             address: replica.address,
             document: replica.localRawDocument,
             revision: replica.documentRevision ?? 0,
             status,
+            ...(errorReason ? { errorReason } : {}),
             conflict: replica.conflict,
             createdAt: replica.createdAt,
             updatedAt: replica.updatedAt,
@@ -2088,7 +2099,7 @@ export class SessionDraftRepository {
             });
         } catch (error) {
             if (!params.isCurrent()) return false;
-            this.writeLatestReplicaStatus(params.scope, params.address, 'offline');
+            this.writeLatestReplicaStatus(params.scope, params.address, { status: 'offline' });
             throw error;
         }
         if (!params.isCurrent()) return false;
@@ -2343,7 +2354,7 @@ export class SessionDraftRepository {
                 content = shouldTombstone ? null : await runtime.cipher.seal(params.address, submittedDocument!);
             } catch {
                 if (!isCurrent()) return { status: 'pending' };
-                this.writeLatestReplicaStatus(params.scope, params.address, 'error');
+                this.writeLatestReplicaStatus(params.scope, params.address, { status: 'error', errorReason: 'crypto' });
                 return { status: 'error' };
             }
             if (!isCurrent()) return { status: 'pending' };
@@ -2357,14 +2368,14 @@ export class SessionDraftRepository {
             } catch (error) {
                 if (!isCurrent()) return { status: 'pending' };
                 if (isSessionDraftEpochUnavailableError(error)) {
-                    this.writeLatestReplicaStatus(params.scope, params.address, 'unsupported');
+                    this.writeLatestReplicaStatus(params.scope, params.address, { status: 'unsupported' });
                     return { status: 'error', code: 'session_draft_epoch_unavailable' };
                 }
                 if (!shouldRetryError(error)) {
-                    this.writeLatestReplicaStatus(params.scope, params.address, 'error');
+                    this.writeLatestReplicaStatus(params.scope, params.address, { status: 'error', errorReason: 'transport' });
                     return { status: 'error' };
                 }
-                this.writeLatestReplicaStatus(params.scope, params.address, 'offline');
+                this.writeLatestReplicaStatus(params.scope, params.address, { status: 'offline' });
                 scoped?.onTransportError?.(error);
                 runtime.onFlushRetryRequested?.(error);
                 return { status: 'offline' };
@@ -2451,7 +2462,7 @@ export class SessionDraftRepository {
         if (!isCurrent()) return 'stale';
         const latestReplica = this.readReplica(scope, address) ?? replica;
         if (remoteRecord?.content && !remoteDocument) {
-            this.writeReplica(scope, { ...latestReplica, status: 'error' });
+            this.writeReplica(scope, { ...latestReplica, status: 'error', errorReason: 'crypto' });
             return 'error';
         }
         return this.rebaseConflictWithDocument(scope, address, latestReplica, remoteRecord, remoteDocument);
@@ -2656,7 +2667,7 @@ export class SessionDraftRepository {
             response = await params.runtime.transport.read(params.address);
         } catch (error) {
             if (!params.isCurrent()) return;
-            this.writeLatestReplicaStatus(params.scope, params.address, 'offline');
+            this.writeLatestReplicaStatus(params.scope, params.address, { status: 'offline' });
             throw error;
         }
         if (!params.isCurrent()) return;
@@ -2667,7 +2678,7 @@ export class SessionDraftRepository {
             } catch (error) {
                 if (!params.isCurrent()) return;
                 if (isSessionDraftContextUnavailableError(error)) throw error;
-                this.writeLatestReplicaStatus(params.scope, params.address, 'error');
+                this.writeLatestReplicaStatus(params.scope, params.address, { status: 'error', errorReason: 'crypto' });
                 throw error;
             }
             if (!params.isCurrent()) return;
@@ -2775,7 +2786,7 @@ export class SessionDraftRepository {
             return false;
         }
         if (!remoteDocument) {
-            if (local) this.writeReplica(scope, { ...local, status: 'error' });
+            if (local) this.writeReplica(scope, { ...local, status: 'error', errorReason: 'crypto' });
             throw new Error(`Unable to open session draft ${canonicalSessionDraftAddressV2(address)}`);
         }
         this.updateObservedTombstoneRevision(scope, response.record);
@@ -3045,13 +3056,14 @@ export class SessionDraftRepository {
                 if (replica.address.kind !== 'newSession' || !replica.materialized
                     || replica.localRawDocument?.target?.kind !== 'newSession') return [];
                 const status = this.projectedStatus(scope, replica);
-                const previous = this.newProjectionCache.get(replica);
-                if (previous && previous.status === status) return [previous];
                 const snapshot = this.getSessionComposerDraftSnapshot(scope, replica.address);
+                const readView = snapshot?.targetKind === 'newSession' ? snapshot : null;
+                const previous = this.newProjectionCache.get(replica);
+                if (previous && previous.status === status && previous.readView === readView) return [previous];
                 const next: NewSessionDraftProjection = {
                     draftId: replica.address.draftId,
                     document: replica.localRawDocument,
-                    readView: snapshot?.targetKind === 'newSession' ? snapshot : null,
+                    readView,
                     status,
                     conflict: replica.conflict,
                     createdAt: replica.createdAt,

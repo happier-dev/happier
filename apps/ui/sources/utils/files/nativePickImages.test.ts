@@ -14,6 +14,8 @@ const nativeImagePickerModule = vi.hoisted(() => ({
 
 vi.mock('expo-image-picker', () => ({
     requestMediaLibraryPermissionsAsync: vi.fn(async () => ({ granted: true })),
+    requestCameraPermissionsAsync: vi.fn(),
+    launchCameraAsync: vi.fn(),
     launchImageLibraryAsync: vi.fn(async () => ({ canceled: true })),
     MediaTypeOptions: { Images: 'images' },
 }));
@@ -28,7 +30,7 @@ vi.mock('react-native', () => ({
 
 describe('nativePickImages', () => {
     beforeEach(async () => {
-        nativeImagePickerModule.current = { launchImageLibraryAsync: () => undefined };
+        nativeImagePickerModule.current = { launchImageLibraryAsync: () => undefined, launchCameraAsync: () => undefined };
         const ImagePicker = await import('expo-image-picker');
         vi.mocked(ImagePicker.requestMediaLibraryPermissionsAsync).mockReset();
         vi.mocked(ImagePicker.launchImageLibraryAsync).mockReset();
@@ -58,6 +60,26 @@ describe('nativePickImages', () => {
         const { nativePickImages } = await import('./nativePickImages');
         await expect(nativePickImages({ multiple: false })).rejects.toThrow();
         expect(ImagePicker.launchImageLibraryAsync).not.toHaveBeenCalled();
+    });
+
+    it.each(['captured', 'cancelled', 'denied'] as const)('handles a %s camera capture through the image picker', async outcome => {
+        const picker = await import('expo-image-picker');
+        vi.mocked(picker.requestCameraPermissionsAsync).mockReset();
+        vi.mocked(picker.launchCameraAsync).mockReset();
+        vi.mocked(picker.requestCameraPermissionsAsync).mockResolvedValue({
+            ...grantedMediaLibraryPermission, granted: outcome !== 'denied',
+        });
+        vi.mocked(picker.launchCameraAsync).mockResolvedValue(outcome === 'captured' ? {
+            canceled: false, assets: [{ uri: 'file:///camera/photo.jpg', width: 100, height: 100,
+                fileName: 'photo.jpg', fileSize: 50, mimeType: 'image/jpeg' }],
+        } : { canceled: true, assets: null });
+
+        const { nativePickImages } = await import('./nativePickImages');
+        await expect(nativePickImages({ source: 'camera' })).resolves.toEqual(outcome === 'captured' ? [
+            { kind: 'native', uri: 'file:///camera/photo.jpg', name: 'photo.jpg', sizeBytes: 50, mimeType: 'image/jpeg' },
+        ] : []);
+        expect(picker.requestMediaLibraryPermissionsAsync).not.toHaveBeenCalled();
+        if (outcome === 'denied') expect(picker.launchCameraAsync).not.toHaveBeenCalled();
     });
 
     it('returns web File sources when expo-image-picker provides `asset.file`', async () => {

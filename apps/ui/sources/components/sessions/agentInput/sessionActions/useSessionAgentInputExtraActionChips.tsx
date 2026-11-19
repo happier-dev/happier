@@ -44,6 +44,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
     isUploadingAttachments: boolean;
     onPickAttachmentFile: () => void;
     onPickAttachmentImage: () => void;
+    onTakeAttachmentPhoto?: () => void;
     onAttachmentsPicked: AttachmentFilePickerProps['onAttachmentsPicked'];
     onPasteAttachmentImage?: () => void;
     onAppendLinkedPath: (path: string) => void;
@@ -129,6 +130,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
             chips.push(createAttachmentActionChip({
                 onPickFile: params.onPickAttachmentFile,
                 onPickImage: params.onPickAttachmentImage,
+                onTakePhoto: params.onTakeAttachmentPhoto,
                 onPasteImage: params.onPasteAttachmentImage,
                 disabled: params.isUploadingAttachments || params.attachmentsUploadsAvailable === false,
                 disabledReason: params.attachmentsUploadsAvailable === false ? t('files.transfers.uploadUnavailable') : undefined,
@@ -181,6 +183,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
         params.onAppendLinkedPath,
         params.onPickAttachmentFile,
         params.onPickAttachmentImage,
+        params.onTakeAttachmentPhoto,
         params.onAttachmentsPicked,
         params.onPasteAttachmentImage,
         params.sessionId,

@@ -5,6 +5,7 @@ import { t } from '@/text';
 import {
     buildSessionDraftSyncStatusBadge,
     resolveSessionDraftStatusKey,
+    selectSessionDraftSyncBadgeStatus,
 } from './sessionDraftStatusPresentation';
 
 describe('sessionDraftStatusPresentation', () => {
@@ -16,7 +17,7 @@ describe('sessionDraftStatusPresentation', () => {
         ['unsupported', 'sessionDrafts.status.unsupported', 'paused'],
     ] as const)('projects %s from the repository status into the composer badge', (status, labelKey, tone) => {
         const label = t(labelKey);
-        expect(buildSessionDraftSyncStatusBadge(status)).toEqual(expect.objectContaining({
+        expect(buildSessionDraftSyncStatusBadge(selectSessionDraftSyncBadgeStatus({ status }))).toEqual(expect.objectContaining({
             key: 'draft-sync-status',
             label,
             accessibilityLabel: label,
@@ -25,10 +26,22 @@ describe('sessionDraftStatusPresentation', () => {
         }));
     });
 
+    it.each([
+        ['storage', 'sessionDrafts.status.storageError'],
+        ['crypto', 'sessionDrafts.status.cryptoError'],
+        ['transport', 'sessionDrafts.status.transportError'],
+        ['cleanup', 'sessionDrafts.status.cleanupError'],
+        [undefined, 'sessionDrafts.status.unknownError'],
+    ] as const)('explains a %s draft failure through the badge popover', (errorReason, explanation) => {
+        const badge = buildSessionDraftSyncStatusBadge(selectSessionDraftSyncBadgeStatus({ status: 'error', errorReason }));
+        expect(badge?.accessibilityHint).toBe(t(explanation));
+        expect(badge?.renderPopover).toBeDefined();
+    });
+
     it('keeps transient synchronization and interactive conflict states out of the composer status row', () => {
-        expect(buildSessionDraftSyncStatusBadge('pending')).toBeNull();
-        expect(buildSessionDraftSyncStatusBadge('clean')).toBeNull();
-        expect(buildSessionDraftSyncStatusBadge('conflict')).toBeNull();
+        expect(selectSessionDraftSyncBadgeStatus({ status: 'pending' })).toBeNull();
+        expect(selectSessionDraftSyncBadgeStatus({ status: 'clean' })).toBeNull();
+        expect(selectSessionDraftSyncBadgeStatus({ status: 'conflict' })).toBeNull();
         expect(resolveSessionDraftStatusKey('conflict')).toBe('sessionDrafts.status.conflict');
     });
 });

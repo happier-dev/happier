@@ -933,7 +933,9 @@ describe('sessionDraftRepository', () => {
             notifications.push(repository.getSessionDraftSnapshot(scope, sessionAddress)?.status ?? 'absent');
         });
         repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'preserve across failed autosave' } });
-        await vi.waitFor(() => expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.status).toBe('error'));
+        await vi.waitFor(() => expect(repository.getSessionDraftSnapshot(scope, sessionAddress)).toMatchObject({
+            status: 'error', errorReason: 'storage',
+        }));
         expect(repository.getExistingSessionDraftProjection(scope, 'session-a')?.status).toBe('error');
         expect(notifications).toContain('error');
         expect(remote.transport.mutate).not.toHaveBeenCalled();
@@ -2431,7 +2433,7 @@ describe('sessionDraftRepository', () => {
         repository.writeExistingSessionDraft({ scope, sessionId: sessionAddress.sessionId, patch: { text: 'keep the rejected edit' } });
         expect(await repository.flushSessionDraft({ scope, address: sessionAddress })).toEqual({ status: 'error' });
         expect(repository.getSessionDraftSnapshot(scope, sessionAddress)).toMatchObject({
-            status: 'error', document: { composer: { text: { value: 'keep the rejected edit' } } },
+            status: 'error', errorReason: 'transport', document: { composer: { text: { value: 'keep the rejected edit' } } },
         });
         expect(remote.readCurrent()).toBeNull();
     });
@@ -2456,7 +2458,7 @@ describe('sessionDraftRepository', () => {
         repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'recover me' } });
 
         expect(await repository.flushSessionDraft({ scope, address: sessionAddress })).toEqual({ status: 'error' });
-        expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.status).toBe('error');
+        expect(repository.getSessionDraftSnapshot(scope, sessionAddress)).toMatchObject({ status: 'error', errorReason: 'crypto' });
         expect(transport.mutate).not.toHaveBeenCalled();
     });
 

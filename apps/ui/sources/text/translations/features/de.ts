@@ -14227,6 +14227,11 @@ const de: typeof en = {
         conflict: 'Muss geprüft werden',
         unsupported: 'Nicht synchronisiert — dieses Home kann diesen Entwurf nicht synchronisieren',
         startInterrupted: 'Start unterbrochen',
+        storageError: 'Dieses Gerät konnte den Entwurf lokal nicht speichern.',
+        cryptoError: 'Dieses Gerät konnte den Entwurf nicht synchronisieren, weil es ihn nicht verschlüsseln oder öffnen konnte.',
+        transportError: 'Dieses Gerät konnte den Entwurf nicht mit seinem Home synchronisieren.',
+        cleanupError: 'Der Entwurf wurde aus dem Home entfernt, aber dieses Gerät konnte die lokale Kopie nicht entfernen.',
+        unknownError: 'Dieses Gerät konnte den Entwurf nicht vollständig speichern oder synchronisieren.',
     },
     availability: {
         machineUnavailable: 'Rechner nicht verfügbar',

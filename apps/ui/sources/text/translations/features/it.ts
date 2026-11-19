@@ -14230,6 +14230,11 @@ const it: typeof en = {
         conflict: 'Da rivedere',
         unsupported: 'Non sincronizzata — questo Home non può sincronizzare questa bozza',
         startInterrupted: 'Avvio interrotto',
+        storageError: 'Questo dispositivo non ha potuto salvare la bozza in locale.',
+        cryptoError: 'Questo dispositivo non ha potuto sincronizzare la bozza perché non ha potuto cifrarla o aprirla.',
+        transportError: 'Questo dispositivo non ha potuto sincronizzare la bozza con il suo Home.',
+        cleanupError: 'La bozza è stata rimossa dal suo Home, ma questo dispositivo non ha potuto rimuovere la copia locale.',
+        unknownError: 'Questo dispositivo non ha potuto completare il salvataggio o la sincronizzazione della bozza.',
     },
     availability: {
         machineUnavailable: 'Macchina non disponibile',

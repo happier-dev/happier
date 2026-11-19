@@ -44,6 +44,25 @@ describe('createAttachmentActionChip', () => {
         expect(chip.collapsedOptionsPopover).toBeUndefined();
     });
 
+    it.each(['ios', 'android'] as const)('offers camera capture in the %s attachment chooser', async os => {
+        const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
+        const originalOs = Platform.OS;
+        Platform.OS = os;
+        try {
+            const onTakePhoto = vi.fn();
+            const callbacks = { onPickFile: vi.fn(), onPickImage: vi.fn(), onTakePhoto };
+            const chip = createAttachmentActionChip(callbacks);
+            const section = chip.collapsedOptionsPopover?.rootStep?.sections[0];
+            if (section?.kind !== 'static') throw new Error('Expected attachment options');
+            const camera = section.options.find(option => option.id === 'take-photo');
+            expect(camera?.disabled).not.toBe(true);
+            camera?.onSelect?.();
+            expect(onTakePhoto).toHaveBeenCalledOnce();
+        } finally {
+            Platform.OS = originalOs;
+        }
+    });
+
     it('keeps files available while image attachment options explain dispatcher refusal', async () => {
         const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
         const originalOs = Platform.OS;
@@ -52,18 +71,20 @@ describe('createAttachmentActionChip', () => {
             const onPickFile = vi.fn();
             const onPickImage = vi.fn();
             const onPasteImage = vi.fn();
-            const chip = createAttachmentActionChip({ onPickFile, onPickImage, onPasteImage,
+            const onTakePhoto = vi.fn();
+            const chip = createAttachmentActionChip({ onPickFile, onPickImage, onPasteImage, onTakePhoto,
                 imageInputDisabledReason: 'Agent cannot read images' });
             const section = chip.collapsedOptionsPopover?.rootStep?.sections[0];
             if (section?.kind !== 'static') throw new Error('Expected attachment options');
             const images = section.options.filter(option => option.id !== 'add-file');
-            expect(images).toHaveLength(2);
+            expect(images).toHaveLength(3);
             for (const option of images) {
                 expect(option).toMatchObject({ disabled: true, subtitle: 'Agent cannot read images' });
                 option.onSelect?.();
             }
             expect(onPickImage).not.toHaveBeenCalled();
             expect(onPasteImage).not.toHaveBeenCalled();
+            expect(onTakePhoto).not.toHaveBeenCalled();
             const file = section.options.find(option => option.id === 'add-file');
             expect(file?.disabled).not.toBe(true);
             file?.onSelect?.();
