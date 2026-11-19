@@ -204,6 +204,7 @@ export type MediaAnnotationActionInputById = {
                 color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
                 size: 'l' | 'm' | 's';
                 id: string;
+                note?: string | undefined;
             } | {
                 kind: 'text';
                 at: {
@@ -307,6 +308,7 @@ export type MediaAnnotationActionInputById = {
                 color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
                 size: 'l' | 'm' | 's';
                 id: string;
+                note?: string | undefined;
             } | {
                 kind: 'text';
                 at: {
@@ -428,6 +430,7 @@ export type MediaAnnotationActionResultById = {
                 color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
                 size: 'l' | 'm' | 's';
                 id: string;
+                note?: string | undefined;
             } | {
                 kind: 'text';
                 at: {
