@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   SENTRY_ACTION_IDS,
   SENTRY_CONNECTED_ACCOUNT_PURPOSE,
+  SENTRY_CONTRIBUTION_ID,
   SENTRY_PLUGIN_ID,
   SENTRY_SCOPE_SEPARATOR,
   SENTRY_SOURCE_DISPLAY_NAME,
@@ -141,9 +142,10 @@ describe('the mounted Sentry PRs & Issues settings page', () => {
       { pluginId: SENTRY_PLUGIN_ID, localId: SENTRY_ACTION_IDS.listInstances },
       { ...TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1 },
     ]);
-    // Both mount reads are reads: opening a settings page must never configure
-    // anything.
-    expect(recorded.map((entry) => entry.input)).toEqual([{ v: 1 }, { v: 1 }]);
+    expect(recorded.map((entry) => entry.input)).toEqual([
+      { v: 1 },
+      { v: 1, source: { pluginId: SENTRY_PLUGIN_ID, localId: SENTRY_CONTRIBUTION_ID } },
+    ]);
   });
 
   it('names this source the way its own descriptor spells it', async () => {

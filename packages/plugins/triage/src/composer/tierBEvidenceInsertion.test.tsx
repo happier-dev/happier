@@ -42,7 +42,9 @@ function deferredCandidate(): Readonly<{
     return { resolver: async () => await promise, resolve: settle };
 }
 
-async function mountInsertion(): Promise<Readonly<{
+async function mountInsertion(initialDraft = {
+    text: 'Investigate ', selection: { start: 12, end: 12 },
+}): Promise<Readonly<{
     fixture: PluginUiTestkit;
     applyCalls: readonly ApplyCall[];
     readRefs: readonly unknown[];
@@ -81,8 +83,8 @@ async function mountInsertion(): Promise<Readonly<{
                         snapshot: {
                             revision: 9,
                             ref,
-                            text: 'Investigate ',
-                            selection: { start: 12, end: 12 },
+                            text: initialDraft.text,
+                            selection: initialDraft.selection,
                             references: [],
                             attachments: [],
                             layout: 'wrap',
@@ -157,6 +159,26 @@ describe('useTriageTierBEvidenceInsertion', () => {
                 },
             ],
         });
+    });
+
+    it.each([
+        { end: 27, kinds: ['reference.insert'] },
+        { end: 26, kinds: ['text.replaceRange', 'reference.insert'] },
+    ])('reuses only the complete token at the selected range ending at $end', async ({ end, kinds }) => {
+        const mountedInsertion = await mountInsertion({
+            text: 'Investigate Sentry event 42', selection: { start: 12, end },
+        });
+        await act(async () => {
+            expect(await mountedInsertion.insertion().disclose(async () => CANDIDATE)).toEqual({ kind: 'applied' });
+        });
+
+        expect(mountedInsertion.applyCalls).toEqual([{
+            ref: COMPOSER_A,
+            transaction: {
+                expectedRevision: 9,
+                operations: kinds.map((kind) => expect.objectContaining({ kind })),
+            },
+        }]);
     });
 
     it('makes a candidate that resolves after unmount inert and mutates no draft', async () => {

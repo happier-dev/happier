@@ -1,3 +1,4 @@
+import { MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
 import { SENTRY_SCOPE_SEPARATOR } from '../sentryContracts.js';
@@ -87,13 +88,28 @@ describe('encodeSentryInstanceConfiguration', () => {
     }))).toEqual({ ok: true, configuration });
   });
 
-  it('refuses to encode a configuration that would exceed the bounded token size', () => {
-    expect(() => encodeSentryInstanceConfiguration({
+  it('accepts selected-project tokens at the UTF-8 boundary and refuses the first byte over', () => {
+    const unitIds = Array.from({ length: 32 }, (_, index) => String(9001 + index));
+    const configuration = (padding: number) => ({
       v: 1,
-      organizationId: '7'.repeat(64 * 1024),
-      projectScope: { kind: 'allAccessible' },
+      organizationId: '7701',
+      projectScope: { kind: 'selected', unitIds },
+      projectUnits: unitIds.map((id, index) => ({
+        id,
+        label: `Paiement 🧪${'a'.repeat(Math.floor((padding + index) / unitIds.length))}`,
+      })),
       environmentScope: { kind: 'all' },
-    })).toThrow();
+    } as const);
+    const bytes = (token: string) => new TextEncoder().encode(token).byteLength;
+    const overhead = bytes(encodeSentryInstanceConfiguration(configuration(0)));
+    const maxPadding = MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1 - overhead;
+    for (const delta of [-1, 0]) {
+      const input = configuration(maxPadding + delta);
+      const token = encodeSentryInstanceConfiguration(input);
+      expect(bytes(token)).toBe(MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1 + delta);
+      expect(decodeSentryInstanceConfiguration(token)).toEqual({ ok: true, configuration: input });
+    }
+    expect(() => encodeSentryInstanceConfiguration(configuration(maxPadding + 1))).toThrow(/bounded token size/);
   });
 });
 
