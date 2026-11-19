@@ -65,6 +65,20 @@ describe('Artifact HTTP authority projection', () => {
         }
     });
 
+    it('preserves a definitive private-storage refusal for binary writes', async () => {
+        httpRequest.mockResolvedValueOnce(Response.json({
+            error: 'private_storage_unavailable',
+            reason: 's3_private_bucket_missing',
+        }, { status: 503 }));
+        const blob = { blobId: '00000000-0000-4000-8000-000000000001', content: { t: 'plain' as const, v: 'AA==' } };
+        await expect(createArtifact({ token: 't' }, { id: '00000000-0000-4000-8000-000000000002',
+            header: 'header', body: 'body', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, blob },
+        { retry: 'none' })).rejects.toMatchObject({
+            status: 503, code: 'private_storage_unavailable', canTryAgain: false,
+            details: { reason: 's3_private_bucket_missing' },
+        });
+    });
+
     it('selects only the captured owner for an Account migration, not received document grants', async () => {
         httpRequest.mockResolvedValueOnce(new Response(JSON.stringify([
             { id: 'owned', ...authority },

@@ -23,6 +23,7 @@ import { type UsageNoticeArtifactHeaderV1,
   type ServiceHealthNoticeNotificationV1, type AccountNoticeArtifactHeaderV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { PrivateBinaryStorageUnavailableResponseV1Schema } from '@happier-dev/protocol/storage/binaryBlobV1';
 import { createResourceDataKey, openResourceDataKey, ResourceDataKeyUnavailableError } from '@/api/encryption/resourceDataKey';
 import { ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema, ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema, ArtifactHttpReadV1Schema, ArtifactHttpLockedListItemV1Schema, type ArtifactLockedAvailabilityV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { completeArtifactAccessMutationPreparationV1, runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
@@ -211,6 +212,11 @@ function readAcknowledgedRevision(value: unknown): AccountArtifactRevision {
 }
 
 function readWriteFailure(response: Readonly<{ status: number; data: unknown }>) {
+  if (response.status === 503) {
+    const storage = PrivateBinaryStorageUnavailableResponseV1Schema.safeParse(response.data);
+    if (storage.success) return { ok: false, errorCode: storage.data.error, error: storage.data.error,
+      details: { reason: storage.data.reason } } as const;
+  }
   if ((response.status < 200 || response.status >= 300) && response.data && typeof response.data === 'object'
     && 'error' in response.data && response.data.error === 'artifact_account_mode_mismatch') {
     return { ok: false, errorCode: 'artifact_account_mode_mismatch', error: 'artifact_account_mode_mismatch' } as const;
@@ -964,10 +970,10 @@ export function createAccountArtifactStore(params: Readonly<{
     const prepared = await prepareUpdateContent(input, storedBasis);
     if (!prepared.ok) return prepared;
     const { stored, blob, header, body, kind, provenance, wire } = prepared;
-    let response;
+    let attempt;
     let writeAttempts = 0;
     try {
-      response = await retryArtifactRevisionUpdate(async () => {
+      attempt = await retryArtifactRevisionUpdate(async () => {
         input.signal?.throwIfAborted();
         if (input.beforeWrite) await input.beforeWrite();
         await assertOwnerAccountMode(stored, undefined, { signal: input.signal, authorizationHeaders: input.authorizationHeaders });
@@ -1007,11 +1013,12 @@ export function createAccountArtifactStore(params: Readonly<{
           const failure = projectHomeAuthorizationHttpFailure(result.status, requestHeaders, result.data);
           throw Object.assign(createHttpStatusError(result.status, failure.error, failure.errorCode), { cause: failure });
         }
-        if (result.status >= 500) {
+        const refusal = readWriteFailure(result);
+        if (result.status >= 500 && !refusal) {
           const storageError = result.status === 503 ? readArtifactStorageFailureCode(result.data?.error) : null;
           throw createHttpStatusError(result.status, storageError ?? 'artifact_update_unavailable', storageError ?? undefined);
         }
-        return result;
+        return { response: result, refusal };
       });
     } catch (error) {
       if (error instanceof HttpStatusError && (readHttpStatus(error) ?? 0) >= 500) {
@@ -1021,8 +1028,8 @@ export function createAccountArtifactStore(params: Readonly<{
       }
       throw error;
     }
-    const quota = readWriteFailure(response);
-    if (quota) return quota;
+    const { response, refusal } = attempt;
+    if (refusal) return refusal;
     const sourceError = MemoryDecisionSourceErrorCodeV1Schema.safeParse(response.data?.error);
     if ((response.status < 200 || response.status >= 300) && sourceError.success)
       return { ok: false, errorCode: sourceError.data, error: sourceError.data } as const;
@@ -1414,9 +1421,9 @@ export function createAccountArtifactStore(params: Readonly<{
       const response = await axios.post(`${resolveServerHttpBaseUrl()}${path}`, requestBody, {
         headers: { ...requestHeaders, ...(content.blob?.content ? { 'Content-Type': ARTIFACT_UPLOAD_CONTENT_TYPE_V1 } : {}) },
         ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true });
-      const quota = readWriteFailure(response);
-      if (quota) throw Object.assign(new Error(quota.error), { code: quota.errorCode,
-        ...('details' in quota ? { details: quota.details } : {}) });
+      const refusal = readWriteFailure(response);
+      if (refusal) throw Object.assign(new Error(refusal.error), { code: refusal.errorCode,
+        ...('details' in refusal ? { details: refusal.details } : {}) });
       const sourceError = MemoryDecisionSourceErrorCodeV1Schema.safeParse(response.data?.error);
       if ((response.status < 200 || response.status >= 300) && sourceError.success)
         throw Object.assign(new Error(sourceError.data), { code: sourceError.data });

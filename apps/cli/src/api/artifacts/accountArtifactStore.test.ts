@@ -3138,6 +3138,16 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
     await expect(store.storageUsage()).resolves.toEqual(usage);
   });
 
+  it('preserves the operator reason when a Home refuses a binary Artifact write', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    mockPost.mockResolvedValueOnce({ status: 503, data: {
+      error: 'private_storage_unavailable', reason: 's3_private_bucket_missing',
+    } });
+    await expect(store.create({ header: { title: 'Binary' }, binary: { bytes: Uint8Array.of(1), mime: 'application/octet-stream' } }))
+      .rejects.toMatchObject({ code: 'private_storage_unavailable', details: { reason: 's3_private_bucket_missing' } });
+  });
+
   it('creates plain content from Account mode without probing older server support', async () => {
     const store = createCredentialedAccountArtifactStore({ token: 'token', encryption: null });
     mockGet.mockImplementation(async (url: string) => {

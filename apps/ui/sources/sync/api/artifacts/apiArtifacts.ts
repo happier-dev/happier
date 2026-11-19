@@ -15,6 +15,7 @@ import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, iterateArtifa
     type ArtifactUploadDestinationV1 } from '@happier-dev/transfers';
 import { ArtifactAccessErrorCodeV1Schema, ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactOwedRecipientCensusPageV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, type ArtifactAccessGrantsListInputV1, type ArtifactAccessGrantSetInputV1, type ArtifactAccessGrantRemoveInputV1, type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { PrivateBinaryStorageUnavailableResponseV1Schema } from '@happier-dev/protocol/storage/binaryBlobV1';
 import { ArtifactPublicAudienceV1ReadSchema, ArtifactRevisionListResponseV1Schema, ArtifactQuotaExceededV1Schema, ArtifactRevisionV1Schema, ArtifactStorageUsageV1Schema, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactBlobReadResponseV1Schema, ArtifactBlobAccountEncryptionStageV1Schema, type ArtifactBlobStoredContentV1, type ArtifactBlobAccountEncryptionStageV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { ArtifactCreateHttpResponseV1Schema, ArtifactHttpLockedListItemV1Schema, ArtifactHttpReadV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema,
@@ -83,6 +84,12 @@ async function readWriteRefusal(response: Response, fallback: string): Promise<H
     const value: unknown = await response.json().catch(() => null);
     const quota = response.status === 413 ? ArtifactQuotaExceededV1Schema.safeParse(value) : null;
     if (quota?.success) return new ArtifactQuotaExceededError({ budget: quota.data.budget, limitBytes: quota.data.limitBytes, usedBytes: quota.data.usedBytes });
+    if (response.status === 503) {
+        const storage = PrivateBinaryStorageUnavailableResponseV1Schema.safeParse(value);
+        if (storage.success) return new HappyError(storage.data.error, false, {
+            status: response.status, kind: 'config', code: storage.data.error, details: { reason: storage.data.reason },
+        });
+    }
     const message = value && typeof value === 'object' && typeof Reflect.get(value, 'error') === 'string' ? String(Reflect.get(value, 'error')) : fallback;
     const sourceError = MemoryDecisionSourceErrorCodeV1Schema.safeParse(message);
     const transient = readTransientAvailabilityFailure(message);
