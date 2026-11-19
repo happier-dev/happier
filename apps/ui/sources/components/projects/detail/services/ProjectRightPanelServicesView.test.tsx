@@ -357,7 +357,9 @@ describe('ProjectRightPanelServicesView', () => {
         machine = { ...machine, active: true, activeAt: Date.now() };
         await act(async () => { await publishMachine(); });
         await allSay(t('managedPower.asleep'));
-        expect(screen.findByTestId('machine-detail-presence')).toBeNull();
+        const presence = text(screen.findByTestId('machine-detail-presence')!);
+        expect(presence).toContain(t('managedPower.asleep'));
+        expect(presence).not.toContain(t('machineDetailPage.online'));
         expect(screen.findByTestId('machine-detail-unavailable')).toBeNull();
         managed = { ...managed, submittedNativeEffect: { intent: 'start', intentRevision: managed.intentRevision, requestId: 'start-studio' },
             observation: { availability: 'present', observedAt: 2, power: 'stopped', storage: 'retained' } };
@@ -373,12 +375,12 @@ describe('ProjectRightPanelServicesView', () => {
         await act(async () => { await publishMachine(); });
         // Public lifecycle settles before the protected list refreshes. The header must consume
         // that same result, rather than retain its previous native Starting word.
-        await allSay(t('settingsOverview.machineOffline', { lastSeen: (await import('@/utils/sessions/sessionUtils')).formatLastSeen(offlineAt) }));
+        await allSay(t('machineDetailPage.offline'));
         managed = { ...managed, submittedNativeEffect: undefined,
             observation: { availability: 'present', observedAt: 3, power: 'running', storage: 'retained' } };
         home.answer(serverId, '/v1/machines/managed/actions/list', { body: { machines: [managed] } });
         await act(async () => { await publishMachine(); publishHomeAccountChange(serverId); });
-        await allSay(t('settingsOverview.machineOffline', { lastSeen: (await import('@/utils/sessions/sessionUtils')).formatLastSeen(offlineAt) }));
+        await allSay(t('machineDetailPage.offline'));
         expect(screen.findByTestId('machine-detail-managed-power')).toBeNull();
         expect(text(screen.findByTestId('machine-details-native-power')!)).toContain(t('managedMachines.detail.power.running'));
         expect(screen.findByTestId('runtime-services-pane-offline')).toBeNull();
