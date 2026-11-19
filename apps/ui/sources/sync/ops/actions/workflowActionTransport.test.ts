@@ -160,7 +160,7 @@ describe('Workflow Action relay and resource target', () => {
         });
         const response = await execute({ actionId: 'workflow.run.start', input: {
             runId: '00000000-0000-4000-8000-000000000001', source: { kind: 'catalog', workflow: 'builtin:review-and-converge' },
-            inputs: { engines: ['agent:happier.agent.codex/codex'] },
+            inputs: { reviewers: [{ kind: 'engine', engineId: 'agent:happier.agent.codex/codex' }] },
         }, context: { ...context, ...(withOrigin ? { defaultSessionId: 'session-a' } : {}),
             externalActionTarget: { kind: 'machine', machineId: 'executor-a', project: { machineId: 'executor-a', directory: '/repo' } } } });
         if (withOrigin) {
