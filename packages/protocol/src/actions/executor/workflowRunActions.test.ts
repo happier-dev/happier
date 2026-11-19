@@ -238,7 +238,7 @@ describe('shared Account workflow run owner', () => {
         origin: { kind: 'direct', originSessionId: 'origin-1' }, authorization: { principal: { kind: 'host' } } },
       admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true,
         resolveSessionTarget: async () => ({ address, machineId: 'machine-a' }),
-        readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: { type: 'object' } }) } });
+        readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) } });
     if (!materialized.ok) throw new Error(JSON.stringify(materialized.error));
     const snapshot = { ...runSnapshot(), acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
       mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId },
@@ -291,7 +291,7 @@ describe('shared Account workflow run owner', () => {
       sessionList: async () => { throw new Error('accepted_scope_must_not_recheck_session_list'); },
       resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true,
         resolveSessionTarget: async value => ({ address: ActionSessionAddressV1Schema.parse(value), machineId: 'machine-a' }),
-        readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) } }),
+        readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) } }),
     });
     const records = createInMemoryReviewRecordPortV1();
     const scopeReads: string[] = [];
