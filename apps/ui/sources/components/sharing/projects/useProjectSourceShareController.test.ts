@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
@@ -11,6 +11,21 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { ProjectSourcesUpdateInputV1Schema, type ProjectSourceRepositorySelectorV1,
     type ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { projectPrivateLabelForRecipientV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { flushHookEffects } from '@/dev/testkit';
+import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
+import { teamGroupNameBinding } from '@/sync/ops/teams/teamGroupLabels';
+import { readSharePrincipalNames } from '../sharePrincipalNames';
+
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+installDisconnectedServerSocketBoundary();
 
 const scope = { serverId: 'home-a', accountId: 'owner-a' };
 const principal = { kind: 'team' as const, teamId: 'team-a' };
@@ -18,6 +33,81 @@ const repository = { provider: { id: 'github', kind: 'github', displayName: 'Git
     repository: { nameWithOwner: 'owner/repo', visibility: 'private' }, protocol: 'https' } satisfies ProjectSourceRepositorySelectorV1;
 
 describe('Source audience ShareSheet controller', () => {
+    afterEach(async () => { await homes.reset(); });
+
+    it('keeps authorized Group grant names on open and reopen without browsing the lazy directory', async () => {
+        installHomeGovernanceBoundaries(homes);
+        await homes.reset();
+        const secret = new Uint8Array(32).fill(52);
+        const credentials = { token: createAccountTokenForTests(scope.accountId, { currentAccount: true }), secret: encodeBase64(secret, 'base64url') };
+        const encryption = await createEncryptionFromAuthCredentials(credentials);
+        if (!encryption) throw new Error('E2EE fixture needs actual key material');
+        const serverUrl = 'https://source-grant-labels.test';
+        const serverId = await homes.addHome({ name: 'Source sharing Home', serverUrl, accountId: scope.accountId,
+            teamsEnabled: true, currentAccount: true, accountEncryptionMode: 'e2ee', credentials });
+        const ownedScope = { serverId, accountId: scope.accountId };
+        homes.answer(serverId, 'GET /v1/account/encryption/currentness', { body: createLegacyAccountEncryptionCurrentnessFixture({ secret }) });
+        homes.answer(serverId, '/v1/account/private-labels/recipient-census', { body: { contentEncryptionMode: 'e2ee', recipients: [{
+            account: { kind: 'account', accountId: scope.accountId, firstName: null, lastName: null, username: null, avatarUrl: null },
+            readiness: { status: 'available', contentPublicKey: encodeBase64(encryption.contentDataKey),
+                contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(encryption.contentDataKey) }, envelopeStatus: 'missing',
+        }] } });
+        const group = { kind: 'group', teamId: principal.teamId, groupId: 'existing-private-group' } as const;
+        const sealed = await createPrivateLabelClient(ownedScope).seal({ owner: principal,
+            binding: teamGroupNameBinding(group.groupId), value: 'TH177 Group' });
+        if (!sealed) throw new Error('Group label sealing failed');
+        expect(sealed.content.t).toBe('encrypted');
+        expect(JSON.stringify(sealed)).not.toContain('TH177 Group');
+        homes.answer(serverId, 'POST /v1/session-access/principals/resolve', { body: { v: 1, principals: [
+            { ...group, name: { kind: 'available', label: projectPrivateLabelForRecipientV1({ stored: sealed, recipientAccountId: scope.accountId }) }, teamName: 'Payments' },
+            { ...principal, name: 'Payments' },
+        ] } });
+        // Control: the real authorized resolver, credential capture and cipher can open this exact label.
+        const names = await readSharePrincipalNames([group, principal], ownedScope);
+        expect(names.get(`group:${principal.teamId}:${group.groupId}`)).toBe('TH177 Group, Payments');
+        homes.answer(serverId, 'POST /v1/teams/list', { body: { items: [], nextCursor: null } });
+        const unknown = { kind: 'account', accountId: 'unresolved-account-id' } as const;
+        const source: ProjectSourceV1 = { id: 'source-existing-group-grant', revision: 2, name: 'Repository',
+            createdByAccountId: scope.accountId, repository,
+            audience: [group, principal, unknown].map(principal => ({ principal, level: 'view' })) };
+        homes.answer(serverId, `GET /v1/projects/sources/${source.id}`, { body: { ok: true, canManage: true, source } });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            ...createProjectSourceActionDeps({ ...ownedScope, credentialAuthorityKind: 'account', assertCurrent() {},
+                workflowArtifacts: { read: async () => null }, request: (path, init) => homes.request(`${serverUrl}${path}`, init) }),
+        }));
+        const controller = createProjectSourcesController(ownedScope, (id, input, context) => executor.execute(id, input,
+            { ...context, authority: 'present_user', bypassApprovals: true }));
+        await controller.select(source.id);
+        const exactReads = () => homes.requestsFor('/v1/session-access/principals/resolve').length;
+        const beforeClosed = homes.requests.length;
+        const hook = await renderHook((enabled: boolean) => useProjectSourceShareController({ controller, enabled }),
+            { initialProps: false, flushOptions: { cycles: 25 } });
+        await flushHookEffects({ cycles: 25 });
+        expect(homes.requests).toHaveLength(beforeClosed);
+        const beforeOpen = exactReads();
+        await hook.rerender(true);
+        await flushHookEffects({ cycles: 25 });
+        expect(hook.getCurrent().model.directory.sections.flatMap(section => section.candidates)).toEqual([]);
+        const opened = hook.getCurrent().model.grants.map(row => row.principal.displayName);
+        await hook.rerender(false);
+        await flushHookEffects({ cycles: 25 });
+        const afterClosed = homes.requests.length;
+        await hook.rerender(false);
+        await flushHookEffects({ cycles: 25 });
+        expect(homes.requests).toHaveLength(afterClosed);
+        await hook.unmount();
+        const reopened = await renderHook(() => useProjectSourceShareController({ controller, enabled: true }), { flushOptions: { cycles: 25 } });
+        try {
+            await flushHookEffects({ cycles: 25 });
+            expect(reopened.getCurrent().model.grants.map(row => row.grant)).toEqual([group, principal, unknown]);
+            expect(reopened.getCurrent().model.grants.at(-1)?.principal.accessibilityLabel).not.toContain(unknown.accountId);
+            expect(homes.requestsFor('/v1/teams/groups/list')).toEqual([]);
+            const expected = ['TH177 Group, Payments', 'Payments', t('accountDisplay.unnamed')];
+            expect([opened, reopened.getCurrent().model.grants.map(row => row.principal.displayName)]).toEqual([expected, expected]);
+            expect(exactReads() - beforeOpen).toBe(2);
+        } finally { await reopened.unmount(); }
+    });
+
     it('keeps typed Source mutation reasons in the row presentation', () => {
         expect(presentProjectSourceShareFailure('source_conflict')).toBe(t('projects.sources.changed'));
         expect(presentProjectSourceShareFailure('outcome_unknown')).toBe(t('projects.sources.outcomeUnknown'));

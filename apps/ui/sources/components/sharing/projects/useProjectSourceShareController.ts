@@ -8,6 +8,7 @@ import { t } from '@/text';
 import type { ShareGrantRowModel, ShareOperationModel, ShareSheetActions, ShareSheetModel, ShareUiReason } from '../shareSheetTypes';
 import { isGrantToOwningTeam, presentSharePrincipal } from '../sharePrincipalPresentation';
 import { useShareViewerProfile } from '../useShareViewerProfile';
+import { useSharePrincipalNames } from '../sharePrincipalNames';
 
 const NO_TEAMS: readonly [] = [];
 const IDLE: ShareOperationModel = { kind: 'idle' };
@@ -38,6 +39,9 @@ export function useProjectSourceShareController(input: Readonly<{
     const viewerProfile = useShareViewerProfile(scope);
     const sourceState = React.useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
     const source = sourceState.current;
+    const subjects = React.useMemo(() => input.enabled
+        ? source?.audience.map(grant => grant.principal) ?? null : null, [input.enabled, source?.audience]);
+    const { names } = useSharePrincipalNames(subjects, scope.serverId);
     const [query, setQuery] = React.useState('');
     const [operations, setOperations] = React.useState(EMPTY_OPERATIONS);
     const [notice, setNotice] = React.useState<ShareUiReason | undefined>();
@@ -79,21 +83,18 @@ export function useProjectSourceShareController(input: Readonly<{
     }, [controller]);
 
     const grants = React.useMemo<readonly ShareGrantRowModel[]>(() => {
-        const knownPrincipals = new Map(directory.sections.flatMap(section => section.candidates)
-            .map(candidate => [candidate.principal.key, candidate.principal] as const));
         return (source?.audience ?? [])
             .filter(({ principal }) => !isGrantToOwningTeam(source?.owner, principal))
             .map((grant) => {
-                const known = knownPrincipals.get(sessionAccessSubjectKey(grant.principal));
-                const principal = presentSharePrincipal({ ref: grant.principal, name: known?.displayName,
-                    teamName: known?.secondaryLabel, viewerAccountId: scope.accountId,
+                const principal = presentSharePrincipal({ ref: grant.principal,
+                    name: names?.get(sessionAccessSubjectKey(grant.principal)), viewerAccountId: scope.accountId,
                     profile: grant.principal.kind === 'account' && grant.principal.accountId === scope.accountId ? viewerProfile : null });
                 return { grant: grant.principal, principal,
                     level: { kind: 'editable', value: 'view', options: ['view'] },
                     removal: principal.key === scopedConfirmingRemoval ? { kind: 'confirming', consequences: [] } : { kind: 'allowed' },
                     operation: scopedOperations[principal.key] ?? IDLE };
             });
-    }, [source?.audience, source?.owner, scopedOperations, scopedConfirmingRemoval, directory.sections, scope.accountId, viewerProfile]);
+    }, [source?.audience, source?.owner, scopedOperations, scopedConfirmingRemoval, names, scope.accountId, viewerProfile]);
     const ownerRef = source ? source.owner ?? { kind: 'account' as const, accountId: source.createdByAccountId } : null;
     const ownerTeamName = ownerRef?.kind === 'team'
         ? source?.audienceTeams?.find(team => team.teamId === ownerRef.teamId)?.name : undefined;
