@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
@@ -6,6 +7,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 // The window's measured size and the device's pointer are the boundaries; the phone classification stays real.
@@ -51,6 +53,9 @@ const { WidgetAreaLayoutBar } =
   await import('@/components/widgets/area/WidgetAreaLayoutBar');
 const { UsageFilterBar } = await import('./UsageFilterBar');
 const { UsageWidgetPage } = await import('./UsageWidgetPage');
+const { SurfaceFreshnessLine } =
+  await import('@/components/ui/surfaces/SurfaceFreshnessLine');
+const { t } = await import('@/text');
 
 const totals: UsageAnalyticsQueryResponse['totals'] = {
   eventCount: 1,
@@ -69,10 +74,18 @@ const accounting: UsageAnalyticsQueryResponse = {
   totals,
   breakdowns: {},
 };
+const visibleContentGeometry = {
+  measureInWindow: (
+    done: (x: number, y: number, width: number, height: number) => void,
+  ) => done(0, 0, viewport.width, 300),
+};
+
 let home: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
+let readFails = false;
 
 beforeEach(() => {
   Object.assign(viewport, { width: 390, height: 844 });
+  readFails = false;
   vi.stubGlobal('navigator', {
     userAgent: 'Mozilla/5.0 (iPhone)',
     maxTouchPoints: 1,
@@ -86,9 +99,14 @@ afterEach(async () => {
   invalidateUsageQueryResources();
   await home?.dispose();
   home = undefined;
+  vi.restoreAllMocks();
 });
 
-async function renderUsagePage() {
+async function renderUsagePage(layoutId = 'overview', response = accounting) {
+  const artifacts = createArtifactStoreBoundary({
+    ownerAccountId: () => 'account-a',
+    encryptionMode: 'plain',
+  });
   home = await serveActionHomes({
     homes: [
       {
@@ -103,9 +121,15 @@ async function renderUsagePage() {
         ? Response.json(createRootLayoutFeaturesResponse())
         : request.path === '/v1/kv/bulk'
           ? Response.json({ values: [] })
+          : request.path === '/v2/usage/query-batch'
+            ? undefined
           : request.path === '/v2/usage/query'
-            ? Response.json(accounting)
-            : (createEmptyAccountBootstrapHttpResponse(request.path, {
+            ? readFails
+              ? Response.json({ error: 'unavailable' }, { status: 503 })
+              : Response.json(response)
+            : (artifacts.handle(request.url.toString(), {
+                method: request.method,
+              }) ?? createEmptyAccountBootstrapHttpResponse(request.path, {
                 method: request.method,
               }) ?? undefined),
   });
@@ -119,16 +143,16 @@ async function renderUsagePage() {
   const credentials = (await TokenStorage.getCredentialsForServerUrl(
     server.serverUrl,
   ))!;
-  return renderScreen(
+  const screen = await renderScreen(
     <InjectedAuthProvider credentials={credentials}>
       <MainAppTabStateProvider>
         <AppPaneProvider>
           <CurrentUiContextProvider>
             <UsageWidgetPage
               initialFilters={{
-                layoutId: 'overview',
+                layoutId,
                 period: '7days',
-                metric: 'tokens',
+                metric: layoutId === 'costs' ? 'cost' : 'tokens',
                 costMode: 'auto',
                 focus: null,
               }}
@@ -137,7 +161,21 @@ async function renderUsagePage() {
         </AppPaneProvider>
       </MainAppTabStateProvider>
     </InjectedAuthProvider>,
+    {
+      createNodeMock: (node) =>
+        node.props.testID === 'usage-page'
+          ? { getInnerViewRef: () => visibleContentGeometry }
+          : visibleContentGeometry,
+    },
   );
+  await act(async () => {
+    screen.findByTestId('usage-page')!.props.onLayout?.({
+      nativeEvent: {
+        layout: { x: 0, y: 0, width: viewport.width, height: viewport.height },
+      },
+    });
+  });
+  return screen;
 }
 
 // D23 (owner 11-09): the dashboard chooser and its + leave the phone; it shows the selected view under its
@@ -164,4 +202,50 @@ it('leaves the dashboard chooser off a phone and keeps it on a wide window', asy
     expect(wide.findAllByType(WidgetAreaLayoutBar)).toHaveLength(1),
   );
   expect(wide.findAllByType(WidgetAreaLayoutBar)[0]?.props.onCreate).toBeTypeOf('function');
+});
+
+// USAGE-ACCEPT 1118 #9: a phone's one header line cannot hold the read-failure sentence. Like the partial
+// form, it says the short word with Details and keeps its one Retry; Details opens the whole sentence.
+it('gives the phone read-failure notice the short form with Details and its Retry', async () => {
+  readFails = true;
+  const phone = await renderUsagePage('costs');
+  const line = () => phone.findAllByType(SurfaceFreshnessLine)
+    .find(candidate => candidate.props.testID === 'usage-page.header.failed');
+  await waitForHomeGovernance(() => expect(line(), JSON.stringify(phone.findAllByType(SurfaceFreshnessLine)
+    .map(candidate => [candidate.props.testID, candidate.props.reason]))).toBeDefined());
+  expect(line()!.props.reason).toBe(t('usage.board.charts.coveragePartialShort'));
+  const actions = line()!.props.actions as readonly { testID?: string; onPress: () => void }[];
+  expect(actions.map(action => action.testID)).toEqual(['usage-page.header.failed.detail', 'usage-page.header.retry']);
+  await act(async () => { actions[0]!.onPress(); });
+  expect(line()!.props.reason).not.toBe(t('usage.board.charts.coveragePartialShort'));
+  expect((line()!.props.actions as readonly { testID?: string }[]).map(action => action.testID))
+    .toEqual(['usage-page.header.failed.detail', 'usage-page.header.retry']);
+});
+
+it('dates the header by the read and shows the older source date in Details', async () => {
+  const readAt = Date.UTC(2026, 10, 19, 12);
+  const sourceAt = Date.UTC(2026, 9, 10, 2, 6);
+  vi.spyOn(Date, 'now').mockReturnValue(readAt);
+  const { formatUsageObservedAt } = await import('@/sync/domains/usage/usageCalendarPresentation');
+  const { usageSourceTitle } = await import('@/sync/domains/usage/usageLabels');
+  const phone = await renderUsagePage('costs', {
+    ...accounting,
+    coverage: { status: 'partial', reasons: ['incomplete_history'], missingDimensions: [], ranked: [],
+      range: { startMs: Date.UTC(2026, 10, 12), endMs: readAt, complete: false },
+      sources: [
+        { source: 'claude-sdk-result', path: 'runtime', status: 'partial', eventCount: 1, asOfMs: sourceAt, historyComplete: false },
+        { source: 'runtime', path: 'runtime', status: 'available', eventCount: 1, asOfMs: readAt - 1, historyComplete: true },
+      ] },
+  });
+  const line = () => phone.findAllByType(SurfaceFreshnessLine)
+    .find(candidate => candidate.props.testID?.startsWith('usage-page.header.') && candidate.props.asOf != null);
+  await waitForHomeGovernance(() => expect(line()?.props.asOf).toBe(readAt));
+  const actions = line()!.props.actions as readonly { label: string; onPress: () => void }[];
+  expect(line()!.props.reason).not.toContain(formatUsageObservedAt(sourceAt));
+  const details = actions.find(action => action.label === t('common.details'));
+  expect(details).toBeDefined();
+  await act(async () => { details!.onPress(); });
+  expect(line()!.props.asOf).toBe(readAt);
+  expect(line()!.props.reason).toContain(usageSourceTitle('claude-sdk-result', undefined, 'coverage'));
+  expect(line()!.props.reason).toContain(formatUsageObservedAt(sourceAt));
 });

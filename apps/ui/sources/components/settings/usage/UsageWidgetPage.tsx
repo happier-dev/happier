@@ -583,6 +583,8 @@ function resolveUsagePageNotice(
   const { pending, failed, failedQuiet, newerServer, partial } = facts;
   if (failed) {
     return { testID: 'usage-page.header.failed', reason: failed, tone: failedQuiet ? 'neutral' : 'warning',
+      // The page still shows what arrived: on a phone the line says "Partial" with Details beside its Retry (#9).
+      short: t('usage.board.charts.coveragePartialShort'),
       // The one Retry, which also rereads the views and Sessions that failed: bodies with nothing to draw only
       // say they were not read (`UsageBodyReadFailed`).
       ...(retry ? { action: { label: t('common.retry'), onPress: retry, testID: 'usage-page.header.retry' } } : {}) };
@@ -633,8 +635,8 @@ function UsagePageHeader(
   }>,
 ) {
   const { retry, history, layouts, phone } = props;
-  // A phone's header line cannot hold the partial sentence: it says "Partial" and opens the sentence on demand,
-  // never an ellipsis mid-word (USAGE-ACCEPT #16).
+  // A phone's header line cannot hold the partial or read-failure sentence: it says "Partial" and opens the sentence
+  // on demand, never an ellipsis mid-word (USAGE-ACCEPT 1113 #16, 1118 #9). A failure keeps its Retry at the line end.
   const [noticeOpen, setNoticeOpen] = React.useState(false);
   const sessionTitle = useSessionDisplayTitles(React.useMemo(() => props.sessionId ? [{ sessionId: props.sessionId }] : [], [props.sessionId]))[0] ?? null;
   const { observedAtMs, olderReadAtMs, olderSource, machines, agents } = props.facts;
@@ -659,7 +661,7 @@ function UsagePageHeader(
       retry, history, layouts, startSession);
     if (!resolved && olderReadAtMs === null && !olderSource) return null;
     const testID = resolved?.testID ?? 'usage-page.header.freshness';
-    const shortened = phone && resolved?.short && !resolved.action ? resolved.short : null;
+    const shortened = phone && resolved?.short ? resolved.short : null;
     const detail = shortened || olderReadAtMs !== null || olderSource ? { label: noticeOpen ? t('usage.showLess') : t('common.details'), testID: `${testID}.detail`,
       onPress: () => setNoticeOpen(open => !open) } : null;
     const expanded = detail !== null && noticeOpen;
@@ -675,7 +677,9 @@ function UsagePageHeader(
       <SurfaceFreshnessOnSheetProvider>
         <View style={styles.headerLine}>
         <SurfaceFreshnessLine
-          presentation={expanded ? 'line' : 'inline'}
+          // A phone's short form is a line, never an ellipsis: its date (and "older reading") and the short word share one
+          // line when they fit and stack when they do not, so nothing is cut before Details and Retry (#9).
+          presentation={shortened || expanded ? 'line' : 'inline'}
           {...(expanded ? { glyph: 'clock' as const } : {})}
           testID={testID}
           asOf={props.facts.observedAtMs}
