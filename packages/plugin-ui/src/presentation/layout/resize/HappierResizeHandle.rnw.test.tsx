@@ -42,12 +42,8 @@ describe('HappierResizeHandle', () => {
         expect(current).toHaveBeenCalledOnce();
     });
 
-    it('grows an edge handle\'s pointer target outward, never further into its own pane than the drawn divider', async () => {
-        // An edge handle that reached inward covered the pane's trailing controls (the Machines rail "+", 2026-11-06:
-        // inward-only 24 px covered its centre; a centred target still covered its last 2 px). Pane gutters are laid
-        // out around the drawn divider, so the floor's extra size goes over the neighbour beyond the edge.
+    it('keeps the web edge target outside the scrolling pane', async () => {
         const { HappierResizeHandle } = await import('./HappierResizeHandle.js');
-        const { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE: floor } = await import('../../../environment/interactiveTarget.js');
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
@@ -64,11 +60,11 @@ describe('HappierResizeHandle', () => {
             const size = axis === 'x' ? Math.max(px(style.width), px(style.minWidth)) : Math.max(px(style.height), px(style.minHeight));
             const margin = (side: string) => px(style.getPropertyValue(`margin-${side}`));
             // Past the edge it resizes (outward), and into its own pane beyond the drawn divider (inward).
-            return { size, outward: 0 - margin(anchor), inwardBeyondDrawn: 0 - margin(inner), drawn };
+            return { size, outward: -margin(anchor), coveredPane: drawn - margin(inner) };
         };
         for (const axis of ['x', 'y'] as const) for (const edge of ['start', 'end'] as const) {
             const measured = await reach(edge, axis);
-            expect(measured).toEqual({ size: floor, outward: floor - measured.drawn, inwardBeyondDrawn: 0, drawn: measured.drawn });
+            expect(measured).toEqual({ size: 8, outward: 8, coveredPane: 0 });
         }
     });
 

@@ -7,6 +7,8 @@ import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '../../../enviro
 /** The seam's ink while pointing at the handle, and while dragging it (lab ade-shell SH2/SH3). */
 const SEAM_HOVER = { widthPx: 1, opacity: 0.28 } as const;
 const SEAM_ACTIVE = { widthPx: 2, opacity: 0.46 } as const;
+// The web resize seam shares its inside edge with the pane's scrollbar.
+const WEB_EDGE_TARGET_PX = 8;
 
 export function resolveResizablePaneNativeTouchTargetSize(): number | null {
     if (Platform.OS === 'web') return null;
@@ -62,29 +64,31 @@ export const HappierResizeHandle = React.memo((props: Readonly<{
     const seam = props.active ? SEAM_ACTIVE : hovered ? SEAM_HOVER : null;
     const nativeTouchTargetSize = resolveResizablePaneNativeTouchTargetSize();
     const visualHandleSize = props.axis === 'x' ? 10 : 18;
-    const webTargetSize = Platform.OS === 'web' ? HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE : null;
-    const inwardExpansion = Math.max(0, (nativeTouchTargetSize ?? webTargetSize ?? visualHandleSize) - visualHandleSize);
-    // Negative margins keep the caller's position whether it anchors from left/top or right/bottom.
-    // A centred divider expands equally. On the web an edge handle grows only outward, over the
-    // neighbour beyond the edge it resizes: it never covers more of its own pane than the drawn divider,
-    // which pane gutters are laid out around, so the pane's trailing controls stay clickable. Its host
-    // leaves that seam unclipped and paints the pane above the neighbour it reaches into.
-    const startExpansion = props.edge === undefined ? inwardExpansion / 2 : props.edge === 'start' ? inwardExpansion : 0;
-    const endExpansion = inwardExpansion - startExpansion;
-    // The seam ink draws on the edge: the drawn box's outer edge, offset from the web target's centre;
-    // on native the target is the drawn box itself.
-    const seamAlign = props.edge === undefined || webTargetSize !== null ? 'center' : props.edge === 'start' ? 'flex-start' : 'flex-end';
-    const seamOffset = props.edge === undefined || webTargetSize === null ? 0
-        : (props.edge === 'end' ? startExpansion + visualHandleSize : startExpansion) - (visualHandleSize + inwardExpansion) / 2;
-    const indicatorOffset = Platform.OS === 'web' ? (startExpansion - endExpansion) / 2 : 0;
+    const web = Platform.OS === 'web';
+    const edgeTarget = web && props.edge !== undefined;
+    const webCenteredExpansion = (HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE - visualHandleSize) / 2;
+    const nativeExpansion = Math.max(0, (nativeTouchTargetSize ?? visualHandleSize) - visualHandleSize);
+    const edgeDirection = props.edge === 'start' ? 1 : -1;
+    // The web hit zone sits entirely outside the pane. Keep the painted seam
+    // at the boundary and the optional indicator in its original drawn box.
+    const seamOffset = edgeTarget ? edgeDirection * WEB_EDGE_TARGET_PX / 2 : 0;
+    const indicatorOffset = edgeTarget ? edgeDirection * (WEB_EDGE_TARGET_PX + visualHandleSize) / 2 : 0;
+    const seamAlign = props.edge === undefined || web ? 'center' : props.edge === 'start' ? 'flex-start' : 'flex-end';
+    const startMargin = edgeTarget ? (props.edge === 'start' ? -WEB_EDGE_TARGET_PX : visualHandleSize) : -webCenteredExpansion;
+    const endMargin = edgeTarget ? (props.edge === 'end' ? -WEB_EDGE_TARGET_PX : visualHandleSize) : -webCenteredExpansion;
+    const webTargetStyle = props.axis === 'x'
+        ? { ...(edgeTarget ? { width: WEB_EDGE_TARGET_PX } : { minWidth: HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE }),
+            marginLeft: startMargin, marginRight: endMargin }
+        : { ...(edgeTarget ? { height: WEB_EDGE_TARGET_PX } : { minHeight: HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE }),
+            marginTop: startMargin, marginBottom: endMargin };
     // Native HitRects cannot extend beyond the pane parent. Expand only inward
     // from the owning edge so the full 44/48pt target remains reachable without
     // shifting the visual divider or overlapping the adjacent pane.
     const nativeHitSlop = nativeTouchTargetSize === null || props.edge === undefined
         ? undefined
         : props.axis === 'x'
-            ? props.edge === 'start' ? { right: inwardExpansion } : { left: inwardExpansion }
-            : props.edge === 'start' ? { bottom: inwardExpansion } : { top: inwardExpansion };
+            ? props.edge === 'start' ? { right: nativeExpansion } : { left: nativeExpansion }
+            : props.edge === 'start' ? { bottom: nativeExpansion } : { top: nativeExpansion };
     const centeredNativeTargetStyle: ViewStyle | undefined = nativeTouchTargetSize === null || props.edge !== undefined
         ? undefined
         : props.axis === 'x'
@@ -119,9 +123,7 @@ export const HappierResizeHandle = React.memo((props: Readonly<{
                 } as object) : null,
                 props.style,
                 centeredNativeTargetStyle,
-                Platform.OS === 'web' ? (props.axis === 'x'
-                    ? { minWidth: HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, marginLeft: -startExpansion, marginRight: -endExpansion }
-                    : { minHeight: HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, marginTop: -startExpansion, marginBottom: -endExpansion }) : null,
+                web ? webTargetStyle : null,
             ]}
         >
             {seam && inkColor && !showIndicator ? (
