@@ -24,6 +24,8 @@ function portablePlugin(id: string) {
         runtime: { apiVersion: 1 }, contributes: { actions: [{ id: 'read', title: 'Read',
             scopes: ['global'], surfaces: ['ui', 'plugin'], dangerLevel: 'safe', readOnly: true, placementBindings: [],
             execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } },
+            inputSchema: { type: 'object', properties: { token: { type: 'string' } } },
+            secretInputPaths: ['token'],
         }] } });
     if (!parsed.ok) throw new Error(`Invalid portable fixture: ${JSON.stringify(parsed)}`);
     return { manifest: parsed.manifest, activate(api: PluginAccountApi) {
@@ -102,6 +104,8 @@ it('admits and keeps both portable Account executables in one published action s
         for (const plugin of [first, second, first]) {
             const action = installed.projection.actionsById[`${plugin.manifest.id}/read`];
             expect(action, `Expected the complete portable set to contain ${plugin.manifest.id}`).toBeDefined();
+            expect(action).not.toHaveProperty('secretInputPaths');
+            expect(action?.accountActionDeclaration?.secretInputPaths).toEqual(['token']);
             expect(admitted?.actionsById[`${plugin.manifest.id}/read`]?.available).toBe(true);
             const registered = resolvePluginUiClientActionRegistration({ action: action!, platform: resolvePluginUiClientExecutablePlatform() });
             expect(registered).not.toBeNull();

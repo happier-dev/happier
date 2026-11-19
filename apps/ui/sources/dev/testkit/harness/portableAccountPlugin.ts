@@ -281,9 +281,10 @@ async function preparePortableAccountPluginForTest(input: Readonly<{
         const authorization = { generation: { targetGeneration: occurrenceId, desiredGeneration: occurrenceId, appliedGeneration: occurrenceId },
             resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] };
         const graph = preparedArtifact ?? createPortableAccountExecutableArtifact(account);
+        const actionProjectionFields = PluginProjectedActionV2Schema.shape;
         const projectedActions = actions.map(declaration => {
-            const { hostAccess: _hostAccess, connectedAccountPurposeBindings: _connectedAccountPurposeBindings,
-                inputSchema: _inputSchema, resultSchema: _resultSchema, ...projected } = declaration;
+            const projected = Object.fromEntries(Object.entries(declaration)
+                .filter(([field]) => Object.hasOwn(actionProjectionFields, field)));
             return { ...PluginProjectedActionV2Schema.parse({ ...projected, pluginId: input.manifest.id,
                 occurrenceId, available: true, authorization }), hostAccountOrigin: origin, accountActionDeclaration: declaration };
         });
