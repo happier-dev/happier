@@ -45,6 +45,11 @@ export type HappierPageRowMetrics = Readonly<{
      * label first.
      */
     valueLeads: boolean;
+    /**
+     * A `facts` section sets its keys in one column this wide and each value, with its note under it, left-aligned in
+     * a second column beside it (lab Themes C2 `th-kv`), so the values scan down one edge. Null for every other row.
+     */
+    factKeyColumnPx: number | null;
     subtitle: PageRowText & Readonly<{ marginTop: number }>;
     iconGlyphPx: number;
 }>;
@@ -102,6 +107,9 @@ const PAGE_ROW_DENSITY_METRICS: Record<HappierPageRowDensity, Readonly<{
     },
 };
 
+/** A facts key's column: room for "Reshapes layout" on two lines and its gap before the value (lab C2 `th-kv`). */
+const PAGE_ROW_FACT_KEY_COLUMN_PX = 112;
+
 /** Between a page row's title and its description, at every density. */
 const PAGE_ROW_SUBTITLE_GAP_PX = 2;
 
@@ -134,6 +142,7 @@ export function resolveHappierPageRowMetrics(input: Readonly<{
         title: table.title,
         titleWeight: facts ? 'regular' : table.titleWeight ?? 'medium',
         valueLeads: facts || (input.density === 'inspector' && input.shape === 'list'),
+        factKeyColumnPx: facts ? PAGE_ROW_FACT_KEY_COLUMN_PX : null,
         subtitle: Object.freeze({ ...table.subtitle, marginTop: PAGE_ROW_SUBTITLE_GAP_PX }),
         iconGlyphPx: table.iconGlyphPx,
     });

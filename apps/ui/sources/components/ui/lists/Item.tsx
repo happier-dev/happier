@@ -587,6 +587,20 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     detailFact: {
         color: theme.colors.text.primary,
     },
+    // A facts section's two columns (lab Themes C2 `th-kv`): the key in its own column, the value and its note
+    // left-aligned beside it, both wrapping as prose.
+    factKey: {
+        flexShrink: 0,
+        paddingRight: theme.space.s12,
+    },
+    factValue: {
+        flex: 1,
+        minWidth: 0,
+    },
+    factValueText: {
+        ...Typography.default('regular'),
+        textAlign: 'left',
+    },
     titleSelected: {
         color: theme.colors.text.primary,
     },
@@ -1202,6 +1216,7 @@ function ItemRow(props: ItemProps & Readonly<{
         : null;
     const pageRowStyles = pageRowMetrics ? resolvePageRowStyles(pageRowMetrics) : null;
     const factRow = pageRowMetrics?.valueLeads === true && !destructive;
+    const factKeyColumnPx = factRow ? pageRowMetrics?.factKeyColumnPx ?? null : null;
     const titleColor = dimmed && !destructive ? styles.titleDimmed : factRow ? styles.titleFact : titleColorBase;
     // Subtitle and meta step down with the title, so a dimmed row keeps its title over its quiet line.
     const subtitleInkStyle = dimmed ? styles.subtitleDimmed : null;
@@ -1765,6 +1780,32 @@ function ItemRow(props: ItemProps & Readonly<{
         const includeLeftAccessory = options?.includeLeftAccessory ?? true;
         // A split primary remains a bounded horizontal label/value band. Its independent
         // operation stacks outside this band, so only content containing that operation stacks.
+        if (factKeyColumnPx !== null) return (
+            <View style={[styles.labelBand, styles.containerAlignStart]}>
+                <View style={[styles.factKey, { width: factKeyColumnPx }]}>
+                    {typeof title === 'string' || typeof title === 'number' ? renderPrimitiveText({
+                        value: title,
+                        ref: titleRef,
+                        dataSet: titleDataSet,
+                        style: [styles.title, titleSizeStyle, titleColor, titleStyle],
+                    }) : normalizeNodeForView(title)}
+                </View>
+                <View style={styles.factValue}>
+                    {detail ? (
+                        <Text testID={detailTestID} style={[styles.factValueText, detailSizeStyle, detailFigures, subtitleInkStyle, detailStyle]}>
+                            {detail}
+                        </Text>
+                    ) : null}
+                    {typeof subtitle === 'string' ? renderPrimitiveText({
+                        value: subtitle,
+                        testID: subtitleTestID,
+                        style: [styles.subtitle, subtitleSizeStyle, subtitleInkStyle, subtitleStyle],
+                    }) : subtitle ?? null}
+                </View>
+                {includeRightAccessory ? rightAccessory : null}
+                {chevronAccessory}
+            </View>
+        );
         const stackContentAccessory = stackAccessory && includeRightAccessory;
         const detailBeneathNode = detailBeneath && detail ? renderPrimitiveText({
             value: detail,
@@ -2041,6 +2082,12 @@ function ItemRow(props: ItemProps & Readonly<{
     );
     }, [
         chevronAccessory,
+        factKeyColumnPx,
+        styles.factKey,
+        styles.factValue,
+        styles.factValueText,
+        titleRef,
+        subtitleTestID,
         directoryEdges,
         placeFacts,
         rightElementYields,
