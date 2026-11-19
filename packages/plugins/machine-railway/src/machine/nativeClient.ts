@@ -2,9 +2,9 @@ import { decodeBase64, encodeBase64, defineProtocolArray, defineProtocolLiteral,
 import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, RailwayLaunchSchema, RailwayOperationSchema, RailwayResourceSchema, ROLE_SCHEMAS, reference, type RailwayLaunch, type RailwayOperation, type RailwayResource } from './schemas.js';
 import { readRailwayFile, writeRailwayFile } from './files.js';
+import { createRailwayGraphqlClient, NativeError, railwayErrorCode as code } from '../railwayApi.js';
 
-// Official Railway API v2 and files bridge v3.16.0, checked 2026-11-01.
-export const RAILWAY_API = 'https://backboard.railway.com/graphql/v2';
+export { NativeError, RAILWAY_API } from '../railwayApi.js';
 const open = { policy: 'additive-open/drop' } as const;
 const text = defineProtocolString({ minLength: 1 });
 const boolean = defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]);
@@ -21,34 +21,12 @@ const readQuery = `query($environmentId:String!,$id:String!){sandbox(environment
 const destroyQuery = `mutation($environmentId:String!,$id:String!){sandboxDestroy(environmentId:$environmentId,id:$id){${fields}}}`;
 const execQuery = 'mutation($environmentId:String!,$id:String!,$command:String!,$timeoutSec:Int){sandboxExec(environmentId:$environmentId,id:$id,command:$command,timeoutSec:$timeoutSec){exitCode stdout stderr truncated timedOut}}';
 const tokenQuery = 'mutation($input:ShellTokenInput!){generateShellToken(input:$input)}';
-export class NativeError extends Error {
-  constructor(readonly code: string, readonly status?: number) { super(code); }
-}
-const code = (error: unknown) => error instanceof NativeError ? error.code
-  : error !== null && typeof error === 'object' && 'code' in error && error.code === 'credential_unavailable'
-    ? 'credential_unavailable' : 'railway_unavailable';
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 const pending = (operation: RailwayOperation): Acquisition => ({ kind: 'pending', nativeOperationRef: reference(operation) });
 const unknown = (id: string, reason = 'railway_acquisition_unconfirmed'): Acquisition => ({ kind: 'unknown', recovery: { reference: id, reason, consoleUrl: 'https://railway.com/dashboard' } });
 
 export function createRailwayNativeClient(request: typeof fetch, signal?: AbortSignal, observedAt = Date.now()) {
-  async function graphql(query: string, variables: Readonly<Record<string, unknown>>) {
-    try {
-      signal?.throwIfAborted();
-      const response = await request(RAILWAY_API, { method: 'POST', redirect: 'error', signal,
-        headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query, variables }) });
-      if (!response.ok) throw new NativeError(response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'railway_http_' + response.status, response.status);
-      const body: unknown = await response.json();
-      if (!body || typeof body !== 'object') throw new NativeError('railway_invalid_response');
-      // HTTP 200 does not establish GraphQL success. Never forward vendor error prose.
-      if ('errors' in body && (!Array.isArray(body.errors) || body.errors.length > 0)) throw new NativeError('railway_graphql_unavailable');
-      if (!('data' in body) || !body.data || typeof body.data !== 'object' || Array.isArray(body.data)) throw new NativeError('railway_invalid_response');
-      return body.data as Record<string, unknown>;
-    } catch (error) {
-      const transportFailure = (): never => { throw error instanceof NativeError ? error : new NativeError(code(error)); };
-      return projectMachineProvisionerActionFailure(error, transportFailure);
-    }
-  }
+  const graphql = createRailwayGraphqlClient(request, signal);
   function identity(input: unknown, expected: { environmentId: string; sandboxId?: string }): Native {
     const decoded = nativeSchema.safeParse(input);
     if (!decoded.success) throw new NativeError('railway_invalid_response');
