@@ -35,7 +35,11 @@ export const en = {
         needsYou: ({ count }: { count: number }) => `${count} ${count === 1 ? 'needs' : 'need'} you`,
         separator: ', ',
     },
+    runsEmpty: 'No runs yet. A run appears here as soon as a workflow starts.',
     columns: {
+        run: 'Run',
+        started: 'Started',
+        took: 'Took',
         workflow: 'Workflow',
         uses: 'Uses',
         trigger: 'Trigger',

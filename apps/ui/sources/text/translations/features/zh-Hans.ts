@@ -19216,7 +19216,11 @@ const zhHans: WorkflowsDestinationTranslations = {
         needsYou: ({ count }) => `${count} 次需要你处理`,
         separator: '，',
     },
+    runsEmpty: '还没有运行。工作流一开始，运行就会出现在这里。',
     columns: {
+        run: '运行',
+        started: '开始',
+        took: '用时',
         workflow: '工作流',
         uses: '使用',
         trigger: '触发器',

@@ -19367,7 +19367,11 @@ const ru: WorkflowsDestinationTranslations = {
         needsYou: ({ count }) => `ждут вас: ${count}`,
         separator: ', ',
     },
+    runsEmpty: 'Запусков пока нет. Запуск появится здесь, как только начнётся рабочий процесс.',
     columns: {
+        run: 'Запуск',
+        started: 'Начат',
+        took: 'Длительность',
         workflow: 'Рабочий процесс',
         uses: 'Использует',
         trigger: 'Триггер',

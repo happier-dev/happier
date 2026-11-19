@@ -19276,7 +19276,11 @@ const ja: WorkflowsDestinationTranslations = {
         needsYou: ({ count }) => `対応待ち ${count} 件`,
         separator: '、',
     },
+    runsEmpty: 'まだ実行はありません。ワークフローが始まるとここに表示されます。',
     columns: {
+        run: '実行',
+        started: '開始',
+        took: '所要時間',
         workflow: 'ワークフロー',
         uses: '使用',
         trigger: 'トリガー',

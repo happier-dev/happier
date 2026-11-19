@@ -19342,7 +19342,11 @@ const it: WorkflowsDestinationTranslations = {
         needsYou: ({ count }) => `${count} ti ${count === 1 ? 'aspetta' : 'aspettano'}`,
         separator: ', ',
     },
+    runsEmpty: 'Ancora nessuna esecuzione. Ne comparirà una qui appena parte un workflow.',
     columns: {
+        run: 'Esecuzione',
+        started: 'Avviata',
+        took: 'Durata',
         workflow: 'Workflow',
         uses: 'Usa',
         trigger: 'Attivatore',

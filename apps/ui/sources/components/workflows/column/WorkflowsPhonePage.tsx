@@ -4,7 +4,6 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
 import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
-import { SessionsList } from '@/components/sessions/shell/SessionsList';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -17,6 +16,8 @@ import { t } from '@/text';
 import { useWorkflowsColumnEvents, WorkflowsColumnEventsFilters, WorkflowsColumnEventsListening, WorkflowsColumnEventsRows } from '../events/WorkflowsColumnEvents';
 
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
+import { WorkflowRunsColumnRows } from './WorkflowRunsColumnRows';
+import { useWorkflowRunCollection, useWorkflowRunCollectionHeader } from '../library/useWorkflowRunCollection';
 import {
   WorkflowsColumnLibraryContext,
   type WorkflowsColumnLentLibrary,
@@ -48,6 +49,12 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
     libraryView,
     'workflows-column-space',
   );
+  // Runs read the one `workflowRun` collection (scene 8 D2): its space is the title, its search and filters the head's.
+  const runsShown = props.view === 'runs';
+  const runs = useWorkflowRunCollection(presented && runsShown);
+  const runHeader = useWorkflowRunCollectionHeader(runs, 'workflows-column-runs-space');
+  const runSearchQuery = runs.binding.searchQuery;
+  const setRunSearchQuery = runs.setSearchQuery;
   const safeAreaTop = useChromeSafeAreaInsets().top;
   const openAddRef = React.useRef<(() => void) | null>(null);
   const addLabel = t('workflows.destination.addAccessibility');
@@ -78,8 +85,16 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
             // The space's conditions end the field, as on My work; the title's menu also opens them.
             trailing: spaceHeader.filterButton,
           }
-        : null,
-    [definitions, libraryView.searchQuery, setSearchQuery, spaceHeader.filterButton],
+        : runsShown
+          ? {
+              value: runSearchQuery,
+              onChangeText: setRunSearchQuery,
+              placeholder: t('workflows.destination.display.searchRuns'),
+              testID: 'workflows-runs-search',
+              trailing: runHeader.filterButton,
+            }
+          : null,
+    [definitions, libraryView.searchQuery, setSearchQuery, spaceHeader.filterButton, runsShown, runSearchQuery, setRunSearchQuery, runHeader.filterButton],
   );
   return (
     <View testID="workflows-column" style={styles.column}>
@@ -90,7 +105,7 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
         <MainScreenHeader
           testID="workflows-header"
           title={t('workflows.title')}
-          titleControl={definitions ? spaceHeader.titleControl : undefined}
+          titleControl={definitions ? spaceHeader.titleControl : runsShown ? runHeader.titleControl : undefined}
           search={search}
           actions={
             <WorkflowsColumnActions
@@ -116,6 +131,8 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
               />
               {definitions ? spaceHeader.strip : null}
               {definitions ? spaceHeader.conditionRow : null}
+              {runsShown ? runHeader.strip : null}
+              {runsShown ? runHeader.conditionRow : null}
               {eventsShown ? (
                 <View style={styles.eventsHead}>
                   <WorkflowsColumnEventsListening state={events} />
@@ -126,6 +143,7 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
           }
         />
         {spaceHeader.overlays}
+        {runHeader.overlays}
       </View>
       {/* Both views stay built once shown and the switch only presents one: a switch never rebuilds a list. */}
       <RetainedPanelSurface isActive={definitions} hiddenMode="activity" testID="workflows-column:definitions">
@@ -134,7 +152,9 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
         </WorkflowsColumnLibraryContext.Provider>
       </RetainedPanelSurface>
       <RetainedPanelSurface isActive={props.view === 'runs'} hiddenMode="activity" testID="workflows-column:runs">
-        <SessionsList fixedShow="runs" pathname={props.pathname} />
+        <ItemList presentation="grouped" style={styles.events}>
+          <WorkflowRunsColumnRows model={runs} selectedRunId={null} testIDPrefix="workflows-phone:runs" />
+        </ItemList>
       </RetainedPanelSurface>
       <RetainedPanelSurface isActive={eventsShown} hiddenMode="activity" testID="workflows-column:events">
         <ItemList presentation="grouped" style={styles.events}>

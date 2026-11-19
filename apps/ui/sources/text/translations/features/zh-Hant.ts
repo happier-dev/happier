@@ -19216,7 +19216,11 @@ const zhHant: WorkflowsDestinationTranslations = {
         needsYou: ({ count }) => `${count} 次需要你處理`,
         separator: '，',
     },
+    runsEmpty: '還沒有執行。工作流程一開始，執行就會出現在這裡。',
     columns: {
+        run: '執行',
+        started: '開始',
+        took: '耗時',
         workflow: '工作流程',
         uses: '使用',
         trigger: '觸發器',

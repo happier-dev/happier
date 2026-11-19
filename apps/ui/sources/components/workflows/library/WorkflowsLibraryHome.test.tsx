@@ -169,6 +169,50 @@ afterEach(async () => {
 });
 
 describe('workflow library page anatomy', () => {
+    it('draws "Your workflows" as the scene 8 table: Uses, Trigger, Steps, Last run, opt-in Next run, Last 8 runs, State', async () => {
+        windowSize.width = 1440;
+        const definitionId = '10000000-0000-4000-8000-000000000083';
+        execute.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [{
+                kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
+                metadata: { title: 'Nightly dependency check' }, ownerAccountId: 'account-a', access: 'owner',
+                contentStatus: 'available', stepCount: 3, nextRunAt: null,
+                triggers: [{ kind: 'schedule', enabled: false, remainingOccurrences: null,
+                    schedule: { kind: 'interval', scheduleExpr: null, everyMs: 3_600_000, timezone: null } }],
+            }] } };
+            if (actionId === 'workflow.run.summaries') return { ok: true, result: { remainingSourceArtifactIds: [], summaries: [{
+                sourceArtifactId: definitionId, recent: [recent({ runId: 'run-waits', state: 'running', attentionRequired: true, invocationAttentionRequired: true })],
+                lastRun: null, needsYouCount: 1, needsYouRunId: 'run-waits' }] } };
+            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [], metadataByRunId: {} } };
+            return { ok: false, errorCode: 'unexpected', error: 'Unexpected fixture request' };
+        });
+        const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
+        try {
+            const { HostCollection } = await import('@happier-dev/plugin-ui');
+            const library = () => screen.findAllByType(HostCollection).find(node => node.props.testID === 'workflows-home:collection')!;
+            await vi.waitFor(() => expect(library().props.model.keys).toEqual([definitionId]));
+            const fields = library().props.anatomy.fields as readonly { key: string; defaultHidden?: boolean; render: (row: unknown) => unknown }[];
+            const firstRow = () => library().props.model.sections.flatMap((section: { items: unknown[] }) => section.items)[0];
+            const stateOf = () => fields.find(field => field.key === 'state')!.render(firstRow()) as
+                { props: { state: unknown; needsYouRunId: string | null; onOpenRun: (runId: string) => void } };
+            await vi.waitFor(() => expect(stateOf().props.state).toBe('needsYou'));
+            expect(fields.map(field => field.key)).toEqual(['uses', 'trigger', 'steps', 'lastRun', 'nextRun', 'recentRuns', 'state']);
+            // Next run is the opt-in column (owner 2026-11-19); the rest show by default.
+            expect(fields.filter(field => field.defaultHidden === true).map(field => field.key)).toEqual(['nextRun']);
+            const row = library().props.model.sections.flatMap((section: { items: unknown[] }) => section.items)[0];
+            // Off is said once, in the State cell: the trigger sentence doesn't repeat it.
+            expect(fields.find(field => field.key === 'trigger')!.render(row)).not.toContain('workflows.triggers.row.off');
+            expect(fields.find(field => field.key === 'steps')!.render(row)).toBe(3);
+            // The state speaks in one place (the State cell), and the run that needs you is one press away.
+            const state = stateOf();
+            expect(state.props.needsYouRunId).toBe('run-waits');
+            await act(async () => { state.props.onOpenRun('run-waits'); });
+            expect(routerPush).toHaveBeenLastCalledWith(expect.stringContaining('/workflows/runs/run-waits'));
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('switches the same workflow library from the table to cards without reading workflow bodies', async () => {
         const previousWidth = windowSize.width;
         windowSize.width = 1440;
@@ -207,7 +251,15 @@ describe('workflow library page anatomy', () => {
             expect(library().props.model.keys).toEqual([definitionId]);
             await screen.pressByTestIdAsync('workflows-home:presentation:table');
             await vi.waitFor(() => expect(library().props.presentation).toBe('table'));
+            await vi.waitFor(() => expect(storage.getState().settings.collectionDisplayPreferencesV1.workflow?.presentation).toBe('table'));
             expect(library().props.model.keys).toEqual([definitionId]);
+            const settingsVersion = storage.getState().settingsVersion;
+            await act(async () => {
+                expect(await action.execute('settings.set', {
+                    anchor: 'appearance.collectionDisplay', value: { kind: 'workflow', presentation: 'table' },
+                }, context)).toMatchObject({ ok: true });
+            });
+            expect(storage.getState().settingsVersion).toBe(settingsVersion);
             expect(workflowReads()).toEqual(initialReads);
         } finally {
             windowSize.width = previousWidth;
@@ -603,7 +655,10 @@ describe('workflow library page anatomy', () => {
         expect(rows().reduce((sum, [, counter]) => sum + counter.read().renders, 0)).toBe(0);
         changed = true;
         await act(async () => { publishHomeAccountChange(serverId, ['workflow-run:budget-attention-run'], { changeKinds: ['account'] }); });
-        await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${changedId}:needsYou`)).not.toBeNull());
+        // Needs you speaks in the row: the State cell's press (table) or the word leading line 2 (list rows).
+        await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${changedId}:needsYou`) !== null
+            || screen.findAll(node => node.props?.testID === `workflows-home:row:${changedId}:state` && node.props.state === 'needsYou').length > 0)
+            .toBe(true));
         const measurement = { rows: rows().length,
             changedRowRenders: rowCosts.get(`workflows-home:row:${changedId}`)?.read().renders,
             unrelatedRowRenders: rows().filter(([id]) => !id.startsWith(`workflows-home:row:${changedId}`))
@@ -1121,6 +1176,7 @@ describe('workflow library page anatomy', () => {
         await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${definitionId}`)).not.toBeNull());
         expect(screen.findHostByTestId('workflows-home:idle')).toBeNull();
         expect(screen.findHostByTestId('workflows-home:search')).not.toBeNull();
+        // The owner’s 11-19 ruling retains Built-in as a separate index section beside the sidebar.
         expect(screen.findByTestId('workflows-home:builtins')).not.toBeNull();
         expect(screen.findHostByTestId('workflows-home:scope-line')).not.toBeNull();
         // One primary: New workflow opens the blank draft.
@@ -1416,6 +1472,8 @@ describe('workflow library summaries and filter', () => {
     });
 
     it.each(['succeeded', 'interrupted', 'paused'] as const)('offers Running from the shared summaries without treating a %s run as working', async (inactiveState) => {
+        // The run that needs you opens from the wide table's State cell (scene 8); list rows say it as a word.
+        windowSize.width = 1440;
         const row = (definitionId: string, title: string) => ({ kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
             metadata: { title }, ownerAccountId: 'account-a', access: 'owner', contentStatus: 'available', stepCount: 2, triggers: [], nextRunAt: null });
         execute.mockImplementation(async (actionId: string) => {
@@ -1441,11 +1499,21 @@ describe('workflow library summaries and filter', () => {
         await act(async () => { await action.execute('workflow.library.view.set', { filters: { view: 'running' } }, context); });
         expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000011')).not.toBeNull();
         expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000012')).toBeNull();
-        await screen.pressByTestIdAsync('workflows-home:row:10000000-0000-4000-8000-000000000011:needsYou');
+        // The waiting run opens from the State cell (scene 8): the cell's own press, at the run the summary names.
+        const { HostCollection } = await import('@happier-dev/plugin-ui');
+        const library = screen.findAllByType(HostCollection).find(node => node.props.testID === 'workflows-home:collection')!;
+        const fields = library.props.anatomy.fields as readonly { key: string; render: (row: unknown) => unknown }[];
+        const waiting = library.props.model.sections.flatMap((section: { items: { key: string }[] }) => section.items)
+            .find((row: { key: string }) => row.key === '10000000-0000-4000-8000-000000000011');
+        const state = fields.find(field => field.key === 'state')!.render(waiting) as
+            { props: { needsYouRunId: string | null; onOpenRun: (runId: string) => void } };
+        expect(state.props.needsYouRunId).toBe('run-live');
+        await act(async () => { state.props.onOpenRun('run-live'); });
         expect(routerPush).toHaveBeenLastCalledWith(`/workflows/runs/run-live?serverId=${encodeURIComponent(httpBoundary!.serverId)}`);
     });
 
-    it.each([[390, false], [800, true]] as const)('lays a row out for a %ipx window whether or not navigation chrome shows a title (run strip: %s)', async (width, showsStrip) => {
+    // Scene 8: every row keeps its run strip, a phone's list row too (it ends line 2).
+    it.each([[390, true], [800, true]] as const)('lays a row out for a %ipx window whether or not navigation chrome shows a title (run strip: %s)', async (width, showsStrip) => {
         windowSize.width = width;
         const id = '10000000-0000-4000-8000-000000000031';
         execute.mockImplementation(async (actionId: string) => {
@@ -1470,6 +1538,7 @@ describe('workflow library summaries and filter', () => {
     });
 
     it('paints count and shared trigger wording, and filters attached triggers without losing manual workflows', async () => {
+        const timedTriggers = [{ kind: 'schedule' as const, schedule: { kind: 'interval' as const, everyMs: 3_600_000, scheduleExpr: null, timezone: null } }];
         let deletedDefinitionId: string | undefined;
         automationDefinitionResponse = async (url, init) => init?.method === 'DELETE'
             && url.pathname === '/v3/automations/automation-10000000-0000-4000-8000-000000000004'
@@ -1480,7 +1549,7 @@ describe('workflow library summaries and filter', () => {
                     metadata: { title: 'Manual work' }, ownerAccountId: 'account-a', access: 'owner', contentStatus: 'available', stepCount: 3, triggers: [], nextRunAt: null },
                 { kind: 'workflow-definition.v1', definitionId: '10000000-0000-4000-8000-000000000004', revision: { headerVersion: 1, bodyVersion: 1 },
                     metadata: { title: 'Timed work' }, ownerAccountId: 'account-a', access: 'owner', contentStatus: 'available', stepCount: 2, nextRunAt: 1_900_000_000_000,
-                    triggers: [{ kind: 'schedule', schedule: { kind: 'interval', everyMs: 3_600_000, scheduleExpr: null, timezone: null } }] },
+                    triggers: timedTriggers },
                 { kind: 'workflow-definition.v1', definitionId: '10000000-0000-4000-8000-000000000008', revision: { headerVersion: 1, bodyVersion: 1 },
                     metadata: { title: 'Unreadable work' }, ownerAccountId: 'account-a', access: 'owner', contentStatus: 'unavailable', contentUnavailableReason: 'invalid_header', stepCount: null, triggers: [], nextRunAt: null },
                 { kind: 'workflow-definition.v1', definitionId: '10000000-0000-4000-8000-000000000009', revision: null, metadata: null,
@@ -1510,13 +1579,14 @@ describe('workflow library summaries and filter', () => {
         const manual = screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000003');
         expect(manual).not.toBeNull();
         const copy = manual!.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children).join('\n');
-        expect(copy).toContain(t('workflows.examples.stepCount', { count: 3 }));
-        expect(copy).toContain(formatTriggerSetSummary([]));
+        // Scene 8 Lines 2: the trigger is the row's detail ("No automatic triggers"); the step count is a Lines 3 detail.
+        expect(copy).toContain(t('automations.list.noAutomaticTriggers'));
         expect(copy).not.toContain(formatNextScheduledRun(1_900_000_000_000));
         const timed = screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000004');
         expect(timed).not.toBeNull();
+        // Next run is the opt-in column (owner 2026-11-19): a row says its trigger instead.
         expect(timed!.findAll(node => typeof node.props.children === 'string').map(node => node.props.children).join('\n'))
-            .toContain(formatNextScheduledRun(1_900_000_000_000));
+            .toContain(formatTriggerSetSummary(timedTriggers));
         const unreadable = screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000008');
         expect(unreadable).not.toBeNull();
         const unavailableCopy = unreadable!.findAll(node => typeof node.props.children === 'string').map(node => node.props.children).join('\n');

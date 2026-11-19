@@ -19278,7 +19278,11 @@ const es: WorkflowsDestinationTranslations = {
         needsYou: ({ count }) => `${count} te ${count === 1 ? 'necesita' : 'necesitan'}`,
         separator: ', ',
     },
+    runsEmpty: 'Aún no hay ejecuciones. Aparecerá una aquí en cuanto empiece un flujo de trabajo.',
     columns: {
+        run: 'Ejecución',
+        started: 'Inicio',
+        took: 'Duración',
         workflow: 'Flujo de trabajo',
         uses: 'Usa',
         trigger: 'Activador',

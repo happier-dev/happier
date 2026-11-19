@@ -19356,7 +19356,11 @@ const ca: WorkflowsDestinationTranslations = {
         needsYou: ({ count }) => `${count} et ${count === 1 ? 'necessita' : 'necessiten'}`,
         separator: ', ',
     },
+    runsEmpty: 'Encara no hi ha execucions. N\'apareixerà una aquí tan bon punt comenci un flux de treball.',
     columns: {
+        run: 'Execució',
+        started: 'Inici',
+        took: 'Durada',
         workflow: 'Flux de treball',
         uses: 'Fa servir',
         trigger: 'Activador',

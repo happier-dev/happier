@@ -19328,7 +19328,11 @@ const pt: WorkflowsDestinationTranslations = {
         needsYou: ({ count }) => `${count} ${count === 1 ? 'precisa' : 'precisam'} de você`,
         separator: ', ',
     },
+    runsEmpty: 'Ainda não há execuções. Uma aparecerá aqui assim que um fluxo de trabalho começar.',
     columns: {
+        run: 'Execução',
+        started: 'Início',
+        took: 'Duração',
         workflow: 'Fluxo de trabalho',
         uses: 'Usa',
         trigger: 'Gatilho',

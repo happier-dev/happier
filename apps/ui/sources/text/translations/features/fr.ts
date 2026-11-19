@@ -19399,7 +19399,11 @@ const fr: WorkflowsDestinationTranslations = {
         needsYou: ({ count }) => `${count} ${count === 1 ? 'a' : 'ont'} besoin de toi`,
         separator: ', ',
     },
+    runsEmpty: 'Aucune exécution pour l’instant. Une exécution apparaît ici dès qu’un workflow démarre.',
     columns: {
+        run: 'Exécution',
+        started: 'Démarrée',
+        took: 'Durée',
         workflow: 'Workflow',
         uses: 'Utilise',
         trigger: 'Déclencheur',

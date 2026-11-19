@@ -6,6 +6,7 @@ import { WorkflowsGate } from '@/components/workflows/gating/WorkflowsGate';
 import { useWorkflowsDestinationAccess } from '@/components/workflows/gating/workflowsDestinationAccess';
 
 import { WorkflowsLibraryHome } from './WorkflowsLibraryHome';
+import { WorkflowRunsHome } from './WorkflowRunsHome';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
@@ -22,7 +23,10 @@ import { Text } from '@/components/ui/text/Text';
  * Definitions carries the same complete home with descriptions, counts and examples. Runs and
  * Account triggers remain reachable through the existing view and trigger owners.
  */
-export const WorkflowsDestinationIndex = React.memo(function WorkflowsDestinationIndex() {
+export const WorkflowsDestinationIndex = React.memo(function WorkflowsDestinationIndex(props: Readonly<{
+    /** `/workflows/runs`: beside the column, main holds the Runs table (scene 8 D2); without it the column page opens on Runs. */
+    view?: 'runs';
+}>) {
     const columnVisible = useAppShellColumn().columnVisible;
     const access = useWorkflowsDestinationAccess();
     const router = useRouter();
@@ -40,7 +44,7 @@ export const WorkflowsDestinationIndex = React.memo(function WorkflowsDestinatio
     const close = () => router.setParams({ authoringSessionId: undefined, authoringServerId: undefined });
     const content = !columnVisible && access.kind === 'workflows'
         ? <WorkflowsColumn surface="page" definitionsContent={<WorkflowsLibraryHome />} />
-        : <WorkflowsGate surface="destination"><WorkflowsLibraryHome /></WorkflowsGate>;
+        : <WorkflowsGate surface="destination">{props.view === 'runs' ? <WorkflowRunsHome /> : <WorkflowsLibraryHome />}</WorkflowsGate>;
     const main = <>{params.automationUnavailable === '1' ? <SurfaceStateCard testID="retired-automation-unavailable"
         size="line" kind="unavailable" title={t('workflows.triggers.legacy.notAvailable')} /> : null}
         <View style={{ flex: 1 }} collapsable={false}>{content}</View>

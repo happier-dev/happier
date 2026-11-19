@@ -18836,7 +18836,11 @@ const de: WorkflowsDestinationTranslations = {
         needsYou: ({ count }) => `${count} ${count === 1 ? 'braucht' : 'brauchen'} dich`,
         separator: ', ',
     },
+    runsEmpty: 'Noch keine Läufe. Ein Lauf erscheint hier, sobald ein Workflow startet.',
     columns: {
+        run: 'Lauf',
+        started: 'Gestartet',
+        took: 'Dauer',
         workflow: 'Workflow',
         uses: 'Nutzt',
         trigger: 'Auslöser',

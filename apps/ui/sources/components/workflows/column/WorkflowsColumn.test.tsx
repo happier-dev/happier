@@ -309,7 +309,8 @@ describe('WorkflowsColumn', () => {
         expect(routerPush).toHaveBeenCalledWith(createWorkflowDefinitionRoute(definitionId));
         await screen.pressByTestIdAsync('workflows-column:library:account-trigger:digest');
         await vi.waitFor(() => expect(screen.findByTestId('workflows-column-trigger-popover')).not.toBeNull());
-        expect(routerPush).toHaveBeenCalledTimes(1);
+        // The Runs tab opened its table in main; the Account Workflow itself navigated nowhere.
+        expect(routerPush.mock.calls.filter(([route]) => route !== '/workflows/runs')).toHaveLength(1);
     });
     it('demands definitions and summaries only for presented Definitions while a second reader stays current', async () => {
         const { useWorkflowLibraryView } = await import('../library/useWorkflowLibraryView');
@@ -746,29 +747,26 @@ describe('WorkflowsColumn', () => {
     });
     it('opens the Runs deep link as the same list rather than a separate History collection', async () => {
         answerLists();
-        // Without a shell column (a phone), the destination's column-as-page opens on Runs.
+        // Without a shell column (a phone), the destination's column-as-page opens on Runs: the one Run collection's rows.
         routeState.pathname = '/workflows/runs';
         const screen = await renderScreen(<WorkflowsRunsRoute />, { wrapper: TestAuth });
         routeState.pathname = '/workflows';
-        await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+        const row = () => screen.findAll((node) => node.props?.testID === 'workflows-page:runs:row:run-waiting' && typeof node.props.onPress === 'function')[0];
         await vi.waitFor(async () => {
             await act(async () => {});
-            expect(screen.findHostByTestId('workflow-run-row:run-waiting')).not.toBeNull();
+            expect(row()).toBeDefined();
         });
-
-        expect(screen.tree.root.findAll((node) => node.props?.testID === 'sessions-list-keyboard-frame').length).toBeGreaterThan(0);
+        expect(screen.tree.root.findAll((node) => node.props?.testID === 'sessions-list-keyboard-frame')).toHaveLength(0);
         expect(screen.tree.root.findAll((node) => /^workflows-history:view:/.test(String(node.props?.testID ?? '')))).toHaveLength(0);
-        const rows = screen.tree.root.findAll((node) => node.props?.testID === 'workflow-run-row:run-waiting' && typeof node.props.onPress === 'function');
-        expect(rows.length).toBeGreaterThan(0);
         // Runs only: every row would lead with the same Run glyph, so none does (LIST-ICONS-1108).
-        const { WORKER_KIND_GLYPHS } = await import('@/components/sessions/work/workerKindGlyphs');
-        expect(screen.tree.root.findAll((node) => node.props?.testID === 'workflow-run-sheet:run-waiting')[0]!
-            .findAll((node) => node.props.name === WORKER_KIND_GLYPHS.workflow_run)).toHaveLength(0);
-        await act(async () => { rows[0]!.props.onPress(); });
-        expect(routerPush).toHaveBeenCalledWith('/workflows/runs/run-waiting?serverId=unified-column.test');
+        expect(row()!.props.icon).toBeUndefined();
+        await act(async () => { row()!.props.onPress(); });
+        expect(routerPush).toHaveBeenCalledWith(
+            '/workflows/runs/run-waiting?target=occurrence&automationId=automation-1&serverId=unified-column.test',
+        );
     });
 
-    it('keeps the library in main beside a column that already lists Runs (DESIGN-16 D9)', async () => {
+    it('opens the Runs table in main beside the column, never a second Sessions list (scene 8 D2)', async () => {
         answerLists();
         routeState.pathname = '/workflows/runs';
         try {
@@ -776,8 +774,9 @@ describe('WorkflowsColumn', () => {
                 <WorkflowsRunsRoute />
             </AppShellColumnContext.Provider>, { wrapper: TestAuth });
             await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-            // The column is the one Runs list; main never repeats it.
+            // Main holds the Runs table (owner D2); it never repeats a Sessions list.
             expect(screen.findAllHostsByTestId('sessions-list-keyboard-frame')).toHaveLength(0);
+            await vi.waitFor(() => expect(screen.findHostByTestId('workflow-runs:header')).not.toBeNull());
         } finally {
             routeState.pathname = '/workflows';
         }
@@ -794,55 +793,32 @@ describe('WorkflowsColumn', () => {
         // Runs stay built for the next switch, but only Definitions are presented.
         expect(screen.findHostByTestId('workflows-column:runs')?.props.pointerEvents).toBe('none');
     });
-    it('lets the Runs view open a run through the shared Sessions list', async () => {
+    it('lets the Runs view open a run from the one Run collection, never a Session draft', async () => {
         answerLists();
         const scope = storage.getState().profileScope!;
         configureSessionDraftRepository({ scope, syncEnabled: false });
         const draftId = '99999999-9999-4999-8999-999999999999';
         writeNewSessionDraft({ scope, draftId, patch: { text: 'Unsent Session draft' }, materializationIntent: 'seeded' });
         const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
-        const runsTabs = screen.tree.root.findAll((node) => node.props?.testID === 'workflows-column:view:runs' && typeof node.props.onPress === 'function');
-        expect(runsTabs.length).toBeGreaterThan(0);
-        await act(async () => { runsTabs[0]!.props.onPress(); });
-        await flushHookEffects({ frames: 2 }); // the press reaches its owner after the pressed tab has painted
+        await pressView(screen, 'runs');
+        const row = () => screen.findAll((node) => node.props?.testID === 'workflows-column:runs:row:run-waiting' && typeof node.props.onPress === 'function')[0];
         await vi.waitFor(async () => {
             await act(async () => {});
-            expect(screen.findHostByTestId('workflow-run-row:run-waiting')).not.toBeNull();
+            expect(row()).toBeDefined();
         });
-
-        expect(screen.tree.root.findAll((node) => node.props?.testID === 'sessions-list-keyboard-frame').length).toBeGreaterThan(0);
-        expect(screen.tree.root.findAll((node) => /workflows-column:(needsYou|running|history):/.test(String(node.props?.testID ?? '')))).toHaveLength(0);
-        const runRows = screen.tree.root.findAll((node) => node.props?.testID === 'workflow-run-row:run-waiting' && typeof node.props.onPress === 'function');
-        expect(runRows.length).toBeGreaterThan(0);
+        // The sidebar's Runs read the Run collection (scene 8 D2): its own space title, no Sessions list, no drafts.
+        expect(screen.findHostByTestId('workflows-column-runs-space-title')).not.toBeNull();
+        expect(screen.tree.root.findAll((node) => node.props?.testID === 'sessions-list-keyboard-frame')).toHaveLength(0);
         expect(screen.findByTestId(`session-draft-row:new-session:${draftId}`)).toBeNull();
-        const filterTrigger = screen.findByTestId('session-list-filter-trigger');
-        expect(filterTrigger?.props.accessibilityLabel).toContain('sessionsList.filtersShowRuns');
-        expect(filterTrigger?.props.accessibilityLabel).not.toContain('sessionsList.filtersMyWork');
-        // Runs is this list's base scope; only a user-added narrowing offers Reset.
-        expect(screen.findByTestId('session-list-filter-summary-reset')).toBeNull();
-        await act(async () => { runRows[0]!.props.onPress(); });
-        expect(routerPush).toHaveBeenCalledWith('/workflows/runs/run-waiting?serverId=unified-column.test');
-
-        await screen.pressByTestIdAsync('session-list-search-trigger');
-        await act(async () => { screen.changeTextByTestId('session-list-search-input', 'release'); });
-        expect(screen.findByTestId('workflow-run-row:run-waiting')).toBeTruthy();
-        expect(screen.findAllHostsByTestId('session-list-filtered-no-results')).toHaveLength(0);
-        const filteredCounts = screen.tree.root.findAll((node) => node.props.controller?.fixedShow === 'runs' && node.props.filterResult !== undefined);
-        expect(filteredCounts.length).toBeGreaterThan(0);
-        for (const node of filteredCounts) expect(node.props.filterResult).toMatchObject({ coverage: 'complete', matchedCount: 1 });
-        await screen.pressByTestIdAsync('session-list-filter-trigger');
-        const { buildSessionListConditionLabels } = await import('@/components/sessions/shell/search/SessionListFilterControl');
-        const editors = screen.findAll(node => node.props.fixedShow === 'runs' && node.props.result !== undefined);
-        expect(editors.length).toBeGreaterThan(0);
-        for (const editor of editors) expect(editor.props.result).toMatchObject({ coverage: 'complete', matchedCount: 1 });
-        expect(screen.findHostByTestId('collection-filter-count')?.props.children).toBe(buildSessionListConditionLabels().resultCount(1));
+        await act(async () => { row()!.props.onPress(); });
+        expect(routerPush).toHaveBeenCalledWith(
+            '/workflows/runs/run-waiting?target=occurrence&automationId=automation-1&serverId=unified-column.test',
+        );
         await pressView(screen, 'definitions');
         expect(screen.findHostByTestId('workflows-column:runs')?.props.pointerEvents).toBe('none');
-        await pressView(screen, 'runs');
-        expect(screen.findByTestId('session-list-search-input')?.props.value).toBe('release');
     });
 
-    it('switches Definitions and Runs inside one list whose switch stays put, with the spaces only over definitions (R8-7)', async () => {
+    it('switches Definitions and Runs inside one list whose switch stays put, with each view’s own spaces (R8-7, D2)', async () => {
         answerLists();
         // Beside the library home the sidebar keeps its own space title, filter and search, as the Sessions sidebar does
         // (owner 2026-11-19 15:10Z); both narrow through the one Workflow draft.
@@ -870,6 +846,8 @@ describe('WorkflowsColumn', () => {
         expect(inBand()).toBe(true);
         expect(screen.findAllHostsByTestId('workflows-column-space-title')).toHaveLength(0);
         expect(screen.findAllHostsByTestId('workflows-column-space-strip')).toHaveLength(0);
+        // Runs carry their own space over the one Run collection (owner 2026-11-19 15:10Z, D2).
+        expect(screen.findHostByTestId('workflows-column-runs-space-title')).not.toBeNull();
         await pressView(screen, 'definitions');
         expect(screen.findHostByTestId('workflows-column:list')).toBe(list);
         expect(inBand()).toBe(true);
@@ -886,16 +864,16 @@ describe('WorkflowsColumn', () => {
         await pressView(screen, 'runs');
         await vi.waitFor(async () => {
             await act(async () => {});
-            expect(screen.findHostByTestId('workflow-run-row:run-waiting')).not.toBeNull();
+            expect(screen.findHostByTestId('workflows-column:runs:row:run-waiting')).not.toBeNull();
         });
-        const runs = screen.findHostByTestId('sessions-list-keyboard-frame');
+        const runs = screen.findHostByTestId('workflows-column:runs:row:run-waiting');
         expect(runs).not.toBeNull();
         for (const view of ['definitions', 'runs', 'definitions'] as const) {
             await pressView(screen, view);
             // A switch shows the other list as it stood: neither list is built again (P03-TAB-CONTENT W6).
             // Identity, compared as a boolean: a failing match would print both whole render trees.
             expect({ view, definitionsKept: screen.findHostByTestId('workflows-column:group:library') === definitions,
-                runsKept: screen.findHostByTestId('sessions-list-keyboard-frame') === runs })
+                runsKept: screen.findHostByTestId('workflows-column:runs:row:run-waiting') === runs })
                 .toEqual({ view, definitionsKept: true, runsKept: true });
             expect(presented('workflows-column:definitions')).toBe(view === 'definitions');
             expect(presented('workflows-column:runs')).toBe(view === 'runs');

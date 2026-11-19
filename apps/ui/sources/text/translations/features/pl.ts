@@ -19366,7 +19366,11 @@ const pl: WorkflowsDestinationTranslations = {
         needsYou: ({ count }) => `czekają na ciebie: ${count}`,
         separator: ', ',
     },
+    runsEmpty: 'Brak uruchomień. Pojawi się tu, gdy tylko przepływ pracy się rozpocznie.',
     columns: {
+        run: 'Uruchomienie',
+        started: 'Start',
+        took: 'Czas',
         workflow: 'Przepływ pracy',
         uses: 'Używa',
         trigger: 'Wyzwalacz',

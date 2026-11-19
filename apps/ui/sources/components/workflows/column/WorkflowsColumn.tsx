@@ -5,7 +5,6 @@ import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows/bui
 import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { SessionsList } from '@/components/sessions/shell/SessionsList';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -33,6 +32,8 @@ import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinit
 
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
 import { WorkflowColumnRow } from './WorkflowColumnRow';
+import { WorkflowRunsColumnRows } from './WorkflowRunsColumnRows';
+import { useWorkflowRunCollection, useWorkflowRunCollectionHeader } from '../library/useWorkflowRunCollection';
 import type { WorkflowLibraryItem } from '../library/workflowLibraryCells';
 import { WorkflowsPhonePage, type WorkflowsColumnView } from './WorkflowsPhonePage';
 import { WorkflowsColumnCreationRefContext, WorkflowsColumnHeadsPageContext, WorkflowsColumnOwnsCreationContext } from './workflowsColumnCreation';
@@ -47,7 +48,7 @@ import { collectionSpaceSettingRefs } from '@/components/settings/session/collec
 import { readOpenWorkflowDefinition } from './workflowsColumnModel';
 import { WorkflowLibraryFreshness } from '../library/WorkflowLibraryFreshness';
 import { isWorkflowEventsPath, useWorkflowsColumnEvents, WorkflowsColumnEventsFilters, WorkflowsColumnEventsListening, WorkflowsColumnEventsRows } from '../events/WorkflowsColumnEvents';
-import { WORKFLOWS_EVENTS_ROUTE } from '../workflowsRoutes';
+import { WORKFLOWS_EVENTS_ROUTE, WORKFLOWS_RUNS_ROUTE } from '../workflowsRoutes';
 
 
 function isRunPath(pathname: string): boolean {
@@ -144,8 +145,8 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
             <RetainedPanelSurface isActive={view === 'runs'} hiddenMode="activity" testID="workflows-column:runs">
                 {headsPage
                     // Runs sit in the same wide column as the page's name and switch above them.
-                    ? <PageFrame column="wide" content="column" style={styles.pageRuns}><SessionsList fixedShow="runs" pathname={pathname} /></PageFrame>
-                    : <SessionsList fixedShow="runs" pathname={pathname} />}
+                    ? <PageFrame column="wide" content="column" style={styles.pageRuns}><WorkflowsColumnRunsPage pathname={pathname} active={view === 'runs'} /></PageFrame>
+                    : <WorkflowsColumnRunsPage pathname={pathname} active={view === 'runs'} />}
             </RetainedPanelSurface>
             <RetainedPanelSurface isActive={view === 'events'} hiddenMode="activity" testID="workflows-column:events">
                 <WorkflowsColumnEventsPage active={view === 'events'} />
@@ -191,17 +192,29 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
     const selectView = useEventCallback((next: WorkflowsColumnView) => {
         props.onSelectView(next);
         if (next === 'events' && !isWorkflowEventsPath(props.pathname)) router.push(WORKFLOWS_EVENTS_ROUTE as never);
+        // Beside the main pane Runs opens its table there (scene 8 D2); an open run stays where it is.
+        if (next === 'runs' && !isRunPath(props.pathname)) router.push(WORKFLOWS_RUNS_ROUTE as never);
     });
     const header = useWorkflowLibrarySpaceHeader(libraryView, 'workflows-column-space');
     // The sidebar keeps its own search beside "+" and its spaces strip, as the Sessions sidebar does, also beside the
     // index page (owner 2026-11-19 15:10Z, over the lab's navigation-only column). Both places narrow through the one
     // Workflow library draft, so a space or search set in either reads the same in both.
     const spaceControls = definitions;
+    // Runs keep the same sidebar controls over the one `workflowRun` collection the Runs table reads (scene 8 D2).
+    const runsShown = props.view === 'runs';
+    const runs = useWorkflowRunCollection(presented && runsShown);
+    const runHeader = useWorkflowRunCollectionHeader(runs, 'workflows-column-runs-space');
+    const shownHeader = definitions ? header : runsShown ? runHeader : null;
     const { searchQuery, setSearchQuery } = libraryView;
+    const runSearchQuery = runs.binding.searchQuery;
+    const setRunSearchQuery = runs.setSearchQuery;
     const search = React.useMemo(() => spaceControls ? {
         value: searchQuery, onChangeText: setSearchQuery,
         placeholder: t('workflows.destination.searchPlaceholder'), testID: 'workflows-column:search',
-    } : null, [searchQuery, setSearchQuery, spaceControls]);
+    } : runsShown ? {
+        value: runSearchQuery, onChangeText: setRunSearchQuery,
+        placeholder: t('workflows.destination.display.searchRuns'), testID: 'workflows-column:runs-search',
+    } : null, [runSearchQuery, runsShown, searchQuery, setRunSearchQuery, setSearchQuery, spaceControls]);
     const { theme } = useUnistyles();
     const viewSwitch = <SegmentedTabBar<WorkflowsColumnView>
         testIDPrefix="workflows-column:view"
@@ -222,21 +235,21 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
         testID="workflows-column:list"
         surface={props.surface}
         title={t('workflows.title')}
-        {...(spaceControls ? { titleControl: header.titleControl } : {})}
+        {...(shownHeader ? { titleControl: shownHeader.titleControl } : {})}
         search={search}
         strip={<>
             <View testID="workflows-column:view-band" style={styles.viewBand}>{viewSwitch}</View>
             {/* The spaces take their own line under the switch (scene 8 column), so neither squeezes the other. */}
-            {spaceControls ? <View style={styles.viewBandStrip}>{header.strip}</View> : null}
+            {shownHeader ? <View style={styles.viewBandStrip}>{shownHeader.strip}</View> : null}
             {/* The listening line takes its own line under the switch: beside it, its time would be cut (r3 live). */}
             {eventsShown ? <View style={styles.eventsHead}>
                 <WorkflowsColumnEventsListening state={events} />
                 <WorkflowsColumnEventsFilters state={events} />
             </View> : null}
-            {spaceControls ? header.conditionRow : null}
-            {spaceControls ? header.overlays : null}
+            {shownHeader ? shownHeader.conditionRow : null}
+            {shownHeader ? shownHeader.overlays : null}
         </>}
-        headerAction={<View style={styles.headerActions}>{spaceControls ? header.filterButton : null}{props.headerAction}</View>}
+        headerAction={<View style={styles.headerActions}>{shownHeader ? shownHeader.filterButton : null}{props.headerAction}</View>}
         // Both lists stay built once shown and the switch only presents one: a switch never rebuilds a list.
         scrollContent={<>
             <RetainedPanelSurface isActive={definitions} hiddenMode="activity" testID="workflows-column:definitions">
@@ -245,7 +258,9 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
                 </ItemList>
             </RetainedPanelSurface>
             <RetainedPanelSurface isActive={props.view === 'runs'} hiddenMode="activity" testID="workflows-column:runs">
-                <SessionsList fixedShow="runs" pathname={props.pathname} />
+                <ItemList presentation="grouped" style={styles.definitionsList}>
+                    <WorkflowRunsColumnRows model={runs} selectedRunId={readOpenWorkflowRun(props.pathname)} testIDPrefix="workflows-column:runs" />
+                </ItemList>
             </RetainedPanelSurface>
             <RetainedPanelSurface isActive={eventsShown} hiddenMode="activity" testID="workflows-column:events">
                 <WorkflowsColumnEventsRows feed={events.feed} scope={events.scope} filter={events.filter} surface={props.surface}
@@ -424,6 +439,7 @@ const styles = StyleSheet.create((theme) => ({
     viewBand: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     // The band packs from the title's leading text edge, like every column's (SHELL-ACCEPT-1117): the switch follows the strip.
     viewBandStrip: { paddingTop: theme.space.s4, minWidth: 0 },
+    grow: { flexGrow: 1 },
     headerActions: { flexDirection: 'row', alignItems: 'center', gap: 2 },
     freshness: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset, paddingBottom: HAPPIER_COLLECTION_LIST_METRICS.groupLabelFirstPaddingTop },
     // The column's row inset, so the line's edges sit on the rows' edges.
@@ -444,6 +460,30 @@ const WorkflowsColumnEventsPage = React.memo(function WorkflowsColumnEventsPage(
             <WorkflowsColumnEventsRows feed={events.feed} scope={events.scope} filter={events.filter} surface="page" active={presented && props.active} />
         </ItemList>
     </PageFrame>;
+});
+
+/** The run a `/workflows/runs/<id>` route has open, for its row's selection. */
+function readOpenWorkflowRun(pathname: string): string | null {
+    const match = /^\/workflows\/runs\/([^/?#]+)/.exec(pathname);
+    return match ? decodeURIComponent(match[1]!) : null;
+}
+
+/** Runs as the destination's page (no shell column): the run space, search and filters, then the rows. */
+const WorkflowsColumnRunsPage = React.memo(function WorkflowsColumnRunsPage(props: Readonly<{ pathname: string; active: boolean }>) {
+    const presented = useLayoutPresentationActive();
+    const runs = useWorkflowRunCollection(presented && props.active);
+    const header = useWorkflowRunCollectionHeader(runs, 'workflows-page-runs-space', 'section');
+    return <>
+        <View style={styles.eventsPageHead}>
+            <View style={styles.viewBand}>{header.titleControl}<View style={styles.grow} />{header.filterButton}</View>
+            {header.strip}
+            {header.conditionRow}
+            {header.overlays}
+        </View>
+        <ItemList presentation="grouped" style={styles.definitionsList}>
+            <WorkflowRunsColumnRows model={runs} selectedRunId={readOpenWorkflowRun(props.pathname)} testIDPrefix="workflows-page:runs" />
+        </ItemList>
+    </>;
 });
 
 /** Whether a Library row is the open one: its definition's page, or the account workflow a deep link opened. */

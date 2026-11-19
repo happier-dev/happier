@@ -96,10 +96,13 @@ export function readWorkflowLibraryRowFacts(
     return {
       triggers: row.accountTrigger.triggers,
       agents: inline ? workflowDefinitionPreviewAgentsV1(inline) : EMPTY_AGENTS,
+      // The projection owner's sentence; only an Off set is re-said without its Off (its state word says it).
       triggerLine:
-        row.accountTrigger.triggers.length > 0
-          ? formatTriggerSetSummary(row.accountTrigger.triggers, lastRun?.state, OFF_SAID_ELSEWHERE)
-          : null,
+        row.accountTrigger.triggers.length === 0
+          ? null
+          : isAccountWorkflowOff(row)
+            ? formatTriggerSetSummary(row.accountTrigger.triggers, lastRun?.state, OFF_SAID_ELSEWHERE)
+            : row.triggerSummary,
       stepCount: inline ? countWorkflowStepsV1(inline.blocks) : null,
       steps: inline
         ? workflowDefinitionPreviewStepsV1(inline.blocks)

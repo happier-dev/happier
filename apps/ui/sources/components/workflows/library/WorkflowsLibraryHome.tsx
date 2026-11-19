@@ -11,10 +11,10 @@ import {
     HostCollection as Collection,
     useHappierCollection,
     type CollectionAnatomy,
+    type CollectionField,
     type CollectionRowActions,
 } from '@happier-dev/plugin-ui';
 import { HAPPIER_PAGE_METRICS, type HappierCollectionWindow } from '@happier-dev/plugin-ui/presentation';
-import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { useGlobalSearchParams, useIsFocused, useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -27,7 +27,9 @@ import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { CollectionViewSwitch } from '@/components/ui/lists/collection/CollectionViewSwitch';
+import { CollectionColumnsMenuButton, CollectionColumnsMenuTrigger, collectionColumnsMenuColumns } from '@/components/ui/lists/collection/CollectionColumnsMenu';
 import { useCollectionDisplayOptions } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
+import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -45,7 +47,6 @@ import {
     exportSavedWorkflowDocument,
 } from '@/sync/domains/workflows/workflowDefinitionActions';
 import { createWorkflowDefinitionRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
-import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 
 import { confirmWorkflowDocumentExport } from '../actions/confirmWorkflowDocumentExport';
@@ -56,19 +57,23 @@ import {
     useWorkflowRunWindow,
     type WorkflowLibraryDefinition,
 } from './workflowLibraryReads';
-import { projectWorkflowRunStrip } from './workflowRunStrip';
 import { WorkflowRunStripView } from './WorkflowRunStripView';
+import { readWorkflowPluginDetails, useWorkflowListExtensions } from './useWorkflowListExtensions';
+import { buildWorkflowLibraryCard, buildWorkflowLibraryFields, readWorkflowLibraryRowFacts, readWorkflowLibraryRowMarks,
+    WorkflowLibraryStateWord, type WorkflowLibraryRowFacts } from './workflowLibraryCells';
+import { WorkflowMarks } from '../presentation/WorkflowMarks';
 import { WorkflowsLibraryHeaderActions } from './WorkflowsLibraryHeaderActions';
 import { WorkflowExamplesSection } from './WorkflowExamplesSection';
 import { WorkflowBuiltinsSection } from './WorkflowBuiltinsSection';
+import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { useWorkflowAgentAuthoring } from '../authoring/useWorkflowAgentAuthoring';
 import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
-import { formatNextScheduledRun, formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
+import { formatNextScheduledRun } from '../triggers/formatTriggerSummary';
 import { isWorkflowTriggerSourceGone } from '../triggers/sessionTriggerGroups';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '../presentation/workflowProblemPresentation';
 import { AccountTriggersSection, useAccountWorkflowEditor } from '../triggers/AccountTriggersSection';
 import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
-import { AccountWorkflowRowAnchor, formatAccountWorkflowLine, isAccountWorkflowOff, isAccountWorkflowReviewRequired,
+import { AccountWorkflowRowAnchor, isAccountWorkflowOff, isAccountWorkflowReviewRequired,
     type AccountWorkflowLibraryRow } from './AccountWorkflowRowAnchor';
 import { useWorkflowLibraryView, workflowLibraryRowTitle as rowTitle, type WorkflowLibraryRow } from './useWorkflowLibraryView';
 import { resolveSessionSectionDisplayTitle } from '@/sync/domains/session/organization/sections';
@@ -92,6 +97,9 @@ const AccountWorkflowRowsContext = React.createContext<AccountWorkflowRows | nul
 
 /** The narrowest readable row at normal text size. */
 const LIBRARY_MIN_WIDTH_PX = 320;
+/** A workflow card holds its whole sentence (scene 8 D4): two cards to a row on a wide page, never three cramped ones. */
+const WORKFLOW_CARD_MIN_WIDTH_PX = 360;
+const WORKFLOWS_COLLECTION_ID = 'workflows.library';
 
 type LibraryRowCommands = Readonly<{
     deleting: ReadonlySet<string>;
@@ -145,6 +153,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     const ownLibraryView = useWorkflowLibraryView(focused && lent === null);
     const libraryView = lent?.libraryView ?? ownLibraryView;
     const { library, filter, needle, searchQuery: query } = libraryView;
+    const columnListsBuiltins = useAppShellColumn().columnVisible;
     const spaceHeader = useWorkflowLibrarySpaceHeader(ownLibraryView, 'workflows-home-space', 'section');
     React.useEffect(() => {
         const definitionId = library.deletedDefinitionId;
@@ -212,8 +221,18 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         openKey: null,
         onOpenChange: openDefinition,
     });
-    const anatomy = useLibraryAnatomy();
     const commands = useLibraryRowCommands(library.deletedDefinitionId, workflowSections);
+    const { anatomy, pluginDetails } = useLibraryAnatomy(display.presentation, commands.openRun, display.lines, display.details);
+    const groupOptions = <ActionListSection title={t('workflows.destination.display.groupBy')} actions={(['source', 'project'] as const).map(groupBy => ({
+        id: groupBy, testID: `workflows-home:view:group:${groupBy}`,
+        label: t(`workflows.destination.display.${groupBy}`), selected: display.groupBy === groupBy,
+        onPress: () => { void display.setGroupBy(groupBy); },
+    }))} />;
+    const [fittedColumns, setFittedColumns] = React.useState<readonly string[] | null>(null);
+    const columns = React.useMemo(() => ({ collectionId: WORKFLOWS_COLLECTION_ID, onColumnsFit: setFittedColumns }), []);
+    const menuColumns = React.useMemo(() => collectionColumnsMenuColumns(
+        { id: 'title', title: t('workflows.destination.columns.workflow') }, anatomy.fields ?? [],
+    ), [anatomy.fields]);
     const deleted = library.deletedDefinitionId !== null;
     // Built-ins share the filter but live outside this Collection's reachable focus rows.
     const visibleKeys = model.keys;
@@ -273,10 +292,10 @@ export function WorkflowsLibraryHome(): React.ReactElement {
             title={t('workflows.title')}
             description={t('workflows.destination.description')}
             actionsPlacement={landingNeedsNew ? 'page' : undefined}
-            // The column normally owns phone creation.
-            actions={columnOwnsCreation && !landingNeedsNew ? undefined : (
+            // The column normally owns phone creation; a wide page's New workflow ends its one toolbar (scene 8).
+            actions={phone && (!columnOwnsCreation || landingNeedsNew) ? (
                 <WorkflowsLibraryHeaderActions secondary={!columnOwnsCreation} controlRef={setCreationRef} />
-            )}
+            ) : undefined}
         />}
         {deleted ? <View testID="workflows-home:deleted-focus">
             <SurfaceStateCard testID="workflows-home:deleted" size="line" kind="success" title={t('common.deleted')}
@@ -287,11 +306,36 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         {lent ? null : <>
         <View testID="workflows-home:scope-line" style={[styles.controlLine, phone ? styles.controlLinePhone : null]}>
             {spaceHeader.titleControl}
+            {/* Scene 8's one toolbar: the space and its search lead; filters, view and the one primary action end the line. */}
+            {phone ? null : search}
             {phone ? <View style={styles.spaceStripInline}>{spaceHeader.strip}</View> : <View style={styles.controlLineGrow} />}
             {spaceHeader.filterButton}
-            {phone ? null : search}
+            {display.presentation === 'table' ? <CollectionColumnsMenuButton
+                testID="workflows-home:view"
+                collectionId={WORKFLOWS_COLLECTION_ID}
+                columns={menuColumns}
+                fittedIds={fittedColumns}
+                label={t('sessionsList.viewOptions')}
+                beforeColumns={groupOptions}
+            /> : <CollectionColumnsMenuTrigger testID="workflows-home:view" label={t('sessionsList.viewOptions')}>
+                {groupOptions}
+                <ActionListSection title={t('settingsSession.sessionList.densityMenuTitle')} actions={([1, 2, 3] as const).map(lines => ({
+                    id: String(lines), testID: `workflows-home:view:lines:${lines}`,
+                    label: String(lines), selected: display.lines === lines,
+                    onPress: () => { void display.setLines(lines); },
+                }))} />
+                {pluginDetails.length > 0 ? <ActionListSection title={t('workflows.destination.display.rowDetails')}
+                    actions={pluginDetails.map(detail => ({
+                        id: detail.id,
+                        label: detail.title,
+                        checked: display.details?.[detail.id] === true,
+                        onPress: () => { void display.setDetail(detail.id, display.details?.[detail.id] !== true); },
+                    }))} /> : null}
+            </CollectionColumnsMenuTrigger>}
             {phone ? null : <CollectionViewSwitch presentation={display.preferredPresentation}
                 onChange={display.setPresentation} testIDPrefix="workflows-home:presentation" />}
+            {/* Beside the Workflows column its "+" carries Import and Create with an agent; the page keeps the one primary. */}
+            {phone || columnHeadsPage ? null : <WorkflowsLibraryHeaderActions secondary={!columnListsBuiltins} controlRef={setCreationRef} />}
         </View>
         {phone ? <View style={styles.controlLine}>{search}</View> : <View style={styles.spaceStrip}>{spaceHeader.strip}</View>}
         {spaceHeader.conditionRow ? <View style={styles.spaceStrip}>{spaceHeader.conditionRow}</View> : null}
@@ -355,6 +399,10 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                                 presentation={display.presentation}
                                 detail="none"
                                 scroll={display.presentation === 'grid' ? 'page' : 'page-virtualized'}
+                                // The column binding stays fixed for the mounted Collection (its column hook is chosen once):
+                                // toggling it with the presentation crashed the Table ⇄ Cards switch. Cards declare no fields.
+                                columns={columns}
+                                minCardWidth={WORKFLOW_CARD_MIN_WIDTH_PX}
                                 minListWidth={LIBRARY_MIN_WIDTH_PX}
                                 minDetailWidth={LIBRARY_MIN_WIDTH_PX}
                                 preferredListRatio={1}
@@ -387,8 +435,57 @@ function AddressedAccountTriggersSlot() {
     return readSessionRouteServerId(params) ? <AccountTriggersSection /> : null;
 }
 
-function useLibraryAnatomy(): CollectionAnatomy<LibraryRow> {
-    return React.useMemo(() => ({
+function useLibraryAnatomy(
+    presentation: 'table' | 'grid' | 'list',
+    openRun: (runId: string) => void,
+    lines: 1 | 2 | 3,
+    details: Readonly<Record<string, boolean>> | undefined,
+) {
+    const table = presentation === 'table';
+    // One facts reading per row identity, shared by every cell and card slot that draws it (the projection keeps rows' identity).
+    const readFacts = React.useMemo(() => {
+        const facts = new WeakMap<LibraryRow, WorkflowLibraryRowFacts>();
+        return (row: LibraryRow) => {
+            let read = facts.get(row);
+            if (read === undefined) { read = readWorkflowLibraryRowFacts(row); facts.set(row, read); }
+            return read;
+        };
+    }, []);
+    const openRunRef = React.useRef(openRun);
+    openRunRef.current = openRun;
+    const readableFacts = React.useMemo(() => new Map<string, (row: LibraryRow) => unknown>([
+        ['stepCount', row => readFacts(row).stepCount],
+        ['lastRunAt', row => readFacts(row).lastRunAt],
+        ['state', row => readFacts(row).state],
+    ]), [readFacts]);
+    const extensions = useWorkflowListExtensions('workflow', readableFacts);
+    const card = React.useMemo(() => {
+        const base = buildWorkflowLibraryCard(readFacts, (runId) => openRunRef.current(runId));
+        return {
+            ...base,
+            facts: (row: LibraryRow) => {
+                const context = readWorkflowPluginDetails(extensions.details, details, row, 'context');
+                const mark = readWorkflowPluginDetails(extensions.details, details, row, 'mark');
+                return <>{base.facts?.(row)}{context || mark ? <Text variant="meta">{[context, mark].filter(Boolean).join(' · ')}</Text> : null}</>;
+            },
+        };
+    }, [details, extensions.details, readFacts]);
+    const nextRun = React.useMemo(() => [{
+        key: 'nextRun',
+        title: t('automations.detail.overview.nextRunTitle'),
+        minWidth: 112,
+        priority: 0,
+        defaultHidden: true,
+        render: row => !isAccountRow(row) && row.group !== 'fromPlugins' && row.definition.nextRunAt !== null
+            ? formatNextScheduledRun(row.definition.nextRunAt) : null,
+    }] satisfies readonly CollectionField<LibraryRow>[], []);
+    // Scene 8 table order: Workflow, Uses, Trigger, Steps, Last run, Next run (opt-in), Last 8 runs, State.
+    const fields = React.useMemo(() => {
+        const [uses, trigger, steps, lastRun, recentRuns, state] = buildWorkflowLibraryFields(readFacts, (runId) => openRunRef.current(runId));
+        return [uses!, trigger!, steps!, lastRun!, ...nextRun, recentRuns!, ...extensions.columns, state!];
+    }, [extensions.columns, nextRun, readFacts]);
+
+    const anatomy = React.useMemo((): CollectionAnatomy<LibraryRow> => ({
         wrapItem: (row, children) => isAccountRow(row) ? <AccountWorkflowHomeRow row={row}>{children}</AccountWorkflowHomeRow>
             : <WorkflowDefinitionDragRow row={row}>{children}</WorkflowDefinitionDragRow>,
         // Every saved row would repeat the same workflow glyph, so none draws one and the names start on the
@@ -396,42 +493,53 @@ function useLibraryAnatomy(): CollectionAnatomy<LibraryRow> {
         glyph: () => null,
         loadingGlyph: false,
         title: rowTitle,
-        where: (row) => {
-            if (isAccountRow(row)) {
-                const lastRun = row.lastRunSummary?.lastRun ?? null;
-                const startedAt = lastRun === null ? Number.NaN : Date.parse(lastRun.startedAt);
-                const inline = row.accountTrigger.context?.inlineDefinition;
-                const when = isAccountWorkflowOff(row) ? formatAccountWorkflowLine(row) : row.triggerSummary;
-                return [
-                    ...(inline ? [t('workflows.examples.stepCount', { count: countWorkflowStepsV1(inline.blocks) })] : []),
-                    ...(when ? [when] : []),
-                    ...(Number.isFinite(startedAt) ? [t('workflows.destination.lastRun', { age: formatRelativeTimeShort(startedAt, Date.now()) })] : []),
-                ].join(' · ');
-            }
-            if (row.group === 'fromPlugins') return [
-                t('workflows.examples.stepCount', { count: countWorkflowStepsV1(row.plugin.definition.blocks) }),
-                row.plugin.description ?? `${row.plugin.pluginId} · ${row.plugin.version}`,
-            ].join(' · ');
-            const lastRun = row.lastRunSummary?.lastRun ?? null;
-            const startedAt = lastRun === null ? Number.NaN : Date.parse(lastRun.startedAt);
-            return [row.definition.contentStatus === 'available'
-                ? t('workflows.examples.stepCount', { count: row.definition.stepCount }) : t('common.unavailable'),
-                row.definition.triggerSummaryErrorCode === undefined
-                    ? formatTriggerSetSummary(row.definition.triggers) : t('common.unavailable'),
-                ...(Number.isFinite(startedAt) ? [t('workflows.destination.lastRun', { age: formatRelativeTimeShort(startedAt, Date.now()) })] : []),
-            ].join(' · ');
+        card,
+        // A list row (a phone, a narrow page) at Lines 2 (scene 8 phone): the state word leads line 2 when it speaks, then
+        // the trigger sentence; what it uses ends the title line and its recent runs end the row.
+        byline: lines === 1 ? undefined : (row) => {
+            const trigger = readFacts(row).triggerLine ?? (row.group === 'fromPlugins' ? row.plugin.description ?? null : null);
+            const extension = readWorkflowPluginDetails(extensions.details, details, row, 'context');
+            return [trigger, extension].filter(Boolean).join(' · ') || null;
         },
-        titleMeta: row => !isAccountRow(row) && row.group !== 'fromPlugins' && row.definition.nextRunAt !== null
-            ? formatNextScheduledRun(row.definition.nextRunAt) : null,
-        // A plugin row's read-only fact is its group's description, not a per-row note (F9).
-        reason: (row) => isAccountRow(row) ? isAccountWorkflowReviewRequired(row) ? t('workflows.triggers.legacy.reviewRequired') : null
+        description: lines === 3 && !table ? (row) => {
+            const steps = readFacts(row).stepCount;
+            return steps === null ? null : t('workflows.examples.stepCount', { count: steps });
+        } : undefined,
+        bylineLead: lines === 1 ? undefined : (row) => {
+            const facts = readFacts(row);
+            return facts.state === null ? null : <WorkflowLibraryStateWord state={facts.state} needsYouRunId={null}
+                testID={`workflows-home:row:${row.key}:state`} />;
+        },
+        // A list row ends with its recent runs; a narrow table falls back to list rows, so it keeps the same end (the table
+        // itself never draws a list fact, and a card draws the strip in its own foot).
+        ...(presentation === 'grid' ? {} : {
+            listFact: (row: LibraryRow) => {
+                const strip = readFacts(row).strip;
+                return strip === null ? null : <WorkflowRunStripView testID={`workflows-home:row:${row.key}:strip`} strip={strip} />;
+            },
+        }),
+        // The marks end a list row's title line; a card draws them in its own foot.
+        ...(table ? { fields } : presentation === 'grid' ? {} : {
+            titleMeta: (row: LibraryRow) => {
+                const facts = readFacts(row);
+                return <>
+                    {lines === 1 && facts.state ? <WorkflowLibraryStateWord state={facts.state} needsYouRunId={null} /> : null}
+                    <WorkflowMarks layout="cluster" marks={readWorkflowLibraryRowMarks(facts, row)} />
+                    {details ? readWorkflowPluginDetails(extensions.details, details, row, 'mark') : null}
+                </>;
+            },
+        }),
+        // A plugin row's read-only fact is its group's description, not a per-row note (F9). The table says the state in its
+        // State cell, so it draws no Reason column of its own.
+        ...(table ? {} : { reason: (row: LibraryRow) => isAccountRow(row) ? isAccountWorkflowReviewRequired(row) ? t('workflows.triggers.legacy.reviewRequired') : null
             : row.group === 'fromPlugins' ? null
             : row.definition.contentStatus === 'unavailable'
-                ? formatWorkflowDefinitionContentUnavailableReason(row.definition.contentUnavailableReason) : null,
+                ? formatWorkflowDefinitionContentUnavailableReason(row.definition.contentUnavailableReason) : null }),
         accessibilityLabel: rowTitle,
         testID: (row) => `workflows-home:row:${row.key}`,
-        columnTitles: { title: t('workflows.title'), titleMeta: t('common.next') },
-    }), []);
+        columnTitles: { title: t('workflows.destination.columns.workflow') },
+    }), [card, details, extensions.details, fields, lines, presentation, readFacts, table]);
+    return { anatomy, pluginDetails: extensions.details };
 }
 
 function useLibraryRowActions(row: LibraryRow): CollectionRowActions {
@@ -465,39 +573,11 @@ function useDefinitionRowActions(row: Exclude<LibraryRow, AccountWorkflowLibrary
     const mention = useEntityComposerMention();
     const scope = useActiveServerAccountScope();
     const commands = React.useContext(LibraryRowCommandsContext);
-    const { theme } = useUnistyles();
-    // On a phone the history strip, a wide-screen enrichment, is left out rather than wrapped beneath.
-    const phone = useViewportClass() === 'compact';
     if (row === null) return null;
     const owned = row.group === 'library';
     const unavailable = row.group !== 'fromPlugins' && row.definition.contentStatus === 'unavailable';
-    const summary = row.group === 'fromPlugins' ? undefined : row.lastRunSummary;
-    const needsYouRunId = summary?.needsYouRunId ?? null;
-    const showStrip = !phone && summary !== undefined && summary.recent.length > 0;
     return {
         busy: commands?.deleting.has(row.key) === true,
-        // On a narrow row the shared Collection row moves **Needs you** under the title and keeps the ⋯ at its end.
-        accessoryWraps: needsYouRunId !== null || showStrip,
-        // The row's end (07 S2, lab `nav-N1`): the neutral run strip, **Needs you** when a run waits
-        // (navigation only: the run's own page answers, M3). The row itself is the navigation target;
-        // the shared Collection supplies its one trailing overflow control.
-        accessory: (
-            <View style={styles.rowAccessory}>
-                {!showStrip || summary === undefined ? null : (
-                    <WorkflowRunStripView testID={`workflows-home:row:${row.key}:strip`} strip={projectWorkflowRunStrip(summary)} />
-                )}
-                {needsYouRunId === null || commands === null ? null : (
-                    <RoundButton
-                        testID={`workflows-home:row:${row.key}:needsYou`}
-                        size="small"
-                        display="inverted"
-                        title={t('workflows.destination.sections.needsYou')}
-                        textStyle={{ color: theme.colors.state.warning.textForeground }}
-                        onPress={() => commands.openRun(needsYouRunId)}
-                    />
-                )}
-            </View>
-        ),
         secondaryActionAccessibilityLabel: t('workflows.destination.rowMenu.accessibility'),
         secondaryActions: [
             ...(row.group !== 'fromPlugins' && scope ? [{ id: 'mentionInComposer', label: t('entityDragDrop.composer.mentionInComposer') }] : []),
@@ -715,11 +795,6 @@ const styles = StyleSheet.create((theme) => ({
     // A phone gives the search its own full line under the views, on the sheets' edge (lab `phone-P*` search rows).
     searchPhone: {
         flexBasis: '100%',
-    },
-    rowAccessory: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s12,
     },
     headerActions: {
         flexDirection: 'row',
