@@ -420,11 +420,12 @@ async function resolveCliSourceLaunchSpec(
   rootDir: string,
   options: CliLaunchOptions,
 ): Promise<CliTestLaunchSpec> {
-  // Source-driven fixtures already install the workspace export resolver. They
-  // consume current source, so bundled dist outputs and a copied CLI snapshot
-  // are not prerequisites for this existing runtime.
+  // Default source launches use workspace exports directly. Explicit snapshot
+  // modes retain their dependency preparation and publication below.
+  const snapshotNodeModulesMode = resolveCliSnapshotNodeModulesMode(params.env);
   const workspaceSourceLoader = pathToFileURL(resolve(rootDir, 'packages/cli-common/registerSourceRuntime.mjs')).href;
-  if (params.env.NODE_OPTIONS?.includes(workspaceSourceLoader)) {
+  const hasWorkspaceSourceLoader = params.env.NODE_OPTIONS?.includes(workspaceSourceLoader);
+  if (snapshotNodeModulesMode === 'auto' || hasWorkspaceSourceLoader) {
     const sourceEntrypoint = resolveCliSourceEntrypoint(rootDir);
     if (!existsSync(sourceEntrypoint)) {
       throw new Error(`CLI source entrypoint missing for test launch: ${sourceEntrypoint}`);
@@ -433,10 +434,11 @@ async function resolveCliSourceLaunchSpec(
       command: process.execPath,
       args: [sourceEntrypoint],
       cwd: resolve(rootDir, 'apps/cli'),
-      env: { NODE_OPTIONS: params.env.NODE_OPTIONS },
+      env: { NODE_OPTIONS: hasWorkspaceSourceLoader
+        ? params.env.NODE_OPTIONS
+        : withWorkspaceSourceRuntime(params.env, rootDir).NODE_OPTIONS },
     };
   }
-  const snapshotNodeModulesMode = resolveCliSnapshotNodeModulesMode(params.env);
   const skipSharedDepsBuild = shouldSkipCliSharedDepsBuild(params.env);
   const ensureSharedDeps = async (env: NodeJS.ProcessEnv): Promise<void> => {
     await ensureCliSharedDepsBuilt(

@@ -10,15 +10,16 @@ import { repoRootDir } from '../paths';
 import { resolveCliTestLaunchSpec } from './cliLaunchSpec';
 import { withWorkspaceSourceRuntime } from './tsxImportHook';
 
-it('runs the workspace source CLI through its installed source loader without a dist snapshot prerequisite', async () => {
+it.each(['inherited', 'installed'] as const)('runs the workspace source CLI with the %s source loader without a dist snapshot prerequisite', async (loader) => {
   const testDir = await mkdtemp(join(tmpdir(), 'happier-cli-workspace-source-'));
   const rootDir = repoRootDir();
   const snapshotDir = join(testDir, 'unused-snapshot');
-  const env = withWorkspaceSourceRuntime({
+  const sourceEnv = {
     ...process.env,
+    NODE_OPTIONS: '',
     HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-    HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
-  });
+  };
+  const env = loader === 'inherited' ? withWorkspaceSourceRuntime(sourceEnv) : sourceEnv;
   try {
     const spec = await resolveCliTestLaunchSpec({ testDir, env }, { snapshotDir });
     expect(spec.args.at(-1)).toBe(resolve(rootDir, 'apps/cli/src/index.ts'));
