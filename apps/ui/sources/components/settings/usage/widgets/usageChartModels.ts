@@ -118,7 +118,9 @@ export function projectUsageSkyModel(calendar: UsageAgentCalendar, metric: Usage
   const best = streaks.longestStreakDays ? [...runs].reverse().find((run) => run.days === streaks.longestStreakDays) ?? null : null;
   const last = runs[runs.length - 1];
   const current = streaks.currentStreakDays && last && last.days === streaks.currentStreakDays ? last : null;
-  return { encoding: 'amount', days, colourBy, best, current };
+  // Asked for leaders but none is known: the sky draws intensity, so the model says so for its caption (USAGE-ACCEPT 1118 #19).
+  const drawnColourBy = colourBy === 'leadingAgent' && days.some((day) => day.leader != null) ? 'leadingAgent' : 'intensity';
+  return { encoding: 'amount', days, colourBy: drawnColourBy, best, current };
 }
 
 function emptyCalendarMetric(calendar: UsageAgentCalendar, metric: UsageChartMetric): number | null {

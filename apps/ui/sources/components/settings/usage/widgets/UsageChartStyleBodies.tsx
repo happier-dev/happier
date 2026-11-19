@@ -116,7 +116,7 @@ export function UsageSkyStyleBody(props: UsageChartStyleBodyProps) {
   return <View style={{ gap: 12 }} testID={`${props.testID}.sky`}>
     <UsageSkyOfDays theme={host.theme} paint={host.paint} agents={agents} model={model} testID={`${props.testID}.skyChart`}
       label={t('usage.board.charts.skyA11y', { metric: metricName, count: model.days.length })}
-      labels={usageSkyLabels({ query: props.query, metricName, formatValue: (value) => formatUsageChartMetric(metric, value), colourBy })} />
+      labels={usageSkyLabels({ query: props.query, metricName, formatValue: (value) => formatUsageChartMetric(metric, value), colourBy: model.colourBy })} />
     <UsageChartFooter slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />
   </View>;
 }

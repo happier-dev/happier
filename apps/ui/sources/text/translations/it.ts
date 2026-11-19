@@ -17742,7 +17742,7 @@ settingsSession: {
             detector_effort_audit: "Verifica dello sforzo",
             detector_subagent_fanout: "Uso dei sottoagenti",
             summary_compaction_thrash_observed: "Il contesto si è riempito subito dopo tre compattazioni",
-            summary_context_growth_cost_observed: "Il contesto delle richieste è cresciuto nella sessione",
+            summary_context_growth_cost_observed: "Il contesto delle richieste è cresciuto all'interno di una sessione",
             summary_cache_economics_observed: "Letture, scritture e cause di mancato uso della cache osservate",
             summary_effort_audit_observed: "Sforzo registrato e uso del ragionamento",
             summary_subagent_fanout_observed: "Token dell’agente principale e dei sottoagenti",

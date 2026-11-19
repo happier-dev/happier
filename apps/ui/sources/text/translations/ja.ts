@@ -17650,7 +17650,7 @@ settingsSession: {
             detector_effort_audit: "エフォートの確認",
             detector_subagent_fanout: "サブエージェントの使用量",
             summary_compaction_thrash_observed: "3回の圧縮直後にコンテキストが再び上限に達しました",
-            summary_context_growth_cost_observed: "このセッションでリクエストのコンテキストが増加しました",
+            summary_context_growth_cost_observed: "セッション内でリクエストのコンテキストが増え続けました",
             summary_cache_economics_observed: "観測されたキャッシュの読み書きとミスの原因",
             summary_effort_audit_observed: "記録されたエフォートと推論の使用量",
             summary_subagent_fanout_observed: "親エージェントとサブエージェントのトークン使用量",

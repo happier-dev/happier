@@ -20825,7 +20825,7 @@ const enUsage = {
       detector_effort_audit: "Effort audit",
       detector_subagent_fanout: "Subagent usage",
       summary_compaction_thrash_observed: "Context immediately refilled after three compactions",
-      summary_context_growth_cost_observed: "Request context grew during this session",
+      summary_context_growth_cost_observed: "Request context kept growing within a session",
       summary_cache_economics_observed: "Observed cache reads, writes and miss causes",
       summary_effort_audit_observed: "Recorded effort and thinking usage",
       summary_subagent_fanout_observed: "Parent and subagent token usage",

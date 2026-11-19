@@ -663,6 +663,14 @@ describe('Usage chart models', () => {
       })),
     );
   });
+  // USAGE-ACCEPT 1118 #19: asked to colour by the leading Agent with no day's leader known, the sky draws intensity,
+  // so the model (and the caption that reads it) says intensity too.
+  it('colours Sky of days by intensity when no day has a known leader', () => {
+    const days = [bucket(0, { tokens: 900, eventCount: 3 }), bucket(1, { tokens: 10, eventCount: 2 })];
+    expect(projectUsageSkyModel(calendar({ days }), 'tokens', 'leadingAgent', START + 2 * DAY).colourBy).toBe('intensity');
+    const led = [bucket(0, { tokens: 900, eventCount: 3 }, [], { tokens: { status: 'leading', agentIds: ['codex'], includesUnknown: false } })];
+    expect(projectUsageSkyModel(calendar({ days: led }), 'tokens', 'leadingAgent', START + 2 * DAY).colourBy).toBe('leadingAgent');
+  });
   it('does not turn an absent day of partial evidence into measured inactivity', () => {
     const model = projectUsageSkyModel(
       calendar({ coverage: { ...coverage, busy: 'partial' } }),

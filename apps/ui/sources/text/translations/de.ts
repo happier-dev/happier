@@ -17543,7 +17543,7 @@ settingsSession: {
             detector_effort_audit: "Aufwandsübersicht",
             detector_subagent_fanout: "Unteragentennutzung",
             summary_compaction_thrash_observed: "Der Kontext füllte sich nach drei Komprimierungen sofort wieder",
-            summary_context_growth_cost_observed: "Der Anfragekontext wuchs in dieser Sitzung",
+            summary_context_growth_cost_observed: "Der Anfragekontext wuchs innerhalb einer Sitzung",
             summary_cache_economics_observed: "Beobachtete Cache-Lese- und Schreibzugriffe und Fehlursachen",
             summary_effort_audit_observed: "Erfasster Aufwand und Denknutzung",
             summary_subagent_fanout_observed: "Token-Nutzung von Haupt- und Unteragenten",

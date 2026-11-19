@@ -17108,7 +17108,7 @@ settingsSession: {
       detector_effort_audit: "Analiza wysiłku",
       detector_subagent_fanout: "Użycie podagentów",
       summary_compaction_thrash_observed: "Kontekst natychmiast wypełnił się ponownie po trzech kompaktowaniach",
-      summary_context_growth_cost_observed: "Kontekst żądań rósł w tej sesji",
+      summary_context_growth_cost_observed: "Kontekst żądań rósł w obrębie sesji",
       summary_cache_economics_observed: "Zaobserwowane odczyty, zapisy i przyczyny nietrafień pamięci podręcznej",
       summary_effort_audit_observed: "Zapisany wysiłek i użycie myślenia",
       summary_subagent_fanout_observed: "Użycie tokenów agenta głównego i podagentów",

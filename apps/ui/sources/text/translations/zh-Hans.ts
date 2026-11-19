@@ -17014,7 +17014,7 @@ settingsSession: {
             detector_effort_audit: "推理力度审查",
             detector_subagent_fanout: "子智能体用量",
             summary_compaction_thrash_observed: "三次压缩后上下文立即再次达到上限",
-            summary_context_growth_cost_observed: "此会话的请求上下文有所增长",
+            summary_context_growth_cost_observed: "请求上下文在会话内持续增长",
             summary_cache_economics_observed: "观测到的缓存读取、写入和未命中原因",
             summary_effort_audit_observed: "已记录的推理力度和思考用量",
             summary_subagent_fanout_observed: "主智能体和子智能体的词元用量",

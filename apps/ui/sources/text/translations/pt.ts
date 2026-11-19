@@ -17479,7 +17479,7 @@ settingsSession: {
             detector_effort_audit: "Auditoria de esforço",
             detector_subagent_fanout: "Uso de subagentes",
             summary_compaction_thrash_observed: "O contexto voltou ao limite após três compactações",
-            summary_context_growth_cost_observed: "O contexto dos pedidos cresceu nesta sessão",
+            summary_context_growth_cost_observed: "O contexto dos pedidos cresceu dentro de uma sessão",
             summary_cache_economics_observed: "Leituras, escritas e causas de falhas de cache observadas",
             summary_effort_audit_observed: "Esforço registado e uso de raciocínio",
             summary_subagent_fanout_observed: "Tokens do agente principal e dos subagentes",

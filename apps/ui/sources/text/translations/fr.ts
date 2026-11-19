@@ -17245,7 +17245,7 @@ settingsSession: {
             detector_effort_audit: "Bilan de l’effort",
             detector_subagent_fanout: "Usage des sous-agents",
             summary_compaction_thrash_observed: "Le contexte s’est immédiatement rempli après trois compactages",
-            summary_context_growth_cost_observed: "Le contexte des requêtes a grandi dans cette session",
+            summary_context_growth_cost_observed: "Le contexte des requêtes a grandi au sein d'une session",
             summary_cache_economics_observed: "Lectures, écritures et causes de défauts de cache observées",
             summary_effort_audit_observed: "Effort enregistré et usage du raisonnement",
             summary_subagent_fanout_observed: "Tokens de l’agent principal et des sous-agents",

@@ -17317,7 +17317,7 @@ settingsSession: {
             detector_effort_audit: "Обзор усилий",
             detector_subagent_fanout: "Расход подагентов",
             summary_compaction_thrash_observed: "Контекст сразу заполнился после трёх сжатий",
-            summary_context_growth_cost_observed: "Контекст запросов вырос в этой сессии",
+            summary_context_growth_cost_observed: "Контекст запросов рос в пределах сессии",
             summary_cache_economics_observed: "Наблюдаемые чтения, записи и причины промахов кеша",
             summary_effort_audit_observed: "Записанные усилия и расход на рассуждения",
             summary_subagent_fanout_observed: "Токены основного агента и подагентов",
