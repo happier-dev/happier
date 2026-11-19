@@ -54,6 +54,9 @@ function resolveActionFailureMessage(
   errorCode?: string,
   details?: unknown,
 ): string | undefined {
+  if (errorCode === 'present_user_required') {
+    return 'Review and approve this Action in the Happier app.';
+  }
   if (failureCause?.errorCode === 'machine_manage_required') {
     return 'This Action needs Manage on this Machine.';
   }

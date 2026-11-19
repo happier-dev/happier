@@ -98,6 +98,17 @@ it('points a refused terminal approval to the app without changing its failure e
   expect(projected.message).toBe(normalized.errorMessage);
 });
 
+it.each(['outer', 'nested'] as const)('gives the app remedy for a present-user refusal in an %s result', kind => {
+  const refusal = { ok: false, errorCode: 'present_user_required', error: 'present_user_required',
+    effectAttempted: false } as const;
+  const normalized = normalizeActionExecuteResult(kind === 'outer' ? refusal : { ok: true, result: refusal });
+  if (normalized.ok) throw new Error('Expected a refused Action');
+  expect(normalized.errorMessage).toMatch(/approve.*Happier app/i);
+  expect(projectCliActionFailure(normalized)).toMatchObject({
+    code: refusal.errorCode, effectAttempted: false, message: normalized.errorMessage,
+  });
+});
+
 it('preserves authored guidance and does not redirect unrelated credential refusals to approval', () => {
   for (const refusal of [
     { errorCode: 'credential_scope_denied', errorMessage: 'This credential cannot read the resource.' },
