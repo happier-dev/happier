@@ -28,11 +28,8 @@ export function nestSessionListReports(
         if (isSessionListShortcutOccurrence(item)) continue;
         if (previousGroupKey !== item.groupKey) group += 1;
         previousGroupKey = item.groupKey;
-        // One row per Session: a second copy of the same node is not placed again (alone beside its nested self).
-        const id = buildSessionListIndexNodeId(item);
-        if (byKey.has(id)) continue;
         groups.set(item, group);
-        byKey.set(id, item);
+        byKey.set(buildSessionListIndexNodeId(item), item);
     }
     const parentByItem = new Map<WorkItem, WorkItem>();
     const children = new Map<WorkItem, WorkItem[]>();
@@ -136,7 +133,7 @@ export function nestSessionListReports(
     for (const item of items) {
         if (item.type === 'header') output.push(item);
         else if (isSessionListShortcutOccurrence(item)) output.push(item);
-        else if (byKey.get(buildSessionListIndexNodeId(item)) === item && !parentByItem.has(item)) emit(item, 0);
+        else if (!parentByItem.has(item)) emit(item, 0);
     }
     return output.length === items.length && output.every((item, i) => item === items[i]) ? items : output;
 }
