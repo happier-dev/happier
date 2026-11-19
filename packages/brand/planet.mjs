@@ -714,8 +714,18 @@ const easeOut = (v) => 1 - (1 - clamp(v)) ** 3;
 const easeInOut = (v) => { const t = clamp(v); return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2; };
 const crit = (v, w = 7) => { const t = clamp(v); return (1 - (1 + w * t) * Math.exp(-w * t)) / (1 - (1 + w) * Math.exp(-w)); };
 // The field/choreography hash uses addition. The existing body sampler uses XOR above.
-function sceneHash(x, y) { let h = Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
-function digitOf(i, j, t = 0, rate = 0) { const step = rate ? Math.floor(t * rate + sceneHash(i, j) * 9) : 0; const h = sceneHash(i + step * 7, j - step * 13); return h < 0.62 ? 1 + Math.floor(h / 0.62 * 3) : Math.floor(sceneHash(i * 3 + step, j + 11) * 10); }
+function sceneHash(x, y, seed = 0) {
+  let h = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(seed, 1274126177) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function digitAtStep(i, j, step) {
+  const h = sceneHash(i + step * 7, j - step * 13);
+  return h < 0.62 ? 1 + Math.floor(h / 0.62 * 3) : Math.floor(sceneHash(i * 3 + step, j + 11) * 10);
+}
+function digitOf(i, j, t = 0, rate = 0) {
+  return digitAtStep(i, j, rate ? Math.floor(t * rate + sceneHash(i, j) * 9) : 0);
+}
 const bitOf = (i, j, t = 0, rate = 0) => (sceneHash(i + Math.floor(t * rate) * 5, j * 7 + 1) < 0.5 ? 0 : 1);
 const lightForReveal = (reveal) => normalize([mix(0.35, 0.78, reveal), mix(-0.2, -0.42, reveal), mix(-0.95, 0.5, smooth(reveal))]);
 const lightK = (k) => normalize([mix(0.3, 0.42, k), mix(-0.25, -0.5, k), mix(-0.92, 0.76, easeOut(k))]);
@@ -842,7 +852,7 @@ export function gainPlanetScene(scene, gain) {
 
 // The lab's canvas shell consumes these pure functions rather than keeping private copies.
 export const PLANET_SAMPLER = { PLANET_PALETTES, BAYER, shadePlanetDot, inkDot, atmosphereForEnergy, lightForReveal, haloOpacity, gradient, mixRgb, hash, DOT_RADIUS, HERO_DOT_PITCH, REST_SPIN };
-export const PLANET_SCENE_RENDERER = { resolve, brandDots, fieldCells, toArt, brandAt, sceneHash, digitOf, bitOf, sstep, easeOut, easeInOut, crit };
+export const PLANET_SCENE_RENDERER = { resolve, brandDots, fieldCells, toArt, brandAt, sceneHash, digitOf, digitAtStep, bitOf, sstep, easeOut, easeInOut, crit };
 
 const ASM = { FLY: 0.45, PATCH: 2 };
 // the light of the assembly: it starts behind the planet, so only the limb on the lit side catches it (a crescent out

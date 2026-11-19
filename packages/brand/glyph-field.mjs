@@ -1,6 +1,7 @@
-import { PLANET_SAMPLER } from './planet.mjs';
+import { PLANET_SAMPLER, PLANET_SCENE_RENDERER } from './planet.mjs';
 
 const { gradient } = PLANET_SAMPLER;
+const { sceneHash: hash } = PLANET_SCENE_RENDERER;
 const pitch = 6;
 const fieldStep = 2;
 const rippleLifeS = 2.6;
@@ -27,12 +28,6 @@ const empty = Object.freeze([]);
 export function glyphFieldPhase(seconds) {
     const progress = clamp(seconds / glyphFieldDurationS);
     return 0.5 * glyphFieldDurationS * (progress - progress ** 3 + 0.5 * progress ** 4);
-}
-
-function hash(x, y, z) {
-    let bits = Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(z, 1274126177) | 0;
-    bits = Math.imul(bits ^ (bits >>> 13), 1274126177);
-    return ((bits ^ (bits >>> 16)) >>> 0) / 4294967296;
 }
 
 function noise3(x, y, z) {

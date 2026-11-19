@@ -121,7 +121,9 @@ export const PLANET_SCENE_RENDERER: Readonly<{
   fieldCells: (scene: PlanetResolvedScene, all?: boolean) => readonly RawCell[];
   toArt: (scene: PlanetResolvedScene, x: number, y: number, out: [number, number]) => readonly [number, number];
   brandAt: (scene: PlanetResolvedScene, x: number, y: number) => Readonly<{ lit: boolean; rgb: PlanetRgb }>;
-  sceneHash: (x: number, y: number) => number; digitOf: (i: number, j: number, time?: number, rate?: number) => number;
+  sceneHash: (x: number, y: number, seed?: number) => number;
+  digitOf: (i: number, j: number, time?: number, rate?: number) => number;
+  digitAtStep: (i: number, j: number, step: number) => number;
   bitOf: (i: number, j: number, time?: number, rate?: number) => number;
   sstep: (a: number, b: number, value: number) => number; easeOut: (v: number) => number;
   easeInOut: (v: number) => number; crit: (v: number, stiffness?: number) => number;

@@ -1,10 +1,11 @@
-import { PLANET_PALETTES, PLANET_SAMPLER, shadePlanetDot } from './planet.mjs';
+import { PLANET_PALETTES, PLANET_SAMPLER, PLANET_SCENE_RENDERER, shadePlanetDot } from './planet.mjs';
 import { orderedFade, rippleRingGeometry } from './atmosphere.mjs';
 import { createGlyphFieldSampler } from './glyph-field.mjs';
 export { fieldDotLayer, glyphFieldDurationS, glyphDotRadii, glyphFieldPhase, glyphFieldTrailCell, glyphFieldTrailLifeS, glyphFieldRippleLifeS } from './glyph-field.mjs';
 import { markSdfAt } from './glyph-mark.mjs';
 
 const { gradient, lightForReveal, REST_SPIN } = PLANET_SAMPLER;
+const { sceneHash: cellHash, digitAtStep: digitOf } = PLANET_SCENE_RENDERER;
 const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value));
 const mix = (a, b, progress) => a + (b - a) * progress;
 const smooth = (value) => { const k = clamp(value); return k * k * (3 - 2 * k); };
@@ -19,17 +20,6 @@ export const markGlyphLayer = (options) => ({ kind: 'mark', ...options });
 export const travellerGlyphLayer = (options) => ({ kind: 'traveller', ...options });
 export const frontGlyphLayer = (options) => ({ kind: 'front', ...options });
 export const placedGlyphLayer = (cells) => ({ kind: 'placed', cells });
-
-function cellHash(x, y) {
-    let bits = Math.imul(x, 374761393) + Math.imul(y, 668265263) | 0;
-    bits = Math.imul(bits ^ (bits >>> 13), 1274126177);
-    return ((bits ^ (bits >>> 16)) >>> 0) / 4294967296;
-}
-
-function digitOf(x, y, step = 0) {
-    const chance = cellHash(x + step * 7, y - step * 13);
-    return chance < 0.62 ? 1 + Math.floor(chance / 0.62 * 3) : Math.floor(cellHash(x * 3 + step, y + 11) * 10);
-}
 
 function frontEdge(shape, dx, dy, front, ragged, i, j) {
     const distance = shape === 'superellipse' ? Math.sqrt(Math.hypot(dx * dx, dy * dy)) : Math.max(dx, dy);
@@ -178,7 +168,7 @@ function samplePlanetRing(out, grid, planet, palette, foot) {
             const depth = radius - Math.hypot(x - x0, y - y0);
             if (depth <= 0 || depth >= band || cellHash(i + 93, j) > 0.78) continue;
             const profile = Math.sin(Math.PI * Math.pow(1 - depth / band, 0.7));
-            const ink = gradient(palette.body, 0.55 + 0.3 * cellHash(i + 95, j));
+            const ink = gradient(palette.body, 0.55 + 0.3 * cellHash(i + 95, j), out.ink);
             writeSprite(out, x, y, digitOf(i, j, step), ink, profile * fade * 0.95 * footFade);
         }
     }
