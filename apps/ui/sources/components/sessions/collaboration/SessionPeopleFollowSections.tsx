@@ -433,11 +433,14 @@ export function SessionPeopleFollowSheet(props: Readonly<{
             destinationMachineId={props.machineId} following={people.following}
             sheet={{ onOpenSource: panel ? (sourceKey) => setStep({ kind: 'source', sourceKey }) : undefined }} />
     );
+    // With only the You row listed, the summary would repeat that row word for word (LABPARITY-ACCEPT-F fix 8).
+    const followersListIsYouAlone = (people.census.sessions?.length ?? 0) === 0 && !people.census.otherPeople;
     return frame({
         title: followers ? t('session.collaboration.pane.followersTitle') : t('session.follow.sources.title'),
-        // One message per state: a failed read is said by the list's own Retry row, not again in the header.
+        // One message per state: a failed read is said by the list's own Retry row, not again in the header, and a list
+        // of one row already says what the summary would.
         subtitle: (followers
-            ? (people.followersError !== null && !people.census.sessions ? null : describeFollowersSummary(people))
+            ? (people.followersError !== null && !people.census.sessions) || followersListIsYouAlone ? null : describeFollowersSummary(people)
             : (people.following.error !== null && !people.following.projection ? null : describeFollowingSummary(people))) ?? '',
         mark: <FollowerMark name={followers ? 'users' : 'bell'} />,
         body,

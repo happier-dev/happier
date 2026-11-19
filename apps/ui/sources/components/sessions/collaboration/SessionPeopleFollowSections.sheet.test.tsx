@@ -53,12 +53,13 @@ function FollowersSheet(props: Readonly<{
     sources: readonly FollowSourceRelationV1[] | null;
     followersError?: string | null;
     refreshFollowers?: () => void;
+    peopleCount?: number;
 }>) {
     const anchorRef = React.useRef(null);
     const focusReturnRef = React.useRef(null);
     const people = {
         enabled: true,
-        census: projectSessionFollowerCensus(props.sources ? { sources: props.sources, follows: [], peopleCount: 1 } : null),
+        census: projectSessionFollowerCensus(props.sources ? { sources: props.sources, follows: [], peopleCount: props.peopleCount ?? 1 } : null),
         followersLoading: false,
         followersError: props.followersError ?? null,
         refreshFollowers: props.refreshFollowers ?? (() => {}),
@@ -181,6 +182,28 @@ describe('People Follow summary rows and their sheet', () => {
         expect(String(router.push.mock.calls[0]?.[0])).toContain('direction=following');
         expect(screen.findByTestId('session-people-follow-sheet')).toBeNull();
         await screen.unmount();
+    });
+
+    it('drops the Followers subtitle when the list holds one row that already says it (LABPARITY-ACCEPT-F fix 8)', async () => {
+        const subtitle = (screen: Screen) => screen.findAll((node) => node.props.testID === 'session-people-follow-sheet'
+            && 'subtitle' in node.props)[0]?.props.subtitle;
+        // Only you: the one row says "You · <level>", so the header does not say it again.
+        const alone = await renderSettingsView(<FollowersSheet sources={[]} peopleCount={0} />);
+        await vi.waitFor(() => expect(alone.findByTestId('session-people-follower-you')).not.toBeNull());
+        expect(subtitle(alone) || null).toBeNull();
+        await alone.unmount();
+        // Other people follow too: their row is a second one, so the subtitle sums the list up.
+        const people = await renderSettingsView(<FollowersSheet sources={[]} />);
+        await vi.waitFor(() => expect(people.findByTestId('session-people-followers-people')).not.toBeNull());
+        expect(subtitle(people)).toBeTruthy();
+        await people.unmount();
+        // With a follower beside you, the subtitle sums the list up.
+        const two = await renderSettingsView(<FollowersSheet sources={[
+            { sourceSessionId: 'this', destinationSessionId: 'lead', relation: 'follower', policy: { preset: 'quiet' }, deliveryState: 'eligible', hasPendingUpdates: false },
+        ]} />);
+        await vi.waitFor(() => expect(two.findByTestId('session-people-follower-session-lead')).not.toBeNull());
+        expect(subtitle(two)).toBeTruthy();
+        await two.unmount();
     });
 
     it('says a failed Followers read could not be checked, with Retry, instead of showing only you', async () => {
