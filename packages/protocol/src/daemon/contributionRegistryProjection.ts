@@ -358,6 +358,11 @@ export const DaemonContributionRegistryProjectionDescribeRequestSchema = lazyZod
     selection: z.literal('mcpServer'),
     mcpServer: PluginContributionIdentityV1Schema,
   }).check(z.superRefine(rejectMismatchedClientPlatforms)),
+  z.strictObject({
+    ...DaemonContributionRegistryProjectionClientContextV1Shape,
+    selection: z.literal('workflowSource'),
+    workflowSource: PluginContributionIdentityV1Schema,
+  }).check(z.superRefine(rejectMismatchedClientPlatforms)),
   z.looseObject({
     ...DaemonContributionRegistryProjectionClientContextV1Shape,
     /** Explicit offer: old Event readers must never receive an unknown authority-bearing binding. */

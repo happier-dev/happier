@@ -86,6 +86,27 @@ afterEach(async () => {
     publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
 });
 
+describe('use a plugin workflow template', () => {
+    it('reads only the chosen source and opens it as an unsaved sentence draft', async () => {
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const drafts = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected the fixture Account to be active');
+        const before = machineRpc.mock.calls.length;
+        const route = await drafts.preparePluginWorkflowTemplateDraft({ workflow: workflowRef, accountLifetime: lifetime });
+        expect(route).toMatchObject({ pathname: '/workflows/new', params: { serverId: lifetime.scope.serverId } });
+        if (!route) throw new Error('Expected a draft route');
+        expect(drafts.readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId, lifetime.scope)).toEqual({
+            name: plugin.title, definition: child, initialView: 'sentence',
+        });
+        expect(inventoryReads).toEqual([]);
+        expect(machineRpc.mock.calls.slice(before)).toHaveLength(1);
+        expect(machineRpc.mock.calls[before]?.[0]).toMatchObject({
+            payload: { selection: 'workflowSource', workflowSource: { pluginId: plugin.pluginId, localId: 'check' } },
+        });
+    });
+});
+
 describe('editor Flow child read lifetime', () => {
     it('does no hidden work and refreshes changes missed before the Flow is presented again', async () => {
         const hook = await renderHook((enabled: boolean) => useWorkflowFlowChildren(parent, enabled), { initialProps: true });

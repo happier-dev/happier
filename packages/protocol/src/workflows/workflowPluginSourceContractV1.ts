@@ -19,7 +19,7 @@ export const WorkflowPluginSourceV1Schema = lazyZodSchema(() => z.strictObject({
   }
 })));
 export type WorkflowPluginSourceV1 = z.infer<typeof WorkflowPluginSourceV1Schema>;
-export type WorkflowPluginSourceReaderV1 = () => readonly WorkflowPluginSourceV1[] | Promise<readonly WorkflowPluginSourceV1[]>;
+export type WorkflowPluginSourceReaderV1 = (workflow?: string, signal?: AbortSignal) => readonly WorkflowPluginSourceV1[] | Promise<readonly WorkflowPluginSourceV1[]>;
 
 /** Projects an admitted contribution; semantic admission owns qualification and validation. */
 export function projectWorkflowPluginSourceV1(input: Readonly<{

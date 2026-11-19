@@ -16,12 +16,12 @@ export function createWorkflowDefinitionActions(params: Readonly<{
   return createSharedWorkflowDefinitionActions({
     artifactStore: params.artifactStore,
     encodeListCursor: encodeAccountArtifactListCursor,
-    readPluginWorkflows: params.readPluginWorkflows ?? (async () => {
+    readPluginWorkflows: params.readPluginWorkflows ?? (async (workflow) => {
       const [{ readPluginWorkflowSources }, { readCurrentContributionRegistry }] = await Promise.all([
         import('@/plugins/projection/registry/workflows'),
         import('@/agent/catalog/snapshot'),
       ]);
-      return readPluginWorkflowSources(readCurrentContributionRegistry());
+      return readPluginWorkflowSources(readCurrentContributionRegistry(), workflow);
     }),
     ...(params.readWorkflowTriggerSummaries ? { readWorkflowTriggerSummaries: params.readWorkflowTriggerSummaries } : {}),
     ...(params.readWorkflowTriggerEvents ? { readWorkflowTriggerEvents: params.readWorkflowTriggerEvents } : {}),

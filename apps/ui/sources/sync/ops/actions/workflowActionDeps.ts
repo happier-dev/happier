@@ -95,6 +95,9 @@ import { sealSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol
 import type { WorkflowAccountRunActionDeps } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 function targetUnavailable(): never {
     throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
@@ -242,10 +245,25 @@ export function createUiWorkflowAction(params: Readonly<{
         readWorkflowTriggerSummaries: (definitionIds) => triggers.readWorkflowSummaries(definitionIds),
         readWorkflowTriggerEvents: (input) => triggers.readWorkflowTriggerEvents(input),
         encodeListCursor: account.encodeArtifactListCursor,
-        readPluginWorkflows: async () => {
+        readPluginWorkflows: async (workflow, signal) => {
             account.assertCurrent();
             const machineId = resolveUiAccountActionFallbackMachineId(account);
             if (!machineId) return [];
+            if (workflow !== undefined) {
+                const target = parseWorkflowDefinitionRefV1(workflow);
+                if (target?.kind !== 'plugin') return [];
+                const response = await machineRpcWithServerScope({
+                    machineId, serverId: account.serverId, accountId: account.accountId, signal,
+                    method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+                    payload: { machineId, selection: 'workflowSource', workflowSource: target.contribution },
+                });
+                account.assertCurrent();
+                const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(response).projection;
+                const selected = projection.familiesById.workflows?.entriesById[buildQualifiedPluginContributionKey(target.contribution)];
+                return selected?.pluginId ? [projectWorkflowPluginSourceV1({
+                    pluginId: selected.pluginId, pluginVersion: selected.pluginVersion, definition: selected.definition,
+                })] : [];
+            }
             const entry = await loadDaemonMergedProjectionCacheEntry({ machineId, serverId: account.serverId,
                 accountLifetime: account.accountLifetime, reuseFreshReady: true, sections: ['familiesById.workflows'] });
             account.assertCurrent();

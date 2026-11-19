@@ -16,7 +16,7 @@ import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRout
 import { t, tLoose } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { buildWorkflowEditorDraftFromDefinition } from '@/sync/domains/workflows/workflowAuthoring';
-import { storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
+import { preparePluginWorkflowTemplateDraft, storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 
 import { confirmWorkflowDocumentExport } from '../actions/confirmWorkflowDocumentExport';
 import { createWorkflowStartPlacementChips } from '../run/workflowStartPlacementChips';
@@ -108,8 +108,14 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
     const [view, setView] = React.useState<WorkflowEditorView>('steps');
     const host = useWorkflowAuthoringHost({ projectTarget: target, serverId: props.serverId });
 
-    const duplicate = () => {
-        if (!isCurrent()) return;
+    const duplicate = async () => {
+        if (!isCurrent() || !lifetime) return;
+        if ('workflow' in props.plugin) {
+            const route = await preparePluginWorkflowTemplateDraft({ source: props.plugin, accountLifetime: lifetime,
+                name: t('workflows.copyName', { name: plugin.title }) });
+            if (route && isCurrent()) router.push(route as never);
+            return;
+        }
         const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed({ definition: plugin.definition,
             name: t('workflows.copyName', { name: plugin.title }),
             ...(plugin.description === undefined ? {} : { description: plugin.description }) }, accountLifetime);

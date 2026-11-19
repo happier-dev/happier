@@ -15,7 +15,7 @@ export async function resolveWorkflowPluginSourceV1(workflow: string, options: R
   signal?: AbortSignal;
 }>): Promise<WorkflowPluginSourceV1 | null> {
   options.signal?.throwIfAborted();
-  const source = (await options.readPluginWorkflows?.())?.find(entry => entry.workflow === workflow) ?? null;
+  const source = (await options.readPluginWorkflows?.(workflow, options.signal))?.find(entry => entry.workflow === workflow) ?? null;
   options.signal?.throwIfAborted();
   return source;
 }

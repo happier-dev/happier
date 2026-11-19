@@ -3,6 +3,7 @@ import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/aut
 import type { WorkflowStarterSessionTarget } from '@happier-dev/protocol/workflows/builtins/examples';
 import type { WorkflowDefinitionCaptureResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
+import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceContractV1';
 import type { WorkflowDraftSettingsPatchV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import type { WorkflowEditorDraft } from './workflowEditorDraft';
@@ -51,4 +52,28 @@ export function storeWorkflowDefinitionDraftSeed(seed: WorkflowDefinitionDraftSe
 
 export function readWorkflowDefinitionDraftSeed(id: string, scope?: ServerAccountScope | null): WorkflowDefinitionDraftSeed | null {
     return readWorkflowEditorDraftSeed(WORKFLOW_DEFINITION_DRAFT_SEED_KIND, id, scope);
+}
+
+/** Open a private authoring copy. The regular editor owns saving it. */
+export async function preparePluginWorkflowTemplateDraft(input: Readonly<{
+    accountLifetime: ServerAccountScopeLifetime;
+    signal?: AbortSignal;
+}> & (Readonly<{ workflow: string }> | Readonly<{ source: WorkflowPluginSourceV1; name?: string }>)) {
+    const { accountLifetime, signal } = input;
+    if (!accountLifetime.isCurrent()) return null;
+    signal?.throwIfAborted();
+    const source = 'source' in input ? input.source : await (async () => {
+        const { listWorkflowDefinitions } = await import('./workflowDefinitionActions');
+        const result = await listWorkflowDefinitions({ workflow: input.workflow, accountLifetime, signal });
+        return result.pluginWorkflows?.[0];
+    })();
+    signal?.throwIfAborted();
+    if (!source || !accountLifetime.isCurrent()) return null;
+    const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed({
+        name: ('name' in input ? input.name : undefined) ?? source.title,
+        ...(source.description === undefined ? {} : { description: source.description }),
+        definition: source.definition,
+        initialView: 'sentence',
+    }, accountLifetime);
+    return { pathname: '/workflows/new' as const, params: { definitionDraftSeedId, serverId: accountLifetime.scope.serverId } };
 }
