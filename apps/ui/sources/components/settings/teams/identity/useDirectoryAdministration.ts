@@ -2,10 +2,13 @@ import * as React from 'react';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
-    serverAccountScopedTeamKey,
     serverAccountScopedTeamResourceKey,
     type TeamAddress,
 } from '@/sync/domains/teams/teamAddress';
+import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
+import { useManagedIdentityObservationTarget, useManagedIdentityWake } from '@/components/settings/home/identity/useManagedIdentityObservationTarget';
+import { loadTeamPageRange } from '@/sync/engine/teams/loadTeamPageRange';
+import { teamDirectorySourcePages } from '@/sync/store/teams/teamsSnapshots';
 import type {
     TeamDirectoryActionIdV1,
     TeamDirectorySourcePageV1,
@@ -37,6 +40,14 @@ type BoundState<Value> = Readonly<{
     value: Value;
 }>;
 
+function seedDirectoryState(value: ReturnType<typeof teamDirectorySourcePages.get>): DirectoryAdministrationState {
+    return value === undefined ? INITIAL_DIRECTORY_ADMINISTRATION_STATE : beginDirectoryAdministrationRefresh(
+        settleDirectoryAdministrationRefresh(INITIAL_DIRECTORY_ADMINISTRATION_STATE, {
+            ok: true, items: value.items, nextCursor: value.nextCursor,
+        }),
+    );
+}
+
 export function useDirectoryAdministration(
     scope: ServerAccountScope,
     teamId: string,
@@ -47,11 +58,9 @@ export function useDirectoryAdministration(
     refresh: () => void;
     loadMore: () => Promise<void>;
 }> {
-    const address: TeamAddress = { serverId: scope.serverId, teamId };
-    const bindingKey = serverAccountScopedTeamKey(scope, address);
-    const [boundState, setBoundState] = React.useState<BoundState<DirectoryAdministrationState>>(() => ({
-        bindingKey,
-        value: INITIAL_DIRECTORY_ADMINISTRATION_STATE,
+    const { queryKey: bindingKey, binding, resolving } = useManagedIdentityObservationTarget(scope, teamId, enabled);
+    const [boundState, setBoundState] = React.useState(() => ({
+        bindingKey, binding, value: seedDirectoryState(enabled && binding ? teamDirectorySourcePages.get(bindingKey) : undefined),
     }));
     const [refreshGeneration, setRefreshGeneration] = React.useState(0);
     const requestEpochRef = React.useRef(0);
@@ -60,34 +69,48 @@ export function useDirectoryAdministration(
         () => createIdentityAdministrationClient(scope, { onApprovalPending }),
         [onApprovalPending, scope.serverId, scope.accountId],
     );
-    const state = boundState.bindingKey === bindingKey
-        ? boundState.value
-        : INITIAL_DIRECTORY_ADMINISTRATION_STATE;
+    const hasMountedObservation = enabled && !resolving && boundState.bindingKey === bindingKey && boundState.binding === binding;
+    const retained = enabled && !hasMountedObservation && (binding || resolving) ? teamDirectorySourcePages.get(bindingKey) : undefined;
+    const seed = React.useMemo(() => seedDirectoryState(retained), [retained]);
+    const state = hasMountedObservation ? boundState.value : seed;
+    const readPage = React.useCallback((cursor: string | null, signal: AbortSignal) => executeIdentityAdministrationRead<TeamDirectorySourcePageV1>(
+        (options) => client.executeDirectory('teams.directory.sources.list', { v: 1, teamId, ...(cursor === null ? {} : { cursor }) }, options),
+        signal,
+    ), [client, teamId]);
 
     React.useEffect(() => {
-        if (!enabled) return;
+        if (!enabled || resolving) return;
         const controller = new AbortController();
         requestControllerRef.current = controller;
         const requestEpoch = requestEpochRef.current + 1;
         requestEpochRef.current = requestEpoch;
+        const stored = binding ? teamDirectorySourcePages.get(bindingKey) : undefined;
         setBoundState((current) => ({
-            bindingKey,
-            value: current.bindingKey === bindingKey
+            bindingKey, binding,
+            value: current.bindingKey === bindingKey && current.binding === binding
                 ? beginDirectoryAdministrationRefresh(current.value)
-                : INITIAL_DIRECTORY_ADMINISTRATION_STATE,
+                : seedDirectoryState(stored),
         }));
-        void executeIdentityAdministrationRead<TeamDirectorySourcePageV1>(
-            (options) => client.executeDirectory('teams.directory.sources.list', { v: 1, teamId }, options),
-            controller.signal,
-        ).then((result) => {
-            if (controller.signal.aborted || requestEpochRef.current !== requestEpoch) return;
-            setBoundState((current) => current.bindingKey !== bindingKey
+        const isCancelled = () => controller.signal.aborted || requestEpochRef.current !== requestEpoch || (binding !== null && !binding.isCurrent());
+        void loadTeamPageRange({
+            loadedRowCount: stored?.items.length ?? 0,
+            isCancelled,
+            loadPage: async (cursor) => {
+                const result = await readPage(cursor, controller.signal);
+                return result.ok ? { kind: 'succeeded', value: result.value } : { kind: 'failed', failure: result.failure };
+            },
+        }).then((result) => {
+            if (result === null || isCancelled()) return;
+            const withdrawn = result.kind === 'failed' && result.failure.domainFailure !== undefined
+                && isAuthoritativeScopedSnapshotRefusalKind(result.failure.domainFailure.kind);
+            if (binding && withdrawn) teamDirectorySourcePages.apply(bindingKey, binding, null);
+            setBoundState((current) => current.bindingKey !== bindingKey || current.binding !== binding
                 ? current
                 : {
-                    bindingKey,
+                    bindingKey, binding,
                     value: settleDirectoryAdministrationRefresh(
-                        current.value,
-                        result.ok
+                        withdrawn ? INITIAL_DIRECTORY_ADMINISTRATION_STATE : current.value,
+                        result.kind === 'succeeded'
                             ? { ok: true, items: result.value.items, nextCursor: result.value.nextCursor }
                             : { ok: false, failure: result.failure },
                     ),
@@ -97,16 +120,22 @@ export function useDirectoryAdministration(
             controller.abort();
             if (requestControllerRef.current === controller) requestControllerRef.current = null;
         };
-    }, [bindingKey, client, enabled, teamId, refreshGeneration]);
+    }, [binding, bindingKey, enabled, readPage, refreshGeneration, resolving]);
+
+    React.useEffect(() => {
+        if (binding && hasMountedObservation && state.kind === 'ready' && !state.refreshing && !state.loadingMore && !state.stale && !state.failure) {
+            teamDirectorySourcePages.apply(bindingKey, binding, { items: state.items, nextCursor: state.nextCursor });
+        }
+    }, [binding, bindingKey, hasMountedObservation, state]);
 
     const refresh = React.useCallback(() => {
         if (!enabled) return;
         requestEpochRef.current += 1;
-        setBoundState((current) => current.bindingKey !== bindingKey
+        setBoundState((current) => current.bindingKey !== bindingKey || current.binding !== binding
             ? current
-            : { bindingKey, value: beginDirectoryAdministrationRefresh(current.value) });
+            : { bindingKey, binding, value: beginDirectoryAdministrationRefresh(current.value) });
         setRefreshGeneration((value) => value + 1);
-    }, [bindingKey, enabled]);
+    }, [binding, bindingKey, enabled]);
     const loadMore = React.useCallback(async () => {
         if (!enabled
             || state.kind !== 'ready'
@@ -120,20 +149,24 @@ export function useDirectoryAdministration(
         const requestEpoch = requestEpochRef.current;
         const controller = requestControllerRef.current;
         if (!controller || controller.signal.aborted) return;
-        setBoundState((current) => current.bindingKey !== bindingKey
+        setBoundState((current) => current.bindingKey !== bindingKey || current.binding !== binding
             ? current
-            : { bindingKey, value: beginDirectoryAdministrationContinuation(current.value) });
-        const result = await executeIdentityAdministrationRead<TeamDirectorySourcePageV1>(
-            (options) => client.executeDirectory('teams.directory.sources.list', { v: 1, teamId, cursor }, options),
-            controller.signal,
-        );
-        if (controller.signal.aborted || requestEpochRef.current !== requestEpoch) return;
+            : { bindingKey, binding, value: beginDirectoryAdministrationContinuation(current.value) });
+        const result = await readPage(cursor, controller.signal);
+        if (controller.signal.aborted || requestEpochRef.current !== requestEpoch || (binding && !binding.isCurrent())) return;
+        if (!result.ok && result.failure.domainFailure !== undefined
+            && isAuthoritativeScopedSnapshotRefusalKind(result.failure.domainFailure.kind)) {
+            if (binding) teamDirectorySourcePages.apply(bindingKey, binding, null);
+            setBoundState({ bindingKey, binding, value: { kind: 'unavailable', failure: result.failure } });
+            return;
+        }
         setBoundState((current) => {
             if (current.bindingKey !== bindingKey
+                || current.binding !== binding
                 || current.value.kind !== 'ready'
                 || current.value.nextCursor !== cursor) return current;
             return {
-                bindingKey,
+                bindingKey, binding,
                 value: settleDirectoryAdministrationContinuation(
                     current.value,
                     result.ok
@@ -142,16 +175,8 @@ export function useDirectoryAdministration(
                 ),
             };
         });
-    }, [bindingKey, client, enabled, state, teamId]);
-    React.useEffect(() => {
-        if (!enabled) return;
-        return subscribeHomeAccountChange((event) => {
-            if (event.serverId !== scope.serverId) return;
-            if (event.entityIds !== undefined
-                && !event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) return;
-            refresh();
-        }, { reconnect: 'refresh' });
-    }, [enabled, refresh, scope.serverId]);
+    }, [binding, bindingKey, enabled, readPage, state]);
+    useManagedIdentityWake(scope.serverId, teamId, refresh, enabled);
     return React.useMemo(() => ({ state, refresh, loadMore }), [loadMore, refresh, state]);
 }
 

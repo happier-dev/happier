@@ -5,9 +5,9 @@ export type TeamPage<TRow> = Readonly<{
     nextCursor: string | null;
 }>;
 
-export type TeamPageOutcome<TRow> =
+export type TeamPageOutcome<TRow, TFailure = HomeDomainFailure> =
     | Readonly<{ kind: 'succeeded'; value: TeamPage<TRow> }>
-    | Readonly<{ kind: 'failed'; failure: HomeDomainFailure }>;
+    | Readonly<{ kind: 'failed'; failure: TFailure }>;
 
 /**
  * Revalidates the loaded range from the Home's first page through fresh cursors.
@@ -15,11 +15,11 @@ export type TeamPageOutcome<TRow> =
  * returned unchanged so each lifetime's existing owner retains or withdraws its
  * snapshot. Reaching the end can shrink the range after rows were removed.
  */
-export async function loadTeamPageRange<TRow>(params: Readonly<{
+export async function loadTeamPageRange<TRow, TFailure = HomeDomainFailure>(params: Readonly<{
     loadedRowCount: number;
-    loadPage: (cursor: string | null) => Promise<TeamPageOutcome<TRow> | null>;
+    loadPage: (cursor: string | null) => Promise<TeamPageOutcome<TRow, TFailure> | null>;
     isCancelled?: () => boolean;
-}>): Promise<TeamPageOutcome<TRow> | null> {
+}>): Promise<TeamPageOutcome<TRow, TFailure> | null> {
     const items: TRow[] = [];
     let cursor: string | null = null;
     while (true) {

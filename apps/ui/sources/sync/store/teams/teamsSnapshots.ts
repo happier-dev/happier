@@ -6,6 +6,7 @@ import {
     type TeamCredentialResourceSummaryV1,
     type TeamCredentialViewerCapabilitiesV1,
     type TeamGroupV1,
+    type TeamDirectorySourceSummaryV1,
     type TeamSummaryV1,
     type TeamSharedResourceSummaryRowV1,
 } from '@happier-dev/protocol/teams';
@@ -247,12 +248,14 @@ export const teamSharedMachinePoolObservations = createTeamObservations<readonly
 export const teamSharedSavedSecretPages = createTeamObservations<TeamPage<SavedSecretCatalogResultV1>>();
 export const teamSharedArtifactPages = createTeamObservations<TeamPage<ArtifactActionResultV1<'artifact.list'>['items'][number]>>();
 export const teamSharedDiscussionPages = createTeamObservations<TeamPage<DiscussionOpenedSummaryV1>>();
+export const teamDirectorySourcePages = createTeamObservations<TeamPage<TeamDirectorySourceSummaryV1>>();
 const retainedTeamObservations = [
     teamSharedMachineObservations,
     teamSharedMachinePoolObservations,
     teamSharedSavedSecretPages,
     teamSharedArtifactPages,
     teamSharedDiscussionPages,
+    teamDirectorySourcePages,
 ];
 const listeners = new Set<() => void>();
 

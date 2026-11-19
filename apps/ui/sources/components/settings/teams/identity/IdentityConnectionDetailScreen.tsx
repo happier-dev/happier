@@ -158,7 +158,7 @@ export const IdentityConnectionDetailContent = React.memo(function IdentityConne
         ? homeAdministrationIdentityConnectionPath(props.scope.serverId, props.connectionId)
         : teamIdentityConnectionPath({ serverId: props.scope.serverId, teamId: props.teamId }, props.connectionId),
     [props.scope.serverId, props.teamId, props.connectionId]);
-    const { state, refresh } = useIdentityAdministration(props.scope, props.teamId, props.requestApproval);
+    const { state, refresh } = useIdentityAdministration(props.scope, props.teamId, props.requestApproval, props.connectionId);
     const client = React.useMemo(
         () => createIdentityAdministrationClient(props.scope, {
             onApprovalPending: props.requestApproval,

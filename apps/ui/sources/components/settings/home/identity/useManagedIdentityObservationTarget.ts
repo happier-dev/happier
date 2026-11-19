@@ -9,8 +9,8 @@ import {
 } from '@/sync/runtime/orchestration/homeAccountChange';
 import { managedIdentityQueryKey } from '@/sync/store/home/governance/homeGovernanceSnapshots';
 
-export function useManagedIdentityObservationTarget(scope: ServerAccountScope, teamId: string | null) {
-    const credential = useServerCredentialAccountScopeBinding(scope.serverId);
+export function useManagedIdentityObservationTarget(scope: ServerAccountScope, teamId: string | null, enabled = true) {
+    const credential = useServerCredentialAccountScopeBinding(enabled ? scope.serverId : null);
     const binding = credential.binding?.isCurrent() && areServerAccountScopesEqual(credential.binding.scope, scope)
         ? credential.binding : null;
     return {
@@ -20,11 +20,14 @@ export function useManagedIdentityObservationTarget(scope: ServerAccountScope, t
     };
 }
 
-export function useManagedIdentityWake(serverId: string, teamId: string | null, refresh: () => void): void {
-    React.useEffect(() => subscribeHomeAccountChange((event) => {
-        if (event.serverId !== serverId) return;
-        const teamsChanged = event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1);
-        if (teamId === null ? isHomeAdministrationAccountChange(event) || teamsChanged
-            : event.entityIds === undefined || teamsChanged) refresh();
-    }, { reconnect: 'refresh' }), [refresh, serverId, teamId]);
+export function useManagedIdentityWake(serverId: string, teamId: string | null, refresh: () => void, enabled = true): void {
+    React.useEffect(() => {
+        if (!enabled) return;
+        return subscribeHomeAccountChange((event) => {
+            if (event.serverId !== serverId) return;
+            const teamsChanged = event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1);
+            if (teamId === null ? isHomeAdministrationAccountChange(event) || teamsChanged
+                : event.entityIds === undefined || teamsChanged) refresh();
+        }, { reconnect: 'refresh' });
+    }, [enabled, refresh, serverId, teamId]);
 }

@@ -1,6 +1,8 @@
 import type { HomeAdministrationEventV1, HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance';
+import type { HomeIdentityConnectionV1 } from '@happier-dev/protocol/home';
 import type { ManagedGitHubAppsListOutputV1 } from '@happier-dev/protocol/identity/githubApps';
 import type { ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
+import type { IdentityConnectionV1, TeamAdmissionModeApplicabilityV1, TeamIdentityEligibleProviderV1 } from '@happier-dev/protocol/teams';
 import { snapshotReferenceSelectionKey } from '@/sync/domains/scope/snapshotReferenceSelectionKey';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
@@ -83,6 +85,13 @@ type ManagedIdentityProviderObservation = Readonly<{
     unreadableCount: number;
 }>;
 
+type IdentityConnectionObservation = Readonly<{
+    items: readonly (IdentityConnectionV1 & Partial<Pick<HomeIdentityConnectionV1, 'teamsUsingIt'>>)[];
+    eligibleProviders: readonly TeamIdentityEligibleProviderV1[];
+    admissionModeApplicability?: TeamAdmissionModeApplicabilityV1;
+    memberSignInUrl?: string | null;
+}>;
+
 export function managedIdentityQueryKey(scope: ServerAccountScope, teamId: string | null): string {
     return JSON.stringify([scope.serverId, scope.accountId, teamId]);
 }
@@ -112,6 +121,7 @@ function createManagedIdentityObservations<Data>() {
 
 export const managedIdentityProviderObservations = createManagedIdentityObservations<ManagedIdentityProviderObservation>();
 export const managedGitHubAppsObservations = createManagedIdentityObservations<ManagedGitHubAppsListOutputV1>();
+export const identityConnectionObservations = createManagedIdentityObservations<IdentityConnectionObservation>();
 
 function notify(): void {
     for (const listener of [...listeners]) {
@@ -262,6 +272,7 @@ export function clearHomeGovernanceSnapshotsForServer(serverIdRaw: string): void
     }
     managedIdentityProviderObservations.clearForServer(serverId);
     managedGitHubAppsObservations.clearForServer(serverId);
+    identityConnectionObservations.clearForServer(serverId);
     for (const [key, observation] of activityObservations) {
         if (observation.lifetime.scope.serverId === serverId) activityObservations.delete(key);
     }
@@ -274,5 +285,6 @@ export function resetHomeGovernanceSnapshotsForTests(): void {
     activityObservations.clear();
     managedIdentityProviderObservations.clear();
     managedGitHubAppsObservations.clear();
+    identityConnectionObservations.clear();
     listeners.clear();
 }

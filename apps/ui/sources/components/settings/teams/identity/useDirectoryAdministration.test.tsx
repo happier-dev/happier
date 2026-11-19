@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeamDirectorySourceRemovalPreflightV1Schema, TeamDirectorySourceSummaryV1Schema, type TeamDirectorySourceSummaryV1 } from '@happier-dev/protocol/teams';
 
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createDeferred, teamIdentityConnectionFixture } from '@/dev/testkit';
 import {
     createHomeGovernanceHarness,
     installHomeGovernanceBoundaries,
@@ -21,6 +22,7 @@ installHomeGovernanceBoundaries(harness);
 const { useActionApprovalContinuation } = await import('@/components/approvals/useActionApprovalContinuation');
 const { serverAccountScopedTeamKey, serverAccountScopedTeamResourceKey } = await import('@/sync/domains/teams/teamAddress');
 const { useDirectoryAdministration, useDirectorySourceAdministration } = await import('./useDirectoryAdministration');
+const { useIdentityAdministration } = await import('./useIdentityAdministration');
 const { useDirectoryPeopleList } = await import('./DirectoryPeopleList');
 
 const ACCOUNT_ID = 'account-directory';
@@ -108,6 +110,40 @@ describe('mounted directory reads with local Ask confirmation', () => {
         await harness.reset();
     });
     afterEach(() => standardCleanup());
+
+    it.each(['connections', 'directory'] as const)('keeps observed %s visible until the returning Home read settles', async (kind) => {
+        const scope = await addHome();
+        const id = kind === 'connections' ? 'connection-1' : 'source-1';
+        const path = kind === 'connections' ? '/v1/teams/identity/connections/list' : LIST_PATH;
+        const useProjection = kind === 'connections' ? useIdentityAdministration : useDirectoryAdministration;
+        const body = kind === 'connections'
+            ? {
+                items: [teamIdentityConnectionFixture({ id })], eligibleProviders: [], memberSignInUrl: null,
+                admissionModeApplicability: {
+                    v: 1,
+                    modes: {
+                        invite_only: { status: 'available' },
+                        provisioned: { status: 'unavailable', reason: 'directory_source_required' },
+                        jit: { status: 'unavailable', reason: 'team_connection_required' },
+                    },
+                },
+            }
+            : { items: [directorySource(id)], nextCursor: null };
+        harness.answer(scope.serverId, path, { body });
+        const initial = await renderHook(() => useProjection(scope, 'team-1'));
+        await waitForHomeGovernance(() => expect(initial.getCurrent().state).toMatchObject({
+            kind: 'ready', items: [{ id }], refreshing: false,
+        }));
+        await initial.unmount();
+
+        const fresh = createDeferred<void>();
+        harness.answer(scope.serverId, path, { status: 403, respondAfter: fresh.promise });
+        const returning = await renderHook(() => useProjection(scope, 'team-1'));
+        expect(returning.getCurrent().state).toMatchObject({ kind: 'ready', items: [{ id }], refreshing: true });
+        await act(async () => fresh.resolve());
+        await waitForHomeGovernance(() => expect(returning.getCurrent().state.kind).toBe('unavailable'));
+        await returning.unmount();
+    });
 
     it('confirms source and continuation reads locally without replaying either read', async () => {
         const scope = await addHome();
