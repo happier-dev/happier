@@ -18,25 +18,47 @@ test('root unit file selections dispatch only owning workspaces and preserve the
     writeFileSync(pnpm, `const fs = require('node:fs');fs.appendFileSync(process.env.ROOT_TEST_CALLS, JSON.stringify(process.argv.slice(2))+'\\n');`);
     writeFileSync(join(fixture, 'package.json'), JSON.stringify({ private: true }));
     writeFileSync(join(fixture, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n');
-    for (const [directory, name] of [['apps/stack', '@happier-dev/stack'], ['packages/protocol', '@happier-dev/protocol'], ['packages/channels-protocol', '@happier-dev/channels-protocol']]) {
+    for (const [directory, name] of [['apps/stack', '@happier-dev/stack'], ['apps/ui', '@happier-dev/app'], ['packages/protocol', '@happier-dev/protocol'], ['packages/channels-protocol', '@happier-dev/channels-protocol']]) {
       mkdirSync(join(fixture, directory), { recursive: true });
-      writeFileSync(join(fixture, directory, 'package.json'), JSON.stringify({ name, scripts: { test: 'unused' } }));
-      writeFileSync(join(fixture, directory, 'selected.test.mjs'), '');
+      writeFileSync(join(fixture, directory, 'package.json'), JSON.stringify({ name, scripts: { test: 'unused',
+        ...(directory === 'apps/ui' ? { 'test:unit': 'unused' } : {}) } }));
+      if (directory === 'apps/ui') {
+        mkdirSync(join(fixture, directory, 'sources'), { recursive: true });
+        mkdirSync(join(fixture, directory, 'scripts'), { recursive: true });
+        writeFileSync(join(fixture, directory, 'scripts/selected.test.mjs'), '');
+        writeFileSync(join(fixture, directory, 'sources/selected.integration.test.ts'), '');
+        for (const file of ['selected.test.tsx', 'other.test.tsx']) writeFileSync(join(fixture, directory, 'sources', file), '');
+      } else writeFileSync(join(fixture, directory, 'selected.test.mjs'), '');
     }
+    mkdirSync(join(fixture, 'packages/protocol/src/features'), { recursive: true });
+    writeFileSync(join(fixture, 'packages/protocol/src/features/catalog.ts'), readFileSync('packages/protocol/src/features/catalog.ts'));
     const run = (files: string[]) => spawnSync(process.execPath, ['--experimental-strip-types', resolve('scripts/testing/runRootTests.ts'), 'unit', ...files], {
       cwd: fixture,
       encoding: 'utf8',
       env: { ...process.env, npm_execpath: pnpm, ROOT_TEST_CALLS: log },
     });
-    const result = run(['--', 'apps/stack/selected.test.mjs', join(fixture, 'packages/protocol/selected.test.mjs'), 'packages/channels-protocol/selected.test.mjs', 'apps/stack/selected.test.mjs']);
+    const result = run(['--', 'apps/stack/selected.test.mjs', join(fixture, 'packages/protocol/selected.test.mjs'), 'packages/channels-protocol/selected.test.mjs', 'apps/ui/sources/selected.test.tsx', 'apps/ui/sources/other.test.tsx', 'apps/stack/selected.test.mjs']);
     assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line)), [
       ['--filter', '@happier-dev/protocol', '--silent', 'run', 'test', 'selected.test.mjs'],
       ['--filter', '@happier-dev/channels-protocol', '--silent', 'run', 'build'],
       ['--filter', '@happier-dev/channels-protocol', '--silent', 'run', 'test', 'selected.test.mjs'],
+      ['--filter', '@happier-dev/app', '--silent', 'run', 'test:unit', 'sources/selected.test.tsx', 'sources/other.test.tsx'],
       ['--dir', 'apps/stack', '--silent', 'run', 'test:unit', 'selected.test.mjs'],
     ]);
     rmSync(log);
+    for (const files of [
+      ['scripts/selected.test.mjs'],
+      ['sources/selected.test.tsx', 'scripts/selected.test.mjs'],
+      ['sources/selected.integration.test.ts'],
+    ]) {
+      const direct = run(files.map(file => `apps/ui/${file}`));
+      assert.equal(direct.status, 0, direct.stdout + direct.stderr);
+      assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line)), [
+        ['--filter', '@happier-dev/app', '--silent', 'run', 'test', ...files],
+      ], 'Node, mixed, and non-unit selections retain the full public entry');
+      rmSync(log);
+    }
     for (const file of ['apps/stack/missing.test.mjs', 'apps/stack', '--unknown', '../outside.test.mjs']) {
       const rejected = run([file]);
       assert.notEqual(rejected.status, 0, rejected.stdout + rejected.stderr);

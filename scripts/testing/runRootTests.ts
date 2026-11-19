@@ -9,13 +9,18 @@ import { resolveGatePackageForWorkspaceDirectory } from '../ci/selectAffectedGat
 import { discoverWorkspaceManifests, resolveOwningWorkspaceDirectory } from './lib/workspaceManifests.ts';
 import { discoverPluginWorkspaceTestPackageReport } from './lib/pluginWorkspaceTestPackages.ts';
 
+type RootTestCommand = CommandSuiteEntry & Readonly<{
+  /** Existing public file-filtering entry; the full default may also run boundary checks. */
+  focusedScript?: string;
+}>;
+
 export const ROOT_TEST_COMMANDS = {
   unit: [
     ...selectSharedPackageTestCommands('local'),
     { id: '@happier-dev/plugin-sdk', args: ['--filter', '@happier-dev/plugin-sdk', '--silent', 'run', 'test'] },
     { id: '@happier-dev/plugin-ui', args: ['--filter', '@happier-dev/plugin-ui', '--silent', 'run', 'test'] },
     { id: '@happier-dev/sdk', args: ['--filter', '@happier-dev/sdk', '--silent', 'run', 'test'] },
-    { id: '@happier-dev/app', args: ['--filter', '@happier-dev/app', '--silent', 'run', 'test'] },
+    { id: '@happier-dev/app', args: ['--filter', '@happier-dev/app', '--silent', 'run', 'test'], focusedScript: 'test:unit' },
     { id: '@happier-dev/cli', args: ['--filter', '@happier-dev/cli', '--silent', 'run', 'test:unit'] },
     { id: 'apps/server', args: ['--dir', 'apps/server', '--silent', 'run', 'test:unit'] },
     { id: 'apps/stack', args: ['--dir', 'apps/stack', '--silent', 'run', 'test:unit'] },
@@ -26,7 +31,7 @@ export const ROOT_TEST_COMMANDS = {
     { id: 'apps/server', args: ['--dir', 'apps/server', '--silent', 'run', 'test:integration'] },
     { id: 'apps/stack', args: ['--dir', 'apps/stack', '--silent', 'run', 'test:integration'] },
   ],
-} as const satisfies Record<string, readonly CommandSuiteEntry[]>;
+} as const satisfies Record<string, readonly RootTestCommand[]>;
 
 /** The root lane whose workspaces come from run-time package labels instead of a fixed inventory. */
 const GATE_UNIT_LANE = 'gate-unit';
@@ -44,7 +49,7 @@ export function resolveFixedRootTestCommands(lane: string | undefined): readonly
 
 /** Each root unit command with the workspace directory it tests; the one map from files to unit commands. */
 export function resolveRootUnitCommandOwners(manifests: Awaited<ReturnType<typeof discoverWorkspaceManifests>>) {
-  return ROOT_TEST_COMMANDS.unit.map(command => {
+  return ROOT_TEST_COMMANDS.unit.map((command: RootTestCommand) => {
     const [selector, workspace] = command.args;
     return { command, owner: manifests.find(manifest => selector === '--dir'
       ? manifest.workspaceDirectory === workspace : manifest.packageName === workspace)?.workspaceDirectory };
@@ -68,12 +73,19 @@ async function selectUnitFileCommands(files: readonly string[], rootDir: string)
     selection.add(relative(resolve(rootDir, owner), path));
     selected.set(owner, selection);
   }
+  // Load the classifier only for a focused override: it also reads the root command inventory.
+  const classifier = commands.some(({ command, owner }) => command.focusedScript && owner && selected.has(owner))
+    ? await import('./lib/testLaneMap.ts') : null;
   return commands.flatMap(({ command, owner }) => {
     const selection = owner ? selected.get(owner) : undefined;
     if (!selection) return [];
     // Keep the selected workspace's build/check prerequisites in their established order.
-    const script = command.args[command.args.length - 1];
-    return [{ ...command, args: script.startsWith('test') ? [...command.args, ...selection] : command.args }];
+    const focusedScript = command.focusedScript && classifier && [...selection].every(file =>
+      classifier.classifyTestFile(classifier.EMPTY_TEST_LANE_CONTEXT, `${owner}/${file.split(sep).join('/')}`) === 'test')
+      ? command.focusedScript : undefined;
+    const args = focusedScript ? [...command.args.slice(0, -1), focusedScript] : command.args;
+    const script = args[args.length - 1];
+    return [{ ...command, args: script.startsWith('test') ? [...args, ...selection] : args }];
   });
 }
 
