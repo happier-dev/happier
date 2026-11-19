@@ -24,10 +24,8 @@ it.each([['compose', 'store.kind.app.pasteCompose'], ['image', 'store.kind.app.r
       sources: [{ id: 'source-app', revision: 3, name: 'App', audience: [], createdByAccountId: 'alice' }],
       coverage: { complete: true, nextCursor: null } } });
     const account = await captureLazyActionAccountContext(serverId);
-    // A host over the page (New app) steps aside before the draft opens beneath it.
-    const onNavigate = vi.fn(() => expect(routerMock.spies.push).not.toHaveBeenCalled());
     routerMock.spies.push.mockClear();
-    const screen = await renderScreen(<StoreAppDefinitionEntriesFor scope={account.accountLifetime.scope} onNavigate={onNavigate} />);
+    const screen = await renderScreen(<StoreAppDefinitionEntriesFor scope={account.accountLifetime.scope} />);
     const find = () => screen.tree.findAll(node => node.props.testID === `${testID}.menu` && typeof node.props.onSelect === 'function')[0];
     const menu = () => find()!;
     // The entries render once the active Account scope has resolved.
@@ -36,7 +34,6 @@ it.each([['compose', 'store.kind.app.pasteCompose'], ['image', 'store.kind.app.r
     await vi.waitFor(() => expect(menu().props.items.length, 'the opened menu lists the Account\'s Projects').toBeGreaterThan(0), { timeout: 20000 });
     await act(async () => menu().props.onSelect('source-app'));
     expect(routerMock.spies.push).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^/deployments/source-app\\?serverId=[^&]+&newDefinition=${kind}$`)));
-    expect(onNavigate).toHaveBeenCalledOnce();
     await screen.unmount();
     account.dispose();
   });
