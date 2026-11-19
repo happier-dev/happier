@@ -1651,57 +1651,48 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
             }
         }
 
-        const scrollSourceEl = shouldPortalWeb ? getScrollSourceDomElement() : null;
-        // A portal escapes the anchor's scrolling ancestor, including the zero-height
-        // modal-aware host used by embedded composers. Element scroll events do not
-        // bubble: capture them when no explicit scroll source owns tracking.
-        const shouldSubscribeToWindowScroll = shouldPortalWeb && portalTargetOnWeb === 'body';
-
-        // Prefer an explicit scroll source over boundary-derived heuristics.
-        // (Boundary refs are primarily for clamping; scroll tracking should be independent.)
-        const legacyBoundaryScrollEl =
-            !scrollSourceEl && shouldSubscribeToWindowScroll
-                ? getBoundaryDomElement()
-                : null;
-
-        const shouldCaptureAncestorScroll = shouldPortalWeb && !scrollSourceEl && !legacyBoundaryScrollEl;
+        // A portal escapes the anchor's scrolling ancestors (a page, a pane, the zero-height modal-aware host of an
+        // embedded composer), so it follows whichever of them scrolls the anchor, whatever its boundary or scroll
+        // source: WF-ACCEPT-1119 item 2, where a body portal bounded by a non-scrolling view stayed at y 488 while the
+        // page scrolled its "…" up 85 px. Element scroll events do not bubble: capture them, and keep the ones that
+        // move the anchor. Each frame of a scroll re-places it once, so it moves with the anchor rather than after it.
+        let scrollFrame: number | null = null;
+        const scheduleScrollFrame = () => {
+            if (scrollFrame !== null) return;
+            scrollFrame = window.requestAnimationFrame(() => {
+                scrollFrame = null;
+                recompute();
+            });
+        };
         const scheduleAncestorScroll = (event: Event) => {
             const anchorEl = getDomElementFromNode(anchorRef.current);
             if (event.target === window || (event.target instanceof Node && anchorEl && event.target.contains(anchorEl))) {
-                schedule();
+                scheduleScrollFrame();
             }
         };
-        if (shouldCaptureAncestorScroll) {
+        if (shouldPortalWeb) {
             window.addEventListener('scroll', scheduleAncestorScroll, { capture: true, passive: true });
-        } else if (shouldSubscribeToWindowScroll) {
-            window.addEventListener('scroll', schedule, { passive: true } as any);
         }
-
+        // An explicit scroll source that does not hold the anchor (an inner list) still re-places the popover.
+        const scrollSourceEl = shouldPortalWeb ? getScrollSourceDomElement() : null;
         if (scrollSourceEl) {
-            scrollSourceEl.addEventListener('scroll', schedule, { passive: true } as any);
-        } else if (legacyBoundaryScrollEl) {
-            // Back-compat: if no explicit scroll source is provided, keep subscribing to the boundary
-            // scroll container for fixed-position portals (RN-web ScrollViews).
-            legacyBoundaryScrollEl.addEventListener('scroll', schedule, { passive: true } as any);
+            scrollSourceEl.addEventListener('scroll', scheduleScrollFrame, { passive: true } as any);
         }
         return () => {
             if (timer !== null) window.clearTimeout(timer);
+            if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame);
             window.removeEventListener('resize', schedule);
             visualViewport?.removeEventListener('resize', schedule);
             window.removeEventListener('focusin', scheduleFocusLayout);
             anchorLayoutObserver?.disconnect();
-            if (shouldCaptureAncestorScroll) {
+            if (shouldPortalWeb) {
                 window.removeEventListener('scroll', scheduleAncestorScroll, true);
-            } else if (shouldSubscribeToWindowScroll) {
-                window.removeEventListener('scroll', schedule as any);
             }
             if (scrollSourceEl) {
-                scrollSourceEl.removeEventListener('scroll', schedule as any);
-            } else if (legacyBoundaryScrollEl) {
-                legacyBoundaryScrollEl.removeEventListener('scroll', schedule as any);
+                scrollSourceEl.removeEventListener('scroll', scheduleScrollFrame as any);
             }
         };
-    }, [anchorRef, getContentDomElement, getDomElementFromNode, getBoundaryDomElement, getScrollSourceDomElement, open, portalTargetOnWeb, props.clearanceRef, props.horizontalBoundaryRef, recompute, resolvedAnchorMode, shouldPortalWeb]);
+    }, [anchorRef, getContentDomElement, getDomElementFromNode, getScrollSourceDomElement, open, props.clearanceRef, props.horizontalBoundaryRef, recompute, resolvedAnchorMode, shouldPortalWeb]);
 
     React.useEffect(() => {
         if (!open) return;
