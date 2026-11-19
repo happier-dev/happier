@@ -195,6 +195,8 @@ export interface ItemProps {
     /** Override the primitive subtitle allowance; 0 permits multiline, page descriptions grow by default. */
     subtitleLines?: number;
     detail?: string;
+    /** Let the detail wrap in its trailing column, including on narrow rows. */
+    wrapDetail?: boolean;
     detailTestID?: string;
     icon?: React.ReactNode;
     leftElement?: React.ReactNode;
@@ -756,6 +758,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         ...ITEM_TITLE_TEXT_METRICS.comfortable,
         flexShrink: 1,
     },
+    detailWrapped: Platform.OS === 'web' ? ({ overflowWrap: 'anywhere' } as TextStyle) : {},
     detailCozy: {
         ...ITEM_TITLE_TEXT_METRICS.cozy,
     },
@@ -858,6 +861,7 @@ function ItemRow(props: ItemProps & Readonly<{
         titleHighlightQuery,
         subtitleLines,
         detail,
+        wrapDetail = false,
         detailTestID,
         icon,
         leftElement: leftElementProp,
@@ -1220,7 +1224,8 @@ function ItemRow(props: ItemProps & Readonly<{
     // trailing (count, menu, fix) never leaves its line: its description yields instead (S10 ST-5).
     const pageOperation = isPageRow && rightElementOutsidePressable && accessoryLayout === 'inline';
     const adaptiveAccessory = accessoryLayout === 'adaptive' || pageOperation;
-    const measuresRowWidth = adaptiveAccessory || (isPageRow && Boolean(detail));
+    const hasAdaptiveDetail = isPageRow && Boolean(detail) && !wrapDetail;
+    const measuresRowWidth = adaptiveAccessory || hasAdaptiveDetail;
     const handleRowLayout = React.useCallback((event: LayoutChangeEvent) => {
         const widthPx = event.nativeEvent.layout.width;
         if (!Number.isFinite(widthPx) || widthPx <= 0) return;
@@ -1266,7 +1271,7 @@ function ItemRow(props: ItemProps & Readonly<{
         () => (passiveFactsFloor && titleFloorStyle !== null ? [styles.centerContent, titleFloorStyle] : styles.centerContent),
         [passiveFactsFloor, styles.centerContent, titleFloorStyle],
     );
-    const measuresDetail = isPageRow && Boolean(detail) && isNarrowRow;
+    const measuresDetail = hasAdaptiveDetail && isNarrowRow;
     // A field beside a short name needs only that name's room (see `resolveHappierPageRowFieldMaxWidth`).
     const measuresFieldLabel = isPageRow && fieldAccessory && isNarrowRow;
     const measuresTitle = (measuresDetail || measuresFieldLabel) && (typeof title === 'string' || typeof title === 'number');
@@ -1982,9 +1987,10 @@ function ItemRow(props: ItemProps & Readonly<{
                             detailFigures,
                             { marginRight: rightElement || showAccessory ? 8 : 0 },
                             subtitleInkStyle,
-                            detailStyle
+                            detailStyle,
+                            wrapDetail ? styles.detailWrapped : null,
                         ]}
-                        numberOfLines={1}
+                        numberOfLines={wrapDetail ? undefined : 1}
                     >
                         {detail}
                     </Text>
@@ -2054,6 +2060,7 @@ function ItemRow(props: ItemProps & Readonly<{
         stackAccessory,
         stackedLabelEdgeStyle,
         detail,
+        wrapDetail,
         detailTestID,
         detailSizeStyle,
         detailFigures,
@@ -2095,6 +2102,7 @@ function ItemRow(props: ItemProps & Readonly<{
         composedSubtitleTextStyle,
         styles.centerContent,
         styles.detail,
+        styles.detailWrapped,
         styles.inlineMarkRow,
         styles.inlineMarkText,
         styles.rightSection,

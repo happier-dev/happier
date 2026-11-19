@@ -118,6 +118,7 @@ export function MachinePresetProjectFilesSection(
               title={t('machineDetailPage.projectFiles.repository')}
               subtitle={t('machineDetailPage.projectFiles.repositoryHelp')}
               detail={value.source?.repository.nameWithOwner ?? t('machineDetailPage.projectFiles.fromFolder')}
+              wrapDetail
               subtitleLines={0}
               mode="info"
               showChevron={false}
@@ -127,6 +128,7 @@ export function MachinePresetProjectFilesSection(
               title={t('machineDetailPage.projectFiles.branch')}
               subtitle={t('machineDetailPage.projectFiles.branchHelp')}
               detail={value.branch ?? t('machineDetailPage.projectFiles.folderBranch')}
+              wrapDetail
               subtitleLines={0}
               mode="info"
               showChevron={false}
