@@ -221,6 +221,9 @@ export async function createSentryApiClient(
       }
 
       if (signal.aborted) return failed(abortFailure(request.operation));
+      if (input.deployment.kind === 'selfHosted' && request.update === undefined && response.status === 405) {
+        return failed(classifySentryFailure({ kind: 'selfHostedUnsupported', operation: request.operation }));
+      }
       return Object.freeze({
         kind: 'response' as const,
         response: Object.freeze({

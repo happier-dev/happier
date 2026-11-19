@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import issuesListPage1 from '../fixtures/issuesListPage1.json' with { type: 'json' };
 import issuesListRateLimited from '../fixtures/issuesListRateLimited.json' with { type: 'json' };
 
-import { SENTRY_CONNECTED_ACCOUNT_PURPOSE } from '../sentryContracts.js';
+import { SENTRY_CONNECTED_ACCOUNT_PURPOSE, SENTRY_SELF_HOSTED_UNSUPPORTED_CODES } from '../sentryContracts.js';
 import { createSentryApiClient } from './sentryApiClient.js';
 import { toTriageFailure } from '../source/observation.js';
 
@@ -142,6 +142,27 @@ describe('createSentryApiClient', () => {
       expect(outcome.failure.code).toBe('sentry-invoked-origin-mismatch');
     }
     expect(request).not.toHaveBeenCalled();
+  });
+
+  it('reports an explicitly unsupported self-hosted GET at the configured origin without probing or falling back', async () => {
+    const deployment = { kind: 'selfHosted', origin: 'https://sentry.internal.example' } as const;
+    const url = `${deployment.origin}/api/0/organizations/7701/issues/1234/events/recommended/`;
+    const request = vi.fn(async () => ({
+      status: 405,
+      finalUrl: url,
+      headers: {},
+      body: new TextEncoder().encode('{"detail":"Method not allowed"}'),
+    }));
+    const harness = createContext({ request });
+    const client = await createSentryApiClient(harness.context as never, {
+      account: ACCOUNT, deployment, nowMs: () => 1_786_000_000_000,
+    });
+
+    expect(await client.request({ url, operation: 'event' })).toEqual({
+      kind: 'failed',
+      failure: { class: 'unsupportedContract', code: SENTRY_SELF_HOSTED_UNSUPPORTED_CODES.event },
+    });
+    expect(request).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ url, method: 'GET' }), expect.anything());
   });
 
   it('builds no request carrying an llmFormat parameter', async () => {
