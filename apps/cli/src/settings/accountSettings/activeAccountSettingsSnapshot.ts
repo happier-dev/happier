@@ -11,6 +11,7 @@ import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import type { McpServerCatalogSnapshotV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import { isDeepStrictEqual } from 'node:util';
+import { readHostedSessionScope, type HostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { normalizeActionsSettingsV1, readScopedActionApprovalPreference, type ActionApprovalScopeV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createHash } from 'node:crypto';
 import { materializeExternalSessionSourceInstances, type ExternalSessionSourceDeclarationInput } from '@happier-dev/protocol/plugins/backendExternalSessionSourceInstances';
@@ -82,21 +83,93 @@ export type ActiveAccountSettingsSnapshotCommit = Readonly<{
   didCommit: boolean;
 }>;
 
-let active: ActiveAccountSettingsSnapshot | null = null;
-// Settled listener facts. `active` can independently withdraw several catalog
-// facets during refresh; settling one facet must not publish the others.
-let published: ActiveAccountSettingsSnapshot | null = null;
-// This token is intentionally owner-local: Account scope or key-material
-// retirement advances it; a newer preference revision alone does not.
-let activeLifetimeToken = 0;
-// Observed ACP row evidence survives temporary withdrawal of runtime authority.
-let activeAcpCatalogRevision: number | undefined;
-// Connected Services projections can change the configured External Session
-// source set without changing Account Settings themselves.
-let activeConnectedServicesProjectionRevision = 0;
-const connectedServiceProjectionRevisions = new Map<string, number>();
-const connectedServiceProjectionListeners = new Set<(serviceIds?: ReadonlySet<string>) => void>();
-const listeners = new Set<ActiveAccountSettingsSnapshotListener>();
+/**
+ * One Account Settings incumbent. A process has one, except the session host: its
+ * Sessions can belong to different Accounts (an owner's and a guest's, Team
+ * members'), so it keeps one per Account and each hosted Session reads the
+ * incumbent of its own Account; another Account's commit neither replaces nor wakes it.
+ */
+type AccountSettingsSlot = {
+  /** Set once a hosted Session's Account commit names it; the process slot has none. */
+  scopeKey?: string;
+  active: ActiveAccountSettingsSnapshot | null;
+  // Settled listener facts. `active` can independently withdraw several catalog
+  // facets during refresh; settling one facet must not publish the others.
+  published: ActiveAccountSettingsSnapshot | null;
+  // This token is intentionally owner-local: Account scope or key-material
+  // retirement advances it; a newer preference revision alone does not.
+  lifetimeToken: number;
+  // Observed ACP row evidence survives temporary withdrawal of runtime authority.
+  acpCatalogRevision: number | undefined;
+  // Connected Services projections can change the configured External Session
+  // source set without changing Account Settings themselves.
+  connectedServicesProjectionRevision: number;
+  readonly connectedServiceProjectionRevisions: Map<string, number>;
+  readonly connectedServiceProjectionListeners: Set<(serviceIds?: ReadonlySet<string>) => void>;
+  readonly listeners: Set<ActiveAccountSettingsSnapshotListener>;
+};
+
+function createAccountSettingsSlot(): AccountSettingsSlot {
+  return { active: null, published: null, lifetimeToken: 0, acpCatalogRevision: undefined,
+    connectedServicesProjectionRevision: 0, connectedServiceProjectionRevisions: new Map(),
+    connectedServiceProjectionListeners: new Set(), listeners: new Set() };
+}
+
+// One sequence for every slot: a lifetime token captured in one Account's slot never matches another's.
+let lifetimeTokenSequence = 0;
+const processSlot = createAccountSettingsSlot();
+const hostedAccountSlots = new Map<string, AccountSettingsSlot>();
+let hostedSessionSlots = new WeakMap<HostedSessionScope, AccountSettingsSlot>();
+
+/** A Session added to a session host; a one-Session runner's scope is the whole process. */
+function readSharedHostSession(): HostedSessionScope | undefined {
+  const scope = readHostedSessionScope();
+  return scope?.end ? scope : undefined;
+}
+
+/** The calling Session's incumbent: its own Account's in a session host. */
+function currentSlot(): AccountSettingsSlot {
+  const session = readSharedHostSession();
+  if (!session) return processSlot;
+  let slot = hostedSessionSlots.get(session);
+  if (!slot) hostedSessionSlots.set(session, slot = createAccountSettingsSlot());
+  return slot;
+}
+
+/** An operation that names its Account reaches that Account's incumbent. */
+function slotFor(scopeKey: string): AccountSettingsSlot {
+  return (readSharedHostSession() && hostedAccountSlots.get(scopeKey)) || currentSlot();
+}
+
+/** A hosted Session's Account commit binds that Session to its Account's incumbent. */
+function slotForCommit(next: ActiveAccountSettingsSnapshot): AccountSettingsSlot {
+  const session = readSharedHostSession();
+  const own = currentSlot();
+  if (!session || !next.scopeKey) return own;
+  let slot = hostedAccountSlots.get(next.scopeKey);
+  if (!slot) {
+    slot = own.scopeKey === undefined ? own : createAccountSettingsSlot();
+    slot.scopeKey = next.scopeKey;
+    hostedAccountSlots.set(next.scopeKey, slot);
+  } else if (own !== slot && own.scopeKey === undefined) {
+    // Listeners this Session registered before its Account was known follow it.
+    for (const listener of own.listeners) slot.listeners.add(listener);
+    for (const listener of own.connectedServiceProjectionListeners) slot.connectedServiceProjectionListeners.add(listener);
+  }
+  hostedSessionSlots.set(session, slot);
+  return slot;
+}
+
+function subscribeInCurrentSlot<T>(select: (slot: AccountSettingsSlot) => Set<T>, listener: T): () => void {
+  const session = readSharedHostSession();
+  const subscribed = currentSlot();
+  select(subscribed).add(listener);
+  return () => {
+    select(subscribed).delete(listener);
+    const bound = session && hostedSessionSlots.get(session);
+    if (bound) select(bound).delete(listener);
+  };
+}
 
 // Opened domains belong to the Account lifetime, not the preference revision.
 const accountCatalogFields = [
@@ -135,10 +208,11 @@ function belongsToSameAccount(
 }
 
 function emitActiveAccountSettingsSnapshot(
+  slot: AccountSettingsSlot,
   next: ActiveAccountSettingsSnapshot | null,
 ): void {
-  const previous = published;
-  published = next;
+  const previous = slot.published;
+  slot.published = next;
   if (previous && next && belongsToSameAccount(previous, next)
     && (previous.source === 'none') === (next.source === 'none')) {
     // Revision and timing advance synchronous admission without replacing
@@ -147,7 +221,7 @@ function emitActiveAccountSettingsSnapshot(
     const { settingsVersion: _nextVersion, loadedAtMs: _nextLoadedAt, ...nextFacts } = next;
     if (isDeepStrictEqual(previousFacts, nextFacts)) return;
   }
-  for (const listener of listeners) {
+  for (const listener of slot.listeners) {
     try {
       listener(previous, next);
     } catch {
@@ -158,15 +232,17 @@ function emitActiveAccountSettingsSnapshot(
 
 /** Settle only the observed facets; synchronous admission still reads `active`. */
 function publishSettledAccountCatalog(
+  slot: AccountSettingsSlot,
   next: ActiveAccountSettingsSnapshot,
   facets: readonly typeof independentAccountFields[number][],
   unchanged: boolean,
 ): void {
+  const { published } = slot;
   const publication = published && belongsToSameAccount(published, next)
     ? { ...published, ...Object.fromEntries(facets.map(facet => [facet, next[facet]])) }
     : next;
-  if (unchanged) published = publication;
-  else emitActiveAccountSettingsSnapshot(publication);
+  if (unchanged) slot.published = publication;
+  else emitActiveAccountSettingsSnapshot(slot, publication);
 }
 
 /** An unrelated preference write does not replace unchanged admitted values. */
@@ -260,11 +336,12 @@ export function preserveAccountCatalogsInSnapshot(
   return accepted;
 }
 
-/** The sole process-local publication cut for account settings. */
+/** The sole publication cut for account settings (per Account in a session host). */
 export function commitActiveAccountSettingsSnapshot(
   next: ActiveAccountSettingsSnapshot,
 ): ActiveAccountSettingsSnapshotCommit {
-  const previous = active;
+  const slot = slotForCommit(next);
+  const previous = slot.active;
   if (
     previous?.scopeKey
     && next.scopeKey === previous.scopeKey
@@ -280,28 +357,28 @@ export function commitActiveAccountSettingsSnapshot(
   const lifetimeChanged = !previous || !belongsToSameAccount(previous, accepted)
     || !isDeepStrictEqual(previous.settingsSecretsReadKeys, accepted.settingsSecretsReadKeys);
   if (lifetimeChanged) {
-    activeLifetimeToken += 1;
-    activeAcpCatalogRevision = undefined;
-    connectedServiceProjectionRevisions.clear();
-    activeConnectedServicesProjectionRevision = 0;
+    slot.lifetimeToken = ++lifetimeTokenSequence;
+    slot.acpCatalogRevision = undefined;
+    slot.connectedServiceProjectionRevisions.clear();
+    slot.connectedServicesProjectionRevision = 0;
   }
   if (accepted.acpCatalog) {
     const admission = resolveAcpCatalogRevisionAdmission({ catalog: accepted.acpCatalog,
-      retainedRevision: activeAcpCatalogRevision, settingsVersion: accepted.settingsVersion });
+      retainedRevision: slot.acpCatalogRevision, settingsVersion: accepted.settingsVersion });
     if (admission.status === 'stale') accepted = { ...accepted, acpCatalog: previous?.acpCatalog };
-    else activeAcpCatalogRevision = admission.revision;
+    else slot.acpCatalogRevision = admission.revision;
   }
   zeroRetiredSavedSecretResourceDataKeys(previous?.savedSecretResources, accepted.savedSecretResources);
-  active = accepted;
+  slot.active = accepted;
   // Settings cannot settle another owner's in-flight catalog observation.
   // Key retirement and Account replacement still publish their withdrawal.
-  const settled = published;
+  const settled = slot.published;
   const retained = !lifetimeChanged && settled
     ? independentAccountFields.filter(field => accepted[field] !== settled[field]) : [];
   const publication = retained.length > 0 && settled
     ? { ...accepted, ...Object.fromEntries(retained.map(field => [field, settled[field]])) }
     : accepted;
-  emitActiveAccountSettingsSnapshot(publication);
+  emitActiveAccountSettingsSnapshot(slot, publication);
   return { snapshot: accepted, didCommit: true };
 }
 
@@ -310,7 +387,7 @@ export function setActiveAccountSettingsSnapshot(next: ActiveAccountSettingsSnap
 }
 
 export function getActiveAccountSettingsSnapshot(): ActiveAccountSettingsSnapshot | null {
-  return active;
+  return currentSlot().active;
 }
 
 /** One admission rule for daemon and invocation projections of the same ACP row. */
@@ -333,29 +410,31 @@ export function resolveAcpCatalogRevisionAdmission(input: Readonly<{
 export function commitActiveAcpCatalog(input: Readonly<{
   scopeKey: string; lifetimeToken: number; catalog: AcpCatalogSnapshotV1;
 }>): boolean {
-  const previous = active;
+  const slot = slotFor(input.scopeKey);
+  const { active: previous, published } = slot;
   if (!previous || !isActiveAccountSettingsSnapshotLifetimeCurrent(input)) return false;
   const admission = resolveAcpCatalogRevisionAdmission({ catalog: input.catalog,
-    retainedRevision: activeAcpCatalogRevision, settingsVersion: previous.settingsVersion });
+    retainedRevision: slot.acpCatalogRevision, settingsVersion: previous.settingsVersion });
   if (admission.status === 'stale') return false;
-  activeAcpCatalogRevision = admission.revision;
+  slot.acpCatalogRevision = admission.revision;
   const unchanged = published?.scopeKey === input.scopeKey && isDeepStrictEqual(published.acpCatalog, input.catalog);
   const catalog = unchanged ? published!.acpCatalog! : input.catalog;
   if (unchanged && previous.acpCatalog === catalog && published?.settings === previous.settings) return true;
   const next = { ...previous, acpCatalog: catalog };
-  active = next;
-  publishSettledAccountCatalog(next, ['acpCatalog'], unchanged);
+  slot.active = next;
+  publishSettledAccountCatalog(slot, next, ['acpCatalog'], unchanged);
   return true;
 }
 
 export function beginActiveAcpCatalogRefresh(input: Readonly<{ scopeKey: string; lifetimeToken: number }>): boolean {
-  if (!active || !isActiveAccountSettingsSnapshotLifetimeCurrent(input)) return false;
-  active = { ...active, acpCatalog: { status: 'loading' } };
+  const slot = slotFor(input.scopeKey);
+  if (!slot.active || !isActiveAccountSettingsSnapshotLifetimeCurrent(input)) return false;
+  slot.active = { ...slot.active, acpCatalog: { status: 'loading' } };
   return true;
 }
 
 export function readActiveAcpCatalog(): AcpCatalogSnapshotV1 {
-  return active?.acpCatalog ?? { status: 'unavailable', reason: 'catalog-unobserved' };
+  return currentSlot().active?.acpCatalog ?? { status: 'unavailable', reason: 'catalog-unobserved' };
 }
 
 /** Pure Account-catalog projection; Settings remains the sole persisted owner. */
@@ -366,12 +445,12 @@ export function resolveActiveSavedSecretCatalogCollisionState(
 }
 
 /**
- * Identifies the current process-local Account incumbent.  Consumers that bind
+ * Identifies the caller's Account incumbent lifetime.  Consumers that bind
  * authority across async work must capture this token, rather than treating a
  * matching scope key as proof that a retired Account lifetime is current again.
  */
 export function getActiveAccountSettingsSnapshotLifetimeToken(): number {
-  return activeLifetimeToken;
+  return currentSlot().lifetimeToken;
 }
 
 /** Admission to the original Account lifetime, independent of catalog availability. */
@@ -379,7 +458,8 @@ export function isActiveAccountSettingsSnapshotLifetimeCurrent(input: Readonly<{
   scopeKey: string;
   lifetimeToken: number;
 }>): boolean {
-  return active !== null && active.scopeKey === input.scopeKey && activeLifetimeToken === input.lifetimeToken;
+  const { active, lifetimeToken } = slotFor(input.scopeKey);
+  return active !== null && active.scopeKey === input.scopeKey && lifetimeToken === input.lifetimeToken;
 }
 
 /** Retained Settings source until the catalog transfer; the Account lifetime owns admission. */
@@ -387,6 +467,7 @@ export function readActiveAccountRoleOverrides(input: Readonly<{
   scopeKey: string;
   lifetimeToken: number;
 }>): AccountRoleOverridesReadV1 {
+  const { active } = slotFor(input.scopeKey);
   if (!active || !isActiveAccountSettingsSnapshotLifetimeCurrent(input)) {
     return { status: 'unavailable', reason: 'scope-retired' };
   }
@@ -421,6 +502,7 @@ export function readActiveAccountPromptStackSources(input: AccountPromptStackSou
   scopeKey: string;
   lifetimeToken: number;
 }>): ActiveAccountPromptStackSources {
+  const { active } = slotFor(input.scopeKey);
   if (!active || !isActiveAccountSettingsSnapshotLifetimeCurrent(input)) {
     return { status: 'unavailable', reason: 'scope-retired' };
   }
@@ -487,21 +569,23 @@ type AccountCatalogIncumbent = Readonly<{ scopeKey: string; lifetimeToken: numbe
 function commitActiveAccountCatalog<Key extends AccountCatalogFacet>(input: AccountCatalogIncumbent & Readonly<{
   facet: Key; catalog: NonNullable<ActiveAccountSettingsSnapshot[Key]>;
 }>): boolean {
-  const previous = active;
+  const slot = slotFor(input.scopeKey);
+  const { active: previous, published } = slot;
   if (!previous || !isActiveAccountSettingsSnapshotLifetimeCurrent(input)) return false;
   const incumbent = published?.scopeKey === input.scopeKey ? published[input.facet] : undefined;
   const unchanged = incumbent !== undefined && JSON.stringify(incumbent) === JSON.stringify(input.catalog);
   // Finishing a readable catalog phase must not withdraw consumers of that same snapshot.
   if (unchanged && previous[input.facet] === incumbent && published?.settings === previous.settings) return true;
   const next: ActiveAccountSettingsSnapshot = { ...previous, [input.facet]: unchanged ? incumbent : input.catalog };
-  active = next;
-  publishSettledAccountCatalog(next, [input.facet], unchanged);
+  slot.active = next;
+  publishSettledAccountCatalog(slot, next, [input.facet], unchanged);
   return true;
 }
 
 function beginActiveAccountCatalogRefresh(input: AccountCatalogIncumbent, facet: AccountCatalogFacet): boolean {
-  if (!active || !isActiveAccountSettingsSnapshotLifetimeCurrent(input)) return false;
-  active = { ...active, [facet]: { status: 'loading' } };
+  const slot = slotFor(input.scopeKey);
+  if (!slot.active || !isActiveAccountSettingsSnapshotLifetimeCurrent(input)) return false;
+  slot.active = { ...slot.active, [facet]: { status: 'loading' } };
   return true;
 }
 
@@ -517,7 +601,7 @@ export function beginActivePromptLibraryCatalogRefresh(input: Readonly<{ scopeKe
 }
 
 export function readActivePromptLibraryCatalog(): PromptLibraryCatalogSnapshotV1 {
-  return active?.promptLibraryCatalog ?? { status: 'loading' };
+  return currentSlot().active?.promptLibraryCatalog ?? { status: 'loading' };
 }
 
 export function commitActiveMcpServerCatalog(input: AccountCatalogIncumbent & Readonly<{
@@ -531,7 +615,7 @@ export function beginActiveMcpServerCatalogRefresh(input: AccountCatalogIncumben
 }
 
 export function readActiveMcpServerCatalog(): McpServerCatalogSnapshotV1 {
-  return active?.mcpServerCatalog ?? { status: 'loading' };
+  return currentSlot().active?.mcpServerCatalog ?? { status: 'loading' };
 }
 
 /** Change only the typed Profile facet; Account preferences and their revision stay untouched. */
@@ -564,7 +648,7 @@ export function beginActiveProfileCatalogRefresh(input: Readonly<{
 }
 
 export function readActiveProfileCatalog(): ProfileCatalogSnapshotV1 {
-  return active?.profileCatalog ?? { status: 'loading' };
+  return currentSlot().active?.profileCatalog ?? { status: 'loading' };
 }
 
 export function readConnectedAccountCatalogFromSnapshot(snapshot: ActiveAccountSettingsSnapshot | null,
@@ -577,6 +661,7 @@ export function readConnectedAccountCatalogFromSnapshot(snapshot: ActiveAccountS
 export function readPublishedConnectedAccountCatalog(input: Readonly<{
   key: ConnectedAccountCatalogKeyV1; scopeKey: string;
 }>): ConnectedAccountCatalogSnapshotV1 {
+  const { active, published } = slotFor(input.scopeKey);
   if (!active || active.scopeKey !== input.scopeKey) return { status: 'unavailable', reason: 'scope-retired' };
   return readConnectedAccountCatalogFromSnapshot(published, input.key);
 }
@@ -598,7 +683,9 @@ export function preserveConnectedAccountCatalogCleanup(
 export function commitActiveConnectedAccountCatalog(input: Readonly<{
   scopeKey: string; lifetimeToken: number; key: ConnectedAccountCatalogKeyV1; catalog: ConnectedAccountCatalogSnapshotV1;
 }>): boolean {
-  if (!active || active.scopeKey !== input.scopeKey || activeLifetimeToken !== input.lifetimeToken
+  const slot = slotFor(input.scopeKey);
+  const { active, published } = slot;
+  if (!active || active.scopeKey !== input.scopeKey || slot.lifetimeToken !== input.lifetimeToken
     || input.catalog.status === 'ready' && input.catalog.record.key !== input.key) return false;
   const incumbent = published?.scopeKey === input.scopeKey
     ? readConnectedAccountCatalogFromSnapshot(published, input.key) : undefined;
@@ -607,8 +694,8 @@ export function commitActiveConnectedAccountCatalog(input: Readonly<{
   const catalog = unchanged ? incumbent : observed;
   const next = input.key === 'configurations' ? { ...active, connectedConfigurationCatalog: catalog }
     : { ...active, connectedPurposeCatalog: catalog };
-  active = next;
-  publishSettledAccountCatalog(next,
+  slot.active = next;
+  publishSettledAccountCatalog(slot, next,
     [input.key === 'configurations' ? 'connectedConfigurationCatalog' : 'connectedPurposeCatalog'], unchanged);
   return true;
 }
@@ -617,8 +704,10 @@ export function commitActiveConnectedAccountCatalog(input: Readonly<{
 export function beginActiveConnectedAccountCatalogRefresh(input: Readonly<{
   scopeKey: string; lifetimeToken: number; key: ConnectedAccountCatalogKeyV1;
 }>): boolean {
-  if (!active || active.scopeKey !== input.scopeKey || activeLifetimeToken !== input.lifetimeToken) return false;
-  active = input.key === 'configurations' ? { ...active, connectedConfigurationCatalog: { status: 'loading' } }
+  const slot = slotFor(input.scopeKey);
+  const { active } = slot;
+  if (!active || active.scopeKey !== input.scopeKey || slot.lifetimeToken !== input.lifetimeToken) return false;
+  slot.active = input.key === 'configurations' ? { ...active, connectedConfigurationCatalog: { status: 'loading' } }
     : { ...active, connectedPurposeCatalog: { status: 'loading' } };
   return true;
 }
@@ -632,6 +721,7 @@ export function replaceProviderConnectionsCatalogInSnapshot(snapshot: ActiveAcco
 export function commitActiveProviderConnectionsCatalog(input: Readonly<{
   scopeKey: string; lifetimeToken: number; catalog: ProviderConnectionsCatalogSnapshotV1;
 }>): boolean {
+  const { published } = slotFor(input.scopeKey);
   const incumbent = published?.scopeKey === input.scopeKey ? published.providerConnectionsCatalog : undefined;
   const catalog = preserveProviderConnectionsCatalogAuthority(incumbent, input.catalog);
   return commitActiveAccountCatalog({ ...input, catalog, facet: 'providerConnectionsCatalog' });
@@ -642,7 +732,7 @@ export function beginActiveProviderConnectionsCatalogRefresh(input: Readonly<{ s
 }
 
 export function readActiveProviderConnectionsCatalog(): ProviderConnectionsCatalogSnapshotV1 {
-  return active?.providerConnectionsCatalog ?? { status: 'loading' };
+  return currentSlot().active?.providerConnectionsCatalog ?? { status: 'loading' };
 }
 
 export function commitActiveRemoteHostCatalog(input: AccountCatalogIncumbent & Readonly<{ catalog: RemoteHostCatalogSnapshotV1 }>): boolean {
@@ -654,7 +744,7 @@ export function beginActiveRemoteHostCatalogRefresh(input: AccountCatalogIncumbe
 }
 
 export function readActiveRemoteHostCatalog(): RemoteHostCatalogSnapshotV1 {
-  return active?.remoteHostCatalog ?? { status: 'loading' };
+  return currentSlot().active?.remoteHostCatalog ?? { status: 'loading' };
 }
 
 export function commitActiveNotificationChannelCatalog(input: AccountCatalogIncumbent & Readonly<{ catalog: NotificationChannelCatalogSnapshotV1 }>): boolean {
@@ -672,7 +762,7 @@ export function beginActiveNotificationChannelCatalogRefresh(input: AccountCatal
 }
 
 export function readActiveNotificationChannelCatalog(): NotificationChannelCatalogSnapshotV1 {
-  return active?.notificationChannelCatalog ?? { status: 'loading' };
+  return currentSlot().active?.notificationChannelCatalog ?? { status: 'loading' };
 }
 
 export function commitActiveConnectedPresentationCatalog(input: AccountCatalogIncumbent & Readonly<{ catalog: ConnectedPresentationCatalogSnapshotV1 }>): boolean {
@@ -684,7 +774,7 @@ export function beginActiveConnectedPresentationCatalogRefresh(input: AccountCat
 }
 
 export function readActiveConnectedPresentationCatalog(): ConnectedPresentationCatalogSnapshotV1 {
-  return active?.connectedPresentationCatalog ?? { status: 'loading' };
+  return currentSlot().active?.connectedPresentationCatalog ?? { status: 'loading' };
 }
 
 export function commitActiveConnectedAcknowledgementsCatalog(input: AccountCatalogIncumbent & Readonly<{ catalog: ConnectedAcknowledgementsCatalogSnapshotV1 }>): boolean {
@@ -696,7 +786,7 @@ export function beginActiveConnectedAcknowledgementsCatalogRefresh(input: Accoun
 }
 
 export function readActiveConnectedAcknowledgementsCatalog(): ConnectedAcknowledgementsCatalogSnapshotV1 {
-  return active?.connectedAcknowledgementsCatalog ?? { status: 'loading' };
+  return currentSlot().active?.connectedAcknowledgementsCatalog ?? { status: 'loading' };
 }
 
 /** Only the transient import outcome changes; raw preferences, version and keys retain identity. */
@@ -709,14 +799,16 @@ export function replaceSavedSecretLegacyImportInSnapshot(snapshot: ActiveAccount
 export function commitActiveSavedSecretLegacyImport(input: Readonly<{
   scopeKey: string; lifetimeToken: number; expectedSettingsVersion: number; result: SavedSecretLegacyImportResultV1;
 }>): boolean {
-  if (!active || active.scopeKey !== input.scopeKey || activeLifetimeToken !== input.lifetimeToken
+  const slot = slotFor(input.scopeKey);
+  const { active } = slot;
+  if (!active || active.scopeKey !== input.scopeKey || slot.lifetimeToken !== input.lifetimeToken
     || active.settingsVersion !== input.expectedSettingsVersion) return false;
   const previous = active;
   const next = replaceSavedSecretLegacyImportInSnapshot(active, input.result);
-  active = next;
+  slot.active = next;
   // Operation callers read the diagnostic from the returned/current snapshot.
   // A cleanup result is not a material change and must not restart Sessions.
-  if (published === previous) published = next;
+  if (slot.published === previous) slot.published = next;
   return true;
 }
 
@@ -727,11 +819,12 @@ export function commitActiveSavedSecretCatalog(input: Readonly<{
   resources: readonly SavedSecretCatalogResourceInputV1[];
   state: SavedSecretCatalogState;
 }>): boolean {
-  const previous = active;
-  if (!previous || previous.scopeKey !== input.scopeKey || activeLifetimeToken !== input.lifetimeToken) return false;
+  const slot = slotFor(input.scopeKey);
+  const previous = slot.active;
+  if (!previous || previous.scopeKey !== input.scopeKey || slot.lifetimeToken !== input.lifetimeToken) return false;
   const next = replaceSavedSecretCatalogInSnapshot(previous, input);
-  active = next;
-  publishSavedSecretCatalogIfChanged(next);
+  slot.active = next;
+  publishSavedSecretCatalogIfChanged(slot, next);
   return true;
 }
 
@@ -761,10 +854,11 @@ function withdrawSavedSecretCatalogMaterial(input: Readonly<{
   lifetimeToken: number;
   resourceIds?: readonly string[];
 }>): ActiveAccountSettingsSnapshot | null {
-  const previous = active;
-  if (!previous || previous.scopeKey !== input.scopeKey || activeLifetimeToken !== input.lifetimeToken) return null;
+  const slot = slotFor(input.scopeKey);
+  const previous = slot.active;
+  if (!previous || previous.scopeKey !== input.scopeKey || slot.lifetimeToken !== input.lifetimeToken) return null;
   const next = withdrawSavedSecretCatalogInSnapshot(previous, input.resourceIds);
-  active = next;
+  slot.active = next;
   return next;
 }
 
@@ -789,14 +883,15 @@ function savedSecretCatalogPublicationKey(snapshot: ActiveAccountSettingsSnapsho
  * so they are woken only when the authorized catalog actually changed
  * (teams-lane-10 08 §5.8; 06 L10D-R13).
  */
-function publishSavedSecretCatalogIfChanged(next: ActiveAccountSettingsSnapshot): void {
+function publishSavedSecretCatalogIfChanged(slot: AccountSettingsSlot, next: ActiveAccountSettingsSnapshot): void {
+  const { published } = slot;
   const unchanged = Boolean(
     published
     && published.scopeKey === next.scopeKey
     && published.settings === next.settings
     && savedSecretCatalogPublicationKey(published) === savedSecretCatalogPublicationKey(next)
   );
-  publishSettledAccountCatalog(next, ['savedSecretResources', 'savedSecretCatalogState'], unchanged);
+  publishSettledAccountCatalog(slot, next, ['savedSecretResources', 'savedSecretCatalogState'], unchanged);
 }
 
 /**
@@ -826,7 +921,7 @@ export function withdrawActiveSavedSecretCatalog(input: Readonly<{
 }>): boolean {
   const next = withdrawSavedSecretCatalogMaterial(input);
   if (!next) return false;
-  publishSavedSecretCatalogIfChanged(next);
+  publishSavedSecretCatalogIfChanged(slotFor(input.scopeKey), next);
   return true;
 }
 
@@ -843,20 +938,21 @@ export function disableActiveSavedSecretCatalog(input: Readonly<{
 }
 
 /**
- * Revokes the current process-local Account Settings incumbent at logout.
+ * Revokes the caller's Account Settings incumbent at logout.
  * Subscribers observe this transition so custody bound to the prior Account
  * cannot become current again if that Account is later selected anew.
  */
 export function clearActiveAccountSettingsSnapshot(): void {
-  const previous = active;
+  const slot = currentSlot();
+  const previous = slot.active;
   if (!previous) return;
   zeroRetiredSavedSecretResourceDataKeys(previous.savedSecretResources, undefined);
-  active = null;
-  activeAcpCatalogRevision = undefined;
-  activeLifetimeToken += 1;
-  connectedServiceProjectionRevisions.clear();
-  activeConnectedServicesProjectionRevision = 0;
-  emitActiveAccountSettingsSnapshot(null);
+  slot.active = null;
+  slot.acpCatalogRevision = undefined;
+  slot.lifetimeToken = ++lifetimeTokenSequence;
+  slot.connectedServiceProjectionRevisions.clear();
+  slot.connectedServicesProjectionRevision = 0;
+  emitActiveAccountSettingsSnapshot(slot, null);
 }
 
 export function resolveActiveAccountSettingsSnapshotRevision(
@@ -897,6 +993,7 @@ export function resolveActiveAccountConfiguredExternalSessionSourceRevision(
   sources: readonly ExternalSessionSourceDeclarationInput[] = [],
   activeServerId: string | null = null,
 ): string {
+  const slot = snapshot?.scopeKey ? slotFor(snapshot.scopeKey) : currentSlot();
   const sourceSettings = sources.filter(source => source.instances?.some(instance =>
     instance.kind === 'agentSetting' || instance.kind === 'agentSettingOverride')).map(declaration =>
     materializeExternalSessionSourceInstances({ declaration, agentSettings: snapshot?.settings, activeServerId }));
@@ -911,9 +1008,9 @@ export function resolveActiveAccountConfiguredExternalSessionSourceRevision(
       : 'account-profile:bootstrap',
     facts.digest('hex'),
     'connected-services',
-    activeLifetimeToken,
-    services.size > 0 ? activeConnectedServicesProjectionRevision : 0,
-    ...Array.from(services).sort().map(serviceId => `${serviceId}:${connectedServiceProjectionRevisions.get(serviceId) ?? 0}`),
+    slot.lifetimeToken,
+    services.size > 0 ? slot.connectedServicesProjectionRevision : 0,
+    ...Array.from(services).sort().map(serviceId => `${serviceId}:${slot.connectedServiceProjectionRevisions.get(serviceId) ?? 0}`),
   ].join(':');
 }
 
@@ -938,7 +1035,8 @@ export function configuredExternalSessionSourceSettingsKeys(
  */
 export function notifyActiveAccountConnectedServicesProjection(scopeKey: string,
   connectedServiceRefs?: readonly QualifiedConnectedAccountRef['service'][]): void {
-  const snapshot = active;
+  const slot = slotFor(scopeKey);
+  const snapshot = slot.active;
   if (snapshot?.scopeKey && snapshot.scopeKey !== scopeKey) return;
   // Configured source declarations currently consume the scalar projection.
   // Use its canonical identity translator; novel services cannot affect it.
@@ -949,10 +1047,10 @@ export function notifyActiveAccountConnectedServicesProjection(scopeKey: string,
   if (serviceIds?.size === 0) return;
   if (serviceIds) {
     for (const serviceId of serviceIds) {
-      connectedServiceProjectionRevisions.set(serviceId, (connectedServiceProjectionRevisions.get(serviceId) ?? 0) + 1);
+      slot.connectedServiceProjectionRevisions.set(serviceId, (slot.connectedServiceProjectionRevisions.get(serviceId) ?? 0) + 1);
     }
-  } else activeConnectedServicesProjectionRevision += 1;
-  for (const listener of connectedServiceProjectionListeners) {
+  } else slot.connectedServicesProjectionRevision += 1;
+  for (const listener of slot.connectedServiceProjectionListeners) {
     try { listener(serviceIds); } catch { /* One consumer cannot prevent projection invalidation. */ }
   }
 }
@@ -964,7 +1062,7 @@ export function subscribeActiveAccountConfiguredExternalSessionSourceRevision(
   activeServerId: string | null = null,
 ): () => void {
   const services = configuredExternalSessionSourceServiceIds(sources);
-  const notify = () => listener(resolveActiveAccountConfiguredExternalSessionSourceRevision(active, sources, activeServerId));
+  const notify = () => listener(resolveActiveAccountConfiguredExternalSessionSourceRevision(currentSlot().active, sources, activeServerId));
   const onProjection = (serviceIds?: ReadonlySet<string>) => {
     if (services.size > 0 && (serviceIds === undefined || Array.from(serviceIds).some(serviceId => services.has(serviceId)))) notify();
   };
@@ -974,26 +1072,26 @@ export function subscribeActiveAccountConfiguredExternalSessionSourceRevision(
       || resolveActiveAccountConfiguredExternalSessionSourceRevision(previous, sources, activeServerId)
         !== resolveActiveAccountConfiguredExternalSessionSourceRevision(next, sources, activeServerId)) notify();
   });
-  connectedServiceProjectionListeners.add(onProjection);
-  return () => { unsubscribe(); connectedServiceProjectionListeners.delete(onProjection); };
+  const unsubscribeProjection = subscribeInCurrentSlot(slot => slot.connectedServiceProjectionListeners, onProjection);
+  return () => { unsubscribe(); unsubscribeProjection(); };
 }
 
 export function resetActiveAccountSettingsSnapshotForTests(): void {
-  const previous = active;
+  for (const slot of hostedAccountSlots.values()) zeroRetiredSavedSecretResourceDataKeys(slot.active?.savedSecretResources, undefined);
+  hostedAccountSlots.clear();
+  hostedSessionSlots = new WeakMap();
+  const previous = processSlot.active;
   zeroRetiredSavedSecretResourceDataKeys(previous?.savedSecretResources, undefined);
-  active = null;
-  published = null;
-  activeAcpCatalogRevision = undefined;
-  if (previous) activeLifetimeToken += 1;
-  activeConnectedServicesProjectionRevision = 0;
-  connectedServiceProjectionRevisions.clear();
+  processSlot.active = null;
+  processSlot.published = null;
+  processSlot.acpCatalogRevision = undefined;
+  if (previous) processSlot.lifetimeToken = ++lifetimeTokenSequence;
+  processSlot.connectedServicesProjectionRevision = 0;
+  processSlot.connectedServiceProjectionRevisions.clear();
 }
 
 export function subscribeActiveAccountSettingsSnapshot(listener: ActiveAccountSettingsSnapshotListener): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
+  return subscribeInCurrentSlot(slot => slot.listeners, listener);
 }
 
 /**
@@ -1040,10 +1138,11 @@ export function subscribeActiveAccountSettingsKeys(
   keys: ActiveAccountSettingsKeys | (() => ActiveAccountSettingsKeys),
   listener: ActiveAccountSettingsSnapshotListener,
 ): () => void {
-  let lifetime = activeLifetimeToken;
+  let lifetime = currentSlot().lifetimeToken;
   return subscribeActiveAccountSettingsSnapshot((previous, next) => {
-    const lifetimeChanged = lifetime !== activeLifetimeToken;
-    lifetime = activeLifetimeToken;
+    const current = currentSlot().lifetimeToken;
+    const lifetimeChanged = lifetime !== current;
+    lifetime = current;
     const selected = typeof keys === 'function' ? keys() : keys;
     if (lifetimeChanged || accountSettingsKeysChanged(previous, next, selected)) {
       listener(previous, next);
