@@ -32,8 +32,11 @@ function mask(value: PostgresqlObservationValue, redact: boolean): PostgresqlObs
   const typedParameter = typeof value.format === 'string' && Object.hasOwn(value, 'value');
   const binaryCredential = typedParameter && value.format === 'binary' && typeof value.value === 'string'
    && credentialUrl(Buffer.from(value.value, 'base64').toString('utf8'));
-  return Object.fromEntries(Object.entries(value).map(([key,item]) => [key,
-   typedParameter && key !== 'value' ? mask(item, sensitive(key)) : mask(item, redact || sensitive(key) || binaryCredential)]));
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+   // Exported OTLP operands carry no trusted database field name or wire metadata.
+   if (key.startsWith('db.query.parameter.')) return [key, item === null ? null : '[redacted]'];
+   return [key, typedParameter && key !== 'value' ? mask(item, sensitive(key)) : mask(item, redact || sensitive(key) || binaryCredential)];
+  }));
  }
  if (redact && value !== null) return '[redacted]';
  if (typeof value === 'string' && credentialUrl(value)) return '[redacted]';

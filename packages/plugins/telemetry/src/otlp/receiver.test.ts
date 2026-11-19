@@ -127,6 +127,30 @@ describe('OTLP HTTP ingress', () => {
         expect(JSON.stringify(batches)).not.toContain('postgres://');
     });
 
+    it('masks anonymous database bind values before storage while preserving equality tokens', async () => {
+        const batches: NormalizedTelemetryBatch[] = [];
+        const url = await listen(createOtlpRequestHandler({ context: null,
+            normalizeStatement: createPostgresqlObservationNormalizer(),
+            onBatch: batch => { batches.push(batch); return { accepted: true }; },
+        }));
+        const sql = 'SELECT $1::text AS description';
+        const values = ['private-value-one', 'private-value-two', 'private-value-one'];
+        const response = await fetch(`${url}/v1/traces`, { method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ resourceSpans: [{ scopeSpans: [{ spans: values.map((stringValue, index) => ({
+                traceId, spanId: String(index + 1).padStart(16, '0'), kind: 3,
+                attributes: [{ key: 'db.query.text', value: { stringValue: sql } },
+                    { key: 'db.query.parameter.1', value: { stringValue } }],
+            })) }] }] }),
+        });
+        expect(response.status).toBe(200);
+        const databases = batches[0]?.spans.map(span => span.database);
+        expect(databases?.map(database => database?.maskedParameters)).toEqual(values.map(() => ({ 'db.query.parameter.1': '[redacted]' })));
+        const identities = databases?.map(database => database?.parameterIdentity);
+        expect(identities?.[0]).toEqual(expect.any(String));
+        expect(identities?.[0]).toBe(identities?.[2]);
+        expect(identities?.[0]).not.toBe(identities?.[1]);
+    });
+
     it('returns permanent protobuf decoding errors as google.rpc.Status and distinguishes retryable ingestion failure', async () => {
         const url = await listen(createOtlpRequestHandler({
             context: null,
