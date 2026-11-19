@@ -209,6 +209,7 @@ export function useCollectionSpaceHeader<
       ? view.activeSpace.name
       : input.defaultName;
   const titleControl = (
+    <View ref={anchorRef} collapsable={false}>
     <CollectionSpaceSwipeZone testID={`${testIDPrefix}-title-swipe`} {...swipeProps}>
     <CollectionSpaceSwipeTitle track={swipeTrack} previousLabel={spaceName(-1)} nextLabel={spaceName(1)}>
     <CollectionSpaceTitle
@@ -235,6 +236,7 @@ export function useCollectionSpaceHeader<
     />
     </CollectionSpaceSwipeTitle>
     </CollectionSpaceSwipeZone>
+    </View>
   );
   const stripItems = React.useMemo(
     () =>
@@ -245,9 +247,7 @@ export function useCollectionSpaceHeader<
       })),
     [view.spaces],
   );
-  const strip = (
-    <View ref={anchorRef} collapsable={false}>
-      {view.spacesEnabled ? (
+  const strip = view.spacesEnabled ? (
         <CollectionSpaceSwipeZone testID={`${testIDPrefix}-strip-swipe`} {...swipeProps}>
         <CollectionSpacesStrip
           testIDPrefix={`${testIDPrefix}-strip`}
@@ -262,9 +262,7 @@ export function useCollectionSpaceHeader<
           {...(input.wrapTabTarget ? { wrapTabTarget: input.wrapTabTarget } : {})}
         />
         </CollectionSpaceSwipeZone>
-      ) : null}
-    </View>
-  );
+      ) : null;
   const overlays = (
     <>
       {conditions.editorOverlay}
