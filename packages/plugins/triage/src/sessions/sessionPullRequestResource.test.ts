@@ -376,9 +376,9 @@ describe('the composed Session PR Resource', () => {
                     displayName: descriptor.displayName,
                 }] },
             } }] });
-            expect(result.kind === 'ready' && result.pullRequests[0]?.entry).toEqual(scenario === 'without a configured source' ? undefined : { entryRef: expect.objectContaining({
-                source: { pluginId: 'happier.scm.forge.github', localId: 'github-forge' },
-            }) });
+            // Channels still shows its binding. A deselected repository supplies
+            // no source-admitted entry and cannot offer the exact Triage detail.
+            expect(result.kind === 'ready' && result.pullRequests[0]?.entry).toBeUndefined();
             expect(host.counts()).toEqual({ metadataReads: 1, relationReads: initiallySelected ? 2 : 1, nativeReads: 0 });
             expect(host.nativeObservationCount()).toBe(initiallySelected ? 1 : 0);
             expect(relationRequests).toBe(scenario === 'without a configured source' ? 0 : initiallySelected ? 2 : 1);
