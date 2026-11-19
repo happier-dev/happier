@@ -348,10 +348,11 @@ inputs (vendored `public/` assets).
 
 Every verdict includes elapsed milliseconds. `NOT_READY` identifies the failing
 check and its evidence; `READY` includes the component identities. Verification
-also requires an available, identified managed CLI after reload. When its
-pre-reload identity is available, verification compares the binary selected
-on the daemon host before and after reload; an unexpected replacement is
-`NOT_READY`. A missing or unavailable pre-reload identity records
+also requires an available, identified managed CLI in the daemon host's
+configured release ring after reload. When its pre-reload identity is
+available, verification compares the binary on that host before and after
+reload. An unexpected replacement is `NOT_READY`. A missing or unavailable
+pre-reload identity records
 `baseline: unavailable` and allows the reload to repair the runtime; only
 the baseline comparison is skipped. Selected and loaded runtime identities
 must still match. Verification does not update that installation. A missing sign-in,

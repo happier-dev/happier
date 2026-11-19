@@ -35,7 +35,11 @@ import { observeRemoteSourceRuntime as readRemoteSourceRuntime } from './remote_
 import { readStackDatabaseIdentity } from './stack_database_identity.mjs';
 import { readSharedDatabaseCoWriters } from './shared_database_cowriters.mjs';
 import { projectLoadedRuntimeSnapshotId, readLoadedSourceRuntimeIdentities } from '../runtime/shared/loaded_runtime_identity.mjs';
-import { resolveInstalledFirstPartyComponentPaths } from '@happier-dev/cli-common/firstPartyRuntime';
+import {
+  DAEMON_SERVICE_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS,
+  resolveInstalledFirstPartyComponentPaths,
+  resolveManagedCliReleaseChannel,
+} from '@happier-dev/cli-common/firstPartyRuntime';
 import { realpath } from 'node:fs/promises';
 import { readStackDaemonParticipants } from './daemon_participants.mjs';
 
@@ -43,7 +47,12 @@ const readExistingEnv = readTextOrEmpty;
 
 async function readManagedCliIdentity(env) {
   try {
-    const paths = resolveInstalledFirstPartyComponentPaths({ componentId: 'happier-cli', processEnv: env });
+    const { ringId } = await resolveManagedCliReleaseChannel({
+      processEnv: env,
+      envKeys: DAEMON_SERVICE_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS,
+      markerFallback: 'always',
+    });
+    const paths = resolveInstalledFirstPartyComponentPaths({ componentId: 'happier-cli', releaseRing: ringId, processEnv: env });
     const binaryPath = await realpath(paths.resolvedBinaryPath ?? paths.binaryPath);
     return { status: 'installed', binaryPath };
   } catch (error) {

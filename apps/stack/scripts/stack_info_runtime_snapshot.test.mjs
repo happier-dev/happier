@@ -3,7 +3,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { resolveInstalledFirstPartyComponentPaths } from '@happier-dev/cli-common/firstPartyRuntime';
+import {
+  DAEMON_SERVICE_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS,
+  resolveInstalledFirstPartyComponentPaths,
+  writeDefaultManagedReleaseChannel,
+} from '@happier-dev/cli-common/firstPartyRuntime';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import { once } from 'node:events';
@@ -21,8 +25,11 @@ import { runCommandCapture } from './testkit/core/run_node_capture.mjs';
 
 test('reload observes the managed CLI through its install owner and preserves absence', async t => {
   const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'managed-cli-info' });
-  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
-    HAPPIER_FIRST_PARTY_INSTALL_HOME: join(fixture.root, 'installed') });
+  withPatchedProcessEnv(t, {
+    ...Object.fromEntries(DAEMON_SERVICE_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS.map(key => [key, undefined])),
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_FIRST_PARTY_INSTALL_HOME: join(fixture.root, 'installed'),
+  });
   const readInfo = () => readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
   assert.deepEqual((await readInfo()).runtime.managedCli, { status: 'absent', binaryPath: null });
   const paths = resolveInstalledFirstPartyComponentPaths({ componentId: 'happier-cli', processEnv: process.env });
@@ -30,6 +37,33 @@ test('reload observes the managed CLI through its install owner and preserves ab
   await mkdir(dirname(binaryPath), { recursive: true });
   await writeFile(binaryPath, 'managed-cli-fixture');
   assert.deepEqual((await readInfo()).runtime.managedCli, { status: 'installed', binaryPath });
+});
+
+test('reload observes the managed CLI in the configured daemon ring', async t => {
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'managed-cli-ring' });
+  withPatchedProcessEnv(t, {
+    ...Object.fromEntries(DAEMON_SERVICE_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS.map(key => [key, undefined])),
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_FIRST_PARTY_INSTALL_HOME: join(fixture.root, 'installed'),
+  });
+  const readInfo = () => readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
+  const install = async channel => {
+    const paths = resolveInstalledFirstPartyComponentPaths({ componentId: 'happier-cli', channel });
+    await mkdir(dirname(paths.binaryPath), { recursive: true });
+    await writeFile(paths.binaryPath, 'managed-cli-fixture');
+    return paths.binaryPath;
+  };
+
+  await install('stable');
+  const devBinaryPath = await install('publicdev');
+  await writeDefaultManagedReleaseChannel({ releaseChannel: 'publicdev' });
+  assert.deepEqual((await readInfo()).runtime.managedCli, { status: 'installed', binaryPath: devBinaryPath });
+
+  const envPath = join(fixture.stackDir, 'env');
+  await writeFile(envPath, (await readFile(envPath, 'utf8')) + '\nHAPPIER_DAEMON_SERVICE_CHANNEL=preview\n');
+  assert.deepEqual((await readInfo()).runtime.managedCli, { status: 'absent', binaryPath: null });
+  const previewBinaryPath = await install('preview');
+  assert.deepEqual((await readInfo()).runtime.managedCli, { status: 'installed', binaryPath: previewBinaryPath });
 });
 
 test('reload observes managed CLI on the daemon host without substituting the controller install', async t => {
