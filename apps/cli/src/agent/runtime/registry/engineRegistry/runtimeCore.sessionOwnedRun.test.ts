@@ -77,7 +77,10 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 
-function createContributions(delivery: AgentSessionCapabilities['delivery'] = ['newTurn']) {
+function createContributions(delivery: AgentSessionCapabilities['delivery'] = ['newTurn'], policy?: Readonly<{
+  primary: 'sessions' | 'executionRuns';
+  workspaceWrites?: 'deny';
+}>) {
   const backend = {
     id: AGENT_ID,
     agentId: AGENT_ID,
@@ -99,16 +102,20 @@ function createContributions(delivery: AgentSessionCapabilities['delivery'] = ['
         title: { key: 'agents.acme.title', fallback: 'Acme' },
         description: { key: 'agents.acme.description', fallback: 'Acme' },
         runtime: { kind: 'custom' },
-        primary: 'sessions',
+        primary: policy?.primary ?? 'sessions',
         capabilities: {
           tools: { delivery: 'native_mcp' },
-          sessions: {
+          ...(policy?.primary === 'executionRuns' ? { executionRuns: {
+            open: ['create'], checkpoint: false, stop: true,
+            ...(policy.workspaceWrites ? { workspaceWrites: policy.workspaceWrites } : {}),
+          } } : { sessions: {
             open: ['create', 'resume'],
             delivery,
             cancel: true,
             executionRunContext: { versions: [1] },
             workStateSources: [{ id: 'tasks', itemKinds: ['task'] }],
-          },
+            ...(policy?.workspaceWrites ? { workspaceWrites: policy.workspaceWrites } : {}),
+          } }),
         },
       },
     },
@@ -125,6 +132,66 @@ function createContributions(delivery: AgentSessionCapabilities['delivery'] = ['
 }
 
 describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
+
+  it.each([
+    { primary: 'executionRuns', supported: true, configured: true },
+    { primary: 'executionRuns', supported: true, configured: false },
+    { primary: 'executionRuns', supported: false, configured: true },
+    { primary: 'sessions', supported: true, configured: true },
+    { primary: 'sessions', supported: false, configured: true },
+  ] as const)('enforces workspace denial through the selected $primary surface (declared=$supported, configured=$configured)', async ({ primary, supported, configured }) => {
+    const { backend, agent } = createContributions(['newTurn'], {
+      primary, ...(supported ? { workspaceWrites: 'deny' } : {}),
+    });
+    // Native Agent factories are the external boundary; capability admission,
+    // adapter selection and Run configuration remain production owners.
+    const open = vi.fn(async (_request: AgentExecutionRunOpenRequest): Promise<AgentExecutionRunRuntime> => ({
+      async send() { return { status: 'admitted' }; },
+      async stop() { return { status: 'requested' }; },
+      watch() { return { dispose() {} }; },
+      async dispose() {},
+    }));
+    const runtime: AgentRuntime = primary === 'executionRuns'
+      ? { executionRuns: { open } }
+      : { sessions: { async open() { throw new Error('Session provisioning is outside this admission case'); } } };
+    // Parent Session persistence is a boundary; no parent writes occur at Run admission.
+    const parentSession = { sessionId: 'readonly-parent',
+      getMetadataSnapshot: () => createTestMetadata({ path: '/repo', machineId: 'machine-a' }),
+    } as unknown as ApiSessionClient;
+    const adapter = await resolveBackendRuntimeCore({
+      backend, agent, executionSurfaces: createEmptyBackendExecutionSurfaces(),
+      runtimeOwner: { backendId: AGENT_ID,
+        selected: { kind: 'plugin_engine', ownerId: AGENT_ID, provenance: 'external', pluginId: AGENT_ID }, candidates: [] },
+      nativeAgentRuntime: runtime,
+      nativeAgentRuntimeIdentity: { pluginId: AGENT_ID, pluginVersion: '1.0.0', agentId: AGENT_ID,
+        localAgentId: 'default', occurrenceId: 'write-policy-occurrence', isCurrent: () => true },
+    });
+    const create = () => adapter!.runtimeCore.createExecutionRunBackend({
+      scope: primary === 'sessions' ? 'session_owned' : 'detached', cwd: '/repo', runId: 'readonly-run',
+      controllerOccurrenceId: 'readonly-controller', backendId: AGENT_ID, permissionMode: 'read_only', workspaceWrites: 'deny',
+      ...(configured ? { configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: 'read-only' as const, updatedAtMs: 0 }, options: {} } } : {}),
+      ...(primary === 'sessions' ? { sessionInteractionHost: { session: parentSession, machineId: 'machine-a',
+        permissionHandler: createExecutionRunPermissionHandler({ permissionMode: 'read_only', workspaceWrites: 'deny' }),
+      } } : {}),
+      start: { intent: 'review', profileId: 'review', runClass: 'bounded', retentionPolicy: 'ephemeral' },
+    });
+    if (!supported) {
+      expect(create).toThrow(expect.objectContaining({ executionRunErrorCode: 'role_policy_unenforceable' }));
+      expect(open).not.toHaveBeenCalled();
+      return;
+    }
+    const host = create();
+    if (!host) throw new Error('Expected an admitted read-only Run');
+    try {
+      if (primary === 'executionRuns') {
+        await expect(host.provisionRuntime()).resolves.toEqual({ runtimeId: 'readonly-run' });
+        await expect(host.deliverInput('readonly-run', { text: 'Review without changing the workspace.' }))
+          .resolves.toMatchObject({ status: 'admitted' });
+        expect(open.mock.calls[0]?.[0].configuration).toMatchObject({ workspaceWrites: 'deny' });
+      }
+    } finally { await host.dispose(); }
+  });
 
   it('fails a Session-derived finite helper when a native question cannot be presented', async () => {
     // Without declared multi-turn delivery the Session adapter is finite;

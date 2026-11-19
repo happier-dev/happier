@@ -33,6 +33,7 @@ import type { WorkStateService } from '@happier-dev/plugin-sdk/sessions/work-sta
 import { randomUUID } from 'node:crypto';
 import { callSessionMcpTool } from '@/cli/commands/toolsSessionMcp';
 import { createExecutionRunHostBackendFromSessionRuntime } from './sessionAdapter';
+import { buildExecutionRunConfiguration } from './runtime/openInputs';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { CreateCliExecutionRunBackendParams, EngineResolutionAgent } from '@/agent/runtime/registry/engineRegistryTypes';
@@ -1006,6 +1007,18 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
     );
     const profile = resolveExecutionProfileReference(profileId, params.lease.pluginId);
     const launchEnvironment = buildLaunchEnvironment(params.options);
+    const configuration = params.options.configuration
+        ?? (params.options.workspaceWrites === undefined ? undefined : buildExecutionRunConfiguration({
+            backendTarget: params.options.backendTarget ?? { kind: 'backend', backendId: params.options.backendId },
+            modelId: params.options.modelId,
+            modelSelection: params.options.modelSelection,
+            modelSelectionSource: params.options.modelSelectionSource,
+            sessionConfigOptionOverrides: params.options.sessionConfigOptionOverrides,
+            acpSessionModeId: params.options.start?.acpSessionModeId,
+            permissionMode: params.options.permissionMode,
+            workspaceWrites: params.options.workspaceWrites,
+            updatedAtMs: 0,
+        }).configuration);
     const boundedOpenInputs = Object.freeze({
         stateSharing: resolveNativeAgentSessionStateSharingPolicy(params.lease.agentId),
         ...(launchEnvironment ? { launchEnvironment } : {}),
@@ -1015,8 +1028,10 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
         ...(params.options.modelSelection
             ? { modelSelection: params.options.modelSelection }
             : {}),
-        ...(params.options.configuration
-            ? { configuration: projectNativeAgentProviderBindingConfiguration(params.options.configuration, params.options.providerBinding) }
+        ...(configuration
+            ? { configuration: projectNativeAgentProviderBindingConfiguration({ ...configuration,
+                ...(params.options.workspaceWrites !== undefined ? { workspaceWrites: params.options.workspaceWrites } : {}),
+            }, params.options.providerBinding) }
             : {}),
         ...(params.options.providerBinding
             ? { providerBinding: params.options.providerBinding }

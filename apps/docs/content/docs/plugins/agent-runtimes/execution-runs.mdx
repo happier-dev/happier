@@ -5,6 +5,14 @@ description: Implement bounded Agent execution through AgentExecutionRunRuntime.
 
 An execution-run-only `AgentRuntime` registers an `executionRuns` factory for host-owned tasks that are not ordinary interactive sessions. `AgentRuntime` is an exclusive union — `sessions` or `executionRuns`, never both — so this factory is the whole registration for an execution-only Agent; a session-capable Agent instead registers a `sessions` factory and the host derives its finite Runs.
 
+In 0.3 development source, declare
+`capabilities.executionRuns.workspaceWrites: 'deny'` only when the native factory
+enforces an admitted `request.configuration.workspaceWrites: 'deny'` ceiling.
+The host delivers that ceiling in the existing Run open configuration. An
+undeclared runtime refuses a Role requiring denial with
+`role_policy_unenforceable`. Session-derived Runs consume the corresponding
+`capabilities.sessions.workspaceWrites` declaration.
+
 ## Code-defined runtime binding
 
 Unlike a Session Agent, an execution-run-only Agent needs no separate runner

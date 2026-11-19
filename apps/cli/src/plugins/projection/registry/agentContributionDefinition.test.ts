@@ -62,6 +62,7 @@ describe('Agent contribution definition discriminants', () => {
                     open: ['create', 'resume'],
                     delivery: ['newTurn'],
                     cancel: true,
+                    workspaceWrites: 'deny',
                 },
                 executionRuns: {
                     open: ['create'],
@@ -86,6 +87,7 @@ describe('Agent contribution definition discriminants', () => {
             open: ['create', 'resume'],
             checkpoint: true,
             stop: true,
+            workspaceWrites: 'deny',
         });
     });
 

@@ -3858,6 +3858,13 @@ enforces denial through its native launch
 settings; an unchanged ceiling is not a live TUI directive. Happier Actions
 that do not write the workspace keep their ordinary Action approval policy.
 
+Finite Run admission consumes the existing adapter selection: Session-derived
+Runs use `capabilities.sessions.workspaceWrites`, and native execution-only Runs
+use `capabilities.executionRuns.workspaceWrites`. Either surface declares `deny`
+only when its native runtime enforces `configuration.workspaceWrites: 'deny'`.
+An undeclared surface retains `role_policy_unenforceable`; an admitted ceiling
+reaches the selected native factory in its existing open configuration.
+
 OpenCode server mode applies the same ceiling through its native permission
 config and Session rules, denying file-modification tools, Bash and native
 child Agents while retaining read tools. Session rules also apply on resume

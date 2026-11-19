@@ -587,9 +587,10 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                             await options.projectLaunchContext?.disposeNativeOperation?.();
                         });
                         const invocationIdentity = engineEntry ?? nativeIdentity;
-                        const openCapabilities = readAgentExecutionRunCapabilities(
+                        const executionRunCapabilities = readAgentExecutionRunCapabilities(
                             params.agent.richDefinition?.definition,
-                        )?.open;
+                        );
+                        const openCapabilities = executionRunCapabilities?.open;
                         const runId = options.runId?.trim();
                         const parentToolPolicy = host?.session.getMetadataSnapshot();
                         if (parentToolPolicy?.unlistedTools === 'deny') {
@@ -630,15 +631,28 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                             : undefined;
                         const effectiveSessionCapabilities = params.nativeAgentSessionCapabilities
                             ?? readAgentSessionCapabilities(params.agent.richDefinition?.definition);
-                        if (options.workspaceWrites === 'deny' && effectiveSessionCapabilities?.workspaceWrites !== 'deny') {
-                            throw createExecutionRunCodedError('role_policy_unenforceable', 'Agent cannot enforce the role workspace-write policy');
-                        }
                         const sessionOpenCapabilities = effectiveSessionCapabilities?.open;
                         const detachedSessionPrimary = options.scope === 'detached'
                             && nativeAgentRuntime.sessions !== undefined;
                         const executionRunContextV1 = detachedSessionPrimary
                             ? nativeAgentRuntime.sessions?.executionRunContextV1
                             : undefined;
+                        const adapterSelection = selectExecutionRunSessionAdapter({
+                                scope: options.scope,
+                                hasParentSessionCustody: host !== undefined && host !== null,
+                                agentExposesSessionRuntime: Boolean(nativeAgentRuntime.sessions),
+                                agentExposesDetachedConversation: typeof executionRunContextV1?.openConversation === 'function',
+                                sessionCapabilities: effectiveSessionCapabilities ?? null,
+                                intent: options.start?.intent ?? null,
+                                runClass: options.start?.runClass ?? null,
+                                retentionPolicy: options.start?.retentionPolicy ?? null,
+                            });
+                        const workspaceWrites = adapterSelection === 'native_execution_run'
+                            ? executionRunCapabilities?.workspaceWrites
+                            : effectiveSessionCapabilities?.workspaceWrites;
+                        if (options.workspaceWrites === 'deny' && workspaceWrites !== 'deny') {
+                            throw createExecutionRunCodedError('role_policy_unenforceable', 'Agent cannot enforce the role workspace-write policy');
+                        }
                         if (
                             detachedSessionPrimary
                             && (
@@ -651,16 +665,6 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                 `Agent runtime '${nativeIdentity.agentId}' does not support detached execution-run context v1`,
                             );
                         }
-                        const adapterSelection = selectExecutionRunSessionAdapter({
-                                scope: options.scope,
-                                hasParentSessionCustody: host !== undefined && host !== null,
-                                agentExposesSessionRuntime: Boolean(nativeAgentRuntime.sessions),
-                                agentExposesDetachedConversation: typeof executionRunContextV1?.openConversation === 'function',
-                                sessionCapabilities: effectiveSessionCapabilities ?? null,
-                                intent: options.start?.intent ?? null,
-                                runClass: options.start?.runClass ?? null,
-                                retentionPolicy: options.start?.retentionPolicy ?? null,
-                            });
                         const transformNativeAgentRequest = async (
                             payload: Readonly<Record<string, unknown>>,
                             transformOptions: Readonly<{ signal: AbortSignal }>,

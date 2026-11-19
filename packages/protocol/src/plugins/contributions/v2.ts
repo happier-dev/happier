@@ -457,6 +457,8 @@ export {
 
 export const PluginAgentExecutionRunCapabilitiesV2Schema = lazyZodSchema(() => z.strictObject({
   open: z.array(z.enum(['create', 'resume', 'fork'])).check(z.minLength(1), z.refine((values) => new Set(values).size === values.length, 'Entries must be unique.')), checkpoint: z.boolean(), stop: z.boolean(),
+  /** Native filesystem enforcement of Run configuration.workspaceWrites='deny'. Absence is unsupported. */
+  workspaceWrites: z.optional(z.literal('deny')),
 }));
 export type PluginAgentExecutionRunCapabilitiesV2 = z.infer<typeof PluginAgentExecutionRunCapabilitiesV2Schema>;
 

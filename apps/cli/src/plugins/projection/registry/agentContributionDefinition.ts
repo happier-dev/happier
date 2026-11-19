@@ -79,6 +79,7 @@ export function readAgentNativeSandboxCapabilities(
  * - `checkpoint` derives from the provider-session identity fact represented
  *   by Session resume. `continuationVerification` governs verification of a
  *   continuation request; it does not create provider Session identity.
+ * - `workspaceWrites` retains the Session's declared native denial enforcement.
  *
  * An Agent whose derived `open` set is empty has no effective Run capability
  * and this returns `null`, matching the declared shape's non-empty bound.
@@ -101,5 +102,6 @@ export function readAgentExecutionRunCapabilities(
         open,
         checkpoint: sessions.open.includes('resume'),
         stop: sessions.cancel === true,
+        ...(sessions.workspaceWrites ? { workspaceWrites: sessions.workspaceWrites } : {}),
     };
 }
