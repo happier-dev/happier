@@ -6,6 +6,7 @@ import { useOptionalHappierUiTypography } from '../../../environment/context.js'
 import { HAPPIER_SPACE_STEPS } from '../../../environment/spacing.js';
 import { HappierBadge } from '../../content/Foundation.js';
 import { HappierDataRows } from '../../data/DataRows.js';
+import { HAPPIER_DATA_METRICS } from '../../data/dataText.js';
 import { HappierDataMetric, type HappierDataMetricProps } from '../../data/Metric.js';
 import { ChartDatum, type HappierChartDatum } from '../../data/ChartDatum.js';
 import type { HappierStyleProp } from '../../portableTypes.js';
@@ -136,7 +137,8 @@ export type UsageSourceCoverageBodyProps = Readonly<{
 }>;
 
 export function UsageSourceCoverageBody(props: UsageSourceCoverageBodyProps) {
-  return <View testID={props.testID ? `${props.testID}.facts` : undefined}>
+  // The rows, their fold and the coverage line are three blocks: each sits a block apart, never flush under the last row.
+  return <View testID={props.testID ? `${props.testID}.facts` : undefined} style={{ gap: HAPPIER_DATA_METRICS.blockGapPx }}>
     {props.rows.length ? <>
       <HappierDataRows theme={props.theme} testID={props.testID ? `${props.testID}.rows` : undefined} label={props.label}
         columns={props.columns.map(label => ({ label }))}
