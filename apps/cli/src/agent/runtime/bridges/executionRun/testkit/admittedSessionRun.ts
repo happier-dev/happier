@@ -114,6 +114,7 @@ type AdmittedSessionRunOptions = Readonly<{
   profileIntent?: 'memory_hints' | 'review';
   directOwner?: boolean;
   reviewComments?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['reviewComments'];
+  readRoleArtifact?: (artifactId: string) => import('@happier-dev/protocol/prompts/roles/roleArtifactV1').RoleArtifactV1 | null;
   runReportPolicy?: import('@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1').FollowPolicyV1;
   runReportPreferencesUnavailable?: boolean;
   beforeRunReportPreferencesRead?: () => Promise<void>;
@@ -132,6 +133,8 @@ type AdmittedSessionRunOptions = Readonly<{
 }>;
 
 export type AdmittedSessionRunFixture = Readonly<{
+  credentials: import('@/persistence').StoredCredentials;
+  serverHttpBaseUrl: string;
   requesterWorkAttributionV1: NonNullable<ExecutionRunManagerStartParams['requesterWorkAttributionV1']>;
   rpc: RpcHandlerManager;
   session: ApiSessionClient;
@@ -460,8 +463,16 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     // Fresh host Agent-start admission reads real Account Role sources and
     // their canonical private catalog before supplying the child context.
     home.get('/v1/artifacts', async () => skillsScenario ? artifacts : []);
-    if (skillsScenario) home.get<{ Params: { id: string } }>('/v1/artifacts/:id', async request =>
-      artifacts.find(artifact => artifact.id === request.params.id));
+    if (skillsScenario || options?.readRoleArtifact) home.get<{ Params: { id: string } }>('/v1/artifacts/:id', async (request, reply) => {
+      if (skillsScenario) return artifacts.find(artifact => artifact.id === request.params.id);
+      const role = options?.readRoleArtifact?.(request.params.id);
+      if (!role) return reply.code(404).send({ error: 'artifact-not-found' });
+      const { buildRoleArtifactHeaderV1 } = await import('@happier-dev/protocol/prompts/roles/roleArtifactV1');
+      return { id: request.params.id, ownerAccountId: accountId, access: 'owner', publicAudience: 'none', encryptionMode: 'plain',
+        header: encodePlainArtifactStoredContent(buildRoleArtifactHeaderV1(role)),
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify(role) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+    });
     home.get(PROMPT_LIBRARY_ROWS_ROUTE_V1, async () => PromptLibraryRowsListResponseV1Schema.parse({
       status: 'listed', rows: skillsScenario ? PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1,
         content: { t: 'plain', v: key === 'skill-rules' ? { key, value: { v: 1, rules: [
@@ -958,7 +969,7 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     bridge = createDirectBridge();
     if (options) {
       if (!session) throw new Error('The composed Session Run fixture requires a real Session');
-      await options.run({ requesterWorkAttributionV1: attribution, rpc, session, trackedSessions: tracked, directory, agentIdentity, nativeOpen, nativeDetachedOpen, daemonObservations, bridge, lifecycleEvents, activationDisposals,
+      await options.run({ credentials, serverHttpBaseUrl: origin, requesterWorkAttributionV1: attribution, rpc, session, trackedSessions: tracked, directory, agentIdentity, nativeOpen, nativeDetachedOpen, daemonObservations, bridge, lifecycleEvents, activationDisposals,
         readHomeBoundary: () => [...homeBoundary].map(([operation, count]) => ({ operation, count })),
         get admittedRuntime() { return admittedRuntimeFixture!; },
         async replaceAgent(selection) {

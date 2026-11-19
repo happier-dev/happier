@@ -30,28 +30,40 @@ import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSu
 import { buildPendingScmDiffSummaryOutput } from './kinds/scmDiffSummary/publishSavedScmDiffSummaryTurn';
 import { createReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
 import { createInMemoryReviewRecordPortV1 } from '../../../../../../../packages/protocol/src/reviews/reviewArtifactV1.testkit';
-import { createExecutionRunRpcActionDeps } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
+import { createExecutionRunRpcActionDeps, createExecutionRunRpcActionExecutor } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
+import { createMachineExecutionRunAgentStartContextResolver } from '@/api/machine/resolveExecutionRunAgentStartContext';
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { resolveCliAgentStartContextV1 } from '@/session/actions/resolveCliAgentStartContextV1';
 import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
 import type { ResolvedRolesSnapshotV1 } from '@happier-dev/protocol';
 import { ExecutionRunActionResponseSchema } from '@happier-dev/protocol/execution/runs/index';
+import type { RoleArtifactV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
+import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 
-it.each([undefined, 'custodian'])('starts a new Review round with retained requester and authored Role under ambient Account %s', async ambientAccountId => {
+it.each([
+  { ambientAccountId: undefined, machineIngress: false },
+  { ambientAccountId: 'custodian', machineIngress: false },
+  { ambientAccountId: 'custodian', machineIngress: true },
+])('starts a new Review round with retained requester and authored Role under ambient Account $ambientAccountId (Machine ingress $machineIngress)', async ({ ambientAccountId, machineIngress }) => {
   const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-review-round-account-' });
   const records = createInMemoryReviewRecordPortV1();
   const comments = createReviewRunCommentService({ cwd: repository.rootPath,
     scope: { workspace: { machineId: 'machine', path: repository.rootPath } }, reviewRecords: records,
     // Comment HTTP is unused while preparing a round; records and SCM owners remain real.
     execute: async () => { throw new Error('Unexpected comment publication during round preparation'); } });
+  const roleArtifact = { name: 'Writable review', instructions: 'Inspect the selected comparison.',
+    runsAs: { kind: 'background_run', intent: 'review' }, workspaceWrites: 'allow', secondOpinion: 'off', enabled: true } satisfies RoleArtifactV1;
+  let roleAvailable = true;
   try {
-    await withAdmittedSessionRun({ directOwner: true, reviewComments: comments, run: async fixture => {
+    await withAdmittedSessionRun({ directOwner: true, reviewComments: comments,
+      readRoleArtifact: artifactId => artifactId === 'custom-review' && roleAvailable ? roleArtifact : null, run: async fixture => {
       const requester = fixture.requesterWorkAttributionV1;
       const role = resolveRoleSelectionV1({ roleId: 'custom-review', settingsRoles: { 'custom-review': {
         name: 'Writable review', instructions: 'Inspect the selected comparison.', runsAs: { kind: 'background_run', intent: 'review' },
         workspaceWrites: 'allow', secondOpinion: 'off', enabled: true,
       } } });
       if (!role.ok) throw new Error('Fixture custom Review Role is unavailable');
-      const sessionId = ambientAccountId ? fixture.session.sessionId : null;
+      const sessionId = ambientAccountId && !machineIngress ? fixture.session.sessionId : null;
       const captured = await runWithScmAccountScope(requester.accountId, () => captureScmComparison({
         cwd: repository.rootPath, ...(sessionId ? { sessionId } : {}), source: { kind: 'workingTree' } }));
       const reviewRound = await records.start({ reviewId: 'requester-round-review', title: 'Review', subjectKind: 'comparison',
@@ -74,29 +86,68 @@ it.each([undefined, 'custodian'])('starts a new Review round with retained reque
             backendTarget: readBackendTargetRefV2({ kind: 'builtInAgent', agentId: `${fixture.agentIdentity.pluginId}/${fixture.agentIdentity.localId}` }),
             callerPermissionMode: context.callerPermissionMode ?? 'read-only', starterDepth: 0, turnDepth: 0, settings: null }),
         } });
-      const startRound = () => actions.executionRunAction!(sessionId, { runId: started.runId, actionId: 'review.new_round', input: { fresh: true } }, {
-        requesterWorkAttributionV1: requester,
-        ...(sessionId ? { authority: 'account_automation' as const, surface: 'agent' as const,
-          actionCaller: { kind: 'session' as const, sessionId, starterDepth: 0, turnDepth: 0 } }
-          : { authority: 'present_user' as const, surface: 'rpc' as const }),
-      });
-      const next = ExecutionRunActionResponseSchema.parse(await (ambientAccountId ? runWithScmAccountScope(ambientAccountId, startRound) : startRound()));
-      expect(next, JSON.stringify(next)).toMatchObject({ ok: true, result: { runId: expect.any(String), reviewRound: { reviewId: reviewRound.reviewId, roundOrdinal: 2 } } });
-      if (!next.ok || !next.result || typeof next.result !== 'object' || !('runId' in next.result) || typeof next.result.runId !== 'string') {
-        throw new Error('New round did not return its Run');
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-round', binding: {
+        accountId: requester.accountId, custodianAccountId: requester.accountId, authentication: { kind: 'account', tokenEpoch: 1 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'fixture-home', machineId: requester.machineId, installationId: requester.installationId,
+        actionId: 'execution.run.action', requestId: 'next-round', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: requester.machineId },
+      } });
+      const custody = machineIngress ? await admitRequesterAccountActionContext({ authorization, credentials: fixture.credentials,
+        serverId: requester.serverId, serverIdentityId: 'fixture-home', serverHttpBaseUrl: fixture.serverHttpBaseUrl,
+        isCurrent: async () => true }) : null;
+      if (machineIngress && !custody) throw new Error('Requester Account custody was not admitted');
+      try {
+        const machineActions = createExecutionRunRpcActionExecutor({ manager: fixture.bridge!, policy: resolveExecutionRunPolicy(),
+          isExecutionRunsEnabled: () => true, context: { sessionId: null, cwd: repository.rootPath, serverId: requester.serverId,
+            resolveAgentStartContext: createMachineExecutionRunAgentStartContextResolver({ machineId: requester.machineId, cwd: repository.rootPath }) } });
+        const request = { runId: started.runId, actionId: 'review.new_round', input: { fresh: true } };
+        // The real RPC adapter continues the admitted root and projects its
+        // private requester into the public executor's ordinary authorization.
+        const startRound = async () => machineIngress ? await machineActions.execute('execution.run.action', request, {
+          ...buildActionExecutorContextForRpc({ actionId: 'execution.run.action', serverId: requester.serverId,
+            callerAuthority: 'present_user', callerInputAuthorization: custody!.authorization,
+            localActionContext: { surface: 'rpc' } }),
+          executionRunTargetMachineId: requester.machineId,
+        }) : actions.executionRunAction!(sessionId, request, {
+          requesterWorkAttributionV1: requester,
+          ...(sessionId ? { authority: 'account_automation' as const, surface: 'agent' as const,
+            actionCaller: { kind: 'session' as const, sessionId, starterDepth: 0, turnDepth: 0 } }
+            : { authority: 'present_user' as const, surface: 'rpc' as const }),
+        });
+        const executeRound = async () => {
+          const result = await (ambientAccountId ? runWithScmAccountScope(ambientAccountId, startRound) : startRound());
+          if (machineIngress && result && typeof result === 'object' && 'ok' in result && result.ok && 'result' in result) return result.result;
+          return result;
+        };
+        const next = ExecutionRunActionResponseSchema.parse(await executeRound());
+        expect(next, JSON.stringify(next)).toMatchObject({ ok: true, result: { runId: expect.any(String), reviewRound: { reviewId: reviewRound.reviewId, roundOrdinal: 2 } } });
+        if (!next.ok || !next.result || typeof next.result !== 'object' || !('runId' in next.result) || typeof next.result.runId !== 'string') {
+          throw new Error('New round did not return its Run');
+        }
+        const child = fixture.bridge!.get(next.result.runId);
+        expect(child).toMatchObject({ requesterWorkAttributionV1: requester, roleId: role.selection.roleId, workspaceWrites: 'allow',
+          intentInput: { reviewRound: { reviewId: reviewRound.reviewId, roundOrdinal: 2 }, comparison: { id: expect.any(String) } } });
+        await fixture.bridge!.stop(next.result.runId);
+        await fixture.bridge!.waitForTerminal(next.result.runId);
+        const input = child?.intentInput;
+        if (!input || typeof input !== 'object' || !('comparisonId' in input) || typeof input.comparisonId !== 'string') throw new Error('Child comparison is missing');
+        const comparisonId = input.comparisonId;
+        await expect(runWithScmAccountScope(requester.accountId, () => readCapturedScmComparison({
+          cwd: repository.rootPath, ...(sessionId ? { sessionId } : {}), comparisonId }))).resolves.toMatchObject({ comparison: { id: comparisonId } });
+        if (machineIngress) {
+          const unavailable = () => machineActions.execute('execution.run.action', request, {
+            ...buildActionExecutorContextForRpc({ actionId: 'execution.run.action', serverId: requester.serverId,
+              callerAuthority: 'present_user', callerInputAuthorization: authorization, localActionContext: { surface: 'rpc' } }),
+            executionRunTargetMachineId: requester.machineId,
+          });
+          expect(await runWithScmAccountScope('custodian', unavailable)).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+            details: { executionRunStart: { runCreation: 'noRunCreated', refusal: { code: 'agent_start_context_unavailable' } } } });
+        }
+        currentRoles = {};
+        roleAvailable = false;
+        expect(await executeRound()).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+      } finally {
+        await custody?.dispose();
       }
-      const child = fixture.bridge!.get(next.result.runId);
-      expect(child).toMatchObject({ requesterWorkAttributionV1: requester, roleId: role.selection.roleId, workspaceWrites: 'allow',
-        intentInput: { reviewRound: { reviewId: reviewRound.reviewId, roundOrdinal: 2 }, comparison: { id: expect.any(String) } } });
-      await fixture.bridge!.stop(next.result.runId);
-      await fixture.bridge!.waitForTerminal(next.result.runId);
-      const input = child?.intentInput;
-      if (!input || typeof input !== 'object' || !('comparisonId' in input) || typeof input.comparisonId !== 'string') throw new Error('Child comparison is missing');
-      const comparisonId = input.comparisonId;
-      await expect(runWithScmAccountScope(requester.accountId, () => readCapturedScmComparison({
-        cwd: repository.rootPath, ...(sessionId ? { sessionId } : {}), comparisonId }))).resolves.toMatchObject({ comparison: { id: comparisonId } });
-      currentRoles = {};
-      expect(await startRound()).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
     } });
   } finally {
     await rm(repository.rootPath, { recursive: true, force: true });

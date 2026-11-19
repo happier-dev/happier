@@ -21,7 +21,7 @@ export function createMachineExecutionRunAgentStartContextResolver(input: Readon
   cwd: string;
 }>): NonNullable<ExecutionRunRpcHandlerContext['resolveAgentStartContext']> {
   return async (context, _options, startInput) => {
-    const requester = readRequesterAccountActionContext(context.callerInputAuthorization);
+    const requester = readRequesterAccountActionContext(context.callerInputAuthorization ?? context.externalActionExecutionAuthorization);
     const operation = requester?.savedSecretOperationContext ?? context.requesterSessionBootstrap?.savedSecretOperationContext;
     const serverUrl = requester?.serverHttpBaseUrl ?? context.requesterSessionBootstrap?.serverHttpBaseUrl;
     const snapshot = operation?.readSnapshot();
