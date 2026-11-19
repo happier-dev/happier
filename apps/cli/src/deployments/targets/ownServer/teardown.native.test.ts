@@ -148,14 +148,19 @@ it.each(['empty', 'unavailable', 'other-target-deployed'] as const)(
     });
 
 // The canonical executable Docker fixture uses a POSIX shebang.
-it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local-native', 'remote-already-absent', 'remote-fleet-absent', 'remote-native', 'remote-retry', 'remote-reconcile', 'remote-unknown', 'remote-caddy', 'remote-caddy-primary', 'remote-caddy-primary-reconcile', 'remote-caddy-other-endpoint', 'remote-observation-denied', 'never-deployed', 'other-link', 'missing-tool', 'engine-unreachable', 'observation-denied', 'removal-denied'] as const)(
+it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local-native', 'remote-already-absent', 'remote-fleet-absent', 'remote-native', 'remote-retry', 'remote-reconcile', 'remote-unknown', 'remote-caddy', 'remote-caddy-primary', 'remote-caddy-primary-reconcile', 'remote-caddy-after-tunnel-retirement', 'remote-caddy-other-endpoint', 'remote-observation-denied', 'never-deployed', 'other-link', 'missing-tool', 'engine-unreachable', 'observation-denied', 'removal-denied'] as const)(
     'settles native teardown truthfully: %s', async (scenario) => {
         const root = await mkdtemp(join(tmpdir(), 'happier-teardown-cause-'));
         const originalHome = configuration.happyHomeDir;
         const environment = createDeploymentEnvironmentDetailV1();
         const link = environment.targetLinks[0].targetLink;
         const remote = scenario.startsWith('remote-');
-        const caddyPrimary = scenario === 'remote-caddy-primary' || scenario === 'remote-caddy-primary-reconcile';
+        // ROWS-OWNSERVER #183 and #184 showed Caddy alone on the retained
+        // primary network. TUNNEL-LIVE #184 showed an empty guest and a
+        // still-deployed target after tunnel retirement. Exercise both first
+        // removal and already-absent paths with the retained dependency.
+        const afterTunnelRetirement = scenario === 'remote-caddy-after-tunnel-retirement';
+        const caddyPrimary = scenario === 'remote-caddy-primary' || scenario === 'remote-caddy-primary-reconcile' || afterTunnelRetirement;
         const reconcile = scenario === 'remote-reconcile' || scenario === 'remote-caddy-primary-reconcile';
         const removesEnvironment = scenario === 'local-remove-environment' || caddyPrimary;
         const auditsImages = scenario === 'local-remove-environment' || scenario === 'local-native';
@@ -310,7 +315,9 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                     await docker.setImagePruneState(image.configDigest, { repoTags: [retainedImages.ownedTag,
                         retainedImages.activationRef, foreignEnvironmentTag, 'nginx:alpine'], repoDigests: [] });
                 }
-                if (scenario !== 'remote-already-absent' && scenario !== 'remote-fleet-absent' && !reconcile) await docker.seedComposeGeneration(identity.projectName);
+                if (scenario !== 'remote-already-absent' && scenario !== 'remote-fleet-absent' && !reconcile && !afterTunnelRetirement) {
+                    await docker.seedComposeGeneration(identity.projectName);
+                }
                 if (scenario === 'remote-native') {
                     await docker.seedVolume('app_data', identity.projectName);
                     await docker.seedVolume('app_logs', identity.projectName);
@@ -443,7 +450,8 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                     expect(await docker.readPruneReference('nginx:alpine')).toMatch(/^sha256:/);
                 }
                 if (scenario === 'remote-native') expect(await docker.readVolumeNames()).toEqual(['app_logs', 'foreign_data']);
-                expect(remoteJobs).toEqual(auditsImages ? [] : scenario === 'remote-already-absent' || reconcile
+                if (afterTunnelRetirement) expect(await docker.readVolumeNames()).toEqual([]);
+                expect(remoteJobs).toEqual(auditsImages ? [] : scenario === 'remote-already-absent' || reconcile || afterTunnelRetirement
                     ? ['removeTarget:observe', 'verify:observe'] : scenario === 'remote-fleet-absent'
                         ? ['removeTarget:observe', 'verify:observe', 'removeTarget:observe', 'verify:observe'] : scenario === 'remote-unknown'
                         ? ['removeTarget:observe'] : scenario === 'remote-caddy-other-endpoint'
@@ -453,6 +461,7 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                 if (caddy) {
                     expect(await docker.readNativeCaddyAttachments()).toEqual({ containerId: caddyId, networkIds: caddyPrimary ? ['owned-network', 'foreign-network'] : ['foreign-network'] });
                     expect(await docker.readNetworkEndpoints('foreign-network')).toEqual([caddyId]);
+                    if (caddyPrimary) expect(await docker.readNetworkEndpoints('owned-network')).toEqual([caddyId]);
                     if (scenario === 'remote-caddy-other-endpoint') {
                         expect(await docker.readNetworkEndpoints('owned-network')).toEqual(['unrelated-endpoint']);
                     }
