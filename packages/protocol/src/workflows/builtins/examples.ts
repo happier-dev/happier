@@ -208,10 +208,10 @@ function offUntilConfigured(scheduleExpr: string): AutomationScheduleTriggerInpu
 }
 
 const checksFailed: PluginUiOpenAutomationEventRequestV1 = {
-  eventRef: { pluginId: 'happier.scm.github', localId: 'automation/pull-request-checks-failed-v1' }, setupInput: {},
+  eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/pull-request-checks-failed-v1' }, setupInput: {},
 };
 const pullRequestLifecycle: PluginUiOpenAutomationEventRequestV1 = {
-  eventRef: { pluginId: 'happier.scm.github', localId: 'automation/pull-request-lifecycle-v1' }, setupInput: {},
+  eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/pull-request-lifecycle-v1' }, setupInput: {},
 };
 const sentryIssueTransition: PluginUiOpenAutomationEventRequestV1 = {
   eventRef: { pluginId: 'happier.sentry', localId: 'issue-transition' }, setupInput: {},

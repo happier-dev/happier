@@ -154,8 +154,8 @@ describe('built-in workflow catalog', () => {
   it('carries deferred Event setup through the list and resolve Actions without fabricating a configured trigger', () => {
     const { examples } = WorkflowStartersListResultV1Schema.parse({ examples: catalog.getWorkflowStarterExamplesV1() });
     for (const [key, pluginId, localId] of [
-      ['investigate-failing-pr-check', 'happier.scm.github', 'automation/pull-request-checks-failed-v1'],
-      ['review-opened-pull-request', 'happier.scm.github', 'automation/pull-request-lifecycle-v1'],
+      ['investigate-failing-pr-check', 'happier.scm.forge.github', 'automation/pull-request-checks-failed-v1'],
+      ['review-opened-pull-request', 'happier.scm.forge.github', 'automation/pull-request-lifecycle-v1'],
       ['investigate-new-sentry-issue', 'happier.sentry', 'issue-transition'],
     ] as const) {
       const example = examples.find(entry => entry.key === key)!;
