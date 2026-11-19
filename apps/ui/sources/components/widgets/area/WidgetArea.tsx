@@ -736,6 +736,8 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     // A phone stacks a Project's Overview as one page, so each widget is a section of it, titled as one (owner P1 11-15).
     const phone = useDeviceType() === 'phone';
     const pageSection = surface.owner.kind === 'corePage' || (phone && surface.owner.kind === 'project');
+    // Those Overview sections stand apart by space alone (P1); a dashboard such as Usage keeps its rules (lab wgusage).
+    const separator = phone && surface.owner.kind === 'project' ? 'space' as const : 'rule' as const;
     const [localCollapsed, setLocalCollapsed] = React.useState(() => instance.definition.kind === 'builtin' && instance.definition.id === 'project_readme');
     const collapsed = props.disclosure?.collapsedByInstanceId[instance.id] ?? localCollapsed;
     const onCollapsedChange = (next: boolean) => props.disclosure
@@ -1007,6 +1009,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 grouped={parent !== undefined}
                 // Every column's first widget leads: paired, the row reads level, with no hairline on one side only.
                 leadsArea={props.index < (props.columnLayout?.columns ?? 1)}
+                separator={separator}
                 fill
                 // A core page's rows take their content height (A6/A7): no fixed viewport, size and width kept.
                 {...(surface.owner.kind === 'corePage' ? { bodyHeight: 'content' as const } : {})}

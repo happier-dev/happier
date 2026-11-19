@@ -734,6 +734,19 @@ describe('WidgetFrame', () => {
         expect(screen.findAllByProps({ name: 'timer' })).toHaveLength(0);
     });
 
+    // ACCEPT-D: the phone Project Overview (lab phone-lists-1115 P1) separates its sections by space; a dashboard's
+    // page sections (Usage, lab wgusage) keep the hairline that separates each from the one above.
+    it('separates a widget from the one above by space alone when its area says so; a page section keeps its hairline otherwise', async () => {
+        const hairlines = (screen: Awaited<ReturnType<typeof renderFrame>>) => screen.root.findAll((node) => {
+            if (typeof node.type !== 'string') return false;
+            const style = StyleSheet.flatten(node.props.style) as { borderTopWidth?: number; borderTopColor?: string } | undefined;
+            return style?.borderTopColor === lightTheme.colors.border.default && (style.borderTopWidth ?? 0) > 0;
+        }).length;
+        expect(hairlines(await renderFrame({ frameStyle: 'plain', placement: 'home', pageSection: true, separator: 'space' }))).toBe(0);
+        standardCleanup();
+        expect(hairlines(await renderFrame({ frameStyle: 'plain', placement: 'home', pageSection: true }))).toBeGreaterThan(0);
+    });
+
     it('reveals a plain widget\'s controls on hover or keyboard focus with a pointer; a card and touch keep them shown', async () => {
         const menu = <Text testID="frame-menu">menu</Text>;
         const resting = (screen: Awaited<ReturnType<typeof renderFrame>>) =>

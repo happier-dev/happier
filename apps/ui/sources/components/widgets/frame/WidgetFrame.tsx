@@ -188,6 +188,11 @@ export type WidgetFrameProps = Readonly<{
     grouped?: boolean;
     /** First in its area: a plain widget's hairline separates it from the one above, so the first draws none. */
     leadsArea?: boolean;
+    /**
+     * How the area separates this widget from the one above: `rule` (default) a hairline, `space` only the area's gap
+     * (the phone Project Overview, lab phone-lists-1115 P1). The area decides it for its surface.
+     */
+    separator?: 'rule' | 'space';
     accessibilityLabel?: string;
 }>;
 
@@ -488,7 +493,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             cardStyle={styles.card}
             gradient={resolveThemeSurfaceFinish(theme, 'card')}
             renderMaterialSurface={renderThemeMaterialSurface}
-            {...(props.grouped || (props.leadsArea && props.frameStyle === 'plain') ? {} : { dividerColor: theme.colors.border.default })}
+            {...(props.grouped || props.separator === 'space' || (props.leadsArea && props.frameStyle === 'plain') ? {} : { dividerColor: theme.colors.border.default })}
             mark={mark}
             title={props.titleMeta && typeof props.title === 'string' ? (
                 <View style={styles.titleWithMeta}>
