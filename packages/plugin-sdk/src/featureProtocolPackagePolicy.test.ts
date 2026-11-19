@@ -107,6 +107,7 @@ const FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE = Object.freeze({
     // Current Channels/Triage wire facts use these canonical portable owners;
     // no service, host admission, or operational validator is admitted here.
     ScmHostingRepositoryIdentityV1ProtocolSchema: 'feature-protocol',
+    ReviewRoundBindingV1ProtocolSchema: 'feature-protocol',
     ScmHostingProjectReadinessSourceFactV1ProtocolSchema: 'feature-protocol',
     FileDownloadDestinationV1ProtocolSchema: 'feature-protocol',
     FileDownloadResultV1ProtocolSchema: 'feature-protocol',
@@ -1466,6 +1467,18 @@ describe('feature-protocol package policy', () => {
         });
         expect(() => assertFeatureProtocolPackageBoundary(source('AgentTargetKeyV2Schema'))).not.toThrow();
         expect(() => assertFeatureProtocolPackageBoundary(source('buildAgentTargetKeyV2'))).toThrow('buildAgentTargetKeyV2');
+    });
+
+    it('admits the canonical Review round binding without admitting Review runtime services', () => {
+        const source = (name: string, specifier = '@happier-dev/plugin-sdk/protocol') => ({
+            ...featureProtocolFixture,
+            sources: {
+                ...featureProtocolFixture.sources,
+                'src/v1/review.ts': `import { ${name} } from '${specifier}';\nvoid ${name};\n`,
+            },
+        });
+        expect(() => assertFeatureProtocolPackageBoundary(source('ReviewRoundBindingV1ProtocolSchema'))).not.toThrow();
+        expect(() => assertFeatureProtocolPackageBoundary(source('readReviewStartActionResultV1', '@happier-dev/plugin-sdk/reviews'))).toThrow('@happier-dev/plugin-sdk/reviews');
     });
 
     it('allows only named, allowlisted public SDK schema facts in feature protocol source', () => {
