@@ -754,6 +754,50 @@ describe('Theme profile editor', () => {
         expect(editor().startFrom?.selectedKey).toBe('premiumLight');
     });
 
+    it('opens palette CSS on a retained saved theme and keeps unsaved edits', async () => {
+        const { JSDOM } = await import('jsdom');
+        const { buildThemeCommands } = await import('@/components/appShell/commandPalette/themeCommands');
+        const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
+        const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
+        vi.stubGlobal('window', dom.window);
+        vi.stubGlobal('document', dom.window.document);
+        onTestFinished(() => { vi.unstubAllGlobals(); dom.window.close(); });
+        const profile = baseProfile('ocean');
+        const parsed = parseThemeProfileDocument(profile);
+        if (!parsed.ok) throw new Error(parsed.error);
+        const entry = projectThemeLibraryEntry(parsed.document);
+        setThemeProfiles({ profiles: [profile], activeProfileIds: { light: profile.id, dark: null } });
+        const profileId = getThemePresetSourceReferenceId(entry.reference);
+        const pathname = `/settings/appearance/themes/${encodeURIComponent(profileId)}`;
+        const navigation = { push: shared.routerPush, replace: vi.fn(), back: shared.routerBack };
+        const body = (path: string) => (
+            <DestinationInstanceContext.Provider value={{ tabId: 'saved-theme', pathname, navigation,
+                focused: true, visible: true, isFocused: () => true,
+                ref: { kind: 'settings', params: { pageId: `appearance/themes/${profileId}`, profileId,
+                    ...Object.fromEntries(new URL(path, dom.window.location.href).searchParams) } },
+            }}>
+                <ThemeProfileRuntimeSync />
+                <ThemeProfileEditorScreen />
+            </DestinationInstanceContext.Provider>
+        );
+        const screen = await renderSettingsView(body(pathname));
+        expect(screen.findByTestId('settings-theme-profile-css')).toBeNull();
+        await act(async () => { screen.changeTextByTestId('settings-theme-profile-name', 'Unsaved ocean'); });
+
+        let href = '';
+        const command = buildThemeCommands({ entries: [entry], mode: 'light', undoHandle: null,
+            selection: { light: entry.reference, dark: null },
+            execute: async () => undefined, push: path => { href = path; },
+        }).find(item => item.id === 'theme.editCss');
+        await command!.action();
+        expect(href).toBe(`${pathname}?view=css`);
+        await screen.update(body(href));
+
+        expect(screen.findByTestId('settings-theme-profile-css')).not.toBeNull();
+        await screen.pressByTestIdAsync('settings-theme-profile-view:colors');
+        expect(screen.findByTestId('settings-theme-profile-name')?.props.value).toBe('Unsaved ocean');
+    });
+
     it('retains unsupported presentation through an unrelated edit and deliberate style changes', async () => {
         const raw = { ...baseProfile('862d417f-f6f9-480d-a7c0-82735194d027'), schemaVersion: 2,
             seeds: { canvas: '#101010', accent: '#abcdef', futureTone: 0.4 },

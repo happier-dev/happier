@@ -108,17 +108,17 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     const isNewProfile = profileId === createNewProfileRouteId;
     const previewRef = isNewProfile ? getProfileIdParam(params.previewRef) : null;
     const startFrom = isNewProfile && !previewRef ? getProfileIdParam(params.from) : null;
-    const initialView = getProfileIdParam(params.view) === 'css' ? 'css' : 'colors';
-    const draftKey = isNewProfile ? JSON.stringify([profileId, previewRef, startFrom, initialView]) : profileId;
+    const requestedView = getProfileIdParam(params.view) === 'css' ? 'css' : 'colors';
+    const draftKey = isNewProfile ? JSON.stringify([profileId, previewRef, startFrom, requestedView]) : profileId;
     return <ThemeProfileEditorDraft key={draftKey} profileId={profileId} previewRef={previewRef}
-        startFrom={startFrom} initialView={initialView} />;
+        startFrom={startFrom} requestedView={requestedView} />;
 });
 
-function ThemeProfileEditorDraft({ profileId, previewRef, startFrom, initialView }: Readonly<{
+function ThemeProfileEditorDraft({ profileId, previewRef, startFrom, requestedView }: Readonly<{
     profileId: string | null;
     previewRef: string | null;
     startFrom: string | null;
-    initialView: ThemeEditorView;
+    requestedView: ThemeEditorView;
 }>) {
     const presented = useLayoutPresentationActive();
     const router = useRouter();
@@ -196,7 +196,12 @@ function ThemeProfileEditorDraft({ profileId, previewRef, startFrom, initialView
         if (!parsed.ok) throw new Error(parsed.error);
         return parsed.document;
     }, []);
-    const [view, setView] = React.useState(initialView);
+    const [view, setView] = React.useState(requestedView);
+    const [previousRequestedView, setPreviousRequestedView] = React.useState(requestedView);
+    if (previousRequestedView !== requestedView) {
+        setPreviousRequestedView(requestedView);
+        setView(requestedView);
+    }
     const [colorQuery, setColorQuery] = React.useState('');
     const codeEditorRef = React.useRef<CodeEditorHandle>(null);
     const [invalidByToken, setInvalidByToken] = React.useState<Readonly<Record<string, boolean>>>({});
