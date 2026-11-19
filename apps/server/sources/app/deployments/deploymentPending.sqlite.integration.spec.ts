@@ -28,6 +28,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { commitMachineRecipientKeyEnvelopesInTx, resolveMachineAdmission } from '@/app/machines/machineAccess';
+import { normalizeGithubWebhookDelivery } from '../../../../../packages/plugins/scm-github/src/observations/githubWebhookNormalization';
 
 // Hop-local server admission test; the sole cross-component composed journey stays with S0.
 describe('protected deployment pending storage', () => {
@@ -328,6 +329,24 @@ describe('protected deployment pending storage', () => {
             const oldReplay = await app.inject({ method: 'POST', url: `${base}/deploy`, headers, payload: next });
             expect(oldReplay.statusCode).toBe(409);
             expect(await read()).toMatchObject({ ok: true, pendingDeploy: latest.pendingDeploy });
+            // A fresh admission of an older provider push is different from the
+            // stale B replay above. Pending replacement is ordered by admission,
+            // not commit ancestry or commit-authorship timestamps.
+            const lateOlderPush = normalizeGithubWebhookDelivery({ eventType: 'push',
+                providerDeliveryId: 'late-older-push', receivedAtMs: 2_000,
+                rawBody: new TextEncoder().encode(JSON.stringify({
+                    repository: { id: 77, full_name: 'acme/pending' }, ref: 'refs/heads/main',
+                    before: 'a'.repeat(40), after: 'b'.repeat(40),
+                    head_commit: { id: 'b'.repeat(40), timestamp: '2026-08-10T10:00:00Z' },
+                })) }).automationEvent;
+            if (!lateOlderPush || !('after' in lateOlderPush.payload)
+                || typeof lateOlderPush.payload.after !== 'string') throw new Error('Expected normalized GitHub push');
+            expect(lateOlderPush.occurredAtMs).toBe(2_000);
+            latest = await preparePending(lateOlderPush.payload.after, replaced.json().revision);
+            replaced = await signedDeploy(latest);
+            expect(replaced.statusCode, replaced.body).toBe(200);
+            expect(await read()).toMatchObject({ ok: true, pendingDeploy: latest.pendingDeploy });
+            expect(await db.deployment.count({ where: { environmentId, state: { in: ['queued', 'running'] } } })).toBe(1);
             const cancelPending = { serverId, environmentId, expectedRevision: replaced.json().revision,
                 actionOperationId: latest.actionOperationId, pendingDeploy: latest.pendingDeploy };
             const unsignedCancel = await app.inject({ method: 'POST', url: `${base}/pending/cancel`, headers,
