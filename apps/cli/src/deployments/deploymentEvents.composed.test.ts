@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { createDaemonExternalActionContributedInvoker } from '@/daemon/externalActions/createDaemonExternalActionContributedInvoker';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { AutomationEventAdmitInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { UpdateBodySchema } from '@happier-dev/protocol/updates';
@@ -325,6 +330,37 @@ describe('deployment receipt Events through canonical admission', () => {
         expect(result.sourceInstanceId).toMatch(/^deployment:/);
         expect(f.execute.mock.calls).toEqual([['deployments.environments.get', { serverId: 'home', environmentId: 'env' },
             { signal: f.context.signal }]]);
+    });
+    it('sets up Home-wide receipt observation through the bundled daemon declaration', async () => {
+        const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
+            pluginIds: [materialization.pluginId],
+            resolveCurrentMachineId: () => materialization.machineId,
+            scopedActionRuntime: {
+                credentials: {
+                    token: `e30.${Buffer.from(JSON.stringify({ sub: 'receipt-setup-account' })).toString('base64url')}.signature`,
+                    encryption: null,
+                    credentialProvenance: 'stored_session',
+                },
+                actionsSettingsProvider: createActionSettingsProvider({ getAccountSettings: () => null, allowEnvironmentOverride: false }),
+            },
+        } });
+        try {
+            const executor = createActionExecutor({
+                ...createUnavailableActionTransportDeps(),
+                invokeContributedAction: createDaemonExternalActionContributedInvoker({
+                    acquireRuntimeRegistryLease: () => runtime.controller.acquireRuntimeRegistry(),
+                }),
+            });
+            const input = { v: 1, serverId: 'home' };
+            const result = await executor.execute('action.invoke', {
+                action: { pluginId: materialization.pluginId, localId: 'deployment-failed/setup' }, input,
+            }, { surface: 'api', authority: 'present_user', actionCaller: { kind: 'host' } });
+            expect(result, result.ok ? undefined : result.errorCode).toMatchObject({ ok: true, result: { v: 1, sourceContractVersion: 1,
+                sourceConfig: { ...input, observingSince: expect.any(Number) } } });
+            if (result.ok) expect(result.result).not.toHaveProperty('sourceConfig.environmentId');
+        } finally {
+            await runtime.dispose();
+        }
     });
     it('wakes an all-Environment source from a committed receipt invalidation', async () => {
         const f = fixture();
