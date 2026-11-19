@@ -1,5 +1,6 @@
 import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
-import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
+import * as serverLog from '@/utils/logging/log';
 import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent,
@@ -810,11 +811,11 @@ describe('private installed Environment secret launch transport', () => {
             actionId, machineId: input.machineId, target, requestId: writeEnvelope.requestId,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(writeEnvelope),
             deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, writeInput) })).resolves.toMatchObject({ binding: { actionId } });
-        const request = (changes: Partial<EnvironmentSecretLaunchAdmissionBodyV1> = {}) => {
+        const request = (changes: Partial<EnvironmentSecretLaunchAdmissionBodyV1> = {}, proofAccountId = f.owner.id) => {
             const body = { serverId, environmentId: row.id, targetLinkId: input.targetLinkId, machineId: input.machineId,
                 installationId: input.installationId, materialization: { kind: 'dataRole' as const,
                     expectedRevision: row.revision, deploymentId, service: input.service }, ...changes };
-            const payload = { ...body, proof: signMachineInstallationProof({ payload: { version: 1, accountId: f.owner.id,
+            const payload = { ...body, proof: signMachineInstallationProof({ payload: { version: 1, accountId: proofAccountId,
                 machineId: body.machineId, installationId: body.installationId, deploymentSecretLaunch: {
                     requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } }, privateKey: f.keys.secretKey }) };
             const url = `/v1/deployments/environments/${encodeURIComponent(body.environmentId)}/secret-launch-admission`;
@@ -842,6 +843,17 @@ describe('private installed Environment secret launch transport', () => {
             expect(allowed.statusCode, allowed.body).toBe(200);
             expect(allowed.json()).toEqual({ ok: true, grants: [f.grant] });
             expect(allowed.body).not.toContain('launch-trims-private-sentinel');
+            const otherActor = crypto.randomUUID();
+            const wrongProof = request({}, otherActor);
+            const log = vi.spyOn(serverLog, 'log');
+            try {
+                const refused = await app.inject(wrongProof);
+                expect(refused.statusCode).toBe(403);
+                expect(refused.json()).toEqual({ ok: false, error: 'deployment_access_denied' });
+                expect(log).toHaveBeenCalledWith({ module: 'deployments', errorCode: 'deployment_access_denied',
+                    diagnostic: { source: 'deployment.secret_launch.data_role.installation_proof', issues: [],
+                        phase: 'deployment.secret_launch.data_role.installation_proof', causeKind: 'access_denied' } });
+            } finally { log.mockRestore(); }
             await db.teamMembership.deleteMany({ where: { teamId: f.team.id, accountId: f.owner.id } });
             const authorityReads: string[] = [];
             const stopObserving = observePrismaRequests(db, { before(query) {

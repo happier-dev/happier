@@ -4,6 +4,7 @@ import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/action
 import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema, MachineConnectorSecretGrantResultV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { readEnvironmentSecretLaunchAdmissionInTx, accessMachineConnectorSecretGrantInTx } from '@/app/deployments/environmentSecretLaunchAdmission';
+import { deploymentFailure } from '@/app/deployments/deploymentAdmission';
 import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
 import { inReadSnapshot, inTx } from '@/storage/inTx';
 import { readDeploymentExecutionBindingFromRequest } from '@/app/deployments/deploymentAcceptedExecution';
@@ -53,7 +54,9 @@ export function registerEnvironmentSecretLaunchAdmissionRoute(app: Fastify): voi
         if (request.authTokenKind === 'api_token' && !admittedBackup && !admittedDataQuery && !request.externalActionDeploymentChildSigner
             && !(request.externalActionReviewedChildAdmission?.actionId === 'deployments.bindings.set'
                 && request.externalActionReviewedChildAdmission.environmentId === request.params.environmentId)) {
-            return reply.code(403).send({ ok: false, error: 'deployment_access_denied' });
+            const dataRole = !request.validationError && !('kind' in request.body) && request.body.materialization.kind === 'dataRole';
+            return reply.code(403).send(deploymentFailure('deployment_access_denied', dataRole
+                ? { phase: 'deployment.secret_launch.data_role.api_token_admission', causeKind: 'binding_missing' } : undefined));
         }
         if (request.validationError || request.params.environmentId !== request.body.environmentId) {
             return reply.code(400).send({ ok: false, error: 'deployment_invalid' });

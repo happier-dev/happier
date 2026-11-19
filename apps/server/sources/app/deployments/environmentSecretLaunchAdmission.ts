@@ -93,6 +93,7 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
         | Extract<DeploymentReadAdmissionV1, { actionId: typeof ACTION_INVOKE_ACTION_ID_V1 }>,
 ): Promise<EnvironmentSecretLaunchAdmissionResultV1> {
     if ('kind' in input) return readEnvironmentBindingPreparationInTx(tx, actorAccountId, input, authentication);
+    const dataRole = input.materialization.kind === 'dataRole';
     const factsOnly = input.materialization.kind === 'domain' && !input.materialization.use;
     const domainAdmission = factsOnly ? admittedChild?.domainAdmission : undefined;
     let installationPublicKey: Uint8Array;
@@ -104,30 +105,50 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
         const machine = await tx.machine.findUnique({ where: { id: input.machineId },
             select: { accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true } });
         if (!machine || machine.installationId !== input.installationId
-            || !machine.installationPublicKey || machine.revokedAt || machine.replacedByMachineId) return deploymentFailure('deployment_access_denied');
+            || !machine.installationPublicKey || machine.revokedAt || machine.replacedByMachineId) {
+            return deploymentFailure('deployment_access_denied', dataRole
+                ? { phase: 'deployment.secret_launch.data_role.installation', causeKind: 'access_denied' } : undefined);
+        }
         installationPublicKey = machine.installationPublicKey;
     }
     const { proof, ...body } = input;
     if (!verifyMachineInstallationProof({ payload: { version: 1, accountId: actorAccountId, machineId: input.machineId,
         installationId: input.installationId, deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } },
-        proof, publicKey: installationPublicKey })) return deploymentFailure('deployment_access_denied');
-    if (input.materialization.kind === 'dataRole') {
+        proof, publicKey: installationPublicKey })) {
+        return deploymentFailure('deployment_access_denied', dataRole
+            ? { phase: 'deployment.secret_launch.data_role.installation_proof', causeKind: 'access_denied' } : undefined);
+    }
+    if (dataRole) {
         // HTTP binds the signed query operands; this scope owner decides their
         // current Environment/link custody. Service and binding selection stay
         // private to the host; another seal never selects a role.
-        if (!admittedDataQuery && admittedBackup?.kind !== 'restore') return deploymentFailure('deployment_access_denied');
+        if (!admittedDataQuery && admittedBackup?.kind !== 'restore') {
+            return deploymentFailure('deployment_access_denied', {
+                phase: 'deployment.secret_launch.data_role.admission', causeKind: 'binding_missing',
+            });
+        }
         if (admittedDataQuery) {
             const scope = await readAdmittedDeploymentReadScopeInTx(tx, admittedDataQuery);
-            if (!scope) return deploymentFailure('deployment_access_denied');
+            if (!scope) return deploymentFailure('deployment_access_denied', {
+                phase: 'deployment.secret_launch.data_role.scope', causeKind: 'not_found',
+            });
             if ('databaseTarget' in admittedDataQuery) {
                 const target = admittedDataQuery.databaseTarget, materialization = input.materialization;
-                if (input.environmentId !== admittedDataQuery.environmentId || input.targetLinkId !== admittedDataQuery.targetLinkId) return deploymentFailure('deployment_access_denied');
+                if (input.environmentId !== admittedDataQuery.environmentId || input.targetLinkId !== admittedDataQuery.targetLinkId) {
+                    return deploymentFailure('deployment_access_denied', {
+                        phase: 'deployment.secret_launch.data_role.operands', causeKind: 'access_denied',
+                    });
+                }
                 if (target.kind === 'deployment_service' ? 'targetLinkId' in materialization
                     || materialization.deploymentId !== target.deploymentId || materialization.service !== target.serviceId
                     : !('targetLinkId' in materialization) || materialization.targetLinkId !== target.targetLinkId
-                        || scope.managedControllerMachineId !== input.machineId) return deploymentFailure('deployment_access_denied');
+                        || scope.managedControllerMachineId !== input.machineId) return deploymentFailure('deployment_access_denied', {
+                    phase: 'deployment.secret_launch.data_role.operands', causeKind: 'access_denied',
+                });
             } else if ('targetLinkId' in input.materialization) {
-                return deploymentFailure('deployment_access_denied');
+                return deploymentFailure('deployment_access_denied', {
+                    phase: 'deployment.secret_launch.data_role.operands', causeKind: 'access_denied',
+                });
             }
         }
         const loaded = await loadDeploymentEnvironmentCustodyInTx(tx, input);
