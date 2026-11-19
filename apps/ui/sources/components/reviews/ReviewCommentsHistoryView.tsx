@@ -16,6 +16,7 @@ export type ReviewCommentsHistoryViewProps = Readonly<{
     comments: readonly ReviewCommentV1[];
     labels: ReviewCommentLabels;
     cardActions?: ReviewCommentCardActions;
+    listFooter?: React.ReactElement | null;
     testID?: string;
 }>;
 
@@ -25,6 +26,7 @@ export function ReviewCommentsHistoryView(props: ReviewCommentsHistoryViewProps)
             comments={props.comments.filter(isHistoryComment)}
             labels={props.labels}
             cardActions={props.cardActions}
+            listFooter={props.listFooter}
             testID={props.testID}
         />
     );

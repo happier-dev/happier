@@ -9,6 +9,12 @@ import { ReviewCommentsHeaderButton } from './ReviewCommentsHeaderButton';
 import { ReviewCommentsHistoryView } from './ReviewCommentsHistoryView';
 import { ReviewCommentsPanel } from './ReviewCommentsPanel';
 
+// The native recycler is the physical layout boundary; list/card behavior stays real.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true });
+});
+
 vi.mock('@/components/ui/text/Text', async () => {
     const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
     return createUiTextModuleMock();

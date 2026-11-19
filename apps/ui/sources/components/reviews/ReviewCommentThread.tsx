@@ -7,43 +7,36 @@ import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1'
 import type { ReviewCommentLabels } from './labels';
 import { ReviewCommentCard, type ReviewCommentCardActions } from './ReviewCommentCard';
 
-export type ReviewCommentThreadProps = Readonly<{
-    root: ReviewCommentV1;
-    replies: readonly ReviewCommentV1[];
+export type ReviewCommentThreadRowProps = Readonly<{
+    comment: ReviewCommentV1;
+    isReply: boolean;
+    isThreadEnd: boolean;
+    expanded: boolean;
+    onExpandedChange: (expanded: boolean) => void;
     labels: ReviewCommentLabels;
     cardActions?: ReviewCommentCardActions;
     onReply?: (input: Readonly<{ parentCommentId: string }>) => void;
     testID?: string;
 }>;
 
-export function ReviewCommentThread(props: ReviewCommentThreadProps) {
-    const replies = [...props.replies].sort((left, right) => left.createdAt - right.createdAt);
+export function ReviewCommentThreadRow(props: ReviewCommentThreadRowProps) {
     // One Reply for the whole thread, on its root's action row.
     const { onReply } = props;
-    const rootActions = React.useMemo(() => (onReply
+    const rootActions = React.useMemo(() => (onReply && !props.isReply
         ? { ...props.cardActions, onReply: (comment: ReviewCommentV1) => onReply({ parentCommentId: comment.id }) }
-        : props.cardActions), [onReply, props.cardActions]);
+        : props.cardActions), [onReply, props.cardActions, props.isReply]);
     return (
-        <View testID={props.testID} style={styles.thread}>
-            <ReviewCommentCard
-                comment={props.root}
-                labels={props.labels}
-                actions={rootActions}
-                testID={`review-comment-${props.root.id}`}
-            />
-            {replies.length > 0 ? (
-                <View style={styles.replies}>
-                    {replies.map((reply) => (
-                        <ReviewCommentCard
-                            key={reply.id}
-                            comment={reply}
-                            labels={props.labels}
-                            actions={props.cardActions}
-                            testID={`review-comment-${reply.id}`}
-                        />
-                    ))}
-                </View>
-            ) : null}
+        <View testID={props.testID} style={props.isThreadEnd ? styles.thread : undefined}>
+            <View style={props.isReply ? styles.replies : undefined}>
+                <ReviewCommentCard
+                    comment={props.comment}
+                    labels={props.labels}
+                    actions={rootActions}
+                    expanded={props.expanded}
+                    onExpandedChange={props.onExpandedChange}
+                    testID={`review-comment-${props.comment.id}`}
+                />
+            </View>
         </View>
     );
 }

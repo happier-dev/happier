@@ -1,11 +1,12 @@
 import React from 'react';
-import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 
-import { ReviewCommentThread } from './ReviewCommentThread';
+import { ReviewCommentThreadRow } from './ReviewCommentThread';
 import type { ReviewCommentCardActions } from './ReviewCommentCard';
 import type { ReviewCommentLabels } from './labels';
 
@@ -14,13 +15,13 @@ export type ReviewCommentsListProps = Readonly<{
     labels: ReviewCommentLabels;
     cardActions?: ReviewCommentCardActions;
     onReply?: (input: Readonly<{ parentCommentId: string }>) => void;
+    listFooter?: React.ReactElement | null;
     testID?: string;
 }>;
 
-function groupRootComments(comments: readonly ReviewCommentV1[]): readonly Readonly<{
-    root: ReviewCommentV1;
-    replies: readonly ReviewCommentV1[];
-}>[] {
+type CommentRow = Readonly<{ comment: ReviewCommentV1; isReply: boolean; isThreadEnd: boolean }>;
+
+function groupCommentRows(comments: readonly ReviewCommentV1[]): readonly CommentRow[] {
     const byThreadId = new Map<string, ReviewCommentV1[]>();
     for (const comment of comments) {
         const group = byThreadId.get(comment.threadId) ?? [];
@@ -28,38 +29,60 @@ function groupRootComments(comments: readonly ReviewCommentV1[]): readonly Reado
         byThreadId.set(comment.threadId, group);
     }
 
-    return [...byThreadId.values()].map((threadComments) => {
+    return [...byThreadId.values()].flatMap((threadComments) => {
         const root = threadComments.find((comment) => !comment.parentCommentId)
             ?? threadComments[0] as ReviewCommentV1;
-        return {
-            root,
-            replies: threadComments.filter((comment) => comment.id !== root.id),
-        };
+        const replies = threadComments.filter((comment) => comment.id !== root.id)
+            .sort((left, right) => left.createdAt - right.createdAt);
+        return [root, ...replies].map((comment, index) => ({
+            comment,
+            isReply: index > 0,
+            isThreadEnd: index === replies.length,
+        }));
     });
 }
 
 export function ReviewCommentsList(props: ReviewCommentsListProps) {
-    if (props.comments.length === 0) {
-        return (
-            <View testID={props.testID}>
-                <SurfaceStateCard size="line" kind="empty" title={props.labels.empty} />
-            </View>
-        );
-    }
-
+    // A card can leave the viewport while its reader still has its detail expanded.
+    const [expandedCommentIds, setExpandedCommentIds] = React.useState<ReadonlySet<string>>(() => new Set());
+    const setCommentExpanded = React.useCallback((commentId: string, expanded: boolean) => {
+        setExpandedCommentIds((current) => {
+            const next = new Set(current);
+            if (expanded) next.add(commentId);
+            else next.delete(commentId);
+            return next;
+        });
+    }, []);
+    const rows = React.useMemo(() => groupCommentRows(props.comments), [props.comments]);
+    const rowInputs = React.useMemo(() => ({
+        labels: props.labels,
+        cardActions: props.cardActions,
+        onReply: props.onReply,
+        expandedCommentIds,
+    }), [props.labels, props.cardActions, props.onReply, expandedCommentIds]);
     return (
-        <View testID={props.testID}>
-            {groupRootComments(props.comments).map(({ root, replies }) => (
-                <ReviewCommentThread
-                    key={root.id}
-                    root={root}
-                    replies={replies}
+        <VirtualizedList
+            testID={props.testID}
+            style={styles.list}
+            data={rows}
+            extraData={rowInputs}
+            keyExtractor={(row) => row.comment.id}
+            keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={<SurfaceStateCard size="line" kind="empty" title={props.labels.empty} />}
+            ListFooterComponent={props.listFooter}
+            renderItem={({ item }) => (
+                <ReviewCommentThreadRow
+                    {...item}
+                    expanded={expandedCommentIds.has(item.comment.id)}
+                    onExpandedChange={(expanded) => setCommentExpanded(item.comment.id, expanded)}
                     labels={props.labels}
                     cardActions={props.cardActions}
                     onReply={props.onReply}
-                    testID={`review-comment-${root.id}`}
+                    testID={`review-comment-row-${item.comment.id}`}
                 />
-            ))}
-        </View>
+            )}
+        />
     );
 }
+
+const styles = StyleSheet.create({ list: { flex: 1, minHeight: 0 } });

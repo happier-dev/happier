@@ -1,5 +1,5 @@
 import React from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { ReviewCommentStateV1, ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
@@ -37,6 +37,7 @@ export type ReviewCommentsPanelProps = Readonly<{
     onReply?: (input: Readonly<{ parentCommentId: string }>) => void;
     onBulkTransition?: (input: ReviewCommentBulkTransitionInput) => void;
     bulkTransitionResult?: ReviewCommentBulkTransitionResult | null;
+    listFooter?: React.ReactElement | null;
     testID?: string;
 }>;
 
@@ -90,22 +91,20 @@ export function ReviewCommentsPanel(props: ReviewCommentsPanelProps) {
                 </View>
             ) : null}
             {/* The toolbar stays put; only the comments scroll within the room the host gives them. */}
-            <ScrollView style={styles.list} nestedScrollEnabled keyboardShouldPersistTaps="handled">
-                <ReviewCommentsList
-                    comments={props.comments}
-                    labels={props.labels}
-                    cardActions={props.cardActions}
-                    onReply={props.onReply}
-                    testID={props.testID ? `${props.testID}-list` : undefined}
-                />
-            </ScrollView>
+            <ReviewCommentsList
+                comments={props.comments}
+                labels={props.labels}
+                cardActions={props.cardActions}
+                onReply={props.onReply}
+                listFooter={props.listFooter}
+                testID={props.testID ? `${props.testID}-list` : undefined}
+            />
         </View>
     );
 }
 
 const styles = StyleSheet.create((theme) => ({
-    panel: { gap: theme.space.s8, flexShrink: 1, minHeight: 0 },
-    list: { flexShrink: 1, minHeight: 0 },
+    panel: { gap: theme.space.s8, flex: 1, minHeight: 0 },
     toolbar: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: theme.space.s16, rowGap: theme.space.s6 },
     filters: { flexShrink: 1, minWidth: 0 },
     bulk: { flexDirection: 'row', alignItems: 'center', columnGap: theme.space.s16 },

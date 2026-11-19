@@ -27,6 +27,8 @@ export type ReviewCommentCardProps = Readonly<{
     comment: ReviewCommentV1;
     labels: ReviewCommentLabels;
     actions?: ReviewCommentCardActions;
+    expanded?: boolean;
+    onExpandedChange?: (expanded: boolean) => void;
     testID?: string;
 }>;
 
@@ -109,7 +111,9 @@ const STATE_VARIANT: Readonly<Record<ReviewCommentStateV1, StatusPillVariant>> =
 
 export function ReviewCommentCard(props: ReviewCommentCardProps) {
     const { theme } = useUnistyles();
-    const [expanded, setExpanded] = React.useState(false);
+    const [localExpanded, setLocalExpanded] = React.useState(false);
+    const expanded = props.expanded ?? localExpanded;
+    const setExpanded = props.onExpandedChange ?? setLocalExpanded;
     const [moreOpen, setMoreOpen] = React.useState(false);
     const location = anchorLocation(props.comment);
     const engine = engineOf(props.comment);
@@ -128,7 +132,7 @@ export function ReviewCommentCard(props: ReviewCommentCardProps) {
                 label={expanded ? props.labels.showLess : props.labels.showMore}
                 size="meta"
                 expanded={expanded}
-                onPress={() => setExpanded((value) => !value)}
+                onPress={() => setExpanded(!expanded)}
                 testID={`${testID}-fold`}
             />
         </View>

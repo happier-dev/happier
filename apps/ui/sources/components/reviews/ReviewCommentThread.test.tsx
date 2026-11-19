@@ -1,5 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 
 import {
     buildReviewCommentFixture,
@@ -8,7 +9,20 @@ import {
     reviewCommentLabelsFixture,
 } from '@/dev/testkit';
 
-import { ReviewCommentThread } from './ReviewCommentThread';
+import { ReviewCommentsList, type ReviewCommentsListProps } from './ReviewCommentsList';
+
+// The native recycler is the physical layout boundary for these action tests.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true });
+});
+
+function ReviewCommentThread({ root, replies, ...props }: Omit<ReviewCommentsListProps, 'comments'> & {
+    root: ReviewCommentV1;
+    replies: readonly ReviewCommentV1[];
+}) {
+    return <ReviewCommentsList {...props} comments={[root, ...replies]} />;
+}
 
 vi.mock('@/components/ui/text/Text', async () => {
     const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
