@@ -97,7 +97,10 @@ export function useBugReportComposerSubmit(input: Readonly<{
         // A refusal is not a service failure and must not offer a fallback
         // that could send the same report after its approval was declined.
         if (executed.errorCode !== 'bug_report_submission_failed') {
-          await Modal.alert(t('bugReports.composer.alerts.submitFailedTitle'), bugReportErrorMessage(new Error(executed.errorCode === 'action_account_scope_changed' ? executed.errorCode : executed.error), executed.error));
+          await Modal.alert(
+            t('bugReports.composer.alerts.submitFailedTitle'),
+            bugReportErrorMessage(executed, t('bugReports.composer.alerts.submitFailedFallbackMessage')),
+          );
           return;
         }
         throw new Error(executed.error);

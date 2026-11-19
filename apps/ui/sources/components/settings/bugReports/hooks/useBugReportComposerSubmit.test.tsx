@@ -188,6 +188,19 @@ describe('bug report Submit form through Action admission', () => {
     await screen.unmount();
   });
 
+  it('explains that Submit is turned off without contacting the report service', async () => {
+    await homes.setActionPolicy(serverId, 'bugreport.submit', 'ui', 'off');
+    const screen = await renderScreen(<Composer />);
+    try {
+      await act(async () => { await screen.findByTestId('submit')!.props.onPress(); });
+      expect(alerts).toHaveBeenCalledWith('bugReports.composer.alerts.submitFailedTitle', 'actionConfirmations.turnedOffUnnamedMessage');
+      expect(reportRequests).toEqual([]);
+      expect(homes.artifacts(serverId).list()).toEqual([]);
+      expect(confirms).not.toHaveBeenCalled();
+      expect(back).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
+  });
+
   it('uses the default Action review for diagnostics without imposing a second acknowledgement floor', async () => {
     await persistPreRestartBugReportSnapshot(snapshot);
     await expect(peekPreRestartBugReportSnapshot()).resolves.toEqual(snapshot);
