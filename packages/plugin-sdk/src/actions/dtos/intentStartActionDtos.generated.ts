@@ -601,12 +601,14 @@ export type IntentStartActionInputById = {
                     allowedTools?: string[] | undefined;
                     unlistedTools?: 'ask' | 'deny' | undefined;
                 };
+                includeSessionTranscript?: boolean | undefined;
             } | {
                 kind: 'session';
                 session: {
                     serverId: string;
                     sessionId: string;
                 };
+                includeSessionTranscript?: boolean | undefined;
             } | {
                 principal: {
                     kind: 'account';
@@ -984,12 +986,14 @@ export type IntentStartActionInputById = {
                         allowedTools?: string[] | undefined;
                         unlistedTools?: 'ask' | 'deny' | undefined;
                     };
+                    includeSessionTranscript?: boolean | undefined;
                 } | {
                     kind: 'session';
                     session: {
                         serverId: string;
                         sessionId: string;
                     };
+                    includeSessionTranscript?: boolean | undefined;
                 } | {
                     principal: {
                         kind: 'account';
@@ -1191,6 +1195,7 @@ export type IntentStartActionInputById = {
                         evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
                     } | {
                         kind: 'workingTree';
+                        area?: 'both' | 'included' | 'pending';
                     };
                     endpoints: {
                         before?: string | undefined;
@@ -1403,6 +1408,7 @@ export type IntentStartActionInputById = {
                 evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
             } | {
                 kind: 'workingTree';
+                area?: 'both' | 'included' | 'pending';
             };
             repository: {
                 rootPath: string;
@@ -1475,7 +1481,19 @@ export type IntentStartActionInputById = {
         };
         comparisonCapture?: undefined | {
             cwd: string;
-            source: {
+            sessionId?: string | undefined;
+            comparisonId?: string | undefined;
+            projection?: undefined | {
+                kind: 'index';
+                cursor?: number | undefined;
+                limit?: number | undefined;
+                path?: string | undefined;
+            };
+            backendPreference?: undefined | {
+                kind: 'prefer';
+                backendId: string;
+            };
+            source?: undefined | {
                 kind: 'branch';
                 head: string;
                 base: string;
@@ -1554,18 +1572,7 @@ export type IntentStartActionInputById = {
                 evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
             } | {
                 kind: 'workingTree';
-            };
-            sessionId?: string | undefined;
-            comparisonId?: string | undefined;
-            projection?: undefined | {
-                kind: 'index';
-                cursor?: number | undefined;
-                limit?: number | undefined;
-                path?: string | undefined;
-            };
-            backendPreference?: undefined | {
-                kind: 'prefer';
-                backendId: string;
+                area?: 'both' | 'included' | 'pending';
             };
             turnId?: string | undefined;
             checkpointReceiptId?: string | undefined;
@@ -1945,12 +1952,14 @@ export type IntentStartActionInputById = {
                 allowedTools?: string[] | undefined;
                 unlistedTools?: 'ask' | 'deny' | undefined;
             };
+            includeSessionTranscript?: boolean | undefined;
         } | {
             kind: 'session';
             session: {
                 serverId: string;
                 sessionId: string;
             };
+            includeSessionTranscript?: boolean | undefined;
         } | {
             principal: {
                 kind: 'account';
@@ -2328,12 +2337,14 @@ export type IntentStartActionInputById = {
                     allowedTools?: string[] | undefined;
                     unlistedTools?: 'ask' | 'deny' | undefined;
                 };
+                includeSessionTranscript?: boolean | undefined;
             } | {
                 kind: 'session';
                 session: {
                     serverId: string;
                     sessionId: string;
                 };
+                includeSessionTranscript?: boolean | undefined;
             } | {
                 principal: {
                     kind: 'account';
@@ -2535,6 +2546,7 @@ export type IntentStartActionInputById = {
                     evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
                 } | {
                     kind: 'workingTree';
+                    area?: 'both' | 'included' | 'pending';
                 };
                 endpoints: {
                     before?: string | undefined;
