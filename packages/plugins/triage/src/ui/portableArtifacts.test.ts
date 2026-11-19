@@ -20,7 +20,6 @@ import { compileUniversalPluginUiCommonJs } from '../../../../plugin-sdk/src/ui/
 describe('Triage portable artifact initialization', () => {
     it.each([
         ['surface.tsx', 'renderSurface'],
-        ['tasksSurface.tsx', 'renderSurface'],
         ['shell/root.tsx', 'TriageListShell'],
     ])('compiles and evaluates %s without preloading Triage', async (entry, symbol) => {
         const repoRoot = resolve(import.meta.dirname, '../../../../..');

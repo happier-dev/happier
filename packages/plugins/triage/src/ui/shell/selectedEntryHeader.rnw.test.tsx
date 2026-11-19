@@ -32,7 +32,7 @@ import { reobserveTriagePostMutationRow } from '../detail/postMutationReobservat
 import { triageEntryRowKey, TRIAGE_LIST_DEFAULT_LENS_V1, MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../../projection/listWindow.js';
 import { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1 } from '../../actions/reobserveEntryProtocol.js';
 import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
-import { renderSurface as renderTasksSurface } from '../tasksSurface.js';
+import { renderSurface as renderTriagePage } from '../surface.js';
 import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../../internalTasks/contribution.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
 import { TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1 } from '../../actions/tasksProtocol.js';
@@ -514,7 +514,7 @@ describe('the selected entry once the window stops holding it', () => {
                 identity: { instanceId: 'task-title-locality', mountNonce: 'task-title-locality' },
                 authorPlugin: { id: 'happier.triage', version: '0.0.0' },
                 // The query-clear replay exercises an active page; locality-only cases observe a retained inactive surface.
-                surface: context => showTasks ? renderTasksSurface({ ...context, activity: { active: count === 200 } }) : null,
+                surface: context => showTasks ? renderTriagePage({ ...context, activity: { active: count === 200 } }) : null,
                 surfaceContext: admittedSurface,
                 adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, detailsPane: { available: true } }),
                 handlers: { executeAction: async ({ action, input }) => {

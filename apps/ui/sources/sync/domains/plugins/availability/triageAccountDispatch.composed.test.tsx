@@ -62,14 +62,14 @@ vi.mock('./generatedBundledPluginUiArtifacts', async () => {
         files: [{ relativePath: detailPath, digest: computePluginUiArtifactSha256DigestV1(detailCompiled.bytes), byteSize: detailCompiled.bytes.byteLength }],
         builtWith: { bundler: 'esbuild', version: '0.27.2' }, executable: { exports: ['renderSurface'] }, hostUiApiRange: '^1.0.0' });
     const pageCompiled = await compileUniversalPluginUiCommonJs({ projectRoot,
-        entryPath: join(projectRoot, 'src/ui/tasksSurface.tsx'), artifactId: 'triage-tasks-page-native',
+        entryPath: join(projectRoot, 'src/ui/surface.tsx'), artifactId: 'triage-list-page-native',
         requestedExports: ['renderSurface'], exportConditions: ['happier-source'],
         resolveSourceImport: specifier => packages.has(packageNameOfSpecifier(specifier))
             ? resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] }) : undefined,
     });
     packaged.pageBytes = pageCompiled.bytes;
-    const pagePath = 'react-native/triage-tasks-page-native/entry.cjs.bundle';
-    const pageArtifact = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: 'triage-tasks-page-native', tier: 'reactNative',
+    const pagePath = `react-native/${pageCompiled.artifactId}/entry.cjs.bundle`;
+    const pageArtifact = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: pageCompiled.artifactId, tier: 'reactNative',
         entry: pagePath, digest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: pagePath, bytes: pageCompiled.bytes }]),
         files: [{ relativePath: pagePath, digest: computePluginUiArtifactSha256DigestV1(pageCompiled.bytes), byteSize: pageCompiled.bytes.byteLength }],
         builtWith: { bundler: 'esbuild', version: '0.27.2' }, executable: { exports: ['renderSurface'] }, hostUiApiRange: '^1.0.0' });

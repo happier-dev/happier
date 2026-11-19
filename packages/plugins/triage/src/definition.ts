@@ -605,7 +605,7 @@ function createTriagePlugin(): TriagePlugin {
       }, {
         id: 'internal-task-settings', kind: 'reactNative', artifact: 'triage-internal-task-settings-native', requiredHostMethods: ['executeAction'],
       }, {
-        id: 'tasks-page', kind: 'reactNative', artifact: 'triage-tasks-page-native',
+        id: 'tasks-page', kind: 'reactNative', artifact: 'triage-list-page-native',
         requiredHostMethods: ['executeAction', 'publishCurrentUiContext'],
       }, {
         id: 'tasks-widget', kind: 'reactNative', artifact: 'triage-tasks-widget-native',

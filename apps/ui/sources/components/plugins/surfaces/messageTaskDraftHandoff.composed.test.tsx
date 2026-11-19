@@ -12,7 +12,7 @@ import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-triage/manifest';
 import { activate } from '@happier-dev/plugins-triage/happier-plugin-ui/triage-mounted-ui-action-native';
-import { renderSurface } from '@happier-dev/plugins-triage/happier-plugin-ui/triage-tasks-page-native';
+import { renderSurface } from '@happier-dev/plugins-triage/happier-plugin-ui/triage-list-page-native';
 
 import { renderScreen } from '@/dev/testkit';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -46,7 +46,9 @@ describe('message Action → Tasks draft through the host shared scope', () => {
         let launchInput: unknown;
         const fixture = await createPluginUiTestkit({ identity: { instanceId: 'message-launch', mountNonce: 'launch' },
             authorPlugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
-            surface: defineUiSurface(() => null), surfaceContext: createSurfaceContextFixture(),
+            surface: defineUiSurface(() => null), surfaceContext: createSurfaceContextFixture({
+                mount: { kind: 'destination', destination: { pluginId: PLUGIN_MANIFEST.id, localId: 'tasks' }, container: 'appPage' },
+            }),
             adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: {
                 openSurface: ({ input }) => { launchInput = input; },
                 // Genuine remote Account/daemon transport boundary; opening a draft must work before these reads recover.

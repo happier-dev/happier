@@ -83,7 +83,7 @@ import {
 import { loadMoreTriageListWindow, readTriageListWindowReadOwner, readTriageListWindowSnapshot, refreshTriageListWindow, subscribeToTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
-import { renderSurface as renderTasksSurface } from './tasksSurface.js';
+import { TRIAGE_TASKS_PAGE_LOCAL_ID_V1 } from '../composer/openEntryDetails.js';
 import { TriageListShell } from './shell/root.js';
 import type { PluginUiDataClient, PluginUiCollectionQuerySnapshot } from '@happier-dev/plugin-ui/data';
 import { CORPUS_SOURCE_INSTANCES_COLLECTION, CORPUS_SESSION_LINKS_COLLECTION, CORPUS_USER_MARKS_COLLECTION } from '../corpus/collections/definitions.js';
@@ -510,7 +510,7 @@ async function mountSurface(
     harness: ReturnType<typeof createHarness>,
     instanceId: string,
     context: Parameters<typeof createSurfaceContextFixture>[0] = {},
-    options: Readonly<{ subPath?: string; launchInput?: Parameters<typeof createPluginUiTestkit>[0]['launchInput']; recordSurfaceOpens?: boolean; directAccountData?: boolean;
+    options: Readonly<{ subPath?: string; tasksDestination?: boolean; launchInput?: Parameters<typeof createPluginUiTestkit>[0]['launchInput']; recordSurfaceOpens?: boolean; directAccountData?: boolean;
         dragDropRequests?: PluginUiUpdateEntityDragDropRequestV1[] }> = {},
 ): Promise<PluginUiTestkit> {
     // Mounting starts the window's first cycle, so the whole mount is driven
@@ -562,7 +562,12 @@ async function mountSurface(
             ...(options.subPath === undefined ? {} : { subPath: options.subPath }),
             ...(options.launchInput === undefined ? {} : { launchInput: options.launchInput }),
             surface: mountSurface,
-            surfaceContext: createSurfaceContextFixture(context),
+            surfaceContext: createSurfaceContextFixture({
+                ...context,
+                ...(options.tasksDestination ? {
+                    mount: { kind: 'destination', destination: { pluginId: 'happier.triage', localId: TRIAGE_TASKS_PAGE_LOCAL_ID_V1 }, container: 'appPage' },
+                } : {}),
+            }),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({
                 ephemeralSharedScope: harness.ephemeralSharedScope,
                 sessions: true,
@@ -1135,8 +1140,8 @@ describe('the mounted PRs & Issues surface', () => {
             sourceInstance: { source: SOURCE_A, sourceInstanceId: INSTANCE_A },
             originComposer: { kind: 'pendingMessage', sessionId: 'session-1', localId: 'pending-1' } });
         const writesBeforeSwitch = harness.accountKv.setCallCount();
-        const shell = await mountSurface(legacy ? renderTasksSurface : renderShellSurface, harness, `q1-${legacy}`,
-            sourceContextFixture(harness), { subPath: buildTriageRouteSubPathV1(lens), launchInput: launch, recordSurfaceOpens: true });
+        const shell = await mountSurface(renderShellSurface, harness, `q1-${legacy}`,
+            sourceContextFixture(harness), { tasksDestination: legacy, subPath: buildTriageRouteSubPathV1(lens), launchInput: launch, recordSurfaceOpens: true });
         await settleWindow('view', shell);
         const commands = harness.publishedContexts.at(-1)?.commands ?? [];
         const prs = commands.find(command => command.title === 'PRs & Issues');
@@ -1463,8 +1468,7 @@ describe('the mounted PRs & Issues surface', () => {
 
     it('opens Tasks with one row-producing list pass, without an initial default-lens pass', async () => {
         const harness = createHarness({ tasks: true });
-        const tasksSurface = defineUiSurface(() => <TriageListShell tasksPage />);
-        const shell = await mountSurface(tasksSurface, harness, 'triage-tasks');
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-tasks', {}, { tasksDestination: true });
         await settleWindow('view', shell);
         // Each source settles its own first page; continuation needs Load more.
         // Binding the initial lens is not another page-view producer.
@@ -1748,9 +1752,8 @@ describe('the mounted PRs & Issues surface', () => {
 
     it.each([false, true])('offers source management on the source recovery status (Tasks=%s)', async (tasks) => {
         const harness = createHarness({ tasks, sourceBUnavailable: true });
-        const surface = tasks ? renderTasksSurface : renderShellSurface;
-        const shell = await mountSurface(surface, harness, `source-warning-${tasks}`, sourceContextFixture(harness),
-            { directAccountData: true, ...(tasks ? { subPath: 'tasks,everyone' } : {}) });
+        const shell = await mountSurface(renderShellSurface, harness, `source-warning-${tasks}`, sourceContextFixture(harness),
+            { directAccountData: true, tasksDestination: tasks, ...(tasks ? { subPath: 'tasks,everyone' } : {}) });
         await settleWindow('view', shell);
         // View health partitions failures once (6861b0f0d1fd). An unadmitted
         // source has no declared task kinds, so Tasks sends its recovery to the

@@ -30,7 +30,6 @@
     "./happier-plugin-ui/triage-list-page-native": "./src/ui/surface.tsx",
     "./happier-plugin-ui/triage-internal-task-detail-native": "./src/internalTasks/detail.tsx",
     "./happier-plugin-ui/triage-internal-task-settings-native": "./src/internalTasks/settings.tsx",
-    "./happier-plugin-ui/triage-tasks-page-native": "./src/ui/tasksSurface.tsx",
     "./happier-plugin-ui/triage-entity-drag-drop-native": "./src/ui/list/entryDragDrop.ts",
     "./happier-plugin-ui/triage-latest-widget-native": "./src/ui/widget/latestWidget.tsx",
     "./happier-plugin-ui/triage-tasks-widget-native": "./src/ui/widget/tasksWidget.tsx",

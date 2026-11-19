@@ -15,8 +15,8 @@ import { MessageActionAvailableSnapshotV1Schema } from '@happier-dev/protocol';
 import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { createTriageEphemeralSharedScopeOriginFixture } from '../ui/window/ephemeralSharedScope.test-support.js';
 import { readTriageTaskDraftLaunch } from '../ui/taskDraftHandoff.js';
-import { renderSurface as renderTasksSurface } from '../ui/tasksSurface.js';
-import { renderSurface as renderListSurface } from '../ui/surface.js';
+import { renderSurface as renderTriagePage } from '../ui/surface.js';
+import { TRIAGE_TASKS_PAGE_LOCAL_ID_V1 } from '../composer/openEntryDetails.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { listTriageEntries } from './listEntries.js';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, TriageListEntriesInputV1Schema } from './listEntriesProtocol.js';
@@ -169,9 +169,11 @@ it.each([
       const mountPage = async () => { await act(async () => {
         page = await createPluginUiTestkit({ identity: { instanceId: 'tasks-page', mountNonce: 'page' },
           authorPlugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
-          ...(fromMessage ? { surface: renderListSurface, launchInput: launch }
-            : { surface: renderTasksSurface, launchInput: launch, subPath: 'tasks,mine' }),
-          surfaceContext: createSurfaceContextFixture(),
+          surface: renderTriagePage, launchInput: launch,
+          ...(fromMessage ? {} : { subPath: 'tasks,mine' }),
+          surfaceContext: createSurfaceContextFixture(fromMessage ? {} : {
+            mount: { kind: 'destination', destination: { pluginId: PLUGIN_MANIFEST.id, localId: TRIAGE_TASKS_PAGE_LOCAL_ID_V1 }, container: 'appPage' },
+          }),
           adapter: { mount: async (input) => { pageMount = await adapter.mount(input); return pageMount; } },
           handlers: { publishCurrentUiContext: ({ enrichment }) => { publishedContexts.push(enrichment); },
             executeAction: async ({ action, input }) => {
@@ -321,8 +323,11 @@ it('shows an unavailable draft instead of an empty form when its client lifetime
   let page!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
   await act(async () => {
     page = await createPluginUiTestkit({ identity: { instanceId: 'missing-draft', mountNonce: 'missing' },
-      authorPlugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version }, surface: renderTasksSurface,
-      launchInput: { v: 1, kind: 'createTask', draftId: 'retired-draft' }, surfaceContext: createSurfaceContextFixture(),
+      authorPlugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version }, surface: renderTriagePage,
+      launchInput: { v: 1, kind: 'createTask', draftId: 'retired-draft' },
+      surfaceContext: createSurfaceContextFixture({
+        mount: { kind: 'destination', destination: { pluginId: PLUGIN_MANIFEST.id, localId: TRIAGE_TASKS_PAGE_LOCAL_ID_V1 }, container: 'appPage' },
+      }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: { executeAction: () => { throw new Error('An unavailable draft must not write'); } },
     });

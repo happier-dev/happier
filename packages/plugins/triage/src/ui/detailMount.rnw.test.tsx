@@ -109,7 +109,6 @@ import { TRIAGE_TASK_STORY_TEST_ID_V1 } from './detail/taskStory.js';
 import { readTriageListWindowSnapshot, refreshTriageListWindow } from './window/mountedWindow.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 import { TriageResourceSurface } from './resourceSurface.js';
-import { renderSurface as renderTasksSurface } from './tasksSurface.js';
 import { renderSurface as renderEntrySessionCompanion } from './detail/sessionCompanion.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 import { createTriageEphemeralSharedScopeFixture, createTriageEphemeralSharedScopeOriginFixture } from './window/ephemeralSharedScope.test-support.js';
@@ -1043,7 +1042,7 @@ async function mountShell(
             // The semantic host's RenderContext omits its activity snapshot;
             // supply this genuine host boundary fact for mounted-action cases.
             surface: (context) => {
-                const entry = (options.resource ? resourceSurface : options.taskEdit ? renderTasksSurface : renderShellSurface)(
+                const entry = (options.resource ? resourceSurface : renderShellSurface)(
                     { ...context,
                         ...(options.deliveredLaunch === undefined ? {} : { launchInput: options.deliveredLaunch.current }),
                         ...(pageLaunch === undefined ? {} : { launch: pageLaunch }),

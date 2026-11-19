@@ -37,6 +37,7 @@ import { TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1 } from './actions/saved
 import { TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1 } from './actions/actionsCatalogProtocol.js';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema } from './actions/mountedUiProtocol.js';
 import { TRIAGE_ENTRIES_CONTROL_LOCAL_ID_V1 } from './composer/attachmentValue.js';
+import { TRIAGE_APP_PAGE_LOCAL_ID_V1, TRIAGE_TASKS_PAGE_LOCAL_ID_V1 } from './composer/openEntryDetails.js';
 import { createTestkitCorpusCollections } from './corpus/testkit/corpusCollections.test-support.js';
 import { testkitEntryRef } from './corpus/testkit/observations.test-support.js';
 import { createTriageSetEntryPinnedActionHandler, listTriagePinnedEntries } from './actions/userMarks.js';
@@ -45,6 +46,17 @@ import { INTERNAL_TASK_SOURCE_RECORD_V1 } from './internalTasks/configuration.js
 const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url));
 
 describe('Triage plugin manifest', () => {
+  it('uses one page artifact for the PRs & Issues and Tasks app destinations', () => {
+    const { views, renderers } = PLUGIN_MANIFEST.contributes.ui;
+    const artifacts = [TRIAGE_APP_PAGE_LOCAL_ID_V1, TRIAGE_TASKS_PAGE_LOCAL_ID_V1].map(id => {
+      const view = views.find(candidate => candidate.id === id && candidate.container === 'appPage');
+      const renderer = renderers.find(candidate => candidate.id === view?.renderer);
+      if (renderer?.kind !== 'reactNative') throw new Error(`Missing native page renderer for ${id}`);
+      return renderer.artifact;
+    });
+    expect(new Set(artifacts).size).toBe(1);
+  });
+
   it('owns retained Zen links as aliases of its Tasks page', () => {
     const page = PLUGIN_MANIFEST.contributes.ui.views.find(view => view.id === 'tasks');
     if (page?.container !== 'appPage' || page.target.kind !== 'app') throw new Error('Missing Tasks app page');

@@ -9,12 +9,12 @@ import { TriageActionEditorLaunchInputV1Schema } from '@happier-dev/triage-proto
 import { TriageResourceSurface } from './resourceSurface.js';
 import { readTriageResourceIntent } from './contributions.js';
 import { useTriageTaskDraftLaunch } from './taskDraftLaunch.js';
-import { openTriageEntryDetails } from '../composer/openEntryDetails.js';
+import { openTriageEntryDetails, TRIAGE_TASKS_PAGE_LOCAL_ID_V1 } from '../composer/openEntryDetails.js';
 import { TriageTaskDraftLaunchV1Schema } from '../actions/tasksProtocol.js';
 import { readReviewDetailInput, ReviewDetail } from '../reviews/detail.js';
 
 /**
- * The PRs & Issues app-page artifact entry.
+ * The Triage list surface.
  *
  * Theme, locale, text scale, accessibility and safe-area all arrive through the
  * provider `defineUiSurface` installs, and the rows arrive through the one
@@ -125,7 +125,25 @@ function TriageListSurface(context: RenderContext): React.ReactElement {
   );
 }
 
+function TriageTasksSurface(context: RenderContext): React.ReactElement {
+  const launch = React.useMemo(() => {
+    const parsed = parseTriageEntryDetailLaunchInput(context.launchInput);
+    return parsed.status === 'valid' ? parsed.input : undefined;
+  }, [context.launchInput]);
+  const draft = useTriageTaskDraftLaunch(context.launchInput);
+  if (draft.status === 'unavailable') return draft.notice;
+  return <TriageListShell tasksPage {...(context.subPath === undefined ? {} : { subPath: context.subPath })}
+    {...(context.launch === undefined ? {} : { pageLaunch: context.launch })}
+    {...(launch === undefined ? {} : { launch })}
+    {...(draft.status === 'ready' ? draft.shellProps : {})} />;
+}
+
 export const renderSurface: RenderSurface = defineUiSurface(context => {
+  const { mount } = context.surface;
+  if (mount.kind === 'destination' && mount.container === 'appPage'
+      && mount.destination.localId === TRIAGE_TASKS_PAGE_LOCAL_ID_V1) {
+    return <TriageTasksSurface {...context} />;
+  }
   const review = readReviewDetailInput(context.launchInput);
   return review === null ? <TriageListSurface {...context} /> : <ReviewDetail context={context} input={review} />;
 });
