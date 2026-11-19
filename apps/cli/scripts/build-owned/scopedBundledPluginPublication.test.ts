@@ -1,10 +1,11 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { createSourceFile, isIdentifier, isObjectLiteralExpression, isPropertyAssignment, isVariableStatement, ModuleKind, ScriptTarget, transpileModule } from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
+import { defineAccountCollection, projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/collections';
 import { readBundledPluginPublicationFailures } from '../../../../scripts/workspaces/bundledPluginPublicationFailure.mjs';
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { importPluginAuthorRuntimeModules, main, publishBundledPluginEntries, publishBundledPluginSemanticProjection } from './generateBundledPluginEntries.ts';
@@ -108,6 +109,41 @@ describe('scoped bundled publication', () => {
     }
     return { ...sandbox, uiPath, catalog: join(happyCliDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts') };
   }
+
+  it('projection check rejects an Account Collection missing from the bundled manifest', async () => {
+    const fixture = await createScopedPublicationFixture();
+    try {
+      // Exercise CLI declaration publication without a retained UI registry.
+      unlinkSync(fixture.uiPath);
+      const root = join(fixture.repoRoot, 'packages/plugins/inspector');
+      const sourcePath = join(root, 'src/manifest.ts');
+      const manifestPath = join(fixture.happyCliDir, 'assets/bundled-plugin-manifests/inspector.json');
+      const selector = ['--root', fixture.repoRoot, '--workspace', 'plugins-inspector'];
+      const check = () => main([...selector, '--mode', 'check', '--scope', 'projections']);
+      const source = readFileSync(sourcePath, 'utf8');
+      const definition = defineAccountCollection({
+        id: 'marks',
+        schemaVersion: 1,
+        rowIdField: 'id',
+        serverReadable: ['id'],
+        indexes: [],
+        identityFields: [],
+        schema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false },
+      });
+      const collection = projectPluginAccountCollectionDeclaration(definition.id, definition);
+      writeFileSync(sourcePath, source.replace('"contributes":{',
+        `"contributes":{"accountCollections":[${JSON.stringify(collection)}],`));
+      await expect(check()).rejects.toThrow(`generated output differs: ${manifestPath}`);
+
+      await withWorkspaceBundleLock(lease => publishBundledPluginEntries(
+        parseGeneratorCliArgs([...selector, '--mode', 'write']), lease,
+      ), { lockPath: join(fixture.repoRoot, 'publication.lock') });
+      const published = ingestPluginManifestV2(readFileSync(manifestPath, 'utf8'));
+      if (!published.ok) throw new Error(JSON.stringify(published.diagnostics));
+      expect(published.manifest.contributes.accountCollections).toMatchObject([collection]);
+      await check();
+    } finally { fixture.cleanup(); }
+  });
 
   it.each(['scoped', 'aggregate'] as const)('%s semantic publication refreshes manifest presentation and Agent declarations', async mode => {
     const fixture = await createScopedPublicationFixture();
