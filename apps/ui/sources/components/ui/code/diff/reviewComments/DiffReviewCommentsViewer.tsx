@@ -8,6 +8,10 @@ import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import { useCodeLinesReviewComments } from '@/components/ui/code/reviewComments/useCodeLinesReviewComments';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import { ReviewCommentCard } from '@/components/reviews/ReviewCommentCard';
+import { buildReviewCommentLabels } from '@/components/reviews/sessionSurfaceLabels';
+import { resolveCodeLineAnchor } from '@/components/ui/code/reviewComments/resolveCodeLineAnchor';
 import { filterReviewCommentDraftsForFile } from '@/sync/domains/input/reviewComments/filterReviewCommentDrafts';
 import { resolveInlineDiffVirtualization } from '@/components/ui/code/diff/resolveInlineDiffVirtualization';
 import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
@@ -33,6 +37,8 @@ export type DiffReviewCommentsViewerProps = Pick<UnifiedDiffViewerProps, 'findAc
     externalScrollView?: CodeLinesExternalScrollView;
     reviewCommentsEnabled: boolean;
     reviewCommentDrafts: readonly ReviewCommentDraft[];
+    reviewComments?: readonly ReviewCommentV1[];
+    serverId?: string;
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void | Promise<void>;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
@@ -70,6 +76,8 @@ function areDiffReviewCommentsViewerPropsEqual(
         && previous.unifiedDiff === next.unifiedDiff
         && previous.reviewCommentsEnabled === next.reviewCommentsEnabled
         && areDraftArraysEquivalent(previous.reviewCommentDrafts, next.reviewCommentDrafts)
+        && previous.reviewComments === next.reviewComments
+        && previous.serverId === next.serverId
         && previous.onUpsertReviewCommentDraft === next.onUpsertReviewCommentDraft
         && previous.onDeleteReviewCommentDraft === next.onDeleteReviewCommentDraft
         && previous.onReviewCommentError === next.onReviewCommentError
@@ -131,11 +139,27 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
         onError: props.onReviewCommentError,
     });
     const showInactiveCommentAffordance = Platform.OS === 'web';
+    const commentsByLineId = React.useMemo(() => {
+        const result = new Map<string, ReviewCommentV1[]>();
+        for (const comment of props.reviewComments ?? []) {
+            if (comment.parentCommentId || (comment.anchor.kind !== 'line' && comment.anchor.kind !== 'range')) continue;
+            const resolution = resolveCodeLineAnchor({ filePath: props.filePath, source: 'diff', lines, anchor: comment.anchor });
+            const lineId = resolution.lines.at(-1)?.id;
+            if (!lineId) continue;
+            const comments = result.get(lineId);
+            if (comments) comments.push(comment);
+            else result.set(lineId, [comment]);
+        }
+        return result;
+    }, [props.reviewComments, props.filePath, lines]);
+    const labels = commentsByLineId.size > 0 ? buildReviewCommentLabels() : null;
     const renderAfterLine = React.useCallback((line: CodeLine) => {
         const notes = props.renderAfterLine?.(line);
         const comments = controls?.renderAfterLine?.(line);
-        return notes || comments ? <>{notes}{comments}</> : null;
-    }, [controls?.renderAfterLine, props.renderAfterLine]);
+        const saved = commentsByLineId.get(line.id);
+        return notes || comments || saved ? <>{notes}{labels && saved?.map(comment =>
+            <ReviewCommentCard key={comment.id} comment={comment} serverId={props.serverId} labels={labels} />)}{comments}</> : null;
+    }, [controls?.renderAfterLine, props.renderAfterLine, commentsByLineId, props.serverId, labels]);
 
     return (
         <View style={virtualized ? resolveInlineDiffVirtualizedViewportStyle(resolveInlineDiffVirtualizedMaxHeight(windowHeight)) : undefined}>
@@ -160,7 +184,7 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
                 pressLineWhenNotSelectable={Boolean(controls?.onPressAddComment)}
                 onPressAddComment={controls?.onPressAddComment}
                 isCommentActive={controls?.isCommentActive}
-                renderAfterLine={props.renderAfterLine ? renderAfterLine : controls?.renderAfterLine}
+                renderAfterLine={props.renderAfterLine || commentsByLineId.size > 0 ? renderAfterLine : controls?.renderAfterLine}
                 showInactiveCommentAffordance={showInactiveCommentAffordance}
                 virtualized={virtualized}
                 wrapLines={effectiveWrapLines}

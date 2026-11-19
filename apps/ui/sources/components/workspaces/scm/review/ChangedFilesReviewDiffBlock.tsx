@@ -33,6 +33,7 @@ import { useImageCompare, type ImageCompareSource } from './imageCompare/useImag
 import { useMediaStage } from '@/components/ui/media/stage/useMediaStage';
 import type { FileViewerClass } from '@/scm/utils/filePresentation';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import type { ChangedFilesReviewDiffStateSource } from '@/components/workspaces/scm/review/ChangedFilesReviewDiffStore';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
@@ -70,7 +71,8 @@ export type ChangedFilesReviewDiffBlockProps = Readonly<{
     onRetryDiff?: (path: string) => void;
     reviewCommentsEnabled: boolean;
     reviewCommentDrafts: readonly ReviewCommentDraft[];
-    onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
+    reviewComments?: readonly ReviewCommentV1[];
+    onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void | Promise<void>;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
     onScrollToLine?: (windowY: number) => void;
@@ -123,6 +125,8 @@ function areChangedFilesReviewDiffBlockPropsEqual(
         || prev.diffStateSource !== next.diffStateSource
         || prev.onRetryDiff !== next.onRetryDiff
         || prev.reviewCommentsEnabled !== next.reviewCommentsEnabled
+        || (prev.reviewComments !== next.reviewComments && (prev.reviewComments?.length !== next.reviewComments?.length
+            || prev.reviewComments?.some((comment, index) => comment !== next.reviewComments?.[index])))
         || prev.onUpsertReviewCommentDraft !== next.onUpsertReviewCommentDraft
         || prev.onDeleteReviewCommentDraft !== next.onDeleteReviewCommentDraft
         || prev.scrollToLineId !== next.scrollToLineId
@@ -441,7 +445,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
     // While Find is open its target is the current match, marked only by the match fill; the line ring is for hunk navigation.
     const reviewHighlightLineId = props.findActive ? undefined : props.scrollToLineId;
 
-    if (props.reviewCommentsEnabled) {
+    if (props.reviewCommentsEnabled || props.reviewComments?.length) {
         return (
             <View ref={frameRef} collapsable={false} onLayout={columnNotes ? onFrameLayout : undefined} testID={blockTestId} style={[props.flat ? FLAT_BLOCK_STYLE : { paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s8 }, noOverflowAnchor, noteColumnStyle]}>
             {freshness}
@@ -460,8 +464,10 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
                     externalScrollView={props.externalScrollView}
                     filePath={filePath}
                     unifiedDiff={state.diff}
-                    reviewCommentsEnabled={true}
+                    reviewCommentsEnabled={props.reviewCommentsEnabled}
                     reviewCommentDrafts={props.reviewCommentDrafts}
+                    reviewComments={props.reviewComments}
+                    serverId={props.workspaceScope?.serverId ?? undefined}
                     wrapLines={effectiveWrapLines}
                     showLineNumbers={effectiveShowLineNumbers}
                     onUpsertReviewCommentDraft={props.onUpsertReviewCommentDraft}

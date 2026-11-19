@@ -80,6 +80,7 @@ import { ScmFileViewedFact, ScmFileViewedMark } from '@/components/sessions/file
 import type { ScmFileViewedSource } from '@/sync/domains/scm/fileViewed';
 import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
 import { DiffFileActionsMenu, type DiffFileSourceLink } from '@/components/ui/code/diff/DiffFileActionsMenu';
+import { useHunkReviewSource, useChangedFilesReviewPathFileReview, type ChangedFilesReviewHunkReviewSource } from './changedFilesReviewHunkReviewSource';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import { resolveScmChangePathTag } from '@/scm/scmChangePathTag';
@@ -122,6 +123,12 @@ type ReviewListFile = DiffFileEntry & Readonly<{
     imageCompare: ChangedFilesReviewDiffBlockProps['imageCompare'];
     snapshotSignature: string | null;
 }>;
+
+function ReviewFileActionsMenu(props: React.ComponentProps<typeof DiffFileActionsMenu> & Readonly<{ reviewSource?: ChangedFilesReviewHunkReviewSource }>) {
+    const { reviewSource, ...menu } = props;
+    const fileReview = useChangedFilesReviewPathFileReview(reviewSource, props.filePath);
+    return <DiffFileActionsMenu {...menu} fileReview={fileReview} />;
+}
 
 function ReviewListDiff(props: Readonly<{
     file: ReviewListFile;
@@ -252,6 +259,7 @@ type ChangedFilesReviewProps = {
     comparisonFiles?: readonly import('@happier-dev/protocol/scm/comparison').ScmComparisonFile[];
     reviewCommentsEnabled?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
+    reviewComments?: readonly import('@happier-dev/protocol/reviews/comments/v1').ReviewCommentV1[];
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void | Promise<void>;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
@@ -1133,11 +1141,12 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             if (destination) focusLine({ filePath: cursor.path, lineId: destination.revealLineId });
         },
     });
-    const { hunksForPath, reviewUnitsForPath } = controller;
+    const { hunksForPath, reviewUnitsForPath, fileReviewForPath } = controller;
     const capturedReview = capturedComparison !== null;
     const hunkReviewModels = React.useMemo(() => reviewEnabled
-        ? { hunksForPath, reviewUnitsForPath: capturedReview ? reviewUnitsForPath : undefined } : undefined,
-    [reviewEnabled, capturedReview, hunksForPath, reviewUnitsForPath]);
+        ? { hunksForPath, reviewUnitsForPath: capturedReview ? reviewUnitsForPath : undefined, fileReviewForPath } : undefined,
+    [reviewEnabled, capturedReview, hunksForPath, reviewUnitsForPath, fileReviewForPath]);
+    const hunkReviewSource = useHunkReviewSource(hunkReviewModels);
     const renderDiffBlock = useChangedFilesReviewDiffBlockRenderer({
         hunkNotes,
         evidenceOnly: props.evidenceOnly,
@@ -1153,11 +1162,12 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         onRetryDiff: retryDiff,
         reviewCommentsEnabled,
         reviewCommentDrafts,
+        reviewComments: props.reviewComments,
         onUpsertReviewCommentDraft: props.onUpsertReviewCommentDraft,
         onDeleteReviewCommentDraft: props.onDeleteReviewCommentDraft,
         onReviewCommentError: props.onReviewCommentError,
         flat: Boolean(props.comparisonChrome),
-        hunkReview: hunkReviewModels,
+        hunkReviewSource,
     });
 
     const onFilePressPinned = props.onFilePressPinned;
@@ -1178,8 +1188,13 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         for (const draft of indexDrafts ?? []) {
             counts.set(draft.filePath, (counts.get(draft.filePath) ?? 0) + 1);
         }
+        for (const comment of props.reviewComments ?? []) {
+            if (comment.parentCommentId || !('filePath' in comment.anchor)) continue;
+            const path = comment.anchor.filePath;
+            counts.set(path, (counts.get(path) ?? 0) + 1);
+        }
         return counts;
-    }, [indexDrafts]);
+    }, [indexDrafts, props.reviewComments]);
     const indexRenderCommitToggle = showIndex ? props.renderFileActions ?? null : null;
     const onIndexFocusPath = focusFile;
 
@@ -1413,7 +1428,8 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 {renderFileActions ? renderFileActions(file) : null}
                 {renderFileTrailingActions ? renderFileTrailingActions(file) : null}
                 {openFileButton}
-                <DiffFileActionsMenu filePath={file.fullPath} sourceLink={fileSourceLink?.(file.fullPath) ?? null}
+                <ReviewFileActionsMenu filePath={file.fullPath} sourceLink={fileSourceLink?.(file.fullPath) ?? null}
+                    reviewSource={hunkReviewSource}
                     onOpenFile={props.evidenceOnly ? undefined : () => deferOnWeb(() => onFilePress(file))} />
             </View>
         );
@@ -1448,8 +1464,9 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                             ) : null}
                             {renderFileActions ? renderFileActions(file) : null}
                             {renderFileTrailingActions ? renderFileTrailingActions(file) : null}
-                            <DiffFileActionsMenu filePath={file.fullPath} sourceLink={fileSourceLink?.(file.fullPath) ?? null}
-                    onOpenFile={props.evidenceOnly ? undefined : () => deferOnWeb(() => onFilePress(file))} />
+                            <ReviewFileActionsMenu filePath={file.fullPath} sourceLink={fileSourceLink?.(file.fullPath) ?? null}
+                                reviewSource={hunkReviewSource}
+                                onOpenFile={props.evidenceOnly ? undefined : () => deferOnWeb(() => onFilePress(file))} />
                             {fileViewed ? <ScmFileViewedMark source={fileViewed} path={file.fullPath} setFileViewed={setFileViewed}
                                 active={fileViewedActive} /> : null}
                         </View>
@@ -1507,6 +1524,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         fileViewed,
         setFileViewed,
         fileViewedActive,
+        hunkReviewSource,
         fileSourceLink,
     ]);
 

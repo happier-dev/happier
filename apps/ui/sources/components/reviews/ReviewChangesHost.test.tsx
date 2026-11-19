@@ -2,6 +2,11 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ScmComparisonSchema } from '@happier-dev/protocol/scm';
+import { buildScmFileReviewUnits, buildScmReviewScopeId } from '@happier-dev/protocol/scm/comparisonOccurrences';
+import { buildScmReviewedMarksKey } from '@happier-dev/protocol/scm/reviewedMarks';
+import { decodeBase64StoredJsonContentEnvelope } from '@/sync/encryption/base64StoredJsonContent';
+import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 import type { ReviewRoundComparisonCaptureV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import type { ScmComparisonCaptureOutput } from '@happier-dev/protocol/scm/diffSummary';
 import { flushHookEffects, standardCleanup } from '@/dev/testkit';
@@ -59,5 +64,58 @@ it('keeps sealed finding excerpts readable without a capture or Machine read', a
     expect(screen.findHostByTestId('review-changes-sealed-excerpts')).not.toBeNull();
     expect(screen.getTextContent()).toContain('sealed text remains readable');
     expect(fixture.requests).toEqual([]);
+    await screen.unmount();
+});
+
+it('keeps a persisted ordinary gutter comment visible on its captured diff side after reopening', async () => {
+    const comparison = ScmComparisonSchema.parse({ id: 'd'.repeat(64), source: { kind: 'workingTree' },
+        repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [{
+            path: 'total.ts', changeKind: 'modified', binary: false, generated: false, lockfile: false,
+            occurrences: [{ id: 'total-change', alias: 'total-change', path: 'total.ts', position: 0,
+                before: { startLine: 2, lineCount: 1 }, after: { startLine: 2, lineCount: 1 } }],
+            evidence: { state: 'available', unifiedDiff: '@@ -1,3 +1,3 @@\n export function total(prices: number[]) {\n-  return prices.reduce((sum, price) => sum + price, 0);\n+  return prices.reduce((sum, price) => sum - price, 0);\n }\n' },
+        }] } });
+    const kv = createAccountKvHttpFixture();
+    const marksKey = buildScmReviewedMarksKey(buildScmReviewScopeId({ repositoryRootPath: '/repo', source: comparison.source }));
+    fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => {
+        if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return { success: true, comparison,
+            metadata: { sourceKey: comparison.id, source: comparison.source } };
+        return undefined;
+    }, request: kv.handleFetch });
+    const { ReviewChangesHost } = await import('./ReviewChangesHost');
+    const { WorkspaceScmReviewBody } = await import('@/components/projects/scm/WorkspaceScmReviewBody');
+    const { DiffViewer } = await import('@/components/ui/code/diff/DiffViewer');
+    const { ReviewCommentCard } = await import('./ReviewCommentCard');
+    const comment = buildReviewCommentFixture({ id: 'saved-gutter', reviewId: 'gutter-review', roundOrdinal: 1,
+        author: { kind: 'user', userId: 'alice' }, anchor: { kind: 'line', filePath: 'total.ts', line: 2, side: 'after' },
+        body: 'Preserve addition: subtraction returns a negative total.', snapshot: { kind: 'none', capturedAt: 1 } });
+    const props = { reviewId: 'gutter-review', roundOrdinal: 1, scope: { serverId: fixture.scope.serverId, accountId: 'alice' },
+        capture: { target: { kind: 'machine', machineId: 'm1' }, input: { cwd: '/repo', comparisonId: comparison.id,
+            source: { kind: 'workingTree' } } } satisfies ReviewRoundComparisonCaptureV1,
+        comments: [comment], view: 'files', onSelectView() {}, onOpenComment() {} } as const;
+    const screen = await fixture.render(<ReviewChangesHost {...props} />);
+    await vi.waitFor(() => expect(screen.findAllByType(WorkspaceScmReviewBody)).toHaveLength(1));
+    await act(async () => screen.findByType(WorkspaceScmReviewBody)
+        .findAll(node => typeof node.props.onLayout === 'function')[0]?.props.onLayout({ nativeEvent: { layout: { width: 900, height: 360 } } }));
+    await vi.waitFor(() => expect(screen.findAllByType(DiffViewer)).toHaveLength(1));
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('Preserve addition: subtraction returns a negative total.'));
+    expect(screen.findAllByType(ReviewCommentCard).map(card => card.props.comment.id)).toEqual(['saved-gutter']);
+    const lines = screen.findByType(DiffViewer).props.precomputedLines;
+    const renderAfterLine = screen.findByType(DiffViewer).props.renderAfterLine;
+    expect(renderAfterLine(lines.find((line: { kind: string }) => line.kind === 'remove'))).toBeNull();
+    expect(renderAfterLine(lines.find((line: { kind: string }) => line.kind === 'add'))).not.toBeNull();
+    await screen.pressByTestIdAsync('diff-file-menu:total.ts');
+    await vi.waitFor(() => expect(screen.findByTestId('diff-file-viewed')).not.toBeNull());
+    expect(screen.findByTestId('diff-file-viewed').props.disabled).not.toBe(true);
+    await screen.pressByTestIdAsync('diff-file-viewed');
+    const expectedKeys = buildScmFileReviewUnits(comparison.inventory.files[0]!).map(unit => unit.key);
+    await vi.waitFor(() => expect(decodeBase64StoredJsonContentEnvelope(kv.read(marksKey)?.value ?? ''))
+        .toMatchObject({ t: 'plain', v: { reviewedChangeKeys: expectedKeys } }));
+    await screen.pressByTestIdAsync('diff-file-menu:total.ts');
+    await screen.pressByTestIdAsync('diff-file-viewed');
+    await vi.waitFor(() => expect(decodeBase64StoredJsonContentEnvelope(kv.read(marksKey)?.value ?? ''))
+        .toMatchObject({ t: 'plain', v: { reviewedChangeKeys: [] } }));
+    await screen.update(fixture.wrap(<ReviewChangesHost {...props} comments={[{ ...comment, body: '', flags: { redacted: true } }]} />));
+    expect(screen.getTextContent()).not.toContain('Preserve addition: subtraction returns a negative total.');
     await screen.unmount();
 });

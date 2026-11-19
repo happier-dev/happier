@@ -3,13 +3,15 @@ import * as React from 'react';
 
 import type { ChangedFilesReviewLineTarget } from './ChangedFilesReviewNavigation';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { ChangedFilesReviewDiffBlock, type ChangedFilesReviewDiffBlockProps } from '@/components/workspaces/scm/review/ChangedFilesReviewDiffBlock';
 import type { ChangedFilesReviewDiffStateSource } from '@/components/workspaces/scm/review/ChangedFilesReviewDiffStore';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
-import { useHunkReviewSource, type ChangedFilesReviewHunkReviewModels } from './changedFilesReviewHunkReviewSource';
+import type { ChangedFilesReviewHunkReviewSource } from './changedFilesReviewHunkReviewSource';
 
 const EMPTY_REVIEW_COMMENT_DRAFTS: readonly ReviewCommentDraft[] = [];
+const EMPTY_REVIEW_COMMENTS: readonly ReviewCommentV1[] = [];
 const EMPTY_REVIEW_COMMENT_DRAFTS_BY_FILE_PATH: ReadonlyMap<string, readonly ReviewCommentDraft[]> = new Map();
 
 type DiffFileFacts = Pick<ChangedFilesReviewDiffBlockProps, 'isBinaryContent' | 'estimatedChangedLines' | 'onOpenFile' | 'imageCompare' | 'snapshotSignature'>;
@@ -22,6 +24,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     onRetryDiff?: ChangedFilesReviewDiffBlockProps['onRetryDiff'];
     reviewCommentsEnabled?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
+    reviewComments?: readonly ReviewCommentV1[];
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void | Promise<void>;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
@@ -35,7 +38,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     evidenceOnly?: boolean;
     hunkNotes?: ChangedFilesReviewDiffBlockProps['hunkNotes'];
     /** Keep / Discard rows on every file's changes (one checkout, one discard owner). */
-    hunkReview?: ChangedFilesReviewHunkReviewModels;
+    hunkReviewSource?: ChangedFilesReviewHunkReviewSource;
 }>): (path: string, fileFacts: DiffFileFacts) => React.ReactNode {
     const {
         theme,
@@ -52,7 +55,18 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         lineTarget,
     } = input;
     const flat = input.flat === true;
-    const hunkReviewSource = useHunkReviewSource(input.hunkReview);
+    const hunkReviewSource = input.hunkReviewSource;
+    const commentsByPath = React.useMemo(() => {
+        const result = new Map<string, ReviewCommentV1[]>();
+        for (const comment of input.reviewComments ?? []) {
+            if (comment.parentCommentId || !('filePath' in comment.anchor)) continue;
+            const path = comment.anchor.filePath;
+            const comments = result.get(path);
+            if (comments) comments.push(comment);
+            else result.set(path, [comment]);
+        }
+        return result;
+    }, [input.reviewComments]);
 
     const reviewCommentDraftsByDiffFilePath = React.useMemo(() => {
         if (reviewCommentsEnabled !== true || !reviewCommentDrafts || reviewCommentDrafts.length === 0) {
@@ -92,6 +106,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
                 onRetryDiff={input.onRetryDiff}
                 reviewCommentsEnabled={reviewCommentsEnabled === true}
                 reviewCommentDrafts={fileReviewCommentDrafts}
+                reviewComments={commentsByPath.get(path) ?? EMPTY_REVIEW_COMMENTS}
                 onUpsertReviewCommentDraft={onUpsertReviewCommentDraft}
                 onDeleteReviewCommentDraft={onDeleteReviewCommentDraft}
                 onReviewCommentError={onReviewCommentError}
@@ -124,6 +139,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         lineTarget,
         onUpsertReviewCommentDraft,
         reviewCommentDraftsByDiffFilePath,
+        commentsByPath,
         reviewCommentsEnabled,
         sessionId,
         theme,

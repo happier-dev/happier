@@ -28,6 +28,7 @@ import { retainDeep } from '@/sync/domains/state/structuralSharing';
 type ReviewProps = React.ComponentProps<typeof ChangedFilesReview>;
 const NO_ATTRIBUTED_FILES: ReviewProps['sessionAttributedFiles'] = [];
 const NO_FILES: ReviewProps['repositoryOnlyFiles'] = [];
+const NO_DRAFTS: NonNullable<ReviewProps['reviewCommentDrafts']> = [];
 const doNotOpenWorkingFile = () => {};
 
 /** The Files renderer for immutable captured evidence, shared by PR, branch, commit and pinned routes. */
@@ -55,6 +56,9 @@ export function CapturedComparisonFilesView(props: Readonly<{
     onLoadMore?: () => void;
     loadingMore?: boolean;
     error?: string | null;
+    reviewComments?: ReviewProps['reviewComments'];
+    onUpsertReviewCommentDraft?: ReviewProps['onUpsertReviewCommentDraft'];
+    onReviewCommentError?: ReviewProps['onReviewCommentError'];
 }>) {
     const { theme } = useUnistyles();
     const { binding, resolution } = useServerCredentialAccountScopeBinding(props.serverId ?? props.workspaceScope?.serverId);
@@ -135,6 +139,9 @@ export function CapturedComparisonFilesView(props: Readonly<{
             allRepositoryChangedFiles={projected.files} sessionAttributedFiles={NO_ATTRIBUTED_FILES} repositoryOnlyFiles={NO_FILES}
             maxFiles={props.maxFiles} maxChangedLines={props.maxChangedLines} onFilePress={doNotOpenWorkingFile}
             evidenceOnly workspaceScope={props.workspaceScope} hunkReview={hunkReview}
+            reviewCommentsEnabled={!!props.onUpsertReviewCommentDraft} reviewCommentDrafts={NO_DRAFTS}
+            reviewComments={props.reviewComments}
+            onUpsertReviewCommentDraft={props.onUpsertReviewCommentDraft} onReviewCommentError={props.onReviewCommentError}
             comparisonChrome={chrome} providerDiffByPath={projected.diffByPath} fetchUnifiedDiffForPath={fetchCapturedDiff}
             comparisonFiles={comparison.inventory.files}
             initialCollapsedPaths={initiallyCollapsed} onCollapsedPathsChange={props.onCollapsedPathsChange}

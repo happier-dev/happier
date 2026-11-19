@@ -27,6 +27,12 @@ function describeDiscardRestriction(reason: ScmComparisonDiscardReason): string 
 export type HunkReviewSource = Readonly<{ kind: 'captured'; comparison: ScmComparison }>
     | Readonly<{ kind: 'live'; root: string }>;
 type UnitsByPath = Readonly<{ get(path: string): readonly ReviewUnit[] | undefined }>;
+export type LocalFileReviewControl = Readonly<{
+    reviewed: boolean;
+    unavailableReason: string | null;
+    setReviewed: (reviewed: boolean) => void;
+}>;
+const noMarkSubscription = () => () => {};
 export type HunkReviewActionTarget = Readonly<{
     path: string;
     changeKey: string;
@@ -175,7 +181,10 @@ export function useHunkReviewController(params: HunkReviewControllerParams) {
     const scopeId = buildScmReviewScopeId(params.source.kind === 'captured'
         ? { repositoryRootPath: params.source.comparison.repository.rootPath, source: params.source.comparison.source }
         : { repositoryRootPath: params.source.root, source: { kind: 'workingTree' } });
-    const marked = React.useMemo(() => new Set(marks.record?.reviewedChangeKeys ?? []), [marks.record]);
+    const readMarks = React.useCallback(() => marks.recordSource ? marks.recordSource.getSnapshot() : marks.record, [marks]);
+    const marksRecord = React.useSyncExternalStore(active ? marks.recordSource?.subscribe ?? noMarkSubscription : noMarkSubscription,
+        readMarks, readMarks);
+    const marked = React.useMemo(() => new Set(marksRecord?.reviewedChangeKeys ?? []), [marksRecord]);
     const [selection, setSelection] = React.useState<HunkReviewCursor | null>(null);
     // The change the page last moved to (navigation, Keep advance); `reading` once the reader's own scroll
     // chose the current change, so the page never jumps under the reader and the next move always lands.
@@ -264,6 +273,35 @@ export function useHunkReviewController(params: HunkReviewControllerParams) {
         });
     }, [fileViewed, viewedIndex, active]), viewedIndex?.getVersion ?? (() => 0), () => 0);
     const reviewedPaths = viewedIndex?.reviewedPaths ?? summary.reviewedPaths;
+    const publishedFileReviews = React.useRef<ReadonlyMap<string, LocalFileReviewControl>>(new Map());
+    const fileReviewForPath = React.useMemo(() => {
+        const previous = publishedFileReviews.current;
+        const published = new Map<string, LocalFileReviewControl>();
+        publishedFileReviews.current = published;
+        return (path: string): LocalFileReviewControl | null => {
+            const cached = published.get(path);
+            if (cached) return cached;
+            const index = inventory.indexById.get(path);
+            const file = index === undefined ? null : files[index];
+            if (params.enabled === false || fileViewed || marks.pending || !file || file.pending || file.keys.length === 0) return null;
+            const reviewed = reviewedPaths.has(path);
+            const prior = previous.get(path);
+            if (prior && prior.reviewed === reviewed && prior.unavailableReason === writeUnavailableReason) {
+                published.set(path, prior);
+                return prior;
+            }
+            const control: LocalFileReviewControl = { reviewed, unavailableReason: writeUnavailableReason,
+                setReviewed: value => {
+                    const current = latest.current;
+                    const selected = current.unitsByPath.get(path);
+                    if (!selected?.length || current.writeUnavailableReason) return;
+                    current.params.onReviewAction?.();
+                    current.marks.setReviewedKeys(selected.map(unit => unit.key), value);
+                } };
+            published.set(path, control);
+            return control;
+        };
+    }, [params.enabled, inventory, files, fileViewed, marks.pending, reviewedPaths, writeUnavailableReason]);
     const currentIndex = currentKey ? units.findIndex(unit => unit.key === currentKey) : -1;
     const revealKey = revealed === 'reading' ? null
         : revealed?.path === params.path && units.some(unit => unit.key === revealed.key) ? revealed.key : units[0]?.key ?? null;
@@ -341,7 +379,7 @@ export function useHunkReviewController(params: HunkReviewControllerParams) {
     const reviewUnitsForPath = React.useCallback((path: string) => unitsByPath.get(path) ?? EMPTY_UNITS, [unitsByPath]);
     const hunks = hunksForPath(params.path);
     return {
-        fileViewed, fileViewedState, fileViewedStatus, reviewedPaths, setFileViewed,
+        fileViewed, fileViewedState, fileViewedStatus, reviewedPaths, setFileViewed, fileReviewForPath,
         hunks, hunksForPath, changeActionsForKey, reviewUnitsForPath,
         reviewUnits: units, cursor, currentIndex, currentHunk: table.find(hunk => hunk.key === currentKey) ?? null,
         /** Where the page should be scrolled: the change last moved to, never one the reader scrolled onto. */

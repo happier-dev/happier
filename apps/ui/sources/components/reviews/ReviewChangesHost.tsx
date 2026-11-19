@@ -193,6 +193,7 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
             comparisonChrome={props.renderFileNotes ? { ...chrome, renderFileNotes: props.renderFileNotes } : chrome}
             host={host} comparisonSessionId={sessionId} serverId={serverId}
             workspaceScope={workspaceScope} activeReviewFile={activeReviewFile} marks={marks}
+            reviewComments={props.comments}
             {...limits} page={index.page} onLoadMore={index.loadMore} loadingMore={index.loading} error={index.error}
             onRefresh={index.retry} onUpsertReviewCommentDraft={saveGutterComment} onReviewCommentError={reportCommentError} /> : null}
         renderWalkthrough={(context) => <ReviewChangesWalkthrough context={context} capture={capture} comparison={comparison}

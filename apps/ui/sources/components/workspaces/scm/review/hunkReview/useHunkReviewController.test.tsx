@@ -17,6 +17,8 @@ import { storage } from '@/sync/domains/state/storage';
 import { KeyboardShortcutProvider } from '@/keyboard/KeyboardShortcutProvider';
 import { useReviewKeyboard } from './useReviewKeyboard';
 import { useHunkReviewController, type HunkReviewSource } from './useHunkReviewController';
+import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
+import { createScmReviewedMarksOperationsWithTransport } from '@/dev/testkit/harness/scmActionTransport';
 import { buildChangedFilesReviewFileIndex } from '../changedFilesReviewFileIndex';
 import { buildEditorChangeMarkers } from '@/components/ui/code/editor/editorChangeMarkers';
 import { useEditorChangeMarkers } from '@/components/ui/code/editor/useEditorChangeMarkers';
@@ -42,6 +44,48 @@ afterEach(() => {
 const patch = '@@ -1,3 +1,3 @@\n-old\n+new\n middle\n-before\n+after\n';
 
 describe('hunk review through the shared keyboard and Account port', () => {
+  it('marks and unmarks only the displayed file units through the existing Account record', async () => {
+    const aKeys = buildReviewUnits('a.ts', undefined, patch).map(unit => unit.key);
+    const bKeys = buildReviewUnits('b.ts', undefined, patch).map(unit => unit.key);
+    const kv = createAccountKvHttpFixture();
+    const operations = createScmReviewedMarksOperationsWithTransport({ source: { repositoryRootPath: '/repo',
+      source: { kind: 'workingTree' }, changeKeys: [...aKeys, ...bKeys] }, credentials: { token: 'file-marks' },
+      encryption: null, shouldContinue: () => true, request: async (path, init) => path.endsWith('/currentness')
+        ? Response.json({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 })
+        : await kv.handleFetch(new URL(path, 'https://file-marks.test'), init) ?? Response.json({}, { status: 404 }) });
+    await operations.read();
+    const marks = { get record() { return operations.recordSource.getSnapshot(); }, recordSource: operations.recordSource,
+      pending: false, unavailableReason: null, setReviewed() {}, clear() {},
+      setReviewedKeys: (keys: readonly string[], reviewed: boolean) => { void operations.setReviewedKeys(keys, reviewed); } };
+    let controller!: ReturnType<typeof useHunkReviewController>;
+    let renders = 0;
+    function Review({ active }: { active: boolean }) {
+      renders++;
+      controller = useHunkReviewController({ source: { kind: 'live', root: '/repo' }, path: 'a.ts', unifiedDiff: patch,
+        liveFiles: ['a.ts', 'b.ts'].map(path => ({ path, unifiedDiff: patch })), host: null, serverId: null, active, marks });
+      return null;
+    }
+    const screen = await renderScreen(<Review active />);
+    try {
+      await act(async () => controller.fileReviewForPath('a.ts')?.setReviewed(true));
+      await vi.waitFor(() => expect(operations.getSnapshot().record?.reviewedChangeKeys).toEqual(aKeys));
+      expect(controller.fileReviewForPath('a.ts')?.reviewed).toBe(true);
+      expect(controller.fileReviewForPath('b.ts')?.reviewed).toBe(false);
+      await act(async () => controller.fileReviewForPath('a.ts')?.setReviewed(false));
+      await vi.waitFor(() => expect(operations.getSnapshot().record?.reviewedChangeKeys).toEqual([]));
+      expect(controller.fileReviewForPath('a.ts')?.reviewed).toBe(false);
+      await screen.update(<Review active={false} />);
+      const hiddenRenders = renders;
+      await act(async () => { await operations.setReviewedKeys(aKeys, true); });
+      expect(renders).toBe(hiddenRenders);
+      await screen.update(<Review active />);
+      expect(controller.fileReviewForPath('a.ts')?.reviewed).toBe(true);
+    } finally {
+      await screen.unmount();
+      operations.retire();
+    }
+  });
+
   it('does no inventory classification or sorting on 55,559-file renders and cursor moves, and reorders real changes', async () => {
     // REVIEWRAIL #44 had 55,559 changed files. Observe the real classifier, never replace its policy.
     const classifications = vi.spyOn(scmComparison, 'classifyScmChangePath');
