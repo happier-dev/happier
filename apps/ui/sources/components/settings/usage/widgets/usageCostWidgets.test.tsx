@@ -544,16 +544,24 @@ describe('one selected money basis across Usage bodies', () => {
       <UsageEfficiencyWidget {...props} query={query} slice={slice} id="usage_efficiency" testID="whole-efficiency" />
     </>);
     const metrics = screen.findAllByType(HappierDataMetric);
-    const selected = costBasis === 'auto' ? 11 : costBasis === 'estimated' ? 6 : costBasis === 'reported' ? 7 : 0;
+    // The money-only final row has a zero-token tariff identity. It cannot price the
+    // two token-bearing rows, whose model has no API price.
+    const selected = costBasis === 'auto' ? 11 : costBasis === 'estimated' ? 6 : costBasis === 'reported' ? 7 : null;
     expect(projectUsagePageCost(slice.accounting!, costBasis).amountUsd).toBe(selected);
-    expect(metrics.find(metric => metric.props.testID === 'whole-summary.hero')?.props.value).toBe(selected);
-    expect(metrics.find(metric => metric.props.testID === 'whole-efficiency.perMtok')?.props.value).toBe(selected / total.tokens.total * 1e6);
+    expect(metrics.find(metric => metric.props.testID === 'whole-summary.hero')?.props.value).toBe(selected ?? '—');
+    expect(metrics.find(metric => metric.props.testID === 'whole-efficiency.perMtok')?.props.value)
+      .toBe(selected === null ? '—' : selected / total.tokens.total * 1e6);
     expect(metrics.find(metric => metric.props.testID === 'whole-facts.fact.reported')?.props.value).toBe(7);
     expect(metrics.find(metric => metric.props.testID === 'whole-facts.fact.estimated')?.props.value).toBe(6);
     expect(screen.findByType(RankedRows).props.rows[0].value).toBe(selected);
     const chart = screen.findByType(StackedSeriesChart);
     const points: { y: number | null }[] = chart.props.series.flatMap((entry: { points: { y: number | null }[] }) => entry.points);
-    expect(points.reduce((sum, point) => sum + (point.y ?? 0), 0)).toBe(olderUnpriced ? 11 : selected ?? 0);
+    if (selected === null) {
+      expect(points.length).toBeGreaterThan(0);
+      expect(points.map(point => point.y)).toEqual(points.map(() => null));
+    } else {
+      expect(points.reduce((sum, point) => sum + (point.y ?? 0), 0)).toBe(selected);
+    }
     if (olderUnpriced) {
       expect(points.some(point => point.y === null)).toBe(true);
       expect(slice.costFactTotals?.find(fact => fact.kind === 'unpriced')?.tokens.total).toBe(30);
