@@ -117,6 +117,38 @@ describe('workflow effect Actions', () => {
     expect(starts).toBe(1);
   });
 
+  it('starts the notify Before workflow once across operation re-entry', async () => {
+    const actionId = 'session.spawn_new' as const;
+    let starts = 0;
+    const actionAutomations = createActionAutomationPortV1({
+      accountId: 'owner',
+      seed: async () => ({ v: 1, rows: [
+        { automationId: 'notify', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
+          ownerAccountId: 'owner', actionIds: [actionId], phase: 'before', mode: 'notify' },
+      ] }),
+      start: async () => { starts++; return { runs: [], notices: [] }; },
+      settle: async () => {},
+    });
+    const executor = createActionExecutor({
+      actionAutomations,
+      runActionOperation: ({ context, execute }) => execute(context),
+      sessionSpawnNew: async () => ({ type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' }),
+    });
+
+    const result = await executor.execute(actionId, {
+      executionTarget: { serverId: 'home', machineId: 'machine' },
+      directory: { kind: 'path', path: '/workspace' },
+      organizationPlacement: { sectionId: null, tagIds: [] },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    }, {
+      surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, bypassApprovals: true,
+      actionRequestId: 'operation-once', runtimeAccountId: 'owner', serverId: 'home', defaultSessionMachineId: 'machine',
+    });
+
+    expect(result).toMatchObject({ ok: true, result: { type: 'pending' } });
+    expect(starts).toBe(1);
+  });
+
   it('fails closed when automatic admission reports an unavailable before check', async () => {
     let effects = 0;
     const actionId = 'machines.command.run' as const;
