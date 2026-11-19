@@ -22,6 +22,7 @@ export async function publishSourceAttention(input: unknown, context: PluginInvo
   const result = await publishTriageAttentionV1(context, { entryRef: parsed.entryRef, reason: parsed.reason,
     notice: { clientRequestId: parsed.clientRequestId, categoryId: 'source-attention', title: parsed.title,
       type: parsed.type, resolved: parsed.resolved,
+      ...(parsed.reviewAttention ? { reviewAttention: parsed.reviewAttention } : {}),
       page: { pageId: 'triage', subPath: buildTriageEntryRouteSegmentV1(parsed.entryRef) },
     },
   });

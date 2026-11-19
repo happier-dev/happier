@@ -88,6 +88,8 @@ export type {
 } from './channelsPullRequestWatch.js';
 export { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from './protocolFacade.js';
 export { ReviewRoundBindingV1ProtocolSchema } from './protocolFacade.js';
+export { ReviewAttentionV1ProtocolSchema } from './protocolFacade.js';
+export type { ReviewAttentionV1 } from './protocolFacade.js';
 export type { ReviewRoundBindingV1 } from './protocolFacade.js';
 export type {
     EnvVarRequirement,

@@ -8,6 +8,7 @@ import { projectAccountNoticeInboxItemV1, projectOpenUsageNoticeHeaderV1 } from 
 import { shallow } from 'zustand/shallow';
 import { readInboxApprovalServerId, resolveInboxItemPageRoute, type InboxItemFocus } from './inboxItemFocus';
 import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
+import { reviewSubjectLabel } from '@/components/reviews/list/reviewSubjectLabel';
 import type { SessionQuestionContextV1 } from '@happier-dev/protocol/sessions/permissions/questionV1';
 import type { PersonalFollowOnceOccurrenceV1, PersonalRunFollowOnceOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -76,6 +77,8 @@ export type InboxItem = Readonly<{
     view: InboxItemView;
     title: string;
     context: string | null;
+    /** Row-only presentation; source.displayName remains the source's identity. */
+    sourceLabel?: string;
     createdAt: number;
     read: boolean;
     remindAt?: number;
@@ -286,7 +289,10 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
             // An open health notice (failed deploy, failing service or backup) reads as failing; recovery stays quiet.
             const failing = entry.header.healthPhase === 'open' ? { workStatus: resolveWorkStatusTone({ kind: 'health_notice',
                 facts: { word: t('inbox.work.healthNotice.failing') } }) } : {};
-            if (row) rows.push({ ...row, ...failing, ...(entry.expectedDuring ? { expectedDuring: entry.expectedDuring } : {}) });
+            const requested = entry.header.reviewAttention?.requestedVerdict === true
+                ? { sourceLabel: `${t('reviewWalkthrough.detail.requestedFromYou')} · ${reviewSubjectLabel(entry.header.reviewAttention.subjectKind)}` }
+                : {};
+            if (row) rows.push({ ...row, ...failing, ...requested, ...(entry.expectedDuring ? { expectedDuring: entry.expectedDuring } : {}) });
         }
     }
     if (input.discussions) {
@@ -373,7 +379,7 @@ function sameItem(left: InboxItem, right: InboxItem): boolean {
         && left.remindAt === right.remindAt
         && left.pageRoute === right.pageRoute && shallow(left.focus, right.focus)
         && left.source.kind === right.source.kind && left.source.id === right.source.id && left.source.serverId === right.source.serverId
-        && left.source.displayName === right.source.displayName && left.excerpt === right.excerpt
+        && left.source.displayName === right.source.displayName && left.sourceLabel === right.sourceLabel && left.excerpt === right.excerpt
         && left.reportsTo?.address.serverId === right.reportsTo?.address.serverId
         && left.reportsTo?.address.sessionId === right.reportsTo?.address.sessionId
         && left.reportsTo?.title === right.reportsTo?.title && left.workerUpdateHeadline === right.workerUpdateHeadline

@@ -49,6 +49,9 @@ import {
 import { t } from '@/text';
 
 import { useReviewList } from '../useReviewList';
+import { reviewSubjectLabel } from './reviewSubjectLabel';
+
+export { reviewSubjectLabel } from './reviewSubjectLabel';
 
 type ReviewSpace = CollectionSpaceV1<'review'>;
 const MEMBERSHIP_ACTION = 'collection.space.membership.set';
@@ -79,18 +82,6 @@ export function reviewRowWords(item: ReviewListItemV1, title: string | null | un
     reviewSubjectLabel(item.subjectKind),
     reviewStateLabel(item.state),
   ].join(' ');
-}
-
-export function reviewSubjectLabel(
-  kind: ReviewListItemV1['subjectKind'],
-): string {
-  return t(
-    kind === 'pull_request'
-      ? 'reviewWalkthrough.collection.subjectPullRequest'
-      : kind === 'repository'
-        ? 'reviewWalkthrough.collection.subjectRepository'
-        : 'reviewWalkthrough.collection.subjectComparison',
-  );
 }
 
 export function reviewStateLabel(state: ReviewListItemV1['state']): string {

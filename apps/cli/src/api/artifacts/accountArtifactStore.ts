@@ -1621,6 +1621,7 @@ export function createAccountArtifactStore(params: Readonly<{
       platformTransition?: AccountNoticeArtifactHeaderV1['platformTransition'];
       environmentHealth?: AccountNoticeArtifactHeaderV1['environmentHealth'];
       investigation?: AccountNoticeArtifactHeaderV1['investigation'];
+      reviewAttention?: AccountNoticeArtifactHeaderV1['reviewAttention'];
       recoveryChoices?: Readonly<NonNullable<AccountNoticeArtifactHeaderV1['recoveryChoices']>>
         | ((reference: Readonly<{ artifactId: string }>) => Readonly<NonNullable<AccountNoticeArtifactHeaderV1['recoveryChoices']>>);
       signal?: AbortSignal; beforeWrite?: () => void | Promise<void>;
@@ -1636,6 +1637,7 @@ export function createAccountArtifactStore(params: Readonly<{
         ...(input.platformTransition === undefined ? {} : { platformTransition: input.platformTransition }),
         ...(input.environmentHealth === undefined ? {} : { environmentHealth: input.environmentHealth }),
         ...(input.investigation === undefined ? {} : { investigation: input.investigation }),
+        ...(input.reviewAttention === undefined ? {} : { reviewAttention: input.reviewAttention }),
         ...(input.body === undefined ? {} : { body: input.body }), ...(input.page === undefined ? {} : { page: input.page }) });
       const occurrence = accountNoticeOccurrence(accountId, baseContent);
       let artifactId = privateArtifactSourceId({ occurrence,
@@ -1675,6 +1677,7 @@ export function createAccountArtifactStore(params: Readonly<{
             resolved: health && content.healthPhase === 'recovered' ? content.resolved : notice.resolved,
             ...(notice.body === undefined ? {} : { body: notice.body }), ...(notice.page === undefined ? {} : { page: notice.page }),
             ...(notice.investigation === undefined ? {} : { investigation: notice.investigation }),
+            ...(notice.reviewAttention === undefined ? {} : { reviewAttention: notice.reviewAttention }),
             ...(notice.recoveryChoices === undefined ? {} : { recoveryChoices: notice.recoveryChoices }),
             ...(notice.healthPhase === undefined ? {} : { healthPhase: notice.healthPhase }),
             ...(notice.platformTransition === undefined ? {} : { platformTransition: notice.platformTransition }),

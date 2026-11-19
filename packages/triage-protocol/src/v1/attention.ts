@@ -1,4 +1,4 @@
-import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolUnion, ReviewAttentionV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import { TriageEntryRefV1Schema, TriageIdentifierV1ProtocolSchema, TriageSourceEntryLocalRefV1Schema, TriageTextV1ProtocolSchema } from './identity.js';
 import { TriageConfiguredSourceInstanceV1Schema, TriageConfiguredSourceConnectedAccountInstanceV1Schema, TriageConfiguredSourceCredentialInstanceV1Schema } from './instances.js';
 import { TriageScanContinuationV1Schema } from './observations.js';
@@ -17,6 +17,7 @@ const attentionFields = {
   type: defineProtocolUnion([defineProtocolLiteral('decision'), defineProtocolLiteral('update'), defineProtocolLiteral('mention')]),
   title: TriageTextV1ProtocolSchema,
   resolved: boolean,
+  reviewAttention: ReviewAttentionV1ProtocolSchema.optional(),
 };
 export const TriageReadAttentionResultV1Schema = defineProtocolUnion([
   defineProtocolObject({

@@ -275,6 +275,27 @@ describe('plugin notification Account Artifact custody', () => {
         await publishTriageAttentionV1(attentionContext, { ...attentionInput, notice: { ...attentionInput.notice, clientRequestId: 'attention-resolved', resolved: true } });
         expect(rows.size).toBe(1);
         expect(readAccountNoticeArtifactV1((await activeStore.read(attentionArtifactId, { includeSharedAudience: false }))!)).toMatchObject({ resolved: true });
+        const reviewEntry = { source: { pluginId: 'happier.triage', localId: 'reviews' },
+          kindId: 'review', collisionScope: 'reviews', entryId: 'requested-review' };
+        const reviewAttention = { requestedVerdict: true, subjectKind: 'repository' as const };
+        const reviewInput = { entryRef: reviewEntry, reason: 'review_needs_you', notice: {
+          clientRequestId: 'review-requested', categoryId: 'source-attention', title: 'Code review',
+          type: 'decision' as const, resolved: false, reviewAttention,
+          page: { pageId: 'triage', subPath: buildTriageEntryRouteSegmentV1(reviewEntry) } } };
+        await publishTriageAttentionV1(attentionContext, reviewInput);
+        expect(rows.size).toBe(2);
+        const reviewArtifactId = [...rows.keys()].find(id => id !== attentionArtifactId)!;
+        expect(readAccountNoticeArtifactV1((await activeStore.read(reviewArtifactId, { includeSharedAudience: false }))!))
+          .toMatchObject({ reviewAttention });
+        const pendingOnly = { ...reviewInput, notice: { ...reviewInput.notice, clientRequestId: 'review-pending',
+          reviewAttention: { ...reviewAttention, requestedVerdict: false } } };
+        await publishTriageAttentionV1(attentionContext, pendingOnly);
+        expect(rows.size).toBe(2);
+        expect(readAccountNoticeArtifactV1((await activeStore.read(reviewArtifactId, { includeSharedAudience: false }))!))
+          .toMatchObject({ resolved: false, reviewAttention: pendingOnly.notice.reviewAttention });
+        expect(await publishTriageAttentionV1(attentionContext, { ...pendingOnly,
+          notice: { ...pendingOnly.notice, clientRequestId: 'review-pending-unchanged' } }))
+          .toMatchObject({ notice: { changed: false } });
         rows.clear();
         const pushOnly = { clientRequestId: 'push-only', categoryId: 'updates', title: 'PR needs attention', type: 'blocked' as const,
           buttonInputs: { 'Ship 🚀': { repository: 'selected' } },
@@ -338,7 +359,7 @@ describe('plugin notification Account Artifact custody', () => {
         // server owner uses row.id for every head/history update; this boundary
         // conversion preserves that contract in both mode directions.
         migrateAccountMode();
-        await service.send({ ...input, clientRequestId: 'migrated-update', title: 'After mode change' });
+        await service.send({ ...input, clientRequestId: 'migrated-update', title: 'After mode change', resolved: true });
         expect(rows.size).toBe(1);
         expect(readAccountNoticeArtifactV1((await activeStore.read(artifactId))!)).toMatchObject({ title: 'After mode change', status: 'dismissed', readAt: 100 });
         await service.send({ ...input, clientRequestId: 'migrated-resolve', resolved: true });

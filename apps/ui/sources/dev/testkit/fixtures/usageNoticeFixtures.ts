@@ -42,6 +42,7 @@ export function createAccountNoticeArtifactFixture(
             environmentHealth: header.environmentHealth,
             investigation: header.investigation,
             recoveryChoices: header.recoveryChoices,
+            reviewAttention: header.reviewAttention,
         })),
     });
 }

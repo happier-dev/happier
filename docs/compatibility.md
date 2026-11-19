@@ -9803,6 +9803,15 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Triage attention results and notification requests accept optional
+`reviewAttention` presentation facts, using the Protocol-owned Review subject
+kind and requested-verdict boolean. The existing V1 envelopes and nested fact
+object remain closed; these facts grant no identity, routing or authority.
+Account notice readers still accept retained notices without the field. Matching
+Protocol, SDK, Triage, daemon and UI readers load together under the unpublished
+development direct cut because earlier strict readers reject the addition.
+There is no migration, new wire epoch or mixed-development adapter.
+
 Unreleased 0.3 Workflow starter Actions include new catalog keys and an optional
 closed `eventSeed` using the existing Event authoring request. This result
 carries a requested Event identity and setup input. The Event editor still

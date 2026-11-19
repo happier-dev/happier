@@ -5,6 +5,7 @@ import { resolvePluginLocalizedStringV2Text as localizedFallback } from '@happie
 import { createPluginContributionIdentity, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { AccountNoticeInvestigationV1Schema, AccountNoticeItemTypeV1Schema, PluginNoticePageV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { PluginNotificationPushContextV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { ReviewAttentionV1Schema } from '@happier-dev/protocol/reviews/reviewAttentionV1';
 import { resolveAttentionDeliveryPolicyDecision } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -227,12 +228,13 @@ function readRequest(request: Parameters<PluginNotificationsService['send']>[0])
     resolved?: boolean;
     healthPhase?: 'open' | 'recovered';
     investigation?: Parameters<PluginNotificationsService['send']>[0]['investigation'];
+    reviewAttention?: Parameters<PluginNotificationsService['send']>[0]['reviewAttention'];
 }> {
     try {
         if (!request || typeof request !== 'object' || Array.isArray(request)) {
             throw notificationError('plugin_notification_invalid_request', 'Notification request is invalid');
         }
-        const allowedKeys = new Set(['clientRequestId', 'categoryId', 'title', 'body', 'channelIds', 'data', 'buttonInputs', 'itemId', 'type', 'page', 'resolved', 'healthPhase', 'investigation']);
+        const allowedKeys = new Set(['clientRequestId', 'categoryId', 'title', 'body', 'channelIds', 'data', 'buttonInputs', 'itemId', 'type', 'page', 'resolved', 'healthPhase', 'investigation', 'reviewAttention']);
         if (Object.keys(request).some((key) => !allowedKeys.has(key))) {
             throw notificationError('plugin_notification_invalid_request', 'Notification request contains unknown fields');
         }
@@ -249,6 +251,7 @@ function readRequest(request: Parameters<PluginNotificationsService['send']>[0])
         const itemType = request.type === undefined ? undefined : AccountNoticeItemTypeV1Schema.parse(request.type);
         const itemPage = request.page === undefined ? undefined : PluginNoticePageV1Schema.parse(request.page);
         const investigation = request.investigation === undefined ? undefined : AccountNoticeInvestigationV1Schema.parse(request.investigation);
+        const reviewAttention = request.reviewAttention === undefined ? undefined : ReviewAttentionV1Schema.parse(request.reviewAttention);
         if (typeof clientRequestId !== 'string'
             || clientRequestId.length < 1
             || typeof categoryId !== 'string'
@@ -258,7 +261,7 @@ function readRequest(request: Parameters<PluginNotificationsService['send']>[0])
             || (itemId !== undefined && (typeof itemId !== 'string' || itemId.trim().length === 0))
             || (resolved !== undefined && typeof resolved !== 'boolean')
             || (healthPhase !== undefined && healthPhase !== 'open' && healthPhase !== 'recovered')
-            || (itemId === undefined && (itemPage !== undefined || resolved !== undefined || healthPhase !== undefined || investigation !== undefined))) {
+            || (itemId === undefined && (itemPage !== undefined || resolved !== undefined || healthPhase !== undefined || investigation !== undefined || reviewAttention !== undefined))) {
             throw notificationError('plugin_notification_invalid_request', 'Notification request is invalid');
         }
         const data = rawData === undefined
@@ -280,6 +283,7 @@ function readRequest(request: Parameters<PluginNotificationsService['send']>[0])
             ...(itemPage === undefined ? {} : { page: Object.freeze(itemPage) }),
             ...(healthPhase === undefined ? {} : { healthPhase }),
             ...(investigation === undefined ? {} : { investigation }),
+            ...(reviewAttention === undefined ? {} : { reviewAttention }),
         });
     } catch (error) {
         if (isPluginError(error)) throw error;
@@ -675,6 +679,7 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                     ...(request.page === undefined ? {} : { page: request.page }),
                     ...(request.healthPhase === undefined ? {} : { healthPhase: request.healthPhase }),
                     ...(request.investigation === undefined ? {} : { investigation: request.investigation }),
+                    ...(request.reviewAttention === undefined ? {} : { reviewAttention: request.reviewAttention }),
                 });
                 const requestFingerprint = fingerprint(normalizedRequest);
                 const key = operationKey(seed, request.categoryId, request.clientRequestId);
@@ -715,6 +720,7 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                             ...(request.page === undefined ? {} : { page: request.page }),
                             ...(request.healthPhase === undefined ? {} : { healthPhase: request.healthPhase }),
                             ...(request.investigation === undefined ? {} : { investigation: request.investigation }),
+                            ...(request.reviewAttention === undefined ? {} : { reviewAttention: request.reviewAttention }),
                             signal: operationSignal, beforeWrite: () => ensureCurrent(seed, operationSignal) });
                         ensureCurrent(seed, operationSignal);
                         noticePushWorthy = persisted.pushWorthy;

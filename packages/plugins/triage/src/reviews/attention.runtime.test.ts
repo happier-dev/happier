@@ -37,9 +37,9 @@ describe('Review attention invalidation', () => {
         },
         execute: async (id: string, input: { reviewId: string }) => {
           if (id === 'artifact.get') return { artifact: { header: { title: 'Review title' } } };
-          if (id === 'reviews.list') return { items: [{ needsYou: facts() }], cursor: null };
+          if (id === 'reviews.list') return { items: [{ subjectKind: 'comparison', needsYou: facts() }], cursor: null };
           calls.push(`${id}:${input.reviewId}`);
-          return { review: { reviewId: input.reviewId }, human: { needsYou: facts() } };
+          return { review: { reviewId: input.reviewId, subjectKind: 'comparison' }, human: { needsYou: facts() } };
         },
       }, notifications: { send: async (notice: Notice) => {
         notices.push(notice); return { deliveries: [], replayed: false };
@@ -50,7 +50,8 @@ describe('Review attention invalidation', () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(calls).toEqual(['list']);
       expect(notices).toHaveLength(1);
-      expect(notices[0]).toMatchObject({ type: 'decision', resolved: false, title: 'Review title' });
+      expect(notices[0]).toMatchObject({ type: 'decision', resolved: false, title: 'Review title',
+        reviewAttention: { requestedVerdict: true, subjectKind: 'comparison' } });
       await listeners.get('@happier/account/entities-invalidated')?.({ payload: { entityIds: ['unrelated'] } });
       await vi.advanceTimersByTimeAsync(0);
       expect(calls).toEqual(['list']);
@@ -61,7 +62,7 @@ describe('Review attention invalidation', () => {
       expect(calls).toEqual(['list', 'review.get:review-a']);
       expect(notices).toHaveLength(2);
       expect(notices[1]).toMatchObject({ itemId: notices[0]?.itemId, page: notices[0]?.page,
-        type: 'decision', resolved: true });
+        type: 'decision', resolved: true, reviewAttention: { requestedVerdict: false, subjectKind: 'comparison' } });
       await listeners.get('@happier/automation/event-sources-invalidated')?.({ payload: { reason: 'reconnect' } });
       await vi.advanceTimersByTimeAsync(0);
       expect(calls).toEqual(['list', 'review.get:review-a', 'list']);

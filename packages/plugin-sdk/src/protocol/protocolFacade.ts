@@ -9,6 +9,8 @@ import { embedProtocolJsonSchema as canonicalEmbedProtocolJsonSchema } from '@ha
 export { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 export { ReviewRoundBindingV1ProtocolSchema } from '@happier-dev/protocol/reviews/reviewRoundBindingV1';
 export type { ReviewRoundBindingV1 } from '@happier-dev/protocol/reviews/reviewRoundBindingV1';
+export { ReviewAttentionV1ProtocolSchema } from '@happier-dev/protocol/reviews/reviewAttentionV1';
+export type { ReviewAttentionV1 } from '@happier-dev/protocol/reviews/reviewAttentionV1';
 
 /** Embed an existing schema without changing the meaning of its document-local references. */
 export const embedProtocolJsonSchema: (projection: PluginJsonSchema, path: readonly (string | number)[]) => PluginJsonSchema = canonicalEmbedProtocolJsonSchema;

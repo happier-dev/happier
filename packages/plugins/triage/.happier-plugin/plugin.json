@@ -51516,6 +51516,9 @@
                                                         },
                                                         {
                                                           "const": "localPath"
+                                                        },
+                                                        {
+                                                          "const": "git"
                                                         }
                                                       ]
                                                     },
@@ -51725,6 +51728,9 @@
                                                         },
                                                         {
                                                           "const": "localPath"
+                                                        },
+                                                        {
+                                                          "const": "git"
                                                         }
                                                       ]
                                                     },
@@ -53657,6 +53663,9 @@
                                                               },
                                                               {
                                                                 "const": "localPath"
+                                                              },
+                                                              {
+                                                                "const": "git"
                                                               }
                                                             ]
                                                           },
@@ -53866,6 +53875,9 @@
                                                               },
                                                               {
                                                                 "const": "localPath"
+                                                              },
+                                                              {
+                                                                "const": "git"
                                                               }
                                                             ]
                                                           },
@@ -117945,6 +117957,9 @@
                                                         },
                                                         {
                                                           "const": "localPath"
+                                                        },
+                                                        {
+                                                          "const": "git"
                                                         }
                                                       ]
                                                     },
@@ -118154,6 +118169,9 @@
                                                         },
                                                         {
                                                           "const": "localPath"
+                                                        },
+                                                        {
+                                                          "const": "git"
                                                         }
                                                       ]
                                                     },
@@ -120086,6 +120104,9 @@
                                                               },
                                                               {
                                                                 "const": "localPath"
+                                                              },
+                                                              {
+                                                                "const": "git"
                                                               }
                                                             ]
                                                           },
@@ -120295,6 +120316,9 @@
                                                               },
                                                               {
                                                                 "const": "localPath"
+                                                              },
+                                                              {
+                                                                "const": "git"
                                                               }
                                                             ]
                                                           },
@@ -270382,6 +270406,39 @@
                           }
                         ]
                       },
+                      "reviewAttention": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "requestedVerdict": {
+                            "anyOf": [
+                              {
+                                "const": true
+                              },
+                              {
+                                "const": false
+                              }
+                            ]
+                          },
+                          "subjectKind": {
+                            "anyOf": [
+                              {
+                                "const": "comparison"
+                              },
+                              {
+                                "const": "pull_request"
+                              },
+                              {
+                                "const": "repository"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "requestedVerdict",
+                          "subjectKind"
+                        ],
+                        "type": "object"
+                      },
                       "title": {
                         "minLength": 1,
                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -332862,6 +332919,39 @@
                 }
               ]
             },
+            "reviewAttention": {
+              "additionalProperties": false,
+              "properties": {
+                "requestedVerdict": {
+                  "anyOf": [
+                    {
+                      "const": true
+                    },
+                    {
+                      "const": false
+                    }
+                  ]
+                },
+                "subjectKind": {
+                  "anyOf": [
+                    {
+                      "const": "comparison"
+                    },
+                    {
+                      "const": "pull_request"
+                    },
+                    {
+                      "const": "repository"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "requestedVerdict",
+                "subjectKind"
+              ],
+              "type": "object"
+            },
             "sourceInstanceId": {
               "minLength": 1,
               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -340695,6 +340785,9 @@
                                     },
                                     {
                                       "const": "localPath"
+                                    },
+                                    {
+                                      "const": "git"
                                     }
                                   ]
                                 },
@@ -340904,6 +340997,9 @@
                                     },
                                     {
                                       "const": "localPath"
+                                    },
+                                    {
+                                      "const": "git"
                                     }
                                   ]
                                 },
@@ -345141,6 +345237,9 @@
                                     },
                                     {
                                       "const": "localPath"
+                                    },
+                                    {
+                                      "const": "git"
                                     }
                                   ]
                                 },
@@ -345350,6 +345449,9 @@
                                     },
                                     {
                                       "const": "localPath"
+                                    },
+                                    {
+                                      "const": "git"
                                     }
                                   ]
                                 },
@@ -402424,6 +402526,39 @@
                                     "const": false
                                   }
                                 ]
+                              },
+                              "reviewAttention": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "requestedVerdict": {
+                                    "anyOf": [
+                                      {
+                                        "const": true
+                                      },
+                                      {
+                                        "const": false
+                                      }
+                                    ]
+                                  },
+                                  "subjectKind": {
+                                    "anyOf": [
+                                      {
+                                        "const": "comparison"
+                                      },
+                                      {
+                                        "const": "pull_request"
+                                      },
+                                      {
+                                        "const": "repository"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "requestedVerdict",
+                                  "subjectKind"
+                                ],
+                                "type": "object"
                               },
                               "title": {
                                 "minLength": 1,

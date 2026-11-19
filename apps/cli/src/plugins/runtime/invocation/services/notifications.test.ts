@@ -85,7 +85,8 @@ describe('stable plugin notifications service', () => {
             .resolves.toMatchObject({ deliveries: [{ status: 'accepted' }] });
         expect(delivered).toEqual([expect.objectContaining({ data: request.data })]);
         expect(noticeReads).toBe(0);
-        for (const noticeOnly of [{ page: { pageId: 'detail' } }, { resolved: false }]) {
+        for (const noticeOnly of [{ page: { pageId: 'detail' } }, { resolved: false },
+            { reviewAttention: { requestedVerdict: true, subjectKind: 'comparison' as const } }]) {
             await expect(service.send({ ...request, ...noticeOnly })).rejects.toMatchObject({ code: 'plugin_notification_invalid_request' });
         }
     });

@@ -5,11 +5,16 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ExternalActionTargetV1Schema } from '../actions/externalActionApi.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
 import type { ReviewRoundBindingV1 } from './reviewRoundBindingV1.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { defineProtocolLiteral, defineProtocolUnion } from '../plugins/actions/protocolComposableSchema.js';
 export { ReviewRoundBindingV1Schema } from './reviewRoundBindingV1.js';
 export type { ReviewRoundBindingV1 } from './reviewRoundBindingV1.js';
 export { REVIEW_ARTIFACT_KIND_V1 } from '../artifacts/artifactKindV1.js';
 
-export const ReviewSubjectKindV1Schema = z.enum(['comparison', 'pull_request', 'repository']);
+export const ReviewSubjectKindV1ProtocolSchema = defineProtocolUnion([
+  defineProtocolLiteral('comparison'), defineProtocolLiteral('pull_request'), defineProtocolLiteral('repository'),
+]);
+export const ReviewSubjectKindV1Schema = asProtocolZod(ReviewSubjectKindV1ProtocolSchema);
 export const ReviewSourceKindV1Schema = z.enum(['direct', 'workflow']);
 export const ReviewRoundStateV1Schema = z.enum(['running', 'completed', 'partial', 'failed', 'cancelled']);
 export type ReviewSubjectKindV1 = z.infer<typeof ReviewSubjectKindV1Schema>;

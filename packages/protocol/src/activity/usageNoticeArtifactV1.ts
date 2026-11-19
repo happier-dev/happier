@@ -20,6 +20,7 @@ export { AccountNoticePageV1Schema, PluginNoticePageV1Schema, ServiceHealthNotic
   ServiceHealthNoticeMachineV1Schema, ServiceHealthNoticeMachineV1ProtocolSchema,
   type ServiceHealthNoticePageV1, type ServiceHealthNoticeMachineV1 } from './accountNoticePageV1.js';
 import { HealthAlertIdentityV1Schema } from './healthAlertIdentityV1.js';
+import { ReviewAttentionV1Schema } from '../reviews/reviewAttentionV1.js';
 import { DeploymentEnvironmentHealthAggregateV1Schema } from '../deployments/environmentHealthV1.js';
 import { DeploymentIdentifierV1Schema, DeploymentTimestampV1Schema } from '../deployments/deploymentIdentifiersV1.js';
 import { HealthCheckAlertsV1Schema } from '../deployments/healthCheckSourceV1.js';
@@ -102,6 +103,7 @@ const accountNoticeContent = {
   environmentHealth: z.optional(DeploymentEnvironmentHealthAggregateV1Schema),
   investigation: z.optional(AccountNoticeInvestigationV1Schema),
   recoveryChoices: z.optional(AccountNoticeRecoveryChoicesV1Schema),
+  reviewAttention: z.optional(ReviewAttentionV1Schema),
 };
 function validNoticeContent(value: z.infer<ReturnType<typeof noticeContentSchema>>) {
   if (value.platformTransition && (value.source.kind !== 'host' || value.source.topic !== 'service_health'

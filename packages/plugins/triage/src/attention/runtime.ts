@@ -43,6 +43,7 @@ async function followFeed(context: BackgroundServiceContext, instance: TriageCon
         entryRef, reason: item.reason, notice: {
           clientRequestId: globalThis.crypto.randomUUID(), categoryId: 'source-attention',
           title: item.title, type: item.type, resolved: item.resolved,
+          ...(item.reviewAttention ? { reviewAttention: item.reviewAttention } : {}),
           page: { pageId: 'triage', subPath: buildTriageEntryRouteSegmentV1(entryRef) },
         },
       });
@@ -106,6 +107,7 @@ export async function runTriageAttention(context: BackgroundServiceContext): Pro
         await publishTriageAttentionV1(context, { entryRef: { source: REVIEW_TRIAGE_SOURCE_V1, ...item.localRef }, reason: item.reason,
           notice: { clientRequestId: globalThis.crypto.randomUUID(), categoryId: 'source-attention', title: item.title,
             type: item.type, resolved: item.resolved,
+            ...(item.reviewAttention ? { reviewAttention: item.reviewAttention } : {}),
             page: { pageId: 'triage', subPath: buildTriageEntryRouteSegmentV1({ source: REVIEW_TRIAGE_SOURCE_V1, ...item.localRef }) } } });
       }
     },

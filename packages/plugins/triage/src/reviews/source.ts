@@ -25,16 +25,17 @@ async function title(reviewId: string, context: Context): Promise<string> {
     const value = result.artifact.header.title;
     return typeof value === 'string' && value.trim() ? value : 'Review';
 }
-async function attention(facts: Facts, context: Context): Promise<Extract<TriageReadAttentionResultV1, { kind: 'page' }>['items'][number]> {
+async function attention(facts: Facts, subjectKind: Review['subjectKind'], context: Context): Promise<Extract<TriageReadAttentionResultV1, { kind: 'page' }>['items'][number]> {
     return { localRef: reviewTriageLocalRefV1(facts.reviewId), reason: facts.reason, type: 'decision',
-        title: await title(facts.reviewId, context), resolved: !facts.needsYou };
+        title: await title(facts.reviewId, context), resolved: !facts.needsYou,
+        reviewAttention: { requestedVerdict: facts.requestedVerdict, subjectKind } };
 }
 
 /** The Review owner already intersected request eligibility with Artifact access. */
 export async function readOneReviewAttentionV1(reviewId: string, context: Context) {
     const result = await context.services.actions.execute('review.get', { reviewId }, { signal: context.signal });
     if (isPluginActionApprovalRequestCreated(result)) throw new Error('Review unavailable');
-    return attention(result.human.needsYou, context);
+    return attention(result.human.needsYou, result.review.subjectKind, context);
 }
 
 /** Finite pages reconnect through the existing lifecycle; no Review polling. */
@@ -42,7 +43,7 @@ export async function readReviewAttentionV1(input: TriageReadAttentionInputV1, c
     const result = await context.services.actions.execute('reviews.list', { limit: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
         ...(input.cursor ? { cursor: input.cursor.token } : {}) }, { signal: context.signal });
     if (isPluginActionApprovalRequestCreated(result)) return { kind: 'failed', failure: unavailable };
-    return { kind: 'page', items: await Promise.all(result.items.map(review => attention(review.needsYou, context))),
+    return { kind: 'page', items: await Promise.all(result.items.map(review => attention(review.needsYou, review.subjectKind, context))),
         nextPage: result.cursor !== null, ...(result.cursor === null ? {} : { cursor: { v: 1, token: result.cursor } }) };
 }
 

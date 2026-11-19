@@ -1,5 +1,6 @@
 import type { PluginServices } from './index.js';
 import type { DatabaseEnginesServiceV1 } from '../databaseEngines.js';
+import type { ReviewAttentionV1 } from '../protocol/protocolFacade.js';
 /** @moduleRealm daemon */
 import type { InputTypeOptionsQueryV1 } from '../actions/dtos/pluginActionDtoSupport.generated.js';
 import type {
@@ -259,7 +260,9 @@ export interface NotificationsService {
         /** Opts this notice into open/recovered health lifecycle; ordinary notices omit it. */
         healthPhase?: 'open' | 'recovered';
         /** Data-only manual Investigate intent. Requires itemId; current Action admission owns execution. */
-        investigation?: Readonly<{ kind: 'alertEntry'; entry: Readonly<{ entryRef: TriageEntryRefV1; sourceInstanceId: string }> }>
+        investigation?: Readonly<{ kind: 'alertEntry'; entry: Readonly<{ entryRef: TriageEntryRefV1; sourceInstanceId: string }> }>;
+        /** Review-owned presentation facts; does not change notice identity or admission. */
+        reviewAttention?: ReviewAttentionV1;
     }, options?: { signal?: AbortSignal }): Promise<PluginNotificationBatchResult>;
     listChannels(options?: { cursor?: string; limit?: number; signal?: AbortSignal }): Promise<{ items: readonly PluginNotificationChannelSummary[]; nextCursor?: string }>;
     listCategories(options?: { cursor?: string; limit?: number; signal?: AbortSignal }): Promise<{ items: readonly PluginNotificationCategorySummary[]; nextCursor?: string }>;

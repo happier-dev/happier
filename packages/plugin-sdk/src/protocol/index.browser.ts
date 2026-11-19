@@ -236,3 +236,5 @@ export { resolveAccountDisplayLabelV1 } from './discussionContent.js';
 export { resolveLaunchProfilePlacementDirectoryIntentV1 } from './launchProfilePreferences.js';
 
 export { ReviewRoundBindingV1ProtocolSchema } from './protocolFacade.js';
+export type { ReviewAttentionV1 } from './protocolFacade.js';
+export { ReviewAttentionV1ProtocolSchema } from './protocolFacade.js';

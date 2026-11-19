@@ -61,13 +61,16 @@ describe('registered Review attention source', () => {
       const pending = await read();
       expect(pending).toMatchObject({ kind: 'page', nextPage: false, items: [{
         localRef: { kindId: 'review', collisionScope: 'reviews', entryId: 'review' },
-        reason: 'review_needs_you', resolved: false, title: 'Recipient-opened title', type: 'decision' }] });
+        reason: 'review_needs_you', resolved: false, title: 'Recipient-opened title', type: 'decision',
+        reviewAttention: { requestedVerdict: true, subjectKind: 'comparison' } }] });
       requestedVerdict = false;
-      expect(await read()).toMatchObject({ items: [{ reason: 'review_needs_you', resolved: false }] });
+      expect(await read()).toMatchObject({ items: [{ reason: 'review_needs_you', resolved: false,
+        reviewAttention: { requestedVerdict: false, subjectKind: 'comparison' } }] });
       pendingDecisions = false;
       expect(await read()).toMatchObject({ items: [{ reason: 'review_needs_you', resolved: true }] });
       roundOrdinal = 2; requestedVerdict = true;
-      expect(await read()).toMatchObject({ items: [{ reason: 'review_needs_you', resolved: false }] });
+      expect(await read()).toMatchObject({ items: [{ reason: 'review_needs_you', resolved: false,
+        reviewAttention: { requestedVerdict: true, subjectKind: 'comparison' } }] });
       expect(calls.filter(id => id === 'review.get')).toHaveLength(0);
       expect(calls.filter(id => id === 'reviews.list')).toHaveLength(4);
     } finally { await kit.dispose(); }

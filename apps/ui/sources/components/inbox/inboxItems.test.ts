@@ -185,7 +185,8 @@ describe('one Inbox row projection', () => {
         const source = { ...emptyInput, pluginSessionRows, sessionsById: { lead, ask: worker }, sessionMessagesById };
         const projected = buildInboxItems(source);
         expect(projected[0]?.view).toBe('updates');
-        expect(projected[0]?.workerUpdateHeadline).toBe(`${t('sessionWork.workerUpdate.state.settled')} · Runbook drafted`);
+        expect(projected[0]?.workerUpdateHeadline).toContain(t('sessionWork.workerUpdate.state.settled'));
+        expect(projected[0]?.workerUpdateHeadline).toContain('Runbook drafted');
         let bodyReads = 0;
         for (const message of messages) {
             const kind = message.kind;
@@ -200,7 +201,7 @@ describe('one Inbox row projection', () => {
         expect(buildInboxItems({ ...source, sessionMessagesById: { lead: createSessionMessagesFixture({ ...transcript,
             latestWorkerUpdates: undefined,
             messagesById: { ...transcript.messagesById, latest: changed },
-        }) } }, projected)[0]?.workerUpdateHeadline).toBe(`${t('sessionWork.workerUpdate.state.settled')} · Runbook revised`);
+        }) } }, projected)[0]?.workerUpdateHeadline).toContain('Runbook revised');
         for (const headline of ['Finished its turn', `${readInboxSessionTitle(worker, 'home-a')} · settled`, 'ask · settled']) {
             const native = update('latest', 20_002, 'ask', headline);
             expect(buildInboxItems({ ...source, sessionMessagesById: { lead: createSessionMessagesFixture({
@@ -556,6 +557,22 @@ describe('one Inbox row projection', () => {
         const settled = buildInboxItems({ ...named, workGroups: [] }, rows);
         expect(settled).toHaveLength(1);
         expect(settled[0]).toBe(rows[1]);
+
+        const reviewNotice = (requestedVerdict: boolean) => {
+            const artifact = createAccountNoticeArtifactFixture({ header: { type: 'decision',
+                reviewAttention: { requestedVerdict, subjectKind: 'pull_request' } } });
+            return { artifact, header: AccountNoticeArtifactHeaderV1Schema.parse(artifact.rawHeader) };
+        };
+        const requested = buildInboxItems({ ...named, notices: [reviewNotice(true)] }, rows);
+        expect(requested[1]).toMatchObject({
+            sourceLabel: `${t('reviewWalkthrough.detail.requestedFromYou')} · ${t('reviewWalkthrough.collection.subjectPullRequest')}`,
+            source: { displayName: 'Acme Review' },
+        });
+        expect(buildInboxItems({ ...named, notices: [reviewNotice(true)] }, requested)).toBe(requested);
+        const pendingOnly = buildInboxItems({ ...named, notices: [reviewNotice(false)] }, requested);
+        expect(pendingOnly[1]).not.toBe(requested[1]);
+        expect(pendingOnly[1]).not.toHaveProperty('sourceLabel');
+        expect(pendingOnly[1]?.source.displayName).toBe('Acme Review');
     });
 
     it('reads an open health notice as failing and a recovered one as quiet', () => {

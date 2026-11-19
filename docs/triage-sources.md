@@ -225,6 +225,15 @@ hinted Reviews; reconnects replay the finite list through the existing feed
 lifecycle. Inbox opens these items at the Review's canonical Artifact route
 on the notice's Home.
 
+In unreleased 0.3 source, the same attention item carries optional
+`reviewAttention` presentation facts from the Review owner: `requestedVerdict`
+and the canonical `subjectKind`. The existing publisher seals these facts into
+the private Account notice. Inbox labels requested verdicts with the existing
+“Review requested from you” copy and collection subject word; pending findings
+alone retain their ordinary source label. Neither the stable reason nor the
+plugin identity changes, and the row needs no additional Review read. Retained
+notices without these facts keep their existing label until normal publication.
+
 [`publishTriageAttentionV1`](../packages/triage-sources/src/observations/attention.ts)
 owns the shared C1 envelope and stable identity: a domain-separated hash of the
 complete entry reference plus attention reason. The invocation request id is

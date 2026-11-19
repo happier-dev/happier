@@ -1047,19 +1047,26 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
         const { InboxContent } = await import('./InboxContent');
         const notices = (['update', 'decision'] as const).map((type) => {
             const artifact = createAccountNoticeArtifactFixture({ id: `notice-${type}`, createdAt: NOW - 60_000,
-                header: { type, page: undefined, title: `Notice ${type}`, body: 'Plain words' } });
+                header: { type, page: undefined, title: `Notice ${type}`, body: 'Plain words',
+                    ...(type === 'decision' ? { reviewAttention: { requestedVerdict: true, subjectKind: 'comparison' } } : {}) } });
             return { artifact, header: AccountNoticeArtifactHeaderV1Schema.parse(artifact.rawHeader) };
         });
         const base = createModel({ needsYou: false });
         const sessionPresentation = { ...base.sessionPresentation, readySessions: [], markAllReadTargets: [] };
         const dismissAccountNotice = vi.fn(async () => {});
         const items = buildInboxItems({ workGroups: [], sessionPresentation: sessionPresentation as never,
-            workflowServerId: 'server-a', accountServerId: 'server-a', notices });
+            workflowServerId: 'server-a', accountServerId: 'server-a', notices,
+            pluginDisplayNames: new Map([['acme.review', 'Acme Review']]) });
         const model = { ...base, sessionPresentation, friendRequests: [], items, accountNotices: notices, openAccountNotices: notices,
             dismissAccountNotice } as InboxModel;
         for (const [view, notice] of [['updates', notices[0]!], ['needs_you', notices[1]!]] as const) {
             const screen = await renderScreen(<InboxContent model={model} view={view} />, { wrapper: PagePresentation });
             const item = items.find((row) => row.source.id === notice.artifact.id)!;
+            const row = screen.tree.findAllByType(InboxWorkRow).find(node => node.props.testID === `inbox.item.${item.key}`)!;
+            if (notice.header.type === 'decision') {
+                expect(item.sourceLabel).toBeDefined();
+                expect(row.props.facts[0]).toBe(item.sourceLabel);
+            } else expect(row.props.facts[0]).toBe('Acme Review');
             // The row's one trailing control is its … menu, as on every Inbox row; Dismiss is in it.
             await chooseDropdownMenuItem(screen, `inbox.item.${item.key}.dismiss`, 'inbox.dismiss');
             expect(dismissAccountNotice).toHaveBeenLastCalledWith(notice);

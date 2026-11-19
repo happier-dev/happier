@@ -2653,6 +2653,8 @@
 | `./protocol` | `ProtocolWorkspaceWorkerPreferenceMutationResultV1Schema` | value | any |
 | `./protocol` | `ProtocolWorkspaceWorkerPreferenceReadResultV1Schema` | value | any |
 | `./protocol` | `ProtocolWorkspaceWorkerPreferenceSetInputV1Schema` | value | any |
+| `./protocol` | `ReviewAttentionV1` | type | any |
+| `./protocol` | `ReviewAttentionV1ProtocolSchema` | value | any |
 | `./protocol` | `ScmHostingProjectReadinessSourceFactV1ProtocolSchema` | value | any |
 | `./protocol` | `ScmHostingPullRequestLifecycleActionV1ProtocolSchema` | value | any |
 | `./protocol` | `ScmHostingPullRequestLifecycleV1ProtocolSchema` | value | any |
