@@ -1,20 +1,52 @@
-import { readRpcErrorCode } from '../rpc/errors.js';
+import { isMachineRpcTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
+import { SCM_OPERATION_ERROR_CODES } from '../scm/operationError.js';
 import { getUsageQueryKey, type UsageQuery } from '../inputs/usageQuery.js';
 import { ScmWorkEvidenceReadResponseSchema, type ScmWorkEvidenceReadRequest, type ScmBranchWorkEvidence } from '../scm/index.js';
 import { projectUsageWorkSummary, resolveUsageWorkOutcomeAdmissions, type UsageWorkEvidence } from './usageOutcomeAllocation.js';
 import { readUsageAccountingSessionMembership } from './usageAccountingMembership.js';
 import type { UsageAccountingSourceSnapshot, UsageWorkSourceSnapshot } from './resolveUsagePageAggregation.js';
 
-export type SessionWorkSourceResult = Readonly<
+type UnreadSessions = NonNullable<UsageWorkSourceSnapshot['unreadSessions']>;
+type UnreadReason = keyof UnreadSessions;
+
+export type SessionWorkSourceResult = Readonly<(
     | { status: 'unsupported' | 'error' | 'unknown' }
     | { status: 'partial' | 'unsupported' | 'error'; evidence: readonly UsageWorkEvidence[]; branchEvidence?: readonly ScmBranchWorkEvidence[] }
->;
+) & { unreadReason?: UnreadReason }>;
+
+function classifyUnreadReason(code: string | undefined): UnreadReason {
+    switch (code) {
+        case 'target_unavailable':
+        case RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE:
+            return 'machine_unavailable';
+        case RPC_ERROR_CODES.FORBIDDEN:
+        case RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED:
+            return 'not_entitled';
+        case MACHINE_RPC_TIMEOUT_ERROR_CODE:
+        case SCM_OPERATION_ERROR_CODES.COMMAND_TIMEOUT:
+            return 'timed_out';
+        default:
+            return 'failed';
+    }
+}
+
+function unreadSession(code: string | undefined): SessionWorkSourceResult {
+    const unreadReason = classifyUnreadReason(code);
+    if (unreadReason === 'machine_unavailable') return { status: 'unknown', unreadReason };
+    // Explicit refusal withdraws old witnesses. A failed replacement carries no new admission.
+    if (unreadReason === 'not_entitled') return { status: 'error', unreadReason, evidence: [], branchEvidence: [] };
+    return { status: 'error', unreadReason };
+}
+
+function readWorkFailureCode(error: unknown): string | undefined {
+    return isMachineRpcTimeoutError(error) ? MACHINE_RPC_TIMEOUT_ERROR_CODE : readRpcErrorCode(error);
+}
 
 export async function collectUsageWorkSources(input: Readonly<{
     queries: readonly UsageQuery[];
     accounting: readonly UsageAccountingSourceSnapshot[];
     sessionReads?: Map<string, Promise<SessionWorkSourceResult>>;
-    resolveSession: (sessionId: string) => Promise<Readonly<{ machineId: string; cwd: string }> | null>;
+    resolveSession: (sessionId: string) => Promise<Readonly<{ machineId: string; cwd: string } | { errorCode: string }> | null>;
     readMachine: (machineId: string, request: ScmWorkEvidenceReadRequest) => Promise<unknown>;
     assertCurrent: () => void | Promise<void>;
 }>): Promise<readonly UsageWorkSourceSnapshot[]> {
@@ -41,10 +73,19 @@ export async function collectUsageWorkSources(input: Readonly<{
         const machines = new Map<string, ScmWorkEvidenceReadRequest['sessions']>();
         const targets = await Promise.all(missing.map(async sessionId => {
             await input.assertCurrent();
-            return { sessionId, target: await input.resolveSession(sessionId) };
+            try {
+                return { sessionId, target: await input.resolveSession(sessionId) };
+            } catch (error) {
+                await input.assertCurrent();
+                results.set(sessionId, unreadSession(readWorkFailureCode(error)));
+                return null;
+            }
         }));
-        for (const { sessionId, target } of targets) {
-            if (!target) { results.set(sessionId, { status: 'unknown' }); continue; }
+        for (const resolved of targets) {
+            if (!resolved) continue;
+            const { sessionId, target } = resolved;
+            if (!target) { results.set(sessionId, { status: 'unknown', unreadReason: 'failed' }); continue; }
+            if ('errorCode' in target) { results.set(sessionId, unreadSession(target.errorCode)); continue; }
             const sessions = machines.get(target.machineId) ?? [];
             sessions.push({ sessionId, cwd: target.cwd, turnIds: [...turnsBySession.get(sessionId)!] });
             machines.set(target.machineId, sessions);
@@ -54,33 +95,38 @@ export async function collectUsageWorkSources(input: Readonly<{
                 await input.assertCurrent();
                 const response = ScmWorkEvidenceReadResponseSchema.safeParse(await input.readMachine(machineId, { sessions }));
                 await input.assertCurrent();
-                if (!response.success) throw new Error('Invalid SCM Work evidence response');
+                if (!response.success) {
+                    for (const session of sessions) results.set(session.sessionId, unreadSession(undefined));
+                    return;
+                }
                 const rows = new Map<string, (typeof response.data.sessions)[number] | null>();
                 for (const row of response.data.sessions) rows.set(row.sessionId, rows.has(row.sessionId) ? null : row);
                 for (const session of sessions) {
                     const row = rows.get(session.sessionId);
                     if (!row || [...row.evidence ?? [], ...row.branchEvidence ?? []].some(witness => witness.sessionId !== session.sessionId)) {
-                        results.set(session.sessionId, { status: 'error', evidence: [], branchEvidence: [] });
+                        results.set(session.sessionId, { status: 'error', unreadReason: 'failed', evidence: [], branchEvidence: [] });
                         continue;
                     }
                     const turns = turnsBySession.get(session.sessionId)!;
-                    if (row.status === 'unknown') { results.set(session.sessionId, { status: 'unknown' }); continue; }
-                    if (row.status === 'error' && row.evidence === undefined && row.branchEvidence === undefined) {
-                        results.set(session.sessionId, { status: 'error' });
+                    if (row.status === 'unknown') {
+                        results.set(session.sessionId, { status: 'unknown', unreadReason: classifyUnreadReason(row.errorCode) });
+                        continue;
+                    }
+                    if (row.status === 'error') {
+                        results.set(session.sessionId, row.evidence === undefined && row.branchEvidence === undefined
+                            ? unreadSession(row.errorCode)
+                            : { status: 'error', unreadReason: classifyUnreadReason(row.errorCode), evidence: [], branchEvidence: [] });
                         continue;
                     }
                     results.set(session.sessionId, { status: row.status,
+                        ...(row.errorCode === undefined ? {} : { unreadReason: classifyUnreadReason(row.errorCode) }),
                         evidence: (row.evidence ?? []).filter(witness => turns.has(witness.turnId)),
                         ...(row.branchEvidence === undefined ? {} : { branchEvidence: row.branchEvidence.filter(witness => turns.has(witness.turnId)) }),
                     });
                 }
             } catch (error) {
                 await input.assertCurrent();
-                // An unreachable Machine has no evidence. Refusals withdraw its
-                // witnesses; failed replacements retain the existing page facts.
-                const result: SessionWorkSourceResult = readRpcErrorCode(error) === 'target_unavailable' ? { status: 'unknown' }
-                    : readRpcErrorCode(error) === 'RPC_FORBIDDEN' ? { status: 'error', evidence: [], branchEvidence: [] }
-                    : { status: 'error' };
+                const result = unreadSession(readWorkFailureCode(error));
                 for (const session of sessions) results.set(session.sessionId, result);
             }
         }));
@@ -103,6 +149,10 @@ export async function collectUsageWorkSources(input: Readonly<{
             .filter(witness => turns.has(JSON.stringify([witness.sessionId, witness.turnId])));
         const branchEvidence = selected.flatMap(source => 'branchEvidence' in source ? source.branchEvidence ?? [] : [])
             .filter(witness => turns.has(JSON.stringify([witness.sessionId, witness.turnId])));
+        const unreadSessions: UnreadSessions = {};
+        for (const { unreadReason } of selected) {
+            if (unreadReason !== undefined) unreadSessions[unreadReason] = (unreadSessions[unreadReason] ?? 0) + 1;
+        }
         const failedReplacement = selected.length > 0 && selected.every(source => source.status === 'error' && !('evidence' in source));
         const status = selected.some(source => source.status === 'partial') ? 'partial' as const
             : selected.some(source => source.status === 'error') ? 'error' as const : selected.some(source => source.status === 'unsupported') ? 'unsupported' as const : 'unknown' as const;
@@ -110,6 +160,7 @@ export async function collectUsageWorkSources(input: Readonly<{
             ? projectUsageWorkSummary(resolveUsageWorkOutcomeAdmissions({ turns: admittedTurns, evidence }).outcomes) : undefined;
         return { query, ...(failedReplacement ? {} : { evidence, branchEvidence }), status,
             ...(summary ? { summary } : {}),
-            ...(selected.some(source => source.status === 'error') ? { errorCode: 'work_evidence_failed' } : {}) };
+            ...(Object.keys(unreadSessions).length ? { unreadSessions } : {}),
+            ...(status === 'error' ? { errorCode: 'work_evidence_failed' } : {}) };
     });
 }

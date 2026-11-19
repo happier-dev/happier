@@ -52,12 +52,18 @@ export function createUsagePricingReuseResolver() {
 export const UsageQuerySourceStatusSchema = lazyZodSchema(() => z.enum([
   'available', 'stale', 'not_loaded', 'pending', 'error', 'unsupported', 'unknown', 'partial',
 ]));
+const UsageWorkUnreadSessionsSchema = lazyZodSchema(() => {
+  const count = z.optional(z.number().check(z.int(), z.positive()));
+  return z.strictObject({ machine_unavailable: count, not_entitled: count, timed_out: count, failed: count });
+});
 export const UsageQuerySourceStateSchema = lazyZodSchema(() => z.strictObject({
   source: z.string().check(z.trim(), z.minLength(1)),
   status: UsageQuerySourceStatusSchema,
   asOfMs: z.optional(z.number().check(z.int(), z.nonnegative())),
   errorCode: z.optional(z.string().check(z.trim(), z.minLength(1))),
   updateRequired: z.optional(OperationUpdateRequiredV1Schema),
+  /** Private Work read coverage, grouped by reason without Session identifiers. */
+  unreadSessions: z.optional(UsageWorkUnreadSessionsSchema),
 }));
 export type UsageQuerySourceState = z.infer<typeof UsageQuerySourceStateSchema>;
 
@@ -549,6 +555,7 @@ export type UsageWorkSourceSnapshot = Readonly<{
   asOfMs?: number;
   errorCode?: string;
   updateRequired?: OperationUpdateRequiredV1;
+  unreadSessions?: UsageQuerySourceState['unreadSessions'];
 }>;
 
 export type UsageHowYouWorkSourceSnapshot = Readonly<{
@@ -812,15 +819,18 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     const retainWork = workSnapshot?.status === 'pending' || failedWork;
     const priorWorkSource = prior?.sources.find(source => source.source === 'work');
     const workAsOfMs = failedWork ? priorWorkSource?.asOfMs : workSnapshot?.asOfMs;
+    const unreadWorkSessions = workSnapshot?.status === 'pending' ? priorWorkSource?.unreadSessions : workSnapshot?.unreadSessions;
     // A reread has not replaced observed Work facts. Keep their currentness
     // until its answer changes them, including a completed retained failure.
     const workSource: UsageQuerySourceState = priorWorkSource?.errorCode === 'work_evidence_failed'
       && (workSnapshot?.status === 'pending' || failedWork && priorWorkSource.status === 'stale'
         && workSnapshot.errorCode === priorWorkSource.errorCode
-        && workSnapshot.updateRequired === priorWorkSource.updateRequired) ? priorWorkSource
+        && workSnapshot.updateRequired === priorWorkSource.updateRequired
+        && sameStrictJsonValue(unreadWorkSessions ?? null, priorWorkSource.unreadSessions ?? null)) ? priorWorkSource
       : { source: 'work', status: failedWork ? 'stale' : workSnapshot?.status ?? 'not_loaded',
         ...(workAsOfMs === undefined ? {} : { asOfMs: workAsOfMs }),
         ...(workSnapshot?.errorCode === undefined ? {} : { errorCode: workSnapshot.errorCode }),
+        ...(unreadWorkSessions === undefined ? {} : { unreadSessions: unreadWorkSessions }),
         ...(workSnapshot?.updateRequired === undefined ? {} : { updateRequired: workSnapshot.updateRequired }) };
     // Retained evidence remains attached to this exact query while its owner
     // rereads it. Allocation always recomputes over the current contributions;

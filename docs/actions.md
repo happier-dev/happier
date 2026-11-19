@@ -3960,6 +3960,14 @@ outcome and branch tables; each allocation carries only the corresponding
 identity and evidence. Its bounded `workSummary` also retains distinct Session,
 contribution and allocated-contribution counts.
 
+Work reads keep any readable Session evidence and report missing coverage as
+`sources[].unreadSessions` on the `work` source. The counts distinguish an
+unavailable Machine, a refused read, a timeout, and other failures. A mixed read
+has `partial` status and keeps the accounting total, with unwitnessed lineage
+left unallocated. An entirely failed Work read can report
+`work_evidence_failed`. Broad agent delivery keeps the same coverage counts
+along with the Work summary.
+
 In-process Usage filter-option readers call the same typed query port with
 inventory-only demand. They consume distinct accounting ids and labels without
 another result parse or the external Usage response-envelope projection. The

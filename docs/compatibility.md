@@ -9746,6 +9746,13 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `usage.query` Work source results optionally report
+`unreadSessions`, a closed presentation object with positive Session counts by
+read failure category. A reader still accepts Work results without the field.
+Earlier strict development readers reject the added field. Matching UI, CLI and
+Action readers use the shared Protocol schema under the development direct cut.
+This changes no SCM RPC envelope, persisted data, or wire epoch.
+
 Unreleased 0.3 Workflow Event references may select a declared structured payload
 field for an Action JSON binding. Conditions and text retain scalar-only
 operands. The existing accepted-snapshot JSON value slot and Workflow content

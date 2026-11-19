@@ -5,8 +5,9 @@ import type { ScmWorkEvidenceReadRequest, ScmBranchWorkEvidence } from '../scm/i
 import type { SessionWorkSourceResult } from './usageWorkSources.js';
 import { UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
 import { collectUsageWorkSources } from './usageWorkSources.js';
-import { resolveUsagePageAggregation } from './resolveUsagePageAggregation.js';
-import { createRpcCallError } from '../rpc/errors.js';
+import { resolveUsagePageAggregation, UsageQueryBatchResultSchema, UsageQueryResultSliceSchema } from './resolveUsagePageAggregation.js';
+import { createRpcCallError, MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '../rpc/errors.js';
+import { projectUsageQueryDelivery } from './projectUsageQueryDelivery.js';
 
 const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeComparison: false,
   includeQuotaHistory: false, includeSessionEvidence: false, includeWorkEvidence: true });
@@ -17,6 +18,56 @@ const value = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCou
 const accounting = [{ query, value, status: 'available' as const }];
 
 describe('Usage Work repository admission', () => {
+  it('publishes readable Work and conserves the remainder when Machines fail independently', async () => {
+    const sessions = ['linked', 'unlinked', 'offline', 'denied', 'slow'];
+    const tokens = value.totals.tokens;
+    const contributions = sessions.map((sessionId, index) => ({
+      id: sessionId, sessionId, turnId: 'turn', observedAtMs: 1, agentId: 'coding-agent', modelId: 'model',
+      machineId: sessionId, projectKey: 'project', workspaceId: null, source: 'runtime' as const, tokens,
+      cost: { reportedUsd: index + 1, estimatedUsd: null, currency: 'USD' as const },
+    }));
+    const snapshot = UsageAnalyticsQueryResponseSchema.parse({
+      ...value, contributions, totals: { ...value.totals, cost: { reportedUsd: 15, estimatedUsd: null, currency: 'USD' } },
+      sessionMembership: { turns: sessions.map(sessionId => ({ sessionId, turnId: 'turn', executions: ['happier'] })) },
+    });
+    const accounting = [{ query, value: snapshot, status: 'available' as const }];
+    const work = await collectUsageWorkSources({
+      queries: [query], accounting, assertCurrent: () => {},
+      resolveSession: async sessionId => ({ machineId: sessionId, cwd: '/repo' }),
+      readMachine: async (machineId, request) => {
+        if (machineId === 'offline') throw createRpcCallError({ error: 'Offline', errorCode: 'target_unavailable' });
+        if (machineId === 'denied') throw createRpcCallError({ error: 'Denied', errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        if (machineId === 'slow') throw Object.assign(new Error('Timed out'), { code: MACHINE_RPC_TIMEOUT_ERROR_CODE });
+        return { sessions: request.sessions.map(({ sessionId }) => ({
+          sessionId, status: 'partial', evidence: sessionId === 'unlinked' ? [] : [{
+            sessionId, turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
+            checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
+            attributionScope: 'no_happier_checkpoint_overlap_observed',
+            pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+              nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+              number: 1, title: 'Outcome', url: 'https://github.com/owner/repo/pull/1',
+              baseBranch: 'main', headBranch: 'feature', state: 'merged' },
+          }],
+        })) };
+      },
+    });
+    const batch = resolveUsagePageAggregation({ queries: [query], accounting, work }, bundledUsageModelPriceCatalog);
+    const result = UsageQueryResultSliceSchema.parse(batch.results[0]);
+    expect(result.workSummary?.mergedPrCount).toBe(1);
+    expect(result.work?.allocations.map(row => [row.contribution.sessionId, row.reason, row.contribution.cost.reportedUsd])).toEqual([
+      ['linked', 'allocated', 1], ['unlinked', 'missing_evidence', 2], ['offline', 'missing_evidence', 3],
+      ['denied', 'missing_evidence', 4], ['slow', 'missing_evidence', 5],
+    ]);
+    expect(result.accounting?.totals.cost.reportedUsd).toBe(15);
+    const workSource = {
+      source: 'work', status: 'partial', unreadSessions: { machine_unavailable: 1, not_entitled: 1, timed_out: 1 },
+    };
+    expect(result.sources.find(source => source.source === 'work')).toEqual(workSource);
+    const delivered = UsageQueryBatchResultSchema.parse(projectUsageQueryDelivery(batch, 'agent')).results[0];
+    expect(delivered?.sources.find(source => source.source === 'work')).toEqual(workSource);
+    expect(delivered?.workSummary).toEqual(result.workSummary);
+  });
+
   it('reads 624 Sessions on 20 Machines in 20 calls and reuses an admitted read', async () => {
     // Measured 7D census: 624 Sessions across these 20 Machine populations.
     const populations = [46, 18, 1, 33, 27, 1, 70, 23, 100, 38, 8, 74, 1, 1, 1, 1, 101, 66, 13, 1];
@@ -53,8 +104,8 @@ describe('Usage Work repository admission', () => {
     });
     const result = resolveUsagePageAggregation({ queries: [query], accounting, work }, bundledUsageModelPriceCatalog);
     expect(result.results[0]?.sources.find(source => source.source === 'work')).toEqual(code === 'target_unavailable'
-      ? { source: 'work', status: 'unknown' }
-      : { source: 'work', status: 'error', errorCode: 'work_evidence_failed' });
+      ? { source: 'work', status: 'unknown', unreadSessions: { machine_unavailable: 1 } }
+      : { source: 'work', status: 'error', errorCode: 'work_evidence_failed', unreadSessions: { not_entitled: 1 } });
     expect(work[0]?.evidence ?? []).toEqual([]);
     expect(calls).toBe(1);
   });
@@ -68,11 +119,14 @@ describe('Usage Work repository admission', () => {
       resolveSession: async () => ({ machineId: 'machine', cwd: '/repo' }),
       readMachine: async () => ({ sessions: [
         { sessionId: 'allowed', status: 'partial', evidence: [], branchEvidence: [branch] },
-        { sessionId: 'refused', status: 'error', evidence: [], branchEvidence: [], errorCode: 'RPC_FORBIDDEN' },
+        { sessionId: 'refused', status: 'error', evidence: [],
+          branchEvidence: [{ ...branch, sessionId: 'refused' }], errorCode: RPC_ERROR_CODES.FORBIDDEN },
         { sessionId: 'forged', status: 'partial', evidence: [], branchEvidence: [branch] },
       ] }),
     });
-    expect(work[0]).toMatchObject({ status: 'partial', errorCode: 'work_evidence_failed', branchEvidence: [branch] });
+    expect(work[0]).toMatchObject({ status: 'partial',
+      unreadSessions: { failed: 1, not_entitled: 1 }, branchEvidence: [branch] });
+    expect(work[0]?.errorCode).toBeUndefined();
   });
   it('acquires a newly admitted turn set while reusing the exact admitted read', async () => {
     let calls = 0;
