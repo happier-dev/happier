@@ -5,7 +5,8 @@ import { delimiter, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import { WorkflowEventsListOutputV1Schema } from '@happier-dev/protocol/actions/specs/workflowEvents';
-import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/automationEventSetupResultV1';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
@@ -175,9 +176,43 @@ it('P01.F1 health failure opens diagnose Session', async () => {
   expect(await runs()).toEqual([]);
   await waitFor(() => retainedCheck(second.sourceInstanceId, 'up'), { context: 'Second resource probe is saved before its failure' });
   healthy.set('/first', false);
-  await waitForWorkflowChildSession(async () => { const current = await runs(); expect(current.length).toBeLessThanOrEqual(1);
-    return current.length === 1 && await hasDiagnosisSession(current[0]!.id);
-  }, 'One saved transition starts the ordinary cause-bound diagnosis Session');
+  try {
+    await waitForWorkflowChildSession(async () => { const current = await runs(); expect(current.length).toBeLessThanOrEqual(1);
+      return current.length === 1 && await hasDiagnosisSession(current[0]!.id);
+    }, 'One saved transition starts the ordinary cause-bound diagnosis Session');
+  } catch (error) {
+    // Keep only public lifecycle facts; never print opened content or envelopes.
+    const diagnostic = await Promise.allSettled([
+      retainedCheck(saved.sourceInstanceId, 'down'),
+      actor.execute('workflow.trigger.list', { scope: 'account_all' }).then(listed => {
+        if (!listed.ok) return { errorCode: listed.errorCode };
+        const page = WorkflowTriggerListResultV1Schema.parse(listed.result);
+        return page.attached?.filter(row => row.summary.kind === 'pluginEvent'
+          && row.summary.eventRef.pluginId === event.event.identity.pluginId).map(row => ({
+          event: row.summary.kind === 'pluginEvent' ? row.summary.eventRef.localId : undefined,
+          listener: row.triggerId === linked.triggerId ? 'omitted-subject' : row.triggerId === exact.triggerId ? 'exact-subject' : 'probe',
+          sourceStatus: row.sourceStatus && {
+            state: row.sourceStatus.state, code: row.sourceStatus.code,
+            observedCount: row.sourceStatus.observedCount, admittedCount: row.sourceStatus.admittedCount,
+            skippedCount: row.sourceStatus.skippedCount, lastObservedAt: row.sourceStatus.lastObservedAt,
+            lastDispositionAt: row.sourceStatus.lastDispositionAt, nextRetryAt: row.sourceStatus.nextRetryAt,
+          },
+          sourceCatalogStatus: row.sourceCatalogStatus,
+        }));
+      }),
+      runs().then(async current => Promise.all(current.map(async run => {
+        const listed = await actor.execute('workflow.run.invocations.list', { runId: run.id, includeContent: true });
+        return { state: run.state, workflowRunState: run.workflowRunState, errorCode: run.errorCode,
+          executionDispatchState: run.executionDispatchState, producedSession: run.producedSessionId !== null,
+          invocations: listed.ok ? WorkflowInvocationListResultV1Schema.parse(listed.result).invocationDetails?.map(row => ({
+            lifecycle: row.index.lifecycle, execution: row.progress.execution?.kind, reasonCode: row.progress.reason?.code,
+          })) : { errorCode: listed.errorCode } };
+      }))),
+    ]);
+    console.error('F1 saved-transition lifecycle', JSON.stringify(diagnostic.map(result => result.status === 'fulfilled'
+      ? { status: result.status, value: result.value } : { status: result.status })));
+    throw error;
+  }
   expect((await runs())[0]!.cause).toMatchObject({ kind: 'trigger', triggerKind: 'pluginEvent',
     triggerId: linked.triggerId, evidence: { eventRef: HEALTH_CHECK_EVENT_REFS_V1.failed } });
   await waitFor(async () => (await runs(exact)).length === 1, { context: 'Exact saved-check subject matches its failure' });
