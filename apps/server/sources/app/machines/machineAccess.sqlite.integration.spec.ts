@@ -75,6 +75,38 @@ describe('Machine current access (real SQLite)', () => {
             .toMatchObject({ kind: 'admitted', actorAccountId: requester.id, custodianAccountId: f.owner.id, role: 'manage' });
     });
 
+    it('carries installed Session client Actions for a Use recipient without granting custodian RPC access', async () => {
+        const f = await fixture();
+        const requester = await account();
+        const outsider = await account();
+        await grant(f.owner.id, f.machine.id, requester.id, 'view');
+        const sessionActionOrigin = { v: 1 as const, caller: { kind: 'session' as const,
+            sessionId: 'cmwnmxwc000i1oymc7mu36eff', starterDepth: 0, turnDepth: 0 }, sourceTurnId: 'pet-turn',
+            callerPermissionMode: null, requestId: '0b2a5c10-82d2-41f5-9ed1-d222b9f55c26' };
+        const sessionActionSource = { machineId: f.machine.id, installationId: f.machine.installationId! };
+        expect(await access.resolveMachineAdmission({ actorAccountId: requester.id, machineId: f.machine.id }))
+            .toMatchObject({ kind: 'admitted', actorAccountId: requester.id, custodianAccountId: f.owner.id, role: 'use' });
+        for (const actionId of ['pet.import', 'pet.delete', 'search.conversations']) {
+            const input = { machineId: f.machine.id, actionId, callerAuthority: 'account_automation' as const,
+                sessionActionOrigin, sessionActionSource };
+            // The captured import travels through the same signed Action ingress
+            // as other App effects; it never invokes a custodian's private RPC.
+            expect(await inTx(tx => resolveExternalActionExecutionMachineAdmissionInTx(tx, {
+                ...input, actorAccountId: requester.id,
+                envelope: { v: 1, requestId: sessionActionOrigin.requestId,
+                    input: { source: { kind: 'machine', machineId: f.machine.id,
+                        packagePath: '/home/happier/pet-runs/PET-LIVE-OWNER-1118-existing-gemini-luna' } } },
+            })), actionId).toMatchObject({ kind: 'admitted', actorAccountId: requester.id,
+                custodianAccountId: f.owner.id, role: 'use' });
+            expect(await inTx(tx => resolveExternalActionExecutionMachineAdmissionInTx(tx, {
+                ...input, actorAccountId: outsider.id,
+            })), actionId).toMatchObject({ kind: 'denied', code: 'access_denied' });
+            expect(await access.resolveMachineAdmission({ actorAccountId: requester.id,
+                machineId: f.machine.id, actionId }), actionId)
+                .toMatchObject({ kind: 'denied', code: 'unsupported_operation' });
+        }
+    });
+
     it('acquires encrypted recipient material once for a batch while refusing missing envelopes', async () => {
         const first = await fixture('e2ee');
         const second = await fixture('e2ee');

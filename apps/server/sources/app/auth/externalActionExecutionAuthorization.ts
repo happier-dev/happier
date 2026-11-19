@@ -429,16 +429,16 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(reader:
     const accountPlaced = spec?.executionPlacement === 'account' && input.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1
         && (input.actionId === 'deployments.environments.create'
             || !placements.includes('machine') && !placements.includes('client'));
+    const clientCarrier = spec?.executionPlacement === 'client' && !spec.bindings?.rpcMethod && !placements.includes('machine');
     // This Machine carries an Account Action; it does not execute its domain
     // effect. Use admits the carrier, while the Account route owns the actual
     // Session/resource permission (including managed wake's separate Manage).
     // Create's native variant opens and normalizes private definition input;
     // its existing definition owner requires Manage before preparation/effects.
     // It has no raw RPC binding, so Use admits only this Account Action carrier.
-    // Other input-dependent Machine variants retain their native admission policy.
-    // A declared client variant is delivered to the custodian's App on this
-    // Machine, so the Action's own RPC policy decides. Home cannot tell the
-    // variant from (possibly encrypted) input, so this keys on the declaration.
+    // A pure client Action without a raw RPC likewise only uses this carrier;
+    // reverse dispatch selects the invoking Account's App, not the custodian's.
+    // Declared RPCs and input-dependent Machine variants retain their own policy.
     let sessionSpawnAdmission: ApiTokenSessionSpawnAdmissionV1 | undefined;
     if (input.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && input.envelope) {
         try { sessionSpawnAdmission = readExternalActionSessionSpawnAdmission(input.envelope, {
@@ -453,7 +453,7 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(reader:
         ...(input.requireOnline === undefined ? {} : { requireOnline: input.requireOnline }),
         ...(input.actionId === 'approval.request.decide'
             ? { rpcMethod: RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED }
-            : accountPlaced ? {} : { actionId: input.actionId }) });
+            : accountPlaced || clientCarrier ? {} : { actionId: input.actionId }) });
     if (sessionSpawnAdmission?.managedPresetAcquisition) {
         if (sessionSpawnAdmission.executionTarget.serverId !== sessionSpawnAdmission.managedPresetAcquisition.selection.homeId
             || sessionSpawnAdmission.executionTarget.machineId !== input.machineId) return { kind: 'denied', code: 'access_denied' };
