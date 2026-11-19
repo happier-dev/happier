@@ -329,7 +329,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
         });
         return {
             rowId: row.rowId, finding: row.finding,
-            currentBodyMarkdown: row.comment.body,
+            currentBodyMarkdown: typeof row.comment.body === 'string' ? row.comment.body : undefined,
             taskOrigin: taskOriginOf([row.comment]),
             decision: readReviewFindingDecision(pending[row.rowId] ?? row.comment.reviewTriageStatus),
             decidable: true, reviewers,

@@ -240,7 +240,7 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
         const row = [...rows].sort((left, right) => right.rowId.length - left.rowId.length)
             .find((candidate) => find.revealBlockId?.startsWith(`structured-review-finding:${candidate.rowId}:`));
         if (!row) return;
-        const hidden = rows.indexOf(row) >= CARD_VISIBLE_FINDINGS && !showAllFindings;
+        const hidden = rows.findIndex(candidate => candidate.rowId === row.rowId) >= CARD_VISIBLE_FINDINGS && !showAllFindings;
         const revealThread = find.revealBlockId.startsWith(`structured-review-finding:${row.rowId}:thread:`) || find.revealBlockId === `structured-review-finding:${row.rowId}:quote`;
         if (hidden || (revealThread && openThreadRowId !== row.rowId)) notifyLayout({ reason: 'expand', sourceId: 'review-findings' });
         if (hidden) setShowAllFindings(true);
@@ -303,7 +303,7 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
     if (compact) {
         const compactRows = rows.slice(0, CARD_VISIBLE_FINDINGS);
         const reviewId = reviewRunCommentsTargetFromFindings(normalized).reviewId;
-        const href = reviewId ? artifactResourceRoute({ kind: 'artifact', artifactId: reviewId }, serverId) : openFindingsHref;
+        const href = reviewId ? artifactResourceRoute({ kind: 'artifact', artifactId: reviewId }, serverId ?? undefined) : openFindingsHref;
         const open = () => { if (href) transcriptSource?.navigate?.(href); };
         const summaryProps = {
             subject: null,
