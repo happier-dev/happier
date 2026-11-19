@@ -33,6 +33,7 @@ import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
 import { advancePluginExecutionOriginSelectionRevision, usePluginMachineExecutionOriginSelection } from './usePluginExecutionOriginSelection';
 import { getPluginExecutionOriginCandidateOrigin } from './pluginExecutionOrigin';
 import * as executionOrigin from './pluginExecutionOrigin';
+import * as automaticHints from './pluginExecutionOriginAutomaticHints';
 import { resolveFreshMachineAdministrationExecutionTarget } from './useTargetSelection';
 import { setPluginMachineExecutionOriginPreference, readPluginMachineExecutionLastUsedTarget } from './selectionPreferences';
 
@@ -158,6 +159,61 @@ describe('execution-origin plugin identity with real Account and machine owners'
             expect(renders).toBeGreaterThan(settledRenders);
             expect(selection?.state).toMatchObject({ kind: 'unavailable', reasons: ['offline'] });
         } finally { await screen.unmount(); }
+    });
+
+    it('evaluates origin demand only for real input changes before Account Availability loads', async () => {
+        const serverIdentityId = 'srv_origin_pending_count';
+        const url = 'https://origin-pending-count.example.test';
+        await network.addHome(url, FIXTURE_ACCOUNT_ID);
+        const home = await adoptHomeProfile({ descriptor: { v: 1, homeServerIdentityId: serverIdentityId,
+            canonicalServerUrl: url, revision: 1, endpoints: [{ kind: 'https', url }] }, source: 'manual' });
+        await setActiveServerId(home.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
+        const machine = createMachineFixture({ id: 'origin-pending-machine', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, machines: {},
+            machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' } });
+        observeMachinePresenceForTest(scope, [machine.id]);
+
+        // Match the busy Account's existing scale fixture for mounted plugin demands.
+        const pluginIds = Array.from({ length: 107 }, (_, index) => `acme.pending-${index}`);
+        const selections = new Map<string, ReturnType<typeof usePluginMachineExecutionOriginSelection>>();
+        function Origin({ pluginId, includeSource }: Readonly<{ pluginId: string; includeSource: boolean }>) {
+            selections.set(pluginId, usePluginMachineExecutionOriginSelection({
+                pluginId, includeMachineCandidates: false,
+                classifyRelease: useActivePluginAccountAvailabilityReleaseClassifier(pluginId),
+                establishingTargets: [{ serverIdentityId, machineId: machine.id }],
+                sourceCandidates: includeSource ? [{ source: { origin: { serverIdentityId, sourceRef: {
+                    machineId: machine.id, pluginId, sourceCustody: { kind: 'development', registeredRootId: pluginId },
+                } }, version: '1.0.0', occurrenceId: pluginId, serverId: home.id },
+                    releaseContent: 'matched', validation: { kind: 'admitted' } }] : [],
+            }));
+            return null;
+        }
+        const tree = (withdrawn?: string) => <>{pluginIds.map(pluginId => (
+            <Origin key={pluginId} pluginId={pluginId} includeSource={pluginId !== withdrawn} />
+        ))}</>;
+        const screen = await renderScreen(tree());
+        const evaluate = vi.spyOn(automaticHints, 'readPluginExecutionOriginAutomaticHints');
+        try {
+            const changed = pluginIds[0]!;
+            const before = new Map(selections);
+            expect(before.get(changed)).toMatchObject({ loading: true, candidates: [expect.anything()] });
+            await screen.update(tree());
+            const unchangedEvaluations = evaluate.mock.calls.length;
+            evaluate.mockClear();
+            await screen.update(tree(changed));
+            console.info('pending Account Availability origin demand evaluations', {
+                plugins: pluginIds.length, unchanged: unchangedEvaluations, oneSourceWithdrawn: evaluate.mock.calls.length,
+            });
+            expect(selections.get(changed)?.candidates).toHaveLength(0);
+            for (const id of pluginIds.slice(1)) expect(selections.get(id)?.candidates).toBe(before.get(id)?.candidates);
+            expect(unchangedEvaluations).toBe(0);
+            expect(evaluate.mock.calls.map(([id]) => id)).toEqual([changed]);
+        } finally {
+            evaluate.mockRestore();
+            await screen.unmount();
+        }
     });
 
     it('auto-picks qualified rows during hydration, remembers use locally and never replaces a pending pin', async () => {

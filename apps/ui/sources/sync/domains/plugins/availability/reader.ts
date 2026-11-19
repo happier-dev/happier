@@ -900,16 +900,21 @@ function readProjectionForScope(
         : null;
 }
 
+// Both unavailable answers carry only their reason. Keep them stable across
+// reads so origin demand can distinguish Account readiness from a re-render.
+const MATERIALIZATION_ADMISSION_NOT_LOADED = Object.freeze({ kind: 'unavailable', code: 'account_availability_not_loaded' });
+const MATERIALIZATION_ADMISSION_SCOPE_MISMATCH = Object.freeze({ kind: 'unavailable', code: 'account_availability_scope_mismatch' });
+
 function readMaterializationAdmission(
     state: AvailabilityProjectionState | null,
     scope: ServerAccountScope,
 ): PluginMachineMaterializationAdmission {
     if (!state) {
-        return Object.freeze({ kind: 'unavailable', code: 'account_availability_not_loaded' });
+        return MATERIALIZATION_ADMISSION_NOT_LOADED;
     }
     const snapshot = readProjectionForScope(state, scope);
     if (!snapshot) {
-        return Object.freeze({ kind: 'unavailable', code: 'account_availability_scope_mismatch' });
+        return MATERIALIZATION_ADMISSION_SCOPE_MISMATCH;
     }
     return Object.freeze({
         kind: 'available',
