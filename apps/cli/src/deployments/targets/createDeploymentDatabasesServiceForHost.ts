@@ -144,8 +144,12 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                 qualifiedId: seed.contribution.qualifiedId }, { hostAccessRequests, surface: seed.surface, signal: seed.signal });
             const services = input.createServices(seed, { ...policy.serviceBinding, connectedAccountsOwner: owner,
                 exactPurposeBindingSubjectId: lease.subjectId });
-            const invocation = createAccountInvocationContext({ ...seed, invokedAtMs: Date.now(), services },
+            const accountInvocation = createAccountInvocationContext({ ...seed, invokedAtMs: Date.now(), services },
                 { serverId: host.serverId, accountId: host.credentialOwnerAccountId });
+            const invocation = operation === 'write' ? Object.freeze({
+                ...accountInvocation,
+                services: Object.freeze({ ...accountInvocation.services, databaseEngines: services.databaseEngines }),
+            }) : accountInvocation;
             return { runtime, invocation, preparation, placement: admission.placement, dispose };
         } catch (error) { dispose(); throw error; }
     };

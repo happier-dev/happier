@@ -147,8 +147,16 @@ describe('managed database attachment at the deployment owner', () => {
                         method: 'GET', headerNames: ['authorization'] } });
                 return { targets: [descriptor({ ...input.target, database: target.database })], completeness: { complete: true } };
             },
-            async open(input) {
+            async open(input, context) {
                 opens++;
+                if (input.access === 'write') {
+                    const databaseEngines = context.services.databaseEngines;
+                    if (!databaseEngines) throw new Error('The admitted write did not receive the database engine service');
+                    const connection = await databaseEngines.open('postgresql', {
+                        connectionString: 'postgresql://fixture/selected-database', access: input.access, signal: context.signal,
+                    });
+                    return { descriptor: descriptor(input.target), connection };
+                }
                 return { descriptor: descriptor(input.target), connection: { engine: 'postgresql',
                     async execute() { return { ok: true, operation: 'describe', descriptor: descriptor(input.target) }; }, async close() {} } };
             },
@@ -156,6 +164,16 @@ describe('managed database attachment at the deployment owner', () => {
         const service = createDeploymentDatabasesServiceForHost({ seed: {
             plugin: { id: 'happier.database.workbench', version: '0.0.0' }, contribution: { id: 'targets-list', qualifiedId: 'happier.database.workbench/actions/targets-list' },
             occurrenceId: 'workbench', correlationId: 'host-selection', surface: 'cli', signal: new AbortController().signal,
+            databaseEngines: {
+                list: () => [],
+                async open(engine, { access }) {
+                    expect(engine).toBe('postgresql');
+                    expect(access).toBe('write');
+                    return { engine, async execute() {
+                        return { ok: true, operation: 'describe', descriptor: { ...descriptor(target), label: 'Native writer' } };
+                    }, async close() {} };
+                },
+            },
             approvalContext: { ...stored.request.context, authority: 'present_user' }, isOccurrenceCurrent: () => true,
         }, contributes: { deploymentTargets: [{ pluginId, identity: { pluginId, localId: definition.id }, definition,
             provenance: 'first_party', source: { kind: 'bundled' }, manifestPath: '/fixture/neon/plugin.json', pluginVersion: pluginManifest.version }],
@@ -196,6 +214,8 @@ describe('managed database attachment at the deployment owner', () => {
                 .toMatchObject({ targets: [{ access: { canRead: true, canWrite: true } }] });
             const writable = await service.resolve({ operation: 'describe', target }, 'write');
             expect(writable.descriptor.access).toMatchObject({ canWrite: true });
+            await expect(writable.connection.execute({ operation: 'describe', target }))
+                .resolves.toMatchObject({ ok: true, descriptor: { label: 'Native writer' } });
             await writable.connection.close();
             expect(opens).toBe(2);
         } finally { await owners.dispose(); }

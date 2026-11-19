@@ -1,5 +1,6 @@
 import type { ReadonlyAuthorDeclaration } from './authorDeclaration.js';
 import type { PluginAccountActionContext } from './actions/contracts.js';
+import type { DatabaseEnginesServiceV1 } from './databaseEngines.js';
 import type {
     DatabaseDescriptorV1, DatabaseEngineIdV1, DatabaseManagedDeploymentTargetV1,
     DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseOperationResultV1,
@@ -94,7 +95,10 @@ export interface DeploymentTargetDatabaseRuntimeV1 {
         target: DatabaseManagedDeploymentTargetV1;
         access: DatabaseOperationClassV1;
         placement: DatabaseDescriptorV1['placement'];
-    }>, context: PluginAccountActionContext): Promise<DeploymentDatabaseResolutionV1>;
+    }>, context: PluginAccountActionContext & Readonly<{
+        /** The daemon's native engine service, when available for the admitted write. */
+        services: Readonly<{ databaseEngines?: DatabaseEnginesServiceV1 }>;
+    }>): Promise<DeploymentDatabaseResolutionV1>;
 }
 
 type DeploymentDataTargetDeclarationV1 = Extract<DeploymentTargetContributionV1, { role: 'data' }>;
