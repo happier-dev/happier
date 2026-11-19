@@ -199,11 +199,23 @@ it('names the mismatched serverId and allowed profile in the P0-DATA recipe refu
 
 it('reports Account plugin census failure in Session-create JSON before dispatch', async () => {
   const censusPath = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'];
+  const machinePath = '/v1/machines';
   const requestId = '0b54db2b-c37b-4cc0-9ad3-a8c54aab2616';
   const requests: string[] = [];
   const server = createServer((request, response) => {
     requests.push(`${request.method} ${request.url}`);
     response.setHeader('content-type', 'application/json');
+    if (request.method === 'GET' && request.url === machinePath) {
+      response.writeHead(200).end(JSON.stringify([{
+        id: '4af70cb8-88bb-4f41-86d7-94455e4f7e29', active: true, kind: 'persistent',
+        revokedAt: null, replacedByMachineId: null,
+        access: AccessibleMachineAccessV1Schema.parse({
+          custodian: { accountId: 'owner', displayName: 'Owner' },
+          role: 'manage', resourceMode: 'plain', accessState: 'ready',
+        }),
+      }]));
+      return;
+    }
     if (request.method === 'POST' && request.url === censusPath) {
       response.writeHead(503).end(JSON.stringify({ error: 'unavailable', errorCode: 'database_connection_unavailable', requestId }));
       return;
@@ -233,7 +245,7 @@ it('reports Account plugin census failure in Session-create JSON before dispatch
         } });
         expect(() => JSON.parse(output.logs.join('\n'))).not.toThrow();
         expect(process.exitCode).toBe(1);
-        expect(requests).toEqual([`POST ${censusPath}`]);
+        expect(requests.filter(request => request !== `GET ${machinePath}`)).toEqual([`POST ${censusPath}`]);
       } finally { output.restore(); }
     });
   } finally {
