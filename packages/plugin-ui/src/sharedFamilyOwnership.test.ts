@@ -1346,7 +1346,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     coreConsumers: ['components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx'],
     positiveConsumer: {
       kind: 'plugin-surface',
-      pathFromRepoRoot: 'packages/plugins/scm-bitbucket/src/ui/renderSurface.tsx',
+      pathFromRepoRoot: 'packages/plugins/scm-github/src/ui/detail/filesList.tsx',
     },
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'Diff bodies are live provider content, not declarative document nodes.' },
@@ -1363,10 +1363,8 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     sharedSymbol: 'resolveHappierChangedFilesReviewRequest',
     pluginOwner: { module: 'components/ChangedFilesReview.tsx', symbol: 'ChangedFilesReview' },
     coreConsumers: ['components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx'],
-    positiveConsumer: {
-      kind: 'plugin-surface',
-      pathFromRepoRoot: 'packages/plugins/scm-github/src/ui/renderSurface.tsx',
-    },
+    // GitHub and the shared Triage file list now compose public List and DiffViewer.
+    // This retained adapter has no maintained exact public consumer, so it stays in progress.
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'Changed files and their diffs are live source content, not declarative document nodes.' },
   },
