@@ -1,11 +1,11 @@
-import { HAPPIER_ICON_BUTTON_SIZE } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
-import { resolveIconButtonGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
 import { t } from '@/text';
+
+import { DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE } from './DesktopActivityOverlaySessionRow';
 
 /**
  * The island's pin (lab `ntdock-T`): a quiet outline while the panel is only open, a filled glyph in
@@ -31,7 +31,8 @@ export function DesktopActivityOverlayPinButton(
       icon={
         <Icon
           name="push-pin"
-          size={resolveIconButtonGlyphSize(HAPPIER_ICON_BUTTON_SIZE)}
+          // The island's one glyph size (its marks'); the hit target stays the icon button's (owner 11-19).
+          size={DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE}
           weight={props.pinned ? 'fill' : 'regular'}
           color={
             props.pinned

@@ -212,6 +212,7 @@ export function DesktopActivityOverlayConversation(
           testID="desktop-activity-overlay-conversation-back"
           variant="plain"
           iconName="caret-left"
+          iconSize={DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE}
           accessibilityLabel={t('settingsDesktop.overlay.notchBack')}
           tooltip={t('settingsDesktop.overlay.notchBack')}
           onPress={props.onBack}
@@ -271,6 +272,7 @@ export function DesktopActivityOverlayConversation(
           testID="desktop-activity-overlay-conversation-extract"
           variant="plain"
           iconName="arrow-square-out"
+          iconSize={DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE}
           accessibilityLabel={t('settingsDesktop.overlay.notchOpenInWindow')}
           tooltip={t('settingsDesktop.overlay.notchOpenInWindow')}
           busy={extract === 'opening'}
