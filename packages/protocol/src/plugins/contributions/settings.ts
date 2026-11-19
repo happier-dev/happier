@@ -342,6 +342,8 @@ const PluginSettingFieldBaseV2Schema = lazyZodSchema(() => z.object({
   title: PluginLocalizedStringV2Schema,
   description: z.optional(PluginLocalizedStringV2Schema),
   schema: PluginSettingFieldSchemaV2Schema,
+  /** Show a setup step when this field's owning store reports no value. */
+  required: z.optional(z.literal(true)),
   availability: z.optional(PluginAvailabilityDescriptorV2Schema),
   presentation: z.optional(PluginSettingFieldPresentationV2Schema),
   analytics: z.optional(PluginSettingAnalyticsV2Schema),

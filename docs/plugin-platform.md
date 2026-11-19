@@ -370,6 +370,12 @@ restoration fallback applies. Unpersisted dirty work uses the existing departure
 guard. This adds no plugin checkpoint API, native-window SDK or second destination
 registry. See [SDK evolution](compatibility.md#sdk-protocol-evolution).
 
+Installed-plugin setup uses published facts from Connected Services, MCP,
+Plugin Settings and Machine Setup. A Settings field with `required: true`
+can appear when the owner's presence projection reports it missing. Defaults
+satisfy ordinary fields. The setup list uses presence only for secret fields
+and opens each setting's existing editor.
+
 ## Built-in plugin enablement (0.3 development source)
 
 Built-in plugins default to enabled in both Account and Machine scope. The
@@ -7484,7 +7490,9 @@ captured-Home People projection, never the Run starter. Session Info mounts
 the shared Habits section for Starts here and Writes here.
 
 Patterns are ordinary `definePlugin({ workflows })` descriptor contributions,
-resolved by the existing Workflow catalog and admitted materializer. Participant
+resolved by the existing Workflow catalog and admitted materializer. Opening a
+plugin template loads its named source into an unsaved sentence editor draft.
+The usual Save action creates the Account Workflow. Participant
 inputs and qualified Discussion context references use the canonical Workflow
 types and generated Action DTOs. Plugins invoke `workflow.run.start`, its
 read/control Actions and `workflow.definition.capture` through the existing

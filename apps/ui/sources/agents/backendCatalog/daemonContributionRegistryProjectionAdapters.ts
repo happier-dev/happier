@@ -272,6 +272,7 @@ type PluginProjectionEditableSettingPresentation = Readonly<
 export type PluginProjectionEditableSettingField = Readonly<{
     key: string;
     control: PluginProjectionEditableSettingControl;
+    required?: true;
     /** Canonical secret owner from the daemon projection, never inferred from Settings scope. */
     secretCustody: PluginProjectedSettingsFieldV2['secretCustody'];
     /** Account endpoint relation used only as credential-origin metadata. */
@@ -485,6 +486,7 @@ function mapV2EditableSettingsField(field: PluginProjectedSettingsFieldV2): Plug
         ...(field.managedServiceOrigin ? { managedServiceOrigin: field.managedServiceOrigin } : {}),
         valueType: field.valueType,
         valueSchema: field.valueSchema,
+        ...(field.required === true ? { required: true } : {}),
         title: field.displayKey,
         subtitle: field.descriptionKey ?? null,
         ...(typeof field.order === 'number' ? { order: field.order } : {}),

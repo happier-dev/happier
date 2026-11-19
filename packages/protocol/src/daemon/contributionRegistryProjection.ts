@@ -1476,6 +1476,7 @@ export const PluginProjectedSettingsFieldV2Schema = lazyZodSchema(() => z.strict
     'number',
     'json',
   ]),
+  required: z.optional(z.literal(true)),
   /** The declared secret owner; independent from the enclosing Settings scope. */
   secretCustody: zMini.nullable(PluginSecretCustodyV1Schema),
   /** Origin relation metadata; it is not a secret value or a second owner. */
@@ -1704,6 +1705,7 @@ function projectPluginSettingsFieldV2(params: Readonly<{
     valueSchema: params.field.schema,
     valueType,
     control,
+    ...(params.field.required === true ? { required: true } : {}),
     secretCustody,
     ...(managedServiceOrigin ? { managedServiceOrigin } : {}),
     displayKey,
