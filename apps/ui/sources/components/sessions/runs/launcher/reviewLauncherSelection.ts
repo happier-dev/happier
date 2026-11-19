@@ -118,8 +118,8 @@ export function compileReviewLauncherInput(input: Record<string, unknown>, instr
     return { ...rest, ...(Array.isArray(outputs) && outputs.length > 0 ? { outputs } : {}), instructions: steps.length === 1 ? steps[0]!.instructions : instructions,
         reviewers: steps[0]?.reviewers ?? [],
         ...(steps.length > 1 ? { steps } : {}),
-        ...(sourceSession && steps.some(step => step.reviewers.some(reviewer => reviewer.kind === 'engine'
-            && reviewer.includeSessionTranscript)) ? { sourceSession } : {}),
+        ...(sourceSession && steps.some(step => step.reviewers.some(reviewer => reviewer.kind !== 'person'
+            && reviewer.includeSessionTranscript === true)) ? { sourceSession } : {}),
     };
 }
 

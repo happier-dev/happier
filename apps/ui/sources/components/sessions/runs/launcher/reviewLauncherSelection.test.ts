@@ -1,8 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import { ReviewStartInputSchema, type ReviewReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { compileReviewLauncherInput, updateReviewLauncherEngineConfiguration, updateReviewLauncherStepInput } from './reviewLauncherSelection';
 
 describe('review launcher submission', () => {
+    const transcriptReviewers = [
+        { kind: 'session', session: { serverId: 'peer-home', sessionId: 'peer' }, includeSessionTranscript: true },
+        { kind: 'model', launch: {
+            executionTarget: { serverId: 'model-home', machineId: 'machine' },
+            directory: { kind: 'path', path: '/work' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            permissionMode: 'read-only',
+        }, includeSessionTranscript: true },
+    ] satisfies ReviewReviewerSelectionV1[];
+
+    it.each(transcriptReviewers)('submits selected transcript scope for a $kind-only roster', reviewer => {
+        const sourceSession = { serverId: 'source-home', sessionId: 'source' };
+        const parsed = ReviewStartInputSchema.parse(compileReviewLauncherInput({ reviewers: [reviewer] }, 'Inspect', sourceSession));
+        expect(parsed.sourceSession).toEqual(sourceSession);
+        expect(parsed.reviewers).toEqual([reviewer]);
+    });
+
+    it.each(transcriptReviewers)('omits unselected transcript scope for a $kind-only roster', reviewer => {
+        const parsed = ReviewStartInputSchema.parse(compileReviewLauncherInput({
+            reviewers: [{ ...reviewer, includeSessionTranscript: false }],
+        }, 'Inspect', { serverId: 'source-home', sessionId: 'source' }));
+        expect(parsed.sourceSession).toBeUndefined();
+    });
+
+    it.each(transcriptReviewers)('keeps detached selected transcript refusal for a $kind-only roster', reviewer => {
+        const parsed = ReviewStartInputSchema.safeParse(compileReviewLauncherInput({ reviewers: [reviewer] }, 'Inspect', null));
+        expect(parsed.success).toBe(false);
+        if (!parsed.success) expect(parsed.error.issues).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'custom', path: ['sourceSession'] }),
+        ]));
+    });
+
     it('edits the chosen later-step configuration while retaining repeated engines and the scalar first roster', () => {
         const first = { kind: 'engine', engineId: 'claude', modelId: 'first-model' };
         const input = { reviewers: [first], steps: [
