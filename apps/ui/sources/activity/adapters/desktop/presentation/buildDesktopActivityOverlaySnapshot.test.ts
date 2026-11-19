@@ -259,7 +259,7 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
         });
 
         expect(snapshot.primary?.sessionId).toBe('workspace-privacy');
-        expect(snapshot.primary?.subtitle).toContain('Home A');
+        expect(snapshot.primary?.subtitle ?? '').not.toContain('Home A');
         expect(JSON.stringify(snapshot.sessions).includes('PRIVATE-WORKSPACE-SENTINEL')).toBe(privacyMode === 'include_preview');
     });
 
@@ -272,12 +272,12 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             ...overrides,
         });
         const buildFor = (
-            session: ReturnType<typeof createSessionFixture>,
+            session: ReturnType<typeof createSessionFixture> | readonly ReturnType<typeof createSessionFixture>[],
             machines: Record<string, Readonly<{ id: string; metadata: Readonly<{ displayName?: string; host?: string }> }>>,
             privacyMode?: 'status_only',
         ) => buildDesktopActivityOverlaySnapshot({
             source: {
-                ...createOverlaySource({ sessions: [session] }),
+                ...createOverlaySource({ sessions: Array.isArray(session) ? [...session] : [session as ReturnType<typeof createSessionFixture>] }),
                 serverProfilesById: { 'server-1': {
                     id: 'server-1', name: 'Home A', serverUrl: 'https://server-1.example.test',
                     createdAt: 1, updatedAt: 1, lastUsedAt: 1, source: 'manual',
@@ -304,7 +304,25 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
                 'machine-2': { id: 'machine-2', metadata: { host: 'box' } },
             });
 
-            expect(snapshot.primary?.subtitle).toMatch(/^happier · box · machine-1/);
+            // Only one listed Machine is called box, so its name needs no suffix (owner 11-19).
+            expect(snapshot.primary?.subtitle).toBe('happier · box');
+        });
+
+        it('tells two listed same-named Machines apart, and only then', () => {
+            const snapshot = buildFor([
+                askingSession(),
+                askingSession({ id: 'asker-2', metadata: { path: '/Users/tester/happier', host: 'tester.local', homeDir: '/Users/tester', machineId: 'machine-2' } }),
+            ], {
+                'machine-1': { id: 'machine-1', metadata: { host: 'box' } },
+                'machine-2': { id: 'machine-2', metadata: { host: 'box' } },
+                'machine-3': { id: 'machine-3', metadata: { host: 'box' } },
+            });
+
+            const lines = snapshot.sessions.map(session => session.subtitle);
+            expect(lines).toHaveLength(2);
+            expect(lines[0]).toMatch(/^happier · box · \S+/);
+            expect(lines[1]).toMatch(/^happier · box · \S+/);
+            expect(lines[0]).not.toBe(lines[1]);
         });
 
         it('names only the Machine for a Session without a folder', () => {
@@ -316,19 +334,21 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             expect(snapshot.primary?.subtitle).toBe('devbox');
         });
 
-        it('keeps the Home when it knows neither project nor Machine', () => {
+        it('leaves the one Home unnamed when it knows neither project nor Machine', () => {
             const snapshot = buildFor(askingSession({ metadata: {
                 path: '/managed/private', host: 'tester.local', sessionDirectoryV1: { v: 1, kind: 'managed' },
             } }), {});
 
-            expect(snapshot.primary?.subtitle).toBe('Home A');
+            // Every listed Session runs on Home A, so naming it says nothing (owner 11-19).
+            expect(snapshot.primary?.subtitle ?? '').not.toContain('Home A');
         });
 
         it('leaves a row that is not asking to the privacy preference', () => {
             const snapshot = buildFor(askingSession({ agentState: {} }), devbox);
 
             expect(snapshot.permissionRequests).toHaveLength(0);
-            expect(snapshot.primary?.subtitle).toBe('Home A');
+            expect(snapshot.primary?.subtitle ?? '').not.toContain('Home A');
+            expect(JSON.stringify(snapshot.sessions)).not.toContain('devbox');
         });
 
         it('says nothing more when the privacy preference withholds the ask itself', () => {
@@ -393,8 +413,35 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             nowMs: 1_000,
         });
 
-        expect(snapshot.primary?.subtitle).toBe(contextLine);
+        // One listed Home: the line starts after it (owner 11-19).
+        expect(snapshot.primary?.subtitle).toBe(contextLine.replace('Home B · ', ''));
         expect(JSON.stringify(snapshot.primary)).not.toContain('PRIVATE-');
+    });
+
+    it('names each row\'s Home only when the listed Sessions span more than one Home', () => {
+        const candidateOn = (serverId: string, id: string, home: string) => {
+            const session = createSessionFixture({ encryptionMode: 'plain', id, serverId, active: true, presence: 'online',
+                pendingPermissionRequestCount: 1, pendingRequestObservedAt: 950 });
+            return {
+                ...buildSessionActivityAttention({ session, nowMs: 1_000 }),
+                address: { serverId, sessionId: id },
+                context: { address: { serverId, sessionId: id }, segments: [{ kind: 'home' as const, label: home }],
+                    contextLine: home, accessibilityContext: home, workspace: null, mayShowDecryptedContent: true },
+            };
+        };
+        const build = (candidates: ReturnType<typeof candidateOn>[]) => buildDesktopActivityOverlaySnapshot({
+            source: createOverlaySource({ sessions: [] }),
+            sourceOverview: { candidates, counts: { unread: 0, permissionRequired: candidates.length, actionRequired: 0, thinking: 0, totalAttention: candidates.length } },
+            activityPolicy: resolveActivitySurfacePolicy({}),
+            desktopPolicy: createDesktopPolicy(),
+            nowMs: 1_000,
+        });
+
+        const oneHome = build([candidateOn('server-1', 'a', 'Home A'), candidateOn('server-1', 'b', 'Home A')]);
+        expect(oneHome.sessions.map(session => session.subtitle ?? '').join(' ')).not.toContain('Home A');
+
+        const twoHomes = build([candidateOn('server-1', 'a', 'Home A'), candidateOn('server-2', 'c', 'Home B')]);
+        expect(twoHomes.sessions.map(session => session.subtitle)).toEqual(['Home A', 'Home B']);
     });
 
     it('keeps the activity snapshot focused on the selected desktop activity session', () => {

@@ -101,6 +101,8 @@ export function buildActivitySurfaceViewModel(params: Readonly<{
     policy: ActivitySurfacePolicy;
     showMachinePath: boolean;
     showPreviewText: boolean;
+    /** False drops the Home from the context line, for a surface whose rows all share one Home. */
+    showHome?: boolean;
     isPrimary: boolean;
     nowMs?: number;
     resolveCandidatePrivacyMode?: ActivitySurfaceCandidatePrivacyModeResolver;
@@ -113,6 +115,7 @@ export function buildActivitySurfaceViewModel(params: Readonly<{
     const statusText = params.candidate.workStatus.word;
     const contextLine = resolveSessionContextLine(params.candidate.context, {
         showWorkspace: mayShowWorkspace,
+        showHome: params.showHome,
     });
 
     return {
@@ -168,6 +171,7 @@ export function buildActivitySurfaceViewModels(params: Readonly<{
     policy: ActivitySurfacePolicy;
     showMachinePath: boolean;
     showPreviewText: boolean;
+    showHome?: boolean;
     nowMs?: number;
     resolveCandidatePrivacyMode?: ActivitySurfaceCandidatePrivacyModeResolver;
 }>): readonly ActivitySurfaceSessionViewModel[] {
@@ -177,6 +181,7 @@ export function buildActivitySurfaceViewModels(params: Readonly<{
             policy: params.policy,
             showMachinePath: params.showMachinePath,
             showPreviewText: params.showPreviewText,
+            showHome: params.showHome,
             isPrimary: index === 0,
             nowMs: params.nowMs,
             resolveCandidatePrivacyMode: params.resolveCandidatePrivacyMode,

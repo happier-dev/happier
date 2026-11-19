@@ -52,20 +52,46 @@ function buildDesktopActivityOverlaySnapshotLabels(): DesktopActivityOverlaySnap
 export type DesktopActivityOverlayMachineDisplays = Readonly<Record<string, Readonly<Record<string, MachineNameSource>>>>;
 
 /**
- * Where an asking Session runs: its project and Machine, plus whatever else its context says, in
- * place of the Home. The Machine name comes from the same resolver as the Machine pickers. Null when
- * neither is known, so the row keeps its ordinary context line.
+ * Where an asking Session runs: its project and Machine, plus whatever else its context says. The Machine
+ * name comes from the same resolver as the Machine pickers, told apart only from the other listed Machines
+ * (owner 11-19: the "· 2f4e" suffix appears only when two listed Machines share a name). Null when neither
+ * is known, so the row keeps its ordinary context line.
  */
 function resolveAskerContextLine(
     candidate: SessionActivityAttention,
     machineId: string | null | undefined,
     machineDisplays: DesktopActivityOverlayMachineDisplays[string] | undefined,
+    listedMachines: readonly MachineNameSource[],
+    showHome: boolean,
 ): string | null {
     const machine = machineId ? machineDisplays?.[machineId] : undefined;
-    const machineName = machine ? getSettledMachineDisplayName(machine, Object.values(machineDisplays ?? {})) : null;
+    const machineName = machine ? getSettledMachineDisplayName(machine, listedMachines) : null;
     if (!machineName && !candidate.context?.workspace) return null;
-    const context = resolveSessionContextLine(candidate.context, { showWorkspace: true, showHome: false });
+    const context = resolveSessionContextLine(candidate.context, { showWorkspace: true, showHome });
     return [context, machineName].filter(Boolean).join(' · ');
+}
+
+/**
+ * The where-line facts decided once for the whole rendered list (owner 11-19): the Home speaks only when the
+ * listed Sessions span more than one Home, and a Machine is told apart only from the other listed Machines.
+ */
+function resolveDesktopActivityOverlayListWhere(
+    candidates: readonly SessionActivityAttention[],
+    machineDisplaysByServerId: DesktopActivityOverlayMachineDisplays | undefined,
+): Readonly<{ showHome: boolean; listedMachinesByServerId: ReadonlyMap<string, readonly MachineNameSource[]> }> {
+    const homes = new Set<string | null>();
+    const listed = new Map<string, MachineNameSource[]>();
+    for (const candidate of candidates) {
+        const serverId = candidate.address?.serverId ?? candidate.serverId ?? candidate.session.serverId ?? null;
+        homes.add(serverId);
+        const machineId = readSessionListIdentityFacts(candidate.session, candidate.presentationSource).machineId;
+        const machine = serverId && machineId ? machineDisplaysByServerId?.[serverId]?.[machineId] : undefined;
+        if (!serverId || !machine) continue;
+        const machines = listed.get(serverId) ?? [];
+        if (!machines.includes(machine)) machines.push(machine);
+        listed.set(serverId, machines);
+    }
+    return { showHome: homes.size > 1, listedMachinesByServerId: listed };
 }
 
 function buildDesktopActivityOverlaySessionSnapshots(
@@ -73,6 +99,7 @@ function buildDesktopActivityOverlaySessionSnapshots(
     candidates: readonly SessionActivityAttention[],
     requests: readonly DesktopActivityOverlayRequestSnapshot[],
     machineDisplaysByServerId: DesktopActivityOverlayMachineDisplays | undefined,
+    where: ReturnType<typeof resolveDesktopActivityOverlayListWhere>,
 ): readonly DesktopActivityOverlaySessionSnapshot[] {
     // A request snapshot exists only where the privacy gates let the ask itself show, so that one
     // decision also admits saying where it comes from.
@@ -100,7 +127,8 @@ function buildDesktopActivityOverlaySessionSnapshots(
         const identity = candidate ? readSessionListIdentityFacts(candidate.session, candidate.presentationSource) : null;
         const askerContext = candidate && viewModel.serverId
             && askingKeys.has(sessionAddressKey({ serverId: viewModel.serverId, sessionId: viewModel.sessionId }))
-            ? resolveAskerContextLine(candidate, identity?.machineId, machineDisplaysByServerId?.[viewModel.serverId])
+            ? resolveAskerContextLine(candidate, identity?.machineId, machineDisplaysByServerId?.[viewModel.serverId],
+                where.listedMachinesByServerId.get(viewModel.serverId) ?? [], where.showHome)
             : null;
         return {
             sessionId: viewModel.sessionId,
@@ -156,8 +184,10 @@ export function buildDesktopActivityOverlaySnapshot(params: Readonly<{
     // The pinned header reads this same row projection even outside the overview slots.
     const presentedCandidates = pinnedCandidate && !slots.selectedSessions.includes(pinnedCandidate)
         ? [...slots.selectedSessions, pinnedCandidate] : slots.selectedSessions;
+    const where = resolveDesktopActivityOverlayListWhere(presentedCandidates, params.machineDisplaysByServerId);
     const selectedSessions = buildActivitySurfaceViewModels({
         candidates: presentedCandidates,
+        showHome: where.showHome,
         policy: params.activityPolicy,
         showMachinePath: true,
         // Expanded detail uses the admitted privacy policy, never the retired collapsed-preview preference.
@@ -175,6 +205,7 @@ export function buildDesktopActivityOverlaySnapshot(params: Readonly<{
         presentedCandidates,
         [...requestSnapshots.permissionRequests, ...requestSnapshots.userQuestions],
         params.machineDisplaysByServerId,
+        where,
     );
     const quotaSummaries = buildDesktopActivityOverlayQuotaSummarySnapshots(params.source.quotaSummaries);
     const completionStates = buildDesktopActivityOverlayCompletionSnapshots({
