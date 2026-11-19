@@ -39,6 +39,7 @@ function candidate(): ReviewCommentHostActionCandidate {
       body: 'Use the canonical owner.',
       anchor: { kind: 'line', filePath: 'a.ts', line: 2 },
       severity: 'warning',
+      extensions: { 'acme.review': { source: 'slice-1', evidence: ['native'] } },
     }],
   };
 }
@@ -98,7 +99,7 @@ describe('createReviewCommentHostActionMaterializer', () => {
     })).toBeNull();
   });
 
-  it('revalidates current intent and dispatches deterministic canonical host actions', async () => {
+  it('binds approved intent once and dispatches deterministic canonical host actions', async () => {
     const cwd = await fixture();
     let current: ReviewCommentHostActionCandidate | null = candidate();
     const dispatches: Array<Readonly<{ input: ReviewCommentCreateRequestV1; context: ActionExecutorContext }>> = [];
@@ -125,6 +126,7 @@ describe('createReviewCommentHostActionMaterializer', () => {
       anchor: { kind: 'line', filePath: 'a.ts', line: 2 },
       snapshot: { kind: 'text', selectedLines: ['two'] },
       metadata: { severity: 'warning' },
+      extensions: { 'acme.review': { source: 'slice-1', evidence: ['native'] } },
       fingerprint: expect.objectContaining({ engineId: 'acme.review' }),
       linkedRefs: [{ kind: 'executionRun', id: 'run-1' }, { kind: 'session', id: 'session-1' }],
     });
@@ -153,11 +155,10 @@ describe('createReviewCommentHostActionMaterializer', () => {
     current = null;
   });
 
-  it('creates no comments when current intent is denied, the run changes, or a snapshot is unavailable', async () => {
+  it('creates no comments when intent is denied, its fingerprint differs, or a snapshot is unavailable', async () => {
     const cwd = await fixture();
     let current: ReviewCommentHostActionCandidate | null = candidate();
-    let mode: 'denied' | 'stale' | 'authority' | 'missing' = 'denied';
-    let authority = currentPluginAuthority;
+    let mode: 'denied' | 'fingerprint' | 'missing' = 'denied';
     let dispatchCount = 0;
     const materialize = createReviewCommentHostActionMaterializer({
       cwd,
@@ -170,19 +171,11 @@ describe('createReviewCommentHostActionMaterializer', () => {
           ],
         }
         : current,
-      readCurrentPluginAuthority: async () => authority,
+      readCurrentPluginAuthority: async () => currentPluginAuthority,
       resolveWorkspace: async () => ({ projectId: 'project-1', workspaceId: 'workspace-1', serverId: 'server-1' }),
       requestCurrentIntent: async (subject) => {
         if (mode === 'denied') return { status: 'rejected', code: 'execution_run_host_action_current_intent_rejected' };
-        if (mode === 'stale') current = { ...candidate(), callId: 'call-2' };
-        if (mode === 'authority') authority = {
-          sourceCustody: {
-            kind: 'managed',
-            immutableGenerationId: 'generation-2',
-            installSource: 'archive',
-          },
-        };
-        return { status: 'approved', fingerprint: subject.subjectFingerprint };
+        return { status: 'approved', fingerprint: mode === 'fingerprint' ? 'different-fingerprint' : subject.subjectFingerprint };
       },
       executeHostAction: async () => {
         dispatchCount += 1;
@@ -191,18 +184,40 @@ describe('createReviewCommentHostActionMaterializer', () => {
     });
 
     await expect(materialize()).resolves.toMatchObject({ ok: false, errorCode: 'execution_run_host_action_current_intent_rejected' });
-    mode = 'stale';
-    current = candidate();
-    await expect(materialize()).resolves.toMatchObject({ ok: false, errorCode: 'execution_run_host_action_stale' });
-    mode = 'authority';
-    current = candidate();
-    authority = currentPluginAuthority;
-    await expect(materialize()).resolves.toMatchObject({ ok: false, errorCode: 'execution_run_host_action_stale' });
+    mode = 'fingerprint';
+    await expect(materialize()).resolves.toMatchObject({ ok: false, errorCode: 'execution_run_host_action_current_intent_mismatch' });
     mode = 'missing';
     current = candidate();
-    authority = currentPluginAuthority;
     await expect(materialize()).resolves.toMatchObject({ ok: false, errorCode: 'review_comment_snapshot_unavailable' });
     expect(dispatchCount).toBe(0);
+  });
+
+  it.each(['source', 'policy', 'candidate'] as const)('writes the exact prepared operands once after an approved %s changes', async (change) => {
+    const cwd = await fixture();
+    let current = candidate();
+    let authority: ReviewCommentHostPluginAuthority | null = currentPluginAuthority;
+    const dispatched: ReviewCommentCreateRequestV1[] = [];
+    const materialize = createReviewCommentHostActionMaterializer({
+      cwd,
+      readCurrentCandidate: () => current,
+      readCurrentPluginAuthority: async () => authority,
+      resolveWorkspace: async () => ({ projectId: 'project-1', workspaceId: 'workspace-1', serverId: 'server-1' }),
+      requestCurrentIntent: async (subject) => {
+        if (change === 'source') authority = { sourceCustody: { kind: 'managed', immutableGenerationId: 'generation-2', installSource: 'archive' } };
+        if (change === 'policy') authority = null;
+        if (change === 'candidate') current = { ...candidate(), callId: 'call-2', proposals: [{ ...candidate().proposals[0]!, body: 'A later proposal.' }] };
+        await writeFile(join(cwd, 'a.ts'), 'Changed after approval.\n', 'utf8');
+        return { status: 'approved', fingerprint: subject.subjectFingerprint };
+      },
+      executeHostAction: async (_actionId, input) => {
+        dispatched.push(input);
+        return { ok: true, result: { comment: { id: 'comment-1' }, replayed: false } };
+      },
+    });
+
+    await expect(materialize()).resolves.toMatchObject({ ok: true, result: { status: 'created', comments: [{ commentId: 'comment-1' }] } });
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]).toMatchObject({ body: 'Use the canonical owner.', runId: 'run-1', snapshot: { selectedLines: ['two'] } });
   });
 
   it('bounds thrown action failures and continues later proposals with deterministic partial truth', async () => {

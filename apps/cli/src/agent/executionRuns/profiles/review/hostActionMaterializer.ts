@@ -106,13 +106,6 @@ function buildBase(
   });
 }
 
-function basesEqual(
-  left: ReviewCommentHostActionBase,
-  right: ReviewCommentHostActionBase,
-): boolean {
-  return stringifyReviewCommentPrincipalCanonicalJsonV1(left) === stringifyReviewCommentPrincipalCanonicalJsonV1(right);
-}
-
 function readCreatedCommentResult(value: unknown): Readonly<{ commentId: string; replayed: boolean }> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Readonly<Record<string, unknown>>;
@@ -171,6 +164,7 @@ function buildCreateRequest(params: Readonly<{
     anchor: params.proposal.anchor,
     snapshot: params.snapshot,
     body: params.proposal.body,
+    ...(params.proposal.extensions === undefined ? {} : { extensions: params.proposal.extensions }),
     authorIntent: 'propose',
     fingerprint: {
       ...(params.proposal.findingId ? { ruleId: params.proposal.findingId } : {}),
@@ -286,23 +280,13 @@ export function createReviewCommentHostActionMaterializer(deps: Readonly<{
       return { ok: false, errorCode: 'execution_run_host_action_current_intent_mismatch', error: 'Approved subject fingerprint does not match' };
     }
 
-    const approvedBase = await readBase();
-    if (!approvedBase || !basesEqual(initialBase, approvedBase)) {
-      return { ok: false, errorCode: 'execution_run_host_action_stale', error: 'Review run changed while awaiting current intent' };
-    }
     const approved = initial;
     const prepared = initialPrepared.prepared;
-
-    const immediatelyBeforeDispatch = await readBase();
-    if (!immediatelyBeforeDispatch || !basesEqual(approvedBase, immediatelyBeforeDispatch)) {
-      return { ok: false, errorCode: 'execution_run_host_action_stale', error: 'Review run changed before host-action dispatch' };
-    }
 
     const comments: Array<Readonly<{ findingId?: string; commentId: string; replayed: boolean }>> = [];
     const failures: Array<Readonly<{ findingId?: string; errorCode: string }>> = [];
     for (const [itemIndex, item] of prepared.entries()) {
-      const currentBase = await readBase();
-      if (!currentBase || !basesEqual(approvedBase, currentBase)) {
+      if (!deps.readCurrentCandidate()) {
         for (const remaining of prepared.slice(itemIndex)) {
           failures.push({
             ...(remaining.proposal.findingId ? { findingId: remaining.proposal.findingId } : {}),

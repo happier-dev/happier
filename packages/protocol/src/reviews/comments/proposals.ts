@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { ReviewFindingExtensionsSchema } from '../findingExtensions.js';
 
 const WorkspaceRelativeReviewPathV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(4096), z.refine((value) => {
   const normalized = value.replaceAll('\\', '/');
@@ -32,6 +33,7 @@ export const ReviewCommentProposalV1Schema = lazyZodSchema(() => z.strictObject(
   body: z.string().check(z.trim(), z.minLength(1), z.maxLength(65_536)),
   anchor: ReviewCommentProposalAnchorV1Schema,
   severity: z.optional(z.enum(['info', 'warning', 'error', 'critical'])),
+  extensions: z.optional(ReviewFindingExtensionsSchema),
   taxonomyIds: z.optional(z.array(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))).check(z.maxLength(32))),
   tags: z.optional(z.array(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))).check(z.maxLength(32))),
 }));

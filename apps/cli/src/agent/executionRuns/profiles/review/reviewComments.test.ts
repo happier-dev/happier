@@ -299,47 +299,7 @@ describe('canonical review Run comments', () => {
     });
   });
 
-  it('uses the prepared comparison for a Session finding after the live file is deleted', async () => {
-    return runWithScmAccountScope('account', async () => {
-      const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-session-historical-' });
-      repositories.push(fixture.rootPath);
-      await writeFile(join(fixture.rootPath, fixture.trackedPath), 'historical Session input();\n');
-      const captured = await captureScmComparison({ cwd: fixture.rootPath, sessionId: 'source-session', source: { kind: 'workingTree' } });
-      await rm(join(fixture.rootPath, fixture.trackedPath));
-      const requests: unknown[] = [];
-      vi.mocked(axios.post).mockImplementation(async (_url, body) => {
-        requests.push(body);
-        return { status: 200, data: { comment: commentForCreate(body), replayed: false } };
-      });
-      const result = await service().materialize({ session: { sessionId: 'reviewer-session', localInputId: 'input',
-        workflowRunId: 'workflow', stepId: 'review', invocationId: 'invocation', agentId: 'claude', reviewerId: 'selection', cwd: fixture.rootPath },
-        comparison: captured.comparison, findings: [{ ...findings[0], filePath: fixture.trackedPath }], reviewedFingerprint: null });
-      expect(result).toMatchObject({ status: 'materialized' });
-      expect(requests).toMatchObject([{ anchor: { kind: 'line', filePath: fixture.trackedPath, side: 'after' },
-        snapshot: { kind: 'text', source: 'diffSide', selectedLines: ['historical Session input();'] } }]);
-    });
-  });
 
-  it('uses the prepared comparison for a Session finding after the live file is deleted', async () => {
-    return runWithScmAccountScope('account', async () => {
-      const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-session-historical-' });
-      repositories.push(fixture.rootPath);
-      await writeFile(join(fixture.rootPath, fixture.trackedPath), 'historical Session input();\n');
-      const captured = await captureScmComparison({ cwd: fixture.rootPath, sessionId: 'source-session', source: { kind: 'workingTree' } });
-      await rm(join(fixture.rootPath, fixture.trackedPath));
-      const requests: unknown[] = [];
-      vi.mocked(axios.post).mockImplementation(async (_url, body) => {
-        requests.push(body);
-        return { status: 200, data: { comment: commentForCreate(body), replayed: false } };
-      });
-      const result = await service().materialize({ session: { sessionId: 'reviewer-session', localInputId: 'input',
-        workflowRunId: 'workflow', stepId: 'review', invocationId: 'invocation', agentId: 'claude', reviewerId: 'selection', cwd: fixture.rootPath },
-        comparison: captured.comparison, findings: [{ ...findings[0], filePath: fixture.trackedPath }], reviewedFingerprint: null });
-      expect(result).toMatchObject({ status: 'materialized' });
-      expect(requests).toMatchObject([{ anchor: { kind: 'line', filePath: fixture.trackedPath, side: 'after' },
-        snapshot: { kind: 'text', source: 'diffSide', selectedLines: ['historical Session input();'] } }]);
-    });
-  });
 
   it('uses the prepared comparison for a Session finding after the live file is deleted', async () => {
     return runWithScmAccountScope('account', async () => {
