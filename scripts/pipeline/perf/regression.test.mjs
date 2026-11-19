@@ -94,17 +94,21 @@ test('production bundle budget measures all emitted JS/CSS once and rejects a re
 // A minimal Metro/Expo web export: the shapes are copied from a real v0.3 export
 // (route context getters `(d[N],d.paths)` and a dependency map with `paths`).
 const module = body => `__d((function(g,r,i,a,m,e,d){${body}}),1,[]);`;
+const chunkPath = (name, asyncCommon) => JSON.stringify(asyncCommon
+  ? ['/_expo/static/js/web/__common-e.js', `/_expo/static/js/web/${name}.js`] : `/_expo/static/js/web/${name}.js`);
 const route = (key, index) => `"${key}":{enumerable:!0,get:()=>r(d[1])(d[${index}],d.paths)}`;
-async function writeWebExport(root, { entryModules = 2, homeBody = 'home', precompressed = true } = {}) {
+// Keys keep Expo's order: `./(app)/…` sorts before `./_layout.tsx`.
+// `asyncCommon`: the current Metro shape (patches/@expo__metro-config): the shared `__common` chunk is no
+// longer an index.html script; each async chunk's path is [prerequisite chunks…, chunk].
+async function writeWebExport(root, { entryModules = 2, homeBody = 'home', precompressed = true, asyncCommon = false } = {}) {
   const js = join(root, '_expo/static/js/web');
   await mkdir(join(root, '_expo/static/css'), { recursive: true });
   await mkdir(js, { recursive: true });
   await writeFile(join(root, 'index.html'), '<link href="/_expo/static/css/theme.css" rel="stylesheet">'
     + '<script src="/_expo/static/js/web/runtime.js"></script><script src="/_expo/static/js/web/entry.js"></script>');
-  const context = `__d((function(g,r,i,a,m,e,d){m.exports={${[route('./_layout.tsx', 2), route('./(app)/_layout.tsx', 3),
-    route('./(app)/index.tsx', 4), route('./(app)/settings/index.tsx', 5)].join(',')}}}),2,{"0":0,"1":7,"2":10,"3":11,"4":12,"5":13,`
-    + '"paths":{"10":"/_expo/static/js/web/_layout-a.js","11":"/_expo/static/js/web/_layout-b.js",'
-    + '"12":"/_expo/static/js/web/index-c.js","13":"/_expo/static/js/web/settings-d.js"}});';
+  const context = `__d((function(g,r,i,a,m,e,d){m.exports={${[route('./(app)/_layout.tsx', 3),
+    route('./(app)/index.tsx', 4), route('./(app)/settings/index.tsx', 5), route('./_layout.tsx', 2)].join(',')}}}),2,{"0":0,"1":7,"2":10,"3":11,"4":12,"5":13,`
+    + `"paths":{${['_layout-a', '_layout-b', 'index-c', '[id]-d'].map((name, index) => `"${10 + index}":${chunkPath(name, asyncCommon)}`).join(',')}}});`;
   const files = {
     '_expo/static/css/theme.css': 'body{color:red}',
     '_expo/static/js/web/runtime.js': 'var __d;',
@@ -112,7 +116,8 @@ async function writeWebExport(root, { entryModules = 2, homeBody = 'home', preco
     '_expo/static/js/web/_layout-a.js': module('root layout'),
     '_expo/static/js/web/_layout-b.js': module('app layout'),
     '_expo/static/js/web/index-c.js': module(homeBody),
-    '_expo/static/js/web/settings-d.js': module('settings is not before Home').repeat(5),
+    '_expo/static/js/web/[id]-d.js': module('settings is not before Home').repeat(5),
+    ...asyncCommon ? { '_expo/static/js/web/__common-e.js': module('shared by every async chunk').repeat(4) } : {},
   };
   for (const [file, text] of Object.entries(files)) {
     await writeFile(join(root, file), text);
@@ -151,6 +156,31 @@ test('boot weight counts the entry, its styles and the async Home route chunks, 
     'an export the precompression owner never ran on has no served-bytes figure');
   await writeFile(temp.path('plain/_expo/static/js/web/entry.js'), module('no router'));
   await assert.rejects(regression.readWebBootWeight(temp.path('plain')), /Home route/);
+});
+
+test('boot weight counts the shared common chunk that Home route chunks require once, though index.html does not list it', async t => {
+  const temp = await createTempFixture(t, { prefix: 'happier-perf-boot-common-' });
+  const files = await writeWebExport(temp.path('export'), { asyncCommon: true });
+  const boot = await regression.readWebBootWeight(temp.path('export'));
+  const beforeHome = ['_expo/static/css/theme.css', '_expo/static/js/web/runtime.js', '_expo/static/js/web/entry.js',
+    '_expo/static/js/web/__common-e.js', '_expo/static/js/web/_layout-a.js', '_expo/static/js/web/_layout-b.js', '_expo/static/js/web/index-c.js'];
+  assert.deepEqual(boot.files.map(row => row.file), beforeHome);
+  assert.equal(boot.files.find(row => row.file.includes('__common')).kind, 'shared');
+  assert.equal(boot.modules, 6 + 4);
+  assert.equal(boot.bytes, beforeHome.reduce((sum, file) => sum + Buffer.byteLength(files[file]), 0));
+});
+
+test('the route table gives every route its own chunk weight and the shared chunks it needs first', async t => {
+  const temp = await createTempFixture(t, { prefix: 'happier-perf-routes-' });
+  for (const asyncCommon of [false, true]) {
+    const files = await writeWebExport(temp.path(String(asyncCommon)), { asyncCommon });
+    const { routes } = await regression.readWebBootWeight(temp.path(String(asyncCommon)));
+    assert.deepEqual(Object.keys(routes), ['./(app)/_layout.tsx', './(app)/index.tsx', './(app)/settings/index.tsx', './_layout.tsx']);
+    assert.deepEqual(routes['./(app)/settings/index.tsx'], {
+      files: ['_expo/static/js/web/[id]-d.js'], shared: asyncCommon ? ['_expo/static/js/web/__common-e.js'] : [],
+      bytes: Buffer.byteLength(files['_expo/static/js/web/[id]-d.js']), brotliBytes: 3, modules: 5,
+    });
+  }
 });
 
 test('comparison summary retains backend CPU, event-loop and long-task observations as noisy deltas', () => {

@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { WEB_BOOT_WEIGHT_VERSION, WEB_BOOT_WEIGHT_COMMENT_MARKER, compareWebBootWeight, renderWebBootWeightComment } from './web-boot-weight.mjs';
 
-const measurement = (sha, modules, extra = {}) => ({ version: WEB_BOOT_WEIGHT_VERSION, sha, bytes: 1000,
-  boot: { modules, bytes: 500, brotliBytes: 100, files: [{ kind: 'script', file: '_expo/static/js/web/entry.js', modules, bytes: 500, brotliBytes: 100 }] }, ...extra });
+const routeRow = (name, bytes) => ({ files: [`_expo/static/js/web/${name}.js`], shared: ['_expo/static/js/web/__common-e.js'], bytes, brotliBytes: bytes / 10, modules: 2 });
+const measurement = (sha, modules, extra = {}, routes = { './(app)/index.tsx': routeRow('index-c', 100), './(app)/settings/index.tsx': routeRow('settings-d', 200) }) => ({
+  version: WEB_BOOT_WEIGHT_VERSION, sha, bytes: 1000,
+  boot: { modules, bytes: 500, brotliBytes: 100, files: [{ kind: 'script', file: '_expo/static/js/web/entry.js', modules, bytes: 500, brotliBytes: 100 }], routes }, ...extra });
 
 test('the PR diff names each boot change against the exact base', () => {
   const result = compareWebBootWeight(measurement('b'.repeat(40), 11), measurement('a'.repeat(40), 10));
@@ -37,4 +39,19 @@ test('the sticky PR comment renders only plain measurement data from CI artifact
   // An unusable base is dropped, not trusted: the comment shows this commit only.
   const unusableBase = { ...measurement('a'.repeat(40), 10), sha: '<b>' };
   assert.match(renderWebBootWeightComment(measurement('b'.repeat(40), 11), unusableBase), /No exact-base measurement/);
+});
+
+test('the PR diff lists each route whose own chunk changed against the base, and the full table on request', () => {
+  const base = measurement('a'.repeat(40), 10);
+  const candidate = measurement('b'.repeat(40), 10, {}, { './(app)/index.tsx': routeRow('index-c', 100),
+    './(app)/settings/index.tsx': routeRow('settings-f', 260), './(app)/boards/index.tsx': routeRow('boards-g', 40) });
+  const { markdown } = compareWebBootWeight(candidate, base);
+  assert.match(markdown, /Routes whose own chunk changed: 2 of 3/);
+  assert.match(markdown, /\| `\.\/\(app\)\/settings\/index\.tsx` \| 200 \| 260 \| 60 \| 20 \| 26 \|/);
+  assert.match(markdown, /\| `\.\/\(app\)\/boards\/index\.tsx` \| unavailable \| 40 \| unavailable \|/);
+  assert.doesNotMatch(markdown, /`\.\/\(app\)\/index\.tsx` \|/, 'an unchanged route stays out of the PR comment');
+  const full = compareWebBootWeight(candidate, base, { allRoutes: true }).markdown;
+  assert.match(full, /\| `\.\/\(app\)\/index\.tsx` \| `index-c\.js` \| 2 \| 100 \| 10 \| `__common-e\.js` \|/);
+  // A baseline measured before routes existed shows this commit only.
+  assert.match(compareWebBootWeight(candidate, null).markdown, /Routes: 3; no exact-base route measurement/);
 });

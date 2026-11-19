@@ -133,53 +133,62 @@ export async function readProductionBundleSize(root) {
 // downloads and evaluates before Home can render. Other routes load on demand.
 const HOME_ROUTE_FILES = ['./_layout.tsx', './(app)/_layout.tsx', './(app)/index.tsx'];
 const exportPath = href => {
-  if (!/^\/[\w.@/-]+$/u.test(href) || href.includes('/../')) throw new Error(`Web export references a non-local asset: ${href}`);
+  // Expo names route chunks after their files: `[id]-<hash>.js`, `+not-found-<hash>.js`.
+  if (!/^\/[\w.@/+()[\]-]+$/u.test(href) || href.includes('/../')) throw new Error(`Web export references a non-local asset: ${href}`);
   return href.slice(1);
 };
-const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 
 /**
- * Find the chunk each Home route loads. Metro's production web output keeps
- * the route context as getters `"./(app)/index.tsx":{…get:()=>r(d[1])(d[N],d.paths)}`
- * and the module's dependency map `{"N":<moduleId>,…,"paths":{"<moduleId>":"/_expo/…js"}}`.
- * A synchronous route (no `.paths` argument) is already inside the entry.
+ * Every route of Expo Router's route context and the chunks it loads. Metro's
+ * production web output keeps the context as getters
+ * `"./(app)/index.tsx":{…get:()=>r(d[1])(d[N],d.paths)}` followed by the
+ * module's dependency map `{"N":<moduleId>,…,"paths":{"<moduleId>":<path>}}`.
+ * A path is the route's chunk, or `[prerequisite…, chunk]` when the chunk needs
+ * the shared `__common` chunk first (patches/@expo__metro-config: common is no
+ * longer an index.html script). A synchronous route (no `.paths` argument) is
+ * inside the entry and loads no file.
+ * @returns {Map<string, { files: string[], shared: string[] }>}
  */
-function resolveHomeRouteChunks(entrySources) {
-  const chunks = new Map();
-  for (const key of HOME_ROUTE_FILES) {
-    let resolved = false;
-    for (const source of entrySources) {
-      const at = source.indexOf(`"${key}":{`);
-      if (at < 0) continue;
-      const getter = source.slice(at, at + 400).match(new RegExp(`^"${escapeRegExp(key)}":\\{[^}]*?\\((\\w+)\\[(\\d+)\\],\\1\\.paths\\)`, 'u'));
-      if (!getter) { resolved = true; break; }
-      // The route context module's dependency map follows its factory.
-      const pathsAt = source.indexOf('"paths":{', at);
-      const mapStart = source.lastIndexOf(',{"0":', pathsAt) + 1;
-      if (pathsAt < 0 || mapStart <= at) throw new Error(`Home route ${key} has no readable dependency map`);
-      let depth = 0, end = mapStart;
-      for (; end < source.length; end++) {
-        if (source[end] === '{') depth++;
-        else if (source[end] === '}' && --depth === 0) break;
-      }
-      const map = JSON.parse(source.slice(mapStart, end + 1));
-      const chunk = map.paths?.[map[getter[2]]];
-      if (typeof chunk !== 'string') throw new Error(`Home route ${key} does not resolve to an emitted chunk`);
-      chunks.set(key, exportPath(chunk));
-      resolved = true;
-      break;
+function resolveRouteChunks(entrySources) {
+  for (const source of entrySources) {
+    const at = source.indexOf(`"${HOME_ROUTE_FILES[0]}":{`);
+    if (at < 0) continue;
+    // The route context module's dependency map follows its factory.
+    const pathsAt = source.indexOf('"paths":{', at);
+    const mapStart = source.lastIndexOf(',{"0":', pathsAt) + 1;
+    if (pathsAt < 0 || mapStart <= at) throw new Error('The route context has no readable dependency map');
+    let depth = 0, end = mapStart;
+    for (; end < source.length; end++) {
+      if (source[end] === '{') depth++;
+      else if (source[end] === '}' && --depth === 0) break;
     }
-    if (!resolved) throw new Error(`Home route ${key} is not in the entry scripts`);
+    const map = JSON.parse(source.slice(mapStart, end + 1));
+    const routes = new Map();
+    // Keys are in Expo's order (`./(app)/…` before `./_layout.tsx`): read the whole factory.
+    const factoryStart = source.lastIndexOf('__d(', at);
+    for (const [, key, getter] of source.slice(factoryStart, mapStart).matchAll(/"(\.\/[^"]+)":\{[^{}]*?get:\(\)=>([^{}]*)\}/gu)) {
+      const async = getter.match(/\((\w+)\[(\d+)\],\1\.paths\)/u);
+      if (!async) { routes.set(key, { files: [], shared: [] }); continue; }
+      const path = map.paths?.[map[async[2]]];
+      const chain = typeof path === 'string' ? [path] : Array.isArray(path) && path.length && path.every(item => typeof item === 'string') ? path : null;
+      if (!chain) throw new Error(`Route ${key} does not resolve to an emitted chunk`);
+      routes.set(key, { files: [exportPath(chain.at(-1))], shared: chain.slice(0, -1).map(exportPath) });
+    }
+    for (const key of HOME_ROUTE_FILES) if (!routes.has(key)) throw new Error(`Home route ${key} is not in the route context`);
+    return routes;
   }
-  return chunks;
+  throw new Error(`Home route ${HOME_ROUTE_FILES[0]} is not in the entry scripts`);
 }
 
 /**
  * Deterministic weight of what loads before Home on web: index.html's scripts
- * and stylesheets plus the Home route chunks. Modules are Metro `__d(`
- * definitions. Served bytes are the precompression owner's brotli sidecar, or
- * the raw file when no smaller sidecar was written; an export that was never
- * precompressed has no served-bytes figure.
+ * and stylesheets, the shared chunks the Home route chunks require first, and
+ * the Home route chunks. Modules are Metro `__d(` definitions. Served bytes are
+ * the precompression owner's brotli sidecar, or the raw file when no smaller
+ * sidecar was written; an export that was never precompressed has no
+ * served-bytes figure. `routes` gives every route its own chunk weight and the
+ * shared chunks it needs first (each shared chunk is weighed once, in `files`
+ * when Home needs it).
  */
 export async function readWebBootWeight(root) {
   const html = await readFile(join(root, 'index.html'), 'utf8');
@@ -187,21 +196,36 @@ export async function readWebBootWeight(root) {
     .filter(tag => /\brel="stylesheet"/u.test(tag)).map(tag => tag.match(/\bhref="([^"]+)"/u)?.[1]).filter(Boolean).map(exportPath);
   const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+\.js)"/gu)].map(match => exportPath(match[1]));
   if (!scripts.length) throw new Error('Web export index.html has no entry scripts');
-  const sources = new Map();
-  for (const file of scripts) sources.set(file, await readFile(join(root, file), 'utf8'));
-  const routes = [...new Set(resolveHomeRouteChunks([...sources.values()]).values())];
-  for (const file of routes) sources.set(file, await readFile(join(root, file), 'utf8'));
   const precompressed = (await readdir(join(root, '_expo/static'), { recursive: true }).catch(() => [])).some(name => name.endsWith('.br'));
-  const files = [];
-  for (const [kind, list] of [['style', styles], ['script', scripts], ['route', routes]]) {
-    for (const file of list) {
+  const weights = new Map();
+  const weigh = async file => {
+    if (!weights.has(file)) {
       const bytes = (await stat(join(root, file))).size;
-      const sidecar = precompressed ? await stat(join(root, `${file}.br`)).then(info => info.size, () => bytes) : null;
-      files.push({ file, kind, bytes, brotliBytes: sidecar, modules: sources.get(file)?.split('__d(').length - 1 || 0 });
+      const brotliBytes = precompressed ? await stat(join(root, `${file}.br`)).then(info => info.size, () => bytes) : null;
+      const modules = file.endsWith('.js') ? (await readFile(join(root, file), 'utf8')).split('__d(').length - 1 : 0;
+      weights.set(file, { bytes, brotliBytes, modules });
+    }
+    return weights.get(file);
+  };
+  const routeChunks = resolveRouteChunks(await Promise.all(scripts.map(file => readFile(join(root, file), 'utf8'))));
+  const home = HOME_ROUTE_FILES.map(key => routeChunks.get(key));
+  const files = [];
+  const listed = new Set();
+  for (const [kind, list] of [['style', styles], ['script', scripts], ['shared', home.flatMap(route => route.shared)], ['route', home.flatMap(route => route.files)]]) {
+    for (const file of list) {
+      if (listed.has(file)) continue;
+      listed.add(file);
+      files.push({ file, kind, ...await weigh(file) });
     }
   }
+  const routes = {};
+  for (const [key, { files: own, shared }] of routeChunks) {
+    const rows = await Promise.all(own.map(weigh));
+    const sum = name => rows.reduce((total, row) => total + row[name], 0);
+    routes[key] = { files: own, shared, bytes: sum('bytes'), brotliBytes: precompressed ? sum('brotliBytes') : null, modules: sum('modules') };
+  }
   const sum = key => files.reduce((total, row) => total + row[key], 0);
-  return { files, modules: sum('modules'), bytes: sum('bytes'), brotliBytes: precompressed ? sum('brotliBytes') : null };
+  return { files, modules: sum('modules'), bytes: sum('bytes'), brotliBytes: precompressed ? sum('brotliBytes') : null, routes };
 }
 
 const BOOT_METRICS = [['modules', 'modules before Home'], ['bytes', 'JS/CSS bytes before Home'], ['brotliBytes', 'brotli transfer bytes before Home']];
