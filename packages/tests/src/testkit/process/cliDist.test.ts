@@ -1035,6 +1035,42 @@ describe('ensureCliDistBuilt', () => {
     ).toEqual([]);
   });
 
+  it('rebuilds a markerless snapshot rejected by a previous preparation with freshness bypassed', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const cliDir = join(repoRoot, 'apps', 'cli');
+    const canonicalEntrypoint = join(cliDir, 'dist', 'index.mjs');
+    const sourcePackageDir = join(cliDir, 'node_modules', '@happier-dev', 'snapshot-fixture');
+    const workspacePackageDir = join(repoRoot, 'packages', 'snapshot-fixture');
+    const packageName = '@happier-dev/snapshot-fixture';
+    await mkdir(join(sourcePackageDir, 'dist'), { recursive: true });
+    await mkdir(workspacePackageDir, { recursive: true });
+    await writeFile(join(sourcePackageDir, 'package.json'), JSON.stringify({ name: packageName, type: 'module', main: 'dist/index.js' }));
+    await writeFile(join(workspacePackageDir, 'package.json'), JSON.stringify({ name: packageName, type: 'module', main: 'dist/current.js' }));
+    await writeFile(join(sourcePackageDir, 'dist', 'index.js'), 'export const oldSelection = 1, currentSelection = 2;\n');
+    await writeFile(join(sourcePackageDir, 'dist', 'current.js'), 'export const currentSelection = 2;\n');
+    await writeFile(canonicalEntrypoint, `export { oldSelection as selection } from '${packageName}';\n`);
+
+    const prepare = () => ensureCliDistSnapshotEntrypoint(
+      { testDir: join(repoRoot, '.project'), env: { ...process.env, HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'copy' } },
+      { repoRoot, snapshotDir, skipSourceFreshnessCheck: true, runCommand: async () => {
+        throw new Error('the compatible source CLI needs no rebuild');
+      } },
+    );
+    await expect(prepare()).rejects.toThrow('missing oldSelection');
+    expect(existsSync(join(snapshotDir, 'dist', 'index.mjs'))).toBe(true);
+    expect(existsSync(join(snapshotDir, '.cli-dist-snapshot.ready.json'))).toBe(false);
+
+    await writeFile(canonicalEntrypoint, `export { currentSelection as selection } from '${packageName}';\n`);
+    const prepared = await prepare();
+    const imported = spawnSync(process.execPath, ['--input-type=module', '--eval',
+      `import { selection } from ${JSON.stringify(pathToFileURL(prepared).href)}; process.stdout.write(String(selection));`,
+    ], { encoding: 'utf8' });
+    expect(imported.status, imported.stderr).toBe(0);
+    expect(imported.stdout).toBe('2');
+    expect(existsSync(join(snapshotDir, '.cli-dist-snapshot.ready.json'))).toBe(true);
+  });
+
   it('reuses a ready shared snapshot before attempting a live CLI rebuild when freshness checks are skipped', async () => {
     const repoRoot = await createRepoRoot();
     const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');

@@ -1211,19 +1211,15 @@ export async function ensureCliDistSnapshotEntrypoint(
       && hasCliDistSnapshotNodeModulesHealth(rootDir, dir)
       && hasCliDistSnapshotFirstPartyNamedImportCompatibility(dir);
   };
-  const isReadyReusableSnapshot = (dir: string): boolean => {
-    const distDir = resolve(dir, 'dist');
-    if (!isHealthyCliDist(distDir) || !snapshotHasReadyMarker(dir)) {
-      return false;
-    }
-    if (options.skipSourceFreshnessCheck ?? false) {
-      return true;
-    }
-    return !isCliDistSnapshotStale({
+  const snapshotFreshnessAllowsReuse = (dir: string, distDir: string): boolean =>
+    options.skipSourceFreshnessCheck === true || !isCliDistSnapshotStale({
       rootDir,
       snapshotDir: dir,
       snapshotDistDir: distDir,
     });
+  const isReadyReusableSnapshot = (dir: string): boolean => {
+    const distDir = resolve(dir, 'dist');
+    return isHealthyCliDist(distDir) && snapshotHasReadyMarker(dir) && snapshotFreshnessAllowsReuse(dir, distDir);
   };
   const ensureSnapshotScaffolding = (dir: string): void => {
     ensureSnapshotProjectFile(dir, rootDir, 'package.json');
@@ -1310,38 +1306,12 @@ export async function ensureCliDistSnapshotEntrypoint(
     try {
       return await withCliDistBuildLock(
         async () => {
-          const shouldIgnoreSnapshotFreshness = options.skipSourceFreshnessCheck ?? false;
-          const isSnapshotStale = (distDir: string): boolean => {
-            if (shouldIgnoreSnapshotFreshness) return false;
-            return isCliDistSnapshotStale({
-              rootDir,
-              snapshotDir: options.snapshotDir,
-              snapshotDistDir: distDir,
-            });
-          };
-
-          const snapshotIsReusable = (dir: string): boolean => {
-            const distDir = resolve(dir, 'dist');
-            return isHealthyCliDist(distDir) && !isSnapshotStale(distDir);
-          };
-
-          const snapshotIsReadyButStale = (dir: string): boolean => {
-            const distDir = resolve(dir, 'dist');
-            return existsSync(dir)
-              && snapshotReadyMarkerExists(dir)
-              && isHealthyCliDist(distDir)
-              && (
-                !hasCliDistSnapshotFirstPartyNamedImportCompatibility(dir)
-                || isSnapshotStale(distDir)
-              );
-          };
-
           const resolveReplacementSnapshotDir = (): string => {
             return `${options.snapshotDir}-${process.pid}-${Date.now()}-${attempt}`;
           };
 
           const markSnapshotReady = (dir: string): void => {
-            if (snapshotHasReadyMarker(dir)) return;
+            if (snapshotReadyMarkerExists(dir)) return;
             try {
               writeFileSync(
                 resolve(dir, '.cli-dist-snapshot.ready.json'),
@@ -1390,30 +1360,24 @@ export async function ensureCliDistSnapshotEntrypoint(
             return targetSnapshotEntrypoint;
           };
 
-          if (snapshotIsReusable(options.snapshotDir) && snapshotHasReadyMarker(options.snapshotDir)) {
-            // Fast path: keep daemon startups cheap during slow E2E lanes.
-            // Still reconcile runtime deps so stale snapshots self-heal when bundled dependency shapes change.
+          const hasReadyMarker = snapshotReadyMarkerExists(options.snapshotDir);
+          const hasHealthyDist = isHealthyCliDist(snapshotDistDir);
+          if (hasHealthyDist && snapshotFreshnessAllowsReuse(options.snapshotDir, snapshotDistDir)
+            && (!hasReadyMarker || hasCliDistSnapshotFirstPartyNamedImportCompatibility(options.snapshotDir))) {
             ensureSnapshotNodeModules(options.snapshotDir);
-            ensureSnapshotScaffolding(options.snapshotDir);
-            return snapshotEntrypoint;
+            // A previous materialization may have copied every chunk and rejected its package exports.
+            // Certify a markerless snapshot against the dependency closure it will actually load.
+            if (hasReadyMarker || hasCliDistSnapshotFirstPartyNamedImportCompatibility(options.snapshotDir)) {
+              ensureSnapshotScaffolding(options.snapshotDir);
+              markSnapshotReady(options.snapshotDir);
+              return snapshotEntrypoint;
+            }
           }
 
-          if (snapshotIsReadyButStale(options.snapshotDir)) {
+          if (hasReadyMarker && hasHealthyDist) {
             const replacementEntrypoint = findReusableReplacementSnapshotEntrypoint();
             if (replacementEntrypoint) return replacementEntrypoint;
             return await materializeSnapshot(resolveReplacementSnapshotDir(), dirname(sourceEntrypoint));
-          }
-
-          // If a previous run left a partial snapshot behind, self-heal instead of failing closed.
-          if (existsSync(options.snapshotDir) && !snapshotIsReusable(options.snapshotDir)) {
-            rmSync(options.snapshotDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
-          }
-
-          if (snapshotIsReusable(options.snapshotDir)) {
-            ensureSnapshotNodeModules(options.snapshotDir);
-            ensureSnapshotScaffolding(options.snapshotDir);
-            markSnapshotReady(options.snapshotDir);
-            return snapshotEntrypoint;
           }
 
           return await materializeSnapshot(options.snapshotDir, dirname(sourceEntrypoint));
