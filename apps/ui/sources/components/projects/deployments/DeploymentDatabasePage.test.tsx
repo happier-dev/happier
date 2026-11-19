@@ -149,6 +149,7 @@ type Answers = Readonly<{
 async function renderDatabase(
   input: Readonly<{
     answers?: Answers;
+    workbenchDiscoveryRefused?: boolean;
     database?: string;
     sizeReadUnavailable?: boolean;
     retainedBackup?: boolean;
@@ -489,6 +490,9 @@ async function renderDatabase(
     placement: { serverId, accountId: account.accountId, machineId, installationId: 'installation-a' } };
   await answerExternalActionAccountForHome(homes, serverId, {
     machineId, installationId: 'installation-a', actionId: 'action.invoke', tokenEpoch: 0,
+    failure: () => input.workbenchDiscoveryRefused
+      ? { errorCode: 'plugin_service_unavailable', error: 'Plugin service unavailable' }
+      : null,
     execute: raw => {
       const invocation = getActionSpec('action.invoke').inputSchema.parse(raw);
       effects.push({ actionId: 'action.invoke', input: invocation });
@@ -698,6 +702,19 @@ describe('Environment → Database → Workbench', () => {
         expect.objectContaining({ input: expect.objectContaining({ input: { scope: {
           kind: 'environment', environment: view.scope.environment } } }) })]);
       expect(view.screen.findByTestId('project-deployments.query.sql')).toBeNull();
+    } finally { await view.dispose(); }
+  });
+
+  it('shows the Workbench discovery refusal in Details', async () => {
+    const view = await renderDatabase({ workbenchDiscoveryRefused: true });
+    const details = 'project-deployments.outcome.refused.other.details';
+    try {
+      await view.settle(`${page}.query`);
+      await view.screen.pressByTestIdAsync(`${page}.query`);
+      expect(await view.settle(details)).not.toBeNull();
+      await view.screen.pressByTestIdAsync(details);
+      expect(view.screen.getTextContent()).toContain('plugin_service_unavailable');
+      expect(view.opened).toEqual([]);
     } finally { await view.dispose(); }
   });
 

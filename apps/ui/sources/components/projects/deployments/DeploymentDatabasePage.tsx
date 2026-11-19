@@ -95,7 +95,6 @@ import { useDeploymentTargetLinkChoices } from './useDeploymentTargetLinkChoices
 import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { DatabaseTargetsListResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
-import { HappyError } from '@/utils/errors/errors';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
 type Detail = DeploymentEnvironmentReadDetailV1;
@@ -233,7 +232,7 @@ export function DeploymentDatabasePage(
   const workbenchNavigation = usePluginSurfaceDestinationNavigationBinding();
   const openWorkbench = () => consoleOpen.press(async () => {
     if (!actions || !detail || !database || !workbenchNavigation) return { ok: true };
-    if (!detail.environment.controllerMachineId) throw new HappyError('machine_unavailable', false);
+    if (!detail.environment.controllerMachineId) return { ok: false, error: 'machine_unavailable' };
     const scope = { kind: 'environment' as const, environment: {
       serverId: detail.environment.serverId, projectSourceId: detail.environment.projectSourceId,
       environmentId: detail.environment.id,
@@ -241,7 +240,7 @@ export function DeploymentDatabasePage(
     const result = await actions.inspectPlatformTarget(DATABASE_TARGETS_LIST_ACTION_ID_V1, { scope }, {
       externalActionTarget: { kind: 'machine', machineId: detail.environment.controllerMachineId },
     });
-    if (!result.ok) throw new HappyError(result.code, false);
+    if (!result.ok) return { ok: false, error: result.code, details: result.details, failureCause: result.failureCause };
     const listed = DatabaseTargetsListResultV1Schema.parse(result.value);
     const matches = listed.targets.filter(({ target }) => database.kind === 'selfHosted'
       ? target.kind === 'deployment_service' && target.serviceId === database.data.service
@@ -250,7 +249,7 @@ export function DeploymentDatabasePage(
       destination: { pluginId: DATABASE_PLUGIN_ID_V1, localId: 'database-workbench' }, subPath: 'console',
       input: projectNativeJsonValueForTransport({ scope, ...(matches.length === 1 ? { descriptor: matches[0] } : {}) }),
     });
-    if (!opened.ok) throw new HappyError(opened.reason, false);
+    if (!opened.ok) return { ok: false, error: opened.reason };
     return { ok: true };
   });
   const id = 'project-deployments.database';
