@@ -6200,6 +6200,11 @@ result carries `isError: true` and `structuredContent.code` with the MCP
 request-timeout code (`-32001`). The timeout applies to that call. The Session's
 stdio relay can serve the next request while the Agent keeps the connection open.
 
+A newly added runtime Machine can restore the serving own-server release while
+an approved deployment rolls out its replacement. The archive holder uses the
+existing signed Deploy child and checks the exact archive provenance before
+starting the transfer. The deployment approval covers that download.
+
 ### Transport and header refusals (0.3 development source)
 
 `not_authenticated` means Home answered an authentication refusal (HTTP 401/403).

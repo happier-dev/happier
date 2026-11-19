@@ -493,7 +493,12 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                             }
                             : {}
                     ),
-                    executor,
+                    executor: deploymentArchiveAdmission ? {
+                        // The verified finite child already spent the deploy's admission.
+                        execute: (id, input, executorContext) => executor.execute(id, input, {
+                            ...executorContext, bypassApprovals: true,
+                        }),
+                    } : executor,
                 });
             };
             const observeExecution = params.observeExecution;

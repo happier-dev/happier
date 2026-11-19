@@ -9,6 +9,13 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { DeploymentChildRpcV1Schema } from '@happier-dev/protocol';
 import { createDeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionAutomationHttpPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { createExternalActionMachineRpcExecution } from '@/api/externalActionExecutionAuthorization';
+import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 
 it.each([
   { authority: 'present_user', mode: 'plain' }, { authority: 'account_automation', mode: 'plain' },
@@ -173,6 +180,62 @@ it('admits the receiver archive download whose parent proof still carries the re
   expect(await attempt(root, 'other-receiver-install')).toMatchObject(refused);
   expect(await attempt(ExternalActionExecutionAuthorizationV1Schema.parse({ ...root,
     binding: { ...root.binding, accountId: 'other-account' } }))).toMatchObject(refused);
+});
+
+it('runs the joining member archive download under the deploy admission without a filesystem Ask', async () => {
+  const install = { machineId: 'joining', installationId: 'joining-install', homeIdentityId: 'home' };
+  const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'member', actionId: 'deployments.deploy',
+    machineId: install.machineId, installationId: install.installationId, phase: 'restore', deploymentId: 'candidate',
+    selectedDeploymentId: 'serving', actionOperationId: 'rollout',
+    input: { serverId: 'home', environmentId: 'environment', targetLinkId: 'link', expectedRevision: 1,
+      expectedTargetLinkRevision: 1, requestKey: 'candidate', contentArtifactId: 'candidate-content',
+      contentHeaderVersion: 1, contentBodyVersion: 1 } });
+  const h = await createDeploymentChildRequesterHarness({ encryptionMode: 'plain', job, receivingIdentity: install });
+  const actionId = 'daemon.filesystem.download';
+  const method = `holder:${RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD}`;
+  const input = { rootPath: '/archive', path: '/archive/serving.tar', destination: { destinationId: 'archive-destination' },
+    asZip: false, format: 'entry_tree' as const };
+  const params = StrictJsonValueSchema.parse(createTargetedActionRpcRequestV1(input, { kind: 'machine', machineId: 'holder' }));
+  const manifestHash = `sha256:${'1'.repeat(64)}`;
+  const receipt = { success: true, status: 'accepted', operationId: 'archive-operation', destinationId: 'archive-destination',
+    prepared: { transferId: 'archive-transfer', name: 'serving.tar', sizeBytes: 42, manifestHash, expiresAt: 1,
+      endpointCandidates: [] },
+    entryTree: { operationId: 'archive-operation', expectation: { kind: 'file', digest: '1'.repeat(40), executable: false, size: 42 },
+      blobs: [{ transferId: 'archive-transfer', sizeBytes: 42, manifestHash }] } };
+  const filesystemActionExecute = vi.fn(async () => receipt);
+  const approvalsCreate = vi.fn(async () => { throw new Error('Unexpected filesystem Ask'); });
+  const rpc = new RpcHandlerManager({ scopePrefix: 'holder', localMachineId: 'holder', encryptionMode: 'plain', logger: () => {},
+    // Authenticated Home and native byte transfer are the system boundaries.
+    authorizeRequest: async () => ({ ok: true }) });
+  registerActionSpecRpcHandlers({ rpcHandlerManager: rpc, actionIds: [actionId], targetMachineId: 'holder',
+    defaultMachineTarget: true, actionExecutor: createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      filesystemActionExecute, approvalsCreate,
+      actionAutomations: createActionAutomationHttpPortV1({ accountId: 'bob', request: async () => ({ v: 1, rows: [] }) }),
+    }) });
+  const request = { method, params, callerAuthority: 'account_automation' as const,
+    machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'bob', machineId: 'holder',
+      installationId: 'holder-install', role: 'use' as const, encryptionMode: 'plain' as const } };
+  const send = async (root: typeof h.root, includeParent = true) => {
+    const requestId = 'archive-download';
+    const externalActionExecution = createExternalActionMachineRpcExecution({
+      context: { externalActionExecutionAuthorization: root, externalActionTarget: root.binding.target },
+      effectActionId: actionId, installationId: install.installationId, method, requestId, params, privateKey: h.receiver.secretKey,
+      ...(includeParent ? { deploymentChildExecution: h.packet, deploymentArchiveOrigin: { environmentId: 'environment',
+        deploymentId: 'serving', holderMachineId: 'holder', holderInstallationId: 'holder-install' } } : {}),
+    });
+    if (!externalActionExecution) throw new Error('Missing signed archive download');
+    return await rpc.handleRequest({ ...request, callerInputAuthorization: root,
+      workspaceSyncSourceExecution: { method, requestId, params, externalActionExecution } });
+  };
+  expect(await send(h.root, false)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+  for (const wrongBinding of [{ accountId: 'other-account' }, { requestId: 'different-deploy' }]) {
+    expect(await send({ ...h.root, binding: { ...h.root.binding, ...wrongBinding } }))
+      .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+  }
+  expect(filesystemActionExecute).not.toHaveBeenCalled();
+  expect(await send(h.root)).toEqual(receipt);
+  expect(filesystemActionExecute).toHaveBeenCalledOnce();
+  expect(approvalsCreate).not.toHaveBeenCalled();
 });
 
 it.each(['account', 'terminal'] as const)('preserves the %s root authority when admitting exact-machine terminal observation', async kind => {
