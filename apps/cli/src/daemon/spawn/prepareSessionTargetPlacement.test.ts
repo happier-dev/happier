@@ -64,21 +64,23 @@ function sessionEnd() {
 }
 
 describe('Session placement on a managed target at spawn', () => {
-    it.each([false, true])('retains only public acquisition refusal evidence before a runner exists (typed %s)', async typed => {
-        const failure = { ok: false as const, errorCode: 'provider_unavailable', error: 'The compute provider is temporarily unavailable',
+    it.each([false, true])('retains normalized, redacted acquisition refusal evidence before a runner exists (typed %s)', async typed => {
+        const credential = 'native-acquisition-token_123+/=';
+        const message = 'The compute provider is temporarily unavailable: Bearer [REDACTED]; retry later';
+        const failure = { ok: false as const, errorCode: 'provider_unavailable', error: `The compute provider is temporarily unavailable: Bearer ${credential}; retry later`,
             requestId: 'native-request', effectAttempted: false,
             failureCause: projectActionFailureCauseV1(Object.assign(new Error('unavailable'), { code: 'provider_unavailable', status: 503 }), 'machines.native.acquire') };
         const error = typed ? ManagedMachineControllerError.fromActionFailure(failure, 'machines.managed.acquire')
-            : Object.assign(new Error('PRIVATE_NATIVE_OUTPUT'), { code: 'provider_unavailable' });
+            : Object.assign(new Error(failure.error), { code: 'provider_unavailable' });
         const result = await prepareSessionTargetPlacement({ request: { managedId: 'managed' }, sessionKey: 'refused', requesterAccountId: 'owner',
             holderVersion: 'v', readTrustedCallerPid: () => null, runnerExit: Promise.resolve(),
             launchResourceScope: createProviderLaunchResourceScope({ onCleanupError: () => undefined }),
             openManagedSessionTarget: async () => { throw error; } });
-        expect(result).toMatchObject({ ok: false, result: { errorDetail: { kind: 'launch_error', code: failure.errorCode,
-            message: typed ? failure.error : failure.errorCode,
+        expect(result).toMatchObject({ ok: false, result: { errorMessage: message, errorDetail: { kind: 'launch_error', code: failure.errorCode,
+            message,
             ...(typed ? { failureCause: { actionCause: failure.failureCause, requestId: 'native-request' } } : {}),
         } } });
-        expect(JSON.stringify(result)).not.toContain('PRIVATE_NATIVE_OUTPUT');
+        expect(JSON.stringify(result)).not.toContain(credential);
     });
 
     it.each(['copy_once', 'sync'] as const)('retains the exact %s native workspace identity even when kept reuse has no baseline in memory', async kind => {
