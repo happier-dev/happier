@@ -47,18 +47,24 @@ it.each(['admitted', 'refused'] as const)('joins the source declaration claim be
             entry.event.identity.localId === DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.localId);
         if (!event) throw new Error('Deployment Event setup declaration unavailable');
         const action = event.setupAction.identity;
-        await fixture.registry.activatePluginsForValidation([action.pluginId]);
+        const ordinary = fixture.registry.contributes.actions.find(entry => entry.pluginId === pluginId
+            && !fixture.registry.contributes.automationEligibleEvents?.some(source =>
+                source.setupAction.identity.localId === entry.definition.localId));
+        if (!ordinary) throw new Error('An ordinary Action is required beside the source setup');
+        await fixture.registry.activateContributionsOnDemand([{ pluginId,
+            family: 'actions', localId: ordinary.definition.localId }]);
         // The daemon starts this best-effort publication without holding ordinary readiness.
         publication = fixture.registry.claimReleaseLessDeclarations();
         // A background refusal is observed below after the source demand settles.
         void publication.catch(() => {});
         await claiming;
-        // An optional Account declaration never holds ordinary plugin readiness.
-        await fixture.registry.activatePluginsForValidation([action.pluginId]);
         const invoke = () => fixture.registry.targetActionInvocations.invoke({ pluginId: action.pluginId,
             localId: action.localId, input: { v: 1, serverId: 'srv_event_setup' }, surface: 'cli' });
         let settled = false;
         const setup = invoke().finally(() => { settled = true; });
+        // Pending source setup never holds an ordinary Action on the same plugin.
+        await fixture.registry.activateContributionsOnDemand([{ pluginId,
+            family: 'actions', localId: ordinary.definition.localId }]);
         // The warm Action has no further asynchronous boundary until its declaration admission.
         await new Promise<void>(resolve => setImmediate(resolve));
         if (settled) expect(await setup).toMatchObject({ status: 'executed', value: { v: 1, sourceContractVersion: 1 } });
