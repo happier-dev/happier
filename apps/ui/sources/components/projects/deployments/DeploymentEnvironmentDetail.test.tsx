@@ -2198,7 +2198,8 @@ describe('Project deployments page', () => {
       await act(async () => { await waitForTestEvent(screen.subscribe,
         () => screen.findByTestId('project-deployments.receipt.outcome.failed'), node => node !== null); });
       expect(screen.findByTestId('project-deployments.receipt.rollback')).toBeNull();
-      expect(screen.getTextContent()).toContain('Investigate');
+      await waitForContent(screen, 'investigation.agentActions.unavailable');
+      expect(screen.getTextContent()).toContain('Retry');
       expect(screen.findByTestId('project-deployments.receipt.log')).toBeNull();
     } finally { controller.retire(); }
   });
@@ -3210,6 +3211,64 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
         await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.serving')).not.toBeNull());
         expect(screen.findByTestId('project-deployments.environment.attention.controllerPaused') !== null).toBe(shownNotice);
       } finally { controller.retire(); }
+    }
+  });
+
+  it('keeps the Health fact when the serving version also has a health notice', async () => {
+    const base = environmentDetailForHome();
+    const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)!.targetLink.activeDeploymentId!;
+    const serving = createDeploymentReceiptDetailV1({
+      deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: 'running_unverified' }),
+    });
+    const { controller, detail } = controllerFor({ detail: base, receipt: serving });
+    const screen = await render(controller, detail);
+    try {
+      await waitForContent(screen, 'project-deployments.environment.serving.notice.running_unverified');
+      expect(screen.findByTestId('project-deployments.environment.facts.health')).not.toBeNull();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('shows a reason for Environment and receipt agent actions on a known offline Controller', async () => {
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const runtime = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const previousRuntime = runtime.getAppliedActiveServerSnapshot();
+    const previousAvailable = runtime.isAppliedActiveServerRuntimeAvailable();
+    const base = environmentDetailForHome();
+    const receipt = createDeploymentReceiptDetailV1({
+      deployment: createDeploymentReceiptHeaderV1({ state: 'failed' }),
+    });
+    const { controller, detail } = controllerFor({ detail: base, receipt });
+    const { t } = await import('@/text');
+    const machineId = detail.environment.controllerMachineId;
+    runtime.publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+    try {
+      await publishMachineInventoryForTest(scope, [createMachineFixture({ id: machineId, active: false, activeAt: 1 })]);
+      const overview = await render(controller, detail);
+      try {
+        await waitForContent(overview, 'investigation.agentActions.unavailable');
+        expect(overview.getTextContent()).toContain(t('inbox.work.healthNotice.agentActionsNeedMachine'));
+      } finally { await overview.unmount(); }
+      const failed = await renderScreen(<DeploymentReceiptDetail controller={controller}
+        environmentId={detail.environment.id} deploymentId={receipt.deployment.id} environmentName={detail.content.name} demand={shown}
+        accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+        rollback={null} cancel={null} linkPath={null} readLogs={null} onBack={() => {}} review={noReview} onOpenReceipt={() => {}} />);
+      try {
+        await waitForContent(failed, 'investigation.agentActions.unavailable');
+        expect(failed.getTextContent()).toContain(t('inbox.work.healthNotice.agentActionsNeedMachine'));
+        expect(failed.findByTestId('project-deployments.receipt.investigate')).toBeNull();
+        await act(async () => {
+          await publishMachineInventoryForTest(scope, [createMachineFixture({ id: machineId, active: true, activeAt: Date.now() })]);
+        });
+        await waitForHomeGovernance(() => {
+          expect(failed.getTextContent()).toContain(t('inbox.work.healthNotice.agentActionsUnavailable'));
+          expect(failed.getTextContent()).toContain(t('common.retry'));
+        });
+      } finally { await failed.unmount(); }
+    } finally {
+      controller.retire();
+      runtime.publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
     }
   });
 

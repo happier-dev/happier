@@ -193,10 +193,10 @@ describe('failed deployment migration recovery', () => {
       const { Modal } = await import('@/modal');
       vi.mocked(Modal.alert).mockClear();
       await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(actionId), value => value !== null); });
-      // Recovery leads; the agent action stays beside it (without an Account catalog, the default Investigate stands
-      // in), and nothing has started an agent.
-      await act(async () => { await waitForTestEvent(screen.subscribe, () => offered().length, count => count === 1); });
-      expect(offered().map(button => button.props.title)).toEqual(['Investigate']);
+      // Recovery leads while the failed catalog read is visible. Nothing has started an agent.
+      await act(async () => { await waitForTestEvent(screen.subscribe,
+        () => screen.findByTestId('investigation.agentActions.unavailable'), value => value !== null); });
+      expect(offered()).toHaveLength(0);
       expect(triage.runs).toEqual([]);
       await screen.pressByTestIdAsync(actionId);
       if (policy === 'ask') {

@@ -7,6 +7,11 @@ import {
 import { failureInvestigationSubjectKey, type FailureInvestigationSubject,
     type FailureInvestigationExecutionOptions } from './accountNoticeInvestigation';
 import { useAccountNoticeInvestigation } from './AccountNoticeInvestigationProvider';
+import { useMachinePresenceSummaries, type MachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+
+const MACHINE_UNREACHABLE = { kind: 'unavailable', code: 'machine_unreachable' } as const;
+const sameReachability = (left: readonly MachinePresenceSummary[], right: readonly MachinePresenceSummary[]) =>
+    left[0]?.reachability === right[0]?.reachability;
 
 export type InvestigateFailureOptions = Readonly<{
     /** Read the page's records for its agent-action buttons: the task default and this subject's own, or only its own. */
@@ -19,19 +24,26 @@ export function useInvestigateFailure(subject: FailureInvestigationSubject | nul
     const owner = useAccountNoticeInvestigation();
     const key = subject ? failureInvestigationSubjectKey(subject) : null;
     const externalActionTarget = options?.externalActionTarget;
+    const catalogMachineId = options?.agentActions && externalActionTarget?.kind === 'machine'
+        && subject && owner.isEligible(subject) ? externalActionTarget.machineId : null;
+    const [catalogMachine] = useMachinePresenceSummaries(owner.scope?.serverId,
+        catalogMachineId ? [catalogMachineId] : [], undefined, sameReachability);
     const investigation = React.useMemo((): BoundHealthNoticeInvestigation | null => !subject ? null : ({
         readAgentActions: (includeDefault, options) => owner.readAgentActions(subject, includeDefault, { ...options, externalActionTarget }),
         launch: (intent, options) => owner.launch(subject, intent, { ...options, externalActionTarget }),
     }), [owner, key, externalActionTarget]);
-    return useBoundFailureInvestigation(investigation, options);
+    return useBoundFailureInvestigation(investigation, options, catalogMachine?.reachability === 'unreachable');
 }
 
 /** Native failures and Inbox's already-bound notice share the same launch and recovery flow. */
-export function useBoundFailureInvestigation(investigation: BoundHealthNoticeInvestigation | null, options?: InvestigateFailureOptions) {
+export function useBoundFailureInvestigation(investigation: BoundHealthNoticeInvestigation | null, options?: InvestigateFailureOptions,
+    catalogMachineUnreachable = false) {
     const intent = useHealthNoticeInvestigate(investigation, investigation);
     const [catalogAttempt, setCatalogAttempt] = React.useState(0);
-    const catalog = useInvestigationAgentActions(options?.agentActions ? investigation : null,
+    // Pushed reachability can settle the controls before a contributed Action can be acquired.
+    const answer = useInvestigationAgentActions(options?.agentActions && !catalogMachineUnreachable ? investigation : null,
         { includeDefault: options?.agentActions === 'withDefault', attempt: catalogAttempt });
+    const catalog = catalogMachineUnreachable ? MACHINE_UNREACHABLE : answer;
     const catalogRefused = catalog != null && 'kind' in catalog;
     const actions = catalogRefused ? null : catalog;
     // A refused catalog read is the controls' availability (InvestigationAgentActionButtons `unavailable`, or the
@@ -52,5 +64,6 @@ export function useBoundFailureInvestigation(investigation: BoundHealthNoticeInv
     }, [placementUnresolved, launch]);
     const showOutcome = outcome !== null
         && (!placementUnresolved || openedComposerForPlacement.current && !intent.pending);
-    return { ...intent, actions, catalogOutcome, retryCatalog, outcome, showOutcome };
+    return { ...intent, actions, catalogOutcome,
+        retryCatalog: catalogMachineUnreachable ? undefined : retryCatalog, outcome, showOutcome };
 }

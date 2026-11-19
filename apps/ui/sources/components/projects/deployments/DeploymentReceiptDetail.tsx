@@ -325,7 +325,7 @@ export const DeploymentReceiptDetail = React.memo(
       state: deployment.state,
     });
     // The shared agent-action control (DEPLOY-COMPOSE R4) for each of the person's records: its face launches in the
-    // record's own mode, the chevron offers the other. When the catalog cannot answer, the default Investigate stands in.
+    // record's own mode, the chevron offers the other. The catalog also supplies the reason and retry when it cannot answer.
     // Until it first answers, the receipt's known records wait in their settled place beside the banner's own buttons.
     const agentActionsPending = investigation.actions === undefined;
     // A rollback is the failure's one filled way back (lab d3d `failed`); finding out why stays beside it, quiet.
@@ -340,6 +340,8 @@ export const DeploymentReceiptDetail = React.memo(
       <InvestigationAgentActionButtons
         actions={investigation.actions ?? fallbackInvestigate}
         pending={investigation.pending}
+        unavailable={investigation.catalogOutcome}
+        onRetry={investigation.retryCatalog}
         compact={phone || stacked}
         emphasis={investigateEmphasis}
         onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }}

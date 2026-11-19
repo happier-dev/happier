@@ -1041,8 +1041,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                     <FactStrip
                       testID="project-deployments.environment.facts"
                       layout="columns" narrow={props.phone}
-                      facts={overviewFacts(detail, services.length, activeReceipt.facts.retainedPreviousCount ?? null, activeReceipt.deployment.state,
-                        attention?.kind === 'runningUnverified' && servingNotice !== null)}
+                      facts={overviewFacts(detail, services.length, activeReceipt.facts.retainedPreviousCount ?? null, activeReceipt.deployment.state)}
                     />
                   </ItemGroup>
                 </>
@@ -1595,11 +1594,9 @@ function deploymentServices(content: DeploymentContentV1): readonly DeploymentSe
 
 /** The four headline facts under the serving version (lab `fc-facts`): health, services, rollout, rollback. */
 function overviewFacts(detail: DeploymentEnvironmentDetailV1, serviceCount: number, kept: number | null,
-  servingState: DeploymentReceiptHeaderV1['state'],
-  /** The notice above already says how this version's health stands (no health check); the facts don't repeat it. */
-  healthSaidByNotice: boolean): FactStripFact[] {
+  servingState: DeploymentReceiptHeaderV1['state']): FactStripFact[] {
   const health = detail.healthAggregate;
-  const facts: FactStripFact[] = healthSaidByNotice ? [] : [{
+  const facts: FactStripFact[] = [{
     key: 'health',
     testID: 'project-deployments.environment.facts.health',
     label: t('projects.deployments.healthTitle'),

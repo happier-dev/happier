@@ -93,6 +93,7 @@ export function createAccountNoticeInvestigation(input: Readonly<{
             ? entry.header.recoveryChoices : NO_RECOVERY_CHOICES;
     };
     return {
+        scope: input.scope,
         dispose: () => {},
         async readAgentActions(entry: FailureInvestigationSubject, includeDefault: boolean,
             options?: FailureInvestigationExecutionOptions): Promise<FailureAgentActionsReadResult> {
@@ -102,7 +103,7 @@ export function createAccountNoticeInvestigation(input: Readonly<{
             if (!result.ok) return presentActionRefusal(result);
             // The Action executor validates the contribution's declared output union.
             const answer = result.result as ActionsResult | PresentationResult;
-            if (answer.kind === 'actions') return answer.actions;
+            if (answer.kind === 'actions' && answer.actions !== null) return answer.actions;
             return answer.kind === 'presentation' && answer.outcome?.kind === 'unavailable'
                 ? answer.outcome : { kind: 'unavailable', code: 'invalid_result' };
         },

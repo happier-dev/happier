@@ -477,7 +477,9 @@ describe('agent actions before the catalog answers', () => {
       expect(hook.getCurrent()).toMatchObject({ actions: null, showOutcome: false, outcome: null,
         catalogOutcome: { kind: 'unavailable', code } });
       // Retry reads the catalog again; the next answer replaces the refusal.
-      await act(async () => { hook.getCurrent().retryCatalog(); });
+      const retryCatalog = hook.getCurrent().retryCatalog;
+      expect(retryCatalog).toBeTypeOf('function');
+      await act(async () => { retryCatalog?.(); });
       expect(hook.getCurrent()).toMatchObject({ actions: undefined, catalogOutcome: null, outcome: null });
       await act(async () => { answer({ ok: true, result: { v: 1, kind: 'choices', defaultActionId: null, actions: [] } }); });
       expect(hook.getCurrent()).toMatchObject({ actions: [], catalogOutcome: null, outcome: null, showOutcome: false });

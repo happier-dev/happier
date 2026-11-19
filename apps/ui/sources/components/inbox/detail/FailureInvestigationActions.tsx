@@ -34,6 +34,7 @@ export function FailureInvestigationActions(props: Readonly<{
         <InvestigationAgentActionButtons actions={investigation.actions ?? [{
             label: t('inbox.work.healthNotice.investigate'), launchMode: 'review', startable: false,
         }]} pending={investigation.pending} waiting={investigation.actions === undefined} compact={props.compact} emphasis={props.emphasis}
+            unavailable={investigation.catalogOutcome} onRetry={investigation.retryCatalog}
             onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }} />
         {investigation.showOutcome && investigation.outcome ? <InvestigationOutcomeBanner
             outcome={investigation.outcome} serverId={props.serverId} testID={props.testID}
