@@ -42,6 +42,7 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
   let recordingPath: string;
   let auditPath: string;
   let recording: Awaited<ReturnType<typeof readMuseLoginRecording>>;
+  let sourceSessionId: string;
   let deepSecAuditPath: string;
   let deepSecExecutablePath: string;
   async function createSourceSession(account = owner) {
@@ -94,7 +95,7 @@ else {
     const features = { ...process.env, HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' };
     const databaseUrl = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
       ?? (postgres = await startDatabaseWorkbenchPostgres({ preloadStatistics: false })).homeDatabaseUrl;
-    fixture = await startFinJourneyFixture({ testDir, dbProvider: 'postgres',
+    fixture = await startFinJourneyFixture({ testDir, dbProvider: 'postgres', requestObservation: {},
       serverEnv: { ...features, DATABASE_URL: databaseUrl } });
     owner = await fixture.createAccount('review-owner');
     machine = await fixture.enrollDaemon(owner, { env: { ...features,
@@ -108,6 +109,7 @@ else {
     execGit(machine.workspaceDir, ['commit', '-m', 'test: review baseline']);
     await writeFile(join(machine.workspaceDir, 'README.md'), 'Review fixture with a change\n');
     ui = await connectUiPersonActionClient({ serverUrl: fixture!.actionServerApiUrl, accountSecret: owner.auth.accountSigningSeed });
+    sourceSessionId = await createSourceSession();
     // The fixture observes daemon control readiness and this client awaits its
     // Account bootstrap. The public Action owns target availability admission.
   });
@@ -137,18 +139,21 @@ else {
   }
   it.each(['continue', 'converged'] as const)('J10 deferred Review keeps the selected model, then Check publishes %s', async verdict => {
     const started = WorkflowRunStartResultV1Schema.parse(await act('workflow.run.start', {
-      runId: randomUUID(), executionTarget: { kind: 'detached_run' }, inputs: { engines: ['muse'] },
+      runId: randomUUID(), executionTarget: { kind: 'detached_run' }, inputs: {
+        reviewers: [{ kind: 'engine', engineId: 'muse', includeSessionTranscript: false }],
+      },
       source: { kind: 'inline', definition: { version: 1,
-        inputs: [{ name: 'engines', valueType: 'json', required: true }],
+        inputs: [{ name: 'reviewers', valueType: 'json', required: true }],
         defaults: { agentTarget: muse, permissionMode: 'read-only',
           modelSelection: { v: 1, ref: { agentTargetKey: 'agent:happier.agent.muse/muse', providerConnectionId: null, modelId }, updatedAt: 0 },
           sessionConfigOptionOverrides: { v: 1, updatedAt: 0, overrides: { reasoning_effort: { value: 'minimal', updatedAt: 0 } } } },
         blocks: [
-          { kind: 'loop', id: 'panel', repetition: { kind: 'items', items: { kind: 'input', name: 'engines', path: [] },
+          { kind: 'loop', id: 'panel', repetition: { kind: 'items', items: { kind: 'input', name: 'reviewers', path: [] },
             execution: 'sequential', failurePolicy: 'fail_stop' }, body: [
             { kind: 'action', id: 'review', actionId: 'review.start', input: {
               target: { kind: 'literal', value: { kind: 'detached' } }, instructions: { kind: 'literal', value: 'Review this fixture change.' },
-              engineIds: { kind: 'list', items: [{ kind: 'item', field: 'value' }] },
+              reviewers: { kind: 'list', items: [{ kind: 'item', field: 'value' }] },
+              sourceSession: { kind: 'literal', value: { sessionId: sourceSessionId, serverId: ui!.serverId } },
               reviewCommentAuthorIntent: { kind: 'literal', value: 'open' },
             } },
           ] },
@@ -169,9 +174,19 @@ else {
       .toMatchObject({ index: { lifecycle: 'completed' }, progress: { result: {
         perEngineOutcome: [{ key: reviewReviewerIdForSelectionV1(0), runId: expect.any(String), outcome: 'completed' }],
       } } });
+    const reviewResult = review?.progress.result;
+    expect(reviewResult && typeof reviewResult === 'object' && !Array.isArray(reviewResult) && 'perEngineOutcome' in reviewResult
+      ? reviewResult.perEngineOutcome : undefined).toHaveLength(1);
+    // At this held boundary only the detached Review has run. Transcript Off
+    // must neither fetch the source messages nor include them in native input.
+    expect(fixture!.requestProxy!.count()).toBeGreaterThan(0);
+    expect(fixture!.requestProxy!.count(request => request.method === 'GET'
+      && request.path.split('?')[0] === `/v1/sessions/${sourceSessionId}/messages`))
+      .toBe(0);
     // This is the native process's received selection, below every internal
     // Workflow/Review/default-selection owner implicated in 10e094ddb785.
     const nativeAudit = await readMuseMspProcessAudit(auditPath);
+    expect(JSON.stringify(nativeAudit.turnInputs).includes(sourceClaim)).toBe(false);
     expect(nativeAudit.modelSelections)
       .toContainEqual({ providerId: 'meta', modelId: 'muse-spark-1.3-contributor' });
     expect(nativeAudit.commandTargets).toContainEqual(expect.objectContaining({
