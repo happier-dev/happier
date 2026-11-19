@@ -1,16 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { reviewReviewerIdForSelectionV1, type ReviewEngineReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { ReviewEngineInventorySchema } from '@happier-dev/protocol/reviews/reviewEngines';
+import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
+import { ReviewCommentListResponseV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
 import { WorkflowDefinitionCreateResultV1Schema, WorkflowInvocationListResultV1Schema, WorkflowRunGetResultV1Schema, WorkflowRunListResultV1Schema, WorkflowRunStartResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { readMuseLoginRecording, readMuseMspProcessAudit, waitForMuseMspProcessAudit } from '../../../plugins/muse/src/agent/testkit/mspProcess';
 import { REPOSITORY_REVIEW_WORKFLOW_V1 } from '@happier-dev/protocol/workflows/builtins/repositoryReview';
 import { ReviewStartTerminalValueV1Schema } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
 import { ReviewGetResponseV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
-import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { readMuseRecord } from '../../../plugins/muse/src/agent/nativeInput';
 import { buildMuseNativeAuth } from '../../../plugins/muse/src/connectedAccounts/nativeAuth';
 import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
@@ -35,6 +38,8 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
   let recordingPath: string;
   let auditPath: string;
   let recording: Awaited<ReturnType<typeof readMuseLoginRecording>>;
+  let deepSecAuditPath: string;
+  let deepSecExecutablePath: string;
   async function nativeReply(value: unknown) {
     // Schema-derived model output inside the existing sanitized native capture.
     // Request/response framing and lifecycle remain the captured MSP protocol.
@@ -56,6 +61,22 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
     recording = await readMuseLoginRecording();
     await nativeReply({ summary: 'No findings in the fixture change', findings: [] });
     const executablePath = await writeFinMuseExecutable({ binDir: bin, recordingPath, auditPath });
+    deepSecAuditPath = join(testDir, 'deepsec-audit.jsonl');
+    await writeFile(deepSecAuditPath, '');
+    deepSecExecutablePath = join(bin, 'deepsec');
+    await writeFile(deepSecExecutablePath, `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args.includes('--version')) console.log('2.3.12');
+else {
+  fs.appendFileSync(${JSON.stringify(deepSecAuditPath)}, JSON.stringify({ args, dataRoot: process.env.DEEPSEC_DATA_ROOT }) + '\\n');
+  if (args[0] === 'process') process.exitCode = 2;
+  else if (args[0] === 'export') fs.writeFileSync(args[args.indexOf('--out') + 1], JSON.stringify([{
+    title: 'Validate redirects', description: 'Reject an external redirect before returning.', severity: 'CRITICAL',
+    metadata: { filePath: 'README.md', lineNumbers: [1] },
+  }]));
+}
+`, { mode: 0o755 });
     const features = { ...process.env, HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' };
     const databaseUrl = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
       ?? (postgres = await startDatabaseWorkbenchPostgres({ preloadStatistics: false })).homeDatabaseUrl;
@@ -249,5 +270,58 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
     expect(retained.review).toMatchObject({ sourceKind: 'workflow', workflowId: saved.definitionId });
     const runs = WorkflowRunListResultV1Schema.parse(await act('workflow.run.list', { sourceArtifactId: saved.definitionId }));
     expect(runs.runs.map(row => row.id)).toEqual(expect.arrayContaining([stopped.run.id, retried.run.id]));
+  });
+  async function startNativeReview(engineId: string, extra: Readonly<{ comparisonId?: string; scope?: 'repository' }> = {},
+    reviewer: Omit<ReviewEngineReviewerSelectionV1, 'kind' | 'engineId'> = {}) {
+    const started = await act('review.start', { target: { kind: 'detached' },
+      reviewers: [{ kind: 'engine', engineId, ...reviewer }],
+      instructions: 'Review this fixture change.', reviewCommentAuthorIntent: 'open', ...extra });
+    expect(started, `${engineId}: ${JSON.stringify(started)}`).toMatchObject({
+      results: [{ key: reviewReviewerIdForSelectionV1(0), ok: true }],
+    });
+    if (!started || typeof started !== 'object' || !('results' in started) || !Array.isArray(started.results)) {
+      throw new Error('Review start did not return engine results');
+    }
+    const engine: unknown = started.results[0];
+    if (!engine || typeof engine !== 'object' || !('result' in engine)) throw new Error(`${engineId} did not start`);
+    const { runId } = ExecutionRunStartResponseSchema.parse(engine.result);
+    await act('execution.run.wait', { runId, condition: 'terminal' });
+    return ExecutionRunGetResponseSchema.parse(await act('execution.run.get', { runId, includeStructured: true }));
+  }
+  async function createWriteEnabledReviewRole() {
+    const roleId = randomUUID();
+    await act('roles.create', { roleId, role: { ...BUILT_IN_ROLES_V1.reviewer,
+      name: 'Native review with workspace writes', workspaceWrites: 'allow' } });
+    return roleId;
+  }
+  it('F3 DeepSec retains exported partial audit findings with an explicitly write-enabled Role through public Actions', async () => {
+    const profileId = 'happier.review.deepsec/repository-security-audit';
+    const roster = ReviewEngineInventorySchema.parse(await act('review.engines.list', { sessionId: null }));
+    const profileSourceCustody = roster.items.find(item => item.engineId === 'deepsec')?.profileSourceCustody;
+    if (!profileSourceCustody) throw new Error('DeepSec source custody is unavailable');
+    const inventory = ReviewEngineInventorySchema.parse(await act('review.engines.list', {
+      sessionId: null, scope: 'repository', profileSelections: [{ engineId: 'deepsec', profileId, profileSourceCustody }],
+    }));
+    const profile = inventory.selectionItems?.find(item => item.engineId === 'deepsec' && item.profileId === profileId);
+    if (!profile?.profileSourceCustody) throw new Error('DeepSec audit profile is unavailable');
+    const result = await startNativeReview('deepsec', { scope: 'repository' }, {
+      roleId: await createWriteEnabledReviewRole(), profileId, profileSourceCustody: profile.profileSourceCustody,
+      options: { confirmedCostWarning: true, preferredExecutablePath: deepSecExecutablePath },
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ run: { status: 'succeeded' }, reviewFindings: {
+      reviewOutcome: 'partial', findings: [{ filePath: 'README.md', severity: 'blocker', startLine: 1 }],
+    } });
+    const reviewId = result.run.display?.groupId;
+    expect(reviewId).toBeTruthy();
+    const persisted = ReviewCommentListResponseV1Schema.parse(await act('reviews.comments.list', { reviewId }));
+    expect(persisted.items).toHaveLength(1);
+    expect(persisted.items[0]?.author).toEqual({ kind: 'executionRun', agentId: 'deepsec', runId: result.run.runId });
+    expect(ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId })).review)
+      .toMatchObject({ state: 'partial', counts: { total: 1 } });
+    const commands: { args: string[]; dataRoot: string }[] = (await readFile(deepSecAuditPath, 'utf8'))
+      .trim().split('\n').map(line => JSON.parse(line));
+    expect(commands.map(command => command.args[0])).toEqual(['scan', 'process', 'export']);
+    expect(new Set(commands.map(command => command.dataRoot)).size).toBe(1);
+    expect(commands[0]?.dataRoot).toBeTruthy();
   });
 });
