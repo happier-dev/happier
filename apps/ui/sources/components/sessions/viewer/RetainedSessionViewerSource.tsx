@@ -42,6 +42,8 @@ export function RetainedSessionViewerSource(props: Readonly<{
     transition?: RetainedPresentationGeometryTransition | null;
     /** A watched picture lets the pointer through to the frame beneath it (see the binder). */
     inputPassthrough?: boolean;
+    /** The source's region name while presented (the portal stands outside the page's landmarks). */
+    accessibilityLabel?: string;
     children: React.ReactNode;
 }>): React.ReactElement | null {
     const inheritedLifetime = useSessionViewerSourceAccountLifetime();
@@ -66,7 +68,7 @@ export function RetainedSessionViewerSource(props: Readonly<{
         && !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, props.serverId))) return null;
     return <RetainedPresentationSlotBinder slotId={props.slotId} visible={props.visible}
         windowGeometry={props.windowGeometry} transition={props.transition}
-        inputPassthrough={props.inputPassthrough}>
+        inputPassthrough={props.inputPassthrough} accessibilityLabel={props.accessibilityLabel}>
         {retainedBody}
     </RetainedPresentationSlotBinder>;
 }

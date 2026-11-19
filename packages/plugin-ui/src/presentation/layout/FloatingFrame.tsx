@@ -612,7 +612,9 @@ export function FloatingFrame(props: FloatingFrameProps) {
       ref={moveSession.dragTargetRef}
       testID={props.testID}
       accessibilityLabel={props.accessibilityLabel}
-      role="group"
+      // On the web a frame's host presents it above the router, outside the page's main landmark: the
+      // frame is its own named region. Native keeps the group (it has no landmark navigation).
+      role={Platform.OS === 'web' ? 'region' : 'group'}
       focusable={floating}
       {...webOnly({ happierFloatingFrame: 'true' })}
       {...frameEventHandlers}

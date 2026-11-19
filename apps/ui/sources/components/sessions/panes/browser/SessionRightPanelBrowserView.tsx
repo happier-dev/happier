@@ -4,6 +4,7 @@ import { BrowserMobileSurfaceScreen } from '@/components/browser/surfaces/Browse
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { RetainedSessionViewerSource } from '@/components/sessions/viewer/RetainedSessionViewerSource';
+import { t } from '@/text';
 import { PaneHeaderSlotHandleProvider, usePaneHeaderSlotHandle } from '@/components/appShell/panes/paneHeaderSlot';
 import { useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
@@ -90,7 +91,7 @@ export function SessionRightPanelBrowserView(props: Readonly<{
     return (
         <RetainedSessionViewerSource sessionId={props.sessionId} slotId={slotId} serverId={serverId} visible={props.visible}
             windowGeometry={props.windowGeometry} transition={props.transition}
-            inputPassthrough={props.inputPassthrough}>
+            inputPassthrough={props.inputPassthrough} accessibilityLabel={t('computerUse.presentation.sourceBrowser')}>
             {body}
         </RetainedSessionViewerSource>
     );

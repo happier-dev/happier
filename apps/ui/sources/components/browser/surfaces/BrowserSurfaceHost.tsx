@@ -85,6 +85,7 @@ import { RetainedPresentationSlotBinder, useRetainedPresentationSlotVisible } fr
 import { useRetainedPresentationSlotGeometry } from '@/components/ui/presentation/retainedPresentationSlotGeometry';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { t } from '@/text';
 
 type BrowserSurfaceState = Readonly<{
     browserState: BrowserControlState;
@@ -293,6 +294,7 @@ export function BrowserSurfaceHost(props: BrowserSurfaceHostProps): React.ReactE
             slotId={props.presentationSlotId ?? props.browserSessionId}
             visible={props.visible ?? true}
             enabled={props.keepAliveAboveRouter === true && typeof props.presentationSlotId === 'string'}
+            accessibilityLabel={t('computerUse.presentation.sourceBrowser')}
         >
             <SessionViewerSourceAccountScopeProvider accountLifetime={accountLifetime}>
                 <SessionViewerControllerScope controller={viewerController}>

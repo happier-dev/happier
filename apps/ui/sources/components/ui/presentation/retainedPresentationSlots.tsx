@@ -151,6 +151,11 @@ export type RetainedPresentationSlotEntry = Readonly<{
     nativeMotion?: RetainedPresentationNativeMotion | null;
     /** Bound under the floating layer: it paints above in-flow bodies and the floating chrome. */
     floating?: boolean;
+    /**
+     * The page region's name. The portal stands above the router, outside the shell's main landmark,
+     * so the presented slot is its own named region for landmark navigation.
+     */
+    accessibilityLabel?: string;
 }>;
 
 export type RetainedPresentationSlotsStore = Readonly<{
@@ -183,6 +188,7 @@ function portalEntriesEqual(
         && a.refreshGeometry === b.refreshGeometry
         && (a.inputPassthrough ?? false) === (b.inputPassthrough ?? false)
         && (a.floating ?? false) === (b.floating ?? false)
+        && a.accessibilityLabel === b.accessibilityLabel
         && a.transition?.durationMs === b.transition?.durationMs
         && a.transition?.easingCss === b.transition?.easingCss
         && a.transition?.properties === b.transition?.properties
@@ -388,6 +394,7 @@ function RetainedPresentationPortalSlot({ entry, origin }: Readonly<{ entry: Ret
     return <Animated.View
         testID={`browser-presentation-portal-slot-${entry.slotId}`}
         {...resolvePaneUnderlayAccessibilityProps(!visible, Platform.OS === 'web')}
+        {...(Platform.OS === 'web' && entry.accessibilityLabel ? { role: 'region' as const, 'aria-label': entry.accessibilityLabel } : null)}
         style={Platform.OS === 'web' ? resolvePortalSlotStyle(entry, origin) : [resolvePortalSlotStyle(entry, origin), animatedStyle]}
         pointerEvents={visible && motion?.overlay ? 'box-none' : visible && !entry.inputPassthrough ? 'auto' : 'none'}
     >
@@ -536,6 +543,8 @@ export type UseRetainedPresentationSlotInput = Readonly<{
     transition?: RetainedPresentationGeometryTransition | null;
     inputPassthrough?: boolean;
     nativeMotion?: RetainedPresentationNativeMotion | null;
+    /** See `RetainedPresentationSlotEntry.accessibilityLabel`. */
+    accessibilityLabel?: string;
     /**
      * When `true`, this binder is the active host for the slot and registers its `node` into the
      * route-stable portal. When `false` (no provider, or the caller opted out), nothing is registered
@@ -586,6 +595,7 @@ export function useRetainedPresentationSlot(
             inputPassthrough: input.inputPassthrough ?? false,
             nativeMotion: input.nativeMotion ?? null,
             floating,
+            accessibilityLabel: input.accessibilityLabel,
         });
     });
 
@@ -639,6 +649,8 @@ export type RetainedPresentationSlotBinderProps = Readonly<{
     transition?: RetainedPresentationGeometryTransition | null;
     /** See `RetainedPresentationSlotEntry.inputPassthrough`. */
     inputPassthrough?: boolean;
+    /** The presented body's region name (see `RetainedPresentationSlotEntry.accessibilityLabel`). */
+    accessibilityLabel?: string;
     children: React.ReactNode;
     retainOnUnmount?: () => boolean;
 }>;
@@ -720,6 +732,7 @@ export function RetainedPresentationSlotBinder(props: RetainedPresentationSlotBi
         enabled: props.enabled,
         transition: props.transition,
         inputPassthrough: props.inputPassthrough,
+        accessibilityLabel: props.accessibilityLabel,
         nativeMotion,
         retainOnUnmount: props.retainOnUnmount,
     });

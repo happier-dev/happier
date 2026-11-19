@@ -3,6 +3,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { RetainedSessionViewerSource } from '@/components/sessions/viewer/RetainedSessionViewerSource';
+import { t } from '@/text';
 import { SessionViewerPresentedElsewhere } from '@/components/sessions/viewer/SessionViewerPresentedElsewhere';
 import {
   isSessionViewerPresenting,
@@ -108,6 +109,7 @@ export function SessionComputerScreenPane(
       windowGeometry={props.windowGeometry}
       transition={props.transition}
       inputPassthrough={props.inputPassthrough}
+      accessibilityLabel={t('computerUse.presentation.sourceComputer')}
     >
       {body}
     </RetainedSessionViewerSource>

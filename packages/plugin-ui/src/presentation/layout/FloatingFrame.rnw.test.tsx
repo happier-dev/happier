@@ -167,6 +167,16 @@ function key(target: Element, value: string) {
 }
 
 describe('FloatingFrame', () => {
+  it('is a named region on the web, so its chrome and footer stay reachable by landmark navigation above the page', () => {
+    // Hosts present the frame in a layer above the router, outside the page's main landmark.
+    const { view, byId } = mount();
+    const frame = byId('frame');
+    expect(frame.getAttribute('role')).toBe('region');
+    expect(frame.getAttribute('aria-label')).toBe('Watching Browser on fly-bot-1');
+    expect(byId('frame-controls').closest('[role="region"]')).toBe(frame);
+    view.unmount();
+  });
+
   it('reveals its controls on hover for a pointer that hovers, and keeps them shown for one that cannot', () => {
     const hovering = mount();
     expect(hovering.byId('frame-controls').style.opacity).toBe('0');

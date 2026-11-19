@@ -30,7 +30,7 @@ async function mount(visible = true, windowGeometry?: { x: number; y: number; wi
     const render = async (shown: boolean) => act(async () => root.render(
         <RetainedPresentationSlotsProvider>
             <div data-testid="entering-pane">
-                <RetainedPresentationSlotBinder slotId="pane" enabled visible={shown} windowGeometry={windowGeometry}><Body /></RetainedPresentationSlotBinder>
+                <RetainedPresentationSlotBinder slotId="pane" enabled visible={shown} windowGeometry={windowGeometry} accessibilityLabel="Browser"><Body /></RetainedPresentationSlotBinder>
             </div>
         </RetainedPresentationSlotsProvider>,
     ));
@@ -77,4 +77,16 @@ it('keeps a parked body mounted but inaccessible, then restores its existing con
     expect(control.closest('[aria-hidden="true"]')).toBeNull();
     await render(false);
     expect(control.closest('[inert]')).not.toBeNull();
+});
+
+it('names the presented body as a page region from the portal, without remounting it', async () => {
+    // The portal stands above the router, outside the shell's main landmark: the slot itself must be one.
+    const { container, render } = await mount(true, { x: 100, y: 50, width: 380, height: 600 });
+    const control = container.querySelector<HTMLButtonElement>('[data-testid="retained-control"]')!;
+    const region = control.closest('[role="region"]');
+    expect(region?.getAttribute('aria-label')).toBe('Browser');
+    await render(false);
+    await render(true);
+    expect(container.querySelector('[data-testid="retained-control"]')).toBe(control);
+    expect(control.closest('[role="region"]')?.getAttribute('aria-label')).toBe('Browser');
 });
