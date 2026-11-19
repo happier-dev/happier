@@ -1032,15 +1032,16 @@ test('measured native workload reservations round the recorded peak without a bl
   }
 });
 
-test('native CPU projection preserves canonical declared demand and explicit worker sizing', { skip: process.platform === 'win32' }, async () => {
+test('native CPU projection preserves canonical cold and declared demand with explicit worker sizing', { skip: process.platform === 'win32' }, async () => {
   const resources = await import('./command_resources.mjs');
   const policy = renderNativeCommandPolicy();
   for (const className of [...Object.keys(resources.HEAVYWEIGHT_COMMAND_RESOURCES), 'unknown-class']) {
-    for (const requestedCpuCores of [0, 7, 'host']) {
+    for (const requestedCpuCores of [0, 1, 7, 'host']) {
       const native = spawnSync('/bin/sh', ['-c', [policy, 'heavyweight_cpu_cores "$1" 8 3 "$2"'].join('\n'), 'cpu', className, String(requestedCpuCores)], { encoding: 'utf8' });
       assert.equal(native.status, 0, native.stderr);
-      assert.equal(Number(native.stdout), resources.resolveAdmissionCpuCores(resources.resolveAdmissionCpuCost(className), {
-        totalCpuCores: 8, workers: 3, requestedCpuCores,
+      const cold = resources.resolveColdAdmissionCpuCost(className);
+      assert.equal(Number(native.stdout), resources.resolveAdmissionCpuCores(typeof cold === 'number' ? Math.min(8, cold) : cold, {
+        totalCpuCores: 8, workers: 3, requestedCpuCores, className,
       }), className);
     }
   }

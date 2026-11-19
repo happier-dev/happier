@@ -30,7 +30,7 @@ import { resolveRemoteValidationPlacementClass } from './validation_preparation_
 import { readShellCommandPrefix, workspaceBuildCommands, workspaceBuildSequence } from './shell_command_sequence.mjs';
 import { HOST_ADMISSION_OBSERVATION, HOST_OBSERVATION_PROGRAMS } from './host_observation.mjs';
 import { COMPILER_NATIVE_TEST_FILES, COMPILER_TEST_SUITES, refineCompilerSuiteSelection } from './compiler_test_suites.mjs';
-import { ADMISSION_CPU_WORKER_ENV_NAMES, ADMISSION_CPU_WORKER_FLAGS, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY } from './command_resources.mjs';
+import { ADMISSION_CPU_WORKER_ENV_NAMES, ADMISSION_CPU_WORKER_FLAGS, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY, resolveColdAdmissionCpuCost } from './command_resources.mjs';
 export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_RELOAD_ADMISSION_CLASS } from './command_resources.mjs';
 
 // Both dispatchers evaluate this policy. The native artifact is generated once,
@@ -1335,15 +1335,17 @@ function renderNativeCpuPolicy() {
   return [
     'heavyweight_cpu_cores() {',
     '  case "$1" in',
-    ...Object.entries(HEAVYWEIGHT_COMMAND_RESOURCES).map(([name, resource]) => {
-      const value = resource.cpuCores === 'host' ? '$2' : resource.cpuCores === 'workers' ? '${3:-$2}' : String(resource.cpuCores);
+    ...Object.keys(HEAVYWEIGHT_COMMAND_RESOURCES).map(name => {
+      const cost = resolveColdAdmissionCpuCost(name);
+      const value = cost === 'workers' ? '${3:-$2}' : String(cost);
       return `    ${name}) heavyweight_cpu_cost=${value} ;;`;
     }),
-    '    *) heavyweight_cpu_cost=$2 ;;',
+    `    *) heavyweight_cpu_cost=${resolveColdAdmissionCpuCost(undefined)} ;;`,
     '  esac',
+    '  if [ "${1-}" != source-web-export ] && [ "$heavyweight_cpu_cost" -gt "$2" ]; then heavyweight_cpu_cost=$2; fi',
     '  heavyweight_cpu_requested=${4:-0}',
     '  [ "$heavyweight_cpu_requested" != host ] || heavyweight_cpu_requested=$2',
-    '  if [ "$heavyweight_cpu_requested" -gt "$heavyweight_cpu_cost" ]; then heavyweight_cpu_cost=$heavyweight_cpu_requested; fi',
+    '  if { [ "${1-}" = validation ] && [ "$heavyweight_cpu_requested" -gt 0 ]; } || [ "$heavyweight_cpu_requested" -gt "$heavyweight_cpu_cost" ]; then heavyweight_cpu_cost=$heavyweight_cpu_requested; fi',
     '  printf \'%s\' "$heavyweight_cpu_cost"',
     '}',
     'heavyweight_include_requested_cpu() {',

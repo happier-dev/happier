@@ -21,21 +21,33 @@ export function readJobScopePeakKiB() {
   return null;
 }
 
-/** Only a dedicated dispatch scope can be attributed to this workload. File
- * cache belongs to the cgroup charge but is reclaimable under memory pressure.
- * shmem is separate from anon and must remain charged. */
+/** Read resources only from a dedicated scope attributable to this workload. */
+function readJobScopeStat(pid, name, read) {
+  const scope = file => read(file, 'utf8').match(/^0::(.*)$/m)?.[1] ?? '';
+  const path = scope(`/proc/${pid ?? 'self'}/cgroup`);
+  if (!path.startsWith(`${jobsSlice(process.getuid())}/`)
+    || !/\/happier-jobs-\d+-[^/]+\.scope$/.test(path)
+    || (pid !== undefined && path === scope('/proc/self/cgroup'))) return null;
+  return read(`/sys/fs/cgroup${path}/${name}`, 'utf8');
+}
+
+/** File cache is reclaimable. shmem is separate from anon and stays charged. */
 export function readProcessJobScopeWorkingSetKiB(pid, read = readFileSync) {
   try {
-    const scope = file => read(file, 'utf8').match(/^0::(.*)$/m)?.[1] ?? '';
-    const path = scope(`/proc/${pid ?? 'self'}/cgroup`);
-    if (!path.startsWith(`${jobsSlice(process.getuid())}/`)
-      || !/\/happier-jobs-\d+-[^/]+\.scope$/.test(path)
-      || (pid !== undefined && path === scope('/proc/self/cgroup'))) return null;
-    const stat = read(`/sys/fs/cgroup${path}/memory.stat`, 'utf8');
+    const stat = readJobScopeStat(pid, 'memory.stat', read);
+    if (stat === null) return null;
     const usage = ['anon', 'shmem', 'kernel'].map(key => Number(new RegExp(`^${key} +(\\d+)$`, 'm').exec(stat)?.[1]));
     if (!usage.every(value => Number.isSafeInteger(value) && value >= 0)) return null;
     const bytes = usage.reduce((total, value) => total + value, 0);
     return Number.isSafeInteger(bytes) && bytes > 0 ? Math.ceil(bytes / 1024) : null;
+  } catch { return null; }
+}
+
+export function readProcessJobScopeCpuUsageUsec(pid, read = readFileSync) {
+  try {
+    const stat = readJobScopeStat(pid, 'cpu.stat', read);
+    const usage = Number(/^usage_usec +(\d+)$/m.exec(stat ?? '')?.[1]);
+    return Number.isSafeInteger(usage) && usage >= 0 ? usage : null;
   } catch { return null; }
 }
 

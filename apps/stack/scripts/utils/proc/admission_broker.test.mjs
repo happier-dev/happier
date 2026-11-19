@@ -330,7 +330,7 @@ test('broker succession recovers CPU reservations from live slot sockets', linux
   assert.equal(replacement.status().reservedCpuCores, 1);
 });
 
-test('tsrs compilation retains its memory floor and is admitted on memory alone', linux, async t => {
+test('tsrs compilation retains its memory floor and charges its observed CPU class', linux, async t => {
   const { HEAVYWEIGHT_COMMAND_RESOURCES } = await import('../dev_targets/command_resources.mjs');
   const floorKiB = HEAVYWEIGHT_COMMAND_RESOURCES['compilation-ui-tsrs']?.memoryKiB;
   assert.equal(floorKiB, 10 * 1024 * 1024);
@@ -351,7 +351,7 @@ test('tsrs compilation retains its memory floor and is admitted on memory alone'
   await exact.next();
   exact.socket.destroy();
   assert.equal(broker.status().activeCount, 1);
-  assert.equal(broker.status().reservedCpuCores, 0);
+  assert.equal(broker.status().reservedCpuCores, 17);
   await held.release();
   await second.admit();
   assert.equal(broker.status().activeCount, 1);
@@ -359,19 +359,140 @@ test('tsrs compilation retains its memory floor and is admitted on memory alone'
   assert.equal(broker.status().reservedMemoryKiB, floorKiB);
 });
 
-test('host-class work is admitted on memory alone and still receives the host core count', linux, async t => {
-  // Reproduced 2026-11-10: whole-host CPU reservations for 'host' classes left an
-  // idle 128-core worker running one heavyweight job at a time.
-  const { root, broker } = await fixture(t, { cpuCores: 2, readMemory: () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }) });
-  const first = await acquire(root, 1, t, { className: 'source-bundle' });
-  const held = await first.admit();
-  const second = await acquire(root, 1, t, { className: 'source-bundle' });
-  const admitted = await second.admit();
-  assert.equal(broker.status().activeCount, 2);
-  assert.equal(broker.status().waitingCount, 0);
-  assert.equal(broker.status().reservedCpuCores, 0);
-  assert.equal(admitted.admitted.cpuCores, 2, 'clients keep their host-sized worker controls');
-  await held.release();
+test('memory-fitting CPU-heavy waiters admit up to cores minus runnable pressure', { ...linux, timeout: 6000 }, async t => {
+  const clock = captureRecoveryClock(t);
+  let pressure = 3;
+  const { root, broker } = await fixture(t, { cpuCores: 12, readCpuPressure: () => pressure });
+  const waiters = [];
+  for (let index = 0; index < 9; index++) {
+    waiters.push(await acquire(root, 1, t, { className: 'package-dist' }));
+  }
+  const snapshot = await requestAdmissionSample(root);
+  assert.equal(snapshot.activeCount, 2);
+  assert.equal(snapshot.waitingCount, 7);
+  assert.equal(snapshot.reservedCpuCores, 8);
+  assert.equal(snapshot.cpuPressureCores, 3);
+  assert.equal(snapshot.unreservedCpuCores, 1);
+  for (const waiter of waiters.slice(0, 2)) {
+    assert.equal((await waiter.admit()).admitted.cpuCores, 4);
+  }
+  const check = await request(root, { kind: 'check', floorKiB: 1, className: 'package-dist', cpuCost: 'host' });
+  assert.equal((await check.next()).reason, 'HSTACK_CPU_BUSY');
+  check.socket.destroy();
+  pressure = 0;
+  const afterPressureDrop = await request(root, { kind: 'check', floorKiB: 1, className: 'package-dist', cpuCost: 'host' });
+  assert.equal((await afterPressureDrop.next()).kind, 'admitted');
+  afterPressureDrop.socket.destroy();
+  await clock.tick();
+  await waiters[2].admit();
+  assert.equal(broker.status().reservedCpuCores, 12);
+});
+
+test('small validation jobs stay concurrent on a large host', { ...linux, timeout: 6000 }, async t => {
+  const { root } = await fixture(t, { cpuCores: 128, readCpuPressure: () => 8 });
+  const waiters = [];
+  for (let index = 0; index < 24; index++) {
+    waiters.push(await acquire(root, 1, t, { className: 'validation' }));
+  }
+  const snapshot = await requestAdmissionSample(root);
+  assert.equal(snapshot.activeCount, 24);
+  assert.equal(snapshot.reservedCpuCores, 24 * 3);
+  for (const waiter of waiters) assert.equal((await waiter.admit()).admitted.cpuCores, 3);
+  const oneWorker = await acquire(root, 1, t, { className: 'validation', requestedCpuCores: 1 });
+  assert.equal((await oneWorker.admit()).admitted.cpuCores, 1);
+});
+
+test('succession charges live zero and legacy CPU sockets before admitting reconnects', { ...linux, timeout: 6000 }, async t => {
+  const { root, broker, sampleResources } = await fixture(t);
+  await broker.close();
+  for (const [index, cpu] of [0, undefined].entries()) {
+    const holder = createServer(socket => socket.on('error', () => {}));
+    holder.listen(slotAddress(root, process.pid, 1, `00000000-0000-4000-8000-00000000000${index}`, cpu));
+    await once(holder, 'listening');
+    t.after(() => holder.close());
+  }
+  const successor = createAdmissionBroker({ root, sampleResources, readCpuCapacity: () => 36, readCpuPressure: () => 2 });
+  await successor.start();
+  t.after(() => successor.close());
+  const waiters = [];
+  for (let index = 0; index < 8; index++) waiters.push(await acquire(root, 1, t, { className: 'validation' }));
+  const snapshot = await requestAdmissionSample(root);
+  assert.equal(snapshot.reservedCpuCores, 34);
+  assert.equal(snapshot.activeCount, 2);
+  assert.equal(snapshot.waitingCount, 8);
+});
+
+test('completed CPU usage sizes a queued identity and survives broker succession', { ...linux, timeout: 6000 }, async t => {
+  const { root, broker, sampleResources } = await fixture(t);
+  const identity = { className: 'validation', component: 'ui', entry: 'synthetic.mjs', projects: ['apps/ui'] };
+  const first = await (await acquire(root, 60, t, identity)).admit();
+  const queued = await acquire(root, 60, t, identity);
+  await first.report({ kind: 'slot-completed', status: 0, cpuMilliCores: 4500 });
+  await requestAdmissionSample(root);
+  await first.release();
+  const learned = await queued.admit();
+  assert.equal(learned.admitted.cpuCores, 7);
+  await learned.release();
+  await broker.close();
+  const successor = createAdmissionBroker({ root, sampleResources, readCpuCapacity: () => 128 });
+  await successor.start();
+  t.after(() => successor.close());
+  const again = await (await acquire(root, 60, t, identity)).admit();
+  assert.equal(again.admitted.cpuCores, 7);
+});
+
+test('the admission client reports payload-only CPU use from its dedicated cgroup', linux, async t => {
+  const { root } = await fixture(t);
+  const uid = process.getuid();
+  const scope = `/user.slice/user-${uid}.slice/user@${uid}.service/happier.slice/happier-jobs.slice/happier-jobs-${process.pid}-fixture.scope`;
+  let usageUsec = 100_000_000;
+  let now = 10_000;
+  const read = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (path === '/proc/self/cgroup') return `0::${scope}\n`;
+    if (path === `/sys/fs/cgroup${scope}/cpu.stat`) return `usage_usec ${usageUsec}\nuser_usec 0\n`;
+    return read(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.mock.method(performance, 'now', () => now);
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const identity = { className: 'validation', component: 'ui', entry: 'cpu-fixture.mjs', projects: ['apps/ui'] };
+  const started = Promise.withResolvers();
+  const finish = Promise.withResolvers();
+  const running = runAdmittedTask({ root, ...identity, machine: 'fixture', env: {},
+    floorKiB: 60, repoDir: root, readJobPeakKiB: () => null }, async () => {
+    started.resolve();
+    await finish.promise;
+    usageUsec += 1_200_000;
+    now += 1_000;
+    return 0;
+  });
+  await started.promise;
+  const queued = await acquire(root, 60, t, identity);
+  await requestAdmissionSample(root);
+  finish.resolve();
+  assert.equal(await running, 0);
+  assert.equal((await queued.admit()).admitted.cpuCores, 2, '1.2 payload cores with 50% headroom round up to two');
+});
+
+test('missing, corrupt, and memory-only identity histories keep admitting with cold CPU charges', { ...linux, timeout: 6000 }, async t => {
+  const identity = { className: 'validation', component: 'ui', entry: 'legacy.mjs', projects: ['apps/ui'] };
+  const memoryKey = JSON.stringify(['validation', 'ui', 'legacy.mjs', ['apps/ui']]);
+  const gib = 1024 * 1024;
+  for (const [history, expectedFloor] of [
+    [undefined, gib],
+    ['{', gib],
+    [JSON.stringify({ 'malformed-key': [4000], [memoryKey]: [2 * gib] }), 2 * gib],
+    [JSON.stringify({ [memoryKey]: [2 * gib] }), 2 * gib],
+  ]) {
+    const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 8 * gib, totalMemoryKiB: 8 * gib }) });
+    if (history !== undefined) await writeFile(join(root, 'identity-kernel-peaks.json'), history);
+    const client = await acquire(root, gib, t, identity);
+    assert.equal((await requestAdmissionSample(root)).activeCount, 1, `history ${history} must not stall the acquire`);
+    const held = await client.admit();
+    assert.equal(held.admitted.floorKiB, expectedFloor);
+    assert.equal(held.admitted.cpuCores, 3);
+  }
 });
 
 test('canonical validation floors admit concurrent focused work up to exact capacity', linux, async t => {
@@ -512,14 +633,14 @@ async function acquire(root, floorKiB, t, extra = {}) {
   } };
 }
 
-async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }), readProcesses = () => new Map(), admitDisk, cpuCores = 128, readSlotWorkingSetKiB = () => null } = {}) {
+async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }), readProcesses = () => new Map(), admitDisk, cpuCores = 128, readCpuPressure, readSlotWorkingSetKiB = () => null } = {}) {
   // Unix socket metadata needs a short pathname, independent of the command's
   // potentially deep workspace/custody TMPDIR. This remains a private root.
   const root = await mkdtemp('/tmp/happier-broker-test-');
   const sampleResources = ({ slots }) => readAdmissionMemorySample({ slots,
     readMemory, readProcesses });
   const broker = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources,
-    readCpuCapacity: () => cpuCores, readSlotWorkingSetKiB,
+    readCpuCapacity: () => cpuCores, readCpuPressure, readSlotWorkingSetKiB,
     ...(admitDisk ? { admitDisk } : {}) });
   await broker.start();
   t.after(async () => { await broker.close(); await rm(root, { recursive: true, force: true }); });

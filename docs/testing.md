@@ -213,8 +213,8 @@ invocations; already-running shells retain their parsed code.
 
 In 0.3 development, finite daemon Plugin UI preparation during a source reload
 uses `source-reload` admission at producer priority, ahead of validation, focused
-tests and typechecks. It retains the observed 17 GiB floor, host CPU reservation,
-validation disk budget and existing capacity checks; priority never preempts
+tests and typechecks. It retains the observed 17 GiB floor, validation disk
+budget and existing capacity checks. Priority never preempts
 active work. Reload coordinators still delegate admission to finite producers.
 A queued client retains its submitted class: relaunch it to adopt a changed
 classification. A long-lived broker must adopt updated priority policy too.
@@ -623,10 +623,13 @@ client-owned socket succession path.
 In current 0.3 development, the Linux host admission broker owns capacity and
 FIFO ordering with head-floor reservation and backfill. CPU reservations share
 that queue and each slot's lifetime with memory. The broker reads the OS's
-available logical-core count once at startup, then admits only declared CPU
-demand that fits its remaining core capacity. It does not sample CPU load or
-add a CPU recovery timer. CPU-only waiters wake on existing slot/resource events
-without memory/process observations. A request larger than the host receives
+available logical-core count once at startup. Each offer pass subtracts held
+reservations and the current Linux runnable count, excluding the sampling broker
+itself. This counts work outside admission, such as database and stack activity,
+and can also count runnable threads from already admitted jobs. Existing slot and
+resource events wake CPU waiters. The resource catch-up also checks external CPU
+pressure while it blocks a waiter and refreshes memory before making an offer.
+A request larger than the host receives
 `HSTACK_CPU_CAPACITY`; a nonwaiting request without current room receives
 `HSTACK_CPU_BUSY`.
 
@@ -639,23 +642,25 @@ with the existing catch-up interval covering abrupt broker death. The original
 arrival survives a reconnect. Succession loads the broker check for retained
 clients. The reconnect change takes effect when a client process starts.
 
-The current command-resource catalog owns each class's CPU cost; clients send
-that policy with their memory floor so retained brokers do not re-decide it
-from stale catalog modules. Focused validation and native source/custody work
-reserve one core and receive the existing Go/Vitest worker controls after
-admission. Compilers and compound publishers reserve the host because their
-runners do not establish a smaller worker bound. Managed exports reserve their
-selected worker count against both resources. Explicit worker settings remain
-intact and contribute declared demand; nonnumeric sizing reserves the host.
-This is admission accounting, not an OS CPU quota or a measurement of other
-processes. Legacy slots without a CPU declaration reserve the host until they
-finish. Already-running pre-CPU brokers retain memory-only enforcement and use
-minimum worker defaults for new payloads; fixed CPU enforcement requires a
-successor broker. The launcher does not restart a live broker, stack or daemon.
+Focused validation and native source/custody jobs declare one core. Managed
+exports declare their selected workers against both resources. Ordinary validation
+honors an explicit worker count. Compilers and compound publishers start from
+class-specific cold costs in the command-resource catalog. The broker then uses
+host-local identity or related class history when available. Each successful
+attributable payload contributes its cgroup CPU usage delta divided by its run
+duration. The grant includes 50% headroom on learned CPU use, rounded up to a
+whole core, and feeds the Go and Vitest worker controls. This accounting imposes
+no OS quota. Explicit worker controls remain in place; nonnumeric sizing requests
+reserve the whole host and can wait for runnable pressure to clear.
+
+On succession, the broker adopts live slot charges before offering capacity to
+reconnecting waiters. A zero or absent legacy charge uses the largest cold class
+cost until the retained client provides a known class identity. The launcher
+does not restart a live broker, stack or daemon.
 
 Only a waiter whose minimum demand fits the broker's achievable memory and
-fixed CPU capacity can reserve as head. Larger waiters keep their arrival order
-and become eligible when achievable memory recovers; non-admitted pressure must
+capacity after runnable CPU pressure can reserve as head. Larger waiters keep
+their arrival order and become eligible when their resources recover; non-admitted pressure must
 not block smaller fitting work. When a request becomes head, capacity already
 free remains available to fitting younger requests, in arrival order. Memory
 and CPU released by this broker's slots remain reusable until the head has waited

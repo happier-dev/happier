@@ -117,14 +117,46 @@ export function resolveTypeScriptAdmissionClass(admissionClass, compiler) {
   return admissionClass;
 }
 
-// CPU admission reserves fixed runnable work, never observed host load. A
-// single-worker command gets one core; compound publishers retain the host so
-// their existing internal parallelism fits. Managed exports name their workers.
+// Cold core charges for commands without a worker declaration. Short cgroup
+// cpu.stat deltas (2026-11-19 22:16Z, controller, nl1, nl3, windows2-linux):
+// compilation 1.124 (earlier nested UI 1.38), UI 1.135, server 0.746,
+// package-dist 2.552, source-bundle 1.079, and tsrs 11.153. Use 1.5×,
+// rounded up. Ordinary validation was 1.202–1.374, with one run at 2.709;
+// 3 cores covers that upper observation with 11% slack. For unsampled
+// compound builds/installers use the 4-core package preparation envelope;
+// entry-loads use the validation envelope. Completed local identities replace
+// these estimates. Fixed worker classes and dynamic exports use their declarations.
+export const COLD_ADMISSION_CPU_CORES = Object.freeze({
+  [SOURCE_RELOAD_ADMISSION_CLASS]: 4,
+  validation: 3,
+  'entry-loads': 3,
+  'source-bundle': 2,
+  'dependency-install': 4,
+  'package-dist': 4,
+  'runtime-build': 4,
+  compilation: 2,
+  'compilation-ui': 2,
+  'compilation-ui-tsrs': 17,
+  'compilation-cli': 2,
+  'compilation-server': 2,
+});
+export const UNKNOWN_ADMISSION_CPU_CORES = COLD_ADMISSION_CPU_CORES['package-dist'];
+
+// Clients retain the symbolic declaration; the destination broker sizes
+// host-class commands from its own completed history.
 export function resolveAdmissionCpuCost(className) {
   return HEAVYWEIGHT_COMMAND_RESOURCES[className]?.cpuCores ?? 'host';
 }
 
-export function resolveAdmissionCpuCores(cost, { totalCpuCores, workers, requestedCpuCores = 0 } = {}) {
+export function resolveColdAdmissionCpuCost(className) {
+  const declared = resolveAdmissionCpuCost(className);
+  return declared !== 'host' ? declared : Object.hasOwn(COLD_ADMISSION_CPU_CORES, className)
+    ? COLD_ADMISSION_CPU_CORES[className] : UNKNOWN_ADMISSION_CPU_CORES;
+}
+
+export function resolveAdmissionCpuCores(cost, { totalCpuCores, workers, requestedCpuCores = 0, className } = {}) {
+  // An explicit count sizes ordinary Vitest runs more directly than a class sample.
+  if (className === 'validation' && Number.isSafeInteger(requestedCpuCores) && requestedCpuCores > 0) return requestedCpuCores;
   const base = cost === 'workers' ? workers ?? totalCpuCores : cost === 'host' ? totalCpuCores : cost;
   return Math.max(base, requestedCpuCores === 'host' ? totalCpuCores : requestedCpuCores);
 }

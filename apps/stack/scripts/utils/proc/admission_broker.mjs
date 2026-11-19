@@ -4,7 +4,7 @@ import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, 
 import { createConnection, createServer } from 'node:net';
 import { dirname, isAbsolute, join, posix, relative } from 'node:path';
 import { availableParallelism } from 'node:os';
-import { FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_RELOAD_ADMISSION_CLASS, resolveAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
+import { COLD_ADMISSION_CPU_CORES, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_RELOAD_ADMISSION_CLASS, resolveAdmissionCpuCores, resolveColdAdmissionCpuCost } from '../dev_targets/command_resources.mjs';
 import { createInterface } from 'node:readline';
 import { DURATION_WINDOW, nearestRankP99 } from '../dev_targets/execution_provenance.mjs';
 import { pathToFileURL } from 'node:url';
@@ -87,6 +87,21 @@ const IDENTITY_PEAKS_FILENAME = 'identity-kernel-peaks.json';
 // preparation step or a producer inside a run) is projected by its own identity's
 // successful admitted run times, with the same window and nearest-rank p99 as the
 // controller's run history. Without a recorded success it has no duration.
+// CPU uses the same tuple and integer-array history shape as working-set
+// memory, under a reserved class prefix. Old brokers ignore these rows for
+// memory sizing and preserve them when rewriting the shared host-local file.
+const CPU_HISTORY_PREFIX = 'cpu-millicores/';
+const cpuHistoryKey = key => key?.replace(/^\["/, `["${CPU_HISTORY_PREFIX}`) ?? null;
+const MAX_COLD_CPU_CORES = Math.max(...Object.values(COLD_ADMISSION_CPU_CORES));
+
+function readLinuxCpuPressure() {
+  const runnable = Number(/^\S+ +\S+ +\S+ +(\d+)\/\d+ /.exec(readFileSync('/proc/loadavg', 'utf8'))?.[1]);
+  // The broker itself is runnable while it reads /proc. Budget the remaining
+  // runnable tasks conservatively, including work outside the broker. Some
+  // admitted tasks can also appear in this count.
+  return runnable - 1;
+}
+
 const IDENTITY_DURATIONS_FILENAME = 'identity-durations.json';
 const IDENTITY_DURATION_CLASS = 'identity-history';
 // Systemic 20:31Z: class + component + script/entry + sorted projects, never argv.
@@ -200,6 +215,7 @@ const HOST_LEGACY_LOCK_PATH = '/tmp/happier-heavyweight-admission-v3/lock';
 export function createAdmissionBroker({ root,
   oldLockPath = root === HOST_ADMISSION_ROOT ? HOST_LEGACY_LOCK_PATH : join(root, 'old-admission.lock'),
   oldLockFd, startupLockFd, sampleResources = readAdmissionMemorySample, readCpuCapacity = availableParallelism,
+  readCpuPressure = sampleResources === readAdmissionMemorySample ? readLinuxCpuPressure : () => 0,
   readSlotWorkingSetKiB = readProcessJobScopeWorkingSetKiB,
   readRecoveredSlotMemoryKiB = readSlotWorkingSetKiB,
   admitDisk = request => request.cacheBaseDir
@@ -219,6 +235,7 @@ export function createAdmissionBroker({ root,
   let sample = { availableMemoryKiB: 0, totalMemoryKiB: 0, reservedMemoryKiB: 0,
     residentMemoryKiB: 0, unreservedMemoryKiB: 0, achievableMemoryKiB: 0 };
   let totalCpuCores;
+  let cpuPressureCores = 0;
   let sampleCount = 0;
   let arrivalOrder = 0;
   let headPledge;
@@ -234,9 +251,15 @@ export function createAdmissionBroker({ root,
     identityPeaks = new Map();
     try {
       for (const [key, peaks] of Object.entries(JSON.parse(readFileSync(join(root, IDENTITY_PEAKS_FILENAME), 'utf8')))) {
-        if (Array.isArray(peaks) && peaks.length && peaks.every(peak => Number.isSafeInteger(peak) && peak > 0)) {
-          identityPeaks.set(key, peaks.slice(-IDENTITY_PEAK_WINDOW));
-        }
+        if (!Array.isArray(peaks) || !peaks.length || !peaks.every(peak => Number.isSafeInteger(peak) && peak > 0)) continue;
+        try {
+          const identity = JSON.parse(key);
+          if (Array.isArray(identity) && identity.length === 4
+            && identity.slice(0, 3).every(part => typeof part === 'string')
+            && Array.isArray(identity[3]) && identity[3].every(project => typeof project === 'string')) {
+            identityPeaks.set(key, peaks.slice(-IDENTITY_PEAK_WINDOW));
+          }
+        } catch (error) { recordFailure(error); }
       }
     } catch (error) { if (error.code !== 'ENOENT') recordFailure(error); }
     return identityPeaks;
@@ -265,12 +288,14 @@ export function createAdmissionBroker({ root,
     return p99DurationMs > 0 ? { durationClass: IDENTITY_DURATION_CLASS, p99DurationMs } : {};
   }
   const roundPeak = peakKiB => Math.ceil(peakKiB / IDENTITY_FLOOR_ROUNDING_KIB) * IDENTITY_FLOOR_ROUNDING_KIB;
-  function recordedIdentityPeakKiB(item) {
-    const key = identityKey(item);
+  function recordedIdentityResource(item, cpu = false) {
+    const identity = identityKey(item);
+    const key = cpu ? cpuHistoryKey(identity) : identity;
     const own = recordedIdentityPeaks().get(key);
     if (own) return nearestRank(own, 0.95);
 
-    const resourceClass = item.resourceClass ?? item.className;
+    const className = item.resourceClass ?? item.className;
+    const resourceClass = cpu ? CPU_HISTORY_PREFIX + className : className;
     const projects = [...(item.projects ?? [])].sort();
     const projectSet = JSON.stringify(projects);
     const supersets = [];
@@ -295,6 +320,14 @@ export function createAdmissionBroker({ root,
     return nearestRank(supersets, 0.5) ?? nearestRank(family, 0.5)
       ?? nearestRank(sameProjects, 0.5) ?? nearestRank(sameClass, 0.5);
   }
+  const recordedIdentityPeakKiB = item => recordedIdentityResource(item);
+  function hostCpuCores(item) {
+    const observed = recordedIdentityResource(item, true);
+    const cold = resolveColdAdmissionCpuCost(item.resourceClass ?? item.className);
+    // Legacy exports may lack the worker declaration and options.
+    return Math.min(totalCpuCores, observed === undefined ? (typeof cold === 'number' ? cold : totalCpuCores)
+      : Math.ceil(observed * 1.5 / 1000));
+  }
   function requestedColdFloorKiB(item) {
     // Pre-calibration clients retain the old catalog default in their acquire
     // message across broker succession. Translate only that class and value.
@@ -312,6 +345,7 @@ export function createAdmissionBroker({ root,
    * smallest), each reserving that peak, never the modelled maximum. */
   function sizeWaitingItem(item, peak = recordedIdentityPeakKiB(item)) {
     item.floorKiB = peak === undefined ? requestedColdFloorKiB(item) : roundPeak(peak);
+    if ((item.cpuCost ?? 'host') === 'host') item.hostCpuCores = hostCpuCores(item);
     const options = item.requestedFloorOptions;
     if (peak === undefined || !options) {
       item.floorOptions = options;
@@ -323,18 +357,19 @@ export function createAdmissionBroker({ root,
     item.floorOptions = offered.map(option => ({ ...option, floorKiB: item.floorKiB }))
       .sort((left, right) => right.workers - left.workers);
   }
-  function recordIdentityPeak(identity, peakKiB) {
-    const key = identityKey(identity);
-    if (key === null) return;
+  function recordIdentityResources(slot) {
+    const memoryKey = slot.workingSetIdentity && identityKey(slot.workingSetIdentity);
+    const cpuKey = slot.succeeded && slot.cpuMilliCores && cpuHistoryKey(slot.identityKey);
+    if (!memoryKey && !cpuKey) return;
     const peaks = recordedIdentityPeaks();
-    const recent = [...(peaks.get(key) ?? []), peakKiB].slice(-IDENTITY_PEAK_WINDOW);
-    peaks.set(key, recent);
+    const append = (key, sample) => peaks.set(key, [...(peaks.get(key) ?? []), sample].slice(-IDENTITY_PEAK_WINDOW));
+    if (memoryKey) append(memoryKey, slot.peakWorkingSetKiB);
+    if (cpuKey) append(cpuKey, slot.cpuMilliCores);
     const target = join(root, IDENTITY_PEAKS_FILENAME);
     writeFileSync(`${target}.tmp`, JSON.stringify(Object.fromEntries(peaks)), { mode: 0o600 });
     renameSync(`${target}.tmp`, target);
-    // A retained waiter can gain its first class, family or exact peak while queued.
-    // Apply the same sizing as a new arrival before the release drain picks a head.
-    const resourceClass = identity.resourceClass ?? identity.className;
+    // A retained waiter can gain its first class, family or exact sample while queued.
+    const resourceClass = slot.resourceClass ?? slot.className;
     for (const item of waiting) {
       if (!item.slot && (item.resourceClass ?? item.className) === resourceClass) sizeWaitingItem(item);
     }
@@ -381,14 +416,14 @@ export function createAdmissionBroker({ root,
     return slot.p99DurationMs > 0 && Number.isFinite(slot.admittedAt)
       ? slot.admittedAt + slot.p99DurationMs - now : undefined;
   }
-  function slotResourceBudget(now = Date.now()) {
+  function slotResourceBudget(now = Date.now(), pressure = cpuPressureCores) {
     let reservedMemoryKiB = 0;
     let reservedCpuCores = 0;
     let memoryReleasingWithinBoundKiB = 0;
     for (const slot of slots.values()) {
       const chargeKiB = slot.workingSetKiB ?? slot.floorKiB;
       reservedMemoryKiB += chargeKiB;
-      reservedCpuCores += slot.cpuCores ?? 0;
+      reservedCpuCores += slot.cpuCores;
       const remainingMs = remainingSlotTimeMs(slot, now);
       // Keep the existing release assumption for slots without a duration.
       // A known deadline that passed or lies beyond the bound cannot justify a pledge.
@@ -397,24 +432,28 @@ export function createAdmissionBroker({ root,
       }
     }
     const memoryBalanceKiB = sample.availableMemoryKiB + (sample.creditedResidentMemoryKiB ?? 0) - reservedMemoryKiB;
-    return { reservedMemoryKiB, totalCpuCores, reservedCpuCores,
-      unreservedCpuCores: Math.max(0, totalCpuCores - reservedCpuCores),
+    return { reservedMemoryKiB, totalCpuCores, reservedCpuCores, cpuPressureCores: pressure,
+      unreservedCpuCores: Math.max(0, totalCpuCores - reservedCpuCores - pressure),
       unreservedMemoryKiB: Math.max(0, memoryBalanceKiB),
       memoryWithinBoundKiB: memoryBalanceKiB + memoryReleasingWithinBoundKiB };
   }
-  function cpuCost(item, workers) {
-    // The current client resolves class policy, just like its memory floor.
-    // A retained broker must not re-decide it from an older catalog. Legacy
-    // clients without a CPU declaration reserve the host until they finish.
-    return resolveAdmissionCpuCores(item.cpuCost ?? 'host',
-      { totalCpuCores, workers, requestedCpuCores: item.requestedCpuCores });
+  function readCpuPressureForOffer() {
+    try {
+      const pressure = readCpuPressure();
+      if (!Number.isSafeInteger(pressure) || pressure < 0) {
+        throw Object.assign(new Error('Invalid runnable CPU observation'), { code: 'HSTACK_CPU_OBSERVATION_UNAVAILABLE' });
+      }
+      return pressure;
+    } catch (error) {
+      recordFailure(error);
+      return totalCpuCores;
+    }
   }
-  // Only explicit per-job core declarations are counted against fixed host
-  // capacity. 'host' and undeclared costs carry no measured core budget, so
-  // they are admitted on memory alone, as before CPU accounting; counting them
-  // as whole-host reservations serialized every heavyweight class per host.
   function accountedCpuCores(item, workers) {
-    return (item.cpuCost ?? 'host') === 'host' ? 0 : cpuCost(item, workers);
+    const declaration = item.cpuCost ?? 'host';
+    const cost = declaration === 'host' ? item.hostCpuCores ?? hostCpuCores(item) : declaration;
+    return resolveAdmissionCpuCores(cost, { totalCpuCores, workers, requestedCpuCores: item.requestedCpuCores,
+      className: item.resourceClass ?? item.className });
   }
   function validCpuRequest(request) {
     return (request.cpuCost === undefined || request.cpuCost === 'host' || request.cpuCost === 'workers'
@@ -444,15 +483,15 @@ export function createAdmissionBroker({ root,
       cpuCores: pledged ? Math.min(minimumCpuCores(head), headPledge.cpuCores) : 0,
     };
   }
-  function canReserveHead(item, memoryWithinBoundKiB, now) {
+  function canReserveHead(item, memoryWithinBoundKiB, now, pressure = cpuPressureCores) {
     const minimumFloorKiB = item.floorOptions?.at(-1).floorKiB ?? item.floorKiB;
     const aged = now - item.arrivedAt >= HEAD_RESERVATION_DELAY_MS;
     // Keep the waiter's age and earned pledge while its floor cannot fit in
     // time. Non-admitted pressure cannot be recovered by releasing broker slots.
     return !item.slot && !item.blocked && !item.socket.destroyed && minimumFloorKiB <= sample.achievableMemoryKiB
-      && (!aged || minimumFloorKiB <= memoryWithinBoundKiB) && minimumCpuCores(item) <= totalCpuCores;
+      && (!aged || minimumFloorKiB <= memoryWithinBoundKiB) && minimumCpuCores(item) <= totalCpuCores - pressure;
   }
-  function status() {
+  function status(pressure = cpuPressureCores) {
     const now = Date.now();
     const overruns = [];
     let nextOverrunAt = null;
@@ -470,9 +509,9 @@ export function createAdmissionBroker({ root,
         durationClass: slot.durationClass, ageMs, p99DurationMs: slot.p99DurationMs });
       else nextOverrunAt = nextOverrunAt === null ? thresholdAt + 1 : Math.min(nextOverrunAt, thresholdAt + 1);
     }
-    const { memoryWithinBoundKiB, ...budget } = slotResourceBudget(now);
+    const { memoryWithinBoundKiB, ...budget } = slotResourceBudget(now, pressure);
     orderWaiting();
-    const head = waiting.find(item => canReserveHead(item, memoryWithinBoundKiB, now));
+    const head = waiting.find(item => canReserveHead(item, memoryWithinBoundKiB, now, pressure));
     const reservation = headReservation(head);
     // Only catalog symbols and numeric resource facts leave this private queue.
     // Never expose request env, paths, PIDs or an arbitrary caller label.
@@ -616,16 +655,18 @@ export function createAdmissionBroker({ root,
   function refreshWatchers() {
     const blocked = waiting.filter(item => item.blocked);
     const memoryWaiting = waiting.some(item => !item.slot && !item.blocked && item.waitingForMemory !== false);
-    // External RAM recovery, process death and expired leases need not emit
+    const cpuWaiting = cpuPressureCores > 0 && waiting.some(item => !item.slot && !item.blocked && item.waitingForCpu);
+    // External RAM or CPU recovery, process death and expired leases need not emit
     // filesystem events. Share the lock owner's existing catch-up cadence.
     // Unchanged workspace-only demand still performs no memory observation.
-    if ((blocked.length || memoryWaiting) && !resourceCatchUp) {
+    if ((blocked.length || memoryWaiting || cpuWaiting) && !resourceCatchUp) {
       // Retain this handle while queued/running. Rearm only after recovery
       // drains, so slow OS observations cannot accumulate ticks or run back-to-back.
       const timer = setTimeout(() => enqueue(async () => {
         try {
           await resourcesChanged(waiting.filter(item => item.blocked),
-            waiting.some(item => !item.slot && !item.blocked && item.waitingForMemory !== false));
+            waiting.some(item => !item.slot && !item.blocked && item.waitingForMemory !== false),
+            cpuPressureCores > 0 && waiting.some(item => !item.slot && !item.blocked && item.waitingForCpu));
         } finally {
           if (resourceCatchUp === timer) {
             resourceCatchUp = undefined;
@@ -635,7 +676,7 @@ export function createAdmissionBroker({ root,
       }), DEFAULT_FILE_CHANGE_CATCH_UP_MS);
       resourceCatchUp = timer;
       timer.unref();
-    } else if (!blocked.length && !memoryWaiting && resourceCatchUp) {
+    } else if (!blocked.length && !memoryWaiting && !cpuWaiting && resourceCatchUp) {
       clearTimeout(resourceCatchUp);
       resourceCatchUp = undefined;
     }
@@ -689,14 +730,15 @@ export function createAdmissionBroker({ root,
       enqueue(() => resourcesChanged(changed));
     }
   }
-  async function resourcesChanged(consumers, resampleMemory) {
+  async function resourcesChanged(consumers, resampleMemory, retryCpu) {
     let changed = resampleMemory;
     for (const item of consumers) {
       if (!waiting.includes(item) || !item.blocked || !resourceChanged(item)) continue;
       changed = true;
       item.blocked = false;
     }
-    if (changed) { await observe(); await drain(); }
+    if (changed) await observe();
+    if (changed || retryCpu) await drain({ memoryObserved: changed });
   }
   function resourceChanged(item) {
     const resources = readResources(item);
@@ -711,7 +753,7 @@ export function createAdmissionBroker({ root,
     // the head. Evaluate on this release, never retroactively or on a new timer.
     if (headReservation(headPledge?.item).active) {
       headPledge.memoryKiB += slot.workingSetKiB ?? slot.floorKiB;
-      headPledge.cpuCores += slot.cpuCores ?? 0;
+      headPledge.cpuCores += slot.cpuCores;
     }
     return true;
   }
@@ -735,8 +777,8 @@ export function createAdmissionBroker({ root,
         }) + '\n', { mode: 0o600 });
       } catch (error) { recordFailure(error); }
     }
-    if (slot.workingSetIdentity && !slot.recovered) {
-      try { recordIdentityPeak(slot.workingSetIdentity, slot.peakWorkingSetKiB); } catch (error) { recordFailure(error); }
+    if (slot.admitted && !slot.recovered) {
+      try { recordIdentityResources(slot); } catch (error) { recordFailure(error); }
     }
     if (slot.succeeded && slot.identityKey && slot.admitted && Number.isFinite(slot.admittedAt)) {
       try { recordIdentityDuration(slot.identityKey, Math.max(1, Date.now() - slot.admittedAt)); } catch (error) { recordFailure(error); }
@@ -745,7 +787,7 @@ export function createAdmissionBroker({ root,
   }
   async function releaseDecision() {
     await observe();
-    await drain();
+    await drain({ memoryObserved: true });
   }
   /** The one start simulation behind every projection (AUTO placement and EASY
    * backfill): admitted slots release at their remaining recorded p99 (a slot
@@ -803,7 +845,16 @@ export function createAdmissionBroker({ root,
   function projectedHeadStartAt(head, now) {
     return now + simulateServiceOrder(now, 0)(head.floorOptions?.at(-1).floorKiB ?? head.floorKiB);
   }
-  async function drain() {
+  async function drain({ memoryObserved = false, newArrival } = {}) {
+    cpuPressureCores = readCpuPressureForOffer();
+    const cpuHeadroom = slotResourceBudget().unreservedCpuCores;
+    // A capacity-only wake is cheap. Before it can offer work, refresh memory
+    // if the arrival or CPU-blocked request skipped its normal observation.
+    if (!memoryObserved && waiting.some(item => !item.slot && !item.blocked
+      && (item === newArrival || item.waitingForCpu) && minimumCpuCores(item) <= cpuHeadroom)) {
+      await observe();
+      cpuPressureCores = readCpuPressureForOffer();
+    }
     // Capacity already free when a request becomes head remains available to
     // backfill; releases are held only after that head reaches the wait bound.
     const now = Date.now();
@@ -865,7 +916,8 @@ export function createAdmissionBroker({ root,
         headPledge.memoryKiB = Math.min(headPledge.memoryKiB, headReservation(head).memoryKiB) - borrowKiB;
       }
       item.waitingForMemory = minimumFloorKiB > availableMemoryKiB;
-      if (item.floorOptions ? !fitting : item.floorKiB > availableMemoryKiB || accountedCpuCores(item) > availableCpuCores) {
+      if (item.floorOptions ? !fitting : item.waitingForMemory || accountedCpuCores(item) > availableCpuCores) {
+        item.waitingForCpu = !item.waitingForMemory;
         if (item.noWait) refuse(item, item.waitingForMemory ? 'HSTACK_MEMORY_BUSY' : 'HSTACK_CPU_BUSY');
         else {
           // Publication preference cannot block admitted work while this
@@ -884,8 +936,7 @@ export function createAdmissionBroker({ root,
       }
       const floorKiB = fitting?.floorKiB ?? item.floorKiB;
       const cpuCores = accountedCpuCores(item, fitting?.workers);
-      const clientCpuCores = cpuCost(item, fitting?.workers);
-      item.waitingForMemory = false;
+      item.waitingForMemory = item.waitingForCpu = false;
       if (item.socket.destroyed) { removeWaiting(item); continue; }
       // Observe before publishing a reservation: a failed request must not
       // leave a slot that its client was never offered.
@@ -893,7 +944,7 @@ export function createAdmissionBroker({ root,
       if (!resources) continue;
       const slotId = randomUUID();
       const address = slotAddress(root, item.pid, floorKiB, slotId, cpuCores);
-      const slot = { address, pid: item.pid, className: item.className, resourceClass: item.resourceClass, projects: item.projects, floorKiB, cpuCores, clientCpuCores, workers: fitting?.workers, control: item.socket,
+      const slot = { address, pid: item.pid, className: item.className, resourceClass: item.resourceClass, projects: item.projects, floorKiB, cpuCores, workers: fitting?.workers, control: item.socket,
         slotId, durationClass: item.durationClass, p99DurationMs: item.p99DurationMs, identityKey: identityKey(item),
         arrivedAt: item.arrivedAt, arrivalOrder: item.arrivalOrder };
       slots.set(address, slot);
@@ -905,7 +956,7 @@ export function createAdmissionBroker({ root,
       }
       if (headPledge?.item === item) reserveHead();
       item.resourceSnapshot = resources.snapshot;
-      send(item.socket, { kind: 'reserved', slotAddress: address, floorKiB, cpuCores: clientCpuCores, workers: slot.workers,
+      send(item.socket, { kind: 'reserved', slotAddress: address, floorKiB, cpuCores, workers: slot.workers,
         ...(backfill ? { backfill } : {}) });
     }
     reserveHead(head);
@@ -950,17 +1001,30 @@ export function createAdmissionBroker({ root,
         return;
       }
       if (metadata.kind === 'slot-completed') {
-        if (metadata.status === 0) enqueue(() => { slot.succeeded = true; });
+        if (metadata.status === 0) enqueue(() => {
+          slot.succeeded = true;
+          if (Number.isSafeInteger(metadata.cpuMilliCores) && metadata.cpuMilliCores > 0) {
+            slot.cpuMilliCores = metadata.cpuMilliCores;
+          }
+        });
         return;
       }
       if (metadata.kind === 'slot-identity') {
-        if (typeof metadata.className !== 'string') return;
-        enqueue(() => {
+        if (typeof metadata.className !== 'string'
+          || (metadata.resourceClass !== undefined && typeof metadata.resourceClass !== 'string')
+          || (metadata.projects !== undefined && (!Array.isArray(metadata.projects)
+            || metadata.projects.some(project => typeof project !== 'string')))) return;
+        enqueue(async () => {
           slot.identityKey ??= identityKey(metadata);
           const key = slot.recovered ? identityKey(metadata) : null;
           const peaks = recordedIdentityPeaks().get(key);
           const peak = peaks && nearestRank(peaks, 0.95);
           if (peak !== undefined) slot.floorKiB = Math.max(slot.floorKiB, roundPeak(peak));
+          if (slot.missingCpuCharge && Object.hasOwn(COLD_ADMISSION_CPU_CORES, metadata.resourceClass ?? metadata.className)) {
+            slot.cpuCores = hostCpuCores(metadata);
+            slot.missingCpuCharge = false;
+            if (started && waiting.length) await drain();
+          }
         });
         return;
       }
@@ -1023,15 +1087,16 @@ export function createAdmissionBroker({ root,
       }
       if (request.kind === 'check') {
         const valid = Number.isSafeInteger(request.floorKiB) && request.floorKiB > 0 && validCpuRequest(request);
-        const available = status();
+        const available = status(readCpuPressureForOffer());
         const memoryFits = request.floorKiB <= available.unreservedMemoryKiB;
-        const cpuCores = accountedCpuCores(request);
+        const cpuCores = valid ? accountedCpuCores({ cpuCost: request.cpuCost,
+          requestedCpuCores: request.requestedCpuCores, className: typeof request.className === 'string' ? request.className : undefined }) : 0;
         const admitted = valid && memoryFits && cpuCores <= available.unreservedCpuCores;
         send(socket, { kind: admitted ? 'admitted' : 'refused',
           ...(!admitted ? { reason: !valid ? 'HSTACK_INVALID_ADMISSION'
             : request.floorKiB > sample.totalMemoryKiB ? 'HSTACK_MEMORY_CAPACITY'
               : cpuCores > totalCpuCores ? 'HSTACK_CPU_CAPACITY'
-                : !memoryFits ? 'HSTACK_MEMORY_BUSY' : 'HSTACK_CPU_BUSY' } : {}) });
+                : !memoryFits ? 'HSTACK_MEMORY_BUSY' : 'HSTACK_CPU_BUSY' } : {}) }, available);
         socket.end(); return;
       }
       if (request.kind === 'ready' && item?.slot && !item.settled) {
@@ -1042,7 +1107,7 @@ export function createAdmissionBroker({ root,
           item.settled = true;
           removeWaiting(item);
           send(socket, { kind: 'admitted', slotId: item.slot.slotId, admittedAt: item.slot.admittedAt,
-            floorKiB: item.slot.floorKiB, cpuCores: item.slot.clientCpuCores ?? item.slot.cpuCores, workers: item.slot.workers });
+            floorKiB: item.slot.floorKiB, cpuCores: item.slot.cpuCores, workers: item.slot.workers });
           refreshWatchers();
         } catch { refuse(item, 'HSTACK_SLOT_UNAVAILABLE'); await releaseDecision(); }
         return;
@@ -1059,7 +1124,7 @@ export function createAdmissionBroker({ root,
           item.blocked = false;
           await observe();
         }
-        await drain();
+        await drain({ memoryObserved: !item.blocked });
         return;
       }
       if (!validCpuRequest(request) || !validDuration(request)
@@ -1121,8 +1186,9 @@ export function createAdmissionBroker({ root,
       // admitted floors, including when many clients reconnect after restart.
       // Disk reclamation is a real resource change and still needs a new read.
       const memoryWaiting = waiting.some(other => other !== item && !other.slot && !other.blocked && other.waitingForMemory !== false);
-      if ((!memoryWaiting && minimumCpuCores(item) <= slotResourceBudget().unreservedCpuCores) || disk.reclamation?.length) await observe();
-      await drain();
+      const reclaimed = Boolean(disk.reclamation?.length);
+      if (reclaimed) await observe();
+      await drain({ memoryObserved: reclaimed, newArrival: memoryWaiting ? undefined : item });
     }));
     socket.on('error', () => {});
     socket.once('close', () => {
@@ -1141,7 +1207,7 @@ export function createAdmissionBroker({ root,
     async start() {
       if (process.platform !== 'linux') throw new Error('Admission broker requires Linux');
       // The OS's available logical cores are the fixed resource boundary.
-      // Read once at broker startup; admission never observes CPU load.
+      // Read once at startup. Runnable pressure is sampled before offers.
       totalCpuCores = readCpuCapacity();
       if (!Number.isSafeInteger(totalCpuCores) || totalCpuCores <= 0) throw new Error('Invalid CPU capacity');
       mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -1181,6 +1247,12 @@ export function createAdmissionBroker({ root,
             const slot = readSlotAddress(root, entry.name);
             if (!slot) continue;
             slot.recovered = true;
+            if (!(slot.cpuCores > 0)) {
+              // Charge the largest cold class until the retained client identifies
+              // itself. Old clients without identity keep this conservative charge.
+              slot.cpuCores = Math.min(totalCpuCores, MAX_COLD_CPU_CORES);
+              slot.missingCpuCharge = true;
+            }
             try {
               await connectSlot(slot);
               // The current working set replaces the old floor when attributable.
@@ -1198,6 +1270,7 @@ export function createAdmissionBroker({ root,
             }
           }
           await observe();
+          cpuPressureCores = readCpuPressureForOffer();
           // A removed root ends this broker: its state, slots and clients are gone with it.
           // Its own socket's removal is the observable part: inotify reports no removal of
           // a directory that still holds a bound socket, only the unlink of the entries in

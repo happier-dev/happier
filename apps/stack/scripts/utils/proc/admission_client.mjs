@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { basename, relative, resolve } from 'node:path';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
-import { readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
+import { readProcessJobScopeCpuUsageUsec, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
 import { brokerAddress } from './admission_socket.mjs';
 import { resolveAdmissionCpuCost, resolveAdmissionDiskClass, resolveRequestedAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
 
@@ -318,14 +318,25 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
             // closes. The broker combines it with its in-flight observations.
             const report = line => Promise.all([...slotConnections].map(socket =>
               new Promise(done => socket.write(JSON.stringify(line) + '\n', () => done()))));
+            const ownsScope = !env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT && !env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN;
+            const initialCpuUsec = ownsScope && request.entry !== undefined ? readProcessJobScopeCpuUsageUsec() : null;
+            const startedAt = performance.now();
             payload = run(acquiredEnv).then(async result => {
-              // A successful run's admitted time joins its identity's duration history.
-              if (result === 0) await report({ kind: 'slot-completed', status: 0 });
+              if (result === 0) {
+                // Time only the payload so queue waits and prior scope activity
+                // do not understate or inflate the successful run's usage.
+                const elapsedMs = performance.now() - startedAt;
+                const finalCpuUsec = initialCpuUsec === null ? null : readProcessJobScopeCpuUsageUsec();
+                const cpuMilliCores = finalCpuUsec > initialCpuUsec && elapsedMs > 0
+                  ? Math.ceil((finalCpuUsec - initialCpuUsec) / elapsedMs) : undefined;
+                await report({ kind: 'slot-completed', status: 0,
+                  ...(Number.isSafeInteger(cpuMilliCores) ? { cpuMilliCores } : {}) });
+              }
               return result;
             }).finally(async () => {
               // Only the outermost admission owns its jobs scope. A client nested in
               // another admitted payload shares that scope with its parent.
-              if (env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT || env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN) return;
+              if (!ownsScope) return;
               const peakKiB = await (readJobPeakKiB ?? readProcessJobScopeWorkingSetKiB)();
               if (!Number.isSafeInteger(peakKiB) || peakKiB <= 0) return;
               await report({ kind: 'slot-working-set', peakKiB, className: request.className,
@@ -513,7 +524,7 @@ export async function runAdmissionClient(argv = process.argv.slice(2)) {
   const projects = value('projects')?.split('\n').filter(Boolean);
   if (options.some(option => ['--sample', '--active-count', '--waiting-count', '--unreserved-memory', '--check'].includes(option))) {
     const sample = await requestAdmissionSample(root, options.includes('--check')
-      ? { kind: 'check', floorKiB: Number(value('floor-kib')),
+      ? { kind: 'check', className: value('class'), floorKiB: Number(value('floor-kib')),
         cpuCost: resolveAdmissionCpuCost(value('class')),
         requestedCpuCores: value('cpu-cores') === 'host' ? 'host' : Number(value('cpu-cores') ?? 0) }
       // Placement's sample for a routed command: the broker answers the floor it would reserve for this identity.

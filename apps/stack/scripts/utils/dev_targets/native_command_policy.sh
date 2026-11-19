@@ -10,30 +10,31 @@ controller_coalescing_environment_names='CI GOMAXPROCS HAPPIER_CLI_TEST_SKIP_BUI
 placement_probe_connect_timeout_seconds() { printf '%s' '7'; }
 heavyweight_cpu_cores() {
   case "$1" in
-    source-reload) heavyweight_cpu_cost=$2 ;;
-    validation) heavyweight_cpu_cost=$2 ;;
+    source-reload) heavyweight_cpu_cost=4 ;;
+    validation) heavyweight_cpu_cost=3 ;;
     focused-validation) heavyweight_cpu_cost=1 ;;
     focused-validation-ui) heavyweight_cpu_cost=1 ;;
     focused-validation-cli) heavyweight_cpu_cost=1 ;;
-    entry-loads) heavyweight_cpu_cost=$2 ;;
+    entry-loads) heavyweight_cpu_cost=3 ;;
     native-source-test) heavyweight_cpu_cost=1 ;;
     native-custody) heavyweight_cpu_cost=1 ;;
     source-asset) heavyweight_cpu_cost=1 ;;
-    source-bundle) heavyweight_cpu_cost=$2 ;;
+    source-bundle) heavyweight_cpu_cost=2 ;;
     source-web-export) heavyweight_cpu_cost=${3:-$2} ;;
-    dependency-install) heavyweight_cpu_cost=$2 ;;
-    package-dist) heavyweight_cpu_cost=$2 ;;
-    runtime-build) heavyweight_cpu_cost=$2 ;;
-    compilation) heavyweight_cpu_cost=$2 ;;
-    compilation-ui) heavyweight_cpu_cost=$2 ;;
-    compilation-ui-tsrs) heavyweight_cpu_cost=$2 ;;
-    compilation-cli) heavyweight_cpu_cost=$2 ;;
-    compilation-server) heavyweight_cpu_cost=$2 ;;
-    *) heavyweight_cpu_cost=$2 ;;
+    dependency-install) heavyweight_cpu_cost=4 ;;
+    package-dist) heavyweight_cpu_cost=4 ;;
+    runtime-build) heavyweight_cpu_cost=4 ;;
+    compilation) heavyweight_cpu_cost=2 ;;
+    compilation-ui) heavyweight_cpu_cost=2 ;;
+    compilation-ui-tsrs) heavyweight_cpu_cost=17 ;;
+    compilation-cli) heavyweight_cpu_cost=2 ;;
+    compilation-server) heavyweight_cpu_cost=2 ;;
+    *) heavyweight_cpu_cost=4 ;;
   esac
+  if [ "${1-}" != source-web-export ] && [ "$heavyweight_cpu_cost" -gt "$2" ]; then heavyweight_cpu_cost=$2; fi
   heavyweight_cpu_requested=${4:-0}
   [ "$heavyweight_cpu_requested" != host ] || heavyweight_cpu_requested=$2
-  if [ "$heavyweight_cpu_requested" -gt "$heavyweight_cpu_cost" ]; then heavyweight_cpu_cost=$heavyweight_cpu_requested; fi
+  if { [ "${1-}" = validation ] && [ "$heavyweight_cpu_requested" -gt 0 ]; } || [ "$heavyweight_cpu_requested" -gt "$heavyweight_cpu_cost" ]; then heavyweight_cpu_cost=$heavyweight_cpu_requested; fi
   printf '%s' "$heavyweight_cpu_cost"
 }
 heavyweight_include_requested_cpu() {
