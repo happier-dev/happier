@@ -40,6 +40,7 @@ import {
 import type { WorkbenchChange, WorkbenchLocation } from '../models.js';
 import { CellText, presentCell } from './cells.js';
 import { isIdentifierColumn, useGridAnatomy } from './grid.js';
+import { NewRow } from './NewRow.js';
 import { RelationHeader } from './RelationHeader.js';
 import { RowFilters } from './RowFilters.js';
 import { RowsExport } from './RowsExport.js';
@@ -707,7 +708,15 @@ export function RelationData(
               }}
             />
           }
-          trailing={<RowsExport page={page} selection={selection} filtered={location.conditions !== undefined} />}
+          trailing={
+            <Row gap="small">
+              {page.capabilities.insert && page.insertColumns ? (
+                <NewRow key={JSON.stringify([location.targetKey, props.relation])}
+                  columns={page.insertColumns} targetKey={location.targetKey} relation={props.relation} />
+              ) : null}
+              <RowsExport page={page} selection={selection} filtered={location.conditions !== undefined} />
+            </Row>
+          }
         />
       }
       footer={footer}

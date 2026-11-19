@@ -321,6 +321,28 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
+  it('stages a new row for review without executing a database write', async () => {
+    const executeAction = daemonAnswers([descriptor], true);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'insert-row', mountNonce: 'insert-row' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'data/public/invoices',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+      handlers: { ...connectionResourceHandlers(), executeAction },
+    });
+    try {
+      await settle(20);
+      executeAction.mockClear();
+      await fixture.press(await fixture.getByRole('button', { name: 'New row' }));
+      expect(await fixture.getByRole('textbox', { name: 'id' })).toBeTruthy();
+      await fixture.press(await fixture.getByRole('button', { name: 'Stage row' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Review' }));
+      expect(await fixture.getByText('New row')).toBeTruthy();
+      expect(executeAction).not.toHaveBeenCalled();
+    } finally { await fixture.dispose(); }
+  });
+
   it('keeps reference navigation beside an editable text foreign-key cell', async () => {
     const replacePageLocation = vi.fn(async ({ subPath }: { subPath: string }) => subPath);
     const fixture = await createPluginUiTestkit({

@@ -211,7 +211,7 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
                 const projected = projectRelationPage(result, metadata.data);
                 const capability = metadata.data.capabilities.find(item => item.operation === 'edits.apply');
                 const available = capability?.available === true;
-                return { ...projected, page: { offset: location.page.offset, limit: location.page.rows, approxTotal: result.estimate ?? null,
+                return { ...projected, insertColumns: metadata.data.columns, page: { offset: location.page.offset, limit: location.page.rows, approxTotal: result.estimate ?? null,
                     hasNext: !result.completeness.complete && result.completeness.continuation?.kind === 'keyset' || !result.completeness.complete && result.completeness.continuation?.kind === 'offset' },
                     sort: location.sort, conditions: location.conditions,
                     foreignKey(rowKey: string, constraintName: string) {

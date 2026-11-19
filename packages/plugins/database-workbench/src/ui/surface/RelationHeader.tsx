@@ -26,7 +26,7 @@ export function RelationHeader(
     targetKey: string;
     /** The rows' filters (tokens + Filter), in Data. */
     filters?: React.ReactNode;
-    /** The rows' Export, in Data. */
+    /** The row actions, in Data. */
     trailing?: React.ReactNode;
   }>,
 ) {
