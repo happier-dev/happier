@@ -703,7 +703,9 @@ Native removal releases unused Compose project networks after removing the
 witnessed containers. Service retirement, generation replacement, failed-deploy
 cleanup and full Environment teardown share this network owner. It includes
 stopped containers when checking network holders and preserves shared Caddy
-attachments while another workload still needs them. Service Stop deliberately
+attachments while another workload still needs them. It also retains Caddy's
+primary network: Docker keeps that dependency in immutable `HostConfig.NetworkMode`,
+so detaching and removing it would prevent Caddy from restarting. Service Stop deliberately
 keeps its containers and networks available for Start or Restart; Detach with
 keep-running also preserves the workload.
 
@@ -4771,8 +4773,9 @@ and check only that the admitted job remains active. The controller retires the
 captured Domains before target cleanup; it does not issue another Domain Remove
 Action or ask for another confirmation. Native target cleanup then disconnects
 the canonical shared Caddy container from exact Compose-owned networks before
-removing them, preserving Caddy and its sibling attachments. Other active
-endpoints still prevent verified network removal. A failed retirement returns a typed
+removing them, preserving Caddy, its primary network dependency and sibling
+attachments. Other running or stopped network holders still prevent verified
+network removal. A failed retirement returns a typed
 partial result naming the Domain and its required fact and remedy, records a
 cleanup failure, and leaves the Environment present. Environment removal is the
 last step of Stop and remove. A rejected or uncertain final removal returns a

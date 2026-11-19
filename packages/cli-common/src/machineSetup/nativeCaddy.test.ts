@@ -761,6 +761,26 @@ it('releases exact retired network IDs while preserving shared Caddy and sibling
         networkIds: ['retired-network'] }, { run: f.run })).toEqual({ status: 'ready' });
 });
 
+it.each(['routed-a', 'primary-network'] as const)('keeps Caddy restartable when its primary network is retired by name or ID: %s', async primary => {
+    const f = await fixture(); await f.setup();
+    await ensureNativeCaddyContainer(f.input, f.options());
+    const retained = f.readContainer();
+    retained.HostConfig.NetworkMode = primary;
+    retained.NetworkSettings.Networks = {
+        'routed-a': { NetworkID: 'primary-network' },
+        retired: { NetworkID: 'retired-network' },
+        successor: { NetworkID: 'successor-network' },
+    };
+    expect(await disconnectNativeCaddyNetworks({ networkIds: ['primary-network', 'retired-network'], onlyUnused: true }, {
+        // Docker's all-state holder list is the external process boundary.
+        run: command => command.args[0] === 'ps' ? Promise.resolve(ok(retained.Id)) : f.run(command),
+    })).toEqual({ status: 'ready' });
+    expect(retained.State.Running).toBe(true);
+    expect(retained.NetworkSettings.Networks).toEqual({
+        'routed-a': { NetworkID: 'primary-network' }, successor: { NetworkID: 'successor-network' },
+    });
+});
+
 it('preserves Caddy on a network still used by another generation', async () => {
     const f = await fixture(); await f.setup();
     await ensureNativeCaddyContainer(f.input, f.options());

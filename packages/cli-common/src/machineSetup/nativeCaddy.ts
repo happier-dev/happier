@@ -191,9 +191,12 @@ export async function disconnectNativeCaddyNetworks(input: ContainerInput & Read
     if (owned.status === 'needs_setup') return { status: 'ready' };
     if (owned.status !== 'observed') return owned;
     const retired = new Set(input.networkIds);
-    for (const network of Object.values(owned.networks)) {
+    for (const [networkName, network] of Object.entries(owned.networks)) {
         const networkId = object(network)?.NetworkID;
         if (typeof networkId !== 'string' || !retired.has(networkId)) continue;
+        // Docker keeps the primary network in immutable HostConfig.NetworkMode.
+        // Retain this Caddy dependency so a later restart can still resolve it.
+        if (owned.host.NetworkMode === networkName || owned.host.NetworkMode === networkId) continue;
         if (input.onlyUnused) {
             const holders = await run(['ps', '--all', '--no-trunc', '--filter', `network=${networkId}`, '--format', '{{.ID}}']);
             if (holders.code !== 0) return { status: 'unavailable', reason: 'required_fact_unavailable' };
