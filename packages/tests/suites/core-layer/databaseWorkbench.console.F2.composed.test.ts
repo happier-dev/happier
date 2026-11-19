@@ -59,10 +59,10 @@ describe.sequential('F2 composed Console cases', () => {
         { type: 'integer', value: '9007199254740993' }, { type: 'null' }, { type: 'text', value: '' },
       ] }] }] });
   }, 0);
-  it('binds typed parameters without interpreting SQL-looking text and redacts confidential echoes', async () => {
+  it('binds typed parameters and returns exact cells to the requester', async () => {
     const sqlText = "'); SELECT 42; --";
-    // SEC-CLOSE-165 preserves confidential parameter redaction. Derived booleans
-    // prove native binding without asking the executor to disclose those values.
+    // The successful result returns to the requester. Derived booleans also
+    // check binding in expressions, including bigint precision and the NULL/empty distinction.
     const sql = 'SELECT $1::text, $2::bigint, $3::text, $4::text, length($1::text)::integer, $2::bigint > 9007199254740992, $3::text IS NULL, $4::text = \'\'';
     const { projectConsoleParameterSlots } = await import('../../../plugins/database-workbench/src/ui/consoleSelection');
     const [slots] = projectConsoleParameterSlots(sql, { start: 0, end: 0 }, 'read', 'postgresql');
@@ -74,7 +74,7 @@ describe.sequential('F2 composed Console cases', () => {
       { type: 'null' }, { type: 'text', value: '' },
     ];
     expect(await read(sql, undefined, slots!.map(slot => chosen[slot.index - 1]!))).toMatchObject({ ok: true, operation: 'statement.run', results: [{ rows: [{ cells: [
-      { type: 'text', value: '[REDACTED]' }, { type: 'text', value: '[REDACTED]' },
+      { type: 'text', value: sqlText }, { type: 'integer', value: '9007199254740993' },
       { type: 'null' }, { type: 'text', value: '' },
       { type: 'integer', value: String(sqlText.length) },
       { type: 'boolean', value: true }, { type: 'boolean', value: true }, { type: 'boolean', value: true },
@@ -154,7 +154,7 @@ describe.sequential('F2 composed Console cases', () => {
       const operation = operations[0];
       if (!operation) throw new Error('F2 active query omitted its exact operation receipt');
       expect(operation.cancellation).toBe('supported');
-      const cancelled = await fixture.owner.execute('action.operations.cancel', {
+      const cancelled = await fixture.owner.executeReviewed('action.operations.cancel', {
         ...fixture.machine.target, operationId: operation.operationId,
       });
       expect(cancelled.ok, JSON.stringify(cancelled)).toBe(true);

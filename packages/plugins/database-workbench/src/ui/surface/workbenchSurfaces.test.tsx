@@ -20,6 +20,7 @@ import {
   createPluginUiTestkit,
   createSurfaceContextFixture,
   type PluginUiTestkitExecuteActionInput,
+  type PluginUiTestkitHostHandlers,
 } from '@happier-dev/plugin-sdk/testing';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -398,6 +399,39 @@ describe('Database workbench surfaces', () => {
       expect(await fixture.getByRole('textbox', { name: 'Value of $2' })).toBeTruthy();
       // The type is a quiet word qualifying the value, text until the person picks another.
       expect(await fixture.getByRole('button', { name: 'Type of $1: text' })).toBeTruthy();
+    } finally { await fixture.dispose(); }
+  });
+  it('settles a mounted Console Run and saves it to History', async () => {
+    type Control = Parameters<NonNullable<PluginUiTestkitHostHandlers['actionControl']>>[0];
+    let run: Control | undefined;
+    const sql = 'SELECT 1';
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'console-run', mountNonce: 'console-run' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'console',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        ...connectionResourceHandlers(), executeAction: daemonAnswers([descriptor]), replacePageLocation: async ({ subPath }) => subPath,
+        deviceState: (request: { operation: string; key?: string }) => ({
+          status: 'ready', value: request.operation === 'read' && request.key?.includes('database-console') ? { sql, history: [] } : null,
+        }),
+        actionControl(control) {
+          const { request } = control;
+          if (request.kind === 'bind' && request.presentation.title === 'Run') run = control;
+          if (request.kind !== 'prepared' || request.requestId !== 'run-console') return;
+          expect(request.preparation?.input).toMatchObject({ statement: { sql } });
+          return { ok: true, result: { ok: true, operation: 'statement.run', results: [] } };
+        },
+      },
+    });
+    try {
+      await settle(20);
+      if (!run) throw new Error('Console did not offer Run');
+      await act(async () => { run?.publish({ kind: 'prepare', requestId: 'run-console' }); });
+      await settle(20);
+      await fixture.press(await fixture.getByRole('button', { name: 'History' }));
+      expect(await fixture.getByText(sql)).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
   it('lists the checkout’s databases on Dev servers and opens the chosen one in the workbench', async () => {

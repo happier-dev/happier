@@ -299,19 +299,20 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string; scope: Work
             sql.setMode(value === 'write' ? 'write' : 'read')
           }
         />
+        {/* Keep the preparing control mounted until the host settles the run. */}
+        <Action.Control
+          {...run}
+          title={translate('plugins.database.console.run', 'Run')}
+          variant="primary"
+          disabled={sql.running}
+        />
         {sql.running ? (
           <Button
             variant="secondary"
             title={translate('plugins.database.console.stop', 'Stop')}
             onPress={() => void sql.cancel()}
           />
-        ) : (
-          <Action.Control
-            {...run}
-            title={translate('plugins.database.console.run', 'Run')}
-            variant="primary"
-          />
-        )}
+        ) : null}
         <Action.Control
           {...explain}
           title={translate('plugins.database.console.explain', 'Explain')}
