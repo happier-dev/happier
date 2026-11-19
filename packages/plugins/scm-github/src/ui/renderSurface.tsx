@@ -390,12 +390,20 @@ function describeGithubWriteFailure(
   text: PluginTranslate,
   locale: string,
   fallback: string,
+  uncertain = false,
 ): string {
   if (failure.class === 'rateLimit') {
-    const title = text('plugins.github.releases.state.rate.title', 'GitHub is limiting requests');
-    if (failure.retryNotBeforeMs === undefined) return title;
-    const time = formatTimestamp(locale, failure.retryNotBeforeMs, 'absolute', failure.retryNotBeforeMs);
-    return `${title}. ${text('plugins.github.releases.state.rate.body', 'GitHub resets the limit at {time}.', { time })}`;
+    const time = failure.retryNotBeforeMs === undefined
+      ? null
+      : formatTimestamp(locale, failure.retryNotBeforeMs, 'absolute', failure.retryNotBeforeMs);
+    if (uncertain) {
+      return time === null
+        ? text('plugins.github.ui.mutations.rate.uncertain', 'GitHub is limiting requests. This change may not have gone through. Open this entry again to check.')
+        : text('plugins.github.ui.mutations.rate.uncertainUntil', 'GitHub is limiting requests until {time}. This change may not have gone through. Open this entry again to check.', { time });
+    }
+    return time === null
+      ? text('plugins.github.ui.mutations.rate.limited', 'GitHub is limiting requests.')
+      : text('plugins.github.ui.mutations.rate.limitedUntil', 'GitHub is limiting requests until {time}.', { time });
   }
   return failureDescription(failure, fallback, text);
 }
@@ -403,8 +411,7 @@ function describeGithubWriteFailure(
 function readGithubUncertainWriteAdvice(text: PluginTranslate): string {
   return text(
     'plugins.github.ui.mutations.uncertain.description',
-    'The request was accepted and its effect could not be confirmed. Open this entry'
-      + ' again to see what is true now rather than pressing again.',
+    'This change may not have gone through. Open this entry again to check.',
   );
 }
 
@@ -429,13 +436,12 @@ function WriteOutcome({
   if ('presentation' in outcome) {
     const presentation = outcome.presentation;
     const description = (outcome.kind === 'failed' || outcome.kind === 'uncertain') && outcome.failure?.class === 'rateLimit'
-      ? describeGithubWriteFailure(outcome.failure, text, locale, '')
+      ? describeGithubWriteFailure(outcome.failure, text, locale, '', outcome.kind === 'uncertain')
       : presentation.descriptionKey === undefined
       ? presentation.description : text(presentation.descriptionKey, presentation.description);
-    const advice = outcome.kind === 'uncertain' && outcome.failure?.class === 'rateLimit' ? [readGithubUncertainWriteAdvice(text)] : [];
     return <Banner tone={presentation.tone}
       title={presentation.titleKey === undefined ? presentation.title : text(presentation.titleKey, presentation.title)}
-      description={[description, ...advice, ...(outcome.kind === 'refused' ? outcome.unmetRequirements?.map((requirement) => requirement.label) ?? [] : [])].join(' · ')} />;
+      description={[description, ...(outcome.kind === 'refused' ? outcome.unmetRequirements?.map((requirement) => requirement.label) ?? [] : [])].join(' · ')} />;
   }
   if (outcome.kind === 'publication') {
     const fullyPublished = outcome.publishedCount === outcome.totalCount
@@ -532,14 +538,18 @@ function WriteOutcome({
   if (outcome.kind === 'uncertain') {
     // Never presented as a failure, and never beside a "try again": this request
     // may already have changed GitHub.
-    const stated = readGithubUncertainWriteAdvice(text);
-    const reason = outcome.failure === null ? '' : describeGithubWriteFailure(outcome.failure, text, locale, '');
+    const description = outcome.failure?.class === 'rateLimit'
+      ? describeGithubWriteFailure(outcome.failure, text, locale, '', true)
+      : [
+          outcome.failure === null ? '' : describeGithubWriteFailure(outcome.failure, text, locale, ''),
+          readGithubUncertainWriteAdvice(text),
+        ].filter(Boolean).join(' ');
     return (
       <Banner
         tone="warning"
         title="Outcome unknown"
         titleKey="plugins.github.ui.mutations.uncertain"
-        description={reason ? `${reason} ${stated}` : stated}
+        description={description}
       />
     );
   }

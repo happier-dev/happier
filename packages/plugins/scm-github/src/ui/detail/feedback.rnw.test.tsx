@@ -652,7 +652,14 @@ describe('the mounted GitHub Feedback plane', () => {
     expect((await detail.getByRole('switch', { name: 'Subscribed' })).state?.checked).toBe(true);
     expect(document.body.textContent).toContain('GitHub is limiting requests');
     expect(document.body.textContent).toContain(formatTriageTimestampV1(SURFACE_LOCALE, retryNotBeforeMs, 'absolute', retryNotBeforeMs));
-    if (kind === 'uncertain') expect(document.body.textContent).toContain('Outcome unknown');
+    if (kind === 'uncertain') {
+      expect(document.body.textContent).toContain('Outcome unknown');
+      expect(document.body.textContent).toContain('This change may not have gone through. Open this entry again to check.');
+      expect(document.body.textContent).not.toContain('The request was accepted');
+    } else {
+      expect(document.body.textContent).toContain('Not carried out');
+      expect(document.body.textContent).not.toContain('This change may not have gone through');
+    }
   });
 
   it.each([
