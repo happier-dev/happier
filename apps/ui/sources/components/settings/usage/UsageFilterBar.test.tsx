@@ -92,6 +92,26 @@ describe('UsageFilterBar', () => {
     await screen.unmount();
   });
 
+  it.each([390, 1280])('does not announce Tokens as selected when displayed widgets have mixed metrics (%spx)', async (width) => {
+    Object.assign(viewport, { width, height: 844 });
+    vi.stubGlobal('navigator', { userAgent: width === 390 ? 'Mozilla/5.0 (iPhone)' : 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: width === 390 ? 1 : 0 });
+    const selections: string[] = [];
+    const props = { ...barProps([]), onMetricChange: (metric: 'tokens' | 'cost') => { selections.push(metric); } };
+    const screen = await renderScreen(<UsageFilterBar {...props} metric="cost" />);
+    try {
+      expect(screen.findHostByTestId('filters.metric:cost')!.props.accessibilityState.checked).toBe(true);
+      await screen.update(<UsageFilterBar {...props} metric={null} />);
+      for (const metric of ['tokens', 'cost']) {
+        expect(screen.findHostByTestId(`filters.metric:${metric}`)!.props.accessibilityState.checked).toBe(false);
+      }
+      expect(selections).toEqual([]);
+      await screen.pressByTestIdAsync('filters.metric:cost');
+      expect(selections).toEqual(['cost']);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('keeps phone and desktop filter labels inside text hosts as controls settle', async () => {
     for (const width of [390, 1280]) {
       Object.assign(viewport, { width, height: 844 });

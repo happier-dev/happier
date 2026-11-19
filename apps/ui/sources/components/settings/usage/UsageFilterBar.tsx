@@ -57,7 +57,6 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
     testID: string;
   }>,
 ) {
-  const shownMetric = props.metric ?? props.metricOptions[0]?.id ?? null;
   const phone = useDeviceType() === 'phone';
   // Scopes fold into the one Filters chooser only on a phone; a desktop keeps one chip per scope. Tokens/Cost and the
   // cost basis hold the bar's end edge on every view (lab d2views; phone lab p5 "Filters and Tokens/Cost on one line").
@@ -199,13 +198,13 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
       ))}
     </>
   );
-  const metricToggle = props.onMetricChange && shownMetric !== null ? (
+  const metricToggle = props.onMetricChange && props.metricOptions.length > 0 ? (
         <View style={styles.segment}>
           <SegmentedTabBar
             role="radiogroup"
             testIDPrefix={`${props.testID}.metric`}
             tabs={metricTabs}
-            activeTabId={shownMetric}
+            activeTabId={props.metric}
             onSelectTab={props.onMetricChange}
             segmentSizing="content"
             accessibilityLabel={t('usage.board.page.metricLabel')}
