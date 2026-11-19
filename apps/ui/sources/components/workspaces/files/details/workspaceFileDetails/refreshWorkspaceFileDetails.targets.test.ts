@@ -26,7 +26,7 @@ const input = (filePath: string) => ({ scope: fixture.scope,
     filePath, isBinaryContent: filePath === 'opaque.bin', diffMode: 'pending' as const, includeDiff: false });
 function expectStatTarget(filePath: string) {
     expect(fixture.requests).toEqual([expect.objectContaining({ method: 'statFile',
-        payload: { path: `/work/artifacts/${filePath}` } })]);
+        payload: { path: `/work/artifacts/${filePath}`, rootPath: '/work/artifacts' } })]);
 }
 
 describe('file metadata acquisition failures', () => {

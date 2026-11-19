@@ -21,7 +21,7 @@ export function useWorkspaceFileDetailsLoading(input: Input) {
     const [diffContent, setDiffContent] = React.useState<string | null>(null);
     const [isDiffLoading, setIsDiffLoading] = React.useState(wantsDiff);
     const [isLoading, setIsLoading] = React.useState(true);
-    const [error, setError] = React.useState<string | null>(null);
+    const [failure, setFailure] = React.useState<Readonly<{ message: string; code?: string }> | null>(null);
     const [fileWriteSupported, setFileWriteSupported] = React.useState(true);
     const [staleSince, setStaleSince] = React.useState<number | null>(null);
     const [lastOwnWriteHash, setLastOwnWriteHash] = React.useState<string | null>(null);
@@ -41,7 +41,7 @@ export function useWorkspaceFileDetailsLoading(input: Input) {
         setContentResource(resourceKey);
         setFileContent(null);
         setDiffContent(null);
-        setError(null);
+        setFailure(null);
         setIsLoading(true);
         setFileWriteSupported(true);
         setStaleSince(null);
@@ -75,7 +75,7 @@ export function useWorkspaceFileDetailsLoading(input: Input) {
         request.current = current;
         setIsDiffLoading(wantsDiff);
         if (!hydrated.current || (!publication.current.fileContent && !publication.current.diffContent)) setIsLoading(true);
-        setError(null);
+        setFailure(null);
         try {
             const result = await refreshWorkspaceFileDetails({
                 scope, filePath, diffMode, fileEntryKind, filePreviousPath, fileHasIncludedDelta, isBinaryContent,
@@ -106,7 +106,7 @@ export function useWorkspaceFileDetailsLoading(input: Input) {
             setFileWriteSupported(next.fileWriteSupported);
             setStaleSince(next.staleSince);
             setTooLarge(result.tooLarge ?? null);
-            setError(result.error);
+            setFailure(result.error === null ? null : { message: result.error, code: result.errorCode });
             setIsDiffLoading(false);
             hydrated.current = true;
             setIsLoading(false);
@@ -115,7 +115,7 @@ export function useWorkspaceFileDetailsLoading(input: Input) {
             reusableFile.current = null;
             setIsDiffLoading(false);
             const message = err instanceof Error ? err.message : t('files.fileReadFailed');
-            setError(message);
+            setFailure({ message });
             const next = reconcileWorkspaceFileDetails(publication.current, { status: 'ready', error: message,
                 fileContent: null, diffContent: null, fileWriteSupported: publication.current.fileWriteSupported }, Date.now());
             publication.current = next;
@@ -161,10 +161,12 @@ export function useWorkspaceFileDetailsLoading(input: Input) {
         const next = publishSavedWorkspaceFileDetails(publication.current, value);
         publication.current = next;
         hydrated.current = true;
-        setFileContent(next.fileContent); setFileWriteSupported(true); setStaleSince(null); setError(null);
+        setFileContent(next.fileContent); setFileWriteSupported(true); setStaleSince(null); setFailure(null);
         setLastOwnWriteHash(next.lastOwnWriteHash);
         setTooLarge(null);
         setIsLoading(false); setIsDiffLoading(false);
     }, [resourceKey]);
-    return { fileContent, diffContent, setDiffContent, isLoading, isDiffLoading, error, fileWriteSupported, setFileWriteSupported, staleSince, lastOwnWriteHash, tooLarge, refreshAll, readFileForSave, publishSavedFile };
+    return { fileContent, diffContent, setDiffContent, isLoading, isDiffLoading, error: failure?.message ?? null,
+        errorCode: failure?.code ?? null, fileWriteSupported, setFileWriteSupported, staleSince, lastOwnWriteHash, tooLarge,
+        refreshAll, readFileForSave, publishSavedFile };
 }

@@ -30,6 +30,7 @@ export type WorkspaceFileDetailsFileContent = Readonly<{
 export type WorkspaceFileDetailsRefreshResult = Readonly<{
     status: 'ready';
     error: string | null;
+    errorCode?: string;
     diffContent: string | null;
     fileContent: WorkspaceFileDetailsFileContent | null;
     fileWriteSupported: boolean;
@@ -87,7 +88,9 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
 
     let diffContent: string | null = null;
     let fileContent: WorkspaceFileDetailsFileContent | null = null;
-    let error: string | null = null;
+    const fileFailure = (error: string, errorCode?: string, fileWriteSupported = true): WorkspaceFileDetailsRefreshResult => ({
+        status: 'ready', error, ...(errorCode ? { errorCode } : {}), diffContent, fileContent: null, fileWriteSupported,
+    });
 
     let fileTask: Promise<WorkspaceFileDetailsRefreshResult> | null = null;
     const loadFile = (): Promise<WorkspaceFileDetailsRefreshResult> => {
@@ -113,9 +116,8 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                         signal: input.signal,
                     });
                     if (input.signal?.aborted) throw new Error(t('files.fileReadFailed'));
-                    if (!stat.success || stat.exists !== true) {
-                        throw new Error(!stat.success ? stat.error : t('files.fileReadFailed'));
-                    }
+                    if (!stat.success) return fileFailure(stat.error, stat.errorCode);
+                    if (stat.exists !== true) return fileFailure(t('files.fileReadFailed'));
                     const binarySizeBytes = typeof stat.sizeBytes === 'number'
                         && Number.isFinite(stat.sizeBytes) && stat.sizeBytes >= 0 ? Math.floor(stat.sizeBytes) : null;
                     return {
@@ -142,10 +144,11 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                     });
                     if (input.signal?.aborted) throw new Error(t('files.fileReadFailed'));
                     // Binary viewers need successful target metadata; video additionally needs a stable player revision.
-                    if ((!stat.success && input.scope.workspace) || (wantsBinaryPreview && (!stat.success || stat.exists !== true
+                    if (!stat.success && (input.scope.workspace || wantsBinaryPreview)) return fileFailure(stat.error, stat.errorCode);
+                    if (stat.success && wantsBinaryPreview && (stat.exists !== true
                         || (videoPreview && (typeof stat.sizeBytes !== 'number' || !Number.isFinite(stat.sizeBytes) || stat.sizeBytes < 0
-                            || typeof stat.modifiedMs !== 'number' || !Number.isFinite(stat.modifiedMs)))))) {
-                        throw new Error(!stat.success ? stat.error : t('files.fileReadFailed'));
+                            || typeof stat.modifiedMs !== 'number' || !Number.isFinite(stat.modifiedMs))))) {
+                        return fileFailure(t('files.fileReadFailed'));
                     }
                     if (
                         stat.success
@@ -185,15 +188,7 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                     ...(previewRead.kind === 'partial' ? { range: previewRead.range } : {}),
                 });
                 if (!readResponse.success) {
-                    error = readResponse.error || t('files.fileReadFailed');
-                    fileContent = null;
-                    return {
-                        status: 'ready',
-                        error,
-                        diffContent,
-                        fileContent,
-                        fileWriteSupported: previewRead.kind !== 'partial',
-                    };
+                    return fileFailure(readResponse.error || t('files.fileReadFailed'), readResponse.errorCode, previewRead.kind !== 'partial');
                 }
 
                 const encodedContent = readResponse.content || '';
@@ -247,15 +242,7 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                     fileWriteSupported: true,
                 };
             } catch (err) {
-                const message = err instanceof Error ? err.message : t('files.fileReadFailed');
-                error = message;
-                return {
-                    status: 'ready',
-                    error,
-                    diffContent,
-                    fileContent,
-                    fileWriteSupported: true,
-                };
+                return fileFailure(err instanceof Error ? err.message : t('files.fileReadFailed'));
             }
         })();
         return fileTask;

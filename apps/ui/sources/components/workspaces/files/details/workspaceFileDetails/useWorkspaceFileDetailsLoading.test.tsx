@@ -139,6 +139,22 @@ it('retires retained controller bytes when the same path selects an attached wor
         await act(async () => { tree.unmount(); });
     }
 });
+it('publishes a stopped workspace from preview metadata without requesting bytes', async () => {
+    const workspace = { v: 2 as const, kind: 'managed' as const, workspaceId: 'remote-project', managedId: 'guest',
+        serverId: input.scope.serverId, rootPath: input.scope.rootPath,
+        controller: { machineId: input.scope.machineId, installationId: 'installation' } };
+    transport.stat.mockResolvedValue({ success: false, errorCode: 'managed_power_required', error: 'Guest is stopped' });
+    let tree!: renderer.ReactTestRenderer;
+    try {
+        await act(async () => { tree = renderer.create(<Harness {...input} scope={{ ...input.scope, workspace }} includeDiff={false} includeFile />); });
+        await waitForHomeGovernance(() => expect(current.error).toBe('Guest is stopped'));
+        expect(current).toMatchObject({ errorCode: 'managed_power_required', fileContent: null });
+        expect(transport.stat).toHaveBeenCalledWith(expect.objectContaining({ workspace }));
+        expect(workspaceFileDetailsActionBoundary.read).not.toHaveBeenCalled();
+    } finally {
+        await act(async () => { tree?.unmount(); });
+    }
+});
 it('switches the viewer read identity without reusing opaque binary bytes or publishing a late text read', async () => {
     const selection = resolveWorkspaceFileViewerChoiceModel({ metadata: { contentClass: 'binary' },
         preferences: { v: 1, selections: {} }, availablePluginViewers: [], builtinViewer: 'text' }).selected;
