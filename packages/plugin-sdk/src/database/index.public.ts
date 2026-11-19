@@ -1,4 +1,5 @@
 export type { DatabaseAccessDecisionV1 } from './projections.js';
+export { DatabaseAccessReadResultV1Schema, type DatabaseAccessReadResultV1 } from './accessRead.js';
 export type { DatabaseAccessRefusalV1 } from './projections.js';
 export type { DatabaseAccessSummaryV1 } from './projections.js';
 export type { DatabaseAgentAccessV1 } from './projections.js';

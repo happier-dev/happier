@@ -216,7 +216,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { withMachineLocalDatabaseAgentLevelV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { DATABASE_ACCESS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { DatabaseAccessReadResultV1Schema } from '@happier-dev/database-protocol';
+import { DatabaseAccessReadResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { createPluginSessionsInventory } from '@/session/services/pluginSessionsInventory';
 import { executePluginSessionMessageAction } from '@/session/services/executePluginSessionMessageAction';
 import { createAgentExternalSessionsExecutionSurface } from '@/agent/runtime/registry/agentExternalSessionsExecutionSurface';

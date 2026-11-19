@@ -1,5 +1,5 @@
 import { PluginError, type DatabaseEnginesServiceV1 } from '@happier-dev/plugin-sdk';
-import { DatabaseCapabilityV1Schema } from '@happier-dev/database-protocol';
+import { DatabaseCapabilityV1Schema } from '@happier-dev/plugin-sdk/database';
 import type { ResolvedActivationTarget } from '../../../projection/registry/types';
 import type { ActivatedPluginRuntimeRegistry } from '../manager';
 
