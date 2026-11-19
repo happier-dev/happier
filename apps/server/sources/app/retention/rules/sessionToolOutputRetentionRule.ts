@@ -23,14 +23,14 @@ export function createSessionToolOutputRetentionRule(): RetentionRule {
                 },
                 orderBy: { id: 'asc' },
                 take,
-                select: { id: true, rowRevision: true, updatedAt: true },
+                select: { id: true, sessionId: true, seq: true, rowRevision: true, updatedAt: true },
             });
 
             let examined = 0;
             let deleted = 0;
             for (const row of rows) {
                 if (shouldContinue?.() === false) break;
-                if (dryRun || await expireSessionMessageToolOutputAtRevision({ ...row, cutoff, days: domain.days })) {
+                if (dryRun || await expireSessionMessageToolOutputAtRevision({ ...row, cutoff, now, days: domain.days })) {
                     deleted += 1;
                 }
                 afterId = row.id;

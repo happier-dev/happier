@@ -29,7 +29,7 @@ describe('tool-output retention through the shared sweep', () => {
         ] as const) {
             seeded.push(await db.sessionMessage.create({ data: {
                 sessionId: session.id, seq, localId: `fixture-${seq}`, content: shell,
-                createdAt, sourceCreatedAt: now, toolOutputBytes,
+                createdAt, updatedAt: createdAt, sourceCreatedAt: now, toolOutputBytes,
             } }));
         }
         const env = {
@@ -40,14 +40,24 @@ describe('tool-output retention through the shared sweep', () => {
         };
         const policy = readRetentionPolicyFromEnv(env);
         expect((await runRetentionSweep({ policy: { ...policy, dryRun: true }, now })).byRule.toolOutputs).toBe(1);
+        expect(await db.accountChange.count({ where: { sessionId: session.id } })).toBe(0);
         expect((await runRetentionSweep({ policy, now })).byRule.toolOutputs).toBe(1);
+        expect(await db.accountChange.findMany({
+            where: { sessionId: session.id },
+            select: { accountId: true, hint: true },
+        })).toEqual([{ accountId: account.id, hint: expect.objectContaining({
+            updatedMessageSeq: 1,
+            updatedMessageId: seeded[0].id,
+            updatedMessageUpdatedAt: now.getTime(),
+        }) }]);
         const rows = await db.sessionMessage.findMany({ where: { sessionId: session.id }, orderBy: { seq: 'asc' } });
         expect(rows).toEqual([
-            { ...seeded[0], toolOutputBytes: null, toolOutputExpiredAfterDays: 30, rowRevision: seeded[0].rowRevision + 1n },
+            { ...seeded[0], toolOutputBytes: null, toolOutputExpiredAfterDays: 30, rowRevision: seeded[0].rowRevision + 1n, updatedAt: now },
             seeded[1], seeded[2],
         ]);
         expect(await db.session.findUnique({ where: { id: session.id } })).toEqual(session);
         expect(await db.sessionPin.count({ where: { sessionId: session.id } })).toBe(1);
         expect((await runRetentionSweep({ policy, now })).byRule.toolOutputs).toBe(0);
+        expect(await db.accountChange.count({ where: { sessionId: session.id } })).toBe(1);
     });
 });

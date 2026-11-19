@@ -2,8 +2,12 @@ import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { encodeSessionMessageContentForStorage, toPrismaSessionMessageStoredContent } from "@/storage/sessionMessageContent";
 import type { Prisma } from '@prisma/client';
 
-import type { Tx } from '@/storage/inTx';
-import { db } from '@/storage/db';
+import {
+    acquireSessionAccountCursorLocksInTx,
+    prepareSessionAccountCursorLocks,
+} from '@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx';
+import { markSessionProjectionRecipientsChanged } from '@/app/session/changeTracking/markSessionProjectionRecipientsChanged';
+import { inTx, type Tx } from '@/storage/inTx';
 import { isPrismaErrorCode, prismaRuntime } from '@/storage/prisma';
 import { notifySessionTranscriptMutationAfterCommit } from './sessionTranscriptMutationObserver';
 
@@ -71,25 +75,47 @@ export async function updateSessionMessageAtCurrentRevisionInTx(params: Readonly
 /** Clear only detached bytes under the same revision precondition as content corrections. */
 export async function expireSessionMessageToolOutputAtRevision(params: Readonly<{
     id: string;
+    sessionId: string;
+    seq: number;
     rowRevision: bigint;
     updatedAt: Date;
     cutoff: Date;
+    now: Date;
     days: number;
 }>): Promise<boolean> {
-    const result = await db.sessionMessage.updateMany({
-        where: {
-            id: params.id,
-            rowRevision: params.rowRevision,
-            createdAt: { lt: params.cutoff },
-            toolOutputBytes: { not: null },
-            toolOutputExpiredAfterDays: null,
-        },
-        data: {
-            toolOutputBytes: null,
-            toolOutputExpiredAfterDays: params.days,
-            rowRevision: { increment: 1n },
-            updatedAt: params.updatedAt,
-        },
+    const sessionIds = [params.sessionId];
+    const updatedAt = new Date(Math.max(params.now.getTime(), params.updatedAt.getTime() + 1));
+    return inTx(async tx => {
+        await acquireSessionAccountCursorLocksInTx(tx, sessionIds, [], { reuseHeldAudience: true });
+        const result = await tx.sessionMessage.updateMany({
+            where: {
+                id: params.id,
+                sessionId: params.sessionId,
+                rowRevision: params.rowRevision,
+                createdAt: { lt: params.cutoff },
+                toolOutputBytes: { not: null },
+                toolOutputExpiredAfterDays: null,
+            },
+            data: {
+                toolOutputBytes: null,
+                toolOutputExpiredAfterDays: params.days,
+                rowRevision: { increment: 1n },
+                updatedAt,
+            },
+        });
+        if (result.count !== 1) return false;
+
+        await markSessionProjectionRecipientsChanged({
+            tx,
+            sessionId: params.sessionId,
+            hint: { updatedMessageSeq: params.seq, updatedMessageId: params.id, updatedMessageUpdatedAt: updatedAt.getTime() },
+            followSourceChanged: false,
+            usageAccountingChanged: false,
+            memoryInputsChanged: false,
+        });
+        return true;
+    }, {
+        transactionClass: 'tool-output-retention',
+        prepare: () => prepareSessionAccountCursorLocks(sessionIds),
     });
-    return result.count === 1;
 }
