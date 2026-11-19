@@ -332,8 +332,10 @@ describe('session WorkerUpdate producer through Follow', () => {
     const stored = f.messages.length;
     expect(await f.postViaRpc({ ...report, sessionId: 'another-source' }))
       .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    // The bound Session cannot read a foreign caller's private approval profile.
+    // RPC admission refuses it before the source publisher can run.
     expect(await f.postViaRpc(report, 'another-source'))
-      .toMatchObject({ ok: false, errorCode: 'session_update_source_mismatch' });
+      .toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
     expect(f.messages).toHaveLength(stored);
   });
   it('posts a CLI original through the bound source RPC and retains source ownership guards', async () => {
