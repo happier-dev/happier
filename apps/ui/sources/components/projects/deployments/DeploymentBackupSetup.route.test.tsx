@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -358,7 +358,8 @@ it('opens the existing backup setup sheet for the exact readiness Environment wi
   const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
   const account = await captureLazyActionAccountContext(serverId);
   const initial = createDeploymentEnvironmentDetailV1();
-  const detail = { ...initial, runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(initial), memberVersions: {}, secretRevisions: [],
+  const detail = { ...initial, environment: { ...initial.environment, serverId },
+    runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(initial), memberVersions: {}, secretRevisions: [],
     content: { ...initial.content, template: { templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '1',
       ref: { kind: 'version' as const, version: '1' } }, definition: { kind: 'stored' as const, contentRevision: 1,
       composeDigest: `sha256:${'a'.repeat(64)}` }, services: ['db'], data: [{ engine: 'postgres' as const, service: 'db' }] } } };
@@ -389,11 +390,16 @@ it('opens the existing backup setup sheet for the exact readiness Environment wi
       return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision,
         creationDefaults: { values: { retainPreviousDeployments: 1 }, sources: {} }, backupSourceChoices: sourceChoices };
     } });
+  const { storage } = await import('@/sync/domains/state/storageStore');
+  const { endpointStatus } = storage.getState();
+  // The focused Home's socket is disconnected by the fixture. Supply its online ingress for the projection read.
+  storage.setState({ endpointStatus: 'online' });
   const screen = await renderScreen(<DeploymentBackupSetup detail={detail} serverId={serverId} testID="backups"
     review={{ pendingId: null, request() {}, open() {} }} machineName={id => id} onChanged={() => {}}
     actions={actions} lifetime={account.accountLifetime} />);
   try {
-    await vi.waitFor(() => expect(modal.show).toHaveBeenCalledWith(expect.objectContaining({
+    expect(screen.findByTestId('backups.setup.notNeeded')).toBeNull();
+    await waitForHomeGovernance(() => expect(modal.show, screen.getTextContent()).toHaveBeenCalledWith(expect.objectContaining({
       component: DeploymentBackupSetupSheet, props: expect.objectContaining({ detail,
         sourceChoices }),
     })));
@@ -402,7 +408,7 @@ it('opens the existing backup setup sheet for the exact readiness Environment wi
       actions={actions} lifetime={account.accountLifetime} />));
     expect(modal.show).toHaveBeenCalledTimes(1);
     expect(homes.requests.filter(request => request.path.includes('/sessions'))).toEqual([]);
-  } finally { await screen.unmount(); account.dispose(); }
+  } finally { await screen.unmount(); storage.setState({ endpointStatus }); account.dispose(); }
 });
 
 it('keeps the descriptor name and same-disk warning visible for a configured local destination', async () => {
