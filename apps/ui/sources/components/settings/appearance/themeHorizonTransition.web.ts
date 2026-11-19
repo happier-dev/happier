@@ -1,13 +1,17 @@
 import {
+  createThemeHorizonGlyphSampler,
   FURTHER_PLANET_MOMENT_TIMINGS,
-  themeSwitchFrame,
+  themeHorizonGlyphCell,
+  themeHorizonClip,
 } from '@happier-dev/brand/planet-moments';
 import {
-  loadMomentFonts,
   paintMomentCommands,
   prepareMomentCanvas,
 } from '@/components/atmosphere/momentPaint.web';
+import { prepareWebGlyphLayer } from '@/components/atmosphere/glyph/webGlyphLayer';
+import { releaseCanvasBackingStore } from '@/components/ui/media/canvasBackingStore';
 import { readThemeRuntimeInk } from '@/theme/profiles/themeProfileRuntime';
+import { themeHorizonInk } from './themeHorizonInk';
 import type { WebThemePreferenceChoreography } from './themePreferenceTransition';
 
 /** The overlay's view-transition group: captured in both views (empty in the old), drawn live above the root. */
@@ -35,12 +39,7 @@ export function themeHorizonClipKeyframes(
   for (let i = 1; i < steps; i++) {
     frames.push({
       offset: i / steps,
-      clipPath: themeSwitchFrame((i / steps) * duration, {
-        w,
-        h,
-        dir,
-        kind: 'horizon',
-      }).clipPath,
+      clipPath: themeHorizonClip((i / steps) * duration, { w, h, dir }),
     });
   }
   return [
@@ -70,9 +69,9 @@ export const themeHorizonTransition: WebThemePreferenceChoreography = {
     const w = view.innerWidth,
       h = view.innerHeight,
       dpr = Math.min(2, view.devicePixelRatio || 1);
-    const canvas = document.createElement('canvas');
-    canvas.setAttribute('aria-hidden', 'true');
-    Object.assign(canvas.style, {
+    const overlay = document.createElement('div');
+    overlay.setAttribute('aria-hidden', 'true');
+    Object.assign(overlay.style, {
       position: 'fixed',
       left: '0',
       top: '0',
@@ -81,9 +80,17 @@ export const themeHorizonTransition: WebThemePreferenceChoreography = {
       pointerEvents: 'none',
       zIndex: '2147483647',
     });
-    canvas.style.setProperty('view-transition-name', THEME_HORIZON_LAYER);
-    body.appendChild(canvas);
-    const fonts = loadMomentFonts();
+    overlay.style.setProperty('view-transition-name', THEME_HORIZON_LAYER);
+    const canvas = document.createElement('canvas');
+    const glyphCanvas = document.createElement('canvas');
+    const still = document.createElement('canvas');
+    for (const layer of [canvas, glyphCanvas, still]) {
+      Object.assign(layer.style, { position: 'absolute', inset: '0', width: `${w}px`, height: `${h}px` });
+      overlay.appendChild(layer);
+    }
+    body.appendChild(overlay);
+    const glyphs = prepareWebGlyphLayer(glyphCanvas, still, dpr, themeHorizonGlyphCell);
+    const horizon = createThemeHorizonGlyphSampler();
     return (transition) => {
       const duration = FURTHER_PLANET_MOMENT_TIMINGS.TH.DUR;
       let frame = 0;
@@ -94,13 +101,15 @@ export const themeHorizonTransition: WebThemePreferenceChoreography = {
         if (disposed) return;
         disposed = true;
         view.cancelAnimationFrame(frame);
-        canvas.remove();
+        glyphs.dispose();
+        releaseCanvasBackingStore(canvas);
+        overlay.remove();
         reveal?.cancel();
       };
       // `finished` settles even when the browser skips the transition, so the overlay never outlives it.
       void transition.finished.then(remove, remove);
       // Font readiness may settle before `ready`, or after the transition has been skipped.
-      void fonts.catch(remove);
+      void glyphs.ready.catch(remove);
       void transition.ready.then(() => {
         if (disposed) return;
         const running = document.documentElement.animate(
@@ -114,22 +123,19 @@ export const themeHorizonTransition: WebThemePreferenceChoreography = {
         );
         reveal = running;
         // The switch has applied by `ready`: the digits take the incoming theme's ink, so they read on it.
-        const ink = readThemeRuntimeInk();
+        const ink = themeHorizonInk(readThemeRuntimeInk());
         const paint = () => {
           if (disposed) return;
           // The digits read the reveal's own clock, so the band can never drift from the boundary.
           const t = Number(running.currentTime ?? 0) / 1000;
+          const sampled = horizon(t, { w, h, dir: direction, kind: 'horizon' }, ink);
           const context = prepareMomentCanvas(canvas, w, h, dpr);
-          if (context)
-            paintMomentCommands(
-              context,
-              themeSwitchFrame(t, { w, h, dir: direction, kind: 'horizon', ink })
-                .commands,
-              { w, h, dpr },
-            );
+          if (context) paintMomentCommands(context, sampled.commands, { w, h, dpr });
+          if (glyphs.animated) glyphs.paint({ view: { w, h }, theme: direction === 'sunrise' ? 'light' : 'dark', layers: [sampled.glyphs] }, t);
+          else glyphs.paint({ view: { w, h }, theme: direction === 'sunrise' ? 'light' : 'dark', layers: [] }, t);
           if (t < duration) frame = view.requestAnimationFrame(paint);
         };
-        void fonts.then(() => {
+        void glyphs.ready.then(() => {
           if (disposed) return;
           frame = view.requestAnimationFrame(paint);
         }, remove);

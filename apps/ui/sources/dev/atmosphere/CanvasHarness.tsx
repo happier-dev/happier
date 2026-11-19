@@ -1,8 +1,6 @@
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import { createPlanetScene, type PlanetSceneOptions } from '@happier-dev/brand/planet';
 import { renderBackdrop, type AtmosphereBackdropJob } from '@happier-dev/brand/atmosphere';
-import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas.web';
 import { BackdropCanvas } from '@/components/atmosphere/BackdropCanvas.web';
 import type { BackdropCanvasProps } from '@/components/atmosphere/backdropCanvas.types';
 
@@ -26,19 +24,6 @@ const harness = {
     async picture(props: BackdropCanvasProps) {
         await new Promise<void>((resolve, reject) => root.render(<BackdropCanvas {...props} onReady={resolve} onError={reject} />));
         return { w: pixels().w, h: pixels().h };
-    },
-    async planet(options: PlanetSceneOptions) {
-        const width = options.view.w, height = options.view.h;
-        const calls: { x: number; y: number; r: number }[] = [];
-        const arc = CanvasRenderingContext2D.prototype.arc;
-        CanvasRenderingContext2D.prototype.arc = function (x, y, r, start, end, counterclockwise) {
-            calls.push({ x, y, r }); arc.call(this, x, y, r, start, end, counterclockwise);
-        };
-        try {
-            await new Promise<void>((resolve, reject) => root.render(<PlanetCanvas options={options} width={width} height={height} onReady={resolve} onError={reject} testID="U4-planet" />));
-        } finally { CanvasRenderingContext2D.prototype.arc = arc; }
-        const scene = createPlanetScene(options);
-        return { arcs: calls, expected: [...scene.body, ...scene.haze].map(({ x, y, r }) => ({ x, y, r })), body: scene.body.length, cells: scene.cells.length };
     },
     async strictBackdrop() {
         const source = { rgba: new Uint8ClampedArray([32, 64, 128, 255]), w: 1, h: 1 };

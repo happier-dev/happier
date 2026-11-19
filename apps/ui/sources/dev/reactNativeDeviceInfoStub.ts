@@ -4,5 +4,9 @@ export function getDeviceType() {
     return 'Handset';
 }
 
-export default { getDeviceType };
+export async function getPowerState() {
+    return { lowPowerMode: false };
+}
+
+export default { getDeviceType, getPowerState };
 

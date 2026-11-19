@@ -1,7 +1,7 @@
 import type { PlanetScene, PlanetSceneDot } from '@happier-dev/brand/planet';
 
 /** Canvas composition ported from MO.composite; scene maths stay in Brand. */
-export function paintPlanetScene(context: CanvasRenderingContext2D, scene: PlanetScene, fonts: { regular: string; semiBold: string }, ink?: string) {
+export function paintPlanetMark(context: CanvasRenderingContext2D, scene: PlanetScene, fonts: { regular: string; semiBold: string }, ink?: string) {
     const dots = (list: readonly PlanetSceneDot[]) => {
         for (const dot of list) {
             context.globalAlpha = dot.opacity;

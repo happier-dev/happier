@@ -8,6 +8,7 @@ import { themeHorizonClipKeyframes, themeHorizonTransition } from './themeHorizo
 import { darkTheme } from '@/theme';
 import { DEFAULT_THEME_PROFILES_LOCAL_STATE } from '@/theme/profiles/themeProfilePersistence';
 import { applyThemeRuntimeSelection } from '@/theme/profiles/themeProfileRuntime';
+import { processColor } from 'react-native';
 
 // Status bar and system background are platform boundaries of the theme runtime the digits read their ink from.
 vi.mock('expo-status-bar', () => ({ setStatusBarStyle: vi.fn() }));
@@ -21,29 +22,28 @@ function deferred() {
 }
 
 // Browser DOM, font readiness and animation scheduling are the external boundaries.
-/** A 2D context (browser boundary) that remembers the ink and alpha each glyph was drawn in. */
-function recordingContext() {
-    const glyphs: Array<{ fill: unknown; alpha: unknown }> = [];
-    const state: Record<string, unknown> = { globalAlpha: 1 };
-    const context = new Proxy(state, {
-        get(target, key: string) {
-            if (key in target) return target[key];
-            if (key === 'createRadialGradient' || key === 'createLinearGradient') return () => ({ addColorStop: () => {} });
-            if (key === 'fillText') return () => { glyphs.push({ fill: target.fillStyle, alpha: target.globalAlpha }); };
-            return () => {};
-        },
-        set(target, key: string, value) { target[key] = value; return true; },
-    });
-    return { context, glyphs };
-}
-
-function browser(start = true, context: unknown = null) {
+function browser(start = true) {
     const fonts = deferred();
     const ready = deferred();
     const finished = deferred();
     const frames = new Map<number, FrameRequestCallback>();
     let id = 0;
-    const canvas = { style: { setProperty: vi.fn() }, setAttribute: vi.fn(), remove: vi.fn(), getContext: () => context };
+    const spriteColours: Uint8Array[] = [];
+    const graphics = new Proxy({
+        isContextLost: () => false, getExtension: () => null,
+        getShaderParameter: () => true, getProgramParameter: () => true,
+        bufferData(_target: number, data: ArrayBufferView) { if (data instanceof Uint8Array && data.length % 4 === 0) spriteColours.push(data.slice()); },
+    }, { get: (target, key) => Reflect.get(target, key) ?? (() => ({})) });
+    const context = new Proxy({
+        getImageData: (_x: number, _y: number, width: number, height: number) => ({ data: new Uint8ClampedArray(4 * width * height) }),
+        createRadialGradient: () => ({ addColorStop() {} }), createLinearGradient: () => ({ addColorStop() {} }),
+    }, { get: (target, key) => Reflect.get(target, key) ?? (() => {}) });
+    const overlay = { style: { setProperty: vi.fn() }, setAttribute: vi.fn(), appendChild: vi.fn(), remove: vi.fn() };
+    const newCanvas = () => ({
+        style: {}, width: 0, height: 0, isConnected: true,
+        getContext: (name: string) => name === 'webgl2' ? graphics : context,
+        addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    });
     const reveal = { currentTime: 0 as number | null, cancel: vi.fn(() => { reveal.currentTime = null; }) };
     const animate = vi.fn(() => reveal);
     const document = {
@@ -51,7 +51,7 @@ function browser(start = true, context: unknown = null) {
             requestAnimationFrame: (callback: FrameRequestCallback) => { frames.set(++id, callback); return id; },
             cancelAnimationFrame: (frame: number) => frames.delete(frame) },
         body: { appendChild: vi.fn() }, head: { appendChild: vi.fn() }, getElementById: () => null,
-        createElement: (name: string) => name === 'canvas' ? canvas : {},
+        createElement: (name: string) => name === 'canvas' ? newCanvas() : name === 'div' ? overlay : {},
         documentElement: { animate }, fonts: { load: () => fonts.promise },
         startViewTransition: (mutation: () => void) => { mutation(); return { ready: ready.promise, finished: finished.promise }; },
     };
@@ -61,7 +61,7 @@ function browser(start = true, context: unknown = null) {
         const play = themeHorizonTransition.prepare(document as unknown as Document, 'sunrise')!;
         play({ ready: ready.promise, finished: finished.promise } as ViewTransition);
     }
-    return { document, fonts, ready, finished, frames, canvas, animate, reveal };
+    return { document, fonts, ready, finished, frames, overlay, animate, reveal, spriteColours };
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -94,7 +94,7 @@ describe('theme Horizon lifetime', () => {
         host.ready.resolve(); await flush();
         host.finished.resolve(); await flush();
         host.fonts.resolve(); await flush();
-        expect(host.canvas.remove).toHaveBeenCalled();
+        expect(host.overlay.remove).toHaveBeenCalled();
         expect(host.reveal.currentTime).toBeNull();
         expect(host.frames.size).toBe(0);
     });
@@ -111,15 +111,15 @@ describe('theme Horizon lifetime', () => {
         // The switch to dark has applied by the time the reveal is ready.
         applyThemeRuntimeSelection({ themePreference: 'dark', themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE, systemTheme: 'light',
             platform: 'ios', setSystemBackgroundColor: () => {}, recordBreadcrumb: () => {}, style: null });
-        const { context, glyphs } = recordingContext();
-        const host = browser(false, context);
+        const host = browser(false);
         const play = themeHorizonTransition.prepare(host.document as unknown as Document, 'night')!;
         play({ ready: host.ready.promise, finished: host.finished.promise } as ViewTransition);
         host.ready.resolve(); host.fonts.resolve(); await flush();
         host.reveal.currentTime = 600;
         for (const frame of [...host.frames.values()]) frame(0);
-        expect(glyphs.length).toBeGreaterThan(0);
-        expect(new Set(glyphs.map((glyph) => glyph.fill))).toEqual(new Set([darkTheme.colors.text.primary]));
+        const argb = processColor(darkTheme.colors.text.primary) as number;
+        const ink = [(argb >>> 16) & 255, (argb >>> 8) & 255, argb & 255];
+        expect(host.spriteColours.some(batch => batch.length > 4 && ink.every((value, index) => batch[index] === value))).toBe(true);
         host.finished.resolve(); await flush();
     });
 
@@ -127,7 +127,7 @@ describe('theme Horizon lifetime', () => {
         const host = browser();
         host.ready.resolve(); await flush();
         host.fonts.reject(new Error('font unavailable')); await flush();
-        expect(host.canvas.remove).toHaveBeenCalled();
+        expect(host.overlay.remove).toHaveBeenCalled();
         expect(host.frames.size).toBe(0);
         host.finished.resolve();
     });

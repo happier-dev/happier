@@ -2,7 +2,6 @@ import * as React from 'react';
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
-import { homePlanetGeometry, homePlanetSceneOptions } from './homePlanetPlacement';
 import { PlanetCanvas } from './PlanetCanvas.native';
 
 // Skia's native host is the system boundary. In @shopify/react-native-skia 2.4.18,
@@ -53,12 +52,12 @@ vi.mock('react-native', async () => {
 });
 
 const pane = { width: 390, height: 844 };
-const options = homePlanetSceneOptions(homePlanetGeometry('corner', pane), pane, { theme: 'dark', style: 'balanced', digits: true });
+const options = { R: 110, cx: 193, cy: 197, theme: 'dark', view: { w: pane.width, h: pane.height }, field: 1 } as const;
 
 describe('native planet typefaces', () => {
     afterEach(() => { native.state.borrowedAdoptions = 0; native.state.glyphs = 0; });
 
-    it('draws Home planet digits without adopting the font’s borrowed typeface', async () => {
+    it('draws a static planet mark’s digits without adopting the font’s borrowed typeface', async () => {
         await act(async () => { renderScreen(<PlanetCanvas width={pane.width} height={pane.height} options={options} />); });
         expect(native.state.glyphs).toBeGreaterThan(0);
         expect(native.state.borrowedAdoptions).toBe(0);

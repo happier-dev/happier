@@ -1,6 +1,6 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { AlphaType, BlendMode, ColorType, FilterMode, ImageFormat, MipmapMode, Skia, TileMode, type SkImage } from '@shopify/react-native-skia';
-import type { AtmospherePixels, AtmosphereRgb, AtmosphereTheme, AtmosphereTransitionFrames, AtmosphereRippleOptions } from '@happier-dev/brand/atmosphere';
+import type { AtmospherePixels, AtmosphereRgb, AtmosphereTheme, AtmosphereTransitionFrames } from '@happier-dev/brand/atmosphere';
 import { createWorkletRuntime, runOnRuntimeAsync, type WorkletRuntime } from 'react-native-worklets';
 import { createAtmosphereWorkletCore } from './backdropWorkletCore.generated';
 import { backdropRequestKey } from './backdropRenderRequest';
@@ -134,21 +134,6 @@ export function renderNativeOrderedMask(width: number, height: number, from: num
             } finally { image.dispose(); }
         } finally { data.dispose(); }
     }, Math.max(1, Math.round(width * dpr)), Math.max(1, Math.ceil(height * dpr)), from, to, dpr);
-}
-
-/** No PNG encoding or file per animation frame: Skia image handles are Worklets HostObjects. */
-export async function renderNativeRipple(progress: number, options: AtmosphereRippleOptions): Promise<SkImage> {
-    const api = Skia, colorType = ColorType.RGBA_8888, alphaType = AlphaType.Unpremul;
-    return runOnRuntimeAsync(backdropRuntime(), (t: number, input: AtmosphereRippleOptions) => {
-        'worklet';
-        const output = createAtmosphereWorkletCore().atmosphereRipple(t, input);
-        const data = api.Data.fromBytes(new Uint8Array(output.rgba.buffer, output.rgba.byteOffset, output.rgba.byteLength));
-        try {
-            const image = api.Image.MakeImage({ width: output.w, height: output.h, colorType, alphaType }, data, output.w * 4);
-            if (!image) throw new Error('Atmosphere ripple image is unavailable');
-            return image;
-        } finally { data.dispose(); }
-    }, progress, options);
 }
 
 /** Prepare the brand's blue-noise map and source/target pixels once, on the canonical native worker. */

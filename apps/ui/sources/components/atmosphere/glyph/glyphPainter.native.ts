@@ -1,5 +1,5 @@
 import { AlphaType, BlendMode, ClipOp, ColorType, FilterMode, MipmapMode, Skia, TileMode, createPicture } from '@shopify/react-native-skia';
-import type { SkColor, SkImage, SkRSXform, SkRect } from '@shopify/react-native-skia';
+import type { SkCanvas, SkColor, SkImage, SkRSXform, SkRect } from '@shopify/react-native-skia';
 import type { GlyphFrame, GlyphGrid } from '@happier-dev/brand/glyph-scene';
 
 import { glyphAtlas } from './glyphAtlas.native';
@@ -48,59 +48,66 @@ export async function createNativeGlyphPainter(grid: GlyphGrid, dpr: number) {
         }
         source.length = destination.length = colours.length = sprites.glyph.length;
     }
+    function draw(canvas: SkCanvas, frame: GlyphFrame) {
+        const { body, field, sprites } = frame;
+        if (field !== previousField || (field && field.revision !== previousFieldRevision)) {
+            fieldImage?.dispose();
+            fieldImage = field ? makeImage(field.mask.width, field.mask.height, field.mask.rgba) : null;
+            previousField = field;
+            previousFieldRevision = field?.revision ?? -1;
+        }
+        if (body !== previousBody) {
+            bodyImage?.dispose();
+            bodyImage = body ? makeImage(body.cols, body.rows, body.rgba) : null;
+            previousBody = body;
+        }
+        if (body?.fadeMask !== previousMask) {
+            fadeImage?.dispose();
+            fadeImage = body?.fadeMask ? makeImage(body.fadeMask.width, body.fadeMask.height, body.fadeMask.rgba) : null;
+            const shader = fadeImage?.makeShaderOptions(TileMode.Repeat, TileMode.Clamp, FilterMode.Nearest, MipmapMode.None);
+            maskPaint.setShader(shader ?? null);
+            shader?.dispose();
+            previousMask = body?.fadeMask;
+        }
+        const bounds = Skia.XYWHRect(0, 0, frame.width, frame.height);
+        canvas.save();
+        try {
+            canvas.scale(1 / dpr, 1 / dpr);
+            if (field && fieldImage) {
+                const { mask, maskExtent } = field;
+                canvas.saveLayer();
+                fillAtlasBatch(field.sprites);
+                canvas.drawAtlas(atlas, source, destination, paint, BlendMode.Modulate, colours);
+                canvas.drawImageRectOptions(fieldImage, Skia.XYWHRect(0, 0, mask.width, mask.height),
+                    Skia.XYWHRect(0, 0, ...maskExtent), FilterMode.Linear, MipmapMode.None, fieldPaint);
+                canvas.restore();
+            }
+            if (body && bodyImage) {
+                if (fadeImage) canvas.saveLayer();
+                canvas.save();
+                path.reset();
+                path.addCircle(body.disc.cx, body.disc.cy, body.disc.R);
+                canvas.clipPath(path, ClipOp.Intersect, true);
+                canvas.drawImageRectOptions(bodyImage, Skia.XYWHRect(0, 0, body.cols, body.rows),
+                    Skia.XYWHRect(0, 0, body.cols * w, body.rows * h), FilterMode.Linear, MipmapMode.None, paint);
+                canvas.restore();
+                if (fadeImage) {
+                    canvas.drawRect(bounds, maskPaint);
+                    canvas.restore();
+                }
+            }
+            if (sprites.glyph.length) {
+                fillAtlasBatch(sprites);
+                canvas.drawAtlas(atlas, source, destination, paint, BlendMode.Modulate, colours);
+            }
+        } finally {
+            canvas.restore();
+        }
+    }
     return {
+        draw,
         paint(frame: GlyphFrame) {
-            const { body, field, sprites } = frame;
-            if (field !== previousField || (field && field.revision !== previousFieldRevision)) {
-                fieldImage?.dispose();
-                fieldImage = field ? makeImage(field.mask.width, field.mask.height, field.mask.rgba) : null;
-                previousField = field;
-                previousFieldRevision = field?.revision ?? -1;
-            }
-            if (body !== previousBody) {
-                bodyImage?.dispose();
-                bodyImage = body ? makeImage(body.cols, body.rows, body.rgba) : null;
-                previousBody = body;
-            }
-            if (body?.fadeMask !== previousMask) {
-                fadeImage?.dispose();
-                fadeImage = body?.fadeMask ? makeImage(body.fadeMask.width, body.fadeMask.height, body.fadeMask.rgba) : null;
-                const shader = fadeImage?.makeShaderOptions(TileMode.Repeat, TileMode.Clamp, FilterMode.Nearest, MipmapMode.None);
-                maskPaint.setShader(shader ?? null);
-                shader?.dispose();
-                previousMask = body?.fadeMask;
-            }
-            const bounds = Skia.XYWHRect(0, 0, frame.width, frame.height);
-            return createPicture(canvas => {
-                canvas.scale(1 / dpr, 1 / dpr);
-                if (field && fieldImage) {
-                    const { mask, maskExtent } = field;
-                    canvas.saveLayer();
-                    fillAtlasBatch(field.sprites);
-                    canvas.drawAtlas(atlas, source, destination, paint, BlendMode.Modulate, colours);
-                    canvas.drawImageRectOptions(fieldImage, Skia.XYWHRect(0, 0, mask.width, mask.height),
-                        Skia.XYWHRect(0, 0, ...maskExtent), FilterMode.Linear, MipmapMode.None, fieldPaint);
-                    canvas.restore();
-                }
-                if (body && bodyImage) {
-                    if (fadeImage) canvas.saveLayer();
-                    canvas.save();
-                    path.reset();
-                    path.addCircle(body.disc.cx, body.disc.cy, body.disc.R);
-                    canvas.clipPath(path, ClipOp.Intersect, true);
-                    canvas.drawImageRectOptions(bodyImage, Skia.XYWHRect(0, 0, body.cols, body.rows),
-                        Skia.XYWHRect(0, 0, body.cols * w, body.rows * h), FilterMode.Linear, MipmapMode.None, paint);
-                    canvas.restore();
-                    if (fadeImage) {
-                        canvas.drawRect(bounds, maskPaint);
-                        canvas.restore();
-                    }
-                }
-                if (sprites.glyph.length) {
-                    fillAtlasBatch(sprites);
-                    canvas.drawAtlas(atlas, source, destination, paint, BlendMode.Modulate, colours);
-                }
-            }, { width: frame.width / dpr, height: frame.height / dpr });
+            return createPicture(canvas => draw(canvas, frame), { width: frame.width / dpr, height: frame.height / dpr });
         },
         dispose() {
             atlas.dispose();

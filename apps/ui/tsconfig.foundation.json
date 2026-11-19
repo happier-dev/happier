@@ -735,7 +735,6 @@
     "sources/components/atmosphere/sessionRipple.ts",
     "sources/components/atmosphere/useCanvasRenderState.ts",
     "sources/components/atmosphere/useNativeMomentEnvironment.ts",
-    "sources/components/atmosphere/usePlanetDigits.ts",
     "sources/components/atmosphere/useStoredPictureRecord.ts",
     "sources/components/auth/pairing/PairingQrCode.tsx",
     "sources/components/auth/pairing/PairingQrMoment.native.tsx",

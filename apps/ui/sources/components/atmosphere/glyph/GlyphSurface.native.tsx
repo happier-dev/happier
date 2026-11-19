@@ -9,6 +9,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 
 import { useGlyphClock } from '../moments/useMomentClock';
 import type { GlyphSurfaceProps, GlyphSurfaceReadiness } from './glyphSurfaceTypes';
+import { readGlyphLowPower } from './readGlyphLowPower.native';
 
 type Backend = typeof import('./glyphPainter.native');
 type Painter = Awaited<ReturnType<Backend['createNativeGlyphPainter']>>;
@@ -23,6 +24,7 @@ export const GlyphSurface = React.memo(function GlyphSurface({
     const reduced = useReducedMotionPreference();
     const painterRef = React.useRef<Painter | null>(null);
     const [prepared, setPrepared] = React.useState(false);
+    const [lowPower, setLowPower] = React.useState<boolean | null>(null);
     const picture = useSharedValue<SkPicture | null>(null);
     const previousPicture = React.useRef<SkPicture | null>(null);
     const sample = React.useMemo(createGlyphFrameSampler, []);
@@ -33,6 +35,7 @@ export const GlyphSurface = React.memo(function GlyphSurface({
     React.useEffect(() => {
         let disposed = false;
         setPrepared(false);
+        paintedStatus.current = null;
         const grid = { cell: [Math.round(cellW * dpr), Math.round(cellH * dpr)] as const, cols: 0, rows: 0, origin: [0, 0] as const };
         void import('./glyphPainter.native').then(backend => backend.createNativeGlyphPainter(grid, dpr)).then((painter) => {
             if (disposed) { painter.dispose(); return; }
@@ -49,7 +52,12 @@ export const GlyphSurface = React.memo(function GlyphSurface({
         };
     }, [cellH, cellW, dpr, picture]);
 
-    const readiness = prepared ? reduced ? 'still' as const : 'ready' as const : null;
+    React.useEffect(() => {
+        let active = true;
+        void readGlyphLowPower().then(value => { if (active) setLowPower(value); });
+        return () => { active = false; };
+    }, []);
+    const readiness = prepared && lowPower !== null ? reduced || lowPower ? 'still' as const : 'ready' as const : null;
     const paintedStatus = React.useRef<GlyphSurfaceReadiness | null>(null);
     const paint = React.useCallback((seconds: number) => {
         if (!painterRef.current || width <= 0 || height <= 0) return;

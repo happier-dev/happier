@@ -49,28 +49,9 @@ try {
         assert.deepEqual(result.rgba, result.expected, `putImageData ${reference.id}`);
         assert.equal(createHash('sha256').update(Uint8Array.from(result.rgba)).digest('hex'), reference.sha256, `fixture ${reference.id}`);
     }
-    const planetFixture = JSON.parse(await readFile(join(repo, 'packages/brand/fixtures/planet-scene-parity.json'), 'utf8'));
     const shots = join(repo, '.project/plans/2026-10-10-home-atmosphere/lanes/U4-shots');
     await mkdir(shots, { recursive: true });
-    let planets = 0;
-    for (const reference of planetFixture.scenes) {
-        const result = await page.evaluate(options => window.U4.planet(options), reference.options);
-        assert.deepEqual(result.arcs, result.expected, reference.id);
-        planets++;
-        if (planets <= 2) await page.screenshot({ path: join(shots, `planet-${planets}.png`) });
-    }
-    // Exercise effect teardown/replay on the actual product worker/canvas, not a transport stub.
     await page.evaluate(() => window.U4.strictBackdrop());
-    for (const width of [1440, 390]) for (const theme of ['light', 'dark']) {
-        await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
-        const reference = planetFixture.scenes.find(entry => entry.options.view.w === width && entry.options.theme === theme);
-        assert.ok(reference, `missing planet picture ${width} ${theme}`);
-        await page.evaluate(async ({ options, theme }) => {
-            document.body.style.background = document.documentElement.style.background = theme === 'dark' ? '#131111' : '#f5f5f5';
-            await window.U4.planet(options);
-        }, { options: reference.options, theme });
-        await page.screenshot({ path: join(shots, `planet-${width}-${theme}.png`) });
-    }
     await page.setViewportSize({ width: 1440, height: 900 });
     for (const theme of ['light', 'dark']) {
         for (const look of ['fine', 'painted']) {
@@ -86,5 +67,5 @@ try {
     }
     await page.evaluate(() => window.U4.unmount());
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ origin, backdropCases: fixture.cases.length, planetCases: planets, pageErrors: errors, shots }));
+    console.log(JSON.stringify({ origin, backdropCases: fixture.cases.length, pageErrors: errors, shots }));
 } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }

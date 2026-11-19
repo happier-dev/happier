@@ -3,10 +3,13 @@ import { PixelRatio, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { fieldDotLayer, frontGlyphLayer, markGlyphLayer, planetGlyphLayer, travellerGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
+import { createThemeHorizonGlyphSampler, themeHorizonGlyphCell } from '@happier-dev/brand/planet-moments';
 
+import { PairingQrMomentCanvas } from '@/components/auth/pairing/PairingQrMoment';
 import { GlyphSurface } from '@/components/atmosphere/glyph/GlyphSurface';
 import { sessionRippleLayer } from '@/components/atmosphere/sessionRipple';
 import { loadingPlanetLayer, loadingPlanetOrigin, loadingPlanetPhase } from '@/components/atmosphere/moments/planetMomentTimeline';
+import { homeRiseFootFade } from '@/components/atmosphere/homePlanetPlacement';
 
 const pane = { width: 390, height: 520 };
 const centre = { x: 195, y: 108 };
@@ -26,10 +29,17 @@ export default function GlyphSpecimen() {
     }>();
     const dark = theme === 'dark';
     const palette = dark ? 'dark' : 'light';
+    const themeFrame = React.useMemo(createThemeHorizonGlyphSampler, []);
     const layers = React.useMemo(() => {
         const geometry = horizonPlanetGeometry(pane, { phone: true });
         const options = { geometry, intensity: 'quiet', digits: true } as const;
         const seconds = Number(at ?? '0.5') || 0;
+        if (moment === 'horizon') {
+            const fade = homeRiseFootFade({ aboveBottom: pane.height * 0.66, nextTop: pane.height * 0.87, phone: true });
+            return [planetGlyphLayer({ ...options, geometry: horizonPlanetGeometry(pane, { phone: true, composerTop: pane.height * 0.43 }), fade })];
+        }
+        if (moment === 'theme') return [themeFrame(seconds, { w: pane.width, h: pane.height, dir: dark ? 'night' : 'sunrise', kind: 'horizon' },
+            dark ? [239, 237, 237] : [26, 26, 26]).glyphs];
         if (moment === 'ripple') return [sessionRippleLayer(options, seconds * 1000, {
             width: pane.width, theme: palette, reducedMotion: false,
         })];
@@ -40,7 +50,7 @@ export default function GlyphSpecimen() {
             return layer ? [layer] : [];
         }
         return scene;
-    }, [at, moment, palette]);
+    }, [at, dark, moment, palette, themeFrame]);
     const cycles = requested === '20' ? 20 : 1;
     const [draws, setDraws] = React.useState(0);
     const [status, setStatus] = React.useState('warming');
@@ -53,6 +63,9 @@ export default function GlyphSpecimen() {
         testID={`glyph-specimen-${status}-${draws}-${PixelRatio.get()}`}
         style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: opaque === '1' ? dark ? '#141214' : '#fbf7f4' : 'transparent' }}
     >
-        <GlyphSurface key={key} width={pane.width} height={pane.height} theme={palette} scene={layers} onReady={onReady} testID="glyph-specimen-surface" />
+        {moment === 'pairing' ? <PairingQrMomentCanvas size={224} theme={palette} pairing reducedMotion machines={['Desktop']}
+            scene={{ kind: 'pairing', device: 'Laptop', scan: null, joinedAtMs: 0 }} />
+            : <GlyphSurface key={key} width={pane.width} height={pane.height} theme={palette} scene={layers}
+                cell={moment === 'theme' ? themeHorizonGlyphCell : undefined} onReady={onReady} testID="glyph-specimen-surface" />}
     </View>;
 }

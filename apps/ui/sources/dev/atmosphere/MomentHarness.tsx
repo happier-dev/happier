@@ -11,17 +11,17 @@ const mount = document.getElementById('product');
 if (!mount) throw new Error('Missing harness mount');
 createRoot(mount);
 
-function frameCanvas(request: QrMomentFrameRequest, theme: 'light' | 'dark', size: number, machines: readonly string[]) {
+async function frameCanvas(request: QrMomentFrameRequest, theme: 'light' | 'dark', size: number, machines: readonly string[]) {
     const canvas = document.createElement('canvas');
     canvas.style.width = `${size}px`; canvas.style.height = `${size}px`; canvas.style.display = 'block';
-    paintPairingQrMomentRequest(canvas, request, { size, theme, reducedMotion: false, pairing: true, machines }, window.devicePixelRatio || 1);
+    await paintPairingQrMomentRequest(canvas, request, { size, theme, reducedMotion: false, pairing: true, machines }, window.devicePixelRatio || 1);
     return canvas;
 }
 
 const harness = {
     QR, SCAN, PAIR,
     /** A row of frames on a card, as the lab's timeline board lays them out. */
-    strip(requests: Array<[QrMomentFrameRequest, string]>, theme: 'light' | 'dark', size: number, card: string, machines: string[] = []) {
+    async strip(requests: Array<[QrMomentFrameRequest, string]>, theme: 'light' | 'dark', size: number, card: string, machines: string[] = []) {
         const row = document.createElement('div');
         row.style.cssText = `display:flex;gap:16px;padding:16px;background:${theme === 'dark' ? '#131111' : '#f5f5f5'}`;
         for (const [request, caption] of requests) {
@@ -29,7 +29,7 @@ const harness = {
             cell.style.cssText = `display:flex;flex-direction:column;gap:8px;font:12px system-ui;color:${theme === 'dark' ? '#aaa' : '#555'}`;
             const box = document.createElement('div');
             box.style.cssText = `padding:16px;background:${card};border-radius:12px`;
-            box.appendChild(frameCanvas(request, theme, size, machines));
+            box.appendChild(await frameCanvas(request, theme, size, machines));
             cell.appendChild(box); cell.appendChild(document.createTextNode(caption));
             row.appendChild(cell);
         }
@@ -37,8 +37,8 @@ const harness = {
         return row.getBoundingClientRect().height;
     },
     /** The exact pixels of one frame with the lab's 12 % white quiet zone (what a camera sees on the paper). */
-    heldPixels(request: QrMomentFrameRequest, size: number) {
-        const canvas = frameCanvas(request, 'light', size, []);
+    async heldPixels(request: QrMomentFrameRequest, size: number) {
+        const canvas = await frameCanvas(request, 'light', size, []);
         const pad = Math.round(canvas.width * 0.12);
         const padded = document.createElement('canvas');
         padded.width = canvas.width + pad * 2; padded.height = canvas.height + pad * 2;

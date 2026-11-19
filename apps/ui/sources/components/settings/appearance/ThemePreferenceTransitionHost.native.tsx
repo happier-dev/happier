@@ -4,12 +4,16 @@ import { PixelRatio, StyleSheet, View } from 'react-native';
 import Animated, { cancelAnimation, Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { Canvas, Image, Picture, createPicture, type SkImage, type SkPicture } from '@shopify/react-native-skia';
 import { captureNativeLayer } from '@/components/ui/motion/stepMotion/freezeLayer.native';
-import { FURTHER_PLANET_MOMENT_TIMINGS } from '@happier-dev/brand/planet-moments';
+import { createGlyphFrameSampler } from '@happier-dev/brand/glyph-scene';
+import { createThemeHorizonGlyphSampler, FURTHER_PLANET_MOMENT_TIMINGS, themeHorizonGlyphCell } from '@happier-dev/brand/planet-moments';
 import { useAtmosphereMoment } from '@/components/atmosphere/atmosphereMoments';
 import { useCanvasRenderState } from '@/components/atmosphere/useCanvasRenderState';
 import { useNativeMomentEnvironment } from '@/components/atmosphere/useNativeMomentEnvironment';
+import { createNativeGlyphPainter } from '@/components/atmosphere/glyph/glyphPainter.native';
+import { readGlyphLowPower } from '@/components/atmosphere/glyph/readGlyphLowPower.native';
 import { readThemeRuntimeInk } from '@/theme/profiles/themeProfileRuntime';
 import { paintNativeThemeHorizon } from './themeHorizonPaint.native';
+import { themeHorizonInk } from './themeHorizonInk';
 import { createNativeThemePreferenceTransitionController } from './nativeThemePreferenceTransitionController';
 import { registerNativeThemePreferenceTransitionController } from './themePreferenceTransition';
 import { THEME_TRANSITION_DURATION_MS, THEME_TRANSITION_EASING_BEZIER } from './themePreferenceTransitionMotion';
@@ -80,7 +84,9 @@ function HorizonOverlay(props: Readonly<{ overlay: Overlay; size: { width: numbe
     const env = useNativeMomentEnvironment(props.size.width, props.size.height, PixelRatio.get(), onLoadError);
     const image = props.overlay.image;
     const state = useCanvasRenderState({ size: props.size });
-    const [picture, setPicture] = React.useState<SkPicture | null>(null);
+    const picture = useSharedValue<SkPicture | null>(null);
+    const previous = React.useRef<SkPicture | null>(null);
+    const [drawn, setDrawn] = React.useState(false);
     const latest = React.useRef({ env, image }); latest.current = { env, image };
     const ready = env !== null;
     const { playing, reducedMotion, onDone, overlay } = props;
@@ -89,21 +95,50 @@ function HorizonOverlay(props: Readonly<{ overlay: Overlay; size: { width: numbe
         if (loadError || !state.visible || reducedMotion) { onDone(); return; }
         if (!ready) return;
         let frame = 0, live = true;
+        let painter: Awaited<ReturnType<typeof createNativeGlyphPainter>> | null = null;
         let start: number | null = null;
+        const dpr = PixelRatio.get();
+        const cell = [Math.round(themeHorizonGlyphCell[0] * dpr), Math.round(themeHorizonGlyphCell[1] * dpr)] as const;
+        const sample = createGlyphFrameSampler();
+        const horizon = createThemeHorizonGlyphSampler();
+        const ink = themeHorizonInk(overlay.ink);
         const step = (time: number) => {
-            if (!live || !latest.current.env || !latest.current.image) return;
+            const { env, image } = latest.current;
+            if (!live || !env || !image || !painter) return;
             start ??= time;
             const t = (time - start) / 1000;
             if (t >= FURTHER_PLANET_MOMENT_TIMINGS.TH.DUR) { onDone(); return; }
-            setPicture(createPicture(canvas => paintNativeThemeHorizon(canvas, latest.current.image!, t, overlay.direction, latest.current.env!, overlay.ink), props.size));
+            const view = { w: env.w, h: env.h };
+            const sampleAt = horizon(t, { ...view, dir: overlay.direction, kind: 'horizon' }, ink);
+            const next = createPicture(canvas => {
+                paintNativeThemeHorizon(canvas, image, sampleAt, env);
+                painter?.draw(canvas, sample({ view, theme: overlay.direction === 'sunrise' ? 'light' : 'dark', layers: [sampleAt.glyphs], cell: themeHorizonGlyphCell, dpr }));
+            }, props.size);
+            picture.value = next;
+            if (previous.current) previous.current.dispose();
+            else setDrawn(true);
+            previous.current = next;
             frame = requestAnimationFrame(step);
         };
-        frame = requestAnimationFrame(step);
-        return () => { live = false; cancelAnimationFrame(frame); };
-    }, [playing, ready, loadError, state.visible, reducedMotion, onDone, overlay.direction, overlay.ink, props.size]);
-    React.useEffect(() => () => picture?.dispose(), [picture]);
-    return picture
-        ? <Canvas style={StyleSheet.absoluteFill}><Picture picture={picture} /></Canvas>
+        void readGlyphLowPower().then(lowPower => {
+            if (!live) return;
+            if (lowPower) { onDone(); return; }
+            return createNativeGlyphPainter({ cell, origin: [0, 0], rows: 0, cols: 0 }, dpr);
+        }).then(value => {
+            if (!value) return;
+            if (!live) { value.dispose(); return; }
+            painter = value;
+            frame = requestAnimationFrame(step);
+        }, () => { if (live) onDone(); });
+        return () => { live = false; cancelAnimationFrame(frame); painter?.dispose(); };
+    }, [playing, ready, loadError, state.visible, reducedMotion, onDone, overlay.direction, overlay.ink, props.size, picture]);
+    React.useEffect(() => () => {
+        picture.value = null;
+        previous.current?.dispose();
+        previous.current = null;
+    }, [picture]);
+    return drawn
+        ? <Canvas style={StyleSheet.absoluteFill}><Picture picture={picture as unknown as { value: SkPicture }} /></Canvas>
         : <CapturedTheme image={image} size={props.size} />;
 }
 

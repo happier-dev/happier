@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
-import { atmosphereRipple, createAtmosphereTransition, orderedFade, renderBackdrop, type AtmosphereBackdropJob } from '@happier-dev/brand/atmosphere';
+import { createAtmosphereTransition, orderedFade, renderBackdrop, type AtmosphereBackdropJob } from '@happier-dev/brand/atmosphere';
 import { AlphaType, ColorType, Skia } from '@shopify/react-native-skia';
 import { orderedDissolve } from './orderedDissolve';
 import type { BackdropRenderRequest } from './backdropCanvas.types';
@@ -244,15 +244,8 @@ it('keeps resettle pixels on the worker until release, without persisting frame 
     input.from.dispose(); input.to.dispose();
 });
 
-it('delivers canonical ring pixels as a native image and the ordered send mask as one encoded lattice', async () => {
-    const { renderNativeRipple, renderNativeOrderedMask } = await import('./renderBackdrop.native');
-    const options = { w: 96, h: 96, dpr: 2, x: 24, y: 24, theme: 'dark' as const, page: [28, 28, 28] as const,
-        glyphs: { cw: 3, ch: 5, chars: '0123456789', masks: new Uint8Array(150).fill(255) } };
-    const reference = atmosphereRipple(0.25, options);
-    expect(reference.rgba.some(value => value > 0)).toBe(true);
-    const ring = await renderNativeRipple(0.25, options);
-    expect(Array.from(ring.readPixels()!)).toEqual(Array.from(reference.rgba));
-    ring.dispose();
+it('delivers the ordered send mask as one encoded lattice', async () => {
+    const { renderNativeOrderedMask } = await import('./renderBackdrop.native');
     const dissolve = orderedDissolve(24, 2);
     const uri = await renderNativeOrderedMask(32, dissolve.mask.cssHeight, dissolve.from, dissolve.to, 2);
     const mask = JSON.parse(Buffer.from(uri.split(',')[1], 'base64').toString()) as { width: number; height: number; rgba: number[] };

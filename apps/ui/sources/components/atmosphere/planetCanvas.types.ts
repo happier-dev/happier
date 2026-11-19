@@ -9,10 +9,6 @@ export type PlanetCanvasProps = Readonly<{
     testID?: string;
     onReady?: () => void;
     onError?: (error: Error) => void;
-    /** Welcome's resting digits; the drawing leaf owns their two-second clock. */
-    retype?: Readonly<{ paused: boolean }>;
-    /** The brand's ordered foot fade over this band of the canvas (css px from its top); below it clears. */
-    fade?: Readonly<{ from: number; to: number }>;
     /** One ink for every dot (a planet drawn in an Agent's identity colour); absent keeps the Brand palette. */
     ink?: string;
 }> & (

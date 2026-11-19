@@ -1,79 +1,18 @@
 import * as React from 'react';
-import { act } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 // This drawing-only suite does not need the root barrel's Protocol fixtures.
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { PlanetCanvas } from './PlanetCanvas.web';
-import { homePlanetGeometry, homePlanetSceneOptions } from './homePlanetPlacement';
-import { createPlanetScene } from '@happier-dev/brand/planet';
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-it('draws the static body once per real input change and only retypes digits on visible two-second ticks', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    // Browser fonts and the physical Canvas2D drawing surface are system boundaries.
-    vi.stubGlobal('document', { documentElement: {}, fonts: { check: () => true } });
-    vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '' }));
-    const frames: string[][] = [[]];
-    const arc = vi.fn();
-    const context = { setTransform() {}, clearRect() { frames.push([]); }, beginPath() {}, arc, fill() {}, drawImage() {},
-        measureText: () => ({ actualBoundingBoxAscent: 12, actualBoundingBoxDescent: 12 }),
-        fillText(text: string) { frames.at(-1)!.push(text); } };
-    Object.assign(document, { createElement: () => ({ getContext: () => context }) });
-    const pane = { width: 280, height: 240 };
-    const options = homePlanetSceneOptions(homePlanetGeometry('corner', pane), pane,
-        { theme: 'dark', style: 'balanced', digits: true });
-    const ready = vi.fn();
-    let parentRenders = 0;
-    function Scene({ paused = false, theme = 'dark', ink }: { paused?: boolean; theme?: 'dark' | 'light'; ink?: string }) {
-        parentRenders += 1;
-        return <PlanetCanvas {...pane} options={{ ...options, theme }} ink={ink} retype={{ paused }} onReady={ready} />;
-    }
-    const screen = await renderScreen(<Scene />, { createNodeMock: element => element.type === 'canvas'
-        ? { getContext: () => context } : null });
-    const mounted = parentRenders;
-    const outerProps = screen.findByType(PlanetCanvas).props;
-    ready.mockClear();
-    const rest = frames.at(-1)!;
-    const mountedFrames = frames.length;
-    const bodyDots = arc.mock.calls.length;
-    const initial = createPlanetScene(options);
-    expect(bodyDots).toBe(initial.body.length + initial.haze.length);
-    expect(bodyDots).toBeGreaterThan(0);
-    for (let tick = 0; tick < 150; tick++) await act(async () => { vi.advanceTimersByTime(2000); });
-    expect(arc).toHaveBeenCalledTimes(bodyDots);
-    expect(ready).toHaveBeenCalledTimes(150);
-    expect(parentRenders).toBe(mounted);
-    expect(screen.findByType(PlanetCanvas).props === outerProps).toBe(true);
-    expect(frames.slice(mountedFrames).some(frame => JSON.stringify(frame) !== JSON.stringify(rest))).toBe(true);
-    await screen.update(<Scene paused />);
-    ready.mockClear();
-    await act(async () => { vi.advanceTimersByTime(6000); });
-    expect(ready).not.toHaveBeenCalled();
-    await screen.update(<Scene />);
-    ready.mockClear();
-    await act(async () => { vi.advanceTimersByTime(1999); });
-    expect(ready).not.toHaveBeenCalled();
-    await act(async () => { vi.advanceTimersByTime(1); });
-    expect(ready).toHaveBeenCalledOnce();
-    await screen.update(<Scene theme="light" />);
-    const light = createPlanetScene({ ...options, theme: 'light' });
-    expect(arc).toHaveBeenCalledTimes(bodyDots + light.body.length + light.haze.length);
-    const lightDigits = frames.at(-1)!;
-    expect(lightDigits.length).toBeGreaterThan(0);
-    await screen.update(<Scene theme="light" ink="#123456" />);
-    expect(frames.at(-1)).toEqual(lightDigits);
-    await screen.unmount();
-    expect(vi.getTimerCount()).toBe(0);
-});
-
-it('keeps one drawing layer per planet and frees its pixel buffers while hidden and when it unmounts', async () => {
+it('keeps one canvas per mark and frees its pixel buffer while hidden and when it unmounts', async () => {
     // WebKit keeps a dropped canvas's pixel surface until a GC the JS heap has no pressure to run, so
     // each Home visit grew the desktop app by the planet's full-size buffers (P03-DESKTOP-LONG).
     vi.stubGlobal('document', { documentElement: {}, fonts: { check: () => true } });
     vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '' }));
-    const drawImage = vi.fn();
-    const context = { setTransform() {}, clearRect() {}, beginPath() {}, arc() {}, fill() {}, drawImage, fillText() {},
+    const dot = vi.fn();
+    const context = { setTransform() {}, clearRect() {}, beginPath() {}, arc: dot, fill() {}, fillText() {},
         measureText: () => ({ actualBoundingBoxAscent: 12, actualBoundingBoxDescent: 12 }) };
     // The physical drawing surfaces are the system boundary: count their pixels, not the drawing.
     const surfaces: { width: number; height: number }[] = [];
@@ -86,10 +25,8 @@ it('keeps one drawing layer per planet and frees its pixel buffers while hidden 
     let layers = 0;
     Object.assign(document, { createElement: () => { layers += 1; return surface(); } });
     const pane = { width: 280, height: 240 };
-    const options = homePlanetSceneOptions(homePlanetGeometry('corner', pane), pane,
-        { theme: 'dark', style: 'balanced', digits: true });
     const Scene = ({ mode = 'visible', theme = 'dark' }: { mode?: 'visible' | 'hidden'; theme?: 'dark' | 'light' }) =>
-        <React.Activity mode={mode}><PlanetCanvas {...pane} options={{ ...options, theme }} /></React.Activity>;
+        <React.Activity mode={mode}><PlanetCanvas {...pane} mark={{ theme, size: pane.width }} /></React.Activity>;
     const screen = await renderScreen(<Scene />,
         { createNodeMock: element => {
             const { width, height } = element.props;
@@ -97,60 +34,16 @@ it('keeps one drawing layer per planet and frees its pixel buffers while hidden 
         } });
     await screen.update(<Scene theme="light" />);
     await screen.update(<Scene />);
-    expect(layers).toBe(1);
+    expect(layers).toBe(0);
     const shown = pixels();
     expect(shown).toBeGreaterThan(0);
     await screen.update(<Scene mode="hidden" />);
     expect(pixels()).toBe(0);
-    drawImage.mockClear();
+    dot.mockClear();
     await screen.update(<Scene />);
     expect(pixels()).toBe(shown);
-    expect(drawImage).toHaveBeenCalled();
-    expect(layers).toBe(1);
+    expect(dot).toHaveBeenCalled();
+    expect(layers).toBe(0);
     await screen.unmount();
     expect(pixels()).toBe(0);
-});
-
-it('applies the foot fade by compositing a mask, so neither the paint nor a digit tick reads the canvas back', async () => {
-    // A full-height getImageData/putImageData per paint and per two-second tick kept growing the
-    // desktop app's graphics memory on every Home visit (P03-DESKTOP-FLOWS-2): the fade is a mask.
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    vi.stubGlobal('document', { documentElement: {}, fonts: { check: () => true } });
-    vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '' }));
-    // The physical Canvas2D surfaces are the system boundary: count pixel reads/writes and mask fills.
-    const pixels = { reads: 0, writes: 0 };
-    const fadeFills: number[] = [];
-    const surface = (width = 0, height = 0) => {
-        const context = {
-            globalCompositeOperation: 'source-over',
-            setTransform() {}, clearRect() {}, beginPath() {}, arc() {}, fill() {}, drawImage() {}, fillText() {},
-            save() {}, restore() { context.globalCompositeOperation = 'source-over'; }, rect() {}, clip() {}, createPattern: () => ({}),
-            createImageData: (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) }),
-            measureText: () => ({ actualBoundingBoxAscent: 12, actualBoundingBoxDescent: 12 }),
-            fillRect(_x: number, _y: number, _w: number, h: number) { if (context.globalCompositeOperation === 'destination-in') fadeFills.push(h); },
-            getImageData(_x: number, _y: number, w: number, h: number) { pixels.reads += 1; return { data: new Uint8ClampedArray(w * h * 4) }; },
-            putImageData() { pixels.writes += 1; },
-        };
-        return { width, height, getContext: () => context };
-    };
-    Object.assign(document, { createElement: () => surface() });
-    const pane = { width: 280, height: 240 };
-    const options = homePlanetSceneOptions(homePlanetGeometry('corner', pane), pane,
-        { theme: 'dark', style: 'balanced', digits: true });
-    const ready = vi.fn();
-    const screen = await renderScreen(<PlanetCanvas {...pane} options={options} fade={{ from: 0, to: pane.height }} retype={{ paused: false }} onReady={ready} />,
-        { createNodeMock: element => {
-            const { width, height } = element.props;
-            return element.type === 'canvas' && typeof width === 'number' && typeof height === 'number' ? surface(width, height) : null;
-        } });
-    const writesAfterMount = pixels.writes;
-    const fillsAfterMount = fadeFills.length;
-    for (let tick = 0; tick < 5; tick++) await act(async () => { vi.advanceTimersByTime(2000); });
-    expect(ready).toHaveBeenCalledTimes(6);
-    expect(pixels.reads).toBe(0);
-    expect(pixels.writes).toBe(writesAfterMount);
-    expect(fillsAfterMount).toBeGreaterThan(0);
-    // The fade still covers every retyped band.
-    expect(fadeFills.length).toBe(fillsAfterMount + 5);
-    await screen.unmount();
 });

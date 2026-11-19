@@ -81,6 +81,7 @@ export interface ThemeSwitchOptions {
 export function themeSwitchFrame(timeSeconds: number, options: ThemeSwitchOptions): Readonly<{
   commands: readonly MomentPaintCommand[]; clipPath: string; visibility: 'hidden' | 'visible';
 }>;
+export function themeHorizonClip(timeSeconds: number, options: Pick<ThemeSwitchOptions, 'w' | 'h' | 'dir'>): string;
 export const themeHorizonGlyphCell: readonly [number, number];
 export function createThemeHorizonGlyphSampler(): (timeSeconds: number, options: ThemeSwitchOptions, ink?: PlanetRgb) => Readonly<{
   commands: readonly MomentVectorCommand[]; clipPath: string; visibility: 'hidden' | 'visible';

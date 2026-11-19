@@ -1,22 +1,14 @@
-import { createPlanetScene } from '@happier-dev/brand/planet';
-import type {
-  MomentPaintCommand,
-  MomentPlanetOptions,
-} from '@happier-dev/brand/planet-moments';
+import type { MomentVectorCommand } from '@happier-dev/brand/planet-moments';
 import {
   getHappierFontFamily,
   themeFontFamilyVariableName,
   type DefaultFontWeight,
   type MonoFontWeight,
 } from '@/constants/Typography';
-import { paintPlanetScene } from './planetCanvasPaint.web';
-import { planetCanvasFonts } from './glyph/glyphAtlas.web';
-import { releaseCanvasBackingStore } from '@/components/ui/media/canvasBackingStore';
 
 /**
  * The web interpreter of the brand moments' paint data (`planet-moments.mjs`). It owns no choreography:
- * every command is replayed in order on a 2D canvas, `planet` delegates to the canonical scene and
- * `paintPlanetScene`, and the lab's font names map to the typography owner's families.
+ * vector commands are replayed in order on a 2D canvas and the lab's font names map to the typography owner's families.
  */
 export type MomentCanvasEnv = Readonly<{
   /** Logical (css px) size of the canvas the commands address. */
@@ -71,46 +63,11 @@ export function loadMomentFonts(): Promise<unknown> {
   ]);
 }
 
-type PlanetLayer = { key: string; canvas: HTMLCanvasElement };
-const planetLayers: PlanetLayer[] = [];
-
-/** The lab's `MO.planet`: the composed planet on its own layer (over-cells composite onto its dots only), drawn with `alpha`. */
-function paintPlanet(
-  context: CanvasRenderingContext2D,
-  options: MomentPlanetOptions & { alpha?: number },
-  env: MomentCanvasEnv,
-) {
-  const { alpha = 1, ...rest } = options;
-  if (alpha <= 0) return;
-  const view = rest.view ?? { w: env.w, h: env.h };
-  const key = `${env.dpr}|${JSON.stringify(rest)}|${view.w}x${view.h}`;
-  let layer = planetLayers.find((entry) => entry.key === key);
-  if (!layer) {
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(view.w * env.dpr);
-    canvas.height = Math.round(view.h * env.dpr);
-    const layerContext = canvas.getContext('2d');
-    if (!layerContext) return;
-    layerContext.setTransform(env.dpr, 0, 0, env.dpr, 0, 0);
-    const scene = createPlanetScene({ ...rest, view, dpr: env.dpr });
-    paintPlanetScene(layerContext, scene, planetCanvasFonts());
-    layer = { key, canvas };
-    // A moment draws at most a few planets per frame (a hand-off interpolates one); keep the recent ones.
-    planetLayers.unshift(layer);
-    if (planetLayers.length > 24) releaseCanvasBackingStore(planetLayers.pop()?.canvas);
-  }
-  context.save();
-  context.globalAlpha *= alpha;
-  context.imageSmoothingEnabled = false;
-  context.drawImage(layer.canvas, 0, 0, view.w, view.h);
-  context.restore();
-}
-
 type Gradient = CanvasGradient;
 /** Replays one frame's commands in order. The caller clears and sets the device-pixel transform. */
 export function paintMomentCommands(
   context: CanvasRenderingContext2D,
-  commands: readonly MomentPaintCommand[],
+  commands: readonly MomentVectorCommand[],
   env: MomentCanvasEnv,
 ) {
   const gradients = new Map<number, Gradient>();
@@ -140,9 +97,6 @@ export function paintMomentCommands(
         gradients.get(id)?.addColorStop(offset, colour);
         break;
       }
-      case 'planet':
-        paintPlanet(context, command[1], env);
-        break;
       case 'drawImage': {
         if (env.mark?.complete && env.mark.naturalWidth > 0) {
           const [, , x, y, w, h] = command;

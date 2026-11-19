@@ -238,6 +238,8 @@ export function pairingMomentFrame(t, o) {
   return commands;
 }
 const TH = { DUR: 1.2 };
+const themeRevealProgress = (time) => easeInOut(clamp(time / TH.DUR));
+const themeRevealClip = (progress, edge) => progress <= 0 ? 'circle(0px at 0 0)' : progress >= 1 ? 'none' : edge.clip;
 function boundary(kind, dir, k, w, h) {
   const light = dir === 'sunrise';
   if (kind === 'horizon') {
@@ -252,6 +254,10 @@ function boundary(kind, dir, k, w, h) {
   }
   const sl = 0.35 * h; const x = mix(-sl - 40, w + sl + 40, k);
   return { clip: `polygon(0 0, ${x + sl}px 0, ${x - sl}px ${h}px, 0 ${h}px)`, d: (px, py) => (px - (x + sl - (py / h) * 2 * sl)) * 0.94, line: true };
+}
+export function themeHorizonClip(time, { w, h, dir = 'sunrise' }) {
+  const progress = themeRevealProgress(time);
+  return themeRevealClip(progress, boundary('horizon', dir, progress, w, h));
 }
 const THEME_HORIZON_PITCH = 13;
 export const themeHorizonGlyphCell = Object.freeze([THEME_HORIZON_PITCH * 0.62, THEME_HORIZON_PITCH * 0.8 / 0.94]);
@@ -272,9 +278,9 @@ export function createThemeHorizonGlyphSampler() {
 
 export function themeSwitchFrame(t, o, placeGlyph, glyphInk) {
     const { c, commands } = recording(); const { w: W, h: H } = o; const dir = o.dir || 'sunrise';
-    const u = clamp(t / TH.DUR); const k = easeInOut(u);
+    const k = themeRevealProgress(t);
     const B = boundary(o.kind || 'horizon', dir, k, W, H);
-    const clipPath = k <= 0 ? 'circle(0px at 0 0)' : k >= 1 ? 'none' : B.clip; const visibility = k <= 0 ? 'hidden' : 'visible';
+    const clipPath = themeRevealClip(k, B); const visibility = k <= 0 ? 'hidden' : 'visible';
     const w = W, h = H; if (k <= 0 || k >= 1) return { commands, clipPath, visibility };
     const band = Math.pow(Math.sin(Math.PI * k), 0.6);
     const warm = dir === 'sunrise'; const stops = warm ? M.BODY : M.COOL;

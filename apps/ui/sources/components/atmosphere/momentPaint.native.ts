@@ -1,11 +1,9 @@
 import { BlendMode, FillType, PaintStyle, Skia, TileMode, type SkCanvas, type SkFont, type SkImage, type SkShader, type SkTypeface } from '@shopify/react-native-skia';
-import { createPlanetScene } from '@happier-dev/brand/planet';
-import type { MomentPaintCommand, MomentPlanetOptions } from '@happier-dev/brand/planet-moments';
-import { paintNativePlanetScene } from './planetCanvasPaint.native';
+import type { MomentVectorCommand } from '@happier-dev/brand/planet-moments';
 
 export type NativeMomentEnvironment = Readonly<{
     w: number; h: number; dpr: number;
-    /** Typefaces, not fonts: see paintNativePlanetScene on Skia's borrowed `getTypeface()`. */
+    /** Keep the loaded typefaces as owners of every font created while painting. */
     mono: SkTypeface; monoStrong: SkTypeface; sans: SkTypeface; sansMedium: SkTypeface; sansStrong: SkTypeface;
     mark?: SkImage | null;
 }>;
@@ -14,7 +12,7 @@ type Gradient = Readonly<{ kind: 'linear' | 'radial'; points: readonly number[];
 type State = { fill: Colour; stroke: Colour; alpha: number; width: number; font: string; align: 'left' | 'center'; baseline: 'alphabetic' | 'middle' | 'top'; dash: readonly number[] };
 
 /** Canvas/Skia interpretation only. Brand owns every frame, path coordinate and scene. Runs on JS, never the UI runtime. */
-export function paintNativeMomentCommands(canvas: SkCanvas, commands: readonly MomentPaintCommand[], env: NativeMomentEnvironment): void {
+export function paintNativeMomentCommands(canvas: SkCanvas, commands: readonly MomentVectorCommand[], env: NativeMomentEnvironment): void {
     let state: State = { fill: '#000', stroke: '#000', alpha: 1, width: 1, font: '400 10px InterLab', align: 'left', baseline: 'alphabetic', dash: [] };
     const stack: State[] = [];
     const gradients = new Map<number, Gradient>();
@@ -107,14 +105,6 @@ export function paintNativeMomentCommands(canvas: SkCanvas, commands: readonly M
                 case 'drawImage':
                     if (env.mark) { apply('#fff'); canvas.drawImageRect(env.mark, Skia.XYWHRect(0, 0, env.mark.width(), env.mark.height()), Skia.XYWHRect(command[2], command[3], command[4], command[5]), paint); }
                     break;
-                case 'planet': {
-                    const layer: MomentPlanetOptions & Readonly<{ alpha?: number }> = command[1];
-                    const { alpha = 1, ...options } = layer;
-                    if (alpha <= 0) break;
-                    apply('#fff'); paint.setAlphaf(state.alpha * alpha); canvas.saveLayer(paint);
-                    paintNativePlanetScene(canvas, createPlanetScene({ ...options, view: options.view ?? { w: env.w, h: env.h }, dpr: env.dpr }), env.mono, env.monoStrong);
-                    canvas.restore(); break;
-                }
             }
         }
     } finally {

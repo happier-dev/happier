@@ -1,9 +1,9 @@
 import { expect, it, vi } from 'vitest';
-import { pairingMomentFrame, qrMomentFrame, qrMomentModel, themeSwitchFrame, type MomentPaintCommand } from '@happier-dev/brand/planet-moments';
+import { createPairingGlyphSampler, createThemeHorizonGlyphSampler, pairingMomentFrame, qrMomentFrame, qrMomentModel, type MomentPaintCommand, type MomentVectorCommand } from '@happier-dev/brand/planet-moments';
 import { createPlanetScene } from '@happier-dev/brand/planet';
 import { paintMomentCommands } from './momentPaint.web';
 import { paintNativeMomentCommands } from './momentPaint.native';
-import { paintNativePlanetScene } from './planetCanvasPaint.native';
+import { paintNativePlanetMark } from './planetCanvasPaint.native';
 import { paintNativeThemeHorizon } from '../settings/appearance/themeHorizonPaint.native';
 
 // Canvas/Skia drawing and font metrics are system boundaries. Both real interpreters, the real
@@ -118,7 +118,7 @@ function recordNative() {
 }
 
 // Opaque host interfaces are represented only at this genuine native/DOM boundary.
-function paintBoth(commands: readonly MomentPaintCommand[]) {
+function paintBoth(commands: readonly MomentVectorCommand[]) {
     const env = { w: 120, h: 120, dpr: 2 };
     vi.stubGlobal('document', { documentElement: {}, createElement: () => { const context = recordWeb(); return { getContext: () => context, draws: context.draws }; } });
     vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '' }));
@@ -134,15 +134,22 @@ function paintBoth(commands: readonly MomentPaintCommand[]) {
     return native.root;
 }
 
+const samplePairing = createPairingGlyphSampler();
+
+function paintPairingVectors(commands: readonly MomentPaintCommand[]) {
+    const { behind, ahead } = samplePairing(commands, { w: 120, h: 120 }, 2);
+    return [...paintBoth(behind), ...paintBoth(ahead)];
+}
+
 it('paints cut and regular planet glyphs through the numeric native embolden boundary', () => {
     for (const overStyle of ['ink', 'emboss'] as const) {
         const scene = createPlanetScene({ R: 120, cx: 160, cy: 90, view: { w: 390, h: 260 },
             theme: 'light', dpr: 2, field: { around: 1, over: 0.62, overStyle } });
         const native = recordNative();
         // Only opaque Skia canvas/font host objects are substituted here.
-        paintNativePlanetScene(native.canvas as unknown as Parameters<typeof paintNativePlanetScene>[0], scene,
-            'mono400' as unknown as Parameters<typeof paintNativePlanetScene>[2],
-            'mono600' as unknown as Parameters<typeof paintNativePlanetScene>[3]);
+        paintNativePlanetMark(native.canvas as unknown as Parameters<typeof paintNativePlanetMark>[0], scene,
+            'mono400' as unknown as Parameters<typeof paintNativePlanetMark>[2],
+            'mono600' as unknown as Parameters<typeof paintNativePlanetMark>[3]);
         expect(native.textWeights).toContain(false);
         if (overStyle === 'ink') expect(native.textWeights).toContain(true);
         else expect(native.textWeights).not.toContain(true);
@@ -162,26 +169,28 @@ it('matches web paint output for actual QR/reform/scan, pairing and both Horizon
     const model = qrMomentModel(matrix, 120, 2);
     for (const theme of ['light', 'dark'] as const) {
         for (const t of [0, 0.3, 0.7, 1]) {
-            paintBoth(qrMomentFrame(model, t, { size: 120, theme }).commands);
-            paintBoth(qrMomentFrame(model, t, { size: 120, theme, phase: 'reform', next: model, wait: 0.2 }).commands);
-            paintBoth(qrMomentFrame(model, t, { size: 120, theme, phase: 'scan' }).commands);
-            const pairingPaint = paintBoth(pairingMomentFrame(t, { w: 120, h: 120, theme, layout: 'square', phase: 'joined', devices: [{ n: 'Dev box' }, { n: 'Phone', isNew: true }] }));
+            paintPairingVectors(qrMomentFrame(model, t, { size: 120, theme }).commands);
+            paintPairingVectors(qrMomentFrame(model, t, { size: 120, theme, phase: 'reform', next: model, wait: 0.2 }).commands);
+            paintPairingVectors(qrMomentFrame(model, t, { size: 120, theme, phase: 'scan' }).commands);
+            const pairingPaint = paintPairingVectors(pairingMomentFrame(t, { w: 120, h: 120, theme, layout: 'square', phase: 'joined', devices: [{ n: 'Dev box' }, { n: 'Phone', isNew: true }] }));
             // An enabled flag or two empty adapters cannot establish native support.
             expect(pairingPaint.length).toBeGreaterThan(0);
         }
     }
-    for (const dir of ['sunrise', 'night'] as const) for (const t of [0, 0.3, 0.6, 0.9, 1.2]) paintBoth(themeSwitchFrame(t, { w: 120, h: 120, dir }).commands);
+    const sample = createThemeHorizonGlyphSampler();
+    for (const dir of ['sunrise', 'night'] as const) for (const t of [0, 0.3, 0.6, 0.9, 1.2]) paintBoth(sample(t, { w: 120, h: 120, dir }).commands);
 });
 
 it('reveals the live new theme through the complement of the exact brand Horizon clip', () => {
     const fonts = { mono: 'mono400', monoStrong: 'mono600', sans: 'sans400', sansMedium: 'sans500', sansStrong: 'sans600' };
     const env = { w: 120, h: 120, dpr: 2, ...fonts };
     const image = { width: () => 120, height: () => 120 };
+    const sample = createThemeHorizonGlyphSampler();
     for (const dir of ['sunrise', 'night'] as const) for (const t of [0, 0.3, 0.6, 0.9, 1.2]) {
-        const frame = themeSwitchFrame(t, { w: env.w, h: env.h, dir, kind: 'horizon' });
+        const frame = sample(t, { w: env.w, h: env.h, dir, kind: 'horizon' });
         const native = recordNative();
         // Screenshot and native font interfaces are genuine boundary fixtures, not domain doubles.
-        paintNativeThemeHorizon(native.canvas as unknown as Parameters<typeof paintNativeThemeHorizon>[0], image as unknown as Parameters<typeof paintNativeThemeHorizon>[1], t, dir, env as unknown as Parameters<typeof paintNativeThemeHorizon>[4]);
+        paintNativeThemeHorizon(native.canvas as unknown as Parameters<typeof paintNativeThemeHorizon>[0], image as unknown as Parameters<typeof paintNativeThemeHorizon>[1], frame, env as unknown as Parameters<typeof paintNativeThemeHorizon>[3]);
         const draws = native.root as { kind: string; path?: unknown[]; op?: string; rect?: number[] }[];
         if (frame.clipPath === 'none') expect(draws.some(draw => draw.kind === 'mark')).toBe(false);
         else {

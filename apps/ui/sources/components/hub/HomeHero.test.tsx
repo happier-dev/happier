@@ -5,9 +5,6 @@ import { View } from 'react-native';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { HomeHero, useHomeHeroFrame } from './HomeHero';
-import { HomePlanet } from '@/components/atmosphere/HomePlanet';
-import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas';
-import type { HomePlanetPlacement } from '@/components/atmosphere/homePlanetPlacement';
 import { DestinationInstanceContext } from '@/components/appShell/workspace/destinationInstanceContext';
 import { atmosphereStageStore } from '@/components/atmosphere/atmosphereStage';
 
@@ -43,46 +40,6 @@ it('reports an excluded visible unfocused Home without a headline, and withdraws
         expect(atmosphereStageStore.get().stage).toBeNull();
         await screen.update(scene(false));
         expect(atmosphereStageStore.get().excludedPanes).toHaveLength(0);
-    } finally { await screen.unmount(); }
-});
-
-it('keeps a mounted planet fade aligned with the section moved by Corner → Rise → Side → Rise', async () => {
-    const pane = { width: 1104, height: 852 };
-    let nextTop = 472;
-    function Home({ placement }: { placement: HomePlanetPlacement }) {
-        const frame = useHomeHeroFrame({ active: true, focused: true, phone: false });
-        return <View testID="measured-home" ref={frame.paneRef} onLayout={frame.measure}>
-            <HomePlanet pane={frame.pane} hero={frame.hero} placement={placement} style="rich" digits
-                theme="dark" phone={false} hidden={false} leave="fade" reducedMotion={false} />
-            <HomeHero title="Home" phone={false} paneHeight={frame.pane.height} rise={placement === 'rise'}
-                suggestions="links" showComposer={false} frame={frame} />
-            <View testID="next-section" ref={frame.nextRef} onLayout={frame.measure} />
-        </View>;
-    }
-    // Native/browser measurement is the boundary. Rise changes padding, not content-box size:
-    // web's ResizeObserver emits no event for the hero, its headline or the moved sibling.
-    const screen = await renderScreen(<Home placement="corner" />, { createNodeMock: element => ({
-        measureInWindow(done: (x: number, y: number, width: number, height: number) => void) {
-            if (element.props.testID === 'measured-home') done(328, 40, pane.width, pane.height);
-            else if (element.props.testID === 'next-section') done(328, 40 + nextTop, pane.width, 40);
-            else done(328, 374, pane.width, 36);
-        },
-    }) });
-    try {
-        await act(async () => { screen.findHostByTestId('measured-home')!.props.onLayout(); });
-        const mountedCanvas = screen.findByType(PlanetCanvas);
-        expect(mountedCanvas.props.fade).toBeUndefined();
-        for (const [placement, position] of [['rise', 672], ['side', 472], ['rise', 752]] as const) {
-            nextTop = position;
-            await screen.update(<Home placement={placement} />);
-            const canvas = screen.findByType(PlanetCanvas);
-            expect(canvas).toBe(mountedCanvas);
-            if (placement === 'rise') {
-                // The ordered fade ends before the section in the CURRENT layout, not the old hero.
-                expect(canvas.props.fade.to).toBe(nextTop - 6);
-                expect(canvas.props.options.view.h).toBe(canvas.props.height);
-            } else expect(canvas.props.fade).toBeUndefined();
-        }
     } finally { await screen.unmount(); }
 });
 

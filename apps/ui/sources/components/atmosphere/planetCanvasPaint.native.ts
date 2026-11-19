@@ -6,7 +6,7 @@ import type { PlanetScene } from '@happier-dev/brand/planet';
  * Takes the typefaces themselves: Skia 2.4.18's `SkFont.getTypeface()` adopts the font's borrowed
  * typeface without a reference, so its collected wrappers free the face under recorded pictures.
  */
-export function paintNativePlanetScene(canvas: SkCanvas, scene: PlanetScene, regular: SkTypeface | null, strong: SkTypeface | null, ink?: string) {
+export function paintNativePlanetMark(canvas: SkCanvas, scene: PlanetScene, regular: SkTypeface | null, strong: SkTypeface | null, ink?: string) {
     const paint = Skia.Paint(); paint.setAntiAlias(true);
     const dots = (list: typeof scene.body) => {
         for (const dot of list) {

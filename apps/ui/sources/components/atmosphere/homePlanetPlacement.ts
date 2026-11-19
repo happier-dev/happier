@@ -2,12 +2,7 @@ import { HOME_HERO_FULL_PANE_HEIGHT } from '@happier-dev/brand/planet-placement'
 
 export {
   HOME_HERO_FULL_PANE_HEIGHT,
-  homePlanetGeometry,
-  homePlanetSceneOptions,
-  type HomePlanetPlacement,
-  type HomePlanetStyle,
   type HomePane,
-  type HomePlanetGeometry,
 } from '@happier-dev/brand/planet-placement';
 
 /** berthd's seam: the band's height before it reaches past the composer. Phones put it at a third. */
@@ -88,10 +83,6 @@ export function homeRiseFoot(input: Readonly<{ paneHeight: number; aboveBottom: 
   return Math.round(Math.max(RISE_FOOT_MIN_PX, Math.min(RISE_FOOT_MAX_PX, input.paneHeight - input.aboveBottom - RISE_FOLD_RESERVE_PX)));
 }
 
-/** Rise: the limb crosses the composer's top; its body leaves in order before the widgets. */
-export function homeRiseLimb(composerTop: number): number {
-  return composerTop + 10;
-}
 export function homeRiseFootFade(
   input: Readonly<{ aboveBottom: number; nextTop: number; phone: boolean }>,
 ) {
