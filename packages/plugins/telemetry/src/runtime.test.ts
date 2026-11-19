@@ -35,7 +35,7 @@ async function post(endpoint: string, signal: 'traces' | 'logs', body: unknown) 
 }
 
 describe('capture runtime through real HTTP and SQLite', () => {
-    it('ingests canonical masked queries and linked logs, lists summaries without bodies and loads only demanded detail', async () => {
+    it('lists masked query summaries and first-line log previews and returns full detail on demand', async () => {
         const f = await fixture();
         const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition } });
         try {
@@ -60,19 +60,21 @@ describe('capture runtime through real HTTP and SQLite', () => {
             await f.runtime.ingest.settled();
             expect(f.publications).toEqual([[partition]]);
 
+            const logBody = 'request completed\nrequest detail';
             const logs = await post(receiver.endpoint, 'logs', { resourceLogs: [{ resource: { attributes: [{ key: 'service.name', value: { stringValue: 'api' } },
                 { key: 'service.version', value: { stringValue: 'build-log' } },
                 { key: 'deployment.environment', value: { stringValue: 'production' } }] }, scopeLogs: [{ logRecords: [{
-                traceId, spanId, severityNumber: 13, timeUnixNano: '1700000000001000000', body: { stringValue: 'request completed' },
+                traceId, spanId, severityNumber: 13, timeUnixNano: '1700000000001000000', body: { stringValue: logBody },
             }] }] }] });
             expect(logs.status).toBe(200);
             await f.runtime.ingest.settled();
             const logRows = await f.runtime.store.list({ worktree: partition, kind: 'log', limit: 20 });
             expect(logRows).toHaveLength(1);
-            expect(logRows[0]).toMatchObject({ traceId, spanId, serviceName: 'api', severityNumber: 13 });
-            expect(JSON.stringify(logRows)).not.toContain('request completed');
+            expect(logRows[0]).toMatchObject({ traceId, spanId, serviceName: 'api', severityNumber: 13,
+                bodyPrefix: 'request completed', bodyPrefixTruncated: true });
+            expect(JSON.stringify(logRows)).not.toContain('request detail');
             expect(await f.runtime.store.detail(partition, logRows[0]!.id)).toMatchObject({ log: {
-                serviceVersion: 'build-log', deploymentEnvironmentName: 'production', deploymentEnvironment: 'production',
+                serviceVersion: 'build-log', deploymentEnvironmentName: 'production', deploymentEnvironment: 'production', body: logBody,
             } });
             expect(f.publications).toEqual([[partition], [partition]]);
         } finally {
