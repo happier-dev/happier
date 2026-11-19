@@ -64,6 +64,7 @@ import { automationRunWithAutomationSelect } from "@/app/automations/automationP
 import { encodeAutomationRunCause, projectAutomationOriginRun } from "@/app/automations/automationRunCauseCodec";
 import { admitAutomationRunTx } from "@/app/automations/automationRunAdmissionService";
 import { encodeAutomationSessionLifecycleConfiguration } from "@/app/automations/automationSessionLifecycleConfigurationCodec";
+import { createAutomationSessionLifecycleFixtureFields } from "@/testkit/automationSessionLifecycleFixture";
 import { AUTOMATION_RUN_TERMINAL_STATES } from "@/app/automations/automationTypes";
 import { createAutomation, deleteAutomation, updateAutomation } from "@/app/automations/automationCrudService";
 import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
@@ -1098,6 +1099,50 @@ describe("workflowRunService (integration)", () => {
             expect(run).toBeDefined();
             expect(run).not.toHaveProperty("automationScopeSessionId");
         } finally { await app.close(); }
+    });
+
+    it.each([true, false])("binds accepted lifecycle snapshots to the admitted source independently of habit lifetime (session scoped: %s)", async (scoped) => {
+        const seeded = await seed();
+        const source = await db.session.create({ data: { id: randomUUID(), tag: randomUUID(), accountId: seeded.accountId,
+            metadata: "{}", encryptionMode: "plain" }, select: { id: true } });
+        await db.sessionTurn.create({ data: { sessionId: source.id, turnId: "observed-turn", status: "completed",
+            startedAt: BigInt(Date.now()), updatedAt: BigInt(Date.now()), workDepth: 0 } });
+        const automation = await createAutomation({ accountId: seeded.accountId, input: { automationId: randomUUID(), name: "Observed lifecycle", enabled: true,
+            scopeSessionId: scoped ? seeded.sessionId : null,
+            executionRecipe: createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: "/repo", prompt: "Work" }),
+            assignments: [{ machineId: seeded.machineId, enabled: true, priority: 0 }], triggers: [] } });
+        const trigger = await db.automationTrigger.create({ data: { automationId: automation.id,
+            kind: "sessionLifecycle", enabled: true, revision: 1,
+            ...await createAutomationSessionLifecycleFixtureFields({ automationId: automation.id, kind: "sessionLifecycle", sourceSessionId: source.id,
+                events: ["parentTurnCompleted"], policy: { kind: "everyMatch" } }) } });
+        const cause = AutomationRunCauseSchema.parse({ kind: "trigger", triggerKind: "sessionLifecycle",
+            triggerId: trigger.id, triggerRevision: 1, occurrenceKey: "A".repeat(43), occurredAt: Date.now(),
+            evidence: { event: "parentTurnCompleted", sourceSessionId: source.id, sourceTurnId: "observed-turn", policy: { kind: "everyMatch" } } });
+        const admitted = await inTx(tx => admitAutomationRunTx({ tx, accountId: seeded.accountId,
+            automationId: automation.id, now: new Date(), cause, recipeFeaturePolicy: { workflowsEnabled: true } }));
+        if (admitted.kind !== "admitted") throw new Error("Expected real lifecycle admission");
+        const runId = admitted.run.id;
+        const claimed = await claimAutomationRun({ accountId: seeded.accountId, machineId: seeded.machineId,
+            leaseDurationMs: 30_000, recipeFeaturePolicy: { workflowsEnabled: true } });
+        if (!claimed.run || claimed.run.id !== runId) throw new Error("Expected the admitted lifecycle claim");
+        const request = { accountId: seeded.accountId, runId, automationId: automation.id, machineId: seeded.machineId,
+            expectedAttempt: claimed.run.attempt, expectedRevision: claimed.run.revision, accountCurrentness: await accountCurrentness(seeded.accountId),
+            definitionEnvelope: claimed.run.executionInputEnvelope,
+            acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId, automationId: automation.id, originSessionId: source.id, deliver: true }),
+            originSessionId: source.id, resultDelivery: { kind: "originating_session" as const } };
+        // A valid Session owned by this Account is still not the admitted occurrence source.
+        for (const originSessionId of [seeded.sessionId, undefined]) {
+            await expect(resolveAutomationWorkflowAcceptedSnapshotOwner({ ...request, originSessionId }))
+                .rejects.toMatchObject({ code: "currentness_conflict" });
+        }
+        await expect(resolveAutomationWorkflowAcceptedSnapshotOwner(request)).resolves.toMatchObject({
+            disposition: "created", run: { automationScopeSessionId: scoped ? seeded.sessionId : null,
+                originDeliveryAckRevision: 0, origin: { kind: "automation", originSessionId: source.id, cause } },
+        });
+        await db.automation.update({ where: { id: automation.id }, data: { scopeSessionId: source.id } });
+        await expect(resolveAutomationWorkflowAcceptedSnapshotOwner(request)).resolves.toMatchObject({
+            disposition: "existing", run: { origin: { originSessionId: source.id } },
+        });
     });
 
     it.each([true, false])("freezes the scoped Automation origin and explicit delivery request at accepted-snapshot resolution (delivery: %s)", async (deliver) => {

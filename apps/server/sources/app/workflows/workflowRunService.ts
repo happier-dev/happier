@@ -651,8 +651,8 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
             assignments: { some: { machineId: params.machineId } },
         }, select: workflowRunSelect });
         if (!current || current.executionInputEnvelope !== params.definitionEnvelope) throw new WorkflowRunServiceError("currentness_conflict");
+        const cause = decodeAutomationRunCause(current);
         if (predecessor) {
-            const cause = decodeAutomationRunCause(current);
             const origin = cause === null ? null : toAutomationRunExecutionInputV1Origin(cause);
             if (origin === null || createCanonicalJsonSigningInput(origin) !== createCanonicalJsonSigningInput(predecessor.origin)) {
                 throw new WorkflowRunServiceError("currentness_conflict");
@@ -676,7 +676,12 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
         }
         const automation = await tx.automation.findFirst({ where: { id: params.automationId, accountId: params.accountId },
             select: { scopeSessionId: true } });
-        if (!automation || (!predecessor && automation.scopeSessionId !== originSessionId)) throw new WorkflowRunServiceError("currentness_conflict");
+        // The admitted lifecycle source is independent of the habit's Session lifetime.
+        const lifecycleSourceSessionId = cause?.kind === "trigger" && cause.triggerKind === "sessionLifecycle"
+            ? cause.evidence.sourceSessionId : null;
+        if (!automation || (!predecessor && (lifecycleSourceSessionId ?? automation.scopeSessionId) !== originSessionId)) {
+            throw new WorkflowRunServiceError("currentness_conflict");
+        }
         if (originSessionId !== null) {
             const session = await tx.session.findFirst({ where: { id: originSessionId, accountId: params.accountId }, select: { id: true } });
             if (!session) throw new WorkflowRunServiceError("invalid_input");
@@ -694,7 +699,8 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
             revision: params.expectedRevision,
             originKind: "automation",
             automationId: params.automationId,
-            automation: { is: { accountId: params.accountId, ...(predecessor ? {} : { scopeSessionId: originSessionId }) } },
+            automation: { is: { accountId: params.accountId,
+                ...(predecessor || lifecycleSourceSessionId !== null ? {} : { scopeSessionId: originSessionId }) } },
             claimedByMachineId: params.machineId,
             attempt: params.expectedAttempt,
             ...(predecessor ? { ...automationRunWithoutExecutionWhere, state: "claimed", workflowCustodyState: null } : { workflowCustodyState: "pending" }),
