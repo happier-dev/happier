@@ -183,6 +183,19 @@ html:not([data-happier-input-modality="keyboard"]) :focus {
     }
 }
 
+/* Reduced motion holds the pulse at its low step, the bar the primitive draws without an environment
+ * that says so (host pages such as an Approval read no plugin accessibility environment). */
+@media (prefers-reduced-motion: reduce) {
+    @keyframes happierSkeletonPulse {
+        from {
+            opacity: 0.4;
+        }
+        to {
+            opacity: 0.4;
+        }
+    }
+}
+
 /* Webkit Scrollbars (Chrome, Safari, Edge) */
 ::-webkit-scrollbar {
     width: 12px;
