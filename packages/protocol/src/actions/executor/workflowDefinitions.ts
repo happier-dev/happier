@@ -165,7 +165,8 @@ export function createWorkflowDefinitionActions(params: Readonly<{
     if (!policy.success || !authority || !params.resolveMaterializer) throw unavailable();
     const { machineId, directory } = authority.baseline;
     const originSessionId = authority.caller.kind === 'session'
-      ? authority.caller.sessionId : authority.caller.runOriginSessionId;
+      ? authority.caller.sessionId
+      : authority.caller.kind === 'originless' ? authority.caller.runOriginSessionId : undefined;
     const materialization = await params.resolveMaterializer({ machineId, directory,
       ...(caller.signal ? { signal: caller.signal } : {}) });
     const materialized = await materializeWorkflowDefinitionAuthorityV1({
