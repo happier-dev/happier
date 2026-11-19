@@ -80,6 +80,7 @@ export type AppShellPluginUiProjectionSnapshot = Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     activeServerId: string | null;
     accountUiProjection: PluginUiProjectionModel | null;
+    accountCensusPending: boolean;
     executionOriginMaterializations: readonly PluginMachineMaterializationV1[];
     executionOriginPluginIds: readonly string[];
     projectionTargets: readonly AppShellPluginProjectionTarget[];
@@ -144,7 +145,7 @@ const EMPTY_UNION: PluginUiProjectionUnion = Object.freeze({ pluginUiProjection:
     interactionEnabled: false, hasEstablishingMembers: false, machineId: null, serverId: null });
 export const EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_SNAPSHOT: AppShellPluginUiProjectionSnapshot = Object.freeze({ accountLifetime: null,
     activeServerId: null,
-    accountUiProjection: null, executionOriginMaterializations: NO_MATERIALIZATIONS,
+    accountUiProjection: null, accountCensusPending: false, executionOriginMaterializations: NO_MATERIALIZATIONS,
     executionOriginPluginIds: NO_IDS, projectionTargets: NO_TARGETS,
     currentnessForActiveAccountByMachineId: NO_CURRENTNESS,
     projectionUnion: EMPTY_UNION, pluginUiProjection: null, mountedActionProjections: EMPTY_MOUNTED_CLIENT_ACTION_PROJECTIONS,
@@ -557,9 +558,9 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             unionMembers = members;
             membersByMachineId = new Map(members.map(member => [member.machineId, member]));
         }
+        const accountCensusPending = accountLifetime !== null && availabilityInputs === null;
         const projectionUnion = settleAppShellProjectionAvailability(union.publish(members, selections),
-            availabilityInputs?.unavailableReasonCode, previous.projectionUnion,
-            accountLifetime !== null && availabilityInputs === null);
+            availabilityInputs?.unavailableReasonCode, previous.projectionUnion, accountCensusPending);
         const accountUiProjection = sources.hostBundledUiEnabled ? availabilityInputs?.accountUiProjection ?? null : null;
         const pluginUiProjection = accountMerge.publish(accountUiProjection ? [accountUiProjection] : NO_MODELS,
             projectionUnion.pluginUiProjection, undefined, explicitSelections);
@@ -599,8 +600,9 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             : owing.length === previous.registrySourcesPendingTargets.length
                 && owing.every((target, index) => target === previous.registrySourcesPendingTargets[index])
                 ? previous.registrySourcesPendingTargets : Object.freeze(owing);
-        const registrySourcesPending = (accountLifetime !== null && availabilityInputs === null) || owing.length > 0;
+        const registrySourcesPending = accountCensusPending || owing.length > 0;
         const next: AppShellPluginUiProjectionSnapshot = Object.freeze({ accountLifetime, activeServerId: sources.activeServerId, accountUiProjection,
+            accountCensusPending,
             executionOriginMaterializations: materializations, executionOriginPluginIds: pluginIds, projectionTargets: targets,
             currentnessForActiveAccountByMachineId: currentness, projectionUnion, pluginUiProjection,
             mountedActionProjections: previous.mountedActionProjections, skillSourceIdentity,

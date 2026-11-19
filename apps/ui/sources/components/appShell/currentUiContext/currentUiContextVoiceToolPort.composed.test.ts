@@ -1427,9 +1427,9 @@ describe('current UI context Voice tool port', () => {
             const defaults = useAppShellPluginUiProjection();
             return React.createElement(AppShellPluginUiProjectionValueProvider, { declarationReady: true,
                 value: { ...defaults, pluginUiProjection: replacing ? projection : published && installs ? installed.projection : null,
-                    // An unrelated current member and ready activation do not
-                    // establish the missing declaration's absence.
+                    // Keep the Account's cold publication distinct from passive Machine discovery.
                     phase: !published && settlement !== 'target-unavailable' && (settlement === 'initial' || replacing) ? 'establishing' : 'current',
+                    accountCensusPending: !published && (!replacing || settlement === 'activation-gap'),
                     hasEstablishingMembers: !published && settlement !== 'initial' && settlement !== 'target-unavailable',
                     clientExecutableActivation: { status: replacing && !published ? 'establishing' : 'ready' },
                     accountLifetime: lifetime, serverId: lifetime.scope.serverId },
@@ -1444,19 +1444,19 @@ describe('current UI context Voice tool port', () => {
         const acquisitionReads = () => request.mock.calls.filter(([url]) => new URL(String(url)).pathname.startsWith('/v1/plugins/')).length;
         const readCount = acquisitionReads();
         const daemonReadCount = daemonRequests.length;
-        // Capture the real hook-produced port; an absent declaration still has
-        // a live Account-scoped acquisition subscription.
+        // Capture the real hook-produced port with its Account-scoped admission.
         const currentPort = port as ReturnType<typeof useCurrentUiContextVoiceToolPort>;
         if (!currentPort?.observeAction) throw new Error('Action observer missing');
         let outcome: 'pending' | 'attached' | 'refused' = 'pending';
         const refusalCodes: unknown[] = [];
-        const pending = currentPort.observeAction({ action: { pluginId: authored.manifest.id, localId: 'read' }, input: {},
+        const observeAction = currentPort.observeAction;
+        const observe = () => observeAction({ action: { pluginId: authored.manifest.id, localId: 'read' }, input: {},
             signal: controller.signal, isCurrent: settlement === 'after-acquired-retired' ? () => true : lifetime.isCurrent,
-            invalidate: () => {} })
-            .then(observer => { outcome = 'attached'; return { observer }; }, error => {
-                refusalCodes.push(error !== null && typeof error === 'object' ? Reflect.get(error, 'code') : 'unexpected');
-                outcome = 'refused'; return { error: isPluginError(error) ? error.code : 'unexpected' };
-            });
+            invalidate: () => {} });
+        const pending = observe().then(observer => { outcome = 'attached'; return { observer }; }, error => {
+            refusalCodes.push(error !== null && typeof error === 'object' ? Reflect.get(error, 'code') : 'unexpected');
+            outcome = 'refused'; return { error: isPluginError(error) ? error.code : 'unexpected' };
+        });
         // Retire after acquire's synchronous read but before its awaiting
         // observation consumer resumes. Only the target lifetime ends.
         if (settlement === 'after-acquired') await composition.invalidatePlugin(authored.manifest.id);
@@ -1494,7 +1494,8 @@ describe('current UI context Voice tool port', () => {
             if (settlement === 'replacement-gap') {
                 projection = null;
                 await screen.update(React.createElement(AppShell));
-                expect(outcome).toBe('pending');
+                expect(outcome).toBe('refused');
+                expect(await pending).toEqual({ error: 'contributed_action_unavailable' });
             }
             if (replacing && settlement !== 'replacement-absent'
                 && settlement !== 'replacement-aborted' && settlement !== 'replacement-retired') {
@@ -1502,9 +1503,8 @@ describe('current UI context Voice tool port', () => {
                 replacement = await installPortableAccountPluginReleaseForTest({ manifest: successor.manifest,
                     activate: api => successor.activateAccount(api, { artifactId: 'account-runtime', exportName: 'activate' }),
                     accountLifetime: lifetime });
-                // Registration publication precedes AppShell's successor
-                // declaration; the old occurrence must not settle this wait.
-                expect(outcome).toBe('pending');
+                // The successor registration cannot settle the wait before AppShell publishes its declaration.
+                expect(outcome).toBe(settlement === 'replacement-gap' ? 'refused' : 'pending');
                 projection = settlement === 'replacement-disabled' ? replacement.disable() : replacement.projection;
             }
             if (settlement === 'replacement-absent') projection = null;
@@ -1514,7 +1514,7 @@ describe('current UI context Voice tool port', () => {
             });
             published = true;
             await screen.update(React.createElement(AppShell));
-            const result = await pending;
+            const result = settlement === 'replacement-gap' ? { observer: await observe() } : await pending;
             expect(attachments).toBe(settlement === 'during-attachment' ? 2 : installs ? 1 : 0);
             expect(attachedVersions).toEqual(settlement === 'during-attachment' ? ['1.0.0', '1.0.1']
                 : installs ? [replacing ? '1.0.1' : '1.0.0'] : []);

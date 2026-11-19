@@ -67,14 +67,12 @@ export async function acquireCurrentContributedAction(input: Readonly<{
         // declaration through replacement, including a temporary discovery gap;
         // only the returned registration pins an observation to an occurrence.
         if (resolveCurrentContributedAction(input.readProjection, input.identity)) return false;
-        // The exact executable's terminal refusal settles acquisition even
-        // while unrelated declarations are still establishing.
-        if (admission && action && resolvePluginUiClientActionRefusal({ action, platform: admission.platform })) return false;
-        // Declaration and executable-Artifact publication can advance separately.
-        // A missing exact activation target cannot establish settled absence
-        // while its declaration source is still establishing.
-        return admission?.declarationPhase === 'establishing' || !action && admission?.hasEstablishingMembers === true
-            || isPluginUiClientActionPending({ admission, accountLifetime: owner, action, currentAction: action });
+        // Only the Account census can supply a missing declaration here. An
+        // unread Machine catalog might never be requested by any surface.
+        if (admission?.accountCensusPending) {
+            return !action || !resolvePluginUiClientActionRefusal({ action, platform: admission.platform });
+        }
+        return isPluginUiClientActionPending({ admission, accountLifetime: owner, action, currentAction: action });
     };
     const settlement = createPluginConnectionSettlement();
     let unsubscribeAdmission: (() => void) | undefined;

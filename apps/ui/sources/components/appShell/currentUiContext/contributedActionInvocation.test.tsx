@@ -24,6 +24,9 @@ it.each([
     { mode: 'observe', unavailable: 'refused' },
     { mode: 'invoke', unavailable: 'missing-artifact' },
     { mode: 'observe', unavailable: 'missing-artifact' },
+    { mode: 'invoke', unavailable: 'unknown-plugin' },
+    { mode: 'observe', unavailable: 'unknown-plugin' },
+    { mode: 'invoke', unavailable: 'unknown-action' },
 ] as const)('settles $unavailable Account action $mode while an unrelated Machine declaration is establishing', async ({ mode, unavailable }) => {
     await account.restore({ machines: [] });
     const lifetime = captureActiveServerAccountScopeLifetime();
@@ -64,7 +67,8 @@ it.each([
     function Shell() {
         const defaults = useAppShellPluginUiProjection();
         return <AppShellPluginUiProjectionValueProvider declarationReady value={{ ...defaults,
-            pluginUiProjection: projection, phase: 'current', hasEstablishingMembers: true,
+            pluginUiProjection: projection, phase: unavailable === 'unknown-action' ? 'establishing' : 'current',
+            hasEstablishingMembers: true,
             clientExecutableActivation: { status: 'ready' }, accountLifetime: lifetime, serverId,
         }}><CurrentUiContextBridge publisher={null} reader={reader}><Probe /></CurrentUiContextBridge></AppShellPluginUiProjectionValueProvider>;
     }
@@ -73,7 +77,10 @@ it.each([
     if (!current?.invokeAction || !current.observeAction) throw new Error('Expected invocation and observation ports');
     const controller = new AbortController();
     let result: unknown;
-    const request = { action: { pluginId: authored.manifest.id, localId: 'read' }, input: {}, signal: controller.signal };
+    const request = { action: {
+        pluginId: unavailable === 'unknown-plugin' ? 'nope.plugin' : authored.manifest.id,
+        localId: unavailable === 'unknown-plugin' ? 'none' : unavailable === 'unknown-action' ? 'undeclared' : 'read',
+    }, input: {}, signal: controller.signal };
     const pending = mode === 'invoke' ? current.invokeAction(request).then(value => { result = value; })
         : current.observeAction({ ...request, isCurrent: lifetime.isCurrent, invalidate() {} }).then(
             async observer => { await observer.dispose(); result = { ok: true }; },

@@ -617,7 +617,7 @@ function useCurrentUiContextToolPortFactory() {
                     read: () => {
                         const value = appShellProjection.getSnapshot();
                         return { projection: value.pluginUiProjection, platform: resolvePluginUiClientExecutablePlatform(),
-                            declarationPhase: value.phase, hasEstablishingMembers: value.hasEstablishingMembers,
+                            accountCensusPending: value.accountCensusPending,
                             mountedActionProjections: value.mountedActionProjections,
                             activation: value.clientExecutableActivation, accountLifetime: value.accountLifetime };
                     },

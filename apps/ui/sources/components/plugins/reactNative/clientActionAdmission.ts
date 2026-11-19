@@ -1,6 +1,5 @@
 import type { PluginContributionClientPlatform } from '@happier-dev/protocol/plugins/contributions/catalog';
 import type { AppShellClientExecutableActivationState } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { isPluginProjectedActionExecutable, type PluginUiActionProjection, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { resolvePluginUiExecutionDeclaration } from '@/sync/domains/plugins/ui/projectionUnion';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -10,9 +9,7 @@ import { isProjectedPluginUiClientActionTarget, type PluginUiClientExecutablePro
 
 export type PluginUiClientActionAdmission = Readonly<{
     projection: PluginUiProjectionModel | null;
-    /** Catalog/Artifact replacement settlement, never positive executable admission. */
-    declarationPhase?: PluginUiProjectionPhase;
-    hasEstablishingMembers?: boolean;
+    accountCensusPending?: boolean;
     mountedActionProjections?: readonly PluginUiClientExecutableProjectionSource[];
     platform: PluginContributionClientPlatform;
     activation: AppShellClientExecutableActivationState;

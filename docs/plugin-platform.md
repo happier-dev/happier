@@ -6628,9 +6628,11 @@ target set before waiting for Artifact preparation or foreign plugin cleanup.
 Each admitted target prepares and publishes independently, with its complete
 declared registration rights committed atomically. An unrelated parked target
 does not hold a fresh registration behind its bytes or a preceding shell update.
-Current-UI acquisition waits for the exact registration when a Machine-supplied
-client Action has a current declaration and its executable is still establishing.
-Catalog Retry reads through that acquisition path and follows the current declaration.
+Current-UI Action acquisition can wait on the Account's initial declaration
+census or on the exact admitted client registration. Once the census settles,
+an Action with no declaration or admitted executable returns the existing
+unavailable result, even while other Machine catalogs are unread. Catalog Retry
+uses the same acquisition path and reads the current declaration.
 Equivalent inventory publications preserve an executable already claimed by the
 composition, including one whose foreign activation is still preparing, and its
 pending Actions. Cancellation fences acquisition until the composition creates
