@@ -2,7 +2,7 @@ import { it, expect } from 'vitest';
 import { DeploySuggestionCatalogV1Schema, DeploySuggestionInputV1Schema, DeploySuggestionV1Schema, validateDeploySuggestionV1, renderDeployPlanBriefV1 } from './deploySuggestionsV1.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import type { DeploySuggestionRecommendationV1 } from './deploySuggestionsV1.js';
-import { DEPLOYMENT_VALIDATION_RULES_V1, DEPLOY_BUILD_PREVIEW_RULES_V1 } from '../deploymentValidationV1.js';
+import { DEPLOYMENT_VALIDATION_RULES_V1, DEPLOY_BUILD_PREVIEW_RULES_V1, DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1 } from '../deploymentValidationV1.js';
 import { DeploymentEnvironmentCreateActionInputV1Schema } from '../deploymentActionsV1.js';
 import { validateExecutionRunProfileResult } from '../../execution/runs/resultContract.js';
 import { normalizePluginJsonSchema } from '../../plugins/actions/protocolComposableSchema.js';
@@ -54,7 +54,7 @@ it.each(['starter', 'scratch'] as const)('preserves description bytes and carrie
     expect(renderDeployPlanBriefV1(description, plan, repository)).toContain(JSON.stringify(repository));
 });
 it('shows the build Session a preview Environment create the Action admits (AUTO-LIVE p4: purpose preview, no Project, no definition)', () => {
-    const brief = renderDeployPlanBriefV1('Bakery', { ...recommendation, targetId: 'own' });
+    const brief = renderDeployPlanBriefV1('Bakery', { ...recommendation, targetId: 'own' }, undefined, { targetClass: 'ownServer' });
     const shown = brief.split('```json\n').slice(1).map(block => JSON.parse(block.slice(0, block.indexOf('\n```'))) as unknown)
         .find(block => typeof block === 'object' && block !== null && 'controllerMachineId' in block);
     expect(shown, brief).toBeDefined();
@@ -64,6 +64,27 @@ it('shows the build Session a preview Environment create the Action admits (AUTO
     // Own server deploys the repository's Compose file; the rule that has the agent author one rides in every brief, once.
     expect(brief.split(DEPLOY_BUILD_PREVIEW_RULES_V1)).toHaveLength(2);
     expect(shown).toMatchObject({ definition: { from: 'repository', compose: { path: 'compose.yaml' } } });
+});
+it('scopes the Compose and own-server input to an Own server target; a platform brief carries neither (REVIEW-DELTA4 F1)', () => {
+    const own = renderDeployPlanBriefV1('Bakery', { ...recommendation, targetId: 'own' }, undefined, { targetClass: 'ownServer' });
+    const platform = renderDeployPlanBriefV1('Bakery', recommendation, undefined, { targetClass: 'platform' });
+    expect(own.split(DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1)).toHaveLength(2);
+    expect(platform).not.toContain(DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1);
+    expect(platform).not.toContain('compose');
+    expect(platform).not.toContain('installationId');
+    expect(platform.split(DEPLOY_BUILD_PREVIEW_RULES_V1)).toHaveLength(2);
+});
+it('the run contract and the check agree on which single-choice bounds only restate it (REVIEW-DELTA4 F2)', () => {
+    const contract = { kind: 'json' as const, schema: normalizePluginJsonSchema(zodSchemaToJsonSchemaObject(DeploySuggestionV1Schema, { target: 'draft-7' })) };
+    const [first] = liveQuestions.questions;
+    const { minSelections: _min, maxSelections: _max, ...bare } = first;
+    for (const bounds of [{}, { minSelections: 0 }, { minSelections: 1 }, { maxSelections: 1 }, { minSelections: 0, maxSelections: 1 },
+        { minSelections: -1 }, { minSelections: 0.5 }, { minSelections: 2 }, { maxSelections: 0 }, { maxSelections: 2 }]) {
+        const questions = { ...liveQuestions, questions: [{ ...bare, ...bounds }] };
+        const run = validateExecutionRunProfileResult({ recommendations: [], questions }, contract).ok;
+        const kept = validateDeploySuggestionV1({ recommendations: [], questions }, catalog).droppedQuestions.length === 0;
+        expect([JSON.stringify(bounds), run], 'run contract').toEqual([JSON.stringify(bounds), kept]);
+    }
 });
 it('routes catalog apps only to a declared Compose host', () => {
     const app = { ...recommendation, source: { kind: 'catalogApp', appId: 'analytics' }, targetId: 'own' };

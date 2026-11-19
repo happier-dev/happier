@@ -48,7 +48,8 @@ export async function applyDeploySuggestion(params: Readonly<{
 
     const input: ProjectStarterCreateInputV1 = { ...create.input, serverId: params.serverId,
         source: creationSource,
-        description: renderDeployPlanBriefV1(params.description, params.suggestion, create.input.repository) };
+        description: renderDeployPlanBriefV1(params.description, params.suggestion, create.input.repository,
+            params.catalog.targets.find(target => target.id === params.suggestion.targetId)) };
     const result = await executeAction.confirmed(PROJECT_STARTER_CREATE_ACTION_ID_V1, input, { surface: 'ui', authority: 'present_user',
         actionCaller: { kind: 'host' }, serverId: params.serverId, expectedAccountId: create.lifetime.scope.accountId });
     if (!result.ok) return { kind: 'failed', code: result.errorCode };

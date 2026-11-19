@@ -19,7 +19,10 @@ const DEPLOY_BUILD_PREVIEW_CREATE_EXAMPLE_V1 = {
         compose: { path: 'compose.yaml', profiles: [], services: ['web'], primaryService: 'web' } },
     firstTargetLink: { machines: [{ machineId: 'MACHINE_ID', installationId: 'MACHINE_INSTALLATION_ID' }] },
 } as const;
-export const DEPLOY_BUILD_PREVIEW_RULES_V1 = [
-    'Create the preview Environment with deployments.environments.create using protection nonProduction and purpose standard; purpose preview is only for a pull-request child of an existing template Environment. Take projectSourceId from projects.sources.list, the Machine id and installationId from machines.list, and the branch you pushed as the definition ref. Own server deploys the repository\'s Compose file: when the repository has none, add a compose.yaml whose web service serves the app with a healthcheck, then commit and push it before the preview. For Own server the input has this shape (read the Action\'s current schema before calling it):',
+/** Every build target: the preview Environment's kind. */
+export const DEPLOY_BUILD_PREVIEW_RULES_V1 = 'Create the preview Environment with deployments.environments.create using protection nonProduction and purpose standard; purpose preview is only for a pull-request child of an existing template Environment. Take projectSourceId from projects.sources.list and use the branch you pushed. Read the Action\'s current schema before calling it.';
+/** Own server only: it deploys the repository's Compose file from a Machine. */
+export const DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1 = [
+    'Own server deploys the repository\'s Compose file: when the repository has none, add a compose.yaml whose web service serves the app with a healthcheck, then commit and push it before the preview. Take the Machine id and installationId from machines.list. The input has this shape:',
     '```json\n' + JSON.stringify(DEPLOY_BUILD_PREVIEW_CREATE_EXAMPLE_V1) + '\n```',
 ].join('\n\n');

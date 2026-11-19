@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { readReadOnlySkillContentV1 } from '../promptBundleSchemas.js';
 import { decodeBase64 } from '../../../crypto/base64.js';
-import { DEPLOY_BUILD_PREVIEW_RULES_V1 } from '../../../deployments/deploymentValidationV1.js';
+import { DEPLOY_BUILD_PREVIEW_RULES_V1, DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1 } from '../../../deployments/deploymentValidationV1.js';
 
 it('opens the bundled deploy skill and its on-demand create-app reference through the skill reader', () => {
     const skill = readReadOnlySkillContentV1('happier:deploy')!;
@@ -13,4 +13,5 @@ it('opens the bundled deploy skill and its on-demand create-app reference throug
     expect(content).toContain('deployments.health.current');
     expect(content).toContain('deployments.suggestions.check');
     expect(content, 'the build loop shows the same admitted preview create as the brief').toContain(DEPLOY_BUILD_PREVIEW_RULES_V1);
+    expect(content, 'the own-server part is scoped to Own server in the guide').toContain(`When the target is Own server:\n\n${DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1}`);
 });

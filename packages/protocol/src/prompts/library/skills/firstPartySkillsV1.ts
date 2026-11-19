@@ -6,7 +6,7 @@ import type { FeatureId } from '../../../features/catalog.js';
 import { resolveReachV1, type ReachContextV1, type ReachDecisionV1 } from '../../../reach/resolveReachV1.js';
 import type { ReachRulesV1 } from '../../../reach/reachRuleV1.js';
 import { HATCH_PET_SKILL_FILES_V1 } from './hatchPetSkillV1.js';
-import { DEPLOYMENT_VALIDATION_RULES_V1, DEPLOY_BUILD_PREVIEW_RULES_V1 } from '../../../deployments/deploymentValidationV1.js';
+import { DEPLOYMENT_VALIDATION_RULES_V1, DEPLOY_BUILD_PREVIEW_RULES_V1, DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1 } from '../../../deployments/deploymentValidationV1.js';
 const DEPLOY_GUIDE_V1 = `---
 name: deploy
 description: Prepare and publish deployments, verify receipts and health, or diagnose a failed deployment in Happier
@@ -114,6 +114,10 @@ and selected forge. Keep credentials out of source, transcripts and logs.
 ${DEPLOYMENT_VALIDATION_RULES_V1}
 
 ${DEPLOY_BUILD_PREVIEW_RULES_V1}
+
+When the target is Own server:
+
+${DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1}
 
 Return the actual preview Environment id, target-link id, receipt/head and preview
 URL with observed health, including unavailable or failed checks. The person

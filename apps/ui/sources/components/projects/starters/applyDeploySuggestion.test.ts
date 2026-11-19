@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
 import type { DeploySuggestionCatalogV1, DeploySuggestionRecommendationV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 import { renderDeployPlanBriefV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
+import { DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1 } from '@happier-dev/protocol/deployments/deploymentValidationV1';
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
@@ -50,7 +51,7 @@ it('sends the original description through the real starter Action and retains t
     expect(execute.mock.calls.map(row => row[0])).toEqual(['projects.starters.create']);
     expect(execute.mock.calls[0]![1]).toMatchObject({ source: { kind: 'starter', starterId: 'website', sourceId: 'starters' },
         description: renderDeployPlanBriefV1('  Bakery\n', { ...suggestion, source: { kind: 'starter', starterId: '["starters","website"]' } },
-            { providerKind: 'github', owner: 'alice', name: 'bakery', visibility: 'private' }) });
+            { providerKind: 'github', owner: 'alice', name: 'bakery', visibility: 'private' }, catalog.targets[0]) });
 });
 
 it.each(['starter', 'scratch'] as const)('resumes %s creation and opens ordinary Session authoring with the returned handoff', async (kind) => {
@@ -79,7 +80,9 @@ it.each(['starter', 'scratch'] as const)('resumes %s creation and opens ordinary
         inputDigest: expect.any(String) } });
     const expectedBrief = renderDeployPlanBriefV1('  Bakery\n', { ...suggestion,
         source: kind === 'starter' ? { kind, starterId: '["starters","website"]' } : { kind } },
-        { providerKind: 'github', owner: 'alice', name: 'bakery', visibility: 'private' });
+        { providerKind: 'github', owner: 'alice', name: 'bakery', visibility: 'private' }, catalog.targets[0]);
+    // The chosen target is Own server, so its brief carries the Compose and own-server input.
+    expect(expectedBrief).toContain(DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1);
     expect(execute.mock.calls[1]![1]).toMatchObject({ seed: { prompt: expectedBrief, placement: {
         kind: 'exactTarget', serverId: 'home', machineId: 'machine', directory: '/projects/bakery' } } });
 });
