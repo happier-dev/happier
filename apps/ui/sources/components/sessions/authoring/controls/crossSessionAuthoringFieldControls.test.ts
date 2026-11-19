@@ -160,8 +160,13 @@ describe('Session-specific field intersection', () => {
         const differing = [scoped('m1', '/repo/a', ['pdf']), scoped('m1', '/repo/b')];
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection', targets: differing }))
             .toMatchObject({ kind: 'mcp', context: { machineId: 'm1', serverId: 'home' } });
+        const switching = [differing[0]!, { ...differing[1]!, agentId: 'codex', values: { agentTarget: codex } }];
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection',
-            targets: [scoped('m1', '/repo/a'), scoped('m2', '/repo/a')] }))
+            targets: switching, selection: { agentTarget: claude } }))
+            .toMatchObject({ kind: 'mcp', agentId: 'claude', context: { machineId: 'm1', serverId: 'home' } });
+        expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection',
+            targets: [switching[0]!, { ...switching[1]!, facts: scoped('m2', '/repo/a').facts }],
+            selection: { agentTarget: claude } }))
             .toMatchObject({ kind: 'unavailable', reason: 'differs_between_targets' });
     });
     it('preserves owner refusals and refuses new-session fields and empty intersections', () => {

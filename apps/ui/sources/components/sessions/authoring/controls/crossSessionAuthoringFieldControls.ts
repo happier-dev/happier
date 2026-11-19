@@ -3,7 +3,7 @@ import { buildExistingSessionTransitionAgentId, EXISTING_SESSION_FIELD_APPLICATI
 import { readBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { SessionAuthoringControls } from './useSessionAuthoringControls';
 import { t } from '@/text';
-import { resolveSessionAuthoringFieldControl, type SessionAuthoringControlFacts, type SessionAuthoringFieldControlModel, type SessionAuthoringFieldId } from './sessionAuthoringFieldControls';
+import { resolveSessionAuthoringAgentId, resolveSessionAuthoringFieldControl, type SessionAuthoringControlFacts, type SessionAuthoringFieldControlModel, type SessionAuthoringFieldId } from './sessionAuthoringFieldControls';
 
 /** Each target carries its own published catalogs, resolved for the effective Agent. */
 export type CrossSessionAuthoringControlTarget = Readonly<{
@@ -57,7 +57,12 @@ export function resolveCrossSessionAuthoringFieldControl(params: Readonly<{
         }
     }
     const models = targets.map(target => resolveSessionAuthoringFieldControl({
-        field, agentId: target.agentId, controls: target.controls,
+        field,
+        // Capability edits run after the staged Agent transition.
+        agentId: field === 'capabilitySelection' && selection.agentTarget !== undefined
+            ? resolveSessionAuthoringAgentId({ agentTarget: selection.agentTarget, facts: target.facts })
+            : target.agentId,
+        controls: target.controls,
         facts: field === 'capabilitySelection' ? withSessionMcpScope(target) : target.facts,
         values: { ...target.values, ...selection,
             ...(selection.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: {
