@@ -5,12 +5,14 @@ import { mcpPluginServerProjectionKeyV1 } from '@happier-dev/protocol/mcp/server
 import { mcpPluginItemIdV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import { PluginSettingsContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/settings';
 
+import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
 import { mapV2EditableSettingsGroup } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 
 import { projectInstalledPluginSetup } from './installedPluginSetup';
+import { installedPluginSetupDismissals, skipInstalledPluginSetupStep } from './installedPluginSetupDismissals';
 
 describe('installed plugin setup', () => {
-    it('keeps only unmet steps published by the four setup owners', () => {
+    it('counts configured and saved skipped steps without dismissing another Account or Machine’s setup', () => {
         const pluginId = 'example.setup';
         const service = { pluginId, localId: 'account' };
         const server = { pluginId, localId: 'remote' };
@@ -61,17 +63,50 @@ describe('installed plugin setup', () => {
                 ref: { ...ref, pluginId: 'example.other' }, status: 'drifted', steps: [],
             }],
         });
-        const input = { pluginId, projection, machineSetup, connections: { groups: [], profiles: [] }, settings };
-        expect(projectInstalledPluginSetup(input)).toEqual([
+        const input = { pluginId, projection, machineId: 'machine-a', machineSetup, connections: { groups: [], profiles: [] }, settings };
+        const pending = projectInstalledPluginSetup(input);
+        expect(pending.progress).toEqual({ done: 0, total: 5 });
+        expect(pending.rows).toMatchObject([
             { kind: 'connectedAccount', service, title: null },
             { kind: 'mcpSignIn', serverId: mcpPluginItemIdV1(server), title: 'Remote tools' },
             { kind: 'setting', fieldId: 'workspace', title: 'Workspace' },
             { kind: 'secret', fieldId: 'token', title: 'Token' },
             { kind: 'machineRecipe', ref, title: null },
         ]);
+        const scopeKey = serverAccountScopedResourceKey({ serverId: 'home-a', accountId: 'account-a' }, pluginId);
+        const otherAccountKey = serverAccountScopedResourceKey({ serverId: 'home-a', accountId: 'account-b' }, pluginId);
+        try {
+            const mcpStep = pending.rows[1].id;
+            const machineStep = pending.rows[4].id;
+            skipInstalledPluginSetupStep(scopeKey, mcpStep);
+            skipInstalledPluginSetupStep(scopeKey, machineStep);
+            skipInstalledPluginSetupStep(scopeKey, mcpStep);
+            // Admission reads the backing device record, independently of the owner’s in-memory observation.
+            const persisted = installedPluginSetupDismissals.readStrict(scopeKey, value => {
+                if (!Array.isArray(value)) throw new TypeError('Expected saved step IDs');
+                return value;
+            });
+            expect(persisted).toEqual([mcpStep, machineStep]);
+            const skipped = projectInstalledPluginSetup({
+                ...input,
+                skippedStepIds: installedPluginSetupDismissals.read(scopeKey),
+                settings: settings.map(entry => entry.field.key === 'workspace' ? { ...entry, status: 'configured' as const } : entry),
+            });
+            expect(skipped.progress).toEqual({ done: 3, total: 5 });
+            expect(skipped.steps.map(step => step.status)).toEqual(['pending', 'skipped', 'done', 'pending', 'skipped']);
+            expect(skipped.rows.map(row => row.kind)).toEqual(['connectedAccount', 'secret']);
+            expect(projectInstalledPluginSetup({
+                ...input, machineId: 'machine-b', skippedStepIds: installedPluginSetupDismissals.read(scopeKey),
+            }).progress).toEqual({ done: 1, total: 5 });
+            expect(projectInstalledPluginSetup({
+                ...input, skippedStepIds: installedPluginSetupDismissals.read(otherAccountKey),
+            }).progress).toEqual({ done: 0, total: 5 });
+        } finally {
+            installedPluginSetupDismissals.remove(scopeKey);
+        }
         expect(projectInstalledPluginSetup({
             ...input, connections: null, machineSetup: null,
             settings: settings.map(entry => ({ ...entry, status: 'unknown' })),
-        })).toEqual([]);
+        })).toEqual({ rows: [], steps: [], progress: { done: 0, total: 0 } });
     });
 });

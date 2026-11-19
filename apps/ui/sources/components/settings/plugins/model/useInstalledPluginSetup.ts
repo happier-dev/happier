@@ -5,12 +5,14 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { mcpServerRoute } from '@/components/settings/mcpServers/collection/mcpServerCollectionModel';
-import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { usePersistentUiStateValue } from '@/sync/domains/state/persistentUiState';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { useActiveServerAccountScopeLifetime, useMachineField, useProfile } from '@/sync/store/hooks';
 
 import { projectInstalledPluginSetup, type InstalledPluginSetupRow, type PluginSettingSetupObservation } from './installedPluginSetup';
+import { installedPluginSetupDismissals, skipInstalledPluginSetupStep } from './installedPluginSetupDismissals';
 import { buildPluginDetailRoute, type PluginsSurfaceHost } from './pluginsSurfaceRoutes';
 
 const NO_SETTING_OBSERVATIONS: readonly PluginSettingSetupObservation[] = [];
@@ -43,13 +45,23 @@ export function useInstalledPluginSetup(input: Readonly<{
     const machineSetup = useMachineField(machineId ?? '', 'daemonState', 'setup', {
         enabled: installed && machineId !== null && serverId !== null, serverId,
     });
-    const rows = React.useMemo(() => installed ? projectInstalledPluginSetup({
+    const dismissalKey = canUseAccountFacts ? serverAccountScopedResourceKey(lifetime.scope, pluginId) : null;
+    const skippedStepIds = usePersistentUiStateValue(installedPluginSetupDismissals, dismissalKey);
+    const setup = React.useMemo(() => installed ? projectInstalledPluginSetup({
         pluginId,
         projection,
         connections: profiles && groups ? { profiles, groups } : null,
         settings,
+        machineId,
         machineSetup,
-    }) : [], [installed, groups, profiles, pluginId, projection, settings, machineSetup]);
+        skippedStepIds,
+    }) : { rows: [], steps: [], progress: { done: 0, total: 0 } }, [
+        installed, groups, profiles, pluginId, projection, settings, machineId, machineSetup, skippedStepIds,
+    ]);
+    const skip = React.useCallback((row: InstalledPluginSetupRow) => {
+        if (dismissalKey === null || lifetime?.isCurrent() !== true) return;
+        skipInstalledPluginSetupStep(dismissalKey, row.id);
+    }, [dismissalKey, lifetime]);
     const open = React.useCallback(async (row: InstalledPluginSetupRow) => {
         if (lifetime?.isCurrent() !== true) return;
         switch (row.kind) {
@@ -69,5 +81,5 @@ export function useInstalledPluginSetup(input: Readonly<{
                 }) as never);
         }
     }, [canUseAccountFacts, lifetime, router, host, pluginId, machineId, serverId]);
-    return { rows, open } as const;
+    return { ...setup, open, skip: dismissalKey === null ? null : skip } as const;
 }
