@@ -4031,14 +4031,15 @@ describe('ConnectedAccountSetupController real ownership', () => {
     });
 
     it.each([
-        { outcome: 'declined', poolCount: 1 },
-        { outcome: 'revoked', poolCount: 1 },
-        { outcome: 'conflict', poolCount: 1 },
-        { outcome: 'revoked', poolCount: 2 },
-        { outcome: 'declined', poolCount: 2 },
-        { outcome: 'revoked', poolCount: 0 },
-        { outcome: 'declined', poolCount: 0 },
-    ] as const)('cleans only the exact account group references after explicit confirmation ($outcome, $poolCount loaded pools)', async ({ outcome, poolCount }) => {
+        { outcome: 'declined', poolCount: 1, fromOverflow: false },
+        { outcome: 'revoked', poolCount: 1, fromOverflow: false },
+        { outcome: 'conflict', poolCount: 1, fromOverflow: false },
+        { outcome: 'revoked', poolCount: 2, fromOverflow: false },
+        { outcome: 'declined', poolCount: 2, fromOverflow: false },
+        { outcome: 'revoked', poolCount: 0, fromOverflow: false },
+        { outcome: 'declined', poolCount: 0, fromOverflow: false },
+        { outcome: 'declined', poolCount: 0, fromOverflow: true },
+    ] as const)('settles exact account removal after confirmation ($outcome, $poolCount loaded pools, overflow: $fromOverflow)', async ({ outcome, poolCount, fromOverflow }) => {
         const targetAccount: QualifiedConnectedAccountProfileV4 = {
             ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual',
             revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: null, scopes: [], displayName: 'Work account',
@@ -4090,7 +4091,13 @@ describe('ConnectedAccountSetupController real ownership', () => {
         const screen = await focusedScreen(true);
         await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:disconnect')).not.toBeNull());
         if (poolCount > 0) expect(screen.findByTestId('qualified-account-detail:action:leave-pool:work-pool')).not.toBeNull();
-        await screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
+        if (fromOverflow) {
+            await screen.pressByTestIdAsync('qualified-account-detail:more');
+            await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:menu:disconnect')).not.toBeNull());
+            await screen.pressByTestIdAsync('qualified-account-detail:menu:disconnect');
+        } else {
+            await screen.pressByTestIdAsync('qualified-account-detail:action:disconnect');
+        }
         await vi.waitFor(() => expect(platform.confirm).toHaveBeenCalledOnce());
         expect(platform.confirm).toHaveBeenCalledWith(
             'connectedServicesSettings.detailRemoveAccount',

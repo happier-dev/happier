@@ -117,9 +117,7 @@ it('offers the connection test once, in Sign-in, with its unsupported reason', a
     expect(row?.props.subtitle).toBe('This service does not offer a connection test.');
 });
 
-// DESIGN-ACCEPT-1115 §5: every action is said once. The page owns Rename (pencil), Test connection, Sign in
-// again and Remove; the overflow holds only what the page doesn't show.
-it('says each account action once: the overflow holds only what the page does not show', async () => {
+it('keeps rename, connection testing and sign-in on the connected account page', async () => {
     const screen = await renderDetail({
         status: 'connected',
         providerAccountId: 'acct_123',
@@ -130,7 +128,7 @@ it('says each account action once: the overflow holds only what the page does no
     });
     const ids = screen.root.findAllByType(DropdownMenu).flatMap((menu) => (menu.props.items as { id: string }[]).map((item) => item.id));
     expect(ids).toContain('copy-account-id');
-    for (const onPage of ['rename', 'test-connection', 'reconnect', 'disconnect']) expect(ids).not.toContain(onPage);
+    for (const onPage of ['rename', 'test-connection', 'reconnect']) expect(ids).not.toContain(onPage);
     expect(screen.findByTestId('qualified-account-detail:action:edit-label')).toBeTruthy();
     expect(screen.findByTestId('qualified-account-detail:action:test-connection')).toBeTruthy();
     expect(screen.findByTestId('qualified-account-detail:action:reconnect')).toBeTruthy();

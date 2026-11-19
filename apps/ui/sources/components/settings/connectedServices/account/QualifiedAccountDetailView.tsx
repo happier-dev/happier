@@ -282,6 +282,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
     const connectionTestTitle = t('connectedServicesSettings.testConnection');
     // A key has no sign-in (lab `muse-accounts` A1): Replace lives with the key and the page ends with "Remove key".
     const isKey = props.accessMode?.kind === 'apiKey';
+    const disconnectTitle = isKey ? t('connectedServicesSettings.detailRemoveKey') : t('connectedServicesSettings.detailRemoveAccount');
     const hasSignInRow = Boolean(onReconnect || props.authenticationModeTitle || props.signInFlow);
     const signInFlow = props.signInFlow ? <SectionContentRow>
         <SurfaceFreshnessOnSheetProvider>{props.signInFlow}</SurfaceFreshnessOnSheetProvider>
@@ -403,9 +404,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                         triggerTestID={`${testID}:more`}
                         accessibilityLabel={t('connectedServicesPool.moreActions')}
                         onOpenChange={onMenuOpenChange}
-                        // Rare actions only: Rename, Sign in again, Test connection and Remove each have their place on
-                        // the page, so the menu never repeats them (DESIGN-ACCEPT-1115 §5). A key has no Sign-in
-                        // section, so its connection test lives here.
+                        // A key has no Sign-in section, so its connection test lives here.
                         actions={[
                             ...(providerAccount ? [{ id: 'copy-account-id', title: t('connectedServicesSettings.detailCopyAccountId'), onSelect: () => copyProviderAccountId(providerAccount) }] : []),
                             ...(isKey ? [{ id: 'test-connection', title: connectionTestTitle,
@@ -413,6 +412,10 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                                 subtitle: connectionTestUnavailable ?? connectionTest?.message,
                                 onSelect: () => connectionTest?.run() }] : []),
                             ...(share && compact ? [{ id: 'share', testID: `${testID}:share`, title: t('secretsSettings.share'), onSelect: (intent?: PageHeaderMenuIntent) => share(intent?.anchor) }] : []),
+                            ...(onDisconnect ? [{
+                                id: 'disconnect', testID: `${testID}:menu:disconnect`, title: disconnectTitle,
+                                destructive: true, loading: disconnectPending, onSelect: handleDisconnect,
+                            }] : []),
                         ]}
                     />
                 </View>}
@@ -552,7 +555,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                             testID={`${testID}:action:disconnect`}
                             size="small"
                             display="destructive"
-                            title={isKey ? t('connectedServicesSettings.detailRemoveKey') : t('connectedServicesSettings.detailRemoveAccount')}
+                            title={disconnectTitle}
                             loading={disconnectPending}
                             onPress={handleDisconnect}
                         />
