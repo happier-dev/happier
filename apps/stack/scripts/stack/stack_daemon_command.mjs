@@ -261,6 +261,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
           runtimeStatePath: runtimePath,
           isShuttingDown: () => false,
           forceRestart: action === 'restart' || Boolean(sourceRuntimeLaunchUpdate),
+          includeStatus: true,
           env: envForIdentity,
           stackName,
           cliIdentity: identity,
@@ -280,20 +281,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
           };
         }
 
-        const status = await daemonStatusSummary({
-          cliBin,
-          cliEntrypoint,
-          cliNodeEntrypoint,
-          cliCommand,
-          cliCommandArgs,
-          cliHomeDir,
-          internalServerUrl,
-          publicServerUrl,
-          env: envForIdentity,
-          stackName,
-          cliIdentity: identity,
-        });
-        return { ok: true, action, cliIdentity: identity, cliHomeDir, status: status.trim(),
+        return { ok: true, action, cliIdentity: identity, cliHomeDir, status: startResult.status?.trim() ?? '',
           ...(startResult?.started === false ? { started: false, reason: startResult.reason } : {}) };
       }
 

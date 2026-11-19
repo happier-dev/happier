@@ -1976,6 +1976,7 @@ export async function startLocalDaemonWithAuth({
   isShuttingDown,
   forceRestart = false,
   preserveExistingRunning = false,
+  includeStatus = false,
   env = process.env,
   stackName = null,
   cliIdentity = 'default',
@@ -2224,7 +2225,7 @@ export async function startLocalDaemonWithAuth({
   });
   const daemonLifecycleLockPollMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_DAEMON_LIFECYCLE_LOCK_POLL_MS, 125);
 
-  return await withStackDaemonLifecycleLock(
+  const startResult = await withStackDaemonLifecycleLock(
     { cliHomeDir, internalServerUrl, stackName: resolvedStackName },
     async () => {
   // An explicit stop can arrive while preparation or lock admission is pending.
@@ -3038,10 +3039,12 @@ export async function startLocalDaemonWithAuth({
     }
   }
 
-  // Confirm daemon status (best-effort)
+  // Callers requesting a summary capture it once after releasing the lifecycle lock.
   try {
     await syncRuntimeDaemonState({ daemonDistFingerprint: currentDistFingerprint });
-    await run(daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'status'], { env: daemonEnv, stdio: 'ignore' });
+    if (!includeStatus) {
+      await run(daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'status'], { env: daemonEnv, stdio: 'ignore' });
+    }
   } catch {
     // ignore
   }
@@ -3052,6 +3055,11 @@ export async function startLocalDaemonWithAuth({
       pollIntervalMs: daemonLifecycleLockPollMs,
     },
   );
+  if (includeStatus && startResult.ok !== false) {
+    const status = await runCapture(daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'status'], { env: daemonEnv });
+    return { ...startResult, status };
+  }
+  return startResult;
   };
 
   return await runDaemonLifecycleWithResolvedCommand();

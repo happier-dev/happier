@@ -492,6 +492,32 @@ test('hstack stack daemon start, restart and stop retire only the selected ident
   assert.doesNotThrow(() => process.kill(replacementDefaultPid, 0), 'named stop must preserve the default daemon');
 });
 
+test('named daemon start reports status through the retained source entry instead of checkout dist', async (t) => {
+  const fixture = await createStackHappierCliCommandFixture(t, {
+    prefix: 'hstack-named-source-status-',
+    distIndexScript: 'throw Object.assign(new Error("stale checkout dist was used"), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });\n',
+  });
+  const identity = 'account-b';
+  const identityHome = join(fixture.storageDir, fixture.stackName, 'cli-identities', identity);
+  await writeDummyAuth({ cliHomeDir: identityHome });
+  registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName, identity });
+  const cliDir = fixture.path('retained source');
+  const entrypoint = join(cliDir, 'happier.mjs');
+  await mkdir(cliDir);
+  await writeFile(entrypoint, buildStubHappyCliScript());
+  await recordStackRuntimeStart(join(fixture.storageDir, fixture.stackName, 'stack.runtime.json'), {
+    stackName: fixture.stackName, ownerPid: process.pid,
+    sourceRuntimeLaunch: { entrypoint, cliDir, env: {} },
+  });
+
+  const result = await runHstack(['stack', 'daemon', fixture.stackName, 'start', '--source',
+    `--identity=${identity}`, '--json'], { env: fixture.baseEnv });
+
+  assert.match(await readLogText(join(identityHome, 'stub-daemon.log')), /^start$/m);
+  assertExitOk(result, 'named daemon start using the retained CLI');
+  assert.match(result.stdout, /"status":\s*"daemon: running"/);
+});
+
 test('hstack stack daemon <name> start/stop with --identity uses an isolated cli home dir', async (t) => {
   const fixture = await createDaemonFixture(t, {
     prefix: 'happy-stacks-stack-daemon-identity-',
