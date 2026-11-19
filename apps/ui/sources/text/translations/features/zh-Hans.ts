@@ -396,7 +396,7 @@ const deploymentMoveTranslations = {
     "destination": "目标",
     "run": "启动迁移工作流"
   },
-} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "zh-Hans">;
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'service' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "zh-Hans">;
 
 return { deploymentMoveTranslations };
 })();

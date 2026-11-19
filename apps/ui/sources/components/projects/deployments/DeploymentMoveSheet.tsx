@@ -119,7 +119,7 @@ export function DeploymentMoveSheet(props: DeploymentMoveSheetInput & CustomModa
                     testID="project-deployments.move.service" open={serviceMenuOpen} onOpenChange={setServiceMenuOpen}
                     items={source.services.map(service => ({ id: service, title: service }))}
                     selectedId={primaryService ?? undefined} onSelect={setPrimaryService}
-                    itemTrigger={{ title: t('projects.setup.service'), itemProps: { disabled: busy } }} /> : null}
+                    itemTrigger={{ title: t('projects.deployments.move.service'), itemProps: { disabled: busy } }} /> : null}
                 {/* The link's own Machines, then the ones it can move to, both in New Session's Machine picker. */}
                 <SessionMachineField testID="project-deployments.move.source" serverId={lifetime.scope.serverId}
                     machines={members} machineId={sourceId} machineName={sourceId ? name(sourceId) : null}

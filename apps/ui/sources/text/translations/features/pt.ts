@@ -404,7 +404,7 @@ const deploymentMoveTranslations = {
     "destination": "Para",
     "run": "Iniciar fluxo de mudança"
   },
-} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "pt">;
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'service' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "pt">;
 
 return { deploymentMoveTranslations };
 })();

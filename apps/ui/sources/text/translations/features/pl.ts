@@ -401,7 +401,7 @@ const deploymentMoveTranslations = {
     "destination": "Do",
     "run": "Uruchom przepływ przenoszenia"
   },
-} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "pl">;
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'service' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "pl">;
 
 return { deploymentMoveTranslations };
 })();

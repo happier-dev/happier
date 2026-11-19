@@ -403,7 +403,7 @@ const deploymentMoveTranslations = {
     "destination": "Куда",
     "run": "Запустить процесс переноса"
   },
-} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "ru">;
+} as const satisfies Pick<Record<deploymentMoveTranslations__SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'service' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'noConnectedServices' | 'stopped', string>>>, "ru">;
 
 return { deploymentMoveTranslations };
 })();
