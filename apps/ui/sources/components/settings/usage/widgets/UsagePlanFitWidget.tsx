@@ -17,7 +17,7 @@ import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFo
 import { projectProviderAccountSubscriptionMonetaryFacts } from '@happier-dev/protocol/connect/accountSubscription';
 import type { UsagePlanInsights } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { UsageBodyInsufficient, UsageBodyReading, usageDimensionLabel, type UsageBodyProps } from './usageBodyKit';
-import { summarizeUsagePlanFit, type UsagePlanAccount } from './plans/usagePlansModel';
+import { summarizeUsagePlanFit, type UsagePlanAccount, type UsagePlanFit } from './plans/usagePlansModel';
 import { readUsagePersonalPaceTarget } from './plans/usagePacingTarget';
 import { UsageBillingButton, UsageSubscriptionPriceEditor } from './plans/UsagePlanActions';
 import {
@@ -95,8 +95,10 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
   const nothingYet = drawn.length > 1 && drawn.every((account) => readPlanKeyFact(account, insightsOf(account), nowMs) === null
     && summarizeUsagePlanFit(account, target).observed === 0 && !isPlanRenewalKnown(account));
   // The one line names why there is nothing to compare: ended windows not loaded or unavailable, else none ended yet.
-  const nothingYetReason = nothingYet ? drawn.map((account) => summarizeUsagePlanFit(account, target).reason)
-    .find((reason) => reason !== 'none_ended') ?? 'none_ended' : null;
+  const sharedFitReason = nothingYet
+    ? drawn.map((account) => summarizeUsagePlanFit(account, target).reason)
+      .find((reason) => reason !== 'none_ended') ?? 'none_ended'
+    : noneEndedOnce ? 'none_ended' : null;
   const planFitGaps = readPlanFitGaps(props.slice.planInsights);
   // A gap more readings cure is one quiet promise; attribution says what it needs.
   const caveats = [noPriceOnce ? t('usage.board.plans.planNoPriceAll') : null,
@@ -118,7 +120,7 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
             onSettled={props.model.refresh}
             insights={insightsOf(account)}
             noPriceSaidOnce={noPriceOnce}
-            noneEndedSaidOnce={noneEndedOnce || nothingYet}
+            sharedFitReason={sharedFitReason}
             testID={`${props.testID}.plan.${account.accountId}`}
           />
         ))}
@@ -136,8 +138,8 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
     return (
       <View style={styles.body} testID={`${props.testID}.planFit`}>
         <UsageBodyInsufficient testID={`${props.testID}.nothingYet`} replacesContent={false}
-          title={t(nothingYetReason === 'not_loaded' ? 'usage.board.plans.pastCyclesNotLoaded'
-            : nothingYetReason === 'unavailable' ? 'usage.board.plans.pastCyclesUnavailable' : 'usage.board.plans.fitNoneEndedOnce')}
+          title={t(sharedFitReason === 'not_loaded' ? 'usage.board.plans.pastCyclesNotLoaded'
+            : sharedFitReason === 'unavailable' ? 'usage.board.plans.pastCyclesUnavailable' : 'usage.board.plans.fitNoneEndedOnce')}
           reason={t('usage.board.plans.fitNoneEndedReason')} />
         <UsagePlanDisclosure testID={`${props.testID}.plans`} title={t('usage.board.plans.fitPlans', { count: drawn.length })}>
           {planRows}
@@ -195,8 +197,8 @@ function PlanRow(
     insights?: UsagePlanInsights['accounts'][number];
     /** Every row lacks a price and the list says so once; the row stays quiet about it. */
     noPriceSaidOnce?: boolean;
-    /** Several rows have no ended window yet and the list says so once; the row stays quiet about it. */
-    noneEndedSaidOnce?: boolean;
+    /** The shared history message covers rows with this same reason. */
+    sharedFitReason: UsagePlanFit['reason'];
   }>,
 ) {
   const { account, nowMs } = props;
@@ -307,7 +309,7 @@ function PlanRow(
     keyFact === null && !props.noPriceSaidOnce ? t('usage.board.plans.planNoPriceShort') : null,
     renewalKnown ? periodText : null,
     verdict ? fitWindow : null,
-    verdict ?? (props.noneEndedSaidOnce ? null : fitText),
+    verdict ?? (fit.reason === props.sharedFitReason ? null : fitText),
   ].filter(Boolean).join(' · ');
   const figureNode = hiddenFigure && exactFigure ? <ChartDatum testID={`${props.testID}.figure`}
     datum={{ keyboard: false, label: props.name.title, value: exactFigure, subtitle: [priceText, periodText, fitText].join(' · ') }}>{figure}</ChartDatum> : figure;

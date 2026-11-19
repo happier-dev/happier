@@ -460,6 +460,25 @@ it('shows unloaded PlanFit history on the visible row beside an unread account',
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.fitNoneEnded'));
 });
 
+it('keeps unloaded PlanFit history visible beside a shared no-ended-windows message', async () => {
+  const now = Date.now();
+  const weekly = { meterId: 'weekly', label: 'Weekly', usedPct: 30, resetAtMs: now + DAY, windowDurationMs: 7 * DAY };
+  const emptyHistory = { historyStatus: 'returned_page', windows: [] };
+  const first = quotaRead('first', now, [weekly], { unusedCapacity: emptyHistory });
+  const second = quotaRead('second', now, [weekly], { unusedCapacity: emptyHistory });
+  const priced = quotaRead('priced', now, [weekly], { unusedCapacity: { historyStatus: 'not_loaded', windows: [] } }, {
+    subscription: { status: 'unavailable', renewal: 'unknown', observedAtMs: now, staleAfterMs: HOUR,
+      enteredMonthlyPrice: { amount: 20, currency: 'USD', enteredAtMs: now } },
+  });
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const screen = await renderPlanAccessibility(<UsagePlanFitWidget {...bodyProps([first, second, priced])} id="usage_plan_fit" testID="fit" />);
+
+  expect(screen.getTextContent()).toContain(t('usage.board.plans.fitNoneEndedOnce'));
+  expect(screen.findHostByTestId('fit.plan.first.fit.insufficient')!.props.children).not.toContain(t('usage.board.plans.fitNoneEnded'));
+  expect(screen.findHostByTestId('fit.plan.second.fit.insufficient')!.props.children).not.toContain(t('usage.board.plans.fitNoneEnded'));
+  expect(screen.findHostByTestId('fit.plan.priced.fit.insufficient')!.props.children).toContain(t('usage.board.plans.pastCyclesNotLoaded'));
+});
+
 it('says once that no plan has anything to compare yet, and keeps every plan one press away (acceptance 11-18 #7)', async () => {
   const now = Date.now();
   const reads = ['first', 'second'].map(id => quotaRead(id, now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,
