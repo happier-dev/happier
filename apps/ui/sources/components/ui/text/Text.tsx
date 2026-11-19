@@ -19,6 +19,7 @@ import {
 import { resolveThemeDefaultFontFamily, Typography } from '@/constants/Typography';
 import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
 import { useGlassBackedInk } from '@/components/ui/glass/glassBackedInk';
+import { settleStepMotionOnNativeInput } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -154,7 +155,7 @@ const AppTextInput = React.forwardRef<any, AppTextInputProps>(
         const uiFontScaleSetting = useLocalSetting('uiFontScale');
         const paintColor = useHappierMaterialColorResolver();
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
-        const { accessibilityLabel, testID, placeholderTextColor, ...restProps } = props;
+        const { accessibilityLabel, testID, placeholderTextColor, onChangeText, ...restProps } = props;
         // A placeholder is read (WCAG AA), so every field draws it in the theme's placeholder ink unless it names its own.
         // Web reads it from the custom property the shared `::placeholder` rule takes (theme.css); native from the prop.
         const { theme } = useUnistyles();
@@ -195,6 +196,10 @@ const AppTextInput = React.forwardRef<any, AppTextInputProps>(
         const webAccessibilityProps = Platform.OS === 'web'
             ? { ...HAPPIER_TEXT_INPUT_WEB_MARKER, dataSet: { ...HAPPIER_TEXT_INPUT_WEB_MARKER.dataSet, ...props.dataSet }, ...(disableUiFontScaling ? WEB_FONT_SCALING_DISABLED_PROPS : null) }
             : {};
+        const changeText = React.useCallback((text: string) => {
+            settleStepMotionOnNativeInput();
+            onChangeText?.(text);
+        }, [onChangeText]);
 
         return (
             <RNTextInput
@@ -202,6 +207,7 @@ const AppTextInput = React.forwardRef<any, AppTextInputProps>(
                 style={mergedStyle}
                 accessibilityLabel={accessibilityLabel}
                 testID={testID}
+                onChangeText={Platform.OS === 'web' ? onChangeText : changeText}
                 placeholderTextColor={placeholderInk}
                 {...restProps}
                 {...webAccessibilityProps}

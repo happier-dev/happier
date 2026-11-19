@@ -24,38 +24,29 @@ export async function freezeStepLayer(
     return {
         rect,
         image,
-        get ink() { return sampleRegion(image, rect, grid); },
+        get ink() {
+            try { return sampleRegion(image, rect, grid); }
+            catch { return undefined; }
+        },
         release: () => image.dispose(),
     };
 }
 
 function sampleRegion(image: SkImage, rect: StepFreeze['rect'], grid: StepGrid) {
     const [cellWidth, cellHeight] = grid.cell;
-    const left = Math.floor(rect.x / cellWidth);
-    const top = Math.floor(rect.y / cellHeight);
-    const width = Math.ceil((rect.x + rect.width) / cellWidth) - left;
-    const height = Math.ceil((rect.y + rect.height) / cellHeight) - top;
+    const { cols: width, rows: height } = grid;
     const surface = Skia.Surface.Make(width, height);
     if (!surface) return undefined;
     try {
         surface.getCanvas().drawImageRectOptions(image,
             Skia.XYWHRect(0, 0, image.width(), image.height()),
-            Skia.XYWHRect(rect.x / cellWidth - left, rect.y / cellHeight - top,
+            Skia.XYWHRect(rect.x / cellWidth, rect.y / cellHeight,
                 rect.width / cellWidth, rect.height / cellHeight),
             FilterMode.Linear, MipmapMode.None);
         const small = surface.makeImageSnapshot();
         try {
             const pixels = small.readPixels(0, 0, { width, height, colorType: ColorType.RGBA_8888, alphaType: AlphaType.Unpremul });
-            if (!(pixels instanceof Uint8Array)) return undefined;
-            const rgba = new Uint8Array(grid.cols * grid.rows * 4);
-            for (let row = Math.max(0, -top); row < Math.min(height, grid.rows - top); row++) {
-                const start = Math.max(0, -left);
-                const end = Math.min(width, grid.cols - left);
-                if (start >= end) continue;
-                rgba.set(pixels.subarray((row * width + start) * 4, (row * width + end) * 4),
-                    ((row + top) * grid.cols + left + start) * 4);
-            }
-            return { rgba, cols: grid.cols, rows: grid.rows };
+            return pixels instanceof Uint8Array ? { rgba: pixels, cols: width, rows: height } : undefined;
         } finally {
             small.dispose();
         }

@@ -4,7 +4,7 @@ import { Animated, Easing, Platform, View, type GestureResponderEvent, type Styl
 import { restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 
 import { motionTokens } from '../motionTokens';
-import { readNativeStepAnchor } from './capturePressedElement.native';
+import { findNativeStepAnchor, readNativeStepAnchor } from './capturePressedElement.native';
 import { findWebStepAnchor } from './capturePressedElement.web';
 import { useStepMotionStage } from './StepMotionStage';
 import type { StepMotionLayerHandle } from './stepMotionTypes';
@@ -16,6 +16,9 @@ export type StepMotionLayerProps = React.PropsWithChildren<Readonly<{
     compact?: boolean;
     testID?: string;
     backTestID?: string;
+    retainContent?: boolean;
+    warmOnMount?: boolean;
+    notice?: boolean;
     style?: StyleProp<ViewStyle>;
 }>>;
 
@@ -30,16 +33,18 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
         if (Platform.OS === 'web' && typeof HTMLElement !== 'undefined' && root.current instanceof HTMLElement) return root.current;
         return null;
     }, []);
-    const { layerKey, backTestID, compact = false } = props;
+    const { layerKey, backTestID, compact = false, notice = false, warmOnMount = !notice } = props;
     const layer = React.useMemo<StepMotionLayerHandle>(() => ({
         key: layerKey,
         backTestID,
         compact,
+        warmOnMount,
+        notice,
         webElement,
         nativeElement: () => root.current,
         focal(returnTo) {
             const web = webElement();
-            const preferred = web && returnTo ? findWebStepAnchor(web, returnTo) : null;
+            const preferred = returnTo ? web ? findWebStepAnchor(web, returnTo) : findNativeStepAnchor(root.current, returnTo) : null;
             return preferred ?? focal.current ?? heading.current ?? web?.querySelector<HTMLElement>('[role="heading"], h1, h2');
         },
         focus(returnTo) {
@@ -80,13 +85,14 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
             animation.start(({ finished }) => { if (finished) onSettled(); });
             return () => { animation.stop(); fadeOpacity.setValue(1); };
         },
-    }), [layerKey, backTestID, compact, fadeOpacity, webElement]);
+    }), [layerKey, backTestID, compact, fadeOpacity, notice, warmOnMount, webElement]);
     const focals = React.useMemo(() => ({ heading, focal }), []);
     React.useLayoutEffect(() => stage?.attach(layer), [stage, layer]);
     React.useLayoutEffect(() => { stage?.commit(layer); }, [stage, layer, props.stepKey]);
     const onTouchStart = React.useCallback((event: GestureResponderEvent) => {
         if (root.current) stage?.nativeInput(readNativeStepAnchor(event, root.current), backTestID);
     }, [stage, backTestID]);
+    const contentKey = props.retainContent ? undefined : props.stepKey;
     return (
         <Animated.View
             ref={root}
@@ -97,8 +103,8 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
         >
             <StepFocalContext.Provider value={focals}>
                 {Platform.OS === 'web'
-                    ? <React.Fragment key={props.stepKey}>{props.children}</React.Fragment>
-                    : <View key={props.stepKey} style={{ flexGrow: 1 }} onLayout={() => stage?.laidOut?.(layer)}>{props.children}</View>}
+                    ? <React.Fragment key={contentKey}>{props.children}</React.Fragment>
+                    : <View key={contentKey} style={{ flexGrow: 1 }} onLayout={() => stage?.laidOut?.(layer)}>{props.children}</View>}
             </StepFocalContext.Provider>
         </Animated.View>
     );

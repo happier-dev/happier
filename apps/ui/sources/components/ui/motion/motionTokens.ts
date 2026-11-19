@@ -1,10 +1,11 @@
 import { HAPPIER_MOTION_V1, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 import { Easing } from 'react-native';
 import { gestureTokens } from './gestureTokens';
+import { stepMotionTiming } from './stepMotion/stepMotionChoreography';
 
 export const motionTokens = {
     gesture: gestureTokens,
-    stepMotion: { noticeCrossFadeMs: 200 },
+    stepMotion: stepMotionTiming,
     durationMs: {
         instant: 0,
         /** Press acknowledgement: fast enough to feel immediate under the finger. */

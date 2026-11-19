@@ -24,12 +24,15 @@ export type StepBuild = Readonly<{
 export type StepBuildResult = 'settled' | 'skipped';
 
 export type StepGrid = Readonly<{ width: number; height: number; cols: number; rows: number; cell: readonly [number, number] }>;
+export type StepWebLeaf = Readonly<{ element: HTMLElement; rect: WindowFlightRect }>;
 export type StepFreeze = Readonly<{
     rect: WindowFlightRect;
     clone?: HTMLElement;
     image?: SkImage;
     ink?: GlyphInkMap;
     control?: HTMLElement | null;
+    webLeaves?: readonly StepWebLeaf[];
+    webFocal?: HTMLElement;
     release: () => void;
 }>;
 
@@ -37,6 +40,8 @@ export type StepMotionLayerHandle = Readonly<{
     key: string;
     backTestID?: string;
     compact: boolean;
+    warmOnMount: boolean;
+    notice: boolean;
     webElement: () => HTMLElement | null;
     nativeElement: () => View | null;
     focal: (returnTo?: string) => FocusReturnTarget;
