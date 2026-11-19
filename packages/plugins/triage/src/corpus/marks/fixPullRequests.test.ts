@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getActionSpec } from '@happier-dev/plugin-sdk/actions';
 import { MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1, type TriageEntryRefV1, type TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
 
 import { CORPUS_USER_MARKS_INDEX_ID } from '../collections/ids.js';
@@ -82,20 +83,26 @@ function createTestkitCorpusCollections(options: Parameters<typeof createBaseCor
         },
     } };
     // Host targeted-operation RPC and Account Collection I/O are the boundaries.
-    const context = { services: {
+    const context = { signal: new AbortController().signal, services: {
         targetedContributions: { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [...sources, {
             contributor: { pluginId: INTERNAL_TASK_SOURCE_V1.pluginId, contributionId: INTERNAL_TASK_SOURCE_V1.localId },
             descriptor: INTERNAL_TASK_DESCRIPTOR_V1,
             operations: { readSessionLinks: internalRead, linkSession: { role: 'internalWrite' } },
         }] }), dispose: () => {} }) },
-        actions: { executeAdmittedTargetedOperation: async (_operation: unknown, input: { sessionId?: string }) => {
-            // The built-in Account task store is empty in this transport fixture.
-            if (_operation === internalRead) return { kind: 'complete', links: [] };
-            roleReads++;
-            if (role === 'failed') throw new Error('PR relation unavailable');
-            return { kind: 'complete', links: input.sessionId === 'session-a' ? [{ localRef: { kindId: 'pull-request', collisionScope: 'acme/web', entryId: 'canonical' },
-                sessionId: 'session-a', linkedAtMs: 2_000, displayPath: 'Canonical PR' }] : [] };
-        } },
+        actions: {
+            // Built-in task relations read the canonical Account Action rather than a source RPC.
+            execute: async (action: string) => {
+                if (action !== 'tasks.internal.list') throw new Error(`Unexpected host Action ${action}`);
+                return getActionSpec(action).outputSchema.parse({ status: 'ok',
+                    scope: { serverId: 'home', accountId: 'account-1' }, todos: [], undoneOrder: [], completedOrder: [] });
+            },
+            executeAdmittedTargetedOperation: async (_operation: unknown, input: { sessionId?: string }) => {
+                roleReads++;
+                if (role === 'failed') throw new Error('PR relation unavailable');
+                return { kind: 'complete', links: input.sessionId === 'session-a' ? [{ localRef: { kindId: 'pull-request', collisionScope: 'acme/web', entryId: 'canonical' },
+                    sessionId: 'session-a', linkedAtMs: 2_000, displayPath: 'Canonical PR' }] : [] };
+            },
+        },
     } } as unknown as Parameters<typeof createTriageSourceSessionRelations>[0];
     return { ...fixture, collections, relations: createTriageSourceSessionRelations(context, collections),
         counts: () => ({ configurationReads, roleReads }) };
