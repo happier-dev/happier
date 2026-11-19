@@ -428,10 +428,16 @@ it('a catalog app picked by hand stays in this dialog and Configure uses its cat
     expect(reads).toContainEqual(expect.objectContaining({ kind: 'app', sourceId: 'app', itemId: 'activepieces' }));
     expect(onClose, 'the dialog stays: Where runs inside it').not.toHaveBeenCalled();
     expect(routerMock.spies.push, 'no detour through the Store listing').not.toHaveBeenCalled();
-    // The Source row names the catalog app it deploys, never a placeholder (journey-deploy catWhere).
-    const { FieldValue } = await import('@/components/ui/lists/FieldRow');
-    const sourceValues = screen.findAllByType(FieldValue).map((node) => [node.props.value, node.props.note]);
-    expect(sourceValues).toContainEqual(['Activepieces', expect.any(String)]);
+    // Read the Source row itself so the catalog name must be visible in the summary (DESIGN-ACCEPT W1).
+    const { t } = await import('@/text');
+    await waitForHomeGovernance(() => {
+      const sourceRow = screen.findHostByTestId('newApp.deploy.summary.source');
+      expect(sourceRow).not.toBeNull();
+      const sourceText = sourceRow?.findAll(node => typeof node.type === 'string')
+        .flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+      expect(sourceText).toContain(summary.title);
+      expect(sourceText).toContain(t('newApp.deploy.catalogSourceNote'));
+    });
     await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft.continue')?.props.disabled).toBe(false));
     const readCount = reads.length;
     await screen.pressByTestIdAsync('project-deployments.draft.continue');
