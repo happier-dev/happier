@@ -366,11 +366,12 @@ export function DeploymentDomainsPanel(
 }
 
 /**
- * Where a new address points first: Compose's primary service, unless it is one of the Environment's databases; then
- * the one app among the known services. A public address never starts on a database (PAGE-ACCEPT-100 D7).
+ * Where a new address points first: the only declared stored service, or the primary app. When there is a choice,
+ * a database (including a database marked primary) still requires explicit selection.
  */
 function initialDomainService(content: EnvironmentContent, known: readonly string[]): string | null {
   const { definition } = content;
+  if (definition.kind === 'stored' && known.length === 1) return known[0]!;
   const primary = (definition.kind === 'stored' ? definition.primaryService : definition.compose?.primaryService) ?? null;
   const databases = new Set(content.template?.data?.map((data) => data.service) ?? []);
   if (primary && !databases.has(primary)) return primary;
@@ -419,7 +420,7 @@ function DomainAddForm(
     inspect?: DomainIngressInspection;
     /** The definition's selected Compose services; empty means Service is typed. */
     services: readonly string[];
-    /** The service a new address starts on (never a database); null leaves Service to the person. */
+    /** The service a new address starts on; null leaves Service to the person. */
     initialService: string | null;
     /** The Machine the Environment's own route (Caddy) serves from. */
     machine: string;
@@ -578,7 +579,7 @@ function DomainAddForm(
           <FieldItem label={t('projects.deployments.domainFieldService')} style={props.phone ? undefined : styles.routeService}>
             {props.services.length > 0 ? (
               <ValueFieldSelect testID="project-deployments.environment.domains.add.service" fill
-                label={t('projects.deployments.domainFieldService')}
+                label={t('projects.deployments.domainFieldService')} placeholder={t('common.choose')}
                 items={props.services.map(name => ({ id: name, title: name }))}
                 selectedId={service || null}
                 onSelect={changeService}

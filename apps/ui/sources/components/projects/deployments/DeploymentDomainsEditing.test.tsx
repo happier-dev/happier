@@ -600,7 +600,7 @@ describe('Environment → Domains: add form (P6)', () => {
   });
 });
 
-describe('Environment → Domains: Service never starts on the database (PAGE-ACCEPT-100 D7)', () => {
+describe('Environment → Domains: Service defaults for saved Compose and apps (PAGE-ACCEPT-100 D7, R2-D16)', () => {
   const withDatabase = (definition: Detail['content']['definition']) => {
     const base = createDeploymentEnvironmentDetailV1();
     // A real default PostgreSQL template's provenance: the database is the template's data service.
@@ -677,6 +677,23 @@ describe('Environment → Domains: Service never starts on the database (PAGE-AC
         await vi.waitFor(() => expect(select(`${id}.service`)?.props.selectedId).toBe('app'));
       });
       expect(screen.findByTestId(`${id}.port`)?.props.value).toBe('80');
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('prefills the Compose port when Add domain opens with the only service already selected', async () => {
+    const { ValueFieldSelect } = await import('@/components/ui/forms/ValueFieldSelect');
+    const detail = withDatabase({ kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`,
+      document: 'services:\n  database:\n    image: postgres:17\n    ports:\n      - target: 5432\n        host_ip: 127.0.0.1\n        protocol: tcp\n',
+      profiles: [], services: ['database'], primaryService: 'database' });
+    const { screen, controller, settle } = await renderDomains(detail, [], domainActions(detail));
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      expect(screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === `${id}.service`)?.props.selectedId)
+        .toBe('database');
+      await act(async () => {
+        await vi.waitFor(() => expect(screen.findByTestId(`${id}.port`)?.props.value).toBe('5432'));
+      });
     } finally { await screen.unmount(); controller.retire(); }
   });
 
