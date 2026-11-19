@@ -97,12 +97,13 @@ export function createAgent37PreparationClient(request: typeof fetch, signal?: A
       }
       const directory = '/tmp/.happier-preparation';
       const copies = definition.cli.files.map(file => 'COPY ' + JSON.stringify([file.path, directory + '/' + file.path]) + '\n').join('');
-      // Preserve the base USER and entrypoint. Root/passwordless sudo applies to
-      // this one build effect; no Account, pairing or daemon input is composed here.
-      const command = ['sh', '-c', 'if [ "$(id -u)" = 0 ]; then exec "$@"; else exec sudo -n -- "$@"; fi', 'happier-prepare',
-        'sh', '-c', 'set -e\nif [ -n "$1" ]; then trap \'rm -rf -- "$1"\' EXIT; cd -- "$1"; fi\nsh -c "$2"\nchmod -R a+rX /opt/happier\nsh -c "$3"\n',
+      const command = ['sh', '-c', 'set -e\nif [ -n "$1" ]; then trap \'rm -rf -- "$1"\' EXIT; cd -- "$1"; fi\nsh -c "$2"\nchmod -R a+rX /opt/happier\nsh -c "$3"\n',
         'happier-build', definition.cli.files.length ? directory : '', definition.cli.installScript, definition.setupScript ?? ''];
-      const dockerfile = 'FROM --platform=linux/amd64 ' + base.data.image_ref + '\n' + copies + 'RUN ' + JSON.stringify(command) + '\n';
+      const install = copies + 'RUN ' + JSON.stringify(command) + '\n';
+      // Run the install as root, then restore the system image's runtime user.
+      const dockerfile = 'FROM --platform=linux/amd64 ' + base.data.image_ref + '\n' + (selected.preparationBaseUser
+        ? 'USER root\n' + install + 'USER ' + selected.preparationBaseUser + '\n'
+        : install);
       const context = await createAgent37BuildContext(dockerfile, definition.cli.files);
       dispatched = true;
       const created = createdSchema.safeParse(await json(await http('/template-builds', 'POST', { name: operation.name, size_bytes: context.length })));

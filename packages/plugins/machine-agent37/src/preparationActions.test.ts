@@ -82,6 +82,7 @@ describe('Agent37 prepared templates through public Actions', () => {
       expect([...files.get('payload.tar.gz')!]).toEqual([0, 1, 2, 3]);
       const dockerfile = files.get('Dockerfile')!.toString();
       expect(dockerfile).toContain('FROM --platform=linux/amd64 ghcr.io/agent37-platform/base:2026.11.01');
+      expect(dockerfile).toMatch(/^USER root\n[\s\S]*^RUN .+\nUSER node$/m);
       expect(dockerfile).toContain(JSON.stringify(input.input.cli.installScript));
       expect(dockerfile).toContain(JSON.stringify(input.input.setupScript));
       expect(dockerfile).not.toMatch(/fixture-key|signed=temporary|daemon start|session start/);
