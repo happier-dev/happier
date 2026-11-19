@@ -4,6 +4,8 @@ import { FeaturesResponseSchema, PluginConnectedAccountDescriptorContributionV2S
 import type { ConnectedAccountReadContext, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import * as vercelVendor from '../../../../../../packages/plugins/machine-vercel/src/index';
+import * as railwayVendor from '../../../../../../packages/plugins/machine-railway/src/index';
+import * as digitalOceanVendor from '../../../../../../packages/plugins/machine-digitalocean/src/index';
 import * as cloudflareDeployment from '../../../../../../packages/plugins/deploy-cloudflare/src/index';
 import { telegramConnectedAccountRuntime } from '../../../../../../packages/plugins/channel-telegram/src/auth/connectedAccountRuntime';
 import { PLUGIN_MANIFEST as telegramManifest } from '../../../../../../packages/plugins/channel-telegram/src/plugin';
@@ -39,10 +41,10 @@ const cloudflareAccountId = 'a'.repeat(32);
 const cloudflareTokenId = 'b'.repeat(32);
 
 type ManualFixture = Readonly<{
-    provider: 'telegram' | 'discord' | 'email' | 'vercel' | 'cloudflare';
+    provider: 'telegram' | 'discord' | 'email' | 'vercel' | 'railway' | 'digitalocean' | 'cloudflare';
     manifest: typeof telegramManifest;
     runtime?: ConnectedAccountRuntime;
-    entry?: typeof vercelVendor | typeof cloudflareDeployment;
+    entry?: typeof vercelVendor | typeof railwayVendor | typeof digitalOceanVendor | typeof cloudflareDeployment;
     modeId: string;
     fields: Readonly<Record<string, string>>;
     identity: unknown;
@@ -85,6 +87,14 @@ describe('manual Connected Account production invocation', () => {
             identity: { id: 'prj_fixture', accountId: 'team_fixture', name: 'Fixture project' },
             rejection: { error: { code: 'invalid_token', message: 'fixture-credential' } },
             expectedAccountId: 'host-account', rejectionCode: 'vercel_invalid_token', expectedOrigin: 'https://api.vercel.com' },
+        { provider: 'railway', manifest: railwayVendor.manifest, entry: railwayVendor, localId: 'railway-account',
+            modeId: 'token', fields: { token: 'fixture-credential' },
+            identity: { data: { me: { id: 'fixture-user', name: 'Fixture account', email: null } } }, rejection: {},
+            expectedAccountId: 'host-account', rejectionCode: 'railway_invalid_token', expectedOrigin: 'https://backboard.railway.com' },
+        { provider: 'digitalocean', manifest: digitalOceanVendor.manifest, entry: digitalOceanVendor, localId: 'digitalocean-account',
+            modeId: 'token', fields: { token: 'fixture-credential' },
+            identity: { account: { status: 'active' } }, rejection: {},
+            expectedAccountId: 'host-account', rejectionCode: 'digitalocean_invalid_token', expectedOrigin: 'https://api.digitalocean.com' },
         { provider: 'cloudflare', manifest: cloudflareDeployment.manifest, entry: cloudflareDeployment,
             modeId: 'oauth', localId: 'cloudflare', oauth: true, fields: {},
             configuration: { clientId: 'registered-client',

@@ -1,3 +1,5 @@
+import type { ConnectedAccountPortableRuntime, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import { digitalOceanOAuthMode, digitalOceanOAuthStatus, refreshDigitalOceanOAuth, revokeDigitalOceanOAuth } from './oauth.js';
 import { readDigitalOceanAccountAccess } from './machine/nativeClient.js';
 import { createMachineProvisionerApiKeyAccount } from '@happier-dev/plugin-sdk/machine-provisioners';
 
@@ -22,5 +24,17 @@ const account = createMachineProvisionerApiKeyAccount({
     },
   },
 });
-export const connectedAccountRuntime = account.runtime;
+export const connectedAccountRuntime: ConnectedAccountRuntime = {
+  ...account.runtime,
+  authentication: { modes: { ...account.runtime.authentication.modes, oauth: digitalOceanOAuthMode } },
+  status: (context, options) => context.configuration.target.modeId === 'oauth'
+    ? digitalOceanOAuthStatus(context, options) : account.runtime.status(context, options),
+  refresh: (context, options) => context.configuration.target.modeId === 'oauth'
+    ? refreshDigitalOceanOAuth(context, options) : account.runtime.refresh(context, options),
+  revoke: (context, options) => context.configuration.target.modeId === 'oauth'
+    ? revokeDigitalOceanOAuth(context, options) : account.runtime.revoke(context, options),
+};
+export const connectedAccountPortableRuntime: ConnectedAccountPortableRuntime = {
+  authentication: connectedAccountRuntime.authentication, materialize: connectedAccountRuntime.materialize,
+};
 export const nativeFetch = account.nativeFetch;

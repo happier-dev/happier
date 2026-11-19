@@ -16,6 +16,7 @@ import { createAdmittedPluginRuntimeFixture, retireAdmittedPluginRuntimeRegistry
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { requireConnectedAccountCryptoMaterial, resolveConnectedAccountCryptoMaterial } from '../accountScopedCryptoMaterial';
 import { refreshQualifiedConnectedAccount } from './refreshQualifiedConnectedAccount';
+import { revokeQualifiedConnectedAccount } from '../revokeQualifiedConnectedAccount';
 
 // Genuine HTTP boundary: Node's runtime uses the package's Undici fetch.
 vi.mock('undici', async importOriginal => {
@@ -43,12 +44,15 @@ afterEach(async () => {
   }));
 });
 
-async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' = 'plain', randomBytes?: (length: number) => Uint8Array) {
+async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' = 'plain', randomBytes?: (length: number) => Uint8Array, provider?: 'railway' | 'digitalocean') {
+  const activeAccount = provider
+    ? { service: { pluginId: `happier.machine.${provider}`, localId: `${provider}-account` }, accountId: account.accountId }
+    : account;
   const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-qualified-refresh-'));
   createdDirectories.push(happyHomeDir);
   const fixture = await createAdmittedPluginRuntimeFixture({
     happyHomeDir,
-    runtimeOptions: { pluginIds: [service.pluginId] },
+    runtimeOptions: { pluginIds: [activeAccount.service.pluginId] },
   });
   const { registry, controller: reloadController } = fixture;
   createdRegistries.push(fixture);
@@ -65,7 +69,7 @@ async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' =
     material: requireConnectedAccountCryptoMaterial(credentials, resolveConnectedAccountCryptoMaterial(credentials)),
   };
   const credentialSnapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
-    ref: account,
+    ref: activeAccount,
     authenticationModeId: 'oauth',
     revisionSemantics: 'revisioned' as const,
     credentialRevision,
@@ -75,7 +79,11 @@ async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' =
       ...contentMode,
       payload: {
         v: 1,
-        values: {
+        values: provider ? {
+          token: 'access-old', refreshToken: 'refresh-old', expiresAtMs: '900',
+          oauthClientId: 'fixture-client', subject: 'fixture-user', displayName: 'Fixture account',
+          ...(provider === 'digitalocean' ? { teamId: 'fixture-team' } : {}),
+        } : {
           accessToken: 'access-old',
           refreshToken: 'refresh-old',
           idToken,
@@ -162,6 +170,41 @@ async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' =
 }
 
 describe('refreshQualifiedConnectedAccount', () => {
+  it.each([
+    { provider: 'railway', tokenUrl: 'https://backboard.railway.com/oauth/token', remoteStatus: 'remoteUnsupported' },
+    { provider: 'digitalocean', tokenUrl: 'https://cloud.digitalocean.com/v1/oauth/token', remoteStatus: 'remoteRevoked' },
+  ] as const)('settles $provider rotation and Disconnect with the admitted bundled runtime', async ({ provider, tokenUrl, remoteStatus }) => {
+    const harness = await createHarness(undefined, undefined, undefined, provider);
+    const ref = harness.credentialSnapshot.ref;
+    const request = vi.fn(async (input: URL | string | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === tokenUrl) {
+        const fields = new URLSearchParams(await new Response(init?.body).text());
+        expect(fields.get('refresh_token')).toBe('refresh-old');
+        expect(fields.has('client_secret')).toBe(false);
+        return Response.json({ token_type: 'Bearer', access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600 });
+      }
+      expect(url).toBe('https://cloud.digitalocean.com/v1/oauth/revoke');
+      return Response.json({});
+    });
+    vi.stubGlobal('fetch', request);
+    await expect(refreshQualifiedConnectedAccount({
+      account: ref, token: harness.credentials.token, ownerId: 'machine-1:runtime-1', leaseMs: 60_000,
+      operationId: 'rotate-grant', expectedCredential: harness.credentialSnapshot, resolveV4Support: () => 'advertised',
+      establishedRuntimeOwner: harness.owner, acquireRefreshLease: harness.acquireRefreshLease, mutateCredential: harness.mutateCredential,
+    })).resolves.toMatchObject({ status: 'refreshed', credentialRevision: nextCredentialRevision });
+    const write = harness.mutateCredential.mock.calls[0]?.[0].mutation as { content: Parameters<typeof openQualifiedConnectedAccountContentEnvelope>[0]['envelope'] };
+    expect(openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', ...harness.contentMode, envelope: write.content }))
+      .toMatchObject({ values: { token: 'access-new', refreshToken: 'refresh-new' } });
+    const deleteCredential = vi.fn(async () => ({ success: true as const }));
+    await expect(revokeQualifiedConnectedAccount({
+      account: ref, token: harness.credentials.token, cleanupGroupReferences: true, resolveV4Support: () => 'advertised',
+      resolveRemovalReviewSupport: () => 'absent', establishedRuntimeOwner: harness.owner, deleteCredential,
+    })).resolves.toMatchObject({ status: 'deleted', remoteStatus });
+    expect(deleteCredential).toHaveBeenCalledWith(expect.objectContaining({ deletion: expect.objectContaining({ ref }) }));
+    expect(request).toHaveBeenCalledTimes(provider === 'railway' ? 1 : 2);
+  });
+
   it.each([
     ['plain', 'provider_response'], ['plain', 'after_exchange'], ['plain', 'during_persist'],
     ['e2ee', 'provider_response'], ['e2ee', 'after_exchange'], ['e2ee', 'during_persist'],

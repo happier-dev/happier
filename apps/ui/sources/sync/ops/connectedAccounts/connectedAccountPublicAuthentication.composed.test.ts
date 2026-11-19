@@ -106,6 +106,26 @@ async function prepareVercelInventory() {
     return { pluginId: PLUGIN_MANIFEST.id, localId: ACCOUNT_ID };
 }
 
+async function prepareMachineOAuthInventory(provider: 'railway' | 'digitalocean') {
+    const { PLUGIN_MANIFEST } = provider === 'railway'
+        ? await import('../../../../../../packages/plugins/machine-railway/src/manifest')
+        : await import('../../../../../../packages/plugins/machine-digitalocean/src/manifest');
+    const service = { pluginId: PLUGIN_MANIFEST.id, localId: `${provider}-account` };
+    // The RED fixture can load the incumbent token-only declaration.
+    const target = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors
+        ?.find(value => value.id === service.localId)?.authentication.account;
+    if (target) await prepareAuthenticationInventory(packaged, { manifest: PLUGIN_MANIFEST, target,
+        projectPath: `packages/plugins/machine-${provider}`,
+        entryPath: `packages/plugins/machine-${provider}/src/${provider === 'railway' ? 'account' : 'accountRuntime'}.ts`,
+        packageName: `@happier-dev/plugins-machine-${provider}`,
+        ...(provider === 'railway' ? { additionalArtifacts: [
+            { target: { artifactId: 'account-runtime', exportName: 'activateAccount' },
+                entryPath: 'packages/plugins/machine-railway/src/manifest.ts' },
+        ] } : {}),
+    });
+    return service;
+}
+
 async function prepareCloudflareInventory() {
     const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/deploy-cloudflare/src/manifest');
     const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.find(value => value.id === 'cloudflare');
@@ -171,6 +191,8 @@ const inventories = {
         deferDeclaration: true, pluginId: 'acme.portable-cold-materialization-auth' }),
     cloudflare: await prepareCloudflareInventory(),
     vercel: await prepareVercelInventory(),
+    railway: await prepareMachineOAuthInventory('railway'),
+    digitalocean: await prepareMachineOAuthInventory('digitalocean'),
     claude: await prepareClaudeInventory(),
     antigravity: await prepareOtherOAuthInventory('antigravity'),
     codex: await prepareOtherOAuthInventory('codex'),
@@ -274,8 +296,22 @@ it.each([
         modeIds: inventories.codex.modeIds, machineModeIds: ['native-import'], declarationLoads: 0, beginStatus: 'awaitingOAuth' },
     { provider: 'Vercel', service: inventories.vercel, defaultModeId: 'oauth', modeIds: ['oauth', 'token'], declarationLoads: 0,
         beginStatus: 'awaitingOAuth', publicClient: 'fixture-vercel-client' },
+    { provider: 'Railway', service: inventories.railway, defaultModeId: 'oauth', modeIds: ['oauth'], declarationLoads: 0,
+        machineModeIds: ['token'], beginStatus: 'awaitingOAuth', publicClient: 'fixture-railway-client' },
+    { provider: 'DigitalOcean', service: inventories.digitalocean, defaultModeId: 'oauth', modeIds: ['oauth'], declarationLoads: 0,
+        machineModeIds: ['token'], beginStatus: 'awaitingOAuth', publicClient: 'fixture-digitalocean-client' },
 ])('demands $provider Account authentication through the service description wrapper', async testCase => {
     const { service, defaultModeId, modeIds, declarationLoads, publicClient } = testCase;
+    const railway = testCase.provider === 'Railway';
+    const digitalocean = testCase.provider === 'DigitalOcean';
+    const hostScopes = railway
+        ? ['openid', 'email', 'profile', 'offline_access', 'workspace:admin', 'project:member']
+        : digitalocean ? ['account:read', 'droplet:create', 'droplet:delete'] : ['openid', 'offline_access'];
+    const vendorOrigin = railway ? 'https://backboard.railway.com'
+        : digitalocean ? 'https://cloud.digitalocean.com' : 'https://api.vercel.com';
+    const authorizeUrl = railway ? 'https://backboard.railway.com/oauth/auth'
+        : digitalocean ? 'https://cloud.digitalocean.com/v1/oauth/authorize' : 'https://vercel.com/oauth/authorize';
+    const { resolveConnectedAccountOAuthCallbackUrlV1 } = await import('@happier-dev/protocol/connect/oauthAuthorizationResponse');
     const priorDeclarationLoads = coldDeclarationLoads;
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const { replacePluginAccountAvailabilityProjection, readPluginAccountAvailability } = await import('@/sync/domains/plugins/availability/projection');
@@ -294,7 +330,7 @@ it.each([
         const features = createRootLayoutFeaturesResponse({ capabilities: {
             server: { webappUrl: url },
             connectedServices: { ...baseline.capabilities.connectedServices, publicOAuthClients: [{
-                service, clientId: publicClient, scopesByMode: { oauth: ['openid', 'offline_access'] },
+                service, clientId: publicClient, scopesByMode: { oauth: hostScopes },
             }] },
         } });
         homes.answer(serverId, '/v1/features', { body: features });
@@ -306,9 +342,10 @@ it.each([
     let machineRpcs = 0;
     let accountListReads = 0;
     let vendorRequests = 0;
+    let exchange: URLSearchParams | undefined;
     const transactions: Parameters<typeof answerAttemptTransaction>[2] = new Map();
     connection = await restoreServerAccountForTest({ serverUrl: url, accountId, credentials,
-        ...(publicClient ? { additionalRequestOrigins: ['https://api.vercel.com'] } : {}),
+        ...(publicClient ? { additionalRequestOrigins: [vendorOrigin] } : {}),
         configureSocket: socket => {
             configureConnectedServerSocketBoundary(socket);
             vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string) => {
@@ -321,6 +358,28 @@ it.each([
             if (request.origin !== url) {
                 vendorRequests += 1;
                 switch (request.pathname) {
+                    case '/oauth/token':
+                    case '/v1/oauth/token':
+                        exchange = new URLSearchParams(await new Response(init?.body).text());
+                        expect(new Headers(init?.headers).get('authorization')).toBeNull();
+                        return Response.json({
+                            token_type: 'Bearer', access_token: 'fixture-access', refresh_token: 'fixture-refresh',
+                            expires_in: 3600, scope: hostScopes.join(' '),
+                            ...(digitalocean ? { info: { uuid: 'user-fixture', team_uuid: 'team-fixture', team_name: 'Fixture team' } } : {}),
+                        });
+                    case '/oauth/me': return Response.json({ sub: 'fixture-subject', name: 'Fixture user' });
+                    case '/graphql/v2': {
+                        const { query } = await new Response(init?.body).json();
+                        if (query.includes('externalWorkspaces')) return Response.json({ data: { externalWorkspaces: [{
+                            id: 'ws_fixture', name: 'Fixture workspace', projects: [{ id: 'prj_fixture', name: 'Fixture project' }],
+                        }] } });
+                        if (query.includes('workspaces')) return Response.json({ data: { me: { workspaces: [] } } });
+                        if (query.includes('environments')) return Response.json({ data: { project: { environments: {
+                            edges: [{ node: { id: 'env_fixture', name: 'Fixture environment' } }],
+                            pageInfo: { endCursor: null, hasNextPage: false },
+                        } } } });
+                        throw new Error('Unexpected Railway inventory request');
+                    }
                     case '/login/oauth/token': return Response.json({
                         token_type: 'Bearer', access_token: 'fixture-access', refresh_token: 'fixture-refresh',
                         expires_in: 3600, scope: 'openid offline_access',
@@ -424,23 +483,41 @@ it.each([
         expect({ ok: begin.ok, status: 'status' in result ? result.status : undefined,
             ...('code' in result ? { code: result.code } : {}) }).toEqual({ ok: true, status: testCase.beginStatus });
         if (publicClient !== undefined) {
-            if (!('attemptId' in result) || typeof result.attemptId !== 'string') throw new Error('Missing Vercel OAuth attempt');
+            if (!('attemptId' in result) || typeof result.attemptId !== 'string') throw new Error('Missing OAuth attempt');
             const attemptId = result.attemptId;
             const read = () => runConnectedAccountAuthenticationAction({ serverId, expectedAccountId: accountId,
                 command: { operation: 'read', attemptId } });
             await expect.poll(async () => (await read()).status).toBe('awaitingOAuth');
             const pending = await read();
-            if (pending.status !== 'awaitingOAuth' || !pending.authorizationUrl) throw new Error('Missing Vercel authorize URL');
+            if (pending.status !== 'awaitingOAuth' || !pending.authorizationUrl) throw new Error('Missing authorize URL');
             const authorize = new URL(pending.authorizationUrl);
-            expect(`${authorize.origin}${authorize.pathname}`).toBe('https://vercel.com/oauth/authorize');
+            expect(`${authorize.origin}${authorize.pathname}`).toBe(authorizeUrl);
             expect(authorize.searchParams.get('client_id')).toBe(publicClient);
-            expect(authorize.searchParams.get('redirect_uri')).toBe(`${url}/oauth/connected-account/callback`);
+            expect(authorize.searchParams.get('redirect_uri')).toBe(resolveConnectedAccountOAuthCallbackUrlV1({ homeWebappUrl: url }));
             expect(authorize.searchParams.get('code_challenge_method')).toBe('S256');
+            expect(authorize.searchParams.get('scope')?.split(' ')).toEqual(expect.arrayContaining(hostScopes));
+            expect(authorize.searchParams.get('prompt')).toBe(railway ? 'consent' : null);
             expect(transactions.get(attemptId)?.scope.phase).toBe('awaitingOAuth');
             const state = authorize.searchParams.get('state');
-            if (!state) throw new Error('Missing Vercel OAuth state');
+            if (!state) throw new Error('Missing OAuth state');
             const callback = await runConnectedAccountAuthenticationAction({ serverId, expectedAccountId: accountId,
                 command: { operation: 'completeOAuth', attemptId, completion: { state, code: 'fixture-code', callbackUrl: pending.callbackUrl } } });
+            if (railway || digitalocean) {
+                expect(Object.fromEntries(exchange ?? [])).toEqual({
+                    grant_type: 'authorization_code', client_id: publicClient,
+                    code: 'fixture-code', redirect_uri: pending.callbackUrl, code_verifier: expect.any(String),
+                });
+            }
+            if (digitalocean) {
+                expect(callback.status).toBe('connected');
+                expect(savedConnection).toMatchObject({ ref: { service }, metadata: {
+                    providerIdentity: { accountId: 'user-fixture', organizationId: 'team-fixture' },
+                } });
+                expect(transactions.has(attemptId)).toBe(false);
+                expect(machineReads).toBe(0);
+                expect(machineRpcs).toBe(0);
+                return;
+            }
             expect(callback.status).toBe('configurationRequired');
             expect(transactions.get(attemptId)?.scope.phase).toBe('configurationRequired');
 
@@ -448,18 +525,37 @@ it.each([
             const presentUserActionConfirmation = vi.fn(async () => true);
             const executor = createDefaultActionExecutor({ presentUserActionConfirmation });
             const target = { kind: 'attempt', attemptId } as const;
-            const configuration = await executor.execute('connectedServices.configuration.get', { target }, context);
             const { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1: outputs } = await import('@happier-dev/protocol/connect/configurationActionsV1');
+            const continueWith = async (values: Record<string, string>) => {
+                const configuration = await executor.execute('connectedServices.configuration.get', { target }, context);
+                if (!configuration.ok) throw new Error(configuration.errorCode);
+                const view = outputs['connectedServices.configuration.get'].parse(configuration.result);
+                const replacement = await executor.execute('connectedServices.configuration.replace', {
+                    target, expectedRevision: view.configuration.revision, values, secretValues: {},
+                }, context);
+                if (!replacement.ok) throw new Error(replacement.errorCode);
+                const { revision } = outputs['connectedServices.configuration.replace'].parse(replacement.result);
+                return runConnectedAccountAuthenticationAction({ serverId, expectedAccountId: accountId,
+                    command: { operation: 'continueConnect', attemptId, expectedConfigurationRevision: revision } });
+            };
+            if (railway) {
+                expect((await continueWith({ workspaceId: 'ws_fixture' })).status).toBe('configurationRequired');
+                expect((await continueWith({ workspaceId: 'ws_fixture', projectId: 'prj_fixture' })).status).toBe('configurationRequired');
+                const values = { workspaceId: 'ws_fixture', projectId: 'prj_fixture', environmentId: 'env_fixture' };
+                expect((await continueWith(values)).status).toBe('connected');
+                expect(savedConnection).toMatchObject({ ref: { service }, initialConfiguration: {
+                    replacementContentEnvelope: { t: 'plain', v: { values } },
+                } });
+                expect(transactions.has(attemptId)).toBe(false);
+                expect(machineReads).toBe(0);
+                expect(machineRpcs).toBe(0);
+                return;
+            }
+            const configuration = await executor.execute('connectedServices.configuration.get', { target }, context);
             if (!configuration.ok) throw new Error(configuration.errorCode);
             const view = outputs['connectedServices.configuration.get'].parse(configuration.result);
             expect(view.configuration.values).toMatchObject({ teamId: 'team_fixture' });
-            const replacement = await executor.execute('connectedServices.configuration.replace', {
-                target, expectedRevision: view.configuration.revision, values: { teamId: 'team_fixture' }, secretValues: {},
-            }, context);
-            if (!replacement.ok) throw new Error(replacement.errorCode);
-            const { revision } = outputs['connectedServices.configuration.replace'].parse(replacement.result);
-            const connected = await runConnectedAccountAuthenticationAction({ serverId, expectedAccountId: accountId,
-                command: { operation: 'continueConnect', attemptId, expectedConfigurationRevision: revision } });
+            const connected = await continueWith({ teamId: 'team_fixture' });
             expect({ status: connected.status, code: 'code' in connected ? connected.code : undefined,
                 credentialWrite: savedConnection !== undefined }).toMatchObject({ status: 'connected', credentialWrite: true });
             expect(transactions.has(attemptId)).toBe(false);

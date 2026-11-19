@@ -12,7 +12,7 @@ import { createDigitalOceanProvider } from './machine/provider.js';
 import { DIGITALOCEAN_SNAPSHOT_FACTS } from './machine/nativeClient.js';
 import { CONTRIBUTION, reference as resourceRef, dropletLaunchSchema, dropletResourceSchema, dropletNativeOperationSchema } from './machine/schemas.js';
 import { createDigitalOceanPreparationClient, DigitalOceanPreparationInputSchema, DigitalOceanPreparedArtifactSchema, DigitalOceanPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
-import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, nativeFetch } from './account.js';
+import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountPortableRuntime, connectedAccountRuntime, nativeFetch } from './account.js';
 
 export const PLUGIN_ID = CONTRIBUTION.pluginId;
 export const PROVISIONER_ID = CONTRIBUTION.localId;
@@ -85,8 +85,13 @@ export const PLUGIN = definePlugin({
       scope: { serviceRefs: [ACCOUNT_ID], operations: ['use'], materializationKinds: ['httpHeaders'] } },
   ], optional: [] },
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
-    declaration: { title: 'DigitalOcean cloud account', ui: { category: 'cloud-machines' }, authentication: { defaultModeId: 'token', modes: [{
+    declaration: { title: 'DigitalOcean cloud account', ui: { category: 'cloud-machines' }, authentication: {
+      account: { artifactId: 'account-runtime', exportName: 'activateAccount' },
+      defaultModeId: 'oauth', modes: [{
+        id: 'oauth', title: 'Sign in with DigitalOcean', kind: 'oauthAuthorizationCode', pkce: 'required', outcomeReconciliation: 'none',
+      }, {
       id: 'token', kind: 'manual', title: 'API token', outcomeReconciliation: 'none',
+      browserReachability: 'unreachable',
       setup: { url: 'https://cloud.digitalocean.com/account/api/tokens', createKeyTitle: 'Open DigitalOcean API tokens',
         checklist: ['In the DigitalOcean Control Panel, open [Account → API → Tokens] and choose Generate New Token.', 'Choose a name, expiration and permissions for managing Droplets, SSH keys, images, snapshots and tags, and reading sizes and regions.', 'Generate the personal access token, then copy and paste it here.'] },
       credentialFieldKeys: { token: 'token' },
@@ -96,7 +101,7 @@ export const PLUGIN = definePlugin({
         key: 'machineDigitalOcean.account.tokenHint',
         fallback: 'Use a DigitalOcean personal access token. Create one in the control panel under Account → API → Tokens.',
       }, schema: { type: 'string', minLength: 1 }, secret: true }],
-    }] } }, runtime: connectedAccountRuntime,
+    }] } }, runtime: connectedAccountRuntime, accountRuntime: connectedAccountPortableRuntime,
   } },
   ui: { translations: [
     { locale: "en", resourceId: "i18n-en" },

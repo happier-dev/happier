@@ -28,7 +28,7 @@ async function activated(response: unknown, status = 200, replyForUrl?: (url: st
   // Provider roles run on the Account host through the same native HTTP implementation.
   await exports.activateAccount({ actions: { register(id: string, handler: PluginAccountActionHandler) {
     handlers.set(id, handler as ActionHandler); return { dispose() {} };
-  } } } as unknown as PluginAccountApi);
+  } }, connectedAccounts: { register() {} } } as unknown as PluginAccountApi);
   const requests: HttpRequest[] = [];
   const credentialContext = { signal: new AbortController().signal, credentials: { get: async () => 'selected-private' } } as unknown as ConnectedAccountReadContext;
   const context = { invokedAtMs: 1234, signal: new AbortController().signal, services: {
@@ -89,7 +89,7 @@ describe('public digitalocean machine provisioner', () => {
     const handlers = new Map<string, PluginAccountActionHandler>();
     await accountExports.activateAccount!({ actions: { register(id: string, handler: PluginAccountActionHandler) {
       handlers.set(id, handler); return { dispose() {} };
-    } } } as unknown as PluginAccountApi);
+    } }, connectedAccounts: { register() {} } } as unknown as PluginAccountApi);
     let credentialReads = 0;
     const credentialContext = { signal: new AbortController().signal, credentials: {
       get: async () => { credentialReads++; return 'selected-private'; },

@@ -6,7 +6,7 @@ import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 
 // Only the host credential store and HTTP boundary are substituted.
 function context(status: number): ConnectedAccountReadContext {
-  return { signal: new AbortController().signal, configuration: { values: { organizationSlug: 'team' } },
+  return { signal: new AbortController().signal, configuration: { target: { modeId: 'token' }, values: { organizationSlug: 'team' } },
     credentials: { get: async () => 'private-token' }, services: { http: {
       request: async (request: { url: string }) => ({ status, finalUrl: request.url, headers: {},
         body: new TextEncoder().encode('{}') }),
