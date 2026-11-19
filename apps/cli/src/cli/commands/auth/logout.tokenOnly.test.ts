@@ -1,10 +1,10 @@
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
-const settingsFixture = vi.hoisted(() => ({ homeDir: '' }));
+const settingsFixture = vi.hoisted(() => ({ homeDir: '', confirm: 'y' }));
 
 const {
   clearCredentialsMock,
@@ -20,7 +20,7 @@ const {
     && error !== null
     && (error as { code?: unknown }).code === 'daemon_stop_incomplete'
   )),
-  readStoredCredentialsMock: vi.fn(async () => ({
+  readStoredCredentialsMock: vi.fn<() => Promise<StoredCredentials | null>>(async () => ({
     token: 'plain-token',
     encryption: null as null,
   })),
@@ -40,7 +40,7 @@ vi.mock('node:readline', async () => {
   const { EventEmitter } = await import('node:events');
   return {
     createInterface: () => Object.assign(new EventEmitter(), {
-      question: (_prompt: string, resolve: (answer: string) => void) => resolve('y'),
+      question: (_prompt: string, resolve: (answer: string) => void) => resolve(settingsFixture.confirm),
       close: vi.fn(),
     }),
   };
@@ -57,6 +57,7 @@ vi.mock('@/configuration', () => ({
     activeServerId: 'plain-server',
     get happyHomeDir() { return settingsFixture.homeDir; },
     get settingsFile() { return join(settingsFixture.homeDir, 'settings.json'); },
+    get privateKeyFile() { return join(settingsFixture.homeDir, 'access.key'); },
   },
 }));
 
@@ -70,7 +71,8 @@ vi.mock('@/daemon/multiDaemon', () => ({
 }));
 
 import { handleAuthLogout } from './logout';
-import { readAccountChangesCursors, readSettings } from '@/persistence';
+import { readAccountChangesCursors, readSettings, type StoredCredentials } from '@/persistence';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import {
   getActiveAccountSettingsSnapshot,
   resetActiveAccountSettingsSnapshotForTests,
@@ -95,6 +97,36 @@ describe('happier auth logout token-only authentication', () => {
     stopAllDaemonsBestEffortMock.mockReset();
     stopAllDaemonsBestEffortMock.mockResolvedValue(undefined);
     rmSyncMock.mockReset();
+  });
+
+  it('clears an obsolete stored credential only after confirmation', async () => {
+    const persistence = await vi.importActual<typeof import('@/persistence')>('@/persistence');
+    const env = createEnvKeyScope(['HAPPIER_TOKEN', 'HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE']);
+    env.patch({ HAPPIER_TOKEN: undefined, HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE: undefined });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const keyPath = join(settingsFixture.homeDir, 'access.key');
+    const payload = Buffer.from(JSON.stringify({ sub: 'obsolete-account', extras: {} })).toString('base64url');
+    const obsoleteKey = JSON.stringify({ token: `hdr.${payload}.sig` });
+    readStoredCredentialsMock
+      .mockImplementationOnce(persistence.readStoredCredentials)
+      .mockImplementationOnce(persistence.readStoredCredentials);
+    clearCredentialsMock.mockImplementationOnce(persistence.clearCredentials);
+    try {
+      await writeFile(keyPath, obsoleteKey);
+      settingsFixture.confirm = 'n';
+      await handleAuthLogout([]);
+      await expect(readFile(keyPath, 'utf8')).resolves.toBe(obsoleteKey);
+
+      settingsFixture.confirm = 'y';
+      await handleAuthLogout([]);
+      await expect(readFile(keyPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      settingsFixture.confirm = 'y';
+      readStoredCredentialsMock.mockReset().mockResolvedValue({ token: 'plain-token', encryption: null });
+      clearCredentialsMock.mockReset().mockResolvedValue(undefined);
+      log.mockRestore();
+      env.restore();
+    }
   });
 
   it('clears a token-only credential instead of reporting logged out', async () => {

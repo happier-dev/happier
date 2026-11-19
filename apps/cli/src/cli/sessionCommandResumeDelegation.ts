@@ -1,3 +1,4 @@
+import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginRequired';
 import type { StoredCredentials } from '@/persistence';
 import { readStoredCredentials } from '@/persistence';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
@@ -62,7 +63,7 @@ async function resolveCredentials(params: Readonly<{
   readCredentialsFn: ReadCredentials;
   ensureAuthFn: EnsureAuth;
 }>): Promise<StoredCredentials | null> {
-  const existing = await params.readCredentialsFn();
+  const existing = await params.readCredentialsFn().catch(returnNullOnCliReloginRequired);
   if (existing) return existing;
   return (await params.ensureAuthFn()).credentials;
 }

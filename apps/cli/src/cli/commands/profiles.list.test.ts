@@ -61,8 +61,13 @@ async function listProfiles() {
 }
 
 describe('happier profiles list --json', () => {
-  it('does not advertise demoted historical profiles when unauthenticated', async () => {
-    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(null);
+  it.each([
+    ['missing', null],
+    ['obsolete', new persistenceModule.CliReloginRequiredError()],
+  ] as const)('lists signed-out profiles when credentials are %s', async (_state, refusal) => {
+    const read = vi.spyOn(persistenceModule, 'readStoredCredentials');
+    if (refusal) read.mockRejectedValue(refusal);
+    else read.mockResolvedValue(null);
     expect(await listProfiles()).toMatchObject({
       ok: true, kind: 'profiles_list', data: { authenticated: false, profiles: [] },
     });

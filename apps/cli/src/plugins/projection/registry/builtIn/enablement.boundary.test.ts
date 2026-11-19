@@ -8,6 +8,7 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import { prepareRunnerAgentSessionBootstrapForLease } from '@/daemon/spawn/prepareAgentRuntimeSessionBridge';
 import { logger } from '@/ui/logger';
+import { CliReloginRequiredError } from '@/persistence';
 import { projectPluginCatalogEntrySnapshot } from '@/plugins/projection/introspection/catalogSnapshot';
 import { projectBundledPluginCatalogEntries } from '@/plugins/projection/catalog/installed';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
@@ -22,6 +23,22 @@ import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '../sources/generatedBundled
 import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
 
 describe('bundled admission Account boundary', () => {
+    it('uses signed-out bundled enablement when the stored credential requires re-login', async () => {
+        const facts = await readCurrentBundledPluginEnablement({
+            machineEnabledById: { 'happier.agent.pi': false },
+            accountStorageDependencies: {
+                readCredentials: async () => { throw new CliReloginRequiredError(); },
+                resolveBaseUrl: () => 'http://unused.invalid',
+            },
+        });
+        expect(facts['happier.agent.claude']).toMatchObject({
+            accountEnabled: true, machineEnabled: true, enabled: true,
+        });
+        expect(facts['happier.agent.pi']).toMatchObject({
+            accountEnabled: true, machineEnabled: false, enabled: false,
+        });
+    });
+
     it('withdraws an installed development replacement under the same bundled Account identity and restores it', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'bundled-replacement-intent-'));
         const pluginId = 'happier.app-context';

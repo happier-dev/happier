@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { configuration } from '@/configuration';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { artifactKindListResponse } from '@/testkit/http/artifactHome';
+import { prepareDaemonBootstrapContext } from './prepareDaemonBootstrapContext';
 
 const mocks = vi.hoisted(() => ({
   authAndSetupMachineIfNeeded: vi.fn(),
@@ -37,10 +38,13 @@ vi.mock('@/api/machine/ensureMachineRegistered', () => ({
   ensureMachineRegistered: mocks.ensureMachineRegistered,
 }));
 
-vi.mock('@/persistence', () => ({
+vi.mock('@/persistence', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/persistence')>()),
   acquireDaemonLock: mocks.acquireDaemonLock,
   readStoredCredentials: mocks.readStoredCredentials,
 }));
+
+import { CliReloginRequiredError } from '@/persistence';
 
 vi.mock('@/ui/logger', () => ({
   logger: {
@@ -101,7 +105,6 @@ describe('prepareDaemonBootstrapContext', () => {
   });
 
   it('lets a self-restart replacement continue takeover without synchronous machine preflight', async () => {
-    const { prepareDaemonBootstrapContext } = await import('./prepareDaemonBootstrapContext');
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number | string | null) => {
       throw new Error(`process.exit(${String(code)})`);
     }) as never);
@@ -129,7 +132,6 @@ describe('prepareDaemonBootstrapContext', () => {
   });
 
   it('prepares a persisted trusted Home transport before fresh daemon authentication and API construction', async () => {
-    const { prepareDaemonBootstrapContext } = await import('./prepareDaemonBootstrapContext');
     const order: string[] = [];
     mocks.authAndPrepareDaemonMachineIfNeeded.mockImplementation(async () => {
       order.push('auth');
@@ -158,9 +160,12 @@ describe('prepareDaemonBootstrapContext', () => {
     expect(order).toEqual(['transport', 'auth', 'api']);
   });
 
-  it('prepares a trusted descriptor transport before fresh auth and verifies it with the new credential', async () => {
-    const { prepareDaemonBootstrapContext } = await import('./prepareDaemonBootstrapContext');
-    mocks.readStoredCredentials.mockResolvedValue(null);
+  it.each([
+    ['missing', null],
+    ['obsolete', new CliReloginRequiredError()],
+  ] as const)('prepares trusted transport and authenticates when credentials are %s', async (_state, refusal) => {
+    if (refusal) mocks.readStoredCredentials.mockRejectedValueOnce(refusal);
+    else mocks.readStoredCredentials.mockResolvedValue(null);
     mocks.isDaemonRunningCurrentlyInstalledHappyVersion.mockResolvedValue(false);
     mocks.acquireDaemonLock.mockResolvedValue({ kind: 'acquired-lock' });
     const order: string[] = [];
@@ -194,7 +199,6 @@ describe('prepareDaemonBootstrapContext', () => {
   });
 
   it('does not ask the control client to stop the startup process after it owns the daemon lock', async () => {
-    const { prepareDaemonBootstrapContext } = await import('./prepareDaemonBootstrapContext');
     mocks.isDaemonRunningCurrentlyInstalledHappyVersion.mockResolvedValue(false);
 
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-daemon-bootstrap-owned-lock-'));
@@ -216,7 +220,6 @@ describe('prepareDaemonBootstrapContext', () => {
   });
 
   it('still stops a mismatched incumbent before acquiring startup ownership', async () => {
-    const { prepareDaemonBootstrapContext } = await import('./prepareDaemonBootstrapContext');
     mocks.isDaemonRunningCurrentlyInstalledHappyVersion.mockResolvedValue(false);
     const acquiredLock = { kind: 'acquired-lock' };
     mocks.acquireDaemonLock.mockResolvedValue(acquiredLock);
@@ -236,7 +239,6 @@ describe('prepareDaemonBootstrapContext', () => {
   });
 
   it('uses a rotated preflight only for identity recovery and leaves daemon-state registration to startup', async () => {
-    const { prepareDaemonBootstrapContext } = await import('./prepareDaemonBootstrapContext');
     mocks.ensureMachineRegistered.mockResolvedValueOnce({
       machineId: 'machine-recovered',
       didRotateMachineId: true,
@@ -259,7 +261,6 @@ describe('prepareDaemonBootstrapContext', () => {
   });
 
   it('does not stop a daemon whose persisted PID is definitively absent', async () => {
-    const { prepareDaemonBootstrapContext } = await import('./prepareDaemonBootstrapContext');
     mocks.isDaemonRunningCurrentlyInstalledHappyVersion.mockResolvedValue(false);
     mocks.inspectDaemonRunningStateAndCleanupStaleState.mockResolvedValue({ status: 'not-running' });
     const acquiredLock = { kind: 'acquired-lock' };

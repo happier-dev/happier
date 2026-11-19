@@ -2,6 +2,7 @@ import { ApiClient } from '@/api/api';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import type { MachineMetadata } from '@/api/types';
 import { acquireDaemonLock, readStoredCredentials } from '@/persistence';
+import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginRequired';
 import { logger } from '@/ui/logger';
 import { authAndPrepareDaemonMachineIfNeeded } from '@/ui/auth';
 
@@ -41,7 +42,7 @@ export async function prepareDaemonBootstrapContext(
     machineId: string;
     deviceLocalSecretStorage: DeviceLocalSecretStorage;
 }>> {
-    const persistedCredentials = await readStoredCredentials();
+    const persistedCredentials = await readStoredCredentials().catch(returnNullOnCliReloginRequired);
     await params.prepareServerTransport?.({ persistedCredentials });
 
     const auth = await authAndPrepareDaemonMachineIfNeeded();

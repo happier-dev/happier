@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Credentials } from '@/persistence';
+import { CliReloginRequiredError, type Credentials } from '@/persistence';
 import { resolveSessionCommandResumeDelegation } from './sessionCommandResumeDelegation';
 
 const credentials = { token: 'token-1' } as Credentials;
 
 describe('resolveSessionCommandResumeDelegation', () => {
-  it('delegates implicit resume when the id is a Happier session', async () => {
+  it.each([
+    ['missing', null],
+    ['obsolete', new CliReloginRequiredError()],
+  ] as const)('authenticates with %s credentials before choosing implicit resume', async (_state, refusal) => {
     const ensureAuthFn = vi.fn(async () => ({ credentials }));
     const fetchSessionByIdFn = vi.fn(async () => ({ id: 'session-1' }));
 
@@ -14,7 +17,10 @@ describe('resolveSessionCommandResumeDelegation', () => {
       args: ['--resume', 'session-1'],
       explicitProviderSubcommand: false,
       resumeFlags: ['--resume', '-r'],
-      readCredentialsFn: async () => null,
+      readCredentialsFn: async () => {
+        if (refusal) throw refusal;
+        return null;
+      },
       ensureAuthFn,
       fetchSessionByIdFn,
     })).resolves.toEqual({ kind: 'delegate', sessionId: 'session-1' });

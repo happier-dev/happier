@@ -15,6 +15,7 @@ import type { BackendTargetRefV2Input, PluginSourceCustodyV1 } from '@happier-de
 
 import type { StoredCredentials } from '@/persistence';
 import { readStoredCredentials } from '@/persistence';
+import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginRequired';
 import type { CommandContext } from '@/cli/commandRegistry';
 import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resolveSessionStartAccountSettingsContext } from '@/settings/accountSettings/resolveSessionStartAccountSettingsContext';
@@ -327,7 +328,8 @@ Provider CLI Options:
         backendId,
       });
 
-      let credentials = params.context.sessionStart?.credentials ?? await readStoredCredentials();
+      let credentials = params.context.sessionStart?.credentials
+        ?? await readStoredCredentials().catch(returnNullOnCliReloginRequired);
       let machineId: string;
       if (!credentials) {
         const auth = await (await import('@/ui/auth')).authAndSetupMachineIfNeeded();

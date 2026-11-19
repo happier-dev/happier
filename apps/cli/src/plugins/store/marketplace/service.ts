@@ -4,6 +4,7 @@ import { PUBLIC_NPM_REGISTRY_ORIGIN_V1 } from '@happier-dev/protocol/marketplace
 import { registryMarketplaceSourceV1, registrySourceSupportsKindV1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import { readStoredCredentials } from '@/persistence';
+import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginRequired';
 import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/profiles/service';
 import { normalizeNpmArtifactRequest } from '@/plugins/distribution/npm/normalize';
 
@@ -104,13 +105,13 @@ export type MarketplaceIndexSourceConfig = Readonly<{
 export type MarketplaceRegistrySourcesReaderV1 = () => Promise<readonly RegistrySourceDescriptorV1[]>;
 export type MarketplaceRegistryHostV1 = Pick<ReturnType<typeof createCliRegistryHostV1>, 'withSource'>;
 
-async function createAccountSourceReader(): Promise<MarketplaceRegistrySourcesReaderV1> {
-  const credentials = await readStoredCredentials();
-  return createCliRegistryHostV1({ ...(credentials ? { credentials } : {}) }).readSources;
+async function createMarketplaceRegistryHost(readSources?: MarketplaceRegistrySourcesReaderV1): Promise<ReturnType<typeof createCliRegistryHostV1>> {
+  const credentials = readSources ? null : await readStoredCredentials().catch(returnNullOnCliReloginRequired);
+  return createCliRegistryHostV1({ ...(credentials ? { credentials } : {}), readSources });
 }
 
 export async function readMarketplaceInstallSources(input: Readonly<{ readRegistrySources?: MarketplaceRegistrySourcesReaderV1 }> = {}): Promise<readonly MarketplaceIndexSourceConfig[]> {
-  const readSources = input.readRegistrySources ?? await createAccountSourceReader();
+  const readSources = input.readRegistrySources ?? (await createMarketplaceRegistryHost()).readSources;
   return (await readSources()).flatMap(source => {
     const projected = projectMarketplaceInstallSource(source);
     return projected ? [projected] : [];
@@ -142,10 +143,7 @@ export function createMarketplaceIndexService(params?: Readonly<{
   let accountHost: Promise<ReturnType<typeof createCliRegistryHostV1>> | undefined;
   const registryHost = async () => {
     if (params?.registryHost) return params.registryHost;
-    accountHost ??= (async () => {
-      const credentials = params?.readRegistrySources ? null : await readStoredCredentials();
-      return createCliRegistryHostV1({ ...(credentials ? { credentials } : {}), readSources: params?.readRegistrySources });
-    })();
+    accountHost ??= createMarketplaceRegistryHost(params?.readRegistrySources);
     return await accountHost;
   };
   return {

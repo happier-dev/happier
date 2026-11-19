@@ -5,8 +5,8 @@ import { createHash, randomBytes } from "node:crypto";
 import tweetnacl from 'tweetnacl';
 import { displayQRCode } from "./qrcode";
 import { delay, delayUnrefAbortable } from "@/utils/time";
+import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginRequired';
 import {
-    CliReloginRequiredError,
     readStoredCredentials,
     readStoredCredentialsForServerId,
     readSettings,
@@ -1061,10 +1061,7 @@ async function authAndPrepareMachineIfNeeded(
 
     // Step 1: Handle authentication
     // An obsolete stored bearer means signing in again; this flow's login replaces it.
-    let credentials: StoredCredentials | null = await readStoredCredentials().catch((error: unknown) => {
-        if (error instanceof CliReloginRequiredError) return null;
-        throw error;
-    });
+    let credentials = await readStoredCredentials().catch(returnNullOnCliReloginRequired);
     let machineSetup: Readonly<{ machineId: string }> | null = null;
     let accountMaterialRecoveryRequired = false;
 

@@ -9,7 +9,7 @@ import { createMinuteHistoryStore } from './vitals/history/minuteHistoryStore';
 import { createMachineVitalsSampler } from './vitals/createMachineVitalsSampler';
 import { createMachineResourceSummary } from './resources/machineResourceSummary';
 import { buildDoctorSnapshotFromInventory } from '@/doctor/inv/snapshot';
-import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
+import { clearCredentials, clearDaemonStateForTestTeardown, writeCredentialsTokenOnly, writeDaemonState } from '@/persistence';
 import { readDoctorRuntimeInventory } from '@/doctor/inv/runtime';
 
 afterEach(() => { vi.unstubAllEnvs(); });
@@ -64,6 +64,13 @@ it('reads canonical sampler/attention/self facts through authenticated Doctor wi
     expect(DoctorSnapshotSchema.parse(snapshot).resourceVitals).toMatchObject({ sample: sampler.latest(),
       attention: summary.getSummary()?.attention, self: { rssBytes: expect.any(Number), heapUsedBytes: expect.any(Number) } });
     expect(DoctorSnapshotResourceVitalsSchema.safeParse({ ...inventory.resourceVitals, history: [] }).success).toBe(false);
+    const payload = Buffer.from(JSON.stringify({ sub: 'obsolete-account', extras: {} })).toString('base64url');
+    await writeCredentialsTokenOnly({ token: `hdr.${payload}.sig` });
+    const signedOutInventory = await readDoctorRuntimeInventory();
+    expect(signedOutInventory.credentials).toBeNull();
+    expect(DoctorSnapshotSchema.parse(buildDoctorSnapshotFromInventory({
+      inventory: signedOutInventory,
+    })).resourceVitals?.sample).toEqual(facts.sample);
     await server.stop();
     serverStopped = true;
     const unavailableInventory = await readDoctorRuntimeInventory();
@@ -72,6 +79,7 @@ it('reads canonical sampler/attention/self facts through authenticated Doctor wi
   } finally {
     if (!serverStopped) await server.stop();
     await clearDaemonStateForTestTeardown();
+    await clearCredentials();
     monitor.stop();
     summary.stop();
     await sampler.stop();

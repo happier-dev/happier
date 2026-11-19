@@ -1,5 +1,6 @@
 import { cyan, dim, emphasis, gray, kv, sectionTitle } from '@happier-dev/cli-common/output';
 
+import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginRequired';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { readStoredCredentials } from '@/persistence';
@@ -38,7 +39,7 @@ export async function runProfilesListCommand(args: string[]): Promise<void> {
   const json = wantsJson(args);
   const refreshSettings = args.includes('--refresh-settings');
 
-  const credentials = await readStoredCredentials();
+  const credentials = await readStoredCredentials().catch(returnNullOnCliReloginRequired);
   if (!credentials) {
     const profiles = readProfilesFromAccountSettings({}).visibleProfiles.map(mapProfileToListItem);
     if (json) {

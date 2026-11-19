@@ -219,6 +219,10 @@ describe('memorySettings', () => {
       throw new Error('expected openai_compatible embeddings config');
     }
     expect(unsealed.embeddings.custom.apiKey?.value).toBe('sk-token-only-memory');
+
+    const payload = Buffer.from(JSON.stringify({ sub: 'obsolete-account', extras: {} })).toString('base64url');
+    await writeCredentialsTokenOnly({ token: `hdr.${payload}.sig` });
+    expect(await readMemorySettingsFromDisk()).toEqual(unsealed);
   });
 
   it('opens legacy account-encrypted memory settings without consulting a corrupt device-local key', async () => {

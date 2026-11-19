@@ -27,8 +27,12 @@ export async function readCurrentBundledPluginEnablement(params?: Readonly<{
   let accountEnabledById: ReadonlyMap<string, boolean> | undefined;
   let accountFailure: Parameters<typeof resolveBundledPluginEnablement>[0]['accountFailure'];
   try {
-    const { readStoredCredentials } = await import('@/persistence');
-    const credentials = await (params?.accountStorageDependencies?.readCredentials ?? readStoredCredentials)();
+    const [{ readStoredCredentials }, { returnNullOnCliReloginRequired }] = await Promise.all([
+      import('@/persistence'),
+      import('@/auth/returnNullOnCliReloginRequired'),
+    ]);
+    const credentials = await (params?.accountStorageDependencies?.readCredentials ?? readStoredCredentials)()
+      .catch(returnNullOnCliReloginRequired);
     if (credentials) {
       const { resolveServerHttpBaseUrl } = await import('@/api/client/serverHttpBaseUrl');
       const { readCurrentAccountPluginEnablements } = await import('@/plugins/runtime/accountPluginActivationSource');

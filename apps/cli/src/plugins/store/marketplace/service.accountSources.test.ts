@@ -10,7 +10,8 @@ import { COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1 } from '@happier-dev/protocol/ma
 import { createPluginRegistrySourceDescriptorV1, listRegistrySourcesV1 } from '@happier-dev/protocol/registries';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
-import { createMarketplaceIndexService } from './service';
+import { CliReloginRequiredError } from '@/persistence';
+import { createMarketplaceIndexService, readMarketplaceInstallSources } from './service';
 import { resolveExactMarketplaceListingForInstall, projectExpectedMarketplaceListing, marketplaceListingMatchesExpected } from './exactInstall';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createCliRegistryHostV1, readCliRegistrySourcesV1 } from '@/registries/createCliRegistryHost';
@@ -22,7 +23,8 @@ vi.mock('node:dns/promises', async (original) => ({ ...await original<typeof imp
 vi.mock('undici', async (original) => { const actual = await original<typeof import('undici')>(); return { ...actual, fetch: vi.fn(actual.fetch) }; });
 // Credential-file access is an external boundary; these cases use the actual
 // already-observed Account catalog and never the developer's login material.
-vi.mock('@/persistence', async (original) => ({ ...await original<typeof import('@/persistence')>(), readStoredCredentials: async () => null }));
+const readCredentialFile = vi.hoisted(() => vi.fn(async () => null));
+vi.mock('@/persistence', async (original) => ({ ...await original<typeof import('@/persistence')>(), readStoredCredentials: readCredentialFile }));
 const homes: string[] = [];
 const sourceUrl = 'https://catalog.example/plugins.json';
 const sourceId = deriveMarketplaceSourceId(sourceUrl);
@@ -46,9 +48,26 @@ const catalog = () => MarketplaceIndexSourceSnapshotV1Schema.parse({ source: { i
   }] });
 
 describe('Account marketplace sources and exact install seam', () => {
-  beforeEach(()=>vi.stubGlobal('fetch',undici.fetch));
+  beforeEach(() => {
+    vi.stubGlobal('fetch', undici.fetch);
+    readCredentialFile.mockReset().mockResolvedValue(null);
+  });
   afterEach(async () => { vi.unstubAllGlobals();vi.mocked(undici.fetch).mockReset(); resetActiveAccountSettingsSnapshotForTests();
     await Promise.all(homes.splice(0).map(removeTempDir)); });
+  it('uses the available source catalog for listing and exact lookup with an obsolete credential', async () => {
+    const home = await createTempDir('happier-marketplace-relogin-');
+    homes.push(home);
+    accountSources([{ enabled: true }]);
+    readCredentialFile.mockRejectedValue(new CliReloginRequiredError());
+    vi.mocked(undici.fetch).mockImplementation(async () => new undici.Response(JSON.stringify(catalog())));
+    const exact = await createMarketplaceIndexService({ happyHomeDir: home }).queryExactListing({
+      sourceId, pluginId: 'acme.plugin',
+    });
+    expect(exact).toMatchObject({ ok: true, result: { items: [{ pluginId: 'acme.plugin' }] } });
+    await expect(readMarketplaceInstallSources()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: sourceId }),
+    ]));
+  });
   it('reads the Account source and refuses removed or disabled bindings before HTTP or install effects', async () => {
     const home = await createTempDir('happier-marketplace-account-u3-'); homes.push(home);
     accountSources([{ enabled: true }]);

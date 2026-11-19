@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { configuration } from '@/configuration';
-import { writeDaemonState } from '@/persistence';
+import { writeCredentialsTokenOnly, writeDaemonState } from '@/persistence';
 import { collectBugReportMachineDiagnosticsSnapshotForBugReport } from './bugReportMachineDiagnosticsRecipe';
 import { collectBugReportMachineDiagnosticsSnapshot } from './bugReportMachineDiagnostics';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
@@ -105,6 +105,11 @@ describe('selected bug report machine diagnostics', () => {
       expect(selectedResult.sessionDiagnostics?.logs.find(entry => entry.kind === 'provider')?.status).toBe('disabled');
       expect(JSON.stringify(selectedResult)).not.toContain('PRIVATE_METADATA_SUMMARY');
       expect(JSON.stringify(selectedResult)).not.toContain('UNRELATED_RUNNER_BODY');
+      const payload = Buffer.from(JSON.stringify({ sub: 'obsolete-account', extras: {} })).toString('base64url');
+      await writeCredentialsTokenOnly({ token: `hdr.${payload}.sig` });
+      const reloginResult = await collectBugReportMachineDiagnosticsSnapshotForBugReport({ sessionId: 'selected-session' });
+      expect(reloginResult.sessionDiagnostics).toEqual(selectedResult.sessionDiagnostics);
+
       const outside = join(homeDir, 'outside.log');
       const link = join(configuration.logsDir, 'escape.log');
       await writeFile(outside, 'PRIVATE_OUTSIDE_BODY');

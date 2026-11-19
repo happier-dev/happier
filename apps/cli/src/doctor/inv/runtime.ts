@@ -1,4 +1,5 @@
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
+import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginRequired';
 import { readAccountChangesCursors, readServerProfileObservations, readSettings, readStoredCredentials, type AccountChangesCursors, type ServerProfileObservations } from '@/persistence';
 import { daemonPost } from '@/daemon/controlHttp';
 import { DoctorSnapshotResourceVitalsSchema, type DoctorSnapshotResourceVitals } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
@@ -24,7 +25,7 @@ export type DoctorRuntimeInventory = Readonly<{
 export async function readDoctorRuntimeInventory(): Promise<DoctorRuntimeInventory> {
   const [settings, credentials, daemonStatus, installations, services, localRelays, accountChangesCursors, serverProfileObservations] = await Promise.all([
     readSettings(),
-    readStoredCredentials(),
+    readStoredCredentials().catch(returnNullOnCliReloginRequired),
     readDaemonStatusSnapshot().catch(() => undefined),
     readDoctorInstallations(),
     readDoctorServices(),

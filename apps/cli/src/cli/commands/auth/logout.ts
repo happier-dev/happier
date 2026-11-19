@@ -4,6 +4,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { cmd, neutral, ok, warn } from '@happier-dev/cli-common/output';
 
 import {
+  CliReloginRequiredError,
   clearCredentials,
   readStoredCredentials,
 } from '@/persistence';
@@ -20,10 +21,15 @@ export async function handleAuthLogout(args: string[]): Promise<void> {
   const targetServerId = configuration.activeServerId;
 
   if (!logoutAll) {
-    const credentials = await readStoredCredentials();
-    if (!credentials) {
-      console.log(neutral('Not signed in'));
-      return;
+    try {
+      const credentials = await readStoredCredentials();
+      if (!credentials) {
+        console.log(neutral('Not signed in'));
+        return;
+      }
+    } catch (error) {
+      if (!(error instanceof CliReloginRequiredError)) throw error;
+      // The unusable credential is still present and can be cleared by confirmed logout.
     }
   }
 

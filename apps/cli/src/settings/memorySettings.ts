@@ -9,6 +9,7 @@ import type { MemorySettingsV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import { readSettings, readStoredCredentials, updateSettings } from '@/persistence';
+import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginRequired';
 import {
   deriveSettingsSecretsReadKeysForCredentials,
 } from '@/settings/secrets/settingsSecretsKey';
@@ -76,7 +77,7 @@ async function resolveMemorySettingsSecretKey(): Promise<Uint8Array> {
 async function unsealMemorySettingsSecrets(raw: unknown): Promise<unknown> {
   if (!hasUnavailableSealedSecret(raw)) return raw;
 
-  const credentials = await readStoredCredentials();
+  const credentials = await readStoredCredentials().catch(returnNullOnCliReloginRequired);
   const accountUnsealed = credentials
     ? unsealSecretsDeepWithKeysV1(
         raw,

@@ -1,3 +1,5 @@
+import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginRequired';
+
 export async function waitForInitialCredentials<TDaemonLockHandle>(opts: {
   isInteractive: boolean;
   waitForAuthEnabled: boolean;
@@ -22,7 +24,7 @@ export async function waitForInitialCredentials<TDaemonLockHandle>(opts: {
     return { action: 'continue', daemonLockHandle: opts.daemonLockHandle };
   }
 
-  const credentials = await opts.readCredentials();
+  const credentials = await opts.readCredentials().catch(returnNullOnCliReloginRequired);
   if (credentials) {
     return { action: 'continue', daemonLockHandle: opts.daemonLockHandle };
   }
@@ -61,7 +63,7 @@ export async function waitForInitialCredentials<TDaemonLockHandle>(opts: {
       return { action: 'shutdown', daemonLockHandle: null };
     }
 
-    const credsNow = await opts.readCredentials();
+    const credsNow = await opts.readCredentials().catch(returnNullOnCliReloginRequired);
     if (credsNow) {
       opts.logger.debug('[DAEMON RUN] Credentials detected, continuing daemon startup');
       return { action: 'continue', daemonLockHandle };

@@ -14,6 +14,7 @@ import {
 } from '@happier-dev/protocol/bugs/reports/machineDiagnostics';
 import { configuration } from '@/configuration';
 import { readDaemonState, readSettings, readStoredCredentials, type StoredCredentials } from '@/persistence';
+import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginRequired';
 import { listDaemonLogFiles } from '@/ui/logger';
 import { listSessionMarkers } from '@/daemon/sessionRegistry';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
@@ -56,7 +57,7 @@ export async function collectBugReportMachineDiagnosticsSnapshotForBugReport(
   let metadata: Record<string, unknown> | null = null;
   let fromLocalMarker = false;
   if (requestedSessionId) {
-    const credentials = scope.credentials ?? await readStoredCredentials();
+    const credentials = scope.credentials ?? await readStoredCredentials().catch(returnNullOnCliReloginRequired);
     if (credentials) {
       try {
         const transport = await resolveSessionTransportContext({

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { CliReloginRequiredError } from '@/persistence';
 import { waitForInitialCredentials } from './waitForInitialCredentials';
 
 describe('waitForInitialCredentials', () => {
@@ -81,11 +82,18 @@ describe('waitForInitialCredentials', () => {
     expect(result).toEqual({ action: 'exit', exitCode: 0, daemonLockHandle: null });
   });
 
-  it('continues when credentials appear while waiting', async () => {
+  it.each([
+    ['missing', null],
+    ['obsolete', new CliReloginRequiredError()],
+  ] as const)('continues when %s credentials are replaced while waiting', async (_state, refusal) => {
+    const readBeforeSignIn = async () => {
+      if (refusal) throw refusal;
+      return null;
+    };
     const readCredentials = vi
       .fn<() => Promise<unknown | null>>()
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(null)
+      .mockImplementationOnce(readBeforeSignIn)
+      .mockImplementationOnce(readBeforeSignIn)
       .mockResolvedValueOnce({ token: 'ready' });
 
     const result = await waitForInitialCredentials({
