@@ -659,6 +659,37 @@ describe('admitted Machine setup snapshot lifetime', () => {
     expect(nativeTerminal.launches[0]?.args.join(' ')).not.toContain(secretValue);
     expect(fixture.machine.metadata?.setup?.sources).toEqual(plan.sources);
     expect(publications).toBeGreaterThan(0);
+    const context = fixture.context('machines.setup.apply');
+    const operations = await fixture.operations.handlers.listV2({
+      requestIdentity: { actionId: 'machines.setup.apply', requestId: context.actionRequestId! },
+    }, context);
+    expect(operations.items).toContainEqual(expect.objectContaining({
+      domainRef: expect.objectContaining({ kind: 'machineSetup', source: expect.objectContaining({ sources }) }),
+    }));
+    expect(JSON.stringify(operations)).not.toContain(secretValue);
+  });
+
+  it('retains the exact authored source of a failed one-off Setup on the typed operation read', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
+    const target = { homeId: 'srv_home', machineId: fixture.machine.id };
+    const sources = [{ kind: 'direct' as const, setup: {
+      items: fixture.sources[0]!.setup.items,
+      scripts: [{ body: 'exit 23', affects: 'none' as const }],
+    } }];
+    const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { ...target, sources, mode: 'effects' }, context: fixture.context('machines.setup.plan'),
+    }));
+    const context = fixture.context('machines.setup.apply');
+    nativeTerminal.onLaunch = () => queueMicrotask(() => nativeTerminal.exit?.(23));
+    expect(await fixture.apply({ input: { ...target, desiredRevision: plan.desiredRevision, sources: plan.sources,
+      exclusions: plan.exclusions, recipePlans: plan.recipePlans ?? [] }, context })).toMatchObject({
+      ok: false, errorCode: 'machine_setup_setup_failed',
+    });
+    const operations = await fixture.operations.handlers.listV2({ states: ['failed'],
+      requestIdentity: { actionId: 'machines.setup.apply', requestId: context.actionRequestId! } }, context);
+    expect(operations.items).toContainEqual(expect.objectContaining({ actionId: 'machines.setup.apply',
+      domainRef: expect.objectContaining({ kind: 'machineSetup', source: { sources: plan.sources, exclusions: plan.exclusions } }),
+    }));
   });
 
   it('stops the admitted Apply on local cancellation before another step or desired publication', async () => {

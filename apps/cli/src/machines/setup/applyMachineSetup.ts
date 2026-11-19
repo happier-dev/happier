@@ -61,6 +61,8 @@ export type ApplyMachineSetupInput = Readonly<{
   preset?: Readonly<{ id: string; revision: number; name?: string }>;
   requesterAccountId: string;
   userHomeDirectory: string;
+  /** Original wire sources for operation recovery, before opening presets or materializing credentials. */
+  authoredSource?: Extract<ActionOperationDomainRefV1, { kind: 'machineSetup' }>['source'];
   /** Ordered admitted source copies; a single internal stage uses the same owner. */
   setup: MachineSetupV1 | MachineSetupV1[];
   recipePlans?: NonNullable<MachineSetupPlanResultV1['recipePlans']>;
@@ -194,6 +196,7 @@ async function startMachineSetup(input: AdmittedMachineSetupInput): Promise<Acti
   const taskKind = input.taskKind;
   const attachment: Extract<ActionOperationDomainRefV1, { kind: 'machineSetup' }> = {
     kind: 'machineSetup', serverId: input.homeId, machineId: input.machineId,
+    ...(input.authoredSource ? { source: input.authoredSource } : {}),
     ...(input.preset ? { preset: input.preset } : {}), ...(input.managedId ? { managedId: input.managedId } : {}),
   };
   const snapshot = createSetupOperationSnapshot(attachment, input.plans, update => input.operation.operationOwnerUpdate.update(update),

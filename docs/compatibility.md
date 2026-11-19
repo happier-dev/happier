@@ -1283,6 +1283,14 @@ exclusions still match its frozen review. Completed recipes and scripts stay
 completed. Ordinary stale reviews and later desired edits still require a fresh
 Plan. No new persisted progress format is introduced.
 
+The receiving Apply operation carries optional `domainRef.source` on the
+`machineSetup` attachment. It preserves the original source proposal, exclusions,
+and removal selections for a fresh Plan. Saved presets and secret inputs retain
+their existing opaque, sealed, or reference forms. Operation content follows the
+existing Account mode. The source carries no effect plans or approval. Matching
+development clients read it through V2. Older records can omit it, and the
+released V1 projection omits the entire Machine Setup attachment.
+
 ## Machine Setup connector grant scope (unreleased 0.3)
 
 The existing Setup preparation admission optionally carries `connectorGrants`

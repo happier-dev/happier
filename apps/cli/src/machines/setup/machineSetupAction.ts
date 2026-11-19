@@ -579,6 +579,9 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           : applyMachineSetup({ ...nativeInput, ...(connectorSecretGrant && elevation ? {
             elevation: { ...elevation, connectorSecretGrant },
           } : {}), setup: [...setups], recipePlans: reviewedRecipePlans,
+            authoredSource: { sources: wireSources,
+              ...(input.exclusions === undefined ? {} : { exclusions: input.exclusions }),
+              ...(input.removeItemKeys === undefined ? {} : { removeItemKeys: input.removeItemKeys }) },
             removalPlans: planned.removalPlans, exclusions, sourceChange,
             ...(secretEnvironment ? { secretEnvironment } : {}) }, prepared);
         };
