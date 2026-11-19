@@ -253,6 +253,32 @@ describe('MachineAdministrationTargetSelector', () => {
         }
     }));
 
+    it('names a lone selected row against its Home\'s Machine lists, so a selected-only consumer keeps the suffix', async () => {
+        const { MachineAdministrationTargetSelector } = await import('./MachineAdministrationTargetSelector');
+        const { registerMachineNameInventory } = await import('@/utils/sessions/machineDisplayNames');
+        const { selection } = createSelection();
+        const hostname = 'NLDW4-5-40-40';
+        const rows = ['2cd4-machine', 'ae13-machine'].map((id) => ({
+            ...selection.pickerRows[0]!,
+            machine: { ...selection.pickerRows[0]!.machine, id, metadata: { displayName: hostname, host: hostname } },
+            candidate: { ...selection.candidates[0]!, displayName: hostname, target: { serverIdentityId: 'portable-server-b', machineId: id } },
+        }));
+        const selectedTarget = rows[0]!.candidate.target;
+        // The consumer reads only its selected Machine's row; the Home's list holds its same-named peer.
+        registerMachineNameInventory(() => ({ 'local-profile-b': rows.map((row) => row.machine) }));
+        try {
+            const screen = await renderScreen(<MachineAdministrationTargetSelector
+                selection={{ ...selection, candidates: [rows[0]!.candidate], pickerRows: [rows[0]!], selectedTarget,
+                    state: resolveMachineAdministrationTargetState({ storedTarget: selectedTarget, candidates: [rows[0]!.candidate] }) }}
+                presentation="chip" testIDPrefix="lone.target"
+            />);
+            try {
+                const chip = screen.findHostByTestId('lone.target.chip');
+                expect(chip?.props.accessibilityLabel ?? chip?.props['aria-label']).toContain(`${hostname} · 2cd4`);
+            } finally { await screen.unmount(); }
+        } finally { registerMachineNameInventory(null); }
+    });
+
     it('keeps the compact context readable and reveals clearing beside the machine choices', async () => {
         const { MachineAdministrationTargetSelector } = await import('./MachineAdministrationTargetSelector');
         const { selection, clearTarget } = createSelection('offline');
@@ -571,4 +597,45 @@ describe('MachineAdministrationTargetSelector', () => {
         expect(presentation).not.toContain(target.machineId);
         expect(presentation).not.toContain(target.serverIdentityId);
     });
+    it.each(['section', 'chip'] as const)('a closed %s chooser does no per-Machine work for its whole inventory, and opening it still lists the fleet', (presentation) => withPopoverWebGlobals(async () => {
+        const { MachineAdministrationTargetSelector } = await import('./MachineAdministrationTargetSelector');
+        const { selection } = createSelection();
+        // QA A's census: 483 same-named Machines on one Home.
+        const pickerRows = Array.from({ length: 483 }, (_, index) => {
+            const id = `${index.toString(16).padStart(4, '0')}-machine`;
+            return {
+                ...selection.pickerRows[0]!,
+                machine: { ...selection.pickerRows[0]!.machine, id, metadata: { displayName: 'lima-happier-fresh', host: `lima-${index}` } },
+                candidate: { ...selection.candidates[0]!, displayName: 'lima-happier-fresh', target: { serverIdentityId: 'portable-server-b', machineId: id } },
+            };
+        });
+        const candidates = pickerRows.map((row) => row.candidate);
+        const selectedTarget = pickerRows[0]!.candidate.target;
+        const fleet: MachineAdministrationTargetSelectionV1 = { ...selection, candidates, pickerRows, selectedTarget,
+            state: resolveMachineAdministrationTargetState({ storedTarget: selectedTarget, candidates }) };
+        let candidateReads = 0;
+        const resolveCandidateAvailability = () => { candidateReads += 1; return undefined; };
+        let renderParent = () => {};
+        function Page() {
+            const [, setRevision] = React.useState(0);
+            renderParent = () => setRevision((revision) => revision + 1);
+            return <MachineAdministrationTargetSelector selection={fleet} presentation={presentation}
+                testIDPrefix="fleet.target" resolveCandidateAvailability={resolveCandidateAvailability} />;
+        }
+        const screen = await renderScreen(<Page />);
+        try {
+            candidateReads = 0;
+            const parentRenders = 5;
+            for (let index = 0; index < parentRenders; index += 1) await act(async () => { renderParent(); });
+            // Closed, the chooser presents only its selected Machine; per render it may ask about that one and
+            // whether any choice exists, never about all 483 rows.
+            expect(candidateReads).toBeLessThanOrEqual(parentRenders * 2);
+
+            await screen.pressByTestIdAsync(`fleet.target.${presentation === 'chip' ? 'chip' : 'current'}`);
+            if (presentation === 'chip') await act(async () => { reportPopoverContentLayout(screen.tree, { width: 320, height: 400 }); });
+            // The section lists its rows; the chip mounts its virtualized list, which lays its rows out later.
+            if (presentation === 'chip') expect(screen.findHostByTestId('fleet.target.picker-list')).not.toBeNull();
+            else expect(screen.findHostByTestId('fleet.target.picker-option:0001-machine')).not.toBeNull();
+        } finally { await screen.unmount(); }
+    }));
 });

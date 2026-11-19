@@ -29,7 +29,7 @@ import {
 } from '@/sync/domains/machines/administration/targetSelection';
 import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { t } from '@/text';
-import { lockedMachineName, resolveMachineDisplayNames, unnamedMachineName } from '@/utils/sessions/machineDisplayNames';
+import { getMachineDisplayName, lockedMachineName, resolveMachineDisplayNames, unnamedMachineName } from '@/utils/sessions/machineDisplayNames';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { linkMachineActivity } from '@/sync/domains/machines/machineActivity';
@@ -193,10 +193,12 @@ function presentCurrentTarget(
     const presentation = resolveCandidatePresentation?.(candidate);
     const availability = resolveCandidateAvailability?.(candidate);
     const row = pickerRows.find((entry) => machineAdministrationTargetsEqual(entry.candidate.target, candidate.target));
+    const homeRows = row ? pickerRows.filter((entry) => entry.serverId === row.serverId).map((entry) => entry.machine) : [];
+    // A lone row (a consumer reading only its selected Machine) has no peers to tell it apart, so it is named against
+    // its Home's Machine lists, exactly as the Machine list names it.
     const machineName = row && readMachineAdministrationCandidateName(candidate) !== null && candidate.availability !== 'locked'
-        ? resolveMachineDisplayNames(pickerRows
-            .filter((entry) => entry.serverId === row.serverId)
-            .map((entry) => entry.machine)).get(row.machine.id) : undefined;
+        ? homeRows.length > 1 ? resolveMachineDisplayNames(homeRows).get(row.machine.id) : getMachineDisplayName(row.machine)
+        : undefined;
     return {
         title: presentation?.title
             ?? machineName
@@ -215,6 +217,17 @@ export function presentMachineAdministrationTargetState(state: MachineAdministra
     return presentCurrentTarget(state, undefined, undefined, undefined, undefined, undefined, false);
 }
 
+const NO_PICKER_GROUPS: readonly ServerScopedMachineGroup<MachineAdministrationPickerMachine>[] = [];
+
+/** Whether the chooser has a Machine to offer; asks the domain only until the first one it does not hide. */
+function hasPickerChoices(
+    selection: MachineAdministrationTargetSelectionV1,
+    resolveCandidateAvailability: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability'],
+): boolean {
+    return selection.pickerRows.some((row) => resolveCandidateAvailability?.(row.candidate)?.hidden !== true);
+}
+
+/** The chooser's rows; built only while it is open, because each row is per-Machine work across the whole inventory. */
 function buildPickerGroups(
     selection: MachineAdministrationTargetSelectionV1,
     resolveCandidateAvailability: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability'],
@@ -285,9 +298,14 @@ function useTargetChange(intent: MachineAdministrationTargetSelectionV1['changeI
  */
 export function MachineAdministrationTargetSelector(props: MachineAdministrationTargetSelectorProps) {
     const [pickerOpen, setPickerOpen] = React.useState(false);
+    const changeTarget = useTargetChange(props.selection.changeIntent);
+    // The chip presents itself; nothing below is computed for it.
+    if (props.presentation === 'chip') {
+        return <MachineTargetChip {...props} />;
+    }
     const testIDPrefix = props.testIDPrefix ?? 'machine-administration-target';
     const groupTitle = props.groupTitle ?? t('settingsProviders.detail.targetMachine');
-    const compact = props.presentation === 'context' || props.presentation === 'chip';
+    const compact = props.presentation === 'context';
     const current = presentCurrentTarget(
         props.selection.state,
         props.unselectedTitle,
@@ -298,8 +316,9 @@ export function MachineAdministrationTargetSelector(props: MachineAdministration
         compact,
         props.selection.pickerRows,
     );
-    const groups = buildPickerGroups(props.selection, props.resolveCandidateAvailability);
-    const canOpenPicker = groups.length > 0 || (compact && props.selection.selectedTarget !== null);
+    const groups = pickerOpen ? buildPickerGroups(props.selection, props.resolveCandidateAvailability) : NO_PICKER_GROUPS;
+    const canOpenPicker = hasPickerChoices(props.selection, props.resolveCandidateAvailability)
+        || (compact && props.selection.selectedTarget !== null);
     const selectedRow = props.selection.selectedTarget
         ? props.selection.pickerRows.find((row) => machineAdministrationTargetsEqual(
             row.candidate.target,
@@ -309,11 +328,6 @@ export function MachineAdministrationTargetSelector(props: MachineAdministration
     const accessibilityLabel = [compact ? groupTitle : undefined, current.title, current.subtitle, current.detail]
         .filter((value): value is string => Boolean(value))
         .join(', ');
-    const changeTarget = useTargetChange(props.selection.changeIntent);
-
-    if (props.presentation === 'chip') {
-        return <MachineTargetChip {...props} />;
-    }
 
     return (
         <>
@@ -406,7 +420,6 @@ export function useMachineAdministrationTargetFilter(
         true,
         props.selection.pickerRows,
     );
-    const groups = buildPickerGroups(props.selection, props.resolveCandidateAvailability);
     const selectedRow = props.selection.selectedTarget
         ? props.selection.pickerRows.find((row) => machineAdministrationTargetsEqual(
             row.candidate.target,
@@ -420,10 +433,12 @@ export function useMachineAdministrationTargetFilter(
     const changeTarget = useTargetChange(props.selection.changeIntent);
     const { selection, resolveCandidateAvailability, resolveCandidatePresentation, selectionPolicy } = props;
     const selectedServerId = selectedRow?.serverId ?? null;
-    const canOpen = (groups.length > 0 || props.chipOpen === true) && props.disabled !== true;
+    // Like the compact section, a chip with a stored target stays openable: a consumer reading only that row
+    // still recovers a missing target, and its choices are read once the chooser opens.
+    const canOpen = (hasPickerChoices(selection, resolveCandidateAvailability) || selection.selectedTarget !== null
+        || props.chipOpen === true) && props.disabled !== true;
     const renderPopoverContent = React.useCallback(({ close, maxHeight }: Readonly<{ close: () => void; maxHeight: number }>) => (
         <MachineTargetChipList
-            groups={groups}
             selection={selection}
             selectedServerId={selectedServerId}
             resolveCandidateAvailability={resolveCandidateAvailability}
@@ -436,7 +451,7 @@ export function useMachineAdministrationTargetFilter(
                 close();
             })}
         />
-    ), [changeTarget, groups, resolveCandidateAvailability, resolveCandidatePresentation, selectedServerId, selection, selectionPolicy, testIDPrefix]);
+    ), [changeTarget, resolveCandidateAvailability, resolveCandidatePresentation, selectedServerId, selection, selectionPolicy, testIDPrefix]);
     return {
         id: props.filterId ?? 'machine',
         label: props.chipLabel ?? groupTitle,
@@ -470,7 +485,6 @@ function MachineTargetChip(props: MachineAdministrationTargetSelectorProps) {
  * own availability decision and naming, and mounts only while the popover is open.
  */
 function MachineTargetChipList(props: Readonly<{
-    groups: ReturnType<typeof buildPickerGroups>;
     selection: MachineAdministrationTargetSelectionV1;
     selectedServerId: string | null;
     resolveCandidateAvailability: MachineAdministrationTargetSelectorProps['resolveCandidateAvailability'];
@@ -482,14 +496,18 @@ function MachineTargetChipList(props: Readonly<{
 }>) {
     const { resolveCandidateAvailability, resolveCandidatePresentation, selectionPolicy } = props;
     const selectedTarget = props.selection.selectedTarget;
+    const groups = React.useMemo(
+        () => buildPickerGroups(props.selection, resolveCandidateAvailability),
+        [props.selection, resolveCandidateAvailability],
+    );
     const selectedMachine = React.useMemo(() => {
         if (!selectedTarget) return null;
-        for (const group of props.groups) {
+        for (const group of groups) {
             const match = group.machines.find((machine) => machineAdministrationTargetsEqual(machine.target, selectedTarget));
             if (match) return match;
         }
         return null;
-    }, [props.groups, selectedTarget]);
+    }, [groups, selectedTarget]);
     const resolveMachineAvailability = React.useCallback(
         (machine: MachineAdministrationPickerMachine): MachineSelectionAvailability => (
             resolveCandidateAvailability?.(machine.candidate) ?? resolvePickerAvailability(machine, selectionPolicy)
@@ -506,7 +524,7 @@ function MachineTargetChipList(props: Readonly<{
     return (
         <View style={resolveMachineChipListStyle()}>
         <NewSessionMachineSelectionContent<MachineAdministrationPickerMachine>
-            groups={props.groups}
+            groups={groups}
             selectedMachine={selectedMachine}
             selectedServerId={props.selectedServerId}
             recentMachines={NO_PINNED_MACHINES}
