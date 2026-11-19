@@ -29,6 +29,8 @@ export { allowRealServerSocketBoundary as allowRealActionServerSocketBoundary } 
 export { createMachineClientEnrollmentOutputFixture } from './machineClientEnrollmentOutputFixture';
 export { createAccountOutputFixture } from './machineAccountOutputContractFixture';
 export { createUiMachineOutputFixture } from './machinesOutputContractFixture';
+export { mountUiWorkflowEnginePicker, readUiBundledClaudeDeclaration } from './workflowAuthoringIntegrationTestkit';
+
 export { mountUiRetainedProjectTerminal } from './projectTerminalPresentationIntegrationTestkit';
 export { installBundledPluginUiArtifactsForTests, installBundledPluginUiDeclarationsForTests } from './mocks/bundledPluginUiAssets';
 export { prepareAuthenticationInventory } from './fixtures/connectedAccountAuthentication';

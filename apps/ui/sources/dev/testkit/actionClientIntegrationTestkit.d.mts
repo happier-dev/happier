@@ -1,3 +1,5 @@
+import type { WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import type { AuthCredentials } from '../../auth/storage/authCredentials.js';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { AccountEncryptionModeResponse } from '@happier-dev/protocol/account/encryptionMode';
@@ -38,6 +40,19 @@ export function prepareAuthenticationInventory(packaged: {
     additionalArtifacts?: readonly Readonly<{ target: Readonly<{ artifactId: string; exportName: string }>; entryPath: string }>[];
     deferDeclaration?: boolean; onDeclarationLoad?: () => void;
 }>): Promise<{ pluginId: string; localId: string }>;
+
+export const readUiBundledClaudeDeclaration: typeof import('./workflowAuthoringIntegrationTestkit.js').readUiBundledClaudeDeclaration;
+export function mountUiWorkflowEnginePicker(params: Readonly<{
+    serverId: string;
+    machineId: string;
+    directory: string;
+    values: WorkflowStepExecutionSelection;
+}>): Promise<Readonly<{
+    waitForModelRow(selection: TeamCredentialProviderModelSelectionV1, expected?: Readonly<{ selected?: boolean }>): Promise<Readonly<{ disabled: boolean; selected: boolean }>>;
+    chooseModel(selection: TeamCredentialProviderModelSelectionV1): Promise<WorkflowStepExecutionSelection>;
+    reopen(values: WorkflowStepExecutionSelection): Promise<void>;
+    close(): Promise<void>;
+}>>;
 
 export function createUiMachineOutputFixture(serverId: string): Readonly<{
     cases: ReadonlyMap<ActionId, () => unknown | Promise<unknown>>;
