@@ -75,7 +75,7 @@ import {
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
-import { TRIAGE_DETAIL_ATTENTION_TEST_ID_V1, TRIAGE_DETAIL_FOOTER_TEST_ID_V1 } from './detail/region.js';
+import { TRIAGE_DETAIL_FOOTER_TEST_ID_V1 } from './detail/region.js';
 import { TRIAGE_SHELL_FILL_TEST_ID_V1 } from './shell/root.js';
 import { triageActionImmediateRefusalV1 } from './header/useEntrySessionStart.js';
 import {
@@ -1006,9 +1006,10 @@ describe('the entry action controls on the mounted detail header', () => {
         const askedShell = await mountShell(createHarness({ involvement: ['reviewRequested'] }));
         await openTheRow(askedShell);
         const askedFooter = document.querySelector(`[data-testid="${TRIAGE_DETAIL_FOOTER_TEST_ID_V1}"]`);
-        const attention = document.querySelector(`[data-testid="${TRIAGE_DETAIL_ATTENTION_TEST_ID_V1}"]`);
+        // A requested review of a pull request is said by its Reviewers cell ("Waiting on you"), not a badge.
+        const attention = document.querySelector('[data-testid="triage-detail-facts.reviewers"]');
         expect(askedFooter).not.toBeNull();
-        expect(attention).not.toBeNull();
+        expect(attention?.textContent).toContain('Waiting on you');
         expect(askedFooter!.contains(attention)).toBe(false);
         await askedShell.dispose();
         mounted.splice(mounted.indexOf(pushedShell), 1);
