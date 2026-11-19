@@ -128,6 +128,14 @@ export type ReviewWalkthroughTranslations = {
         tabActivity: string;
         historyEarlierRuns: (params: Count) => string;
         historyEmpty: string;
+        newInRound: (params: Readonly<{ round: number }>) => string;
+        stillThere: string;
+        notFoundInRound: (params: Readonly<{ round: number }>) => string;
+        preExisting: string;
+        historyNewSincePrevious: string;
+        historyOpenElsewhere: (params: Count) => string;
+        historyNotFoundThisTime: string;
+        openReview: string;
         round: (params: Readonly<{ round: number }>) => string;
         rounds: string;
         failedTitle: string;
@@ -326,6 +334,14 @@ export const en: ReviewWalkthroughTranslations = {
         tabActivity: 'Activity',
         historyEarlierRuns: ({ count }) => count === 1 ? 'Also in 1 earlier run' : `Also in ${count} earlier runs`,
         historyEmpty: 'No earlier findings to show',
+        newInRound: ({ round }) => `New in round ${round}`,
+        stillThere: 'Still there',
+        notFoundInRound: ({ round }) => `Not found in round ${round}`,
+        preExisting: 'Was there before these changes',
+        historyNewSincePrevious: 'New since the last run',
+        historyOpenElsewhere: ({ count }) => count === 1 ? 'Open in 1 other review' : `Open in ${count} other reviews`,
+        historyNotFoundThisTime: 'Not found this time',
+        openReview: 'Open review',
         round: ({ round }) => `Round ${round}`,
         rounds: 'Rounds',
         failedTitle: 'This review didn’t open',

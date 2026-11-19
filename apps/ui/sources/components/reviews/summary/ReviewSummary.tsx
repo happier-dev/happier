@@ -149,7 +149,7 @@ export function ReviewSummary(props: ReviewSummaryProps): React.ReactElement {
         <TextLinkButton
           testID="review-summary:open"
           size="row"
-          label={t('reviewWalkthrough.finished.openFindings')}
+          label={t('reviewWalkthrough.detail.openReview')}
           onPress={props.onOpenReview}
         />
       </View>

@@ -19,6 +19,7 @@ import {
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import {
   SegmentedTabBar,
@@ -145,8 +146,13 @@ export function ReviewDetailView(
         testID="review-detail:header"
       />
       <PageContentColumn style={styles.column}>
-        {props.glance ? <ReviewGlanceLine glance={props.glance} /> : null}
-        {props.notice ?? null}
+        {props.glance || props.notice ? (
+          // The glance and its notice stand on the sections' sheet edge, not the column's.
+          <View style={styles.lead}>
+            {props.glance ? <ReviewGlanceLine glance={props.glance} /> : null}
+            {props.notice ?? null}
+          </View>
+        ) : null}
         {round ? (
           <ReviewDetailRoundSection
             round={round}
@@ -317,8 +323,12 @@ export function ReviewDetailState(
   );
 }
 
+/** The sections' sheet edge inside the page column: page-level lines align with the sheets below them. */
+const CONTENT_INSET_PX = resolveItemGroupContentHorizontalInsetPx();
+
 const styles = StyleSheet.create((theme) => ({
-    column: { gap: theme.space.s24, paddingBottom: theme.space.s32 },
+    column: { gap: theme.space.s16, paddingBottom: theme.space.s32 },
+    lead: { gap: theme.space.s8, paddingHorizontal: CONTENT_INSET_PX, paddingTop: theme.space.s16 },
     glance: { gap: theme.space.s4 },
     glanceSentence: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     glanceDot: { width: theme.space.s8, height: theme.space.s8, borderRadius: theme.space.s4 },
@@ -328,6 +338,7 @@ const styles = StyleSheet.create((theme) => ({
     participant: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, minWidth: 0 },
     participantName: { color: theme.colors.text.primary, flexShrink: 1 },
     participantQuiet: { color: theme.colors.text.secondary },
-    tabs: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.border.default, paddingBottom: theme.space.s8 },
+    tabs: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.border.default, paddingBottom: theme.space.s8,
+        marginHorizontal: CONTENT_INSET_PX },
     loading: { minHeight: theme.space.s48 * 6 },
 }));

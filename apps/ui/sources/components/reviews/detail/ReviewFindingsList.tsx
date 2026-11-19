@@ -13,6 +13,7 @@ import {
   reviewSeverityLabel,
 } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import {
   SegmentedTabBar,
   type SegmentedTab,
@@ -104,6 +105,7 @@ export function ReviewFindingsList(
   }
   return (
     <View testID={props.testID ?? 'review-findings'} style={styles.list}>
+      <View style={styles.filters}>
       <SegmentedTabBar<DecisionFilter>
         role="radiogroup"
         presentation="pills"
@@ -114,6 +116,7 @@ export function ReviewFindingsList(
         testIDPrefix="review-findings:filters"
         accessibilityLabel={t('runPage.review.findings')}
       />
+      </View>
       {props.before ?? null}
       {groups.map(([severity, rows]) => (
         <ItemGroup
@@ -138,5 +141,7 @@ export function ReviewFindingsList(
 
 const styles = StyleSheet.create((theme) => ({
   list: { gap: theme.space.s16 },
+  // The filters stand on the sheets' edge, like the page lines above them.
+  filters: { paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() },
   rows: { paddingHorizontal: theme.space.s16 },
 }));

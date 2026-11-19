@@ -106,6 +106,8 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
     onAsk: (rowId: string, messageMarkdown: string) => Promise<boolean>;
     /** Opens the existing Tasks draft for this saved canonical finding. */
     onCreateTask?: (rowId: string) => Promise<void>;
+    /** The finding's standing words from their owners (round status, already there), after who found it. */
+    facts?: readonly string[];
 }>) {
     const { theme } = useUnistyles();
     const { finding, rowId, onAsk, onDecide, onToggleExpanded } = props;
@@ -302,6 +304,9 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
                                     <Text numberOfLines={1} style={styles.attributionText}>{props.attribution.label}</Text>
                                 </View>
                             ) : null}
+                            {props.facts?.map((fact) => (
+                                <Text key={fact} testID={`review-finding-fact:${rowId}`} numberOfLines={1} style={styles.attributionText}>{fact}</Text>
+                            ))}
                         </View>
                     </View>
                 </Pressable>

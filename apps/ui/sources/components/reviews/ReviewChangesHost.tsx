@@ -16,6 +16,7 @@ import { useScmReviewedMarks } from '@/components/sessions/files/comparison/useS
 import { ScmWalkthroughView } from '@/components/sessions/files/walkthrough/ScmWalkthroughView';
 import type { SessionScmReviewComparison, SessionScmReviewView } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { Text } from '@/components/ui/text/Text';
 import { useCheckoutReachability, describeCheckoutUnreachable } from '@/components/workspaces/reachability/checkoutReachabilityModel';
@@ -108,7 +109,7 @@ function ReviewEvidenceExcerpts(props: Pick<ReviewChangesHostProps, 'comments' |
 
 /** The round's changes are on a Machine this viewer can't reach: say where to open them, then the excerpts. */
 function ReviewChangesUnavailable(props: Pick<ReviewChangesHostProps, 'comments' | 'onOpenComment'> & Readonly<{ reason: string | null }>) {
-    return <View style={excerptStyles.list}>
+    return <View style={[excerptStyles.list, excerptStyles.inset]}>
         <SurfaceStateCard testID="review-changes-unavailable" kind="empty" layout="inline"
             title={t('reviewWalkthrough.detail.noMachineTitle')}
             reason={props.reason ?? t('reviewWalkthrough.detail.noMachineReason')} />
@@ -118,6 +119,8 @@ function ReviewChangesUnavailable(props: Pick<ReviewChangesHostProps, 'comments'
 
 const excerptStyles = StyleSheet.create((theme) => ({
     list: { gap: theme.space.s16 },
+    // On the Review page's sheet edge, with the glance and tabs above it.
+    inset: { paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() },
     item: { gap: theme.space.s6 },
     head: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.s8, flexWrap: 'wrap' },
     title: { color: theme.colors.text.primary, flexShrink: 1 },

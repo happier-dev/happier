@@ -32,6 +32,8 @@ import { presentSessionAddressSelection } from '@/components/sessions/transcript
 import { readArtifactAccessCapabilities } from '@/sync/domains/artifacts/artifactAccessCapabilities';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { ReviewSubmitPanel } from './ReviewSubmitPanel';
+import { reviewFindingFacts, reviewHistoryFacts } from './reviewFindingFacts';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { useReviewNewRound } from './useReviewNewRound';
 import { projectReviewGlance } from './reviewGlance';
 import { reviewSubjectLabel } from '../list/useReviewsCollectionView';
@@ -263,6 +265,7 @@ export function ReviewDetailHost(props: Readonly<{
     serverId: scope?.serverId ?? null, sessionId: null, canAct: canEdit, pending: comments.pending,
     onDecideComment: decide });
   const findingById = React.useMemo(() => new Map(findings.rows.map(row => [row.rowId, row])), [findings.rows]);
+  const commentById = React.useMemo(() => new Map(comments.comments.map(comment => [comment.id, comment])), [comments.comments]);
   const findingTitles = React.useMemo(() => new Map(comments.comments.flatMap(comment =>
     comment.findingIdentity && comment.finding ? [[comment.findingIdentity, comment.finding.title] as const] : [])), [comments.comments]);
   const history = useReviewHistory({ reviewId: record?.reviewId ?? artifact.id, workflowId: review?.workflowId },
@@ -339,7 +342,9 @@ export function ReviewDetailHost(props: Readonly<{
                   decision={canEdit ? row.decision : null} decisionDisabled={!row.decidable} decisionNote={null}
                   onDecide={findings.onDecide} followUp={row.followUp} threadEntries={row.threadEntries} pendingQuestion={null}
                   expanded={openFinding === row.rowId} onToggleExpanded={toggleFinding} askContext={row.askContext}
-                  onAsk={findings.onAsk} onCreateTask={canEdit ? findings.onCreateTask : undefined} /> : null;
+                  onAsk={findings.onAsk} onCreateTask={canEdit ? findings.onCreateTask : undefined}
+                  facts={reviewFindingFacts({ appearance: row.appearance, roundOrdinal: selectedRound,
+                    scopeAttribution: commentById.get(row.rowId)?.scopeAttribution })} /> : null;
               }} /> : null}
         {findings.unavailableFindings.map(comment => <SurfaceStateCard key={comment.id}
           testID={`review-detail:unavailable-finding:${comment.id}`} kind="warning" size="line"
@@ -370,7 +375,7 @@ export function ReviewDetailHost(props: Readonly<{
       {activeTab === 'activity' ? <>
         {history.data ? <ItemGroup header="none">{history.data.items.map(item => <Item key={item.findingIdentity}
           testID={`review-history:finding:${item.findingIdentity}`} title={findingTitles.get(item.findingIdentity) ?? t('runPage.review.findings')}
-          subtitle={t('reviewWalkthrough.detail.historyEarlierRuns', { count: item.priorRunCount })} />)}</ItemGroup> : null}
+          subtitle={joinHappierFacts(...reviewHistoryFacts(item))} />)}</ItemGroup> : null}
         {review?.workflowId && !history.data && history.status !== 'error' ? <SurfaceStateCard kind="loading" title={t('common.loading')} /> : null}
         {history.status === 'error' ? <SurfaceStateCard kind="error" size="line" title={t('common.error')}
           action={{ label: t('common.retry'), onPress: () => void history.refresh() }} /> : null}
