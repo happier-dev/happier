@@ -4,7 +4,7 @@ import {
     ProtocolWorkspaceAddressV1Schema, ProjectExecutionOperationRefV1ProtocolSchema,
     ProtocolLaunchProfileIdV2Schema, ScmHostingRepositoryIdentityV1ProtocolSchema,
     ProtocolServiceHealthNoticeSourceV1Schema, ProtocolServiceHealthNoticePageV1Schema,
-    ProtocolServiceHealthNoticeMachineV1Schema,
+    ProtocolServiceHealthNoticeMachineV1Schema, ProtocolFailureActionPlacementReasonV1Schema,
     type ProtocolComposableSchema, type ProtocolSchemaInput, type ProtocolSchemaOutput,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
@@ -13,7 +13,6 @@ import {
     SessionInputHandoffSendResultV1Schema, SessionInputHandoffCompositionResultV1Schema,
 } from '@happier-dev/plugin-sdk/sessions';
 import { AgentTargetKeyV2Schema } from '@happier-dev/plugin-sdk/agents';
-import { FailureActionPlacementReasonV1Schema } from '@happier-dev/plugin-sdk/ui';
 import { ForgeCiFailureSummaryV1Schema } from '../ci/v1/failureSummary.js';
 import { ForgeReleaseNotesContextV1Schema } from '../releases/v1/operations.js';
 import { TriageActionIdV1Schema, TriageActionSubjectV1Schema, TriageEntryRefV1Schema, TriageSourceInstanceIdV1Schema } from './identity.js';
@@ -176,7 +175,7 @@ const handoffResult = defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('entryExecution'), status: TriageConfiguredEntryExecutionStatusV1Schema }, closed),
     SessionInputHandoffCompositionResultV1Schema,
     handoffSendResult,
-    defineProtocolObject({ kind: defineProtocolLiteral('placement_choice_required'), reason: FailureActionPlacementReasonV1Schema,
+    defineProtocolObject({ kind: defineProtocolLiteral('placement_choice_required'), reason: ProtocolFailureActionPlacementReasonV1Schema,
         candidates: defineProtocolArray(defineProtocolObject({
         machine: ProtocolServiceHealthNoticeMachineV1Schema, workspace: ProtocolWorkspaceAddressV1Schema.optional(),
         reachable: bool,

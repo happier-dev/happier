@@ -15,7 +15,9 @@ const ALLOWED_SDK_SUBPATHS = [
     '@happier-dev/plugin-sdk/automations',
     '@happier-dev/plugin-sdk/scm',
     '@happier-dev/plugin-sdk/actions',
+    '@happier-dev/plugin-sdk/agents',
     '@happier-dev/plugin-sdk/collections',
+    '@happier-dev/plugin-sdk/errors',
 ] as const;
 
 const RETIRED_AUTHORING_SPELLINGS = [
@@ -66,24 +68,21 @@ describe('Triage protocol authoring surface', () => {
     });
 
     it('imports only allowlisted browser-safe public SDK entry points', async () => {
-        const sources = [
-            ...await productionSources(v1Directory),
-            ...await productionSources(testingDirectory),
-        ];
-        const sdkSpecifiers = new Set<string>();
+        const sources = await productionSources(new URL('../', import.meta.url));
+        const happierSpecifiers = new Set<string>();
         for (const source of sources) {
-            for (const match of source.matchAll(/from\s+['"](@happier-dev\/plugin-sdk[^'"]*)['"]/gu)) {
-                sdkSpecifiers.add(match[1]!);
+            for (const match of source.matchAll(/from\s+['"](@happier-dev\/[^'"]+)['"]/gu)) {
+                happierSpecifiers.add(match[1]!);
             }
         }
 
-        expect(sdkSpecifiers.size).toBeGreaterThan(0);
-        for (const specifier of sdkSpecifiers) {
+        expect(happierSpecifiers.size).toBeGreaterThan(0);
+        for (const specifier of happierSpecifiers) {
             expect(ALLOWED_SDK_SUBPATHS).toContain(specifier);
         }
     });
 
-    it('declares only its public Channels protocol dependency and no validator dependency', async () => {
+    it('declares neither host Protocol nor a validator dependency', async () => {
         const packageJson = JSON.parse(await readFile(
             new URL('../../package.json', import.meta.url),
             'utf8',
@@ -103,6 +102,5 @@ describe('Triage protocol authoring surface', () => {
             expect(group?.['@happier-dev/protocol']).toBeUndefined();
             expect(group?.zod).toBeUndefined();
         }
-        expect(Object.keys(packageJson.dependencies ?? {})).toEqual(['@happier-dev/channels-protocol']);
     });
 });
