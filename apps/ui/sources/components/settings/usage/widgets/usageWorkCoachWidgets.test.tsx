@@ -1092,17 +1092,30 @@ describe('Work and Coach widget bodies', () => {
     expect(freeRow).toBeTruthy();
   });
   it('keeps an unpriced Session cost a quiet dash and draws no empty cost-over-time plot (USAGE-ACCEPT 1118 #17)', async () => {
+    const sessionQuery = normalizeUsageQuery({ ...query, metric: 'tokens', session: 'unpriced', costBasis: 'auto' });
+    const unknownCost = { reportedUsd: null, estimatedUsd: null, currency: 'USD', costSource: 'none' as const };
     const rows = [
-      { ...contribution('unknown', 'unpriced', 't1'), cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD', costSource: 'none' as const } },
-      { ...contribution('unknown-2', 'unpriced', 't2'), cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD', costSource: 'none' as const } },
+      { ...contribution('unknown', 'unpriced', 't1'), cost: unknownCost },
+      { ...contribution('unknown-2', 'unpriced', 't2'), cost: unknownCost },
     ];
-    const unpriced = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
-    const sessionQuery = normalizeUsageQuery({ ...query, session: 'unpriced' });
-    const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery} slice={{ ...slice, shownQuery: sessionQuery, work: unpriced }}
+    // The Session's hero comes from its accounting projection; the same unpriced rows feed accounting and Work.
+    const sessionSlice = (cost: NonNullable<UsageQueryResultSlice['accounting']>['totals']['cost'],
+      contributions: readonly ReturnType<typeof contribution>[]): UsageQueryResultSlice => ({ ...slice, shownQuery: sessionQuery,
+      accounting: { v: 1, totals: { eventCount: contributions.length, tokens: { ...tokens, total: 84 }, cost }, contributions: [...contributions] },
+      work: UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: [...contributions], evidence: [] })) });
+    const costFact = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAllByType(HappierDataMetric)
+      .find(node => node.props.label === t('usage.cost'));
+    const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery} slice={sessionSlice(unknownCost, rows)}
       id="usage_session_value" testID="value" />);
-    const values = screen.findAllByType(HappierDataMetric).map(node => node.props.value);
-    expect(values).not.toContain(t('common.unavailable'));
+    expect(costFact(screen)?.props.value).toBe('—');
+    expect(String(costFact(screen)?.props.caption ?? '')).not.toBe('');
     expect(screen.findByTestId('value.autopsy.costTimeline')).toBeNull();
+    // Contrast: the same Session with a reported price keeps its amount.
+    const priced = { reportedUsd: 3, estimatedUsd: 0, currency: 'USD' };
+    await screen.update(<UsageSessionValueWidget {...props} query={sessionQuery}
+      slice={sessionSlice(priced, rows.map(row => ({ ...row, cost: { ...priced, costSource: 'provider_reported' as const } })))}
+      id="usage_session_value" testID="value" />);
+    expect(typeof costFact(screen)?.props.value).toBe('number');
   });
   it('does not substitute an earlier quota reset for unused capacity at a later subscription end', async () => {
     const now = Date.UTC(2026, 9, 10, 12);
