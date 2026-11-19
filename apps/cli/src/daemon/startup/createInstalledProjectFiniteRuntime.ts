@@ -51,12 +51,16 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
     return { accountSettings: snapshot.rawSettings ?? snapshot.settings, settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
       savedSecretMaterializer: materializer, ...(snapshot.savedSecretResources ? { savedSecretResources: snapshot.savedSecretResources } : {}) };
   };
-  const nativeRuntime = (runtimeCurrent: () => Promise<boolean>, accountId: string) => ({
+  const nativeRuntime = (runtimeCurrent: () => Promise<boolean>, accountId: string, observationServerIdentityId: string | null) => ({
     ...(accountId === externalActionAccountId && params.publishSetupSettlement
       ? { publishSetupSettlement: params.publishSetupSettlement } : {}),
     ...(accountId === externalActionAccountId ? {
-      publishMachineServiceObservation: (payload: Parameters<NonNullable<ProjectFiniteActionRuntime['publishMachineServiceObservation']>>[0]) =>
-        publishDaemonHostEvent({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' }, payload }, () => false),
+      publishMachineServiceObservation: (payload: Parameters<NonNullable<ProjectFiniteActionRuntime['publishMachineServiceObservation']>>[0]) => {
+        if (!observationServerIdentityId) throw Object.assign(new Error('automation_event_host_evidence_unavailable'),
+          { code: 'automation_event_host_evidence_unavailable' });
+        publishDaemonHostEvent({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' },
+          payload: { ...payload, serverId: observationServerIdentityId } }, () => false);
+      },
     } : {}),
     workerAdmission: admission, isCurrent: runtimeCurrent,
     nativeIo: params.nativeIo.commandIo, environmentIo: params.nativeIo.environmentIo,
@@ -122,7 +126,9 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
       };
       if (readProjectFiniteIngressRefusal(ingress)) return refuse('requester_projection_missing');
       if (!await runtimeCurrent()) return null;
-      return { ...ports, ...nativeRuntime(runtimeCurrent, session.attribution.accountId), credentials: session.credentials,
+      const observationOrigin = session.attribution.accountId === externalActionAccountId
+        ? await resolveCurrentMachineExecutionOriginContext(ingress.signal) : null;
+      return { ...ports, ...nativeRuntime(runtimeCurrent, session.attribution.accountId, observationOrigin?.serverIdentityId ?? null), credentials: session.credentials,
         serverId: finiteServerId, machineId: registeredMachineId, accountId: session.attribution.accountId,
         serverHttpBaseUrl: session.serverHttpBaseUrl,
         sessionCustody: { serverId: session.attribution.serverId, accountId: session.attribution.accountId,
@@ -153,6 +159,10 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
     const accountAccess = requester ?? (currentCredentials ? { serverId: finiteServerId, machineId: registeredMachineId,
       accountId: externalActionAccountId, credentials: currentCredentials, serverHttpBaseUrl: finiteServerHttpBaseUrl } : null);
     if (!accountAccess) return refuse('account_access_unavailable');
+    // Account rows retain their local profile qualifier. Event sources match
+    // the portable Home identity already bound by the receiving transport.
+    const observationServerIdentityId = requester?.accountAuthorization.binding.serverIdentityId
+      ?? (await resolveCurrentMachineExecutionOriginContext(ingress.signal))?.serverIdentityId ?? null;
     // Load while the original ingress still owns requester custody; publication
     // captures that context synchronously before its first network await.
     const reportPublicationUnavailable = (error: unknown) => {
@@ -179,10 +189,11 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
         if (operation?.requestId !== requester.accountAuthorization.binding.requestId
           || (operation.actionId !== requester.accountAuthorization.binding.actionId
             && requester.accountAuthorization.binding.actionId !== 'action.invoke')) return;
-        void requesterPublisher({ publisherCredentials: credentials, authorization: requester.accountAuthorization, observation })
+        void requesterPublisher({ publisherCredentials: credentials, authorization: requester.accountAuthorization,
+          observation: { ...observation, serverId: requester.accountAuthorization.binding.serverIdentityId } })
           .catch(reportPublicationUnavailable);
       } : undefined;
-    return { ...ports, ...accountAccess, ...nativeRuntime(runtimeCurrent, accountAccess.accountId),
+    return { ...ports, ...accountAccess, ...nativeRuntime(runtimeCurrent, accountAccess.accountId, observationServerIdentityId),
       ...(publishRequesterObservation ? { publishMachineServiceObservation: publishRequesterObservation } : {}),
       ...(!requester ? { resolveSecretEnvironment: async (bindings, signal) => {
         if (!bindings) return undefined;

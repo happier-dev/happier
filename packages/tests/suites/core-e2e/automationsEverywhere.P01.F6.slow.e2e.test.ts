@@ -1,4 +1,4 @@
-import { access, mkdtemp, realpath, unlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -14,6 +14,7 @@ import { MachineStorageItemsListResultV1Schema, PileReviewV1Schema, PileApplyRes
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
+import { readDaemonDiagnostics } from '../../src/testkit/daemon/daemon';
 import { execGit, initGitRepo } from '../../src/testkit/uiE2e/gitRepoFixtures';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
@@ -90,13 +91,28 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
   expect(linked.ok, JSON.stringify(linked)).toBe(true);
   if (!linked.ok) throw new Error(`Removal trigger refused (${linked.errorCode})`);
   const saved = WorkflowTriggerWriteResultV1Schema.parse(linked.result);
-  await waitFor(async () => {
+  const readSelectedTrigger = async () => {
     const listed = await actor.execute('workflow.trigger.list', { automationId: saved.set.automationId, triggerId: saved.triggerId });
     if (!listed.ok) throw new Error(`Removal source read refused (${listed.errorCode})`);
-    const trigger = WorkflowTriggerListResultV1Schema.parse(listed.result).sets
+    return WorkflowTriggerListResultV1Schema.parse(listed.result).sets
       .flatMap(set => set.triggers).find(row => row.id === saved.triggerId);
-    return trigger?.kind === 'pluginEvent' && trigger.sourceStatus?.state === 'observing';
-  }, { context: 'Removal source starts observing before the mutation' });
+  };
+  const readSourceDiagnostic = async () => {
+    const trigger = await readSelectedTrigger();
+    const status = trigger?.kind === 'pluginEvent' ? trigger.sourceStatus : undefined;
+    return status ? { state: status.state, code: status.code, observedCount: status.observedCount,
+      admittedCount: status.admittedCount, skippedCount: status.skippedCount } : null;
+  };
+  try {
+    await waitFor(async () => {
+      const trigger = await readSelectedTrigger();
+      return trigger?.kind === 'pluginEvent' && trigger.sourceStatus?.state === 'observing';
+    }, { context: 'Removal source starts observing before the mutation' });
+  } catch (error) {
+    console.error('F6_DAEMON_DIAGNOSTIC', JSON.stringify(await readDaemonDiagnostics(machine.daemon)));
+    console.error('F6_REMOVAL_SOURCE_DIAGNOSTIC', JSON.stringify(await readSourceDiagnostic()));
+    throw error;
+  }
 
   // Git only prepares this fixture's repository. Both worktree mutations use
   // the ordinary Action executor and the enrolled daemon's native backend.
@@ -123,8 +139,14 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
   const removalInput = { cwd: machine.workspaceDir, worktreePath: checkout.worktreePath,
     confirmed: true, authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN };
   const removalContext = { ...targetContext, presentUserConfirmation: { actionId: 'scm.worktree.remove' } } as const;
-  const rejected = await actor.execute('scm.worktree.remove', removalInput, removalContext);
+  // Confirmed deletion deliberately removes untracked files. An existing
+  // directory that Git never registered exercises a genuine native refusal.
+  const unregisteredPath = join(machine.workspaceDir, 'f6-unregistered-directory');
+  await mkdir(unregisteredPath);
+  const rejected = await actor.execute('scm.worktree.remove', { ...removalInput,
+    worktreePath: unregisteredPath }, removalContext);
   expect(rejected).toMatchObject({ ok: true, result: { success: false } });
+  await expect(access(unregisteredPath)).resolves.toBeUndefined();
   await expect(access(checkout.worktreePath)).resolves.toBeUndefined();
   const readRuns = async () => {
     const response = await fetchJson<unknown>(`${fixture!.server.baseUrl}/v3/automations/${encodeURIComponent(saved.set.automationId)}/runs`, {
@@ -135,15 +157,29 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
     return AutomationV3RunListResponseSchema.parse(response.data).runs;
   };
   expect(await readRuns()).toEqual([]);
-  await unlink(secretPath);
-  expect(await actor.execute('scm.worktree.remove', removalInput, removalContext))
-    .toMatchObject({ ok: true, result: { success: true } });
+  const removed = await actor.execute('scm.worktree.remove', removalInput, removalContext);
+  expect(removed, removed.ok ? undefined : JSON.stringify({ errorCode: removed.errorCode,
+    failureCause: removed.failureCause })).toMatchObject({ ok: true, result: { success: true } });
   await expect(access(checkout.worktreePath)).rejects.toMatchObject({ code: 'ENOENT' });
-  await waitFor(async () => {
-    const runs = await readRuns();
-    expect(runs.length).toBeLessThanOrEqual(1);
-    return runs.length === 1 && typeof runs[0]!.producedSessionId === 'string';
-  }, { failFast: true, context: 'One settled removal starts one Workflow Run' });
+  try {
+    await waitFor(async () => {
+      const runs = await readRuns();
+      expect(runs.length).toBeLessThanOrEqual(1);
+      return runs.length === 1 && typeof runs[0]!.producedSessionId === 'string';
+    }, { failFast: true, context: 'One settled removal starts one Workflow Run' });
+  } catch (error) {
+    // Keep owner-authored lifecycle facts after disposable worker scratch is
+    // reclaimed. Never project the cause payload, private content or headers.
+    console.error('F6_DAEMON_DIAGNOSTIC', JSON.stringify(await readDaemonDiagnostics(machine.daemon)));
+    const observedRuns = await readRuns();
+    console.error('F6_REMOVAL_RUN_DIAGNOSTIC', JSON.stringify({
+      runs: observedRuns.map(run => ({ id: run.id, state: run.state, workflowRunState: run.workflowRunState,
+        errorCode: run.errorCode, producedSessionId: run.producedSessionId,
+        executionDispatchState: run.executionDispatchState })),
+      source: await readSourceDiagnostic(),
+    }));
+    throw error;
+  }
   const runs = await readRuns();
   expect(runs).toHaveLength(1);
   expect(runs[0]!.cause).toMatchObject({ kind: 'trigger', triggerId: saved.triggerId,

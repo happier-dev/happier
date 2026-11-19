@@ -822,6 +822,16 @@ export type StartedDaemon = {
   stop: () => Promise<void>;
 };
 
+/** Read the live fixture's redacted logs before its owned cleanup removes them. */
+export async function readDaemonDiagnostics(daemon: StartedDaemon) {
+  const [stdout, stderr, internal] = await Promise.all([
+    readSanitizedDiagnosticTail(daemon.proc.stdoutPath),
+    readSanitizedDiagnosticTail(daemon.proc.stderrPath),
+    readInternalDaemonLogTail(daemon.happyHomeDir),
+  ]);
+  return { stdout, stderr, internal };
+}
+
 function createStartedDaemon(params: Readonly<{
   happyHomeDir: string;
   state: DaemonState;
