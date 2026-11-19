@@ -296,7 +296,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const usageWidgets = React.useMemo(
     () =>
       ready
-        ? flattenWidgetLayoutWidgetsV1(ready.items).filter(row => usageWidgetAcceptsMetric(row.instance.definition))
+        ? flattenWidgetLayoutWidgetsV1(ready.items).filter(row => usageWidgetAcceptsMetric(row.instance))
         : [],
     [ready],
   );
