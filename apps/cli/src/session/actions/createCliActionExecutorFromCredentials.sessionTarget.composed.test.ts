@@ -1,5 +1,5 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { deriveAccountMachineKeyFromRecoverySecret, deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
@@ -13,11 +13,20 @@ import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecyc
 import { reconcileExternalActionTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createCurrentSessionProjectionRecordFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { decryptSessionPayload, encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 
+const network = vi.hoisted(() => ({ observe: undefined as
+    ((auth: Record<string, unknown>) => ReturnType<typeof createApiSessionSocketStub>) | undefined }));
+vi.mock('socket.io-client', async importOriginal => {
+    const socketIo = await importOriginal<typeof import('socket.io-client')>();
+    return { ...socketIo, io: (url: string, options: Parameters<typeof socketIo.io>[1]) =>
+        network.observe ? network.observe(options?.auth as Record<string, unknown>) : socketIo.io(url, options) };
+});
+
 describe('original CLI Session Action delivery', () => {
-    afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+    afterEach(() => { network.observe = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
     it.each(['editor', 'inactive editor', 'viewer', 'outsider', 'owner',
         'terminal owner after Machine use withdrawal', 'terminal owner reply-wait after Machine use withdrawal'] as const)(
         'sends to a live shared encrypted Session with the correct admission route for %s', async role => {
@@ -336,7 +345,10 @@ describe('original CLI Session Action delivery', () => {
         { login: 'account login with an explicit Machine', terminal: false, reply: 'none' },
         { login: 'ordinary terminal login', terminal: true, reply: 'none' },
         { login: 'ordinary terminal reply-wait', terminal: true, reply: 'wait' },
-    ] as const)('opens Team-only E2EE detail and sends as the authenticated member with $login', async ({ terminal, reply }) => {
+        { login: 'ordinary terminal reply-wait with a finite deadline', terminal: true, reply: 'wait', timeoutSeconds: 1 },
+    ] as const)('opens Team-only E2EE detail and sends as the authenticated member with $login', async testCase => {
+        const { terminal, reply } = testCase;
+        const timeoutSeconds = 'timeoutSeconds' in testCase ? testCase.timeoutSeconds : undefined;
         await withConfiguredDaemonTestHome({ prefix: 'happier-cli-team-send-' }, async () => {
             const accountId = 'team-member';
             const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 4,
@@ -365,8 +377,30 @@ describe('original CLI Session Action delivery', () => {
             const localId = 'team-input';
             const inputPath = `/v2/sessions/${sessionId}/messages/by-local-id/${localId}`;
             const replyPath = `${inputPath}/reply`;
-            const replyProgress = { v: 1, mode: 'wait', disposition: 'observing', outcome: { kind: 'pass' } };
-            const deliveryOrder: string[] = [];
+            const answerId = 'original-answer';
+            const turnId = 'accepted-turn';
+            let pending = false;
+            let answered = false;
+            let readUnansweredTurn = false;
+            let disposition = 'observing';
+            const sockets = new Set<ReturnType<typeof createApiSessionSocketStub>>();
+            if (reply === 'wait') network.observe = auth => {
+                expect(auth.token).toBe(token);
+                const socket = createApiSessionSocketStub();
+                // Home #182 refused this Team editor's Session handshake and admitted its Account socket.
+                if (auth.clientType === 'session-scoped') socket.connect.mockImplementation(() => {
+                    socket.trigger('connect_error', Object.assign(new Error('invalid-session'), { data: { statusCode: 403, code: 'invalid-session' } }));
+                    return socket;
+                });
+                else sockets.add(socket);
+                return socket;
+            };
+            const replyProgress = () => ({ v: 1, mode: 'wait', disposition, ...(pending ? {} : { acceptedTurnId: turnId }),
+                ...(answered ? { outcome: { kind: 'answer', result: { sessionId, messageId: answerId } } } : {}) });
+            const row = (id: string, seq: number, payload: object, messageLocalId: string | null = null) => ({
+                id, seq, localId: messageLocalId, createdAt: Date.now(), updatedAt: Date.now(),
+                content: { t: 'encrypted', c: encryptSessionPayload({ ctx, payload }) },
+            });
             vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
                 const { pathname, searchParams } = new URL(url);
                 if (pathname === `/v2/sessions/${sessionId}`) {
@@ -380,11 +414,34 @@ describe('original CLI Session Action delivery', () => {
                         expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
                         return { status: 200, data: { v: 1, protocolVersions: [1] } };
                     }
-                    if (pathname === inputPath) return { status: 404, data: { error: 'message-not-found' } };
+                    if (pathname === inputPath) {
+                        expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
+                        if (pending) throw Object.assign(new AxiosError('Message not found'), {
+                            response: { status: 404, data: { error: 'Message not found' } },
+                        });
+                        return { status: 200, data: { message: row('original-input', 1,
+                            { role: 'user', content: { type: 'text', text: 'Team-only input' } }, localId) } };
+                    }
                     if (pathname === replyPath) {
                         expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
-                        deliveryOrder.push('reply-read');
-                        return { status: 200, data: { v: 1, status: 'available', progress: replyProgress } };
+                        return { status: 200, data: { v: 1, status: 'available', progress: replyProgress() } };
+                    }
+                    if (pathname === `/v2/sessions/${sessionId}/pending`) {
+                        return { status: 200, data: { pending: pending ? [{ localId, deliveryStatus: { status: 'queued' } }] : [] } };
+                    }
+                    if (pathname === `/v1/sessions/${sessionId}/turns`) {
+                        readUnansweredTurn = true;
+                        return { status: 404, data: {} };
+                    }
+                    if (pathname === `/v1/sessions/${sessionId}/messages`) {
+                        expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
+                        const assistant = (id: string, seq: number, text: string) => row(id, seq, {
+                            role: 'agent', content: { type: 'text', text },
+                        });
+                        return { status: 200, data: { hasMore: false, messages: [
+                            ...(answered ? [assistant(answerId, 2, 'Exact Muse reply')] : []),
+                            assistant('unrelated-answer', 3, 'Unrelated assistant text'),
+                        ] } };
                     }
                 }
                 if (pathname === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'e2ee', version: 1,
@@ -398,20 +455,20 @@ describe('original CLI Session Action delivery', () => {
             const machineId = 'team-session-publisher';
             const actionId = 'session.message.send';
             const input = { sessionId, message: 'Team-only input', reply, localId,
+                ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
                 requestedAction: { v: 1, kind: 'enqueue' } };
             const delivered = vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
                 if (url.endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
                 expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
                 if (reply === 'wait' && url === `https://home.test${replyPath}`) {
-                    expect(body).toEqual({ kind: 'inline' });
-                    deliveryOrder.push('reply-inline');
-                    return { status: 200, data: { v: 1, ok: true, progress: { ...replyProgress, disposition: 'inline' } } };
+                    disposition = body.kind === 'inline' ? 'inline' : 'released';
+                    return { status: 200, data: { v: 1, ok: true, progress: replyProgress() } };
                 }
                 if (terminal) {
                     expect(url).toBe(`https://home.test/v2/sessions/${sessionId}/pending`);
                     expect(body).toMatchObject({ localId: input.localId, requestedAction: input.requestedAction });
                     if (reply === 'wait') expect(body).toHaveProperty('reply.mode', 'wait');
-                    deliveryOrder.push('pending');
+                    pending = true;
                     expect(body).not.toHaveProperty('targetMachineId');
                     const opened = decryptSessionPayload({ ctx, ciphertextBase64: body.ciphertext });
                     expect(opened).toMatchObject({ content: { text: input.message } });
@@ -440,12 +497,46 @@ describe('original CLI Session Action delivery', () => {
                 }) } });
             expect(await executor.execute('session.status.get', { sessionId, live: false }, { surface: 'cli' }))
                 .toMatchObject({ ok: true, result: { session: { id: sessionId } } });
-            const result = await executor.execute(actionId, input, { surface: 'cli' });
-            expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
-                result: reply === 'wait' ? { status: 'replied', localId, outcome: { kind: 'pass' } }
-                    : { status: 'accepted', localId } });
-            if (reply === 'wait') expect(deliveryOrder).toEqual(['pending', 'reply-read', 'reply-inline']);
-            else expect(delivered.mock.calls.filter(([url]) => !url.endsWith('/lookup-by-tags'))).toHaveLength(1);
+            if (reply === 'none') {
+                expect(await executor.execute(actionId, input, { surface: 'cli' }))
+                    .toMatchObject({ ok: true, result: { status: 'accepted', localId } });
+                expect(delivered.mock.calls.filter(([url]) => !url.endsWith('/lookup-by-tags'))).toHaveLength(1);
+                return;
+            }
+            const lifetime = new AbortController();
+            let completed = false;
+            const result = executor.execute(actionId, input, { surface: 'cli', signal: lifetime.signal }).then(value => {
+                completed = true;
+                return value;
+            });
+            const wake = () => {
+                for (const socket of sockets) socket.trigger('ephemeral', {
+                    type: 'session-message-reply-pending-v1', v: 1, sessionId, requestLocalId: localId,
+                });
+            };
+            try {
+                await vi.waitFor(() => expect(pending).toBe(true));
+                // Provider accepted the input and Pending retired. Muse is still working.
+                pending = false;
+                wake();
+                await vi.waitFor(() => expect(readUnansweredTurn || completed).toBe(true));
+                if (timeoutSeconds !== undefined) {
+                    await expect(result).resolves.toMatchObject({ ok: false, errorCode: 'session_reply_timeout' });
+                    expect(disposition).toBe('released');
+                } else {
+                    expect(completed).toBe(false);
+                    expect(disposition).toBe('observing');
+                    answered = true;
+                    wake();
+                    await vi.waitFor(() => expect(completed).toBe(true));
+                    await expect(result).resolves.toMatchObject({ ok: true, result: { status: 'replied', localId,
+                        outcome: { kind: 'answer', text: 'Exact Muse reply', messageRef: { messageId: answerId } } } });
+                    expect(disposition).toBe('inline');
+                }
+            } finally {
+                lifetime.abort();
+                await result;
+            }
         });
     });
 });

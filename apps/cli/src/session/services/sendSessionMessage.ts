@@ -160,6 +160,7 @@ export type WaitForSessionInputResult =
         | 'encryption_material_unavailable'
         | 'invalid_local_id'
         | 'cancelled'
+        | 'session_reply_timeout'
         | 'result_read_failed';
       candidates?: string[];
     }>;
@@ -191,6 +192,8 @@ export type WaitForSessionInputResultParams = Readonly<{
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
   /** Canonical ask waits on this original input's immutable fulfillment, not just text. */
   observeReply?: boolean;
+  /** Account Pending admits the submitting Account, including shared Session recipients. */
+  scope?: 'user';
   resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
   /** Workflow custody may close while this exact input waits for host dispatch. */
   beforeInputObservation?: () => Promise<void>;
@@ -677,6 +680,7 @@ type CurrentPromptDeliveryObservationParams = Readonly<{
   token: string;
   sessionId: string;
   localId: string;
+  scope?: 'user';
   recipient?: Readonly<{ kind: 'execution_run'; runId: string }>;
   deadlineMs: number | null;
   signal?: AbortSignal;
@@ -982,6 +986,7 @@ type AssistantCompletionObservationParams = Readonly<{
   token: string;
   sessionId: string;
   localId: string;
+  scope?: 'user';
   materializedSeq: number;
   materializedContent?: TranscriptMessageLookupResult['content'];
   ctx: Readonly<{
@@ -1058,7 +1063,9 @@ async function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantC
         // its existing custody wake reopens the original before completion.
         // Reclaim can first see an already-published C2 answer. Keep that fact
         // while recovering text only from this original's accepted native turn.
-        if (acceptedTurnId && (outcome.kind === 'failed' || outcome.kind === 'cancelled'
+        // Account Pending wait consumes the original reply projection, which
+        // can commit after the accepted turn becomes readable.
+        if (params.scope !== 'user' && acceptedTurnId && (outcome.kind === 'failed' || outcome.kind === 'cancelled'
           || outcome.kind === 'completed' && outcome.finalAssistantText !== null
             && (!requiresDiscussionReplyOutcome || publishedDiscussionAnswer))) return outcome;
         if (replyOutcome && 'result' in replyOutcome
@@ -1435,6 +1442,7 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
       sessionId: sessionTarget.sessionId,
       localId,
       deadlineMs,
+      scope: params.scope,
       ...(params.beforeInputObservation ? { beforeInputObservation: params.beforeInputObservation } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
       ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
@@ -1463,6 +1471,9 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
     }
     if (promptDelivery.kind === 'missing') {
       if (params.signal?.aborted) return { ok: false, code: 'cancelled' };
+      if (params.scope === 'user' && deadlineMs !== null && Date.now() >= deadlineMs) {
+        return { ok: false, code: 'session_reply_timeout' };
+      }
       return {
         ok: true,
         sessionId: sessionTarget.sessionId,
@@ -1483,6 +1494,7 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
       materializedContent: promptDelivery.message.content,
       ctx: sessionTarget.ctx,
       deadlineMs: acceptedDeadlineMs,
+      scope: params.scope,
       serverFeaturesSnapshot: params.serverFeaturesSnapshot,
       ...(params.onAttentionRequired ? { initialSession: sessionTarget.rawSession,
         onAttentionRequired: params.onAttentionRequired } : {}),
@@ -1494,7 +1506,12 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
       ? await waitForAssistantCompletionAfterCurrentUserTurn({ ...completionParams,
           reply: { credentials: params.credentials, onOutcome: value => { replyOutcome = value; } } })
       : await waitForAssistantCompletionAfterCurrentUserTurn(completionParams);
-    if (outcome.kind === 'missing' && params.signal?.aborted) return { ok: false, code: 'cancelled' };
+    if (outcome.kind === 'missing') {
+      if (params.signal?.aborted) return { ok: false, code: 'cancelled' };
+      if (params.scope === 'user' && acceptedDeadlineMs !== null && Date.now() >= acceptedDeadlineMs) {
+        return { ok: false, code: 'session_reply_timeout' };
+      }
+    }
     return {
       ok: true,
       sessionId: sessionTarget.sessionId,

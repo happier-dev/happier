@@ -1291,9 +1291,11 @@ binding before writing. A missing binding returns
 `session_input_machine_binding_unavailable` to the owner. This leaves
 Session history readable and allows a new Send after access is restored.
 
-A shared Session editor can Send with `reply: wait` from the CLI. Home
-retains the original input through Account Pending, and the CLI observes
-that exact input's reply using the submitting Account. Ending observation
+A shared Session editor or owner can Send with `reply: wait` from a paired
+terminal. The CLI observes the exact admitted original using the submitting
+Account's socket and reply reads. Home wakes that Account when a terminal
+outcome is committed for its original. The caller's observation budget covers
+Pending delivery and the reply. Expiry returns `session_reply_timeout` and
 leaves accepted input in place.
 
 The authenticated input-admission receipt records who submitted an accepted human input. Pending admission derives it from the request's Session access decision, resolved once before publication locks. Authenticated queue edits and delivery-recovery mutations retain that admission through their transaction; access withdrawal refuses the next request. Direct authenticated input uses the same admission builder; runtime observations and transcript-only Voice writes do not become human-authored merely because their message role is `user`.

@@ -37,7 +37,7 @@ import type { SessionMessageReplyPublicationFailureV1 } from '@happier-dev/proto
 const selection = { id: true, replyProgress: true, targetExecutionRunId: true, inputAdmissionReceipt: true } as const;
 type Original = { sessionId: string; localId: string; pendingId?: string; messageId?: string; progress: SessionMessageReplyProgressV1 | null; malformed: boolean;
     storedProgress: Prisma.JsonValue; messageSeq?: number; targetExecutionRunId: string | null; sidechainId: string | null; targetMachineId: string | null;
-    humanRequesterAccountId: string | null };
+    requesterAccountId: string | null };
 
 function parseProgress(value: unknown): SessionMessageReplyProgressV1 | null {
     const parsed = SessionMessageReplyProgressV1Schema.safeParse(value);
@@ -72,7 +72,7 @@ async function readOriginals(tx: Tx, keys: readonly ReplyKey[]): Promise<Readonl
                 storedProgress: raw ?? null, ...(message ? { messageSeq: message.seq } : {}), malformed: raw != null && progress === null,
                 targetExecutionRunId: pending?.targetExecutionRunId ?? message?.targetExecutionRunId ?? null,
                 sidechainId: message?.sidechainId ?? null,
-                humanRequesterAccountId: progress?.humanOrigin && receipt.success && receipt.data.issuer === 'authenticatedAccount'
+                requesterAccountId: receipt.success && receipt.data.issuer === 'authenticatedAccount'
                     ? receipt.data.actorAccountId : null,
                 targetMachineId: receipt.success && (receipt.data.issuer === 'authenticatedMachine'
                     || receipt.data.issuer === 'authenticatedAccount' && progress?.humanOrigin !== undefined)
@@ -114,8 +114,9 @@ async function writeOriginal(tx: Tx, original: Original, progress: SessionMessag
     }
     const workflowPublicationChanged = progress.workflow !== undefined
         && !isDeepStrictEqual(progress.returnPublication, original.progress.returnPublication);
+    const outcomeChanged = !isDeepStrictEqual(progress.outcome, original.progress.outcome);
     if (progress.acceptedTurnId !== original.progress.acceptedTurnId
-        || !isDeepStrictEqual(progress.outcome, original.progress.outcome)
+        || outcomeChanged
         || progress.disposition === 'return_pending' && original.progress.disposition !== 'return_pending'
         || workflowPublicationChanged) {
         afterTx(tx, async () => {
@@ -127,6 +128,13 @@ async function writeOriginal(tx: Tx, original: Original, progress: SessionMessag
                         ...(progress.workflow ? { workflowRunId: progress.workflow.runId } : {}) });
                     await eventRouter.emitEphemeral({ userId: session.accountId, payload,
                         recipientFilter: { type: 'all-interested-in-session', sessionId: original.sessionId } });
+                    // A shared Account wait has no source Session socket. Wake the
+                    // admitted requester through the existing access-qualified delivery.
+                    if (progress.mode === 'wait' && progress.disposition === 'observing' && outcomeChanged && progress.outcome
+                        && original.requesterAccountId && original.requesterAccountId !== session.accountId) {
+                        await eventRouter.emitEphemeral({ userId: original.requesterAccountId, payload,
+                            recipientFilter: { type: 'all-interested-in-session', sessionId: original.sessionId } });
+                    }
                     const sourceSessionId = progress.humanOrigin?.sessionId ?? progress.sourceSession?.sourceSessionId;
                     if (sourceSessionId && sourceSessionId !== original.sessionId) {
                         const source = await db.session.findUnique({ where: { id: sourceSessionId }, select: { accountId: true } });
@@ -147,8 +155,8 @@ async function writeOriginal(tx: Tx, original: Original, progress: SessionMessag
                     // recovery need not run on the destination's host. A hint
                     // wakes the existing finite recovery read, without handing
                     // the execution Account source keys or delivery authority.
-                    if (progress.disposition === 'return_pending' && progress.humanOrigin && original.humanRequesterAccountId) {
-                        const requesterAccountId = original.humanRequesterAccountId;
+                    if (progress.disposition === 'return_pending' && progress.humanOrigin && original.requesterAccountId) {
+                        const requesterAccountId = original.requesterAccountId;
                         const machines = await inTx(async tx => {
                             if (!await isSessionInputReplySourceCurrentInTx(tx, requesterAccountId, progress, undefined,
                                 { requesterAccountId, sessionId: original.sessionId })) return [];
@@ -241,14 +249,14 @@ export async function listSessionMessageRepliesPendingForMachineInTx(tx: Tx, par
 /** Execution custody never confers access to a person's private return Session. */
 async function canRecoverOriginalReplyInTx(tx: Tx, original: Original, params: Readonly<{ accountId: string; machineId: string }>,
     sessionOwned?: boolean): Promise<boolean> {
-    if (original.progress?.humanOrigin && original.humanRequesterAccountId === params.accountId) {
+    if (original.progress?.humanOrigin && original.requesterAccountId === params.accountId) {
         // Account credentials recover the request; ordinary send admission
         // independently resolves the destination's current execution Machine.
         return true;
     }
     return original.targetMachineId === params.machineId
         && (sessionOwned ?? await tx.session.findFirst({ where: { id: original.sessionId, accountId: params.accountId }, select: { id: true } }) !== null)
-        && (!original.progress?.humanOrigin || original.humanRequesterAccountId === params.accountId);
+        && (!original.progress?.humanOrigin || original.requesterAccountId === params.accountId);
 }
 
 /** Indexed original-input recovery page; it neither scans transcript content nor creates delivery custody. */
@@ -564,7 +572,7 @@ async function readSessionMessageRepliesWithAccessInTx(tx: Tx, params: ReplyRead
             && progress.outcome !== undefined && progress.discussion?.participantSessionId === key.sessionId
             && key.localId === deriveWorkflowSessionInputLocalIdV2(progress.workflow);
         const sourceKey = JSON.stringify(progress.humanOrigin
-            ? ['human', progress.humanOrigin.sessionId, original.humanRequesterAccountId, original.sessionId]
+            ? ['human', progress.humanOrigin.sessionId, original.requesterAccountId, original.sessionId]
             : progress.discussion ? ['discussion', progress.discussion, progress.workflow, retainedWorkflowCustody]
                 : ['session', progress.sourceSession]);
         let current = currentness.get(sourceKey);
@@ -573,7 +581,7 @@ async function readSessionMessageRepliesWithAccessInTx(tx: Tx, params: ReplyRead
                 ? isDiscussionReplyDestinationAdmittedInTx(tx, { accountId: params.accountId,
                     discussion: progress.discussion, workflow: progress.workflow }, true)
                 : isSessionInputReplySourceCurrentInTx(tx, params.accountId, progress, params.authentication,
-                    { requesterAccountId: original.humanRequesterAccountId, sessionId: original.sessionId });
+                    { requesterAccountId: original.requesterAccountId, sessionId: original.sessionId });
             currentness.set(sourceKey, current);
         }
         if (!await current) return { v: 1, status: 'unavailable' };
@@ -676,7 +684,7 @@ export async function mutateSessionMessageReplyForAccountInTx(tx: Tx, params: Re
     }
     if (original.progress.sourceSession || original.progress.discussion) return { v: 1, ok: false, error: 'forbidden' };
     if (!await isSessionInputReplySourceCurrentInTx(tx, params.accountId, original.progress, params.authentication,
-        { requesterAccountId: original.humanRequesterAccountId, sessionId: original.sessionId })) return { v: 1, ok: false, error: 'unavailable' };
+        { requesterAccountId: original.requesterAccountId, sessionId: original.sessionId })) return { v: 1, ok: false, error: 'unavailable' };
     const row = original.pendingId ? await tx.sessionPendingMessage.findUnique({ where: { id: original.pendingId }, select: { inputAdmissionReceipt: true } })
         : await tx.sessionMessage.findUnique({ where: { id: original.messageId }, select: { inputAdmissionReceipt: true } });
     const receipt = SessionInputAdmissionReceiptV1Schema.safeParse(row?.inputAdmissionReceipt);
@@ -817,7 +825,7 @@ export async function fulfillSessionInputReplyPublicationInTx(tx: Tx, params: Re
     const original = await readOriginal(tx, params.sessionId, params.localId);
     if (!original?.progress || original.progress.acceptedTurnId !== params.acceptedTurnId
         || !await isSessionInputReplySourceCurrentInTx(tx, params.accountId, original.progress, undefined,
-            { requesterAccountId: original.humanRequesterAccountId, sessionId: original.sessionId })) return false;
+            { requesterAccountId: original.requesterAccountId, sessionId: original.sessionId })) return false;
     if (original.progress.outcome) return isDeepStrictEqual(original.progress.outcome, params.outcome);
     await writeOriginal(tx, original, { ...original.progress, outcome: params.outcome });
     return true;

@@ -472,8 +472,10 @@ hdev send <session-id-or-prefix-or-tag> "The API contract is ready." --reply non
 hdev send <session-id-or-prefix-or-tag> "Inspect the failure and summarize it." --reply wait --timeout-seconds 300
 ```
 
-`none` sends information. `wait` observes the answer to that exact input; a
-timeout stops waiting without cancelling accepted work. The existing `--wait`
+`none` sends information. `wait` observes the answer to that exact input.
+For a paired terminal using Account Pending, the timeout covers delivery and
+reply observation. Expiry reports `session_reply_timeout` and leaves accepted
+work in place. The existing `--wait`
 flag remains supported for older scripts, but cannot be combined with `--reply`.
 `return` additionally needs an admitted destination for the later answer; it
 does not infer one from a standalone CLI's visible or most recent session.

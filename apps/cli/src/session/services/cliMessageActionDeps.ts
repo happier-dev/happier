@@ -562,18 +562,25 @@ export function createCliMessageActionDeps(
           return { ok: false as const, errorCode: 'session_reply_return_unavailable', error: 'session_reply_return_unavailable',
             details: { admission } };
         }
+        const failObservation = async (errorCode: string) => {
+          await release();
+          return { ok: false as const, errorCode, error: errorCode, details: { admission } };
+        };
+        const accountPending = context?.accountPendingSessionId === sent.sessionId;
         try {
           const { waitForSessionInputResult } = await import("@/session/services/sendSessionMessage");
           const observed = await waitForSessionInputResult({ credentials: replyCredentials,
             idOrPrefix: sent.sessionId, localId: admission.localId, observeReply: true,
+            ...(accountPending ? { scope: 'user' as const } : {}),
             ...((serverId ?? params.serverId) ? { serverId: serverId ?? params.serverId } : {}),
             ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),
             observation: timeoutSeconds === undefined ? { kind: 'no_deadline' }
-              : { kind: 'after_input', timeoutMs: timeoutSeconds * 1000 },
+              : accountPending ? { kind: 'absolute_deadline', deadlineMs: Date.now() + timeoutSeconds * 1000 }
+                : { kind: 'after_input', timeoutMs: timeoutSeconds * 1000 },
             ...(sendServerFeaturesSnapshot ? { serverFeaturesSnapshot: sendServerFeaturesSnapshot } : {}),
             ...(signal ? { signal } : {}),
           });
-          if (!observed.ok) { await release(); return admission; }
+          if (!observed.ok) return failObservation(observed.code);
           const result = observed.result;
           const saved = observed.replyOutcome;
           const outcome = result.kind === 'final_text' && result.messageRef
@@ -589,14 +596,13 @@ export function createCliMessageActionDeps(
               ? (result.runtimeIssueV1 ? { kind: 'failed' as const, runtimeIssueV1: result.runtimeIssueV1 } : { kind: 'failed' as const })
             : result.kind === 'fulfilled' && !('result' in result.outcome)
               ? result.outcome : null;
-          if (!outcome) { await release(); return admission; }
+          if (!outcome) return failObservation('session_reply_unavailable');
           const consumed = await observe('inline', signal);
-          if (!consumed.ok) { await release(); return admission; }
+          if (!consumed.ok) return failObservation(consumed.error);
           return { status: 'replied', localId: admission.localId, outcome,
             ...(observed.inputMessageRef ? { inputMessageRef: observed.inputMessageRef } : {}) };
         } catch {
-          await release();
-          return admission;
+          return failObservation(signal?.aborted ? 'cancelled' : 'session_reply_unavailable');
         }
       };
       // Local authority stays bound to its own Session. Standalone/other-Session

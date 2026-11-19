@@ -1159,11 +1159,18 @@ describe('original Session input reply custody', () => {
 
     it('binds automatic completion to the accepted input and exact final, not an unrelated later post', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const editor = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: account.id,
+            accountId: editor.id, accessLevel: 'edit', canApprovePermissions: false } });
+        const editorSocket = createAuthenticatedFakeSocket({ data: { clientType: 'user-scoped', authAuthority: 'account_automation' } });
+        const editorConnection = { connectionType: 'user-scoped' as const, userId: editor.id, socket: editorSocket as unknown as Socket };
+        eventRouter.addConnection(editor.id, editorConnection);
+        onTestFinished(() => eventRouter.removeConnection(editor.id, editorConnection));
         const localId = 'automatic-original';
         const content = { t: 'plain' as const, v: { role: 'user', content: { type: 'text', text: 'answer exactly this' } } };
         const materialize = async (requestLocalId: string) => {
-            expect(await enqueuePendingMessage({ actorUserId: account.id, sessionId: session.id, localId: requestLocalId, content,
+            expect(await enqueuePendingMessage({ actorUserId: editor.id, sessionId: session.id, localId: requestLocalId, content,
                 requestedAction: { v: 1, kind: 'enqueue' }, reply: { mode: 'wait' }, authentication })).toMatchObject({ ok: true });
             const pending = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId: requestLocalId } } });
             return inTx(async tx => {
@@ -1185,11 +1192,14 @@ describe('original Session input reply custody', () => {
             observedAt: Date.now() + 1, transcriptAnchors: { startSeqInclusive: input.seq, endSeqInclusive: batched.seq + 2, finalAssistantMessageSeq: final.seq } };
         await withAuthenticatedTestApp(registerSessionMessageRoutes, async app => {
             const url = `/v2/sessions/${session.id}/messages/by-local-id/${localId}/reply`;
-            const headers = { 'x-test-user-id': account.id };
+            const headers = { 'x-test-user-id': editor.id };
             const [terminal, release] = await Promise.all([applySessionTurnMutation({ actorUserId: account.id, authentication, mutation }),
                 app.inject({ method: 'POST', url: `/v2/sessions/${session.id}/messages/by-local-id/automatic-batched/reply`, headers, payload: { kind: 'release' } })]);
             expect(terminal).toMatchObject({ ok: true });
             expect(release.json()).toMatchObject({ ok: true });
+            await vi.waitFor(() => expect(editorSocket.emit).toHaveBeenCalledWith('ephemeral', {
+                type: 'session-message-reply-pending-v1', v: 1, sessionId: session.id, requestLocalId: localId,
+            }));
             expect((await db.sessionMessage.findUniqueOrThrow({ where: { id: batched.id } })).replyProgress).toMatchObject({
                 acceptedTurnId: 'automatic-turn', disposition: 'released', outcome: { kind: 'answer', result: { messageId: final.id } } });
             expect((await app.inject({ method: 'GET', url, headers })).json()).toMatchObject({ status: 'available', progress: {
