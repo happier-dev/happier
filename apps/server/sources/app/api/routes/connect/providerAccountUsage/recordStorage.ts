@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { Prisma } from "@prisma/client";
 
 import { db } from "@/storage/db";
@@ -6,6 +7,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { ProviderAccountUsageRecordKeyV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { parseBuiltInLegacyProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 import { SealedProviderAccountUsageSnapshotV1Schema, type SealedProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/accountUsage';
+import { serializeProviderAccountUsageHistoryMaterialV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { PROVIDER_ACCOUNT_USAGE_DAY_MS } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import {
     ProviderAccountUsageRecordMetadataSchema,
@@ -100,13 +102,41 @@ export async function readProviderAccountUsageHistoryWitnessRow(params: Readonly
     return row?.history[0] ?? null;
 }
 
+type UsageHistoryMaterial = Pick<UpsertProviderAccountUsageRecordParams, "snapshot" | "sealedPayload" | "metadata">;
+
+export function sameProviderAccountUsageHistoryMaterial(next: UsageHistoryMaterial, previous: UsageHistoryMaterial): boolean {
+    if (next.snapshot && previous.snapshot) {
+        return serializeProviderAccountUsageHistoryMaterialV1(next.snapshot)
+            === serializeProviderAccountUsageHistoryMaterialV1(previous.snapshot);
+    }
+    if (!next.sealedPayload || !previous.sealedPayload) return false;
+    const fingerprint = next.metadata?.materialFingerprint;
+    const sealedFields = (payload: SealedProviderAccountUsageSnapshotV1) => [
+        payload.format, payload.ciphertext, payload.refreshErrorAt,
+        payload.subscription, payload.recoveryCreditDetails,
+    ];
+    return isDeepStrictEqual(sealedFields(next.sealedPayload), sealedFields(previous.sealedPayload))
+        || (fingerprint !== undefined && fingerprint === previous.metadata?.materialFingerprint
+            && next.sealedPayload.format === previous.sealedPayload.format
+            && next.sealedPayload.refreshErrorAt === previous.sealedPayload.refreshErrorAt);
+}
+
 /** Only the accepted-write policy invokes this inside the same transaction as its CAS. */
 export async function retainProviderAccountUsageHistory(
     raw: UpsertProviderAccountUsageRecordParams,
     client: Pick<TransactionClient, "providerAccountUsageHistory" | '$executeRaw'>,
-) {
+): Promise<boolean> {
     const parsed = parseProviderAccountUsageRecordWrite(raw);
-    if (parsed.fetchedAt === undefined || (!parsed.snapshot && !parsed.sealedPayload)) return;
+    if (parsed.fetchedAt === undefined || (!parsed.snapshot && !parsed.sealedPayload)) return false;
+    // The accepted current-record CAS serializes this indexed tail read and append.
+    const latest = await client.providerAccountUsageHistory.findFirst({
+        where: { accountId: parsed.accountId, recordId: parsed.recordId },
+        orderBy: [{ observedAt: "desc" }, { id: "desc" }],
+        select: { payload: true },
+    });
+    if (latest && sameProviderAccountUsageHistoryMaterial(parsed, parseHistoryRecord(latest.payload))) {
+        return false;
+    }
     // The read materialization belongs only to the current record. Embedding it
     // into every accepted observation would recursively duplicate its history.
     const { pageProjection: _derived, daySummaryPendingDays: _pending, ...metadata } = parsed.metadata ?? {};
@@ -136,6 +166,7 @@ export async function retainProviderAccountUsageHistory(
     // its CAS, and a newly created record has no earlier pending work.
     await appendProviderAccountUsagePendingDay({ accountId: parsed.accountId, recordId: parsed.recordId, dayStartAtMs,
         knownPendingDays: parsed.metadata?.daySummaryPendingDays ?? [] }, client);
+    return true;
 }
 
 /** Remove retained exact-observation cache bytes when their source detail is compacted. */

@@ -477,6 +477,23 @@ describe("provider account usage record storage (integration)", () => {
             .toBe(snapshots.length * buildProviderAccountUsageMaterialChangesV1(base.recordId).length);
     });
 
+    it('deduplicates against the last retained observation when the current record has diverged', async () => {
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const first = createUsageSnapshot({ fetchedAt: Date.now() - 4000 });
+        const writeParams = (snapshot: typeof first) => ({ accountId: account.id, recordId: snapshot.recordId,
+            recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1' as const, status: 'ok' as const,
+            snapshot, fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs });
+        await writeProviderAccountUsageRecordWithPolicy(writeParams(first));
+        await upsertProviderAccountUsageRecord(writeParams({ ...first, planLabel: 'other' }));
+        const repeat = { ...first, fetchedAtMs: first.fetchedAtMs + 1000, observedAtMs: first.observedAtMs + 1000 };
+        await expect(writeProviderAccountUsageRecordWithPolicy(writeParams(repeat))).resolves.toBe('written');
+        const readParams = { accountId: account.id, recordId: first.recordId };
+        await expect(readProviderAccountUsageRecord(readParams)).resolves.toMatchObject({ snapshot: repeat });
+        const history = { range: { startAtMs: first.fetchedAtMs, endAtMs: first.fetchedAtMs + 4000 }, pageSize: 10 };
+        const page = await readProviderAccountUsageHistory({ ...readParams, history });
+        expect(page.entries.map(entry => entry.record.snapshot)).toEqual([first]);
+    });
+
     it('coalesces plain subscription-only observation refreshes without relying on caller fingerprints', async () => {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' }, select: { id: true } });
         const first = { ...createUsageSnapshot({ fetchedAt: Date.now() - 3000 }), subscription: { status: 'subscribed' as const, renewal: 'on' as const, observedAtMs: Date.now() - 3000, staleAfterMs: 5000 } };
@@ -525,7 +542,10 @@ describe("provider account usage record storage (integration)", () => {
         await write({ ...first, fetchedAtMs: first.fetchedAtMs + 2000, observedAtMs: first.observedAtMs + 2000, planLabel: 'new tier' }, 'changed');
         const changed = await db.accountChange.findFirst({ where: { accountId: account.id, kind: 'account', entityId: 'provider-account-usage' } });
         expect(changed?.cursor).toBeGreaterThan(freshnessChanged!.cursor);
-        expect(changed?.hint).toEqual(accountWideChange.hint);
+        expect(changed?.hint).toMatchObject({
+            ...accountWideChange.hint,
+            providerAccountUsageHistoryChange: { fromAtMs: first.fetchedAtMs + 2000 },
+        });
     });
 
     it("persists refresh-requested records without requiring a payload", async () => {
@@ -663,6 +683,12 @@ describe("provider account usage record storage (integration)", () => {
             accountId: account.id, recordId, recordKey,
             payloadMode: 'sealed_account_scoped_v1', status: 'ok',
             fetchedAt: fetchedAt + 1500, staleAfterMs: 60_000,
+            sealedPayload: { format: 'account_scoped_v1', ciphertext: 'unknown-material-quota' },
+        });
+        await writeProviderAccountUsageRecordWithPolicy({
+            accountId: account.id, recordId, recordKey,
+            payloadMode: 'sealed_account_scoped_v1', status: 'ok',
+            fetchedAt: fetchedAt + 1750, staleAfterMs: 60_000,
             sealedPayload: { format: 'account_scoped_v1', ciphertext: 'unknown-material-quota' },
         });
         const unknownMaterial = await readProviderAccountUsageHistory({ accountId: account.id, recordId, history });

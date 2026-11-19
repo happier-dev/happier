@@ -4,7 +4,6 @@ import { PROVIDER_ACCOUNT_USAGE_DAY_MS } from '@happier-dev/protocol/connect/pro
 import type { ProviderAccountUsageRecordId, ProviderAccountUsageRecordKeyV1, ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import type { SealedProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/accountUsage';
 import { isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
-import { serializeProviderAccountUsageHistoryMaterialV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 import { compareConnectedServiceQuotaObservationRecency, isConnectedServiceQuotaObservationAtOrBeforeNow } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { mergeProviderAccountSubscription } from '@happier-dev/protocol/connect/accountSubscription';
@@ -16,7 +15,7 @@ import {
     readProviderAccountUsageRecordWithCurrentGuard,
     updateProviderAccountUsageRecordIfCurrent,
     retainProviderAccountUsageHistory,
-    hasProviderAccountUsageHistory,
+    sameProviderAccountUsageHistoryMaterial,
     updateProviderAccountUsageRecordMetadataIfCurrent,
 } from "./recordStorage";
 import type {
@@ -324,18 +323,13 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
         await params.beforeWrite?.();
         const updated = await updateProviderAccountUsageRecordIfCurrent(nextWrite, captured.guard, params.client);
         if (updated) {
-            const changedMaterial = nextWrite.snapshot && existing.snapshot
-                ? serializeProviderAccountUsageHistoryMaterialV1(nextWrite.snapshot) !== serializeProviderAccountUsageHistoryMaterialV1(existing.snapshot)
-                : !incomingFingerprint || existingFingerprint !== incomingFingerprint;
-            const historyChanged = changedMaterial || !await hasProviderAccountUsageHistory({ accountId: params.accountId, recordId: params.recordId }, params.client);
-            if (historyChanged) {
-                await retainProviderAccountUsageHistory(nextWrite, params.client);
-            }
+            const changedMaterial = !sameProviderAccountUsageHistoryMaterial(nextWrite, existing);
+            const historyChanged = await retainProviderAccountUsageHistory(nextWrite, params.client);
             // Freshness is persisted on the exact record, not a material
             // allowance invalidation. Reuse the history/writer equality basis:
             // it preserves quota reset phases and excludes observation clocks.
             // Opaque writers without a fingerprint remain conservative.
-            if (historyChanged || nextWrite.status !== existing.status
+            if (changedMaterial || historyChanged || nextWrite.status !== existing.status
                 || nextWrite.staleAfterMs !== existing.staleAfterMs || clearsRefreshRequest || advancesFailure) {
                 publishUsageRecordChange(params.client, { accountId: params.accountId, recordId: params.recordId,
                     ...(historyChanged ? { dayStartAtMs: Math.floor(nextWrite.fetchedAt / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS,
