@@ -64,6 +64,53 @@ it('refuses a binary upload with the missing private bucket reason while public 
     }
 });
 
+it('returns typed storage unavailability when an under-cap private upload hits a full backend', async () => {
+    const putObject = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('minio', () => ({ Client: class {
+        bucketExists = async () => true;
+        getBucketPolicy = async () => '{"Statement":[]}';
+        putObject = putObject;
+        removeObject = async () => {};
+    } }));
+    vi.stubEnv('HAPPIER_ARTIFACT_DOCUMENT_LIMIT_BYTES', '1024');
+    vi.stubEnv('HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES', '4096');
+    try {
+        await initFilesS3FromEnv({ S3_HOST: 'example.com', S3_PUBLIC_URL: 'https://cdn.example.com', S3_BUCKET: 'public',
+            S3_PRIVATE_BUCKET: 'private', S3_ACCESS_KEY: 'key', S3_SECRET_KEY: 'secret' });
+        await loadFiles();
+        const owner = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+        const dataEncryptionKey = encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32),
+            recipientPublicKey: owner.contentPublicKey!, randomBytes: tweetnacl.randomBytes }));
+        const content = { t: 'encrypted', c: 'AQ==' } as const;
+        const destination = () => ({ kind: 'create', artifactId: crypto.randomUUID(), blobId: crypto.randomUUID(),
+            header: 'AgAD', body: 'AgAE', dataEncryptionKey } satisfies ArtifactUploadDestinationV1);
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const upload = (target: ArtifactUploadDestinationV1) => app.inject({ method: 'POST', url: ARTIFACT_UPLOAD_PATH_V1,
+                headers: { 'x-test-user-id': owner.id, 'content-type': ARTIFACT_UPLOAD_CONTENT_TYPE_V1 },
+                payload: Buffer.from(encodeArtifactUploadFrameV1(target, content)) });
+            const control = await upload(destination());
+            expect(control.statusCode, control.body).toBe(200);
+            putObject.mockRejectedValue(Object.assign(new Error('Storage is full'), { code: 'XMinioStorageFull' }));
+            for (const framed of [true, false]) {
+                const target = destination();
+                const response = framed ? await upload(target) : await app.inject({ method: 'POST', url: '/v1/artifacts/content/binary',
+                    headers: { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) },
+                    payload: { id: target.artifactId, header: target.header, body: target.body, dataEncryptionKey,
+                        blob: { blobId: target.blobId, content } } });
+                expect(response.statusCode, response.body).toBe(503);
+                expect(response.json()).toEqual({ error: 'private_storage_unavailable', reason: 'backend_unavailable' });
+                expect(await db.artifact.findUnique({ where: { id: target.artifactId } })).toBeNull();
+            }
+        });
+        expect(await db.uploadedFile.count({ where: { accountId: owner.id } })).toBe(0);
+    } finally {
+        vi.unstubAllEnvs();
+        vi.doUnmock('minio');
+        initFilesLocalFromEnv();
+        await loadFiles();
+    }
+});
+
 it('skips private IO for a full Artifact budget and removes the candidate that loses a concurrent quota check', async () => {
     const owner = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
     const dataEncryptionKey = encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32),

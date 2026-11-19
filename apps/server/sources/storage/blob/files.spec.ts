@@ -6,6 +6,25 @@ import { Readable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 
 describe('storage/files (S3 env parsing)', () => {
+  it.each(['XMinioStorageFull', 'ENOSPC'])('keeps a full private backend (%s) typed and allows a later write', async code => {
+    vi.resetModules();
+    const putObject = vi.fn().mockRejectedValueOnce(Object.assign(new Error('Storage is full'), { code })).mockResolvedValue(undefined);
+    vi.doMock('minio', () => ({ Client: vi.fn().mockImplementation(() => ({
+      bucketExists: vi.fn().mockResolvedValue(true), getBucketPolicy: vi.fn().mockResolvedValue('{"Statement":[]}'), putObject,
+    })) }));
+    const files = await import('./files');
+    await files.initFilesS3FromEnv({ S3_HOST: 'example.com', S3_BUCKET: 'public', S3_PRIVATE_BUCKET: 'private',
+      S3_PUBLIC_URL: 'https://cdn.example.com', S3_ACCESS_KEY: 'access', S3_SECRET_KEY: 'secret' });
+    await files.loadFiles();
+    await expect(files.writePrivateFile('artifacts/a/b', Uint8Array.of(1))).rejects.toMatchObject({
+      code: 'private_storage_unavailable', reason: 'backend_unavailable',
+    });
+    await expect(files.writePrivateFile('artifacts/a/b', Uint8Array.of(1))).resolves.toBeUndefined();
+    const denied = Object.assign(new Error('Access denied'), { code: 'AccessDenied' });
+    putObject.mockRejectedValueOnce(denied);
+    await expect(files.writePrivateFile('artifacts/a/b', Uint8Array.of(1))).rejects.toBe(denied);
+  });
+
   it('round trips S3 private bytes in the separate bucket using a private policy', async () => {
     vi.resetModules();
     const objects = new Map<string, Buffer>();

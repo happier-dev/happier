@@ -231,7 +231,15 @@ export function assertPrivateStorageAvailable(): void {
 }
 
 export async function writePrivateFile(key: string, data: Uint8Array): Promise<void> {
-    await requirePrivateFilesBackend().writePrivateFile(key, data);
+    try {
+        await requirePrivateFilesBackend().writePrivateFile(key, data);
+    } catch (error: unknown) {
+        if (error && typeof error === 'object' && 'code' in error
+            && (error.code === 'XMinioStorageFull' || error.code === 'ENOSPC')) {
+            throw new PrivateStorageUnavailableError('backend_unavailable');
+        }
+        throw error;
+    }
 }
 
 export async function readPrivateFile(key: string): Promise<Uint8Array> {
