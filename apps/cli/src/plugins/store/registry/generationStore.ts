@@ -6,8 +6,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { z } from 'zod/mini';
 
-import { PluginAvailabilityPortableReleaseSourceClassV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
-import { PluginReleaseFactsV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
+import { PluginAvailabilityPortableReleaseSourceClassV1Schema, PluginReleaseFactsV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { PluginInstallReviewPrincipalDigestSchema, PluginInstallReviewPrincipalPresentationV1Schema } from '@happier-dev/protocol/plugins/permissions/grants';
@@ -239,6 +238,7 @@ function createOwnedPreparedImmutablePluginGenerationHandle(input: Readonly<{
 }
 
 const PluginInstallationAvailabilitySourceClassSchema = z.union([
+  z.literal('gitRepository'),
   asHostProtocolZod(PluginAvailabilityPortableReleaseSourceClassV1Schema),
   z.literal('localPath'),
 ]);
@@ -248,34 +248,19 @@ const PluginInstallationAvailabilitySourceClassSchema = z.union([
  * revision so a full inventory can be reconstructed after restart; it is not
  * an Availability snapshot, authority, or currentness decision.
  */
-export type PluginInstallationAvailabilityProjection = {
-  sourceClass: z.infer<typeof PluginInstallationAvailabilitySourceClassSchema>;
-  portableRelease: boolean;
-  release?: z.infer<typeof PluginReleaseFactsV1Schema>;
-};
-
-export const PluginInstallationAvailabilityProjectionSchema: z.ZodMiniType<
-  PluginInstallationAvailabilityProjection
-> = z.strictObject({
-  sourceClass: PluginInstallationAvailabilitySourceClassSchema,
-  portableRelease: z.boolean(),
-  release: z.optional(asHostProtocolZod(PluginReleaseFactsV1Schema)),
-}).check(z.superRefine((value, context) => {
-  if (value.sourceClass === 'localPath' && value.portableRelease) {
-    context.addIssue({
-      code: 'custom',
-      path: ['portableRelease'],
-      message: 'Local-path installations cannot claim a portable release',
-    });
-  }
-  if (value.portableRelease !== Boolean(value.release)) {
-    context.addIssue({
-      code: 'custom',
-      path: ['release'],
-      message: 'Portable installation availability must carry exactly one release fact set',
-    });
-  }
-}));
+export const PluginInstallationAvailabilityProjectionSchema = z.discriminatedUnion('portableRelease', [
+  z.strictObject({
+    sourceClass: PluginInstallationAvailabilitySourceClassSchema,
+    portableRelease: z.literal(false),
+    release: z.optional(z.never()),
+  }),
+  z.strictObject({
+    sourceClass: asHostProtocolZod(PluginAvailabilityPortableReleaseSourceClassV1Schema),
+    portableRelease: z.literal(true),
+    release: asHostProtocolZod(PluginReleaseFactsV1Schema),
+  }),
+]);
+export type PluginInstallationAvailabilityProjection = z.infer<typeof PluginInstallationAvailabilityProjectionSchema>;
 
 export function createDefaultPluginInstallationAvailabilityProjection(
   distribution: PluginDistributionIdentity,
@@ -285,7 +270,7 @@ export function createDefaultPluginInstallationAvailabilityProjection(
       ? 'registryPackage'
       : distribution.kind === 'archive'
         ? 'versionedArchive'
-        : 'localPath',
+        : distribution.kind === 'git' ? 'gitRepository' : 'localPath',
     portableRelease: false,
   });
 }
@@ -744,6 +729,7 @@ export async function createImmutablePluginGenerationRecordFromSource(input: Rea
   immutableGenerationId?: string;
   singleFileRelativePath?: string;
   generatedManifestContents?: string;
+  generatedFiles?: ReadonlyMap<string, string>;
 }>): Promise<ImmutablePluginGenerationRecord> {
   const rootPath = await realpath(input.sourceRootPath);
   const manifestRelativePath = PortableRelativePathSchema.parse(input.manifestRelativePath.split(sep).join('/'));
@@ -791,15 +777,17 @@ export async function createImmutablePluginGenerationRecordFromSource(input: Rea
       files.push({ relativePath, byteLength: metadata.size });
     }
   }
-  if (input.generatedManifestContents !== undefined) {
-    if (files.some((file) => file.relativePath === manifestRelativePath)) {
-      throw new Error('Host-generated plugin manifest collides with an author source file');
+  if (input.generatedFiles || input.generatedManifestContents !== undefined) {
+    const generated = new Map(input.generatedFiles);
+    if (input.generatedManifestContents !== undefined) generated.set(manifestRelativePath, input.generatedManifestContents);
+    const sourcePaths = new Set(files.map(file => file.relativePath));
+    for (const [path, contents] of generated) {
+      const relativePath = PortableRelativePathSchema.parse(path);
+      if (sourcePaths.has(relativePath)) {
+        throw new Error(`Host-generated plugin file collides with an author source file: ${relativePath}`);
+      }
+      files.push({ relativePath, byteLength: Buffer.byteLength(contents) });
     }
-    const bytes = Buffer.from(input.generatedManifestContents, 'utf8');
-    files.push({
-      relativePath: manifestRelativePath,
-      byteLength: bytes.byteLength,
-    });
   }
   return createImmutablePluginGenerationRecord({
     pluginId: input.pluginId,
@@ -1281,6 +1269,7 @@ async function prepareImmutablePluginGenerationWithReuse(input: Readonly<{
   sourceRootPath: string;
   record: ImmutablePluginGenerationRecord;
   generatedManifestContents?: string;
+  generatedFiles?: ReadonlyMap<string, string>;
   flushDirectory?: (path: string) => Promise<void>;
   reuseUnchangedFilesFrom?: Readonly<{
     rootPath: string;
@@ -1341,13 +1330,13 @@ async function prepareImmutablePluginGenerationWithReuse(input: Readonly<{
       if (canReuse) {
         reusedFileCount += 1;
       }
-      if (
-        input.generatedManifestContents !== undefined
-        && file.relativePath === record.manifestRelativePath
-      ) {
-        const bytes = Buffer.from(input.generatedManifestContents, 'utf8');
+      const generatedContents = file.relativePath === record.manifestRelativePath && input.generatedManifestContents !== undefined
+        ? input.generatedManifestContents
+        : input.generatedFiles?.get(file.relativePath);
+      if (generatedContents !== undefined) {
+        const bytes = Buffer.from(generatedContents, 'utf8');
         if (bytes.byteLength !== file.byteLength) {
-          throw new Error('Host-generated plugin manifest differs from its structural materialization record');
+          throw new Error('Host-generated plugin file differs from its structural materialization record');
         }
         await writeFile(destination, bytes);
       } else {
@@ -1427,6 +1416,7 @@ export async function prepareImmutablePluginGeneration(input: Readonly<{
   sourceRootPath: string;
   record: ImmutablePluginGenerationRecord;
   generatedManifestContents?: string;
+  generatedFiles?: ReadonlyMap<string, string>;
   flushDirectory?: (path: string) => Promise<void>;
 }>): Promise<PreparedImmutablePluginGeneration> {
   return await prepareImmutablePluginGenerationWithReuse(input);
@@ -1443,6 +1433,7 @@ export async function prepareOwnedImmutablePluginGeneration(input: Readonly<{
   immutableGenerationId?: string;
   singleFileRelativePath?: string;
   generatedManifestContents?: string;
+  generatedFiles?: ReadonlyMap<string, string>;
   flushDirectory?: (path: string) => Promise<void>;
 }>): Promise<OwnedPreparedImmutablePluginGeneration> {
   const record = await createImmutablePluginGenerationRecordFromSource({
@@ -1459,6 +1450,7 @@ export async function prepareOwnedImmutablePluginGeneration(input: Readonly<{
     ...(input.generatedManifestContents !== undefined
       ? { generatedManifestContents: input.generatedManifestContents }
       : {}),
+    generatedFiles: input.generatedFiles,
   });
   const rootPath = join(input.paths.generationsDir, record.immutableGenerationId);
   try {
@@ -1482,6 +1474,7 @@ export async function prepareOwnedImmutablePluginGeneration(input: Readonly<{
       ...(input.generatedManifestContents !== undefined
         ? { generatedManifestContents: input.generatedManifestContents }
         : {}),
+      generatedFiles: input.generatedFiles,
       ...(input.flushDirectory ? { flushDirectory: input.flushDirectory } : {}),
     });
     if (!prepared.materialization || prepared.materialization.copiedFileCount === 0) {

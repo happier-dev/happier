@@ -16,7 +16,7 @@ export function createCliRegistryBotTemplateReaderV1(options: Readonly<{
   actionContext?: Pick<ActionExecutorContext, 'externalActionExecutionAuthorization'>;
 }> = {}): RegistryBotTemplateReaderV1 {
   return async ({ item, source, context, contributionId }) => {
-    if (item.payload.kind !== 'plugin' || 'packageContent' in source) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
+    if (item.payload.kind !== 'plugin' || !('listing' in item.payload) || 'packageContent' in source) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
     const listing = item.payload.listing;
     const root = await mkdtemp(join(options.temporaryDirectory ?? tmpdir(), 'happier-template-'));
     try {

@@ -3,6 +3,7 @@ import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/ac
 import { PluginInstallActionInputSchema } from '@happier-dev/protocol/actions/specs/pluginDevelopment';
 import { resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import {
+  describePluginContentOmissions,
   describePluginInstallConsent,
   type PluginInstallConsentScope,
 } from '@/components/settings/plugins/model/pluginInstallationReviewFacts';
@@ -41,7 +42,10 @@ export function readPluginInstallApprovalChange(preview: unknown): 'install' | '
 export function readPluginInstallSourceName(actionArgs: unknown): string | null {
   const parsed = PluginInstallActionInputSchema.safeParse(actionArgs);
   if (!parsed.success) return null;
-  if ('source' in parsed.data) return parsed.data.source.pluginId;
+  if ('source' in parsed.data) {
+    const source = parsed.data.source;
+    return source.kind === 'git' ? source.locator : source.kind === 'gitCatalog' ? source.itemId : source.pluginId;
+  }
   return parsed.data.kind === 'npm' ? parsed.data.path : resolveWorkspacePathBasenameV1(parsed.data.path);
 }
 
@@ -68,6 +72,8 @@ export function listPluginInstallConsentFacts(
   pendingReview: Parameters<typeof describePluginInstallConsent>[0],
 ): readonly Readonly<{ key: string; title: string; value: string }>[] {
   const consent = describePluginInstallConsent(pendingReview);
+  const { source, notImported } = pendingReview.review;
+  const omissions = describePluginContentOmissions(notImported);
   const labelsByTitleKey = new Map<string, string[]>();
   for (const use of consent.uses) {
     const key = SCOPE_TITLE_KEY[use.scope];
@@ -85,6 +91,9 @@ export function listPluginInstallConsentFacts(
           : []),
       ].join('\n'),
     },
+    ...(source.kind === 'git' ? [{ key: 'git', title: t('settingsPlugins.gitInstall.mode'),
+      value: [source.locator, source.subdirectory, source.resolvedCommit].filter(Boolean).join('\n') }] : []),
+    ...(omissions.length ? [{ key: 'notImported', title: t('settingsPlugins.gitInstall.notImported'), value: omissions.join('\n') }] : []),
     ...[...labelsByTitleKey].map(([key, labels]) => ({
       key,
       title: t(key as (typeof SCOPE_TITLE_KEY)[PluginInstallConsentScope]),

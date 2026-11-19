@@ -20,6 +20,9 @@ installSettingsViewCommonModuleMocks({
                     'settingsPlugins.trustPolicy.prompt': 'Approval required',
                     'settingsPlugins.sourceKind.marketplace': 'Marketplace',
                     'settingsPlugins.sourceKind.path': 'Local path',
+                    'settingsPlugins.gitInstall.mode': 'Git repository',
+                    'settingsPlugins.gitInstall.notImported': 'Not imported',
+                    'settingsPlugins.gitInstall.omittedHooks': '1 hook',
                 };
                 if (key === 'settingsPlugins.unknownValue') {
                     return `Other: ${String(params?.value ?? '')}`;
@@ -103,6 +106,17 @@ describe('PluginDetailHeader', () => {
         expect(content).toContain('Locally trusted');
         expect(content).toContain('Local path');
         expect(content).not.toContain('local_trusted');
+    });
+
+    it('shows the resolved Git commit and omitted content on the installed plugin', async () => {
+        const commit = 'a'.repeat(40);
+        const screen = await renderHeader({ installed: installed({ kind: 'git', locator: 'https://github.com/acme/tools',
+            resolvedCommit: commit, notImported: { hooks: 1, commands: 0, agents: 0, mcpServers: 0 } }) });
+
+        const content = screen.getTextContent();
+        expect(content).toContain('Git repository');
+        expect(content).toContain(commit);
+        expect(content).toContain('Not imported · 1 hook');
     });
 
     it('labels novel projection identifiers as other while preserving their diagnostic value', async () => {

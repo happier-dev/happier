@@ -776,6 +776,16 @@ describe('Plugin Account availability v1', () => {
     )).toBe(false);
   });
 
+  it('admits Git materialization on its Machine and refuses a portable release claim', () => {
+    const materialization = {
+      serverIdentityId: 'srv_availability_fixture', machineId: 'machine-1', materializationId: 'install-epoch-1',
+      pluginId: 'com.acme.fixture', version: '1.2.3', sourceClass: 'gitRepository', portableRelease: false,
+      uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1_700_000_000_000,
+    };
+    expect(PluginMachineMaterializationV1Schema.parse(materialization)).toMatchObject({ sourceClass: 'gitRepository' });
+    expect(PluginMachineMaterializationV1Schema.safeParse({ ...materialization, portableRelease: true }).success).toBe(false);
+  });
+
   it('keeps client-authored ordering out of normalized complete machine inventories', () => {
     const first = {
       serverIdentityId: 'srv_availability_fixture',

@@ -1,4 +1,5 @@
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ManagedPluginSourceCustodyV1 } from '@happier-dev/protocol';
 export type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 export type PluginContributionRef = Readonly<{ pluginId: string; localId: string }>;
 export interface Disposable {
@@ -23,7 +24,7 @@ export type PluginTargetedContributionSourceCustodyV1 =
     | Readonly<{
         kind: 'managed';
         immutableGenerationId: string;
-        installSource: 'npm' | 'archive' | 'localPath';
+        installSource: ManagedPluginSourceCustodyV1['installSource'];
     }>
     | Readonly<{
         kind: 'bundled_first_party';

@@ -60,6 +60,7 @@ export const PluginInstallReviewPrincipalPresentationV1Schema = lazyZodSchema(()
       development: z.boolean(),
     }),
     z.strictObject({ kind: z.literal('archive') }),
+    z.strictObject({ kind: z.literal('git') }),
     z.strictObject({
       kind: z.literal('npm'),
       packageName: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),

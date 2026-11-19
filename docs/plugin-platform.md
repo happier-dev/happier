@@ -13067,6 +13067,25 @@ For an installed plugin, `source: { kind: 'installed', pluginId }` asks the
 same daemon owner to choose its update from the retained channel and policy;
 `plugins update <pluginId>` is a CLI projection of that Action. The caller
 does not reconstruct a locator or override a pinned policy.
+
+Git plugins use the same Action and installation owner. Direct input carries an
+HTTPS repository and optional subdirectory. Catalog input carries only the
+registry source ID and item ID. The existing `claude-marketplace` adapter reads
+Claude, Codex, and Cursor catalogs and resolves the selected pointer at use.
+Direct Git input acquires the latest stable GitHub release or the repository's
+default branch. Catalog input acquires the ref or SHA from the current entry.
+Relative entries inherit the catalog repository's ref, and entries with no
+ref use the default branch. Review and installed provenance carry the resolved
+commit. The Git update channel retains the catalog pointer when applicable,
+and the existing update check compares resolved commits for Git sources.
+Git acquisition uses the checkout owner and the managed generation owner.
+
+Manifest admission converts Claude, Codex, Cursor, and Agent Plugins packages
+to the normal Happier manifest. It retains skills, Markdown commands and agents
+as skills, and representable MCP declarations. The normal installation review
+reports omitted content. Discovery reads one catalog per admitted source and
+defers Git acquisition to the selected installation.
+
 Install review uses the ordinary `ApprovalRequestV2` Artifact and Inbox
 presentation. The public `approval.request.decide` Action serves UI, Agent,
 MCP and CLI decisions under the user's approval policy, using the approval

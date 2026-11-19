@@ -9,6 +9,7 @@ import { PageHeaderMenu, PageHeaderStateSwitch, type PageHeaderMenuAction } from
 import { t } from '@/text';
 
 import type { InstalledPluginEntry } from '../model/pluginMarketplaceModel';
+import { describePluginContentOmissions } from '../model/pluginInstallationReviewFacts';
 import { PluginMark } from '../PluginMark';
 
 function resolveTrustPolicyLabel(trustPolicy: string | null | undefined): string {
@@ -42,6 +43,8 @@ function resolveSourceKindLabel(sourceKind: string | null | undefined): string {
             return t('settingsPlugins.sourceKind.package');
         case 'archive':
             return t('settingsPlugins.sourceKind.archive');
+        case 'git':
+            return t('settingsPlugins.gitInstall.mode');
         case 'catalog':
             return t('settingsPlugins.sourceKind.catalog');
         default:
@@ -67,6 +70,7 @@ export function resolvePluginDetailFacts(
         : provenance?.trustPolicy ?? installed.source.trustPolicy;
     const sourceKind = provenance?.sourceKind ?? installed.source.kind;
     const version = projection?.version ?? installed.version;
+    const omissions = describePluginContentOmissions(installed.source.notImported);
     // The status the plugin reports, with its detail (often the reason, e.g. what failed).
     const statusLabel = projection?.status?.label ?? null;
     const statusDetail = projection?.status?.detail ?? null;
@@ -77,6 +81,8 @@ export function resolvePluginDetailFacts(
         { key: 'id', text: installed.pluginId, testID: `settings.plugins.detail.${installed.pluginId}.id` },
         ...(version ? [{ key: 'version', text: version }] : []),
         { key: 'source', text: provenance?.sourceLabel ?? resolveSourceKindLabel(sourceKind) },
+        ...(installed.source.resolvedCommit ? [{ key: 'commit', text: installed.source.resolvedCommit }] : []),
+        ...(omissions.length ? [{ key: 'notImported', text: `${t('settingsPlugins.gitInstall.notImported')} · ${omissions.join(', ')}` }] : []),
         {
             key: 'trust',
             text: resolveTrustPolicyLabel(trustPolicy),

@@ -519,6 +519,7 @@ function formatUpdateChannel(
     return `${channel.development ? 'Development path' : 'Path'}: ${channel.locator}`;
   }
   if (channel.kind === 'archive') return `Archive: ${channel.locator}`;
+  if (channel.kind === 'git') return `Git: ${channel.locator}${channel.subdirectory ? ` (${channel.subdirectory})` : ''}`;
   const registryProfile = channel.registryProfileId
     ? ` via registry profile ${channel.registryProfileId}`
     : '';
@@ -592,12 +593,13 @@ export function formatPluginInstallationReviewForTerminal(
     `- Package: ${review.packageIdentity.name ?? 'Unavailable'} ${review.packageIdentity.version}`,
     `- Publisher: ${formatPublisher(review.publisherIdentity)}`,
     `Source: ${review.source.locator}`,
+    ...(review.source.kind === 'git' ? [`Resolved commit: ${review.source.resolvedCommit}`] : []),
     `Update channel: ${formatUpdateChannel(review.updateChannel)}`,
     ...(review.source.kind === 'archive' && /^https?:\/\//u.test(review.source.locator)
       ? ['URL retention: Happier saves the full archive URL on this machine, including any credentials, for future updates. Expired or revoked URLs can make updates fail.']
       : []),
     ...(!deltaOnly ? ['Verification signals:'] : []),
-    ...(!deltaOnly ? [`- Source integrity: ${review.source.kind === 'path'
+    ...(!deltaOnly ? [`- Source integrity: ${review.source.kind === 'path' || review.source.kind === 'git'
       ? 'None'
       : review.source.integrityBasis === 'expected'
         ? 'Matched expected integrity'
@@ -610,6 +612,10 @@ export function formatPluginInstallationReviewForTerminal(
       ? [`Executable realms: ${review.executableRealms.length > 0 ? review.executableRealms.join(', ') : 'None'}`]
       : []),
     ...(!deltaOnly ? [`Contributions: ${contributions}`] : []),
+    ...(review.notImported ? [
+      `Not imported: ${review.notImported.hooks} hooks, ${review.notImported.commands} commands, ${review.notImported.agents} agents, ${review.notImported.mcpServers} MCP servers`,
+      ...(review.notImported.other?.length ? [`Other omitted content: ${review.notImported.other.join(', ')}`] : []),
+    ] : []),
     ...((!deltaOnly || expanded.has('requestInterceptor')) && requestInterceptors.length > 0
       ? [
           'Request interceptor policies:',

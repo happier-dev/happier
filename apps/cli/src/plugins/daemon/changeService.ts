@@ -136,7 +136,7 @@ function failedPluginChange(
 }
 
 export function createDaemonPluginChangeService(params: Readonly<{
-  prepare: (request: PluginChangeRequest) => Promise<PreparedDaemonPluginChange>;
+  prepare: (request: PluginChangeRequest, signal?: AbortSignal) => Promise<PreparedDaemonPluginChange>;
   readApprovalRetirement?: (review: Extract<PluginPendingChangeEntry, { kind: 'reviewRequired' }>) => Promise<boolean>;
   findOpenDevelopmentApproval?: (intent: PluginInstallIntent) => Promise<string | null>;
   createPendingChangeId?: () => string;
@@ -420,8 +420,9 @@ export function createDaemonPluginChangeService(params: Readonly<{
         }
         let prepared: PreparedDaemonPluginChange;
         try {
-          prepared = await params.prepare(preparationRequest);
+          prepared = await params.prepare(preparationRequest, options?.signal);
         } catch (error) {
+          if (options?.signal?.aborted) return { kind: 'cancelled' };
           if (error instanceof PluginRegistryProfileRequiredError) {
             return { kind: 'registryProfileRequired', ...error.requirement };
           }

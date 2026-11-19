@@ -1,3 +1,4 @@
+import type { PluginGitInstallSource } from '@happier-dev/protocol/plugins/source-spec';
 import {
   type MarketplaceRegistryProfileRequiredResultV1,
   type MarketplaceRegistryProfileRequirementV1,
@@ -31,6 +32,7 @@ export type PluginChangeRequest =
       development?: false;
     }>
   | Readonly<{ kind: 'installArchive'; locator: string; expectedIntegrity?: string }>
+  | Readonly<{ kind: 'installGit'; source: PluginGitInstallSource }>
   | Readonly<{
       kind: 'installMarketplace';
       sourceId: string;

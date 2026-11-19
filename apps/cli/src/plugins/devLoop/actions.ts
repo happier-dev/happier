@@ -2,6 +2,7 @@ import { PluginScaffoldUiModeSchema, PluginScaffoldTemplateSchema, PluginPublish
   PluginPublishPrepareActionInputSchema, PluginPublishActionInputSchema, PluginPublishStatusActionInputSchema,
   PluginLogsReadActionInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecutorContext, PluginDevLoopActionIdV1 } from '@happier-dev/protocol';
+import { PluginGitInstallSourceSchema } from '@happier-dev/protocol/plugins/source-spec';
 
 import { installPluginFromLocator } from '@/plugins/projection/catalog/installed';
 import { readInstalledPluginCatalog } from '@/plugins/projection/catalog/installed';
@@ -472,6 +473,17 @@ export async function executePluginDevLoopAction(
       return await settleApprovedInstallReview(services.approvedInstallReview, params, services);
     }
     const source = readInput(input.source);
+    if (source.kind === 'git' || source.kind === 'gitCatalog') {
+      const selected = PluginGitInstallSourceSchema.parse(source);
+      const change = await (services.requestUserPluginChange ?? requestUserPluginChange)({
+        request: { kind: 'installGit', source: selected }, approval: 'none',
+        ...(params.context?.signal ? { signal: params.context.signal } : {}),
+      });
+      if (isPluginPendingReview(change)) return await settleApprovedInstallReview(change, params, services);
+      return change.kind === 'committed'
+        ? { ok: true, kind: 'plugins_install', outcome: 'applied', change }
+        : projectInstallChangeFailure(change, 'The daemon did not apply the Git plugin install.');
+    }
     if (readString(source, 'kind') === 'installed') {
       const change = await (services.requestUserPluginChange ?? requestUserPluginChange)({
         request: { kind: 'update', pluginId: readString(source, 'pluginId') }, approval: 'none',

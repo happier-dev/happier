@@ -1,17 +1,15 @@
 ---
 title: Marketplace distribution
-description: How marketplace sources recommend npm plugin packages, and what they never decide.
+description: Browse npm releases and Git plugin pointers from your Account's marketplace sources.
 ---
 
-Marketplace distribution uses the same manifest-first and trust-first model as
-local plugins. A marketplace source is a discovery index over npm artifacts —
-not an artifact registry, certification authority, or signing infrastructure
-of its own. It recommends exact npm packages; the registry artifact remains
-the thing that is downloaded, reviewed, and trusted.
+Marketplace sources help you discover npm releases and Git repositories.
+Happier downloads the selected content on your installation machine and
+evaluates it through the same manifest and installation path as local plugins.
 
 ## What a source is and does
 
-Every listing pins an exact npm package, version, registry origin, and SRI
+Every npm listing pins an exact package, version, registry origin, and SRI
 integrity value, and installing it fetches exactly that artifact. Happier
 ships no publisher PKI, certification, review-receipt, or global revocation
 network behind a listing. Curation shapes what you discover and
@@ -30,18 +28,24 @@ In **0.3 development source**, plugin discovery uses the Account's registry
 sources. Public catalog and npm listings are fetched directly by the client;
 choosing an installation machine is not a prerequisite for browsing. Exact
 installation review, npm credential profiles and installation still belong to
-the chosen machine. Three source paths feed that discovery:
+the chosen machine. Discovery uses these sources.
 
 - **Happier curated** — the configured Happier catalog, with reviewed
   recommendation and provenance but no automatic execution trust.
 - **Community npm** — built in: keyword discovery over the public npm registry.
+- **Claude, Codex, and Cursor** — vendor catalogs that point to a Git repository
+  and, when needed, a directory within it. Browse reads the catalog. Install
+  and Update read the selected catalog entry and follow its ref or commit.
+  Relative entries use the catalog repository's ref. An entry with no ref uses
+  the default branch. The installed commit is shown as provenance.
 - **User catalogs** — catalog documents you add with `hdev registries add`.
-  Each entry points at an npm artifact. Sources can be enabled or disabled for
-  the Account; built-in sources cannot be removed.
+  You can add an npm index or a catalog in the vendor marketplace format.
+  Source settings let you enable or disable each catalog for your Account.
 
 In 0.3 development source, Browse uses published summary facts and reads the
-full listing when you select it. New listing links keep the source, native item
-identity and reviewed version together. For npm, the native identity is the
+full listing when you select it. npm listing links keep the source, item
+identity and reviewed version together. Git catalog links use the source and
+item identity. For npm, the native identity is the
 package name. An older npm link containing only a plugin ID offers Browse in
 that source so you can find the listing; Happier does not guess a package name
 or silently choose a newer version.
@@ -58,10 +62,10 @@ function pluginPreview(summary: Summary) {
   return {
     title: summary.title,
     publisher: summary.pluginListing?.publisher.displayName ?? summary.publisher?.name,
-    pointer: summary.version ? {
+    pointer: summary.version || summary.pluginGit ? {
       sourceId: summary.sourceId,
       itemId: summary.itemId,
-      version: summary.version,
+      ...(summary.version ? { version: summary.version } : {}),
     } : null,
   };
 }
@@ -69,8 +73,8 @@ function pluginPreview(summary: Summary) {
 
 Use the selected row's pointer with `registries.items.read { kind: 'plugin',
 ...pointer }` when its details are needed. Missing optional summary facts stay
-unknown until that read; neither the preview nor its review label grants
-installation permission. Installation still goes through Install & Trust.
+unknown until that read. Installation goes through the ordinary
+`plugins.install` Action.
 
 ## Curated catalog availability
 

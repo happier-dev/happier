@@ -624,15 +624,9 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         );
       }
       const availability = installation.availability;
-      const release = availability.release
-        ? snapshotPluginReleaseFactsV1(availability.release)
-        : undefined;
-      if (release) {
-        if (availability.sourceClass === 'localPath') {
-          throw new Error(
-            `Plugin '${pluginId}' local-path installation cannot publish portable release facts`,
-          );
-        }
+      let release: ReturnType<typeof snapshotPluginReleaseFactsV1> | undefined;
+      if (availability.portableRelease) {
+        release = snapshotPluginReleaseFactsV1(availability.release);
         releasePublications.push(Object.freeze({
           facts: release,
           sourceClass: availability.sourceClass,

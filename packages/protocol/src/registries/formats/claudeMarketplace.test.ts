@@ -2,7 +2,41 @@ import {describe,expect,it} from 'vitest';
 import {claudeMarketplaceRegistryAdapterV1} from './claudeMarketplace.js';
 import type {RegistryHttpV1} from './registryFormatAdapterV1.js';
 import type {RegistrySourceV1} from '../registrySourcesV1.js';
+import { RegistryItemV1Schema } from '../registryItemsV1.js';
 const source:RegistrySourceV1={id:'market',title:'Market',url:'https://github.com/owner/market',format:'claude-marketplace',kinds:['skill'],enabled:true,addedAt:0};
+
+it('lists vendor plugins and resolves an install pointer from the current catalog', async () => {
+  const vendor = { ...source, kinds: ['plugin' as const], url: 'https://raw.githubusercontent.com/owner/market/main/collection/.agents/plugins/marketplace.json' };
+  let repository = 'owner/initial';
+  const requested: string[] = [];
+  const http: RegistryHttpV1 = {
+    getJson: async (url) => {
+      requested.push(url);
+      return { ok: true, fetchedAt: 1, value: { plugins: [
+        { name: 'relative', source: { source: 'local', path: './plugins/relative' } },
+        { name: 'url', source: { source: 'url', url: 'https://github.com/owner/url.git', sha: 'a'.repeat(40) } },
+        { name: 'subdir', source: { source: 'git-subdir', url: repository, path: 'tools/subdir', ref: 'stale' } },
+        { name: 'github', source: { source: 'github', repo: 'owner/github', ref: 'refs/heads/next' } },
+      ] } };
+    },
+    getText: async () => ({ ok: false, status: { state: 'invalid_source' } }),
+    getBytes: async () => ({ ok: false, status: { state: 'invalid_source' } }),
+  };
+  expect((await claudeMarketplaceRegistryAdapterV1.list({ http }, { source: vendor, kind: 'plugin' })).items)
+    .toMatchObject([{ itemId: 'relative' }, { itemId: 'url' }, { itemId: 'subdir' }, { itemId: 'github' }]);
+  expect(requested).toEqual([vendor.url]);
+  repository = 'owner/current';
+  for (const [itemId, locator, subdirectory, ref] of [
+    ['relative', 'https://github.com/owner/market', 'collection/plugins/relative', 'main'],
+    ['url', 'https://github.com/owner/url', undefined, 'a'.repeat(40)],
+    ['subdir', 'https://github.com/owner/current', 'tools/subdir', 'stale'],
+    ['github', 'https://github.com/owner/github', undefined, 'refs/heads/next'],
+  ] as const) {
+    const item = RegistryItemV1Schema.parse(await claudeMarketplaceRegistryAdapterV1.read({ http }, { source: vendor, kind: 'plugin', itemId }));
+    expect(item.payload).toEqual({ kind: 'plugin', catalog: { sourceId: vendor.id, itemId }, git: { locator, ref, ...(subdirectory ? { subdirectory } : {}) } });
+  }
+  expect(requested).toEqual(Array(5).fill(vendor.url));
+});
 describe('Claude marketplace skills',()=>{
   it('resolves relative plugin paths from a raw marketplace URL and reads omitted kinds from its pinned plugin manifest',async()=>{
     const rawSource={...source,url:'https://raw.githubusercontent.com/owner/market/main/.claude-plugin/marketplace.json'};

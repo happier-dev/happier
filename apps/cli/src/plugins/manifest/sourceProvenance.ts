@@ -34,6 +34,7 @@ const PLUGIN_SOURCE_KIND_BY_DISTRIBUTION_KIND = {
   npm: 'package',
   localPath: 'path',
   archive: 'archive',
+  git: 'git',
 } as const satisfies Record<PluginDistributionIdentity['kind'], PluginSourceKindV1>;
 
 /**

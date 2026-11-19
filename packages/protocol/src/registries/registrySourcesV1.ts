@@ -17,7 +17,7 @@ export const REGISTRY_KINDS_V1 = ['skill', 'mcpServer', 'agent', 'plugin', 'app'
 export const RegistryKindV1Schema = lazyZodSchema(() => z.enum(REGISTRY_KINDS_V1));
 export type RegistryKindV1 = z.infer<typeof RegistryKindV1Schema>;
 export const REGISTRY_FORMAT_KINDS_V1: Readonly<Record<RegistryFormatV1, readonly RegistryKindV1[]>> = {
-  'skills-sh': ['skill'], git: ['skill'], 'claude-marketplace': ['skill'], 'mcp-registry': ['mcpServer'],
+  'skills-sh': ['skill'], git: ['skill'], 'claude-marketplace': ['skill', 'plugin'], 'mcp-registry': ['mcpServer'],
   'acp-registry': ['agent'], 'happier-catalog': REGISTRY_KINDS_V1, 'happier-npm': ['plugin', 'agent'],
   'coolify-templates': ['app'], 'dokploy-templates': ['app'], 'chrome-web-store': ['browserExtension'], 'open-vsx': ['theme'],
   'codex-pets': ['pet'], petdex: ['pet'],
@@ -193,6 +193,18 @@ export const BUILT_IN_REGISTRY_SOURCES_V1: readonly RegistrySourceDescriptorV1[]
 }, {
   id: COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1, title: 'Community npm', format: 'happier-npm', kinds: ['plugin', 'agent'],
   url: `${PUBLIC_NPM_REGISTRY_ORIGIN_V1}/-/v1/search`, enabled: true, addedAt: 0, origin: { kind: 'built_in' }, removable: false,
+}, {
+  id: 'builtin:claude-plugins', title: 'Claude plugins', format: 'claude-marketplace', kinds: ['plugin'],
+  url: 'https://raw.githubusercontent.com/anthropics/claude-plugins-official/HEAD/.claude-plugin/marketplace.json', enabled: true,
+  addedAt: 0, origin: { kind: 'built_in' }, removable: false,
+}, {
+  id: 'builtin:codex-plugins', title: 'Codex plugins', format: 'claude-marketplace', kinds: ['plugin'],
+  url: 'https://raw.githubusercontent.com/openai/plugins/HEAD/.agents/plugins/marketplace.json', enabled: true,
+  addedAt: 0, origin: { kind: 'built_in' }, removable: false,
+}, {
+  id: 'builtin:cursor-plugins', title: 'Cursor plugins', format: 'claude-marketplace', kinds: ['plugin'],
+  url: 'https://raw.githubusercontent.com/cursor/plugins/HEAD/.cursor-plugin/marketplace.json', enabled: true,
+  addedAt: 0, origin: { kind: 'built_in' }, removable: false,
 }, {
   id: 'builtin:compose-catalog', title: 'Service templates', format: 'coolify-templates', kinds: ['app'],
   url: 'https://github.com/coollabsio/coolify', enabled: true, addedAt: 0, origin: { kind: 'built_in' }, removable: false,

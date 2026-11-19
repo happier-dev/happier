@@ -3,6 +3,7 @@ import { posix, resolve, win32 } from 'node:path';
 
 import { z } from 'zod/mini';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { PluginGitCatalogPointerV1Schema, PluginGitSourceV1Schema, type PluginGitCatalogPointerV1, type PluginGitSourceV1 } from '@happier-dev/protocol/plugins/source-spec';
 import { NpmRegistryProfileIdV1Schema } from '@happier-dev/protocol/rpc/npmRegistryProfiles';
 
 import { normalizeNpmPackageName, normalizeNpmRegistryOrigin } from '@/plugins/distribution/npm/normalize';
@@ -86,6 +87,7 @@ const CanonicalPluginIdSchema = z.string().check(z.superRefine((value, context) 
 }));
 
 export type PluginDistributionIdentity =
+  | Readonly<{ kind: 'git'; catalog?: PluginGitCatalogPointerV1 } & PluginGitSourceV1>
   | Readonly<{ kind: 'npm'; registryOrigin: string; registryProfileId?: string; packageName: string }>
   | Readonly<{ kind: 'localPath'; canonicalPath: string }>
   | Readonly<{
@@ -95,6 +97,7 @@ export type PluginDistributionIdentity =
   }>;
 
 export const PluginDistributionIdentitySchema: z.ZodMiniType<PluginDistributionIdentity> = z.discriminatedUnion('kind', [
+  z.extend(PluginGitSourceV1Schema, { kind: z.literal('git'), catalog: z.optional(PluginGitCatalogPointerV1Schema) }),
   z.strictObject({
     kind: z.literal('npm'),
     registryOrigin: CanonicalNpmRegistryOriginSchema,
@@ -244,6 +247,10 @@ export function pluginDistributionIdentitiesEqual(
   if (left.kind === 'localPath') {
     return right.kind === 'localPath' && canonicalAbsolutePathsEqual(left.canonicalPath, right.canonicalPath);
   }
+  if (left.kind === 'git') {
+    return right.kind === 'git' && left.locator === right.locator && left.subdirectory === right.subdirectory
+      && left.catalog?.sourceId === right.catalog?.sourceId && left.catalog?.itemId === right.catalog?.itemId;
+  }
   if (right.kind !== 'archive' || left.integrity !== right.integrity || left.source.kind !== right.source.kind) {
     return false;
   }
@@ -272,6 +279,7 @@ export function pluginDistributionRollbackLineagesEqual(
   if (left.kind === 'localPath') {
     return right.kind === 'localPath' && canonicalAbsolutePathsEqual(left.canonicalPath, right.canonicalPath);
   }
+  if (left.kind === 'git') return pluginDistributionIdentitiesEqual(left, right);
   if (right.kind !== 'archive' || left.source.kind !== right.source.kind) return false;
   return left.source.kind === 'localFile'
     ? right.source.kind === 'localFile' && canonicalAbsolutePathsEqual(left.source.canonicalPath, right.source.canonicalPath)

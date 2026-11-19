@@ -117,6 +117,17 @@ export type PluginDevLoopActionInputById = {
             packageName?: string | undefined;
         };
         machineId: string;
+    } | {
+        source: {
+            locator: string;
+            kind: 'git';
+            subdirectory?: string | undefined;
+        } | {
+            sourceId: string;
+            itemId: string;
+            kind: 'gitCatalog';
+        };
+        machineId: string;
     };
     readonly "plugins.uninstall": {
         pluginId: string;

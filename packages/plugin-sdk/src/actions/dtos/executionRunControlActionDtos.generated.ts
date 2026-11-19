@@ -76,7 +76,7 @@ export type ExecutionRunControlActionInputById = {
         } | {
             kind: 'managed';
             immutableGenerationId: string;
-            installSource: 'archive' | 'localPath' | 'npm';
+            installSource: 'archive' | 'git' | 'localPath' | 'npm';
         };
         secretReferenceOverlay?: undefined | {
             v: 1;
@@ -918,7 +918,7 @@ export type ExecutionRunControlActionInputById = {
             } | {
                 kind: 'managed';
                 immutableGenerationId: string;
-                installSource: 'archive' | 'localPath' | 'npm';
+                installSource: 'archive' | 'git' | 'localPath' | 'npm';
             };
             secretReferenceOverlay?: undefined | {
                 v: 1;
@@ -5502,7 +5502,7 @@ export type ExecutionRunControlActionResultById = {
                 } | {
                     kind: 'managed';
                     immutableGenerationId: string;
-                    installSource: 'archive' | 'localPath' | 'npm';
+                    installSource: 'archive' | 'git' | 'localPath' | 'npm';
                 };
                 materialization?: undefined | {
                     machineId: string;

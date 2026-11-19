@@ -407,7 +407,7 @@ export type InventoryActionInputById = {
             } | {
                 kind: 'managed';
                 immutableGenerationId: string;
-                installSource: 'archive' | 'localPath' | 'npm';
+                installSource: 'archive' | 'git' | 'localPath' | 'npm';
             };
         }[];
     };

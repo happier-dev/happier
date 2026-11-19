@@ -51,7 +51,7 @@ export type PluginExecutionOriginActionInputById = {
                 } | {
                     kind: 'managed';
                     immutableGenerationId: string;
-                    installSource: 'archive' | 'localPath' | 'npm';
+                    installSource: 'archive' | 'git' | 'localPath' | 'npm';
                 };
             };
         };
@@ -119,7 +119,7 @@ export type PluginExecutionOriginActionResultById = {
                 } | {
                     kind: 'managed';
                     immutableGenerationId: string;
-                    installSource: 'archive' | 'localPath' | 'npm';
+                    installSource: 'archive' | 'git' | 'localPath' | 'npm';
                 };
             };
         };
@@ -158,7 +158,7 @@ export type PluginExecutionOriginActionResultById = {
                 } | {
                     kind: 'managed';
                     immutableGenerationId: string;
-                    installSource: 'archive' | 'localPath' | 'npm';
+                    installSource: 'archive' | 'git' | 'localPath' | 'npm';
                 };
             };
         };
@@ -199,7 +199,7 @@ export type PluginExecutionOriginActionResultById = {
                     } | {
                         kind: 'managed';
                         immutableGenerationId: string;
-                        installSource: 'archive' | 'localPath' | 'npm';
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                 };
             };

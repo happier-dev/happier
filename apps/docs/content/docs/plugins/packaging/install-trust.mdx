@@ -49,6 +49,19 @@ to the exact listing and its existing Install and Trust operation. A separate
 Browse entry opens app-host discovery. Appearing in the
 Account's installed list does not mean a plugin is enabled, trusted or executable.
 
+Use **Add → Git repository** to install directly from an HTTPS Git URL and an
+optional folder within the repository. In 0.3 development source, Happier uses
+the latest stable release on GitHub or the
+default branch if none exists. Other HTTPS Git hosts use the default branch.
+The selected machine records the commit used for the installation.
+
+Happier imports skills, Markdown commands and agents as skills, and supported
+MCP server declarations from Claude, Codex, Cursor, and Agent Plugins packages.
+Portable Agent Plugins packages use version 1.0.0 of the specification.
+The installation review and installed plugin details list omitted content,
+such as hooks, vendor-specific extensions, and MCP declarations that require
+unsupported configuration.
+
 For local authoring, use `hdev plugins dev`. The daemon owns replacement and
 validation while the author command automatically observes the source. For an
 intentional watcher-free refresh of a package root, use the same development

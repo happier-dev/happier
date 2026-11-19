@@ -38,14 +38,14 @@ export function createRegistryUpdateCheck(params: Readonly<{
   checkNow: (filter?: RegistryUpdateCheckFilterV1) => Promise<RegistryUpdateCheckResultV1>;
   runBackgroundAutoUpdateCheck: () => Promise<void>;
 }> {
-  const checkNow = async (filter: RegistryUpdateCheckFilterV1 = {}): Promise<RegistryUpdateCheckResultV1> => {
+  const checkNow = async (filter: RegistryUpdateCheckFilterV1 = {}, trackers = params.trackers): Promise<RegistryUpdateCheckResultV1> => {
     params.ctx.signal?.throwIfAborted();
     if (filter.kind === 'app') {
       if (!params.readEnvironment) throw new RegistryFetchErrorV1({ state: 'needs_machine' });
       return checkRegistryAppUpdatesV1(params.ctx, { environments: filter.environments,
         readEnvironment: params.readEnvironment, readSources: params.readSources, admitSource: params.admitSource });
     }
-    const groups = await Promise.all(params.trackers.filter(tracker => !filter.kind || tracker.kind === filter.kind).map(async tracker => ({
+    const groups = await Promise.all(trackers.filter(tracker => !filter.kind || tracker.kind === filter.kind).map(async tracker => ({
       tracker, items: await tracker.list(filter.keys),
     })));
     params.ctx.signal?.throwIfAborted();
@@ -121,5 +121,11 @@ export function createRegistryUpdateCheck(params: Readonly<{
     params.ctx.signal?.throwIfAborted();
     return { checkedAt: Date.now(), results };
   };
-  return { checkNow, runBackgroundAutoUpdateCheck: async () => { await checkNow(); } };
+  return {
+    checkNow,
+    async runBackgroundAutoUpdateCheck() {
+      // Plugin observations are returned to explicit callers. Background checks have no consumer for them.
+      await checkNow({}, params.trackers.filter(tracker => tracker.kind !== 'plugin'));
+    },
+  };
 }

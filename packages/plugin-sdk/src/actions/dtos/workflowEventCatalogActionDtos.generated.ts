@@ -44,7 +44,7 @@ export type WorkflowEventCatalogActionResultById = {
                 } | {
                     kind: 'managed';
                     immutableGenerationId: string;
-                    installSource: 'archive' | 'localPath' | 'npm';
+                    installSource: 'archive' | 'git' | 'localPath' | 'npm';
                 };
                 title: string;
                 description: null | string;
@@ -255,7 +255,7 @@ export type WorkflowEventCatalogActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                     };
                 };

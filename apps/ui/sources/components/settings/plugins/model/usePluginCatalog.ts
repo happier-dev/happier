@@ -90,11 +90,11 @@ export function usePluginCatalogWithSources(params: PluginCatalogParams, sources
         itemId: itemId ?? '', ...(version ? { version } : {}) }, enabled && !!listing && !!source && itemId !== undefined);
     const selectedItem = enabled && listing && !selected.stale && selected.item?.payload.kind === 'plugin'
         && selected.item.summary.sourceId === listing.sourceId && selected.item.summary.itemId === itemId
-        && (!version || selected.item.summary.version === version) && (!pluginId || selected.item.payload.listing.pluginId === pluginId)
+        && (!version || selected.item.summary.version === version) && (!pluginId || ('listing' in selected.item.payload ? selected.item.payload.listing.pluginId : selected.item.summary.itemId) === pluginId)
         ? selected.item : null;
     const unresolvedListing = !!listing && !sources.loading && itemId === undefined;
     const selectedSummary = React.useMemo(() => selectedItem && source && !('packageContent' in source) && selectedItem.payload.kind === 'plugin'
-        ? selectedItem.summary.pluginListing ? selectedItem.summary : registryPluginSummaryV1(source, selectedItem.payload.listing)
+        ? 'listing' in selectedItem.payload && !selectedItem.summary.pluginListing ? registryPluginSummaryV1(source, selectedItem.payload.listing) : selectedItem.summary
         : null, [selectedItem, source]);
     const projection = React.useRef<Parameters<typeof projectRegistryMarketplacePage>[1]>(undefined);
     const page = React.useMemo(() => {
@@ -154,7 +154,7 @@ export function usePluginCatalogWithSources(params: PluginCatalogParams, sources
     const current = enabled && execution.ready && desired !== null && (listing ? selectedItem !== null : !browse.stale);
     const resolveInstallEntry = React.useCallback((listing: Readonly<{ pluginId: string; sourceId?: string }>) => {
         const entry = page.entries.find(entry => entry.id === listing.pluginId && entry.sourceId === listing.sourceId);
-        return current && entry?.installable && entry.version ? entry : null;
+        return current && entry?.installable && (entry.version || entry.gitCatalogItemId) ? entry : null;
     }, [current, page.entries]);
     const discoverSources = React.useMemo(() => sources.sources.flatMap(source => {
         if ('packageContent' in source || !source.enabled) return [];

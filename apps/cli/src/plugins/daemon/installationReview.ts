@@ -20,6 +20,14 @@ type ReviewBlockedNewerVersions = NonNullable<
 type ReviewRawCredentialAccess = PluginInstallationReview['rawCredentialAccess'];
 
 export type PluginInstallationReviewSourceFacts =
+  | Readonly<Extract<PluginInstallationReview['source'], { kind: 'git' }> & {
+      packageName: null;
+      publisher: Readonly<{ status: 'unavailable' }>;
+      signature: Readonly<{ status: 'notProvided' }>;
+      provenance: Readonly<{ status: 'notProvided' }>;
+      curation: Readonly<{ status: 'notApplicable' }>;
+      updatePolicy: 'allowed';
+    }>
   | Readonly<{
       kind: 'path';
       locator: string;
@@ -174,6 +182,10 @@ function projectDeclaredUiArtifactIds(
 function projectUpdateChannel(
   source: PluginInstallationReviewSourceFacts,
 ): PluginInstallationReview['updateChannel'] {
+  if (source.kind === 'git') {
+    const { kind, locator, subdirectory } = source;
+    return { kind, locator, ...(subdirectory ? { subdirectory } : {}) };
+  }
   if (source.kind === 'path') {
     return Object.freeze({
       kind: 'path',
@@ -196,6 +208,10 @@ function projectUpdateChannel(
 function projectInstallationReviewSource(
   source: PluginInstallationReviewSourceFacts,
 ): PluginInstallationReview['source'] {
+  if (source.kind === 'git') {
+    const { kind, locator, subdirectory, resolvedCommit } = source;
+    return { kind, locator, resolvedCommit, ...(subdirectory ? { subdirectory } : {}) };
+  }
   if (source.kind === 'path') {
     return Object.freeze({
       kind: 'path',
@@ -301,6 +317,7 @@ export function projectPluginInstallationReview(params: Readonly<{
   daemonRights?: MachineDaemonRightsV1;
   manifest: CanonicalPluginManifest;
   source: PluginInstallationReviewSourceFacts;
+  notImported?: PluginInstallationReview['notImported'];
   uiArtifacts: Readonly<{
     verification: 'verified' | 'unavailable';
     contributionIds: readonly string[];
@@ -342,6 +359,7 @@ export function projectPluginInstallationReview(params: Readonly<{
     curation: Object.freeze({ ...params.source.curation }),
     executableRealms: projectPluginInstallationReviewExecutableRealms(params.manifest),
     contributions: projectContributions(params.manifest),
+    ...(params.notImported ? { notImported: params.notImported } : {}),
     requestInterceptors: projectRequestInterceptors(params.manifest),
     uiArtifacts: Object.freeze({
       status: contributionIds.length === 0

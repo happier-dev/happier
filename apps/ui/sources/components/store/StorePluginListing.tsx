@@ -19,7 +19,9 @@ export function StorePluginListing(props: Readonly<{
     const item = catalog.selectedItem;
     const listing = item?.payload.kind === 'plugin' ? {
         sourceId: item.summary.sourceId, itemId: item.summary.itemId,
-        pluginId: item.payload.listing.pluginId, version: item.payload.listing.distribution.version,
+        ...('listing' in item.payload
+            ? { pluginId: item.payload.listing.pluginId, version: item.payload.listing.distribution.version }
+            : { pluginId: item.summary.itemId }),
     } : null;
     return props.children({ listing, resolving: catalog.loadingDiscover, error: catalog.discoverError,
         refresh: catalog.refreshDiscover });

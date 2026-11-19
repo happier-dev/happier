@@ -10,6 +10,7 @@ import { createAgentRegistryUpdateTracker } from '@/agent/acp/catalog/registry/a
 import { createBrowserExtensionRegistryUpdateTracker } from '@/daemon/browser/extensions/registryUpdateTracker';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { runWithServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createMarketplaceIndexService } from '@/plugins/store/marketplace/service';
 import { createCliRegistryHostV1 } from '../createCliRegistryHost';
 import { createRegistryUpdateCheck } from './registryUpdateTracker';
 import { createPluginRegistryUpdateTracker } from './trackers/pluginUpdateTracker';
@@ -41,7 +42,8 @@ export function createCliRegistryUpdateCheck(input: Readonly<{
       createMcpRegistryUpdateTracker({ store: mcpStore }),
       createAgentRegistryUpdateTracker({ store: createCliAcpCatalogStore(input) }),
       createBrowserExtensionRegistryUpdateTracker({ signal: input.signal }),
-      createPluginRegistryUpdateTracker({ signal: input.signal })],
+      createPluginRegistryUpdateTracker({ signal: input.signal,
+        readGitPluginPointer: createMarketplaceIndexService({ registryHost: registry }).readGitPluginPointer })],
       ctx: registry.fetchContext, admitSource: registry.fetchContext.admitSource, readSources: registry.readSources, readEnvironment: input.readEnvironment });
     return {
       checkNow: (filter?: Parameters<typeof checker.checkNow>[0]) => runWithServerHttpBaseUrl(baseUrl, () => checker.checkNow(filter)),

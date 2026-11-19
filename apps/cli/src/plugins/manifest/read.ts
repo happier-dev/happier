@@ -44,10 +44,13 @@ export async function readPluginManifest(params: Readonly<{
   registryPackageName?: string;
   enforceEngineCompatibility?: boolean;
   purpose?: PluginManifestReadPurpose;
+  generatedManifestContents?: string;
 }>): Promise<ReadPluginManifestResult> {
   let manifestRawBytes: Uint8Array;
   try {
-    manifestRawBytes = await readFile(params.manifestPath);
+    manifestRawBytes = params.generatedManifestContents === undefined
+      ? await readFile(params.manifestPath)
+      : Buffer.from(params.generatedManifestContents, 'utf8');
   } catch (error) {
     const code = (error as NodeJS.ErrnoException | null)?.code;
     if (code === 'ENOENT') {

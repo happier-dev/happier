@@ -23537,6 +23537,16 @@ const enProjects = {
 };
 
 const enSettingsPlugins = {
+  gitInstall: {
+    mode: 'Git repository',
+    repository: 'HTTPS repository URL',
+    subdirectory: 'Plugin folder (optional)',
+    notImported: 'Not imported',
+    omittedHooks: ({ count }: { count: number }) => `${count} ${count === 1 ? 'hook' : 'hooks'}`,
+    omittedCommands: ({ count }: { count: number }) => `${count} ${count === 1 ? 'command' : 'commands'}`,
+    omittedAgents: ({ count }: { count: number }) => `${count} ${count === 1 ? 'agent' : 'agents'}`,
+    omittedMcp: ({ count }: { count: number }) => `${count} MCP ${count === 1 ? 'server' : 'servers'}`,
+  },
   publish: pluginPublishTranslations['en'],
   updateReview: pluginUpdateReviewTranslations.en,
   ...pluginWebhookAdministrationTranslations['en'],

@@ -458,12 +458,12 @@ export function AgentPluginDetail(
   }>,
 ): React.ReactElement {
   const entry = React.useMemo(
-    () => props.item.payload.kind === 'plugin' ? projectRegistryMarketplacePage({ items: [{ ...props.item.summary,
+    () => props.item.payload.kind === 'plugin' && 'listing' in props.item.payload ? projectRegistryMarketplacePage({ items: [{ ...props.item.summary,
       pluginListing: registryPluginListingSummaryV1(props.item.payload.listing) }], pages: [],
       sources: [props.item.payload.source] }).entries[0] ?? null : null,
     [props.item],
   );
-  const payload = props.item.payload.kind === 'plugin' ? props.item.payload : null;
+  const payload = props.item.payload.kind === 'plugin' && 'listing' in props.item.payload ? props.item.payload : null;
   const title = entry?.title ?? props.item.summary.title;
   return (
     <View>

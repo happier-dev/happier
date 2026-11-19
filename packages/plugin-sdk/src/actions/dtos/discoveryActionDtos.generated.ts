@@ -4283,7 +4283,7 @@ export type DiscoveryActionResultById = {
                     } | {
                         kind: 'managed';
                         immutableGenerationId: string;
-                        installSource: 'archive' | 'localPath' | 'npm';
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                 };
             };

@@ -20,7 +20,7 @@ export default function BotTemplatePluginFollowOffer(props: Readonly<{
     const enabled = instance.follow && areServerProfileIdentifiersEquivalent(active.serverId, serverId);
     const pointer = instance.source.registryItem;
     const { item, refresh } = useRegistryItem({ kind: 'plugin', sourceId: pointer.sourceId, itemId: pointer.itemId }, enabled);
-    const listing = item?.payload.kind === 'plugin' ? item.payload.listing : null;
+    const listing = item?.payload.kind === 'plugin' && 'listing' in item.payload ? item.payload.listing : null;
     const pluginId = listing?.pluginId;
     const installedVersion = useAppShellPluginUiProjection(value => enabled && pluginId
         ? value.pluginUiProjection?.installedPackagesById[pluginId]?.version : undefined);

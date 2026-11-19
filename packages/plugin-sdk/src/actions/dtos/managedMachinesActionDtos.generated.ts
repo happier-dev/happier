@@ -18389,7 +18389,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -18427,7 +18427,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -19541,7 +19541,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -19579,7 +19579,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -22390,7 +22390,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -22428,7 +22428,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -23542,7 +23542,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -23580,7 +23580,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -29171,7 +29171,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -29209,7 +29209,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -30323,7 +30323,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -30361,7 +30361,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -33172,7 +33172,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -33210,7 +33210,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -34324,7 +34324,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -34362,7 +34362,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -46799,7 +46799,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -46837,7 +46837,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -47951,7 +47951,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -47989,7 +47989,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -50800,7 +50800,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -50838,7 +50838,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -51952,7 +51952,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -51990,7 +51990,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -55606,7 +55606,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -55644,7 +55644,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -56758,7 +56758,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -56796,7 +56796,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -59607,7 +59607,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -59645,7 +59645,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -60759,7 +60759,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -60797,7 +60797,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -64340,7 +64340,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -64378,7 +64378,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -65492,7 +65492,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -65530,7 +65530,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -68341,7 +68341,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -68379,7 +68379,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -69493,7 +69493,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;
@@ -69531,7 +69531,7 @@ export type ManagedMachinesActionResultById = {
                         } | {
                             kind: 'managed';
                             immutableGenerationId: string;
-                            installSource: 'archive' | 'localPath' | 'npm';
+                            installSource: 'archive' | 'git' | 'localPath' | 'npm';
                         };
                         materializationRef?: undefined | {
                             machineId: string;

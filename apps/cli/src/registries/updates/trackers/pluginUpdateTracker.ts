@@ -24,7 +24,9 @@ export function createPluginRegistryUpdateTracker(input: Omit<Parameters<typeof 
         const candidate = await readInstalledPluginUpdateCandidate({ ...input, pluginId: item.key, installed });
         if (candidate.state === 'unavailable' && candidate.reason.code === 'plugin_update_resolution_failed') throw candidate.reason.cause;
         observations.set(item.key, candidate.state === 'resolved'
-          ? { state: candidate.candidateVersion === candidate.installedVersion ? 'current' : 'update_available', latest: { kind: 'version', version: candidate.candidateVersion } }
+          ? { state: (candidate.candidateCommit ? candidate.candidateCommit === installed.source.resolvedCommit
+              : candidate.candidateVersion === candidate.installedVersion) ? 'current' : 'update_available',
+            latest: { kind: 'version', version: candidate.candidateVersion } }
           : { state: 'unchecked', reason: { state: candidate.reason.code === 'authentication_required' || candidate.reason.code === 'authentication_failed'
             ? 'auth_failed' : candidate.reason.code === 'rate_limited' ? 'rate_limited'
             : candidate.reason.code === 'server_error' || candidate.reason.code === 'request_failed' ? 'unreachable' : 'invalid_source' } });

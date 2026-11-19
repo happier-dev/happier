@@ -1,4 +1,6 @@
 import { isReservedHappierPluginId } from '@happier-dev/protocol/plugins/plugin-id';
+import type { PluginGitCatalogPointerV1, PluginGitSourceV1 } from '@happier-dev/protocol/plugins/source-spec';
+import { withResolvedGitPluginSource } from '@/plugins/discovery/sources/git';
 import type { ManagedResourceDependencyV1, ManagedResourceDispositionV1, MachineDaemonRightsV1 } from '@happier-dev/protocol';
 import { runPluginAuthorPhase } from '@/plugins/authoring/phaseLog';
 import { readGeneratedPluginUiArtifactsManifest } from '@/plugins/install/ui/generatedArtifacts';
@@ -134,6 +136,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
   readDaemonRights?: () => MachineDaemonRightsV1;
   happyHomeDir: string;
   runtimeLifecycle: PluginRegistryRuntimeLifecycle;
+  readGitPluginPointer?: Parameters<typeof withResolvedGitPluginSource>[1]['readCatalogPointer'];
   /** Already-admitted runtime declarations include bundled incumbents with no install record. */
   readActivePluginManifest?: (pluginId: string) => CanonicalPluginManifest | null;
   onRegistryApplied?: (record: PluginRegistryCommitRecord) => void;
@@ -146,6 +149,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
 }>): (
   request: PluginChangeRequest,
   context?: DaemonPathPluginChangePreparationContext,
+  signal?: AbortSignal,
 ) => Promise<PreparedDaemonPluginChange> {
   const createMutationStore = (
     onApplied?: (record: PluginRegistryCommitRecord) => void,
@@ -161,6 +165,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
   const prepare = async (
     request: PluginChangeRequest,
     context?: DaemonPathPluginChangePreparationContext,
+    signal?: AbortSignal,
   ): Promise<PreparedDaemonPluginChange> => {
     let trustedDevelopmentPluginId: string | null = null;
     let developmentAuthoringSource: Awaited<ReturnType<typeof resolvePluginAuthoringSource>> | null = null;
@@ -611,10 +616,31 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
         cleanup: async () => undefined,
       });
     }
-    if (request.kind !== 'installPath') {
-      throw new Error(`Plugin change '${request.kind}' is not implemented by the path candidate adapter`);
+    if (request.kind === 'installPath') {
+      return prepareManagedInstall(await resolveLocalPathPluginSource({ locator: request.locator }), context);
     }
-    const source = await resolveLocalPathPluginSource({ locator: request.locator });
+    if (request.kind === 'installGit') {
+      let prepared: PreparedDaemonPluginChange | undefined;
+      try {
+        return await withResolvedGitPluginSource(request.source, {
+          signal, readCatalogPointer: params.readGitPluginPointer,
+        }, async ({ resolved, source, commit, catalog }) => {
+          prepared = await prepareManagedInstall(resolved, context, { source, commit, catalog });
+          return prepared;
+        });
+      } catch (error) {
+        await prepared?.cleanup();
+        throw error;
+      }
+    }
+    throw new Error(`Plugin change '${request.kind}' is not implemented by the path candidate adapter`);
+  };
+
+  async function prepareManagedInstall(
+    source: Awaited<ReturnType<typeof resolveLocalPathPluginSource>>,
+    context?: DaemonPathPluginChangePreparationContext,
+    git?: Readonly<{ source: PluginGitSourceV1; commit: string; catalog?: PluginGitCatalogPointerV1 }>,
+  ): Promise<PreparedDaemonPluginChange> {
     if (!source.ok) {
       const attributed = projectPluginAttributedCompatibilityFailure(source.diagnostics);
       if (attributed) throw new DaemonPluginChangePreparationError(attributed.code, attributed.message);
@@ -625,12 +651,15 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
       sourceLocator: source.sourceSpec.locator,
       manifestRelativePath: relative(source.pluginRootPath, source.manifestPath).split('\\').join('/'),
     });
-    const distribution = await createLocalPathPluginDistributionIdentity(resolved.sourceLocator);
+    const distribution = git
+      ? { kind: 'git' as const, ...git.source, ...(git.catalog ? { catalog: git.catalog } : {}) }
+      : await createLocalPathPluginDistributionIdentity(resolved.sourceLocator);
     const preparedGeneration: OwnedPreparedImmutablePluginGeneration = await prepareOwnedImmutablePluginGeneration({
       paths: resolvePluginStorePaths({ happyHomeDir: params.happyHomeDir }),
       pluginId: resolved.manifest.id,
       sourceRootPath: resolved.pluginRootPath,
       manifestRelativePath: resolved.manifestRelativePath,
+      generatedFiles: resolved.vendorContent?.generatedFiles,
       distribution,
       updatePolicy: 'allowed',
       createdAtMs: Date.now(),
@@ -687,10 +716,10 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
       review = projectPluginInstallationReview({
           daemonRights: params.readDaemonRights?.(),
           manifest,
+          notImported: resolved.vendorContent?.notImported,
           source: {
-            kind: 'path',
-            locator: resolved.sourceLocator,
-            development: false,
+            ...(git ? { kind: 'git' as const, ...git.source, resolvedCommit: git.commit }
+                : { kind: 'path' as const, locator: resolved.sourceLocator, development: false }),
             packageName: null,
             publisher: { status: 'unavailable' },
             signature: { status: 'notProvided' },
@@ -792,20 +821,21 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
               : undefined;
           const source = {
             ...resolved.sourceSpec,
-            kind: 'path' as const,
-            locator: resolved.sourceLocator,
+            ...(git ? { kind: 'git' as const, ...git.source, resolvedCommit: git.commit }
+              : { kind: 'path' as const, locator: resolved.sourceLocator }),
             trustPolicy: 'prompt' as const,
-            installPolicy: 'link' as const,
+            installPolicy: git ? 'managed_install' as const : 'link' as const,
             resolvedPath: preparedGeneration.rootPath,
             manifestPath: candidateManifest.manifestPath,
             resolvedVersion: manifest.version,
             installedAt: existingAtApply?.source.installedAt ?? approvedAtMs,
+            ...(resolved.vendorContent ? { notImported: resolved.vendorContent.notImported } : {}),
           };
           const catalogRecord: PluginStateRecord = {
             source,
             compatibility: { status: 'compatible', diagnostics: [] },
             install: {
-              mode: 'link',
+              mode: git ? 'managed_install' : 'link',
               manifestVersion: manifest.version,
               installedPath: null,
             },
@@ -854,6 +884,6 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
       cleanup,
     });
     return candidate;
-  };
+  }
   return prepare;
 }

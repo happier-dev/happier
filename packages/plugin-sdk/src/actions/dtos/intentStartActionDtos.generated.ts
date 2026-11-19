@@ -293,7 +293,7 @@ export type IntentStartActionInputById = {
                 } | {
                     kind: 'managed';
                     immutableGenerationId: string;
-                    installSource: 'archive' | 'localPath' | 'npm';
+                    installSource: 'archive' | 'git' | 'localPath' | 'npm';
                 };
                 connectedServices?: JsonValue | undefined;
                 secretReferenceOverlay?: undefined | {
@@ -678,7 +678,7 @@ export type IntentStartActionInputById = {
                     } | {
                         kind: 'managed';
                         immutableGenerationId: string;
-                        installSource: 'archive' | 'localPath' | 'npm';
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                     connectedServices?: JsonValue | undefined;
                     secretReferenceOverlay?: undefined | {
@@ -1281,7 +1281,7 @@ export type IntentStartActionInputById = {
             } | {
                 kind: 'managed';
                 immutableGenerationId: string;
-                installSource: 'archive' | 'localPath' | 'npm';
+                installSource: 'archive' | 'git' | 'localPath' | 'npm';
             };
             connectedServices?: unknown;
             connectedServicesByBackendTargetKey?: Record<string, unknown> | undefined;
@@ -1646,7 +1646,7 @@ export type IntentStartActionInputById = {
             } | {
                 kind: 'managed';
                 immutableGenerationId: string;
-                installSource: 'archive' | 'localPath' | 'npm';
+                installSource: 'archive' | 'git' | 'localPath' | 'npm';
             };
             connectedServices?: JsonValue | undefined;
             secretReferenceOverlay?: undefined | {
@@ -2031,7 +2031,7 @@ export type IntentStartActionInputById = {
                 } | {
                     kind: 'managed';
                     immutableGenerationId: string;
-                    installSource: 'archive' | 'localPath' | 'npm';
+                    installSource: 'archive' | 'git' | 'localPath' | 'npm';
                 };
                 connectedServices?: JsonValue | undefined;
                 secretReferenceOverlay?: undefined | {
@@ -2634,7 +2634,7 @@ export type IntentStartActionInputById = {
         } | {
             kind: 'managed';
             immutableGenerationId: string;
-            installSource: 'archive' | 'localPath' | 'npm';
+            installSource: 'archive' | 'git' | 'localPath' | 'npm';
         };
         connectedServices?: unknown;
         connectedServicesByBackendTargetKey?: Record<string, unknown> | undefined;
@@ -6342,7 +6342,7 @@ export type IntentStartActionResultById = {
                 } | {
                     kind: 'managed';
                     immutableGenerationId: string;
-                    installSource: 'archive' | 'localPath' | 'npm';
+                    installSource: 'archive' | 'git' | 'localPath' | 'npm';
                 };
                 materialization?: undefined | {
                     machineId: string;

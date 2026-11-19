@@ -15,6 +15,7 @@ import { RegistryBrowserExtensionV1Schema } from './registryBrowserExtensionV1.j
 import { RegistryStarterV1Schema } from './registryStarterV1.js';
 import { DeployShapeV1Schema } from '../deployments/deployShapeV1.js';
 import { PetAssetMediaTypeV1Schema } from '../pets/accountLibrary.js';
+import { PluginContentNotImportedV1Schema, PluginGitCatalogPointerV1Schema, PluginGitCatalogSourceV1Schema } from '../plugins/sourceSpecV1.js';
 export { RegistryGitTreeRefV1Schema, WellKnownSkillRefV1Schema, RegistrySkillContentRefV1Schema,
   RegistryContentRefV1Schema, RegistryItemPointerV1Schema } from './registryContentRefV1.js';
 export type { WellKnownSkillRefV1, RegistrySkillContentRefV1, RegistryContentRefV1, RegistryItemPointerV1 } from './registryContentRefV1.js';
@@ -83,6 +84,7 @@ export const RegistryItemSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   agentDistribution: z.optional(RegistryAgentDistributionV1Schema),
   starterDeploy: z.optional(DeployShapeV1Schema),
   pluginListing: z.optional(RegistryPluginListingSummaryV1Schema),
+  pluginGit: z.optional(PluginGitCatalogSourceV1Schema),
   themeMetadata: z.optional(RegistryThemeListingV1Schema),
   petMetadata: z.optional(RegistryPetMetadataV1Schema),
 }));
@@ -90,8 +92,7 @@ export type RegistryItemSummaryV1 = z.infer<typeof RegistryItemSummaryV1Schema>;
 export const RegistrySkillSourceV1Schema = lazyZodSchema(() => z.strictObject({
   ref: RegistrySkillContentRefV1Schema, skillMarkdown: z.string(), files: z.array(z.strictObject({
     path: z.string().check(z.minLength(1)), size: z.number().check(z.int(), z.nonnegative()), unixMode: z.union([z.literal(0o644), z.literal(0o755)]), blobSha: z.string().check(z.minLength(1)),
-  })), notImported: z.optional(z.strictObject({ hooks: z.number().check(z.int(), z.nonnegative()), commands: z.number().check(z.int(), z.nonnegative()),
-    mcpServers: z.number().check(z.int(), z.nonnegative()), agents: z.number().check(z.int(), z.nonnegative()) })),
+  })), notImported: z.optional(PluginContentNotImportedV1Schema),
 }));
 export type RegistrySkillSourceV1 = z.infer<typeof RegistrySkillSourceV1Schema>;
 const McpRegistryVariableV1Schema = lazyZodSchema(() => z.strictObject({
@@ -136,7 +137,7 @@ export const AcpRegistryAgentV1Schema = lazyZodSchema(() => z.strictObject({
   }),
 }));
 export type AcpRegistryAgentV1 = z.infer<typeof AcpRegistryAgentV1Schema>;
-export const RegistryItemPayloadV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+export const RegistryItemPayloadV1Schema = lazyZodSchema(() => z.union([z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('pet'), pet: RegistryPetListingV1Schema,
     spritesheet: z.optional(z.strictObject({ mediaType: PetAssetMediaTypeV1Schema, contentBase64: z.string() })) }),
   RegistryThemePayloadV1Schema,
@@ -154,8 +155,10 @@ export const RegistryItemPayloadV1Schema = lazyZodSchema(() => z.discriminatedUn
     listing: z.optional(z.strictObject({ version: z.string().check(z.minLength(1)),
       permissions: z.array(z.string().check(z.minLength(1))), hostPermissions: z.array(z.string().check(z.minLength(1))) })) }),
   z.strictObject({ kind: z.literal('starter'), starter: RegistryStarterV1Schema, ref: RegistryContentRefV1Schema }),
+  ]),
   z.strictObject({ kind: z.literal('plugin'), listing: MarketplaceIndexEntryV1Schema,
     source: MarketplaceIndexSourceSnapshotV1Schema.shape.source }),
+  z.strictObject({ kind: z.literal('plugin'), git: PluginGitCatalogSourceV1Schema, catalog: PluginGitCatalogPointerV1Schema }),
 ]));
 export type RegistryItemPayloadV1 = z.infer<typeof RegistryItemPayloadV1Schema>;
 export const RegistryItemV1Schema = lazyZodSchema(() => z.strictObject({
@@ -173,16 +176,20 @@ export const RegistryItemV1Schema = lazyZodSchema(() => z.strictObject({
     : item.payload.kind === 'pet' ? undefined
     : item.payload.kind === 'theme' ? item.payload.version
     : item.payload.kind === 'agent' ? item.payload.agent.version
-      : item.payload.kind === 'mcpServer' ? item.payload.server.version : item.payload.listing.distribution.version;
+      : item.payload.kind === 'mcpServer' ? item.payload.server.version
+        : 'listing' in item.payload ? item.payload.listing.distribution.version : undefined;
   if (item.summary.kind !== item.payload.kind || item.summary.version !== version
     || item.payload.kind === 'app' && (item.payload.state === 'needs_review'
       ? item.summary.problem?.code !== 'needs_review' || !sameStrictJsonValue(item.summary.problem.diagnostics, item.payload.diagnostics)
       : item.summary.problem !== undefined)
     || item.payload.kind === 'agent' && item.summary.itemId !== item.payload.agent.id
     || item.payload.kind === 'mcpServer' && item.summary.itemId !== item.payload.server.name
-    || item.payload.kind === 'plugin' && (item.summary.sourceId !== item.payload.source.id
-      || item.summary.itemId !== (item.payload.source.kind === 'community-npm' ? item.payload.listing.distribution.packageName : item.payload.listing.pluginId)
-      || item.summary.pluginListing !== undefined && !sameStrictJsonValue(item.summary.pluginListing, registryPluginListingSummaryV1(item.payload.listing)))) {
+    || item.payload.kind === 'plugin' && ('git' in item.payload
+      ? item.summary.sourceId !== item.payload.catalog.sourceId || item.summary.itemId !== item.payload.catalog.itemId
+        || item.summary.pluginListing !== undefined || !sameStrictJsonValue(item.summary.pluginGit, item.payload.git)
+      : item.summary.sourceId !== item.payload.source.id || item.summary.pluginGit !== undefined
+        || item.summary.itemId !== (item.payload.source.kind === 'community-npm' ? item.payload.listing.distribution.packageName : item.payload.listing.pluginId)
+        || item.summary.pluginListing !== undefined && !sameStrictJsonValue(item.summary.pluginListing, registryPluginListingSummaryV1(item.payload.listing)))) {
     ctx.addIssue({ code: 'custom', path: ['summary'], message: 'Read summary must identify the pinned payload' });
   }
 })));

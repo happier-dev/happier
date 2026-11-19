@@ -11,7 +11,7 @@ import {
   type DaemonPluginChangeService,
 } from '@/plugins/daemon/changeService';
 import { createDaemonNpmPluginChangePreparer } from '@/plugins/daemon/npmChangePreparer';
-import type { MarketplaceRegistrySourcesReaderV1, MarketplaceRegistryHostV1 } from '@/plugins/store/marketplace/service';
+import { createMarketplaceIndexService, type MarketplaceRegistrySourcesReaderV1, type MarketplaceRegistryHostV1 } from '@/plugins/store/marketplace/service';
 import { createDaemonPathPluginChangePreparer } from '@/plugins/daemon/pathChangePreparer';
 import { readServerPluginManagedResources, type PluginManagedResourcePreflightBinding } from '@/plugins/availability/serverPublisher';
 import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
@@ -421,6 +421,9 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   const preparePath = createDaemonPathPluginChangePreparer({
     readDaemonRights: params.readDaemonRights,
     happyHomeDir: params.happyHomeDir,
+    readGitPluginPointer: createMarketplaceIndexService({
+      happyHomeDir: params.happyHomeDir, registryHost: params.marketplaceRegistryHost, readRegistrySources: params.readRegistrySources,
+    }).readGitPluginPointer,
     runtimeLifecycle,
     readActivePluginManifest: (pluginId) => {
       if (!params.reloadController.readCurrentPluginOccurrenceId?.(pluginId)) return null;
@@ -468,7 +471,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
         return origin ? await approvalStore.readPluginChangeApprovalRetirement({ pendingReview, ...origin }) : false;
       },
     } : {}),
-    prepare: async (request) => {
+    prepare: async (request, signal) => {
       if (request.kind === 'update') {
         const installed = (
           await createPluginRegistryStateStore({ happyHomeDir: params.happyHomeDir }).read()
@@ -489,11 +492,11 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
         }
         return await preparePath(update.request, {
           installedUpdate: { pluginId: request.pluginId },
-        });
+        }, signal);
       }
       if (request.kind === 'installNpm' || request.kind === 'installMarketplace') return await prepareNpm(request);
       if (request.kind === 'installArchive') return await prepareArchive(request);
-      return await preparePath(request);
+      return await preparePath(request, undefined, signal);
     },
     onCleanupFailure: (pluginId, error) => {
       logger.warn('[PLUGIN RUNTIME] Temporary plugin candidate cleanup failed', {

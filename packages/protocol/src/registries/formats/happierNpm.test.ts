@@ -42,7 +42,7 @@ describe('happier npm real registry wiring', () => {
     const read = await host.execute('registries.items.read', { kind: 'plugin', sourceId: COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1, itemId: packageName, version });
     const consumed = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(JSON.parse(JSON.stringify(read)));
     expect(consumed.item.payload.kind).toBe('plugin');
-    if (consumed.item.payload.kind !== 'plugin') throw new Error('Expected plugin payload');
+    if (consumed.item.payload.kind !== 'plugin' || !('listing' in consumed.item.payload)) throw new Error('Expected npm plugin payload');
     expect(consumed.item.payload.listing.pluginId).toBe('acme.community');
     expect(consumed.item.summary.version).toBe(consumed.item.payload.listing.distribution.version);
     expect(RegistryItemV1Schema.safeParse({ ...consumed.item, summary: { ...consumed.item.summary, itemId: 'another-package' } }).success).toBe(false);

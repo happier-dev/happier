@@ -6,6 +6,7 @@ import type { MachineDaemonRightsV1 } from '../machines/machineAuthorityV1.js';
 
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginUpdatePolicyV1Schema, type PluginUpdatePolicyV1 } from './pluginUpdatePolicyV1.js';
+import { PluginContentNotImportedV1Schema, PluginGitCommitV1Schema, PluginGitSourceV1Schema, type PluginContentNotImportedV1, type PluginGitSourceV1 } from '../plugins/sourceSpecV1.js';
 import { MarketplaceIndexSourceKindV1Schema, type MarketplaceIndexSourceKindV1 } from './marketplaceIndexV1.js';
 import {
   ConnectedAccountMaterializationRequestSchema,
@@ -171,6 +172,7 @@ export type PluginInstallationReview = Readonly<{
     | Readonly<{ status: 'unavailable' }>
     | Readonly<{ status: 'unverified'; id: string; displayName: string }>;
   source:
+    | Readonly<PluginGitSourceV1 & { kind: 'git'; resolvedCommit: string }>
     | Readonly<{
         kind: 'path';
         locator: string;
@@ -188,6 +190,7 @@ export type PluginInstallationReview = Readonly<{
         integrityBasis: 'expected';
       }>;
   updateChannel:
+    | Readonly<PluginGitSourceV1 & { kind: 'git' }>
     | Readonly<{ kind: 'path'; locator: string; development: boolean }>
     | Readonly<{ kind: 'archive'; locator: string }>
     | Readonly<{
@@ -220,6 +223,7 @@ export type PluginInstallationReview = Readonly<{
     | Readonly<{ status: 'unreviewed'; sourceId: string }>;
   executableRealms: readonly ('daemon' | 'reactNative' | 'hostedWeb')[];
   contributions: readonly Readonly<{ family: string; count: number }>[];
+  notImported?: PluginContentNotImportedV1;
   requestInterceptors: readonly PluginInstallationReviewRequestInterceptor[];
   uiArtifacts: Readonly<{
     status: 'verified' | 'none' | 'unavailable';
@@ -289,6 +293,7 @@ export const PluginInstallationReviewSchema: z.ZodMiniType<PluginInstallationRev
     }),
   ]),
   source: z.discriminatedUnion('kind', [
+    z.extend(PluginGitSourceV1Schema, { kind: z.literal('git'), resolvedCommit: PluginGitCommitV1Schema }),
     z.strictObject({
       kind: z.literal('path'),
       locator: ReviewNonEmptyStringSchema,
@@ -307,6 +312,7 @@ export const PluginInstallationReviewSchema: z.ZodMiniType<PluginInstallationRev
     }),
   ]),
   updateChannel: z.discriminatedUnion('kind', [
+    z.extend(PluginGitSourceV1Schema, { kind: z.literal('git') }),
     z.strictObject({
       kind: z.literal('path'),
       locator: ReviewNonEmptyStringSchema,
@@ -371,6 +377,7 @@ export const PluginInstallationReviewSchema: z.ZodMiniType<PluginInstallationRev
     new Set(values.map((entry) => entry.family)).size === values.length
   ))),
   requestInterceptors: z.array(PluginInstallationReviewRequestInterceptorSchema),
+  notImported: z.optional(PluginContentNotImportedV1Schema),
   uiArtifacts: z.strictObject({
     status: z.enum(['verified', 'none', 'unavailable']),
     contributionIds: ReviewStringListSchema,

@@ -3,6 +3,7 @@ import { z } from 'zod/mini';
 import { NpmRegistryProfileIdV1Schema } from '@happier-dev/protocol/rpc/npmRegistryProfiles';
 import { ExpectedMarketplaceListingV1Schema } from '@happier-dev/protocol/marketplace/internal';
 import { PluginUpdatePolicyV1Schema } from '@happier-dev/protocol/marketplace/pluginUpdatePolicyV1';
+import { PluginGitInstallSourceSchema } from '@happier-dev/protocol/plugins/source-spec';
 import { WorkflowRunStartedByV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { ManagedResourceDispositionV1Schema } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 
@@ -32,6 +33,7 @@ const PluginRuntimeOccurrenceIdSchema = z.string().check(z.trim(), z.minLength(1
 const ArchiveSha256IntegritySchema = z.string().check(z.trim(), z.regex(/^sha256-[A-Za-z0-9+/]{43}=$/u));
 
 const PluginChangeRequestSchema = z.union([
+  z.strictObject({ kind: z.literal('installGit'), source: PluginGitInstallSourceSchema }),
   z.strictObject({
     kind: z.literal('installMarketplace'),
     sourceId: NonEmptyStringSchema,

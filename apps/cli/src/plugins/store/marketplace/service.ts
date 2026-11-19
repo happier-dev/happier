@@ -1,12 +1,13 @@
 import { MarketplaceIndexQueryResultV1Schema } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
 import type { MarketplaceIndexQueryResultV1, MarketplaceIndexSourceKindV1 } from '@happier-dev/protocol';
 import { PUBLIC_NPM_REGISTRY_ORIGIN_V1 } from '@happier-dev/protocol/marketplace/communityNpmDiscoveryV1';
-import { registryMarketplaceSourceV1, registrySourceSupportsKindV1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
+import { RegistryFetchErrorV1, registryMarketplaceSourceV1, registrySourceSupportsKindV1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import { readStoredCredentials } from '@/persistence';
 import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginRequired';
 import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/profiles/service';
 import { normalizeNpmArtifactRequest } from '@/plugins/distribution/npm/normalize';
+import type { PluginGitCatalogPointerV1, PluginGitCatalogSourceV1 } from '@happier-dev/protocol/plugins/source-spec';
 
 type MarketplaceArtifactAccessProfile = Readonly<{
   profileId: string;
@@ -138,6 +139,7 @@ export function createMarketplaceIndexService(params?: Readonly<{
   readRegistrySources?: MarketplaceRegistrySourcesReaderV1;
 }>): Readonly<{
   queryExactListing: (params: Readonly<{ sourceId: string; pluginId: string; packageName?: string; version?: string }>) => Promise<ExactMarketplaceQueryResult>;
+  readGitPluginPointer: (pointer: PluginGitCatalogPointerV1) => Promise<PluginGitCatalogSourceV1 | null>;
 }> {
   const registryProfiles = createNpmRegistryProfileService({ happyHomeDir: params?.happyHomeDir });
   let accountHost: Promise<ReturnType<typeof createCliRegistryHostV1>> | undefined;
@@ -147,6 +149,13 @@ export function createMarketplaceIndexService(params?: Readonly<{
     return await accountHost;
   };
   return {
+    async readGitPluginPointer(pointer) {
+      return await (await registryHost()).withSource(pointer.sourceId, async (_descriptor, fetchRequest) => {
+        const result = await fetchRequest({ op: 'read', kind: 'plugin', itemId: pointer.itemId });
+        if (result.op === 'error' && result.status.state !== 'ok') throw new RegistryFetchErrorV1(result.status);
+        return result.op === 'read' && result.item.payload.kind === 'plugin' && 'git' in result.item.payload ? result.item.payload.git : null;
+      });
+    },
     async queryExactListing(exact) {
       const sourceId = exact.sourceId.trim(), pluginId = exact.pluginId.trim();
       if (!sourceId || !pluginId) return { ok: false, code: 'install_unavailable',
@@ -166,7 +175,7 @@ export function createMarketplaceIndexService(params?: Readonly<{
           if (!itemId) return { ok: false, code: 'install_unavailable', message: 'No exact marketplace package was found.' };
           const acquired = await fetchRequest({ op: 'read', kind, itemId,
             ...(exact.version !== undefined ? { version: exact.version } : {}) });
-          if (acquired.op !== 'read' || acquired.item.payload.kind !== 'plugin') {
+          if (acquired.op !== 'read' || acquired.item.payload.kind !== 'plugin' || !('listing' in acquired.item.payload)) {
             return { ok: false, code: 'install_unavailable', message: 'The exact marketplace source facts are currently unavailable.' };
           }
           const profileState = await registryProfiles.snapshot().catch(() => ({ revision: -1, profiles: [] }));

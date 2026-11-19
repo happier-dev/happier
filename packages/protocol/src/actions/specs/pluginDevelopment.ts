@@ -2,6 +2,7 @@ import { PLUGIN_DEVELOPMENT_INPUT_FIELDS } from './pluginDevelopmentInputHints.j
 import type { PreNormalizedActionSpec } from './definition.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginUpdatePolicyV1Schema } from '../../marketplace/pluginUpdatePolicyV1.js';
+import { PluginGitInstallSourceSchema } from '../../plugins/sourceSpecV1.js';
 import { ManagedResourceDispositionV1Schema } from '../../machines/managed/managedDependencyV1.js';
 import { PluginInvocationLogReadQueryV1Schema } from '../../daemon/pluginInvocationLogs.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -76,6 +77,7 @@ export const PluginMarketplaceInstallActionInputSchema = lazyZodSchema(() => z.s
 export const PluginInstallActionInputSchema = lazyZodSchema(() => z.union([
   PluginLocalInstallActionInputSchema,
   PluginMarketplaceInstallActionInputSchema,
+  z.strictObject({ source: PluginGitInstallSourceSchema, machineId: z.string().check(z.trim(), z.minLength(1)) }),
   z.strictObject({
     source: z.strictObject({ kind: z.literal('installed'), pluginId: z.string().check(z.trim(), z.minLength(1)) }),
     machineId: z.optional(z.string().check(z.trim(), z.minLength(1))),

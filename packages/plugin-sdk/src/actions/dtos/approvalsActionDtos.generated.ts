@@ -267,7 +267,7 @@ export type ApprovalsActionResultById = {
                     } | {
                         kind: 'managed';
                         immutableGenerationId: string;
-                        installSource: 'archive' | 'localPath' | 'npm';
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                     startedBy?: 'agent' | 'trigger' | 'user' | undefined;
                 } | {
@@ -1127,7 +1127,7 @@ export type ApprovalsActionResultById = {
                     } | {
                         kind: 'managed';
                         immutableGenerationId: string;
-                        installSource: 'archive' | 'localPath' | 'npm';
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                     startedBy?: 'agent' | 'trigger' | 'user' | undefined;
                 } | {
@@ -1738,7 +1738,7 @@ export type ApprovalsActionResultById = {
             } | {
                 kind: 'managed';
                 immutableGenerationId: string;
-                installSource: 'archive' | 'localPath' | 'npm';
+                installSource: 'archive' | 'git' | 'localPath' | 'npm';
             };
             createdBy: {
                 surface: 'agent' | 'cli' | 'mcp' | 'session_agent' | 'system' | 'voice';
@@ -1957,7 +1957,7 @@ export type ApprovalsActionResultById = {
                     } | {
                         kind: 'managed';
                         immutableGenerationId: string;
-                        installSource: 'archive' | 'localPath' | 'npm';
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                     startedBy?: 'agent' | 'trigger' | 'user' | undefined;
                 } | {

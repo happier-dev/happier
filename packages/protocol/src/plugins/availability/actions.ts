@@ -17,6 +17,7 @@ import {
   PluginAccountAvailabilityMaterializationsReadResponseV1Schema,
   PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE,
   PluginAccountAvailabilityReleaseReadResponseV1Schema,
+  PluginAvailabilityPortableReleaseSourceClassV1Schema,
   PluginAccountPluginIntentV1Schema,
   PluginAccountPluginPackageAssetLinkV1Schema,
   PluginAccountPluginUiArtifactLinkV1Schema,
@@ -193,14 +194,6 @@ export const PluginAvailabilityCollectionWritersClaimActionOutputV1Schema =
   }));
 export type PluginAvailabilityCollectionWritersClaimActionOutputV1 =
   z.infer<typeof PluginAvailabilityCollectionWritersClaimActionOutputV1Schema>;
-
-/** The only source kinds eligible to bind a portable Account release. */
-export const PluginAvailabilityPortableReleaseSourceClassV1Schema = lazyZodSchema(() => z.enum([
-  'registryPackage',
-  'versionedArchive',
-]));
-export type PluginAvailabilityPortableReleaseSourceClassV1 =
-  z.infer<typeof PluginAvailabilityPortableReleaseSourceClassV1Schema>;
 
 export const PluginAvailabilityReleasePublishActionInputV1Schema = lazyZodSchema(() => z.strictObject({
   facts: PluginReleaseFactsV1Schema,
@@ -460,3 +453,5 @@ export const PluginAvailabilityActionOutputSchemasV1: Readonly<
   'account.plugins.availability.packageAsset.read': PluginAvailabilityPackageAssetReadActionOutputV1Schema,
   'account.plugins.availability.packageAsset.remove': PluginAvailabilityPackageAssetRemoveActionOutputV1Schema,
 });
+
+export { PluginAvailabilityPortableReleaseSourceClassV1Schema, type PluginAvailabilityPortableReleaseSourceClassV1 } from './v1.js';

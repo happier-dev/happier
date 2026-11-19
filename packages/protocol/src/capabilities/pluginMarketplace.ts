@@ -2,6 +2,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PluginUpdatePolicyV1Schema } from '../marketplace/pluginUpdatePolicyV1.js';
 import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js';
+import { PluginContentNotImportedV1Schema, PluginGitCommitV1Schema, PluginGitSourceV1Schema } from '../plugins/sourceSpecV1.js';
 
 /** Development lifecycle facts have one wire owner for daemon, Actions and Settings. */
 export const PluginDevelopmentPhaseV1Schema = lazyZodSchema(() => z.enum([
@@ -44,6 +45,7 @@ const DiagnosticSchema = lazyZodSchema(() => z.readonly(z.object({
 const DistributionSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('npm'), registryOrigin: z.string(), registryProfileId: z.optional(z.string()), packageName: z.string() }),
   z.object({ kind: z.literal('localPath'), canonicalPath: z.string() }),
+  z.object({ ...PluginGitSourceV1Schema.shape, kind: z.literal('git') }),
   z.object({ kind: z.literal('archive'), source: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('localFile'), canonicalPath: z.string() }),
     z.object({ kind: z.literal('remoteUrl'), canonicalUrl: z.string() }),
@@ -60,6 +62,8 @@ export const InstalledPluginCapabilityEntryV1Schema = lazyZodSchema(() => z.read
   source: z.readonly(z.object({
     kind: z.string(), locator: z.string(), devWatch: z.optional(z.boolean()), trustPolicy: z.optional(z.string()),
     installPolicy: z.optional(z.string()), resolvedPath: z.optional(z.string()),
+    subdirectory: PluginGitSourceV1Schema.shape.subdirectory, resolvedCommit: z.optional(PluginGitCommitV1Schema),
+    notImported: z.optional(PluginContentNotImportedV1Schema),
   })),
   install: z.readonly(z.object({
     mode: z.string(), manifestVersion: z.string(), installedPath: z.optional(z.nullable(z.string())),

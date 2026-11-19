@@ -3,8 +3,9 @@ import { MarketplaceIndexEntryV1Schema, DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, 
 import { RegistryItemV1Schema, RegistryListPageV1Schema, RegistrySourceDescriptorV1Schema,
     registryPluginSummaryV1, type RegistryItemV1, type RegistryListPageV1 } from '@happier-dev/protocol/registries';
 import { projectRegistryMarketplacePage } from './readPluginMarketplaceCatalog';
+import { buildPluginCatalogInstallInput } from './model/buildPluginCatalogInstallInput';
 
-type Source = Extract<RegistryItemV1['payload'], { kind: 'plugin' }>['source'];
+type Source = Extract<RegistryItemV1['payload'], { listing: MarketplaceIndexEntryV1 }>['source'];
 const curated: Source = { id: 'marketplace:curated', title: 'Happier curated', kind: 'curated',
     sourceUrl: DEFAULT_CURATED_MARKETPLACE_SOURCE_URL };
 const community: Source = { id: 'marketplace:community-npm', title: 'Community npm', kind: 'community-npm',
@@ -35,7 +36,7 @@ function registryItem(overrides: Partial<MarketplaceIndexEntryV1> = {}, source: 
 }
 function page(items: readonly RegistryItemV1[], pages?: readonly RegistryListPageV1[], sources: readonly Source[] = [curated]) {
     return projectRegistryMarketplacePage({ items: items.map(item => {
-        if (item.payload.kind !== 'plugin') throw new Error('Expected Plugin fixture');
+        if (item.payload.kind !== 'plugin' || !('listing' in item.payload)) throw new Error('Expected npm plugin fixture');
         return registryPluginSummaryV1(sourceDescriptor(item.payload.source), item.payload.listing);
     }), sources: sources.map(sourceDescriptor),
         pages: pages ?? sources.map(source => RegistryListPageV1Schema.parse({ sourceId: source.id,
@@ -43,10 +44,21 @@ function page(items: readonly RegistryItemV1[], pages?: readonly RegistryListPag
 }
 
 describe('projectRegistryMarketplacePage', () => {
+    it('selects a Git catalog pointer without treating the preview URL as installation authority', () => {
+        const source = RegistrySourceDescriptorV1Schema.parse({ id: 'vendor', title: 'Vendor', format: 'claude-marketplace',
+            kinds: ['plugin'], url: 'https://example.com/marketplace.json', enabled: true, addedAt: 0,
+            origin: { kind: 'user' }, removable: true });
+        const page = projectRegistryMarketplacePage({ sources: [source], pages: [], items: [{ sourceId: source.id,
+            itemId: 'kit', title: 'Kit', kind: 'plugin', pluginGit: { locator: 'https://github.com/vendor/kit' } }] });
+        const entry = page.entries[0]!;
+        expect(entry).toMatchObject({ title: 'Kit', version: null, installable: true });
+        expect(buildPluginCatalogInstallInput(entry, 'home')).toEqual({ machineId: 'home',
+            source: { kind: 'gitCatalog', sourceId: 'vendor', itemId: 'kit' } });
+    });
     it('ignores packaged app sources while retaining the healthy Plugin listing across source refresh', () => {
         const descriptor = sourceDescriptor(curated);
         const item = registryItem();
-        if (item.payload.kind !== 'plugin') throw new Error('Expected native Plugin fixture');
+        if (item.payload.kind !== 'plugin' || !('listing' in item.payload)) throw new Error('Expected npm plugin fixture');
         const packaged = RegistrySourceDescriptorV1Schema.parse({ id: 'com.example.apps/apps', title: 'Packaged apps',
             format: 'happier-catalog', kinds: ['app'], packageContent: { pluginId: 'com.example.apps', pluginVersion: '1.0.0',
                 occurrenceId: 'apps:current', path: 'resources/apps.json' }, enabled: true, addedAt: 0, removable: false,
@@ -61,7 +73,7 @@ describe('projectRegistryMarketplacePage', () => {
         const descriptors = [sourceDescriptor(curated), sourceDescriptor(internal)];
         const listings = [registryItem(), registryItem({ review: { status: 'unreviewed', reviewedAt: null } }, internal)];
         const items = listings.map((item, index) => {
-            if (item.payload.kind !== 'plugin') throw new Error('Expected native Plugin fixture');
+            if (item.payload.kind !== 'plugin' || !('listing' in item.payload)) throw new Error('Expected npm plugin fixture');
             return registryPluginSummaryV1(descriptors[index]!, item.payload.listing);
         });
         const input = { items, sources: descriptors, pages: [] };

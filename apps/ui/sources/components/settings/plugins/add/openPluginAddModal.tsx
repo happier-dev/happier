@@ -1,10 +1,13 @@
 import * as React from 'react';
 import type { RegistryItemPointerV1 } from '@happier-dev/protocol/registries';
+import { PluginGitSourceV1Schema, type PluginGitSourceV1 } from '@happier-dev/protocol/plugins/source-spec';
 
 import { CapabilityAddDetailAction, CapabilityAddModalBody, openCapabilityAddModalHost, type CapabilityAddModalConfig } from '@/components/capabilities/add/CapabilityAddModal';
 import { CapabilityDetailHeader } from '@/components/capabilities/detail/CapabilityDetailHeader';
 import { buildCapabilityCollectionAnatomy } from '@/components/capabilities/row/buildCapabilityCollectionAnatomy';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { useRegistrySources } from '@/registries/useRegistrySources';
@@ -21,6 +24,7 @@ import type { PluginMarketplaceCatalogEntry } from '../readPluginMarketplaceCata
 export type OpenPluginAddModalParams = Readonly<{
     host?: PluginsSurfaceHost;
     initialSelection?: RegistryItemPointerV1;
+    onInstallGit?: (source: PluginGitSourceV1) => boolean;
 }>;
 const TEST_ID = 'plugins.add';
 const keyOf = (entry: PluginMarketplaceCatalogEntry) => `${entry.sourceId}|${entry.itemId}`;
@@ -64,7 +68,11 @@ export function PluginAddModal(props: CustomModalInjectedProps & Readonly<{ para
     const config: CapabilityAddModalConfig<PluginMarketplaceCatalogEntry> = {
         title: t('settingsPlugins.catalog.addTitle'), testID: TEST_ID,
         onCatalogDemandChange: setCatalogDemanded,
-        modes: [{ key: 'catalog', kind: 'catalog', label: t('settingsPlugins.catalog.browse'), icon: 'cube' }],
+        modes: [{ key: 'catalog', kind: 'catalog', label: t('settingsPlugins.catalog.browse'), icon: 'cube' },
+            ...(props.params.onInstallGit ? [{ key: 'git', kind: 'input' as const, label: t('settingsPlugins.gitInstall.mode'), icon: 'link' as const,
+                renderBody: () => <PluginGitSourceInput onInstall={source => {
+                    if (catalog.execution.isCurrent() && props.params.onInstallGit?.(source)) props.onClose();
+                }} /> }] : [])],
         sources: slot.sources,
         ...(seedEntry ? { initialItemKey: keyOf(seedEntry) } : {}),
         catalog: {
@@ -96,6 +104,23 @@ export function PluginAddModal(props: CustomModalInjectedProps & Readonly<{ para
     return <CapabilityAddModalBody {...props} config={config} />;
 }
 
+function PluginGitSourceInput({ onInstall }: Readonly<{ onInstall: (source: PluginGitSourceV1) => void }>) {
+    const [locator, setLocator] = React.useState('');
+    const [subdirectory, setSubdirectory] = React.useState('');
+    const source = PluginGitSourceV1Schema.safeParse({ locator: locator.trim(), subdirectory: subdirectory.trim() || undefined });
+    const submit = () => { if (source.success) onInstall(source.data); };
+    return <>
+        <FieldTextInput testID={`${TEST_ID}.git.url`} value={locator} onChangeText={setLocator}
+            accessibilityLabel={t('settingsPlugins.gitInstall.repository')} placeholder={t('settingsPlugins.gitInstall.repository')}
+            inputMode="url" autoCapitalize="none" />
+        <FieldTextInput testID={`${TEST_ID}.git.subdirectory`} value={subdirectory} onChangeText={setSubdirectory}
+            accessibilityLabel={t('settingsPlugins.gitInstall.subdirectory')} placeholder={t('settingsPlugins.gitInstall.subdirectory')}
+            autoCapitalize="none" onSubmitEditing={submit} />
+        <RoundButton testID={`${TEST_ID}.git.review`} title={t('settingsPlugins.pendingChangeReviewAction')}
+            disabled={!source.success} onPress={submit} />
+    </>;
+}
+
 function PluginAddDetail(props: Readonly<{ entry: PluginMarketplaceCatalogEntry; sources: ReturnType<typeof useRegistrySources>;
     onSelection: (selection: Selection) => void }>) {
     const { entry, onSelection } = props;
@@ -105,7 +130,7 @@ function PluginAddDetail(props: Readonly<{ entry: PluginMarketplaceCatalogEntry;
     const selected = detail.discoverEntries[0];
     const selectedItem = detail.selectedItem;
     React.useEffect(() => {
-        onSelection({ key: keyOf(entry), pointer: detail.current && selected && selectedItem?.summary.version
+        onSelection({ key: keyOf(entry), pointer: detail.current && selected && selectedItem && (selectedItem.summary.version || selected.gitCatalogItemId)
             ? { sourceId: selected.sourceId, pluginId: selected.id, itemId: selectedItem.summary.itemId, version: selectedItem.summary.version }
             : null });
     }, [entry.sourceId, entry.itemId, detail.current, selected, selectedItem, onSelection]);

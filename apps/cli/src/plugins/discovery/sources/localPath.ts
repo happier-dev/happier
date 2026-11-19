@@ -8,6 +8,7 @@ import {
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { readPluginManifest } from '@/plugins/manifest/read';
+import { projectVendorPluginContent, type VendorContentProjection } from '@/plugins/manifest/vendorContent';
 import { pluginSourceProvenanceForKind } from '@/plugins/manifest/sourceProvenance';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { PluginManifestReadPurpose } from '@/plugins/manifest/ingest';
@@ -23,6 +24,10 @@ export type ResolvedLocalPathPluginSourceSuccess = Readonly<{
   manifest: CanonicalPluginManifest;
   diagnostics?: readonly PluginCompatibilityDiagnostic[];
   sourceSpec: PluginSourceSpecV1;
+  vendorContent?: Readonly<{
+    generatedFiles: ReadonlyMap<string, string>;
+    notImported: VendorContentProjection['notImported'];
+  }>;
 }>;
 
 export type ResolvedLocalPathPluginSourceFailure = Readonly<{
@@ -88,6 +93,7 @@ export async function resolveLocalPathPluginSource(params: Readonly<{
   installedSourceKind?: PluginSourceKindV1;
   registryPackageName?: string;
   purpose?: PluginManifestReadPurpose;
+  vendorIdentity?: string;
 }>): Promise<ResolvedLocalPathPluginSource> {
   const rawLocator = String(params.locator ?? '').trim();
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//u.test(rawLocator)) {
@@ -127,7 +133,24 @@ export async function resolveLocalPathPluginSource(params: Readonly<{
   const { pluginRootPath, manifestPath } = resolveManifestLocation(canonicalPath, pathStat.isFile());
   const manifestAuthority = 'external' as const;
   const sourceProvenance = pluginSourceProvenanceForKind(params.installedSourceKind);
-  const manifestRead = await readPluginManifest({ manifestPath, manifestAuthority, sourceProvenance, registryPackageName: params.registryPackageName, purpose: params.purpose });
+  const readOptions = { manifestPath, manifestAuthority, sourceProvenance, registryPackageName: params.registryPackageName, purpose: params.purpose };
+  let manifestRead = await readPluginManifest(readOptions);
+  let vendorContent: ResolvedLocalPathPluginSourceSuccess['vendorContent'];
+  if (!manifestRead.ok && manifestRead.diagnostics.some(diagnostic => diagnostic.code === 'plugin_manifest_missing')
+    && !pathStat.isFile() && (params.purpose ?? 'admission') === 'admission' && (!params.installedSourceKind || params.installedSourceKind === 'git')) {
+    try {
+      const projected = await projectVendorPluginContent(pluginRootPath, params.vendorIdentity ?? pluginRootPath);
+      if (projected) {
+        const generatedManifestContents = JSON.stringify(projected.manifest);
+        manifestRead = await readPluginManifest({ ...readOptions, generatedManifestContents });
+        const generatedFiles = new Map(projected.files);
+        generatedFiles.set(PLUGIN_MANIFEST_RELATIVE_PATH.split('\\').join('/'), generatedManifestContents);
+        vendorContent = { generatedFiles, notImported: projected.notImported };
+      }
+    } catch (error) {
+      return { ok: false, diagnostics: [{ code: 'plugin_manifest_invalid', message: error instanceof Error ? error.message : 'Invalid vendor plugin source' }] };
+    }
+  }
   if (!manifestRead.ok) {
     return manifestRead;
   }
@@ -138,6 +161,7 @@ export async function resolveLocalPathPluginSource(params: Readonly<{
     manifestPath: manifestRead.manifestPath,
     manifestAuthority,
     manifest: manifestRead.manifest,
+    ...(vendorContent ? { vendorContent } : {}),
     ...(manifestRead.diagnostics?.length ? { diagnostics: manifestRead.diagnostics } : {}),
     sourceSpec: {
       kind: 'path',

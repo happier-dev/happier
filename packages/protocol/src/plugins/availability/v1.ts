@@ -381,13 +381,21 @@ export function projectPluginMachineUiArtifactV1(artifact: PluginMachineUiArtifa
   });
 }
 
+/** The only source kinds eligible to bind a portable Account release. */
+export const PluginAvailabilityPortableReleaseSourceClassV1Schema = lazyZodSchema(() => z.enum([
+  'registryPackage',
+  'versionedArchive',
+]));
+export type PluginAvailabilityPortableReleaseSourceClassV1 =
+  z.infer<typeof PluginAvailabilityPortableReleaseSourceClassV1Schema>;
+
 export type PluginMachineMaterializationV1 = {
   serverIdentityId: string;
   machineId: string;
   materializationId: string;
   pluginId: PluginId;
   version: string;
-  sourceClass: 'registryPackage' | 'versionedArchive' | 'localPath' | 'bundledFirstParty';
+  sourceClass: 'registryPackage' | 'versionedArchive' | 'gitRepository' | 'localPath' | 'bundledFirstParty';
   portableRelease: boolean;
   declaredManifest?: PluginPortableReleaseManifestV1;
   declaredUiEntries?: PluginDeclaredUiEntriesV1;
@@ -404,11 +412,11 @@ export const PluginMachineMaterializationV1Schema: z.ZodMiniType<PluginMachineMa
   pluginId: asProtocolZod(PluginIdSchema),
   version: PluginReleaseVersionV1Schema,
   /**
-   * `bundledFirstParty` and `localPath` are daemon-selected and machine-bound:
+   * `bundledFirstParty`, `localPath`, and `gitRepository` are machine-bound:
    * they never claim a portable release. Their Account currentness comes from
    * the release-less intent declaration their host claims.
    */
-  sourceClass: z.enum(['registryPackage', 'versionedArchive', 'localPath', 'bundledFirstParty']),
+  sourceClass: z.enum(['registryPackage', 'versionedArchive', 'gitRepository', 'localPath', 'bundledFirstParty']),
   portableRelease: z.boolean(),
   /** Admitted installed declaration for discovery; never an execution grant. */
   declaredManifest: zMini.optional(PluginPortableReleaseManifestV1Schema),
@@ -427,11 +435,11 @@ export const PluginMachineMaterializationV1Schema: z.ZodMiniType<PluginMachineMa
       context.addIssue({ code: "custom", path: ['declaredUiEntries', entryId], message: 'Installed UI declaration must match its entry and plugin identity.' });
     }
   }
-  if ((value.sourceClass === 'localPath' || value.sourceClass === 'bundledFirstParty') && value.portableRelease) {
+  if (value.portableRelease && !PluginAvailabilityPortableReleaseSourceClassV1Schema.safeParse(value.sourceClass).success) {
     context.addIssue({
       code: "custom",
       path: ['portableRelease'],
-      message: 'Daemon-selected local and bundled plugins are machine-bound and cannot claim a portable release.',
+      message: 'A machine-bound installation cannot claim a portable release.',
     });
   }
   const keys = new Set<string>();

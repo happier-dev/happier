@@ -13001,7 +13001,7 @@ export type PluginMachineExecutionOriginV1 = {
         } | {
             kind: 'managed';
             immutableGenerationId: string;
-            installSource: 'archive' | 'localPath' | 'npm';
+            installSource: 'archive' | 'git' | 'localPath' | 'npm';
         };
     };
 };
@@ -18246,7 +18246,7 @@ export type WorkflowAcceptedAuthorizationV1 = {
         } | {
             kind: 'managed';
             immutableGenerationId: string;
-            installSource: 'archive' | 'localPath' | 'npm';
+            installSource: 'archive' | 'git' | 'localPath' | 'npm';
         };
         contributionLocalId?: string | undefined;
     } | {

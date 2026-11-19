@@ -683,7 +683,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     /** Discovery is metadata-only; template bodies are acquired only after a contribution is selected. */
     readBotTemplateContributions: async (pointer: RegistryItemPointerV1): Promise<readonly PluginBotTemplateContributionV1[]> => {
       const response = await fetchRequest({ op: 'read', kind: 'plugin', ...pointer });
-      if (response.op !== 'read' || response.item.payload.kind !== 'plugin') {
+      if (response.op !== 'read' || response.item.payload.kind !== 'plugin' || !('listing' in response.item.payload)) {
         throw new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok' ? response.status : { state: 'invalid_source' });
       }
       const contributions = response.item.payload.listing.summary.botTemplates;
@@ -702,7 +702,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
         if (error instanceof RegistryTransportFailureV1) throw new RegistryFetchErrorV1({ state: 'unreachable' });
         throw error;
       });
-      if (response.op !== 'read' || response.item.payload.kind !== 'plugin') {
+      if (response.op !== 'read' || response.item.payload.kind !== 'plugin' || !('listing' in response.item.payload)) {
         throw new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok'
           ? response.status : { state: 'invalid_source' });
       }
@@ -714,7 +714,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     /** Explicit updates use the registry's existing offered-version and eligibility owner. */
     readBotTemplateUpdate: async (pointer: RegistryItemPointerV1, contributionId: string): Promise<ResolvedBotTemplateReleaseV1> => {
       const response = await fetchRequest({ op: 'read', kind: 'plugin', sourceId: pointer.sourceId, itemId: pointer.itemId });
-      if (response.op !== 'read' || response.item.payload.kind !== 'plugin') {
+      if (response.op !== 'read' || response.item.payload.kind !== 'plugin' || !('listing' in response.item.payload)) {
         throw new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok'
           ? response.status : { state: 'invalid_source' });
       }

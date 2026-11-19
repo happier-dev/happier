@@ -25,7 +25,11 @@ function admitPath(path: string): string {
 type GitProtocol = NonNullable<RegistryFetchContextV1['git']>;
 type GitReadOptions = Pick<Parameters<typeof runScmCommand>[0], 'maxOutputBytes' | 'stdoutConsumer'>;
 type Repository = Readonly<{ commit: string; run: (args: string[], options?: GitReadOptions) => Promise<string> }>;
-export function createRegistryGitProtocolV1(input: Readonly<{ signal?: AbortSignal; resolveToken?: (source: RegistrySourceV1) => Promise<string | null> }>): NonNullable<RegistryFetchContextV1['git']> {
+type GitCheckout = Readonly<{ sourceRootPath: string; commit: string }>;
+type CheckoutGitProtocol = GitProtocol & Readonly<{
+  withCheckout: <T>(source: RegistrySourceV1, subdirectory: string | undefined, consume: (checkout: GitCheckout) => Promise<T>) => Promise<T>;
+}>;
+export function createRegistryGitProtocolV1(input: Readonly<{ signal?: AbortSignal; resolveToken?: (source: RegistrySourceV1) => Promise<string | null> }>): CheckoutGitProtocol {
   async function repositoryEnv(source: RegistrySourceV1): Promise<Record<string, string>> {
     admitRepository(source.url);
     const env: Record<string, string> = { GIT_TERMINAL_PROMPT: '0' };
@@ -49,16 +53,18 @@ export function createRegistryGitProtocolV1(input: Readonly<{ signal?: AbortSign
     }
     return env;
   }
-  async function withOperation<T>(consume: (git: GitProtocol) => Promise<T>): Promise<T> {
+  async function withOperation<T>(consume: (git: CheckoutGitProtocol) => Promise<T>): Promise<T> {
     const directories: string[] = [];
     const repositories = new Map<string, Promise<Repository>>();
     const pending: Promise<unknown>[] = [];
     const keyFor = (source: RegistrySourceV1, ref: string) => JSON.stringify([source.url, source.token ?? null, ref]);
     async function acquireRepository(source: RegistrySourceV1, version: string | undefined): Promise<Repository> {
       const env = await repositoryEnv(source);
-      const pinnedRef = source.ref && /^[a-f0-9]{40}$/i.test(source.ref) ? source.ref : undefined;
+      const pinnedRef = source.ref && /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i.test(source.ref) ? source.ref.toLowerCase() : undefined;
       const pin = version ?? pinnedRef;
-      if (pin && !/^[a-f0-9]{40}$/i.test(pin)) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
+      if (pin && !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/i.test(pin)) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
+      const qualifiedRef = source.ref?.startsWith('refs/') ? source.ref : undefined;
+      const branchOrTag = !pinnedRef && !qualifiedRef && source.ref !== 'HEAD' ? source.ref : undefined;
       input.signal?.throwIfAborted();
       const cwd = await mkdtemp(join(tmpdir(), 'happier-registry-git-'));
       directories.push(cwd);
@@ -70,12 +76,17 @@ export function createRegistryGitProtocolV1(input: Readonly<{ signal?: AbortSign
         return result.stdout;
       }
       // Even local sources use upload-pack so filtering does not copy every object by hardlink.
-      await command(cwd, ['clone', '--depth', '1', '--filter=blob:none', '--no-local', '--no-checkout', ...(source.ref && !pinnedRef ? ['--branch', source.ref] : []), '--', source.url, join(cwd, 'repo')]);
+      await command(cwd, ['clone', '--depth', '1', '--filter=blob:none', '--no-local', '--no-checkout', ...(branchOrTag ? ['--branch', branchOrTag] : []), '--', source.url, join(cwd, 'repo')]);
       const repoCwd = join(cwd, 'repo');
       const run: Repository['run'] = (args, options) => command(repoCwd, args, options);
       const head = (await run(['rev-parse', 'HEAD'])).trim();
-      if (pin && head !== pin) await run(['fetch', '--depth', '1', '--filter=blob:none', 'origin', pin]);
-      const commit = (await run(['rev-parse', pin ?? 'HEAD'])).trim();
+      const target = pin ?? qualifiedRef;
+      let commit = head;
+      if (target && target !== head) {
+        if (qualifiedRef && !pin) await run(['check-ref-format', qualifiedRef]);
+        await run(['fetch', '--depth', '1', '--filter=blob:none', '--', 'origin', target]);
+        commit = (await run(['rev-parse', 'FETCH_HEAD^{commit}'])).trim();
+      }
       return { commit, run };
     }
     function withRepository<T>(source: RegistrySourceV1, version: string | undefined, read: (repository: Repository) => Promise<T>): Promise<T> {
@@ -92,9 +103,9 @@ export function createRegistryGitProtocolV1(input: Readonly<{ signal?: AbortSign
       pending.push(result);
       return result;
     }
-    async function tree(repository: Repository, path?: string) {
+    async function tree(repository: Repository, path?: string, includeSizes = path !== undefined) {
       // Listing names needs trees only. Blob sizes are read only inside the selected folder.
-      const output = await repository.run(['ls-tree', '-r', '-z', ...(path === undefined ? [] : ['-l']), repository.commit,
+      const output = await repository.run(['ls-tree', '-r', '-z', ...(includeSizes ? ['-l'] : []), repository.commit,
         ...(path ? ['--', `:(literal)${admitPath(path)}/`] : [])]);
       return output.split('\0').filter(Boolean).map(line => { const match = /^(\d+) (\w+) ([a-f0-9]+)(?: +(-|\d+))?\t([\s\S]+)$/.exec(line); if (!match) throw new RegistryFetchErrorV1({ state: 'invalid_source' }); return { mode: match[1]!, type: match[2]!, sha: match[3]!, size: !match[4] || match[4] === '-' ? 0 : Number(match[4]), path: match[5]! }; });
     }
@@ -115,8 +126,23 @@ export function createRegistryGitProtocolV1(input: Readonly<{ signal?: AbortSign
       const files: RegistrySkillFileBytesV1[] = settled.map(result => { if (result.status === 'rejected') throw result.reason; return result.value; });
       if (computeGitTreeShaV1(files) !== ref.treeSha) throw new Error('registry_tree_sha_mismatch'); return files;
     }); };
-    const git: GitProtocol = {
+    const git: CheckoutGitProtocol = {
       files,
+      async withCheckout(source, subdirectory, consume) {
+        return withRepository(source, undefined, async repository => {
+          const { commit } = repository;
+          const folder = subdirectory ? admitPath(subdirectory) : '';
+          const entries = await tree(repository, folder, false);
+          if (!entries.length || entries.some(entry => entry.mode === '120000' || entry.mode === '160000')) {
+            throw new RegistryFetchErrorV1({ state: 'invalid_source' });
+          }
+          const checkout = await mkdtemp(join(tmpdir(), 'happier-plugin-git-checkout-'));
+          directories.push(checkout);
+          if (folder) await repository.run(['--work-tree', checkout, 'checkout', commit, '--', `:(literal)${folder}`]);
+          else await repository.run(['--work-tree', checkout, 'checkout', commit, '--', '.']);
+          return consume({ sourceRootPath: folder ? join(checkout, folder) : checkout, commit });
+        });
+      },
       async list(_ctx, req) {
         return withRepository(req.source, undefined, async repository => {
           const { commit } = repository;
@@ -203,6 +229,7 @@ export function createRegistryGitProtocolV1(input: Readonly<{ signal?: AbortSign
   }
   return {
     withOperation,
+    withCheckout: (...args) => withOperation(git => git.withCheckout(...args)),
     list: (...args) => withOperation(git => git.list(...args)),
     read: (...args) => withOperation(git => git.read(...args)),
     files: (...args) => withOperation(git => git.files(...args)),

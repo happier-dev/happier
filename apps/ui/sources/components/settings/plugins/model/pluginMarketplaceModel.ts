@@ -91,6 +91,7 @@ export type InstalledPluginEntry = InstalledPluginCapabilityEntryV1 & Readonly<{
 const ACCOUNT_INSTALLATION_SOURCE_KIND = {
     registryPackage: 'npm',
     versionedArchive: 'archive',
+    gitRepository: 'git',
     localPath: 'localPath',
     bundledFirstParty: 'bundled',
 } as const satisfies Record<PluginAccountInstalledPluginInstallation['materialization']['sourceClass'], string>;

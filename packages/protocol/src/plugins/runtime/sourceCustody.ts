@@ -14,6 +14,7 @@ const InstallSource = defineProtocolUnion([
   defineProtocolLiteral('npm'),
   defineProtocolLiteral('archive'),
   defineProtocolLiteral('localPath'),
+  defineProtocolLiteral('git'),
 ]);
 
 export const ManagedPluginSourceCustodyV1ProtocolSchema = defineProtocolObject({

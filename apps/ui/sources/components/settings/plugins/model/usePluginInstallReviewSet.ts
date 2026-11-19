@@ -8,6 +8,7 @@ import { withActionAccountRequestSignal } from '@/sync/ops/actions/actionAccount
 import { resolveMachineAdministrationTargetLabel, type MachineAdministrationCandidateV1 } from '@/sync/domains/machines/administration/targetSelection';
 import { resolveServerProfileForPortableIdentity } from '@/sync/domains/server/serverProfiles';
 import type { usePluginCatalog } from './usePluginCatalog';
+import { buildPluginCatalogInstallInput } from './buildPluginCatalogInstallInput';
 
 type InstallListing = Readonly<{ pluginId: string; sourceId: string }>;
 type ReviewTarget = Readonly<{
@@ -52,14 +53,14 @@ export function usePluginInstallReviewSet(params: Readonly<{
         const isCurrent = () => account.isCurrent() && !signal.aborted;
         // Snapshot every operand before the first suspension. Later picker/listing
         // edits cannot retarget any of the approvals in this operation.
-        const operations = targets.map(value => {
+        const operations = targets.flatMap(value => {
             const target = { serverIdentityId: value.serverIdentityId, machineId: value.machineId };
-            return { target,
+            const input = buildPluginCatalogInstallInput(entry, target.machineId);
+            return input ? [{ target,
                 targetLabel: resolveMachineAdministrationTargetLabel({ target, candidates: params.candidates })
                     ?? { machine: target.machineId, server: target.serverIdentityId },
-                input: { machineId: target.machineId, source: { kind: 'marketplace' as const,
-                    sourceId: entry.sourceId, pluginId: entry.id, version: entry.version, packageName: entry.packageName } },
-            };
+                input,
+            }] : [];
         });
         setRetained(null);
         const rows = await withActionAccountRequestSignal({ accountLifetime: account }, signal, requestSignal =>

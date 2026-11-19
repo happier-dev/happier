@@ -13,6 +13,7 @@ export type PluginMarketplaceCatalogEntry = Readonly<{
     executableRealms: MarketplaceIndexEntryV1['summary']['executableRealms'];
     platforms: MarketplaceIndexEntryV1['compatibility']['platforms'];
     title: string; description: string | null; version: string | null; packageName: string;
+    gitCatalogItemId?: string;
     /** Published review eligibility only. Chosen-machine install admission stays with the daemon. */
     installable: boolean; registrySelectionOrigin: string | null; warning?: 'withdrawn' | 'unreviewed';
 }>;
@@ -81,7 +82,8 @@ export function projectRegistryMarketplacePage(input: RegistryMarketplaceProject
                 title: item.title, description: item.description ?? null, version: item.version ?? null,
                 publisher: { id: '', displayName: item.publisher?.name ?? '' }, categories: [], contributions: [], links: {},
                 executableRealms: [], platforms: [], reviewStatus: null, updatePolicy: null, packageName: '',
-                installable: false, registrySelectionOrigin: null });
+                installable: item.pluginGit !== undefined, registrySelectionOrigin: null,
+                ...(item.pluginGit ? { gitCatalogItemId: item.itemId, links: { repository: item.pluginGit.locator } } : {}) });
             continue;
         }
         const decision = decideMarketplaceListingReviewV1({ source, review: listing.review });

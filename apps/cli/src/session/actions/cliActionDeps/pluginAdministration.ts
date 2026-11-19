@@ -12,6 +12,10 @@ import type { createMarketplaceIndexService } from '@/plugins/store/marketplace/
 import { createPluginPermissionGrantActionExecutor } from '@/plugins/runtime/lifecycle/permissions/pluginPermissionGrantActionExecutor';
 import { createPluginWebhookActionExecutor } from '@/plugins/runtime/webhooks/pluginWebhookActionExecutor';
 import type { executePluginExternalSessionAction } from '../externalSessions/pluginExternalSessionActionExecutor';
+
+export function pluginInstallUsesAccountRegistry(source: Readonly<Record<string, unknown>>): boolean {
+  return source.kind === 'marketplace' || source.kind === 'gitCatalog';
+}
 export type CliPluginAdministrationActionDeps = Pick<ActionExecutorDeps, 'pluginsDevLoopAction' | 'pluginSettingsAdministrationAction' | 'pluginPermissionGrantAction' | 'pluginWebhookAction' | 'pluginSessionHookManagementAction' | 'externalSessionAction'> & Readonly<{
   pluginInstallApprovalChangeServices: Readonly<{ requestUserPluginChange?: typeof requestUserPluginChange }>;
   resolvePluginInstallWorkspaceRoot: (input: unknown, signal?: AbortSignal) => Promise<string | undefined>;
@@ -67,7 +71,7 @@ export function createCliPluginAdministrationActionDeps(
     const source = readRecord(request.source);
     // Remote candidates and installed updates have no Session-relative trust
     // decision. Global callers must not look up a synthetic bound Session.
-    if (source.kind === 'marketplace' || source.kind === 'installed'
+    if (pluginInstallUsesAccountRegistry(source) || source.kind === 'installed' || source.kind === 'git'
       || request.kind === 'npm' || request.kind === 'archive') return undefined;
     return await resolveCurrentSessionValue('path', signal) ?? undefined;
   };
@@ -114,20 +118,19 @@ pluginsDevLoopAction: async ({ actionId, input, context }) => {
           return { ok: false, errorCode: 'permission_denied', error: 'permission_denied' };
         }
       }
-      const marketplaceInstall = actionId === 'plugins.install' && input !== null && typeof input === 'object'
-        && 'source' in input && input.source !== null && typeof input.source === 'object'
-        && 'kind' in input.source && input.source.kind === 'marketplace';
+      const approvedInstallReview = actionId === 'plugins.install'
+        ? context.approvedActionReplay?.pluginInstallReview : undefined;
+      if (actionId === 'plugins.install' && context.presentUserApproval?.artifactId && !approvedInstallReview) {
+        return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+      }
+      const marketplaceInstall = actionId === 'plugins.install' && !approvedInstallReview
+        && pluginInstallUsesAccountRegistry(readRecord(readRecord(input).source));
       if (marketplaceInstall && (!params.credentials || !approvalsStore)) return notSupported();
       const operation = async () => {
         const registryResult = marketplaceInstall ? await resolvePluginInstallRegistry(context) : null;
         if (registryResult && !registryResult.ok) return registryResult;
         const registry = registryResult?.registry ?? null;
         const [{ executePluginDevLoopAction }, { createMarketplaceIndexService }] = await Promise.all([import("@/plugins/devLoop/actions"), import("@/plugins/store/marketplace/service")]);
-        const approvedInstallReview = actionId === 'plugins.install'
-          ? context.approvedActionReplay?.pluginInstallReview : undefined;
-        if (actionId === 'plugins.install' && context.presentUserApproval?.artifactId && !approvedInstallReview) {
-          return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
-        }
         return await executePluginDevLoopAction({ actionId, input,
           happyHomeDir: params.happyHomeDir,
           workspaceRoot: actionId === 'plugins.install'

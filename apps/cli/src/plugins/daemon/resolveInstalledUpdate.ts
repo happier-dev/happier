@@ -18,7 +18,8 @@ export type ResolvedInstalledPluginUpdate =
       updatePolicy: Exclude<PluginUpdatePolicyV1, 'pinned'>;
     }>
   | Readonly<{ kind: 'archive'; request: InstallArchiveRequest }>
-  | Readonly<{ kind: 'path'; request: InstallPathRequest }>;
+  | Readonly<{ kind: 'path'; request: InstallPathRequest }>
+  | Readonly<{ kind: 'git'; request: Extract<PluginChangeRequest, { kind: 'installGit' }> }>;
 
 function installedNpmUpdateSelector(version: string): string {
   const canonicalVersion = semver.valid(version);
@@ -65,6 +66,11 @@ export function resolveInstalledPluginUpdate(
   }
 
   switch (trust.distribution.kind) {
+    case 'git': {
+      const { locator, subdirectory, catalog } = trust.distribution;
+      return { kind: 'git', request: { kind: 'installGit', source: catalog ? { kind: 'gitCatalog', ...catalog }
+        : { kind: 'git', locator, ...(subdirectory ? { subdirectory } : {}) } } };
+    }
     case 'npm':
       return {
         kind: 'npm',

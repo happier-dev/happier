@@ -15,7 +15,7 @@ function distributionIdentity(
       development: channel.development,
     };
   }
-  if (channel.kind === 'archive') {
+  if (channel.kind === 'archive' || channel.kind === 'git') {
     return { kind: channel.kind };
   }
   return {

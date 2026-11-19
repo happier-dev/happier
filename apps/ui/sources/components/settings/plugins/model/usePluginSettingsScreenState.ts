@@ -30,6 +30,8 @@ import type { ManagedResourceDispositionV1 } from '@happier-dev/protocol/machine
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { usePluginCatalog } from './usePluginCatalog';
 import { usePluginInstallReviewSet } from './usePluginInstallReviewSet';
+import { buildPluginCatalogInstallInput } from './buildPluginCatalogInstallInput';
+import type { PluginGitSourceV1 } from '@happier-dev/protocol/plugins/source-spec';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { PluginListingRouteParams } from './pluginsSurfaceRoutes';
 import { type PluginProjectionV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -232,6 +234,7 @@ export type PluginSettingsScreenState = Readonly<{
     }>) => Promise<DevelopmentCreateSettlement>;
     resolveDevelopmentEditTarget: (pluginId: string) => Promise<DevelopmentEditTargetSettlement>;
     runDevelopmentSourceInstall: (sourceRootPath: string) => void;
+    runGitSourceInstall: (source: PluginGitSourceV1) => boolean;
     runDevelopmentAction: (action: 'test' | 'pack' | 'unregister', sourceRootPath: string) => void;
     runInstalledPluginAction: (action: InstalledPluginActionId, pluginId: string, scope?: 'account' | 'machine') => void;
     setInstalledPluginUpdatePolicy: (pluginId: string, policy: PluginUpdatePolicyV1) => void;
@@ -568,13 +571,8 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                     };
                     try {
                         if (params.method === 'install' || params.method === 'update') {
-                            const actionInput = params.method === 'install' && exactInstallEntry?.version
-                                ? {
-                                    machineId: initialTarget.machine.id,
-                                    source: { kind: 'marketplace' as const, sourceId: exactInstallEntry.sourceId,
-                                        pluginId: exactInstallEntry.id, version: exactInstallEntry.version,
-                                        packageName: exactInstallEntry.packageName },
-                                }
+                            const actionInput = params.method === 'install' && exactInstallEntry
+                                ? buildPluginCatalogInstallInput(exactInstallEntry, initialTarget.machine.id)
                                 : params.method === 'update'
                                     ? { machineId: initialTarget.machine.id, source: { kind: 'installed' as const, pluginId: params.pluginId } }
                                     : null;
@@ -961,6 +959,22 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
             }
         })();
     }, [developmentSourceInstallAvailable, executionTarget, invokeDevelopmentAction, isPluginActionInFlight, markPluginActionFinished, markPluginActionStarted, selectedMachineScopeKey, captureMutationPublication, refreshPluginTruth, resolveCurrentExecutionTarget]);
+    const runGitSourceInstall = React.useCallback((source: PluginGitSourceV1) => {
+        const target = resolveCurrentExecutionTarget(executionTarget);
+        const isAuthorityCurrent = captureMutationPublication();
+        if (!target || !isAuthorityCurrent() || !selectedMachineScopeKey || isPluginActionInFlight(source.locator)) return false;
+        void (async () => {
+            markPluginActionStarted(selectedMachineScopeKey, source.locator);
+            try {
+                if (await invokeDevelopmentAction('plugins.install', { machineId: target.machine.id, source: { kind: 'git', ...source } },
+                    target, isAuthorityCurrent)) refreshPluginTruth();
+            } finally {
+                markPluginActionFinished(selectedMachineScopeKey, source.locator);
+            }
+        })();
+        return true;
+    }, [captureMutationPublication, executionTarget, invokeDevelopmentAction, isPluginActionInFlight, markPluginActionFinished,
+        markPluginActionStarted, refreshPluginTruth, resolveCurrentExecutionTarget, selectedMachineScopeKey]);
     return {
         activeView,
         administrationTargetSelection,
@@ -1001,6 +1015,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         runDevelopmentCreate,
         resolveDevelopmentEditTarget,
         runDevelopmentSourceInstall,
+        runGitSourceInstall,
         runDevelopmentAction,
         runInstalledPluginAction,
         setInstalledPluginUpdatePolicy,

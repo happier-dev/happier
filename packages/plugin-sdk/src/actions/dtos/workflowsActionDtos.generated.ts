@@ -21097,7 +21097,7 @@ export type WorkflowsActionResultById = {
                     } | {
                         kind: 'managed';
                         immutableGenerationId: string;
-                        installSource: 'archive' | 'localPath' | 'npm';
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                     state: 'attention' | 'backingOff' | 'baselined' | 'observing' | 'uninitialized';
                     code: null | string;
@@ -22973,7 +22973,7 @@ export type WorkflowsActionResultById = {
                 } | {
                     kind: 'managed';
                     immutableGenerationId: string;
-                    installSource: 'archive' | 'localPath' | 'npm';
+                    installSource: 'archive' | 'git' | 'localPath' | 'npm';
                 };
                 state: 'attention' | 'backingOff' | 'baselined' | 'observing' | 'uninitialized';
                 code: null | string;
@@ -23284,7 +23284,7 @@ export type WorkflowsActionResultById = {
                     } | {
                         kind: 'managed';
                         immutableGenerationId: string;
-                        installSource: 'archive' | 'localPath' | 'npm';
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                     state: 'attention' | 'backingOff' | 'baselined' | 'observing' | 'uninitialized';
                     code: null | string;
@@ -25129,7 +25129,7 @@ export type WorkflowsActionResultById = {
                     } | {
                         kind: 'managed';
                         immutableGenerationId: string;
-                        installSource: 'archive' | 'localPath' | 'npm';
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                     state: 'attention' | 'backingOff' | 'baselined' | 'observing' | 'uninitialized';
                     code: null | string;
@@ -26978,7 +26978,7 @@ export type WorkflowsActionResultById = {
                     } | {
                         kind: 'managed';
                         immutableGenerationId: string;
-                        installSource: 'archive' | 'localPath' | 'npm';
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                     state: 'attention' | 'backingOff' | 'baselined' | 'observing' | 'uninitialized';
                     code: null | string;

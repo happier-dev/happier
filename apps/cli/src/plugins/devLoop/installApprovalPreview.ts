@@ -53,7 +53,8 @@ function daemonDisclosure(evaluation: PluginChangePendingReviewResult | undefine
 export async function buildPluginInstallApprovalPreview(params: PluginInstallApprovalPreviewParams): Promise<unknown> {
   const input = readInput(params.input);
   const requestedSourceInput = readInput(input.source);
-  if (readString(requestedSourceInput, 'kind') === 'marketplace' || readString(requestedSourceInput, 'kind') === 'installed') {
+  const requestedKind = readString(requestedSourceInput, 'kind');
+  if (requestedKind === 'marketplace' || requestedKind === 'installed' || requestedKind === 'git' || requestedKind === 'gitCatalog') {
     return withDefaultPreview(params.defaultPreview, {
       ok: true,
       source: requestedSourceInput,

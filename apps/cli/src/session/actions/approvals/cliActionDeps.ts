@@ -11,7 +11,7 @@ import type { buildPluginInstallApprovalPreview } from '@/plugins/devLoop/instal
 import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import type { executePluginDevLoopAction } from '@/plugins/devLoop/actions';
 import type { createMarketplaceIndexService } from '@/plugins/store/marketplace/service';
-import type { CliPluginAdministrationActionDeps } from '../cliActionDeps/pluginAdministration';
+import { pluginInstallUsesAccountRegistry, type CliPluginAdministrationActionDeps } from '../cliActionDeps/pluginAdministration';
 
 export type CliApprovalActionDeps = Pick<ActionExecutorDeps, 'buildApprovalPreview' | 'recordApprovalRetirementWarning' | 'executionRunHostActionApprovalReplay'> & Readonly<{
   artifactApprovalStore: ReturnType<typeof createCliApprovalsArtifactStore> | null;
@@ -71,9 +71,7 @@ buildApprovalPreview: async ({ actionId, input, context, defaultPreview, machine
         const workspaceRoot = developmentPathInstall
           ? undefined
           : await resolvePluginInstallWorkspaceRoot(input, context.signal);
-        const marketplaceInstall = input !== null && typeof input === 'object'
-          && 'source' in input && input.source !== null && typeof input.source === 'object'
-          && 'kind' in input.source && input.source.kind === 'marketplace';
+        const marketplaceInstall = pluginInstallUsesAccountRegistry(requestedSource);
         const registryResult = marketplaceInstall ? await resolvePluginInstallRegistry(context) : null;
         if (registryResult && !registryResult.ok) return registryResult;
         const registry = registryResult?.registry ?? null;
