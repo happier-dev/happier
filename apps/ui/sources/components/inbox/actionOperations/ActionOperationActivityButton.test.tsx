@@ -136,6 +136,25 @@ describe('ActionOperationActivityButtonView', () => {
         expect(screen.findAllByType(Popover)).toHaveLength(0);
     });
 
+    it('presents the ledger on phones as the titled Activity sheet (lab L3 ledgerp), not an anchored popover', async () => {
+        const { t } = await import('@/text');
+        const { ActionOperationActivityButtonView } = await import('./ActionOperationActivityButton');
+        const screen = await renderScreen(
+            <ActionOperationActivityButtonView
+                operations={[operation()]}
+                hasAttention={true}
+                onOpenOperation={vi.fn()}
+                onMarkVisibleTerminalSeen={vi.fn()}
+            />,
+        );
+        await act(async () => {
+            await screen.findByTestId('action-operation-activity-button')?.props.onPress();
+        });
+        const popoverProps = screen.findAllByType(Popover)[0]?.props;
+        expect(popoverProps?.phonePresentation).toBe('sheet');
+        expect(popoverProps?.accessibilityLabel).toBe(t('inbox.updates'));
+    });
+
     it('opens the exact Home-qualified projection when operation ids collide across Homes', async () => {
         const onOpenOperation = vi.fn();
         const first = operation();

@@ -164,6 +164,9 @@ const ActionOperationActivityDetailsView = React.memo(function ActionOperationAc
             anchor={props.anchor}
             boundaryRef={null}
             placement="bottom"
+            // Phones read the ledger as the titled Activity sheet (lab L3 ledgerp); wider screens keep the anchored list.
+            phonePresentation="sheet"
+            accessibilityLabel={t('inbox.updates')}
             edgePadding={{ horizontal: 12, vertical: 12 }}
             portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false, anchorAlign: 'end' }}
             maxWidthCap={420}
