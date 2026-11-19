@@ -9,6 +9,11 @@ import {
     isRecord, readHappierActionCallId, readHappierActionCallInput, readHappierActionToolResultCandidates,
 } from '@/components/sessions/transcript/references/happierActionToolResult';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
+import { useOptionalSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { selectHomeQualifiedSession } from '@/sync/domains/session/selectHomeQualifiedSession';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import type { StorageState } from '@/sync/store/types';
 
 export type TranscriptThemeAction = {
     [Id in ThemeActionId]: Readonly<{ actionId: Id; input: ThemeActionInput<Id>; output: ThemeActionOutput<Id> }>;
@@ -56,10 +61,12 @@ function decodeTranscriptThemeAction(tool: ToolCall): TranscriptThemeAction | nu
     return null;
 }
 
+type TranscriptNeighbors = Readonly<{ index: number; at: (position: number) => Message | undefined }>;
+
 /** Options stay in the transcript's retained input documents; no candidate registry or writes. */
 export function readThemeActionCardPresentation(input: Readonly<{
     tool: ToolCall; messages: readonly Message[]; messageId?: string;
-}>): ThemeActionCardPresentation | null {
+}>, neighbors?: TranscriptNeighbors): ThemeActionCardPresentation | null {
     const call = readTranscriptThemeAction(input.tool);
     if (!call) return null;
     if (call.actionId !== THEME_ACTION_IDS.tryOn && call.actionId !== THEME_ACTION_IDS.keep && call.actionId !== THEME_ACTION_IDS.apply) return null;
@@ -81,36 +88,74 @@ export function readThemeActionCardPresentation(input: Readonly<{
         return { cardId, call, options: [], replayTry: null, visible: true };
     }
     if (!call.input.group) return { cardId, call, options: [], replayTry: call, visible: true };
-    const index = input.messages.findIndex(message => message.kind === 'tool-call' && (
+    const index = neighbors?.index ?? input.messages.findIndex(message => message.kind === 'tool-call' && (
         message.tool === input.tool || (input.messageId ? message.id === input.messageId : Boolean(input.tool.id && message.tool.id === input.tool.id))
     ));
     const own = { id: input.tool.id ?? input.messageId ?? call.output.previewRef, call };
     if (index < 0) return { cardId, call, options: [own], replayTry: call, visible: true };
-    const optionAt = (position: number) => {
-        const message = input.messages[position];
+
+    const at = neighbors?.at ?? ((position: number) => input.messages[position]);
+    const adjacentOption = (from: number, step: 1 | -1) => {
+        let position = from + step;
+        let message = at(position);
+        // Reasoning between tool calls is part of the same proposal, during a streamed agent turn.
+        while (message?.kind === 'agent-text' && message.isThinking) message = at(position += step);
         if (message?.kind !== 'tool-call') return null;
-        const option = message.tool === input.tool ? call : readTranscriptThemeAction(message.tool);
-        if (option?.actionId !== THEME_ACTION_IDS.tryOn || option.input.group !== call.input.group) return null;
-        return { id: message.tool.id ?? message.id, call: option };
+        const option = readTranscriptThemeAction(message.tool);
+        return option?.actionId === THEME_ACTION_IDS.tryOn && option.input.group === call.input.group
+            ? { position, id: message.tool.id ?? message.id, call: option }
+            : null;
     };
-    let first = index;
-    while (first > 0 && optionAt(first - 1)) first--;
-    const options: Array<Readonly<{ id: string; call: TranscriptThemeTry }>> = [];
-    for (let position = first; position < input.messages.length; position++) {
-        const option = optionAt(position);
-        if (!option) break;
-        options.push(option);
+    if (adjacentOption(index, 1)) return { cardId, call, options: [], replayTry: call, visible: false };
+    const options = [own];
+    for (let previous = adjacentOption(index, -1); previous; previous = adjacentOption(previous.position, -1)) {
+        options.push({ id: previous.id, call: previous.call });
     }
-    return { cardId, call, options, replayTry: call, visible: index === first + options.length - 1 };
+    return { cardId, call, options: options.reverse(), replayTry: call, visible: true };
 }
 
-/** The transcript can publish unrelated rows without changing this card's presentation. */
+/** Select the grouped card presentation from the owning live Session, with a local fallback for detached renders. */
 export function useThemeActionCardPresentation(
-    enabled: boolean, tool: ToolCall, messages: readonly Message[], messageId?: string,
+    enabled: boolean, tool: ToolCall, messages: readonly Message[], messageId?: string, sessionId?: string,
 ): ThemeActionCardPresentation | null {
-    const previous = useRef<ThemeActionCardPresentation | null>(null);
-    return useMemo(() => {
+    const source = useOptionalSessionTranscriptSource();
+    const call = enabled ? readTranscriptThemeAction(tool) : null;
+    const liveSessionId = source?.kind === 'app' && source.sessionId === sessionId && tool.id
+        && call?.actionId === THEME_ACTION_IDS.tryOn && call.input.group ? source.sessionId : undefined;
+    const serverId = liveSessionId ? source?.serverId : undefined;
+    const activeServerId = useActiveServerSnapshot(Boolean(serverId)).serverId;
+    const retainedFallback = useRef<ThemeActionCardPresentation | null>(null);
+    const fallback = useMemo(() => {
         if (!enabled) return null;
-        return previous.current = retainDeep(previous.current, readThemeActionCardPresentation({ tool, messages, messageId }));
+        return retainedFallback.current = retainDeep(retainedFallback.current, readThemeActionCardPresentation({ tool, messages, messageId }));
     }, [enabled, tool, messages, messageId]);
+    const selector = useMemo(() => {
+        let ids: readonly string[] | undefined;
+        let reducer: StorageState['sessionMessages'][string]['reducerState'] | undefined;
+        let version: number | undefined;
+        let index = -1;
+        let current = fallback;
+        return (state: StorageState) => {
+            if (!liveSessionId || !tool.id) return fallback;
+            const scoped = !serverId || selectHomeQualifiedSession(state, liveSessionId, serverId, activeServerId);
+            const transcript = scoped ? state.sessionMessages[liveSessionId] : undefined;
+            if (!transcript) return fallback;
+            const structureVersion = transcript.transcriptStructureVersion ?? transcript.messagesVersion;
+            if (ids === transcript.messageIdsOldestFirst && reducer === transcript.reducerState && version === structureVersion) return current;
+            ids = transcript.messageIdsOldestFirst;
+            reducer = transcript.reducerState;
+            version = structureVersion;
+            const anchorId = transcript.reducerState.toolIdToMessageId.get(tool.id);
+            if (anchorId === undefined) return current = fallback;
+            // Appends leave this position alone. Re-find it when history is inserted or replaced.
+            if (ids[index] !== anchorId) index = ids.lastIndexOf(anchorId);
+            if (index < 0) return current = fallback;
+            const at = (position: number) => transcript.messagesById[transcript.messageIdsOldestFirst[position]];
+            return current = retainDeep(current, readThemeActionCardPresentation({ tool, messages, messageId }, { index, at }));
+        };
+    }, [activeServerId, fallback, liveSessionId, messageId, messages, serverId, tool]);
+    return getStorage()(selector, {
+        sessionMessages: liveSessionId ? [liveSessionId] : [],
+        sessions: serverId && liveSessionId ? [liveSessionId] : [],
+    });
 }

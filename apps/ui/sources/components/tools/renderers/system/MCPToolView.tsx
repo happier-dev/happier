@@ -166,7 +166,7 @@ function renderMCPToolSummary(tool: ToolViewProps['tool']) {
 export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId, serverId, sessionId, messages }) => {
     const find = useToolFindState(messageId);
     const showSummary = detailLevel === 'summary' && !find.active;
-    const theme = useThemeActionCardPresentation(showSummary, tool, messages, messageId);
+    const theme = useThemeActionCardPresentation(showSummary, tool, messages, messageId, sessionId);
     const summary = React.useMemo(() => showSummary ? renderMCPToolSummary(tool) : null, [showSummary, tool]);
     if (detailLevel === 'title') return null;
 

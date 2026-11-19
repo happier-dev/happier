@@ -1,19 +1,17 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
+import type { NormalizedMessage } from '@happier-dev/session-core/raw';
+import { buildToolCallMessageRouteId } from '@happier-dev/session-core/messages';
 import { describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from "@happier-dev/session-core/messages";
-import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
-import { renderScreen } from '@/dev/testkit';
+import { createSessionFixture, makeToolCall, makeToolViewProps, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { createCommittedFiberRenderCounter, readTestRendererRoot } from '@/dev/testkit/performance/committedFiberCounts';
 import { TranscriptFindProvider } from '@/components/sessions/transcript/find/TranscriptFindContext';
 import { createTranscriptFindRowStore } from '@/components/sessions/transcript/find/transcriptFindRowStore';
-import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-vi.mock('../../shell/presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
 
 vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: ({ code }: any) => React.createElement('Text', null, code),
@@ -21,63 +19,120 @@ vi.mock('@/components/ui/media/CodeView', () => ({
 
 // Load the real renderer during collection; cold module transforms are setup, not an interaction timeout.
 // The app entry initializes Sync before any theme result reads its Account-scoped Redo owner.
-await loadSyncSingletonForTests();
-await import('./MCPToolView');
+await initializeRealAppRuntimeForTests();
+const { ToolView } = await import('../../shell/views/ToolView');
+const { AppSessionTranscriptSourceProvider } = await import('@/components/sessions/transcript/source/appSessionTranscriptSource');
+const { useSessionTranscriptSource } = await import('@/components/sessions/transcript/source/SessionTranscriptSourceContext');
+const { storage } = await import('@/sync/domains/state/storage');
+const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+const { ThemeActionResult } = await import('./ThemeActionResult');
+const { ThemeActionResultView } = await import('./ThemeActionResultView');
 
 describe('MCPToolView', () => {
-    it('updates the theme card for a new candidate and skips unrelated arrivals', async () => {
-        const { THEME_ACTION_IDS, ThemeActionInputSchemas, ThemeActionOutputSchemas } = await import('@happier-dev/protocol/actions/themeActionFamily');
+    it('hosts four streamed theme proposals on the final tool and skips unrelated arrivals', async () => {
+        const { THEME_ACTION_IDS } = await import('@happier-dev/protocol/actions/themeActionFamily');
         const { themeActionDocument } = await import('@/dev/testkit/harness/themeActionHarness');
         const { prepareThemeProfileCss } = await import('@/theme/css/prepareThemeCss');
-        const { createToolCallMessageFixture } = await import('@/dev/testkit/fixtures/transcriptFixtures');
-        const { MCPToolView } = await import('./MCPToolView');
-        const { ThemeActionResult } = await import('./ThemeActionResult');
-        const { ThemeActionResultView } = await import('./ThemeActionResultView');
-        const candidate = (id: string) => {
+        const serverId = 'theme-transcript-home';
+        const session = createSessionFixture({ id: 'theme-transcript-group', serverId });
+        const previous = storage.getState();
+        const common = (id: string, seq: number) => ({ id, seq, createdAt: seq, isSidechain: false, localId: null });
+        const candidate = (id: string, seq: number): NormalizedMessage[] => {
             const document = themeActionDocument(id);
-            const input = ThemeActionInputSchemas[THEME_ACTION_IDS.tryOn].parse({ document, mode: 'dark', origin: { kind: 'agent' }, group: 'choices' });
-            const output = ThemeActionOutputSchemas[THEME_ACTION_IDS.tryOn].parse({ previewRef: id, coverage: prepareThemeProfileCss(document.profile).coverage, compatibility: document.compatibility });
-            return createToolCallMessageFixture({ id, tool: makeToolCall({ id, name: 'mcp__happier__action_execute', state: 'completed',
-                input: { actionId: THEME_ACTION_IDS.tryOn, input }, result: { ok: true, result: output } }) });
+            const input = { document, mode: 'dark', origin: { kind: 'agent' }, group: 'choices' };
+            const output = { previewRef: id, coverage: prepareThemeProfileCss(document.profile).coverage, compatibility: document.compatibility };
+            return [
+                { ...common(`call-${id}`, seq), role: 'agent', content: [{
+                    type: 'tool-call', id, name: 'mcp__happier__action_execute',
+                    input: { _happier: { canonicalToolName: 'mcp__happier__action_execute' }, actionId: THEME_ACTION_IDS.tryOn, input },
+                    description: null, uuid: `call-${id}`, parentUUID: null,
+                }] },
+                { ...common(`result-${id}`, seq + 1), role: 'agent', content: [{
+                    type: 'tool-result', tool_use_id: id, content: { ok: true, result: output }, is_error: false,
+                    uuid: `result-${id}`, parentUUID: null,
+                }] },
+            ];
         };
-        const messages = [candidate('First'), candidate('Second')];
-        const unrelated = createToolCallMessageFixture({ id: 'Unrelated', tool: makeMcpTool() });
+        // Mirrors the captured call/result pairs and the thinking row between the first two calls.
+        const thinking: NormalizedMessage = { ...common('thinking', 80), role: 'agent', content: [
+            { type: 'thinking', thinking: 'Considering a second option', uuid: 'thinking', parentUUID: null },
+        ] };
+        storage.getState().applySessions([session]);
+        storage.getState().applyMessages(session.id, [
+            ...candidate('Ink', 60), thinking, ...candidate('Pine', 90), ...candidate('Plum', 110), ...candidate('Geometry', 130),
+        ]);
+        storage.getState().applyMessagesLoaded(session.id);
+
+        const displaySettings = { ...settingsDefaults, toolViewExpandedDetailLevelDefault: 'summary', toolViewTapAction: 'expand' } as const;
         const counter = createCommittedFiberRenderCounter();
         let readRoot: ReturnType<typeof readTestRendererRoot> | undefined;
-        const transcript = (items: typeof messages) => (
-            <React.Profiler id="theme-card-arrival" onRender={() => {
-                if (readRoot) counter.onCommitRoot(readRoot());
-            }}>
-                {items.map(({ tool, id }) => <MCPToolView key={id}
-                    {...makeToolViewProps(tool, { messages: items, messageId: id, detailLevel: 'summary' })} />)}
-            </React.Profiler>
+        function TranscriptRows() {
+            const source = useSessionTranscriptSource();
+            const ids = source.useMessageIdsOldestFirst();
+            const byId = source.useMessagesById();
+            return ids.map(id => {
+                const message = byId[id];
+                if (message?.kind === 'user-text') return <React.Fragment key={id}>{message.text}</React.Fragment>;
+                if (message?.kind !== 'tool-call') return null;
+                return <ToolView key={id} tool={message.tool} metadata={null} messages={message.children}
+                    sessionId={session.id} serverId={serverId} messageId={buildToolCallMessageRouteId({ toolId: message.tool.id, fallbackMessageId: id }) ?? undefined}
+                    displaySettings={displaySettings} />;
+            });
+        }
+        const screen = await renderScreen(
+            <AppSessionTranscriptSourceProvider sessionId={session.id} serverId={serverId}>
+                <React.Profiler id="theme-card-arrival" onRender={() => {
+                    if (readRoot) counter.onCommitRoot(readRoot());
+                }}><TranscriptRows /></React.Profiler>
+            </AppSessionTranscriptSourceProvider>,
         );
-        const screen = await renderScreen(transcript(messages));
         readRoot = readTestRendererRoot(screen.tree.root);
+        const cardHosts = () => screen.findAllHostsByTestId('theme-action-result');
+        const optionCount = () => screen.tree.findAll(node => typeof node.type === 'string'
+            && typeof node.props.testID === 'string'
+            && /^theme-action-result:option:[^:]+$/.test(node.props.testID)).length;
+        const countRenders = () => {
+            const result = counter.read();
+            return { view: result.rendersFor(ThemeActionResultView), model: result.rendersFor(ThemeActionResult),
+                mounts: result.mounts.get('ThemeActionResultView') ?? 0 };
+        };
         try {
-            expect(screen.findAllHostsByTestId('theme-action-result')).toHaveLength(1);
-            expect(screen.getTextContent()).toContain('Second');
+            const rows = screen.findAllByType(ToolView);
+            expect(rows).toHaveLength(4);
+            for (const row of rows) {
+                await pressTestInstanceAsync(row.findAll(node => node.props.testID === 'tool-view-header-primary'
+                    && typeof node.props.onPress === 'function')[0]);
+            }
+            expect(cardHosts()).toHaveLength(1);
+            await act(async () => {
+                for (const group of screen.tree.findAll(node => typeof node.type === 'string'
+                    && node.props.role === 'radiogroup' && typeof node.props.onLayout === 'function')) {
+                    group.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 960, height: 600 } } });
+                }
+            });
+            expect(optionCount()).toBe(4);
+            expect(rows.map(row => row.findAll(node => typeof node.type === 'string'
+                && node.props.testID === 'theme-action-result').length)).toEqual([0, 0, 0, 1]);
 
             counter.start();
-            await screen.update(transcript([...messages, unrelated]));
-            const arrival = counter.read();
-            expect(arrival.commits).toBeGreaterThan(0);
-            expect(screen.getTextContent()).toContain('Created issue LIN-42');
+            await act(async () => storage.getState().applyMessages(session.id, [{
+                ...common('unrelated', 150), role: 'user', content: { type: 'text', text: 'Unrelated arrival' },
+            }]));
+            expect(screen.getTextContent()).toContain('Unrelated arrival');
+            const unrelatedRenders = countRenders();
 
             counter.start();
-            await screen.update(transcript([messages[0]!, candidate('Third'), messages[1]!, unrelated]));
-            const candidateUpdate = counter.read();
-            expect(screen.findAllHostsByTestId('theme-action-result')).toHaveLength(1);
-            expect(screen.getTextContent()).toContain('Third');
-            expect(candidateUpdate.rendersFor(ThemeActionResultView), 'card renders after a new grouped candidate').toBe(1);
-
-            expect({
-                view: arrival.rendersFor(ThemeActionResultView),
-                model: arrival.rendersFor(ThemeActionResult),
-            }, 'card renders after one unrelated arrival').toEqual({ view: 0, model: 0 });
+            await act(async () => storage.getState().applyMessages(session.id, candidate('Linen', 120)));
+            expect(cardHosts()).toHaveLength(1);
+            expect(optionCount()).toBe(5);
+            const candidateRenders = countRenders();
+            console.info('theme-transcript-card-renders', { unrelatedRenders, candidateRenders });
+            expect(unrelatedRenders).toEqual({ view: 0, model: 0, mounts: 0 });
+            expect(candidateRenders).toEqual({ view: 1, model: 1, mounts: 0 });
         } finally {
             counter.stop();
             await screen.unmount();
+            storage.setState(previous, true);
         }
     });
     it('previews canonical MCP content and historical text aliases equally', async () => {

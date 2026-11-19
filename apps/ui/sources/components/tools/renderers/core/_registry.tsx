@@ -107,7 +107,11 @@ export const toolViewRegistry = Object.fromEntries(Object.entries(toolViewDescri
 
 // MCP and unknown calls have no renderer richer than their input and result, so their details page
 // reads those structured (`ToolCallDetailsSections`) instead of the transcript card's raw blocks.
-const mcpToolViewDescriptor: ToolViewDescriptor = { component: MCPToolView, projectDisplayText: projectMCPDisplayText };
+const mcpToolViewDescriptor: ToolViewDescriptor = {
+    // Tool headers also import MCP presentation during registry initialization.
+    get component() { return MCPToolView; },
+    get projectDisplayText() { return projectMCPDisplayText; },
+};
 const unknownToolViewDescriptor: ToolViewDescriptor = { component: UnknownToolView, projectDisplayText: projectUnknownDisplayText };
 
 function getToolViewDescriptor(toolName: string): ToolViewDescriptor {
