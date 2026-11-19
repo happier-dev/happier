@@ -653,13 +653,17 @@ and CPU released by this broker's slots remain reusable until the head has waite
 22m24s. This bound is the nearest-rank p95 of 63,482 successful targeted-validation
 wrapper durations measured on 2026-11-13; those durations include preparation and
 admission, so it is an opportunity window rather than a payload runtime estimate.
-Subsequent releases, including recovered slots, are then pledged up to the head's
+After that bound, a head also needs its floor to fit current unreserved memory
+plus releases expected within the next 22m24s. Slots past their p99 or with a
+recorded p99 farther away supply no projected release for this decision. The
+waiter keeps its arrival and any earned pledge while smaller jobs use the idle
+capacity. Subsequent releases, including recovered slots, are then pledged up to the head's
 minimum floor. The pledge is lent (EASY backfill) only to a waiter whose recorded
 run-time p99 ends before the head's projected start and whose floor fits in the
 free plus pledged memory. The projected start comes from the same service-order
 simulation as AUTO placement's expected start: admitted slots release at their own
 p99 (or now when unknown or overrun), so the head still starts on time. A waiter
-without duration history never backfills. Borrowed memory returns to the pledge
+without duration history cannot borrow an active pledge. Borrowed memory returns to the pledge
 on release. A backfilled waiter's client logs `[preferred-execution] admitted as a
 backfill (…, borrowedKiB=…, headStartInMs=…)`, and the broker status counts them
 (`backfillCount`, since the broker started). The pledging waiter is told what it
@@ -734,8 +738,10 @@ plugin batch carried its run's 404 s p99 and disabled backfill). The broker inst
 gives a request without a duration the nearest-rank p99 of its command identity's
 successful admitted run times (`identity-durations.json`, 200 per identity, recorded
 when the client reports a zero exit); an identity without a recorded success has
-no duration. The broker reports
-an `overruns` entry for each slot strictly older than twice that class p99, and
+no duration. Past one p99, an existing resource observation can replace the
+slot's floor with its current dedicated-scope working set. That memory is already
+charged to the host. The original floor still applies if a valid scope sample
+is unavailable. The broker reports an `overruns` entry for each slot strictly older than twice that class p99, and
 `durationHistoryUnavailableCount` when a slot lacks usable duration metadata.
 It never kills overrun work or invents a threshold when history is unavailable.
 
@@ -988,7 +994,8 @@ A new identity uses a median of related identities' typical working sets. Matchi
 command entries with a containing project set come first, followed by the command
 family, the same project set, and the resource class. Each identity contributes
 one median regardless of how often it ran. The caller's requested floor or
-dynamic export options apply when the class has no history.
+dynamic export options apply when the class has no history. A queued request
+is resized when a completed sample updates history for its resource class.
 
 A routed dispatch admits its `bash -c` wrapper on the worker, so the
 dispatcher forwards the command's own argv and cwd (`--identity-arg=`/`--identity-cwd=`)
@@ -1241,8 +1248,8 @@ In current 0.3 development, `admission_broker.mjs` is the Linux queue owner.
 It considers requests from oldest to newest. The oldest eligible waiter's
 pledge holds subsequent releases only after its measured 22m24s wait bound;
 before then, released capacity can also backfill younger fitting requests. Eligibility requires the minimum floor to fit
-current achievable memory; an unachievable waiter retains its age and becomes
-eligible on recovery. Once its floor fits, the head receives capacity first.
+current achievable memory and, once aged, the memory available within another
+wait bound. A waiter retains its age and becomes eligible when capacity recovers. Once its floor fits, the head receives capacity first.
 The broker's published `unreservedMemoryKiB` deducts the same pledge, so AUTO
 uses the owner's remaining capacity rather than recomputing head reservations.
 The wait bound activates on existing release/recovery events, without a new

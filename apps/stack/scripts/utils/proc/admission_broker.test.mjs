@@ -1794,6 +1794,7 @@ test('windows2-linux 2026-11-18: a preparation holder sized by its own recorded 
   while ((await requestAdmissionSample(root)).activeCount) await new Promise(resolve => setImmediate(resolve));
   const timed = p99DurationMs => ({ durationClass: 'targeted-validation', p99DurationMs });
   const holder = await (await acquire(root, 21, t, batch)).admit();
+  now += 2 * hours - 1_200_000;
   const pledger = await (await acquire(root, 18, t, timed(1_000))).admit();
   const head = await acquire(root, 21, t, { className: 'package-dist', arrivedAt: now - headReservationDelayMs });
   await pledger.release();
@@ -1815,7 +1816,7 @@ test('windows2-linux 2026-11-18: a preparation holder sized by its own recorded 
   for (const backfill of backfills) await backfill.release();
   // The pledge gets back what it lent plus the free unit the first backfill used.
   assert.equal((await requestAdmissionSample(root)).head.reservationKiB, 19, 'released backfill memory goes to the head');
-  now += 2 * hours - 404_000;
+  now += 1_200_000 - 404_000;
   await holder.report({ kind: 'slot-completed', status: 0 });
   await holder.release();
   await head.admit();
@@ -2730,4 +2731,82 @@ test('slow recovery observations coalesce clock ticks, let status settle, and re
     await Promise.allSettled([firstTick, ...extraTicks]);
     status.socket.destroy();
   }
+});
+
+test('an admitted slot past p99 charges its current working set and keeps its payload', linux, async t => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  let workingSetKiB = 12;
+  let availableMemoryKiB = 100;
+  const { root } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB, totalMemoryKiB: 100 }),
+    readSlotWorkingSetKiB: () => workingSetKiB,
+  });
+  const holder = await (await acquire(root, 60, t, {
+    className: 'compilation', durationClass: 'targeted-validation', p99DurationMs: 1000,
+  })).admit();
+  availableMemoryKiB = 88;
+  now += 1000;
+  const before = await acquire(root, 80, t, { noWait: true });
+  assert.equal((await before.next()).reason, 'HSTACK_MEMORY_BUSY');
+  now += 1;
+  workingSetKiB = null;
+  const unmeasurable = await acquire(root, 80, t, { noWait: true });
+  assert.equal((await unmeasurable.next()).reason, 'HSTACK_MEMORY_BUSY', 'retain the floor without a trustworthy scope sample');
+  workingSetKiB = 12;
+  const small = await acquire(root, 80, t, { noWait: true });
+  const charged = await requestAdmissionSample(root);
+  assert.equal(charged.activeCount, 2, 'the next job fits beside the admitted holder');
+  assert.equal(charged.reservedMemoryKiB, 92);
+  assert.equal(charged.overruns.length, 0, 'the sentinel threshold stays at twice p99');
+  const newJob = await small.admit();
+  await newJob.release();
+  await holder.release();
+});
+
+test('an aged head yields its pledge when its floor cannot fit within the wait bound', linux, async t => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const { root } = await fixture(t);
+  const holder = await (await acquire(root, 60, t, {
+    durationClass: 'targeted-validation', p99DurationMs: 2 * headReservationDelayMs,
+  })).admit();
+  const pledger = await (await acquire(root, 30, t)).admit();
+  const head = await acquire(root, 80, t, { arrivedAt: now - headReservationDelayMs });
+  await pledger.release();
+  const small = await acquire(root, 30, t, { noWait: true });
+  const backfill = await requestAdmissionSample(root);
+  assert.equal(backfill.activeCount, 2, 'a fitting job uses memory the head cannot use within the bound');
+  assert.equal(backfill.waitingCount, 1);
+  assert.equal(backfill.head, null, 'the aged head remains queued without pledging');
+  const newJob = await small.admit();
+  now += headReservationDelayMs;
+  await newJob.release();
+  assert.equal((await requestAdmissionSample(root)).head.minimumFloorKiB, 80);
+  await holder.release();
+  await head.admit();
+});
+
+test('an already queued compilation uses its class history as soon as the first related sample arrives', linux, async t => {
+  const gib = 1024 * 1024;
+  let availableMemoryKiB = 42 * gib;
+  const { root } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB, totalMemoryKiB: 64 * gib }),
+    admitDisk: () => ({ admitted: true }),
+  });
+  const activeIdentity = { className: 'compilation', component: 'apps/cli', entry: 'yarn typecheck', projects: ['apps/cli'] };
+  const active = await (await acquire(root, 38 * gib, t, activeIdentity)).admit();
+  const waiting = await acquire(root, 38 * gib, t, { className: 'compilation',
+    component: 'apps/stack', entry: 'yarn compile', projects: ['apps/stack'] });
+  const before = await requestAdmissionSample(root);
+  assert.equal(before.head.minimumFloorKiB, 38 * gib);
+  availableMemoryKiB = 16 * gib;
+  await active.report({ kind: 'slot-working-set', ...activeIdentity, peakKiB: 4.25 * gib });
+  await active.release();
+  let after;
+  do { after = await requestAdmissionSample(root); } while (after.sampleCount === before.sampleCount);
+  assert.equal(after.waitingCount, 0);
+  const admitted = await waiting.admit();
+  assert.equal(admitted.reserved.floorKiB, 4.5 * gib);
+  await admitted.release();
 });

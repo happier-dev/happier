@@ -176,9 +176,12 @@ export async function readAdmissionMemorySample({ slots = [], waiters = [], read
     throw Object.assign(new Error('Memory observation unavailable'), { code: 'HSTACK_MEMORY_UNAVAILABLE' });
   }
   const residentMemoryKiB = [...residentByRoot.values()].reduce((sum, value) => sum + value, 0);
-  const creditedResidentMemoryKiB = slots.reduce((sum, slot) => sum + Math.min(slot.floorKiB, residentByRoot.get(slot.pid) ?? 0), 0);
-  const reservedMemoryKiB = slots.reduce((sum, slot) => sum + slot.floorKiB, 0);
-  const achievableMemoryKiB = Math.min(memory.totalMemoryKiB, memory.availableMemoryKiB + residentMemoryKiB);
+  const creditedResidentMemoryKiB = slots.reduce((sum, slot) =>
+    sum + (slot.workingSetKiB ?? Math.min(slot.floorKiB, residentByRoot.get(slot.pid) ?? 0)), 0);
+  const reservedMemoryKiB = slots.reduce((sum, slot) => sum + (slot.workingSetKiB ?? slot.floorKiB), 0);
+  const releasableResidentMemoryKiB = slots.reduce((sum, slot) =>
+    sum + (slot.workingSetKiB ?? residentByRoot.get(slot.pid) ?? 0), 0);
+  const achievableMemoryKiB = Math.min(memory.totalMemoryKiB, memory.availableMemoryKiB + releasableResidentMemoryKiB);
   return { ...memory, slotRssKiB, reservedMemoryKiB, residentMemoryKiB, creditedResidentMemoryKiB, waitingResidentMemoryKiB,
     achievableMemoryKiB,
     unreservedMemoryKiB: Math.max(0, memory.availableMemoryKiB + creditedResidentMemoryKiB - reservedMemoryKiB) };
@@ -321,11 +324,11 @@ export function createAdmissionBroker({ root,
     const target = join(root, IDENTITY_PEAKS_FILENAME);
     writeFileSync(`${target}.tmp`, JSON.stringify(Object.fromEntries(peaks)), { mode: 0o600 });
     renameSync(`${target}.tmp`, target);
-    // A retained waiter can gain its own measurement while it is queued.
-    // Update it before the normal release drain chooses the next reservation.
-    const estimatedPeak = nearestRank(recent, 0.95);
+    // A retained waiter can gain its first class, family or exact peak while queued.
+    // Apply the same sizing as a new arrival before the release drain picks a head.
+    const resourceClass = identity.resourceClass ?? identity.className;
     for (const item of waiting) {
-      if (!item.slot && identityKey(item) === key) sizeWaitingItem(item, estimatedPeak);
+      if (!item.slot && (item.resourceClass ?? item.className) === resourceClass) sizeWaitingItem(item);
     }
   }
 
@@ -366,16 +369,30 @@ export function createAdmissionBroker({ root,
     return waiting.sort(compareService(Date.now()));
   };
 
-  function slotResourceBudget() {
+  function remainingSlotTimeMs(slot, now) {
+    return slot.p99DurationMs > 0 && Number.isFinite(slot.admittedAt)
+      ? slot.admittedAt + slot.p99DurationMs - now : undefined;
+  }
+  function slotResourceBudget(now = Date.now()) {
     let reservedMemoryKiB = 0;
     let reservedCpuCores = 0;
+    let memoryReleasingWithinBoundKiB = 0;
     for (const slot of slots.values()) {
-      reservedMemoryKiB += slot.floorKiB;
+      const chargeKiB = slot.workingSetKiB ?? slot.floorKiB;
+      reservedMemoryKiB += chargeKiB;
       reservedCpuCores += slot.cpuCores ?? 0;
+      const remainingMs = remainingSlotTimeMs(slot, now);
+      // Keep the existing release assumption for slots without a duration.
+      // A known deadline that passed or lies beyond the bound cannot justify a pledge.
+      if (remainingMs === undefined || (remainingMs >= 0 && remainingMs <= HEAD_RESERVATION_DELAY_MS)) {
+        memoryReleasingWithinBoundKiB += chargeKiB;
+      }
     }
+    const memoryBalanceKiB = sample.availableMemoryKiB + (sample.creditedResidentMemoryKiB ?? 0) - reservedMemoryKiB;
     return { reservedMemoryKiB, totalCpuCores, reservedCpuCores,
       unreservedCpuCores: Math.max(0, totalCpuCores - reservedCpuCores),
-      unreservedMemoryKiB: Math.max(0, sample.availableMemoryKiB + (sample.creditedResidentMemoryKiB ?? 0) - reservedMemoryKiB) };
+      unreservedMemoryKiB: Math.max(0, memoryBalanceKiB),
+      memoryWithinBoundKiB: memoryBalanceKiB + memoryReleasingWithinBoundKiB };
   }
   function cpuCost(item, workers) {
     // The current client resolves class policy, just like its memory floor.
@@ -419,12 +436,13 @@ export function createAdmissionBroker({ root,
       cpuCores: pledged ? Math.min(minimumCpuCores(head), headPledge.cpuCores) : 0,
     };
   }
-  function canReserveHead(item) {
+  function canReserveHead(item, memoryWithinBoundKiB, now) {
     const minimumFloorKiB = item.floorOptions?.at(-1).floorKiB ?? item.floorKiB;
-    // Non-admitted memory cannot be recovered by draining broker slots. Keep
-    // this request's age, but reserve only once the observed floor is achievable.
+    const aged = now - item.arrivedAt >= HEAD_RESERVATION_DELAY_MS;
+    // Keep the waiter's age and earned pledge while its floor cannot fit in
+    // time. Non-admitted pressure cannot be recovered by releasing broker slots.
     return !item.slot && !item.blocked && !item.socket.destroyed && minimumFloorKiB <= sample.achievableMemoryKiB
-      && minimumCpuCores(item) <= totalCpuCores;
+      && (!aged || minimumFloorKiB <= memoryWithinBoundKiB) && minimumCpuCores(item) <= totalCpuCores;
   }
   function status() {
     const now = Date.now();
@@ -444,9 +462,9 @@ export function createAdmissionBroker({ root,
         durationClass: slot.durationClass, ageMs, p99DurationMs: slot.p99DurationMs });
       else nextOverrunAt = nextOverrunAt === null ? thresholdAt + 1 : Math.min(nextOverrunAt, thresholdAt + 1);
     }
-    const budget = slotResourceBudget();
+    const { memoryWithinBoundKiB, ...budget } = slotResourceBudget(now);
     orderWaiting();
-    const head = waiting.find(canReserveHead);
+    const head = waiting.find(item => canReserveHead(item, memoryWithinBoundKiB, now));
     const reservation = headReservation(head);
     // Only catalog symbols and numeric resource facts leave this private queue.
     // Never expose request env, paths, PIDs or an arbitrary caller label.
@@ -536,19 +554,25 @@ export function createAdmissionBroker({ root,
     }
   }
   async function observe() {
+    const now = Date.now();
+    const memorySlots = [...slots.values()].map(slot => {
+      const overdue = remainingSlotTimeMs(slot, now) < 0;
+      const measured = (slot.admitted || slot.recovered) && (slot.identityKey || overdue)
+        ? readSlotWorkingSetKiB(slot.pid) : null;
+      const workingSetKiB = Number.isSafeInteger(measured) && measured > 0 ? measured : undefined;
+      if (slot.admitted && slot.identityKey && workingSetKiB !== undefined) {
+        slot.peakWorkingSetKiB = Math.max(slot.peakWorkingSetKiB ?? 0, workingSetKiB);
+      }
+      // This working set is already charged to physical memory. Past p99 it
+      // replaces the floor and is fully credited, leaving no unused reservation.
+      slot.workingSetKiB = overdue ? workingSetKiB : undefined;
+      return { pid: slot.pid, floorKiB: slot.floorKiB, workingSetKiB: slot.workingSetKiB };
+    });
     const { slotRssKiB, ...resources } = await sampleResources({
-      slots: [...slots.values()].map(({ pid, floorKiB }) => ({ pid, floorKiB })),
-      waiters: waiting.filter(item => !item.slot).map(({ pid }) => ({ pid })) });
+      slots: memorySlots, waiters: waiting.filter(item => !item.slot).map(({ pid }) => ({ pid })) });
     sample = { ...(sample.lastFailure ? { lastFailure: sample.lastFailure } : {}),
       ...resources };
-    const now = Date.now();
     for (const slot of slots.values()) {
-      if (slot.admitted && slot.identityKey) {
-        const workingSetKiB = readSlotWorkingSetKiB(slot.pid);
-        if (Number.isSafeInteger(workingSetKiB) && workingSetKiB > 0) {
-          slot.peakWorkingSetKiB = Math.max(slot.peakWorkingSetKiB ?? 0, workingSetKiB);
-        }
-      }
       const rss = slotRssKiB?.get(slot.pid);
       if (!slot.admitted || rss === undefined) continue;
       slot.peakRssKiB = Math.max(slot.peakRssKiB ?? 0, rss);
@@ -678,7 +702,7 @@ export function createAdmissionBroker({ root,
     // After it, include recovered slots too so sustained traffic cannot starve
     // the head. Evaluate on this release, never retroactively or on a new timer.
     if (headReservation(headPledge?.item).active) {
-      headPledge.memoryKiB += slot.floorKiB;
+      headPledge.memoryKiB += slot.workingSetKiB ?? slot.floorKiB;
       headPledge.cpuCores += slot.cpuCores ?? 0;
     }
     return true;
@@ -724,8 +748,9 @@ export function createAdmissionBroker({ root,
   function simulateServiceOrder(now, unrecordedMs) {
     const capacityKiB = sample.achievableMemoryKiB;
     // Running jobs as [end, floor].
-    const running = [...slots.values()].map(slot => [slot.p99DurationMs > 0 && Number.isFinite(slot.admittedAt)
-      ? Math.max(0, slot.admittedAt + slot.p99DurationMs - now) : unrecordedMs, Math.min(slot.floorKiB, capacityKiB)]);
+    const running = [...slots.values()].map(slot => [
+      Math.max(0, remainingSlotTimeMs(slot, now) ?? unrecordedMs), Math.min(slot.workingSetKiB ?? slot.floorKiB, capacityKiB),
+    ]);
     let at = 0;
     let usedKiB = running.reduce((sum, [, floorKiB]) => sum + floorKiB, 0);
     const releaseNext = () => {
@@ -773,20 +798,21 @@ export function createAdmissionBroker({ root,
   async function drain() {
     // Capacity already free when a request becomes head remains available to
     // backfill; releases are held only after that head reaches the wait bound.
-    const budget = slotResourceBudget();
+    const now = Date.now();
+    const budget = slotResourceBudget(now);
     let availableMemoryKiB = budget.unreservedMemoryKiB;
     let availableCpuCores = budget.unreservedCpuCores;
     let head;
     let lendableKiB = 0;
     let headStartAt;
     orderWaiting();
-    const pledgingHead = waiting.find(canReserveHead);
+    const pledgingHead = waiting.find(item => canReserveHead(item, budget.memoryWithinBoundKiB, now));
     const reservation = headReservation(pledgingHead);
     // Coordination 2026-11-13 11:22Z: source bundles (including stack reloads)
     // cannot move hosts. Let fitting ones use a relocatable head's pledge first.
     // Reorder only this pass, never the arrival queue or the retained pledge.
     const hostBoundFirst = new Set(pledgingHead?.className !== 'source-bundle' && !(pledgingHead?.headPriority > 0) && reservation.memoryKiB > 0
-      ? waiting.filter(item => item.className === 'source-bundle' && canReserveHead(item)
+      ? waiting.filter(item => item.className === 'source-bundle' && canReserveHead(item, budget.memoryWithinBoundKiB, now)
         && item.floorKiB <= Math.min(reservation.memoryKiB, availableMemoryKiB)
         && minimumCpuCores(item) <= availableCpuCores) : []);
     const ordered = hostBoundFirst.size
@@ -844,7 +870,7 @@ export function createAdmissionBroker({ root,
           if (resources.publicationBlocked) {
             item.blocked = true;
             item.resourceSnapshot = resources.snapshot;
-          } else if (!head && canReserveHead(item)) assignHead(item);
+          } else if (!head && canReserveHead(item, budget.memoryWithinBoundKiB, now)) assignHead(item);
         }
         continue;
       }
