@@ -91,7 +91,7 @@ type _AuthorStepKeysAreCurated = Assert<IsEqual<keyof StepProps,
   'marker' | 'title' | 'titleKey' | 'trailing' | 'onPress' | 'children' | 'testID'
 >>;
 type _AuthorTabsKeysAreCurated = Assert<IsEqual<keyof TabsProps,
-  'value' | 'onValueChange' | 'ariaLabel' | 'testID' | 'tabList' | 'layout' | 'sharedPanel' | 'labels' | 'lead' | 'children' | 'presentation' | 'pageKind'
+  'value' | 'onValueChange' | 'ariaLabel' | 'testID' | 'tabList' | 'layout' | 'sharedPanel' | 'labels' | 'lead' | 'children' | 'presentation' | 'pageKind' | 'companionInput'
 >>;
 type _AuthorCollectionComponentUsesCuratedProps = Assert<IsEqual<
   Parameters<typeof import('../index.public.js').Collection<unknown>>[0], CollectionProps<unknown>

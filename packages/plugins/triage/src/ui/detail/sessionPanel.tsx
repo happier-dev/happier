@@ -26,6 +26,7 @@ import { readTriageSessionTitle } from './sessionTitle.js';
 import { TRIAGE_DETAIL_PAGE_KIND_V1, useTriageDetailAvailableTabs, type TriageDetailTabSelectionV1 } from './body.js';
 import { useTriageUnlinkLinkedEntry } from '../../sessions/cockpit/useUnlinkLinkedEntry.js';
 import { TRIAGE_ENTRY_SESSION_COMPANION_V1 } from '../../composer/openEntryDetails.js';
+import type { TriageEntryDetailLaunchInputV1 } from '../../composer/entryDetailLaunchInput.js';
 
 const FILL_STYLE = Object.freeze({ flex: 1, minWidth: 0, minHeight: 0 });
 
@@ -169,6 +170,7 @@ export function TriageSessionPanel(props: Readonly<{
  * Overview | Session above it (plan 05 §4.6; lab t1), and without one it is exactly the source's detail.
  */
 export function TriageDetailWholeBody(props: Readonly<{
+  companionInput?: TriageEntryDetailLaunchInputV1;
   sessions: readonly TriageLinkedSessionProjectionV1[];
   entryRef: TriageEntryRefV1;
   sourceInstanceId?: string;
@@ -190,6 +192,7 @@ export function TriageDetailWholeBody(props: Readonly<{
     <Tabs
       presentation="page"
       pageKind={TRIAGE_DETAIL_PAGE_KIND_V1}
+      companionInput={props.companionInput}
       phonePresented={props.pushed}
       value={value}
       onValueChange={(value) => {

@@ -9,11 +9,10 @@ import {
   useSurfaceContext,
 } from '@happier-dev/plugin-ui';
 
-import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
-import { selectObservationInstance } from '../../corpus/selection/selectObservationInstance.js';
+import { parseTriageEntryDetailLaunchInput } from '../../composer/entryDetailLaunchInput.js';
 import type { TriageListLaneV1 } from '../../projection/listWindow.js';
-import { useTriageConfiguredSources } from '../configuration/useTriageConfiguredSources.js';
 import { parseTriageRouteSubPathV1 } from '../navigation/location.js';
+import { sameTriageEntryRefV1 } from '../state/surface.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import { useTriageEntryDetail } from './useTriageEntryDetail.js';
 import { useTriagePostMutationRow } from './useTriagePostMutationRow.js';
@@ -25,36 +24,20 @@ const EMPTY_LANES: readonly TriageListLaneV1[] = Object.freeze([]);
  * The entry's linked Session beside its story (Plan T `both`): the detail's Session item opens this companion,
  * so the live chat sits next to the entry instead of replacing it.
  *
- * It decides nothing of its own. Which entry comes from the opening page's current location (the host's
- * `openedFrom`, read through Triage's one route codec). The page's selected connection travels with it; older
- * identity-only locations use configured-source admission. The entry itself is the one exact read the
- * page uses for an entry outside its window, and its linked Sessions come from the detail's one reader. It reads
- * no list: the side pane shares no window with the page and must not walk one.
+ * The opening page supplies its admitted selection privately through `openedFrom`. The location
+ * confirms which entry the page is showing. The pane uses the existing exact entry and linked Session
+ * readers, so it does not need its own list window or connection selection.
  */
 function TriageEntrySessionCompanion(): React.ReactElement {
   const { openedFrom } = useSurfaceContext();
   const subPath = openedFrom?.subPath ?? null;
-  const route = React.useMemo(
-    () =>
-      parseTriageRouteSubPathV1(subPath ?? undefined),
-    [subPath],
-  );
-  const entryRef = route.selection;
-  const configured = useTriageConfiguredSources();
+  const launchInput = openedFrom?.launchInput;
   const selection = React.useMemo(() => {
-    if (entryRef === null) return null;
-    // The page already selected this exact connection; never substitute another when it disappears.
-    if (route.selectionSourceInstanceId !== undefined) {
-      return { sectionId: null, entryRef, sourceInstanceId: route.selectionSourceInstanceId };
-    }
-    const active = configured.sources
-      .filter((source) => sameTriageSourceIdentity(source.configured.instance.source, entryRef.source))
-      .map((source) => source.sourceInstanceId);
-    const selected = selectObservationInstance([], active, null, { allowUnobserved: true });
-    return selected.kind === 'none'
-      ? null
-      : { sectionId: null, entryRef, sourceInstanceId: selected.sourceInstanceId };
-  }, [configured.sources, entryRef, route.selectionSourceInstanceId]);
+    const entryRef = parseTriageRouteSubPathV1(subPath ?? undefined).selection;
+    const parsed = parseTriageEntryDetailLaunchInput(launchInput);
+    if (entryRef === null || parsed.status !== 'valid' || !sameTriageEntryRefV1(entryRef, parsed.input.entryRef)) return null;
+    return { sectionId: null, entryRef, sourceInstanceId: parsed.input.sourceInstance.sourceInstanceId };
+  }, [launchInput, subPath]);
   const { row, readFailed } = useTriagePostMutationRow(null, EMPTY_LANES, selection);
   const source = React.useMemo(() => {
     const selected =
@@ -74,7 +57,7 @@ function TriageEntrySessionCompanion(): React.ReactElement {
   }, [row]);
   const detail = useTriageEntryDetail(source);
 
-  if (entryRef === null || (configured.loaded && selection === null)) {
+  if (selection === null) {
     return (
       <EmptyState
         titleKey="plugins.triage.surface.detail.session.companion.noEntry"

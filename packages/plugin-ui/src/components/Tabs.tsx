@@ -107,9 +107,10 @@ export type TabsProps = Readonly<{
    */
   lead?: ReactNode;
   children?: ReactNode;
-}> & (Readonly<{ presentation?: 'tabs'; pageKind?: never }> | Readonly<{
+}> & (Readonly<{ presentation?: 'tabs'; pageKind?: never; companionInput?: never }> | Readonly<{
   presentation: 'page';
   pageKind: PluginUiPageNavigationV1['pageKind'];
+  companionInput?: PluginUiPageNavigationV1['companionInput'];
   /** Collection supplies its existing pushed-detail fact; full pages omit it. */
   phonePresented?: boolean;
 }>);
@@ -126,11 +127,12 @@ function TabsRoot(props: TabsProps): ReactElement {
   const publishing = !publicationFailed && props.presentation === 'page' && props.tabList !== 'host'
     && (host?.surfaceActive ?? true) && (ancestor?.active ?? true)
     && host?.hostApi.version().methods.includes('setPageNavigation') === true;
-  // Portable presentation facts alone determine publication identity. Theme,
+  // Page navigation and companion input determine publication identity. Theme,
   // callback, body and host placement updates must not re-register the Items.
   const candidate: PluginUiPageNavigationV1 | null = props.presentation === 'page' ? {
     pageKind: props.pageKind,
     value: props.value,
+    ...(props.companionInput === undefined ? {} : { companionInput: props.companionInput }),
     ...(props.phonePresented === undefined ? {} : { phonePresented: props.phonePresented }),
     items: Children.toArray(props.children)
       .filter((child): child is ReactElement<TabsItemProps> => isValidElement(child))

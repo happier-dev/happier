@@ -3,6 +3,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
 import { PluginUiIconTokenV1Schema } from '../contributions/ui/tokens.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
+import { PluginUiLaunchInputV1Schema } from './semanticCommands.js';
 
 const value = z.string().check(z.minLength(1));
 const identity = asProtocolZod(PluginContributionIdentityV1Schema);
@@ -23,6 +24,8 @@ export const PluginUiPageNavigationV1Schema = lazyZodSchema(() => z.strictObject
   value,
   items: z.array(PluginUiPageNavigationItemV1Schema),
   phonePresented: z.optional(z.boolean()),
+  /** Current input for a companion opened from this mounted page. */
+  companionInput: z.optional(PluginUiLaunchInputV1Schema),
 }));
 export type PluginUiPageNavigationV1 = z.infer<typeof PluginUiPageNavigationV1Schema>;
 export const PluginUiSetPageNavigationRequestV1Schema = lazyZodSchema(() => z.strictObject({

@@ -12201,7 +12201,10 @@ mount/target identity, Account scope and readiness facts remain unchanged.
 Page-mode Tabs extends the current development 1.1 installed method set with
 `setPageNavigation` and closed optional `page.navigation` context metadata.
 Matching development Protocol, SDK and host readers consume the descriptor,
-placement and controlled-selection projection together. The existing 1.0 context
+placement and controlled-selection projection together. The closed declaration
+also accepts bounded `companionInput` for the mounted page's companion. Omitting
+it preserves the page launch input as the default. The chrome projection omits
+the private input. The existing 1.0 context
 presentation omits this metadata, and hosts without the installed operation keep
 ordinary local Tabs. This adds no runtime ABI or wire epoch. The inspected
 `../0.2` frontier at `b06b31d66f9474bcf322627ae63ecf6a37d4a9a2` has no Plugin SDK

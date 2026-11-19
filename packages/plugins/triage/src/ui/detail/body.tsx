@@ -16,6 +16,7 @@ import { TriageDetailPageScrollProvider, TriageDetailPanelNavigationProvider, tr
 import { readTriageDetailTabSummaryV1, type TriageDetailTabV1 } from './tabs.js';
 import { buildTriageDetailSurfaceInputV1 } from './input.js';
 import { TRIAGE_ENTRY_SESSION_COMPANION_V1 } from '../../composer/openEntryDetails.js';
+import type { TriageEntryDetailLaunchInputV1 } from '../../composer/entryDetailLaunchInput.js';
 
 /** One source detail mount: the admitted surface, its strict input and its identity. */
 export type TriageDetailSourceMountV1 = Readonly<{
@@ -160,6 +161,7 @@ function SourceDetailInstance(props: Readonly<{
  * activity, while the live Session slot retires when the reader leaves it.
  */
 export function TriageDetailTabbedBody(props: Readonly<{
+  companionInput?: TriageEntryDetailLaunchInputV1;
   tabSelection?: TriageDetailTabSelectionV1;
   actionsNavigation?: TriageDetailActionsNavigationV1;
   pushed?: boolean;
@@ -249,6 +251,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
       <Tabs
         presentation="page"
         pageKind={TRIAGE_DETAIL_PAGE_KIND_V1}
+        companionInput={props.companionInput}
         // The pushed detail's title and facts: above the tab row where it is drawn here, else leading the story.
         {...(pageLead === null ? {} : { lead: pageLead })}
         phonePresented={props.pushed}

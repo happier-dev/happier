@@ -39,10 +39,9 @@ export function usePluginDetailNavigation(input: Readonly<{
     title: string;
     openSurface?: PluginSurfaceOpenHandler;
     /**
-     * The page's own surface input as it is now: its launch input and current location. A companion opened from this
-     * page receives the launch input as its own, and reads both through `openedFrom` in its surface context, so it
-     * shows the page's entity without a second selection. (A pane has no location grammar: the resolver refuses a
-     * `subPath` for a non-page container, so the location travels only as that read.)
+     * The page's launch input and current location. A companion opened from this page receives the current
+     * declared companion input or the page's launch input as its own. It reads the effective input and
+     * page location through `openedFrom` in its surface context. A pane opens without a `subPath`.
      */
     surfaceInput?: Readonly<{ launchInput?: PluginSurfaceOpenRequest['input']; subPath: string | null }>;
 }>) {
@@ -52,14 +51,11 @@ export function usePluginDetailNavigation(input: Readonly<{
     const snapshot = React.useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
     const navigation = snapshot.navigation;
     const pageKind = navigation ? buildQualifiedPluginContributionKey(navigation.pageKind) : input.identity;
-    // Read at open time so selecting a companion never waits on a re-render; the published model carries the same values.
-    const surfaceInputRef = React.useRef(input.surfaceInput);
-    surfaceInputRef.current = input.surfaceInput;
-    const pageLaunchInput = input.surfaceInput?.launchInput;
+    const companionInput = navigation?.companionInput === undefined ? input.surfaceInput?.launchInput : navigation.companionInput;
     const pageSubPath = input.surfaceInput?.subPath ?? null;
     const openedFrom = React.useMemo(() => navigation ? Object.freeze({ pageKind: navigation.pageKind,
-        ...(pageLaunchInput === undefined ? {} : { launchInput: pageLaunchInput }), subPath: pageSubPath }) : undefined,
-    [navigation?.pageKind.pluginId, navigation?.pageKind.localId, Boolean(navigation), pageLaunchInput, pageSubPath]);
+        ...(companionInput === undefined ? {} : { launchInput: companionInput }), subPath: pageSubPath }) : undefined,
+    [navigation?.pageKind.pluginId, navigation?.pageKind.localId, Boolean(navigation), companionInput, pageSubPath]);
     const declaredItems = navigation?.items;
     const items = React.useMemo(() => declaredItems ? resolveDetailNavigationItems({ scope: 'plugin', items: declaredItems }) : EMPTY_ITEMS, [declaredItems]);
     const pages = React.useMemo(() => items.filter(item => item.navigation.kind !== 'companion'), [items]);
@@ -75,8 +71,7 @@ export function usePluginDetailNavigation(input: Readonly<{
         companion: { items: companions, activeId: null, close: () => {}, select: id => {
             const item = navigation?.items.find(item => item.value === id);
             if (!item || item.kind === 'page') return;
-            const pageInput = surfaceInputRef.current?.launchInput;
-            void input.openSurface?.({ destination: item.companion, ...(pageInput === undefined ? {} : { input: pageInput }) });
+            void input.openSurface?.({ destination: item.companion, ...(companionInput === undefined ? {} : { input: companionInput }) });
         } },
         phoneChrome: execute => {
             if (!model) return null;

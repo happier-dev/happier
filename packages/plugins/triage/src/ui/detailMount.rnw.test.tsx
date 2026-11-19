@@ -917,6 +917,7 @@ let currentHarness: ReturnType<typeof createHarness> | null = null;
  * differently than it parses it.
  */
 let lastPageLocation: Readonly<{ subPath: string; backLocation: string | undefined }> | null = null;
+let lastPageNavigation: PluginUiPageNavigationV1 | null = null;
 
 async function mountShell(
     options: Readonly<{
@@ -1013,6 +1014,7 @@ async function mountShell(
         await harness.seedLinkedSessions(options.linkedSessionCount);
     }
     lastPageLocation = null;
+    lastPageNavigation = null;
     let fixture!: PluginUiTestkit;
     let failFixRead = options.fixPullRequestState === 'unreachable';
     // The real host records the declaration before publishing its async context
@@ -1082,6 +1084,7 @@ async function mountShell(
             handlers: {
                 ...(options.localNavigation ? {} : { setPageNavigation: async ({ navigation }: { navigation: PluginUiPageNavigationV1 | null }) => {
                     pageNavigation = navigation;
+                    lastPageNavigation = navigation;
                     options.onPageNavigation?.(navigation);
                     if (!fixture) return;
                     const current = await fixture.context.hostApi.context();
@@ -1254,7 +1257,14 @@ function harnessDataClient(harness: NonNullable<typeof currentHarness>): PluginU
     };
 }
 
-async function mountEntrySessionCompanion(openedFrom: Readonly<{ subPath: string | null }> | undefined,
+function readMountedCompanionOpener() {
+    const subPath = lastPageLocation?.subPath;
+    const launchInput = lastPageNavigation?.companionInput;
+    if (subPath === undefined || launchInput === undefined) throw new Error('The mounted detail did not publish a companion opener');
+    return { subPath, launchInput };
+}
+
+async function mountEntrySessionCompanion(openedFrom: Readonly<{ subPath: string | null; launchInput?: JsonValue }> | undefined,
     options: Readonly<{ ownScope?: boolean; paneHeader?: boolean }> = {}): Promise<PluginUiTestkit> {
     const harness = currentHarness;
     if (harness === null) throw new Error('Mount the shell first');
@@ -1274,7 +1284,7 @@ async function mountEntrySessionCompanion(openedFrom: Readonly<{ subPath: string
                 mount: { kind: 'destination', destination: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: 'entry-linked-session' },
                     container: 'rightSidebarTab' },
                 ...(openedFrom === undefined ? {} : { openedFrom: {
-                    pageKind: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: 'entry' }, subPath: openedFrom.subPath,
+                    pageKind: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: 'entry' }, ...openedFrom,
                 } }),
             }),
             // `ownScope`: the side pane's own mount, which shares nothing with the page (the live host case).
@@ -2577,26 +2587,55 @@ describe('opening a row into the source detail', () => {
         await vi.waitFor(() => expect(descriptors.at(-1)?.items).toContainEqual(expect.objectContaining({
             value: 'session', kind: 'both', companion: { pluginId: 'happier.triage', localId: 'entry-linked-session' },
         })));
+        expect(descriptors.at(-1)?.companionInput).toMatchObject({ sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE } });
     });
 
-    it('keeps the opening detail connection in an independently mounted companion', async () => {
+    it('keeps the opening detail connection private and follows a same-entry connection change', async () => {
         const entryRef = { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' };
-        const shell = await mountShell({ activeSurface: true, secondInstance: true, linkedSessionCount: 1,
-            launchInput: buildTriageEntryDetailLaunchInput({ entryRef,
-                sourceInstance: { source: SOURCE, sourceInstanceId: SECOND_INSTANCE } }) as unknown as JsonValue });
+        const launch = (sourceInstanceId: string) =>
+            buildTriageEntryDetailLaunchInput({ entryRef, sourceInstance: { source: SOURCE, sourceInstanceId } }) as unknown as JsonValue;
+        const deliveredLaunch = { current: launch(SECOND_INSTANCE) };
+        const pageLocationRequests: string[] = [];
+        const shell = await mountShell({ activeSurface: true, secondInstance: true, linkedSessionCount: 1, deliveredLaunch,
+            onPageLocationRequest: subPath => pageLocationRequests.push(subPath) });
         await vi.waitFor(() => expect(currentHarness?.readDetailInstanceIds).toContain(SECOND_INSTANCE));
+        await vi.waitFor(() => expect(lastPageNavigation?.companionInput).toEqual(deliveredLaunch.current));
+        const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: entryRef });
+        expect(lastPageLocation?.subPath).toBe(subPath);
         const before = currentHarness!.readDetailInstanceIds.length;
-        const companion = await mountEntrySessionCompanion({ subPath: lastPageLocation?.subPath ?? null }, { ownScope: true });
+        const companion = await mountEntrySessionCompanion(readMountedCompanionOpener(), { ownScope: true });
         await vi.waitFor(async () => {
             await expect(companion.getByRole('group', { name: 'Session session-linked-001' })).resolves.toBeDefined();
         });
         expect(currentHarness!.readDetailInstanceIds.slice(before)).toEqual([SECOND_INSTANCE]);
+
+        const companionContext = await companion.context.hostApi.context();
+        const openedFrom = companionContext.openedFrom!;
+        const exactReadsBeforeMismatch = currentHarness!.exactReads.length;
+        const otherSubPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: { ...entryRef, entryId: '18' } });
+        await act(async () => { await companion.updateSurface({ ...companionContext, openedFrom: { ...openedFrom, subPath: otherSubPath } }); });
+        expect(currentHarness!.exactReads).toHaveLength(exactReadsBeforeMismatch);
+        await expect(companion.queryByRole('group', { name: 'Session session-linked-001' })).resolves.toBeUndefined();
+
+        await act(async () => { await shell.updatePageLocation(subPath); });
+        const priorRequests = pageLocationRequests.slice();
+        deliveredLaunch.current = launch(INSTANCE);
+        await act(async () => { await shell.updateSurface(surfaceContext()); });
+        await vi.waitFor(() => expect(lastPageNavigation?.companionInput).toEqual(deliveredLaunch.current));
+        expect(pageLocationRequests).toEqual(priorRequests);
+        const afterPageRead = currentHarness!.readDetailInstanceIds.length;
+        await act(async () => { await companion.updateSurface({ ...companionContext,
+            openedFrom: { ...openedFrom, ...readMountedCompanionOpener() } }); });
+        await vi.waitFor(async () => {
+            await expect(companion.getByRole('group', { name: 'Session session-linked-001' })).resolves.toBeDefined();
+        });
+        expect(currentHarness!.readDetailInstanceIds.slice(afterPageRead)).toEqual([INSTANCE]);
     });
 
     it('continues linked Sessions in the companion and selects one beyond the first page', async () => {
         const shell = await mountShell({ activeSurface: true, linkedSessionCount: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1 });
         await openTheRow(shell);
-        const companion = await mountEntrySessionCompanion({ subPath: lastPageLocation?.subPath ?? null }, { ownScope: true, paneHeader: true });
+        const companion = await mountEntrySessionCompanion(readMountedCompanionOpener(), { ownScope: true, paneHeader: true });
         await vi.waitFor(async () => {
             await expect(companion.getByRole('button', { name: 'Load more' })).resolves.toBeDefined();
         });
@@ -2620,7 +2659,7 @@ describe('opening a row into the source detail', () => {
         const subPath = lastPageLocation?.subPath ?? null;
         expect(subPath).not.toBeNull();
         await expect(shell.queryByRole('group', { name: 'Session session-linked-001' })).resolves.toBeUndefined();
-        const companion = await mountEntrySessionCompanion({ subPath });
+        const companion = await mountEntrySessionCompanion(readMountedCompanionOpener());
         await vi.waitFor(async () => {
             await expect(companion.getByRole('group', { name: 'Session session-linked-001' })).resolves.toBeDefined();
         });
@@ -2629,7 +2668,7 @@ describe('opening a row into the source detail', () => {
     it('names the companion’s Session in its pane header, with Open session and Unlink beside it', async () => {
         const shell = await mountShell({ activeSurface: true, linkedSessionCount: 1 });
         await openTheRow(shell);
-        const companion = await mountEntrySessionCompanion({ subPath: lastPageLocation?.subPath ?? null }, { paneHeader: true });
+        const companion = await mountEntrySessionCompanion(readMountedCompanionOpener(), { paneHeader: true });
         await vi.waitFor(async () => {
             await expect(companion.getByRole('group', { name: 'Session session-linked-001' })).resolves.toBeDefined();
         });
@@ -2645,16 +2684,18 @@ describe('opening a row into the source detail', () => {
         await openTheRow(shell);
         const subPath = lastPageLocation?.subPath ?? null;
         expect(subPath).not.toBeNull();
-        const companion = await mountEntrySessionCompanion({ subPath }, { ownScope: true });
+        const companion = await mountEntrySessionCompanion(readMountedCompanionOpener(), { ownScope: true });
         await vi.waitFor(async () => {
             await expect(companion.getByRole('group', { name: 'Session session-linked-001' })).resolves.toBeDefined();
         });
     });
 
-    it('says so when the opening page’s entry has no linked Session', async () => {
-        const shell = await mountShell({ activeSurface: true });
+    it('shows an empty companion after unlinking the entry’s last Session', async () => {
+        const shell = await mountShell({ activeSurface: true, linkedSessionCount: 1 });
         await openTheRow(shell);
-        const companion = await mountEntrySessionCompanion({ subPath: lastPageLocation?.subPath ?? null });
+        const companion = await mountEntrySessionCompanion(readMountedCompanionOpener(), { paneHeader: true });
+        await vi.waitFor(async () => expect(await companion.getByRole('button', { name: 'Unlink' })).toBeDefined());
+        await act(async () => { await companion.press(await companion.getByRole('button', { name: 'Unlink' })); });
         await vi.waitFor(async () => {
             await expect(companion.getByText('No Session is linked to this entry.')).resolves.toBeDefined();
         });

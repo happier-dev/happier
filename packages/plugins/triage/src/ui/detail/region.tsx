@@ -61,6 +61,7 @@ import {
   type TriageListRowV1,
 } from '../../projection/listWindow.js';
 import { buildTriageEntryAttachmentPresentation } from '../../composer/mutationPlan.js';
+import { buildTriageEntryDetailLaunchInput } from '../../composer/entryDetailLaunchInput.js';
 import { projectTriageDispatchContext } from '../../composer/resolveForDispatch.js';
 import { useTriageTierBEvidenceInsertion } from '../../composer/tierBEvidenceInsertion.js';
 import type { TriageMountedActionsV1 } from '../actions/useTriageActions.js';
@@ -919,6 +920,12 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     next: activityNext === null ? null : <TriageActivityNext sentence={activityNext} text={text} />,
     ...(activityTailHeading === undefined ? {} : { tailHeading: activityTailHeading }),
   }), [activityNext, activityTailHeading, activitySessionEvents, header.linkedSessions, liveSession, refreshGeneration, reviewEntry, selectInlineSession, text]);
+  const companionInput = detail?.kind === 'ready' && header.linkedSessions.length > 0
+    ? buildTriageEntryDetailLaunchInput({
+        entryRef: detail.input.observation.entryRef,
+        sourceInstance: detail.input.instance.instance,
+      })
+    : undefined;
   const admittedSurface = lookup.kind === 'admitted' ? lookup.surface : null;
   const entryMount = React.useMemo<TriageDetailSourceMountV1 | null>(() => (
     detail?.kind === 'ready' && admittedSurface !== null
@@ -1133,6 +1140,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
               key={entryMount.instanceKey}
               tabs={composition.tabs}
               tabSelection={tabSelection}
+              companionInput={companionInput}
               {...(sourceActions === undefined ? {} : { actionsNavigation })}
               entry={entryMount}
               fixPullRequest={fixPullRequest.mount}
@@ -1199,6 +1207,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
           key={deriveTriageDetailMountInstanceKey(row.entryRef, detail.input.instance.instance.sourceInstanceId)}
           sessions={header.linkedSessions}
           entryRef={row.entryRef}
+          companionInput={companionInput}
           onUnlinked={completeUnlink}
           tabSelection={tabSelection}
           selectedSessionId={selectedSessionId}

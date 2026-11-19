@@ -98,3 +98,34 @@ it('opens a both companion with the page own launch input and publishes the page
     ]);
     await screen.unmount();
 });
+
+it('follows the mounted page’s private companion input without publishing it in navigation chrome', async () => {
+    const descriptor: PluginUiPageNavigationV1 = { pageKind: { pluginId: 'acme.review', localId: 'detail' }, value: 'overview', items: [
+        { value: 'overview', title: 'Overview', kind: 'page', phonePlacement: 'bar' },
+        { value: 'notes', title: 'Notes', kind: 'both', companion: { pluginId: 'acme.review', localId: 'notes' }, phonePlacement: 'bar' },
+    ] };
+    const lifetime = {};
+    const opened = vi.fn(() => ({ ok: true as const }));
+    const surfaceInput = { subPath: 'reviews/r-1' };
+    let host!: ReturnType<typeof usePluginDetailNavigation>;
+    function Fixture() {
+        host = usePluginDetailNavigation({ identity: 'acme.review/detail', lifetime, scope: null, live: true, presented: true,
+            title: 'Review', surfaceInput, openSurface: opened });
+        return null;
+    }
+    const screen = await renderScreen(<AppPaneProvider><Fixture /></AppPaneProvider>);
+    const firstInput = { reviewId: 'r-1', connection: 'first' };
+    const secondInput = { reviewId: 'r-1', connection: 'second' };
+    await act(async () => { host.owner.setPageNavigation({ navigation: { ...descriptor, companionInput: firstInput } }); });
+    expect(host.model?.openedFrom).toEqual({ pageKind: descriptor.pageKind, launchInput: firstInput, subPath: surfaceInput.subPath });
+    const projection = host.projection;
+    expect(projection).not.toHaveProperty('companionInput');
+    await act(async () => { host.owner.setPageNavigation({ navigation: { ...descriptor, companionInput: secondInput } }); });
+    expect(host.model?.openedFrom).toEqual({ pageKind: descriptor.pageKind, launchInput: secondInput, subPath: surfaceInput.subPath });
+    expect(host.projection).toBe(projection);
+    await act(async () => { host.readColumn('side').selectTab!('notes'); });
+    expect(opened).toHaveBeenCalledWith({ destination: { pluginId: 'acme.review', localId: 'notes' }, input: secondInput });
+    await act(async () => { host.owner.clear(); });
+    expect(host.model?.openedFrom).toBeUndefined();
+    await screen.unmount();
+});

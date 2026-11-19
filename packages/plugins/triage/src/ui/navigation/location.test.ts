@@ -72,15 +72,15 @@ function hostApiWith(input: Readonly<{
 }
 
 describe('PRs & Issues route owner', () => {
-  it('carries the selected detail connection to the companion and restores that selection', () => {
+  it('shares only the selected entry ref and retains the live connection on settlement', () => {
     const selection = { sectionId: null, entryRef: entryRef(), sourceInstanceId: '22222222-2222-4222-8222-222222222222' };
     const state = { ...TRIAGE_SURFACE_INITIAL_STATE_V1, selection };
-    const route = readTriageRouteLensV1(state);
-    const decoded = parseTriageRouteSubPathV1(buildTriageRouteSubPathV1(route));
-    expect(decoded).toMatchObject({ selection: selection.entryRef, selectionSourceInstanceId: selection.sourceInstanceId });
-    expect(applyTriageSettledSubPathV1({ candidate: TRIAGE_SURFACE_INITIAL_STATE_V1,
-      previous: TRIAGE_SURFACE_INITIAL_STATE_V1, subPath: buildTriageRouteSubPathV1(route), rowsByKey: new Map() }).selection).toEqual(selection);
-    expect(parseTriageRouteSubPathV1(buildTriageRouteSubPathV1({ ...decoded, selection: null })).selectionSourceInstanceId).toBeUndefined();
+    const shared = lens({ selection: selection.entryRef });
+    const subPath = buildTriageRouteSubPathV1(readTriageRouteLensV1(state));
+    expect(subPath).toBe(buildTriageRouteSubPathV1(shared));
+    expect(parseTriageRouteSubPathV1(`${subPath}/ei,${selection.sourceInstanceId}`)).toEqual(shared);
+    expect(applyTriageSettledSubPathV1({ candidate: state,
+      previous: TRIAGE_SURFACE_INITIAL_STATE_V1, subPath, rowsByKey: new Map() }).selection).toEqual(selection);
   });
   it('shares source and unit facets without configured-instance identities', async () => {
     const value = lens({ filters: { ...TRIAGE_LIST_NO_FILTERS_V1, sources: [
