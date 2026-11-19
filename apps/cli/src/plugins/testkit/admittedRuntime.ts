@@ -71,7 +71,7 @@ export function requireDaemonEntrypoint(manifest: Readonly<{ entrypoints?: Reado
 
 export async function retireAdmittedPluginRuntimeRegistry(params: Readonly<{
     controller: PluginReloadController;
-    registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>;
+    registry: ResolvedExecutablePluginRuntimeRegistry;
     happyHomeDir?: string;
     generationAuthority?: RuntimeOptions['generationAuthority'];
 }>) {

@@ -12,7 +12,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createResolvedContributionRegistry } from '../../../plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveBuiltInContributions } from '../../../plugins/projection/registry/resolveBuiltInContributions';
-import { resolveExecutablePluginRuntimeRegistry } from '../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { resolveBackendEngineAdapterResolution } from './engineRegistry';
 
 const OH_MY_PI_AGENT_LOCAL_ID = 'ohmypi';
@@ -62,7 +62,7 @@ describe('engineRegistry (Oh My Pi External Sessions)', () => {
       const envScope = createEnvKeyScope(['PI_CODING_AGENT_DIR']);
       envScope.patch({ PI_CODING_AGENT_DIR: agentDir });
       let runtimeRegistry:
-        | Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>
+        | ResolvedExecutablePluginRuntimeRegistry
         | null = null;
       try {
         runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({

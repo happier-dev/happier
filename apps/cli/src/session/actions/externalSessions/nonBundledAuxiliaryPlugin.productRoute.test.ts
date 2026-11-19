@@ -15,7 +15,7 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { retireAdmittedPluginRuntimeRegistry } from '@/plugins/testkit/admittedRuntime';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
@@ -529,7 +529,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         },
       };
     });
-    let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+    let runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     let linkedMetadata: unknown = null;
     try {
       await materializeAuxiliaryOnlyPlugin(sourceRoot);
@@ -691,7 +691,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
   it('preserves the optional takeover sibling for a real-loader auxiliary-only Agent', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-external-takeover-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-external-takeover-plugin-'));
-    let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+    let runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     const custodyWarning = vi.spyOn(logger, 'warn');
     try {
       await materializeAuxiliaryOnlyPlugin(pluginRoot, '1.0.0', PLUGIN_ID, true);
@@ -736,7 +736,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
       join(tmpdir(), 'happier-external-source-key-unavailable-home-'),
     );
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-external-source-key-plugin-'));
-    let unownedRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+    let unownedRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     try {
       // The current-global configured-source owner captures its authenticated
       // Home when the registry is built, before demand activation.
@@ -1001,7 +1001,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
   it('prepares only an idle hosted persisted takeover retry with requested terminal placement', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-hosted-takeover-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-hosted-takeover-plugin-'));
-    let unownedRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+    let unownedRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     try {
       await materializeAuxiliaryOnlyPlugin(pluginRoot, '1.0.0', PLUGIN_ID, true, true);
       await seedCurrentLocalPathPluginFixture({
@@ -1111,7 +1111,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
   it('consumes the real-loader takeover sibling through a declarative ACP primary for direct and persisted spawn', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-external-takeover-acp-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-external-takeover-acp-plugin-'));
-    let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+    let runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     try {
       await materializeAuxiliaryOnlyPlugin(
         pluginRoot,
@@ -1230,7 +1230,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
     const replacementPluginRoot = await mkdtemp(
       join(tmpdir(), 'happier-external-product-plugin-replacement-'),
     );
-    let unownedRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+    let unownedRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     try {
       await materializeAuxiliaryOnlyPlugin(pluginRoot);
       await seedCurrentLocalPathPluginFixture({

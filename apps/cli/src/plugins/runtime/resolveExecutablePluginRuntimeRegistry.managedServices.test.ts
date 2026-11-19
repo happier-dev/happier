@@ -34,6 +34,7 @@ import {
 
 import {
     resolveExecutablePluginRuntimeRegistry,
+    type ResolvedExecutablePluginRuntimeRegistry,
 } from './resolveExecutablePluginRuntimeRegistry';
 import {
     resolveCurrentInstalledPluginGenerationRuntimeExecutable,
@@ -86,7 +87,7 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
         const pluginId = 'acme.machine-native-helper';
         const marker = join(happyHomeDir, 'daemon-identity.json');
         const previousPath = process.env.PATH;
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | undefined;
         let capture: { release(): Promise<void> } | undefined;
         try {
             await mkdir(toolRoot);
@@ -144,7 +145,7 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
         const marker = join(happyHomeDir, 'helper-ran');
         const diagnostic = join(happyHomeDir, 'helper-refusal.json');
         const previousPath = process.env.PATH;
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | undefined;
         const productions: Array<{ release(): Promise<void> }> = [];
         let isolationEnabled = false;
         let requesterCurrent = true;
@@ -268,7 +269,7 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
             }),
         };
         const service = await firstLease.registry.projectManagedServices.superviseProject(input);
-        let second: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let second: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             second = await resolveExecutablePluginRuntimeRegistry({
                 happyHomeDir, contributes: createResolvedContributionRegistry({}), generation: 2,
@@ -323,7 +324,7 @@ describe('resolveExecutablePluginRuntimeRegistry managed-services production own
         const failureReceipt = join(happyHomeDir, 'native-failed');
         const logsReceipt = join(happyHomeDir, 'native-logs.json');
         const previousPath = process.env.PATH;
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
             await mkdir(toolRoot);

@@ -4,7 +4,7 @@ import axios from '@/api/client/credentialAxios';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createPortableConnectedAccountAuthenticationHttpFixture } from '@/testkit/connectedAccountAuthentication';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createHappierMcpServer } from './createHappierMcpServer';
@@ -34,7 +34,7 @@ it('retains explicit Account authentication review and original cancellation bef
             causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' as const },
         }),
     } satisfies Pick<HappyMcpSessionClient, 'getActiveTurnAdmissionWitness' | 'getActiveTurnPermissionWitness'>);
-    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
     let runtime: ReturnType<typeof createHappierMcpServer> | undefined;
     let interceptor: number | undefined;
     try {

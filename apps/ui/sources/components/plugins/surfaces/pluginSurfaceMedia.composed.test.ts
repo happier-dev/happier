@@ -25,7 +25,7 @@ import { registerDaemonContributionRegistryProjectionHandler } from '../../../..
 import type { RpcHandler } from '../../../../../cli/src/api/rpc/types';
 import { createMachineLiveStreamCaptureRegistry } from '../../../../../cli/src/daemon/peer/mediation/stream/captureRegistry';
 import { unavailableMachineLiveStreamCaptureAdapter } from '../../../../../cli/src/daemon/peer/mediation/stream/captureAdapter';
-import { resolveExecutablePluginRuntimeRegistry } from '../../../../../cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '../../../../../cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createPluginSurfaceActionHostApi } from './pluginSurfaceActionDispatch';
 import { createPluginSurfaceLiveStreamOwner } from './pluginSurfaceLiveStream';
 import { createPluginSurfaceStoredImageOwner } from './pluginSurfaceStoredImage';
@@ -64,7 +64,7 @@ it('uses the public UI client of installed external plugins for per-view consent
     const image: SessionImageMediaReferenceV1 = { mediaId: 'session-image', mediaKind: 'image', width: 1, height: 1,
         sizeBytes: bytes.byteLength, file: { sessionId: 'session-media', storage: 'session', path: imagePath,
             sha256: createHash('sha256').update(bytes).digest('hex'), mimeType: 'image/png' } };
-    let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let runtime: ResolvedExecutablePluginRuntimeRegistry | undefined;
     try {
         const credentials = { token: 'fixture-media-account', encryption: null };
         vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);

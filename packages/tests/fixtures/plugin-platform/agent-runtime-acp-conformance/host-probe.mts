@@ -7,7 +7,7 @@ import {
   createLocalPathPluginDistributionIdentity,
   createPluginTrustRecord,
 } from '../../../../../apps/cli/src/plugins/store/install/trustIdentity';
-import { resolveExecutablePluginRuntimeRegistry } from '../../../../../apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '../../../../../apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createPluginReloadController } from '../../../../../apps/cli/src/plugins/runtime/reload/controller';
 import { createDaemonPluginRegistryRuntimeLifecycle } from '../../../../../apps/cli/src/plugins/runtime/reload/registryRuntimeLifecycle';
 import { createMutableApiSessionClientFixture } from '../../../../../apps/cli/src/testkit/backends/sessionFixtures';
@@ -76,7 +76,7 @@ try {
   await installReloadController.shutdown();
 }
 
-type RuntimeRegistry = Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>;
+type RuntimeRegistry = ResolvedExecutablePluginRuntimeRegistry;
 type Operations = Record<string, (...args: never[]) => unknown>;
 type Opened = Readonly<{
   registry: RuntimeRegistry;

@@ -510,7 +510,7 @@ async function createExecutableInstallFixture(
 }
 
 async function invokeIdentity(
-  registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>,
+  registry: ResolvedExecutablePluginRuntimeRegistry,
   pluginId: string,
 ) {
   return await registry.targetActionInvocations?.invoke({

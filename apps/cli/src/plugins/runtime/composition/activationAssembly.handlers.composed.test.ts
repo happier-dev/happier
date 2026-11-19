@@ -5,7 +5,7 @@ import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/ad
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createCommittedContributedActionInvoker } from '../invocation/actions/createCommittedContributedActionDeps';
-import { resolveExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
 
 it('keeps retained Action handlers callable after the predecessor runtime releases them', async () => {
     const pluginId = 'acme.retained-handlers';
@@ -31,7 +31,7 @@ it('keeps retained Action handlers callable after the predecessor runtime releas
             ].join('\n') },
         }],
     });
-    let successor: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let successor: ResolvedExecutablePluginRuntimeRegistry | undefined;
     const execute = (registry: typeof fixture.registry) => createActionExecutor({
         ...createUnavailableActionTransportDeps(),
         invokeContributedAction: createCommittedContributedActionInvoker({

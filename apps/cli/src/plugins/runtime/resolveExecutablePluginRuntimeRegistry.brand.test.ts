@@ -11,7 +11,7 @@ import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 const PLUGIN_ID = 'acme.brand-runtime';
 
@@ -148,7 +148,7 @@ async function resolveFixtureRuntimeInputs(fixture: Readonly<{
 describe('executable plugin portable brand Resource projection', () => {
     it('binds the manifest declaration to the exact admitted immutable Resource facts', async () => {
         const fixture = await seedFixture(true);
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             const inputs = await resolveFixtureRuntimeInputs(fixture);
             runtime = await resolveExecutablePluginRuntimeRegistry({
@@ -189,7 +189,7 @@ describe('executable plugin portable brand Resource projection', () => {
 
     it('reports a neutral fallback without diagnostics when its declared brand file is unavailable', async () => {
         const fixture = await seedFixture(false);
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             const inputs = await resolveFixtureRuntimeInputs(fixture);
             runtime = await resolveExecutablePluginRuntimeRegistry({
@@ -210,7 +210,7 @@ describe('executable plugin portable brand Resource projection', () => {
     it('serves an admitted external Resource across another plugin installation until its own occurrence retires', async () => {
         const fixture = await seedFixture(true);
         const peerRoot = await mkdtemp(join(tmpdir(), 'happier-brand-runtime-peer-'));
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             const inputs = await resolveFixtureRuntimeInputs(fixture);
             runtime = await resolveExecutablePluginRuntimeRegistry({

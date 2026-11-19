@@ -15,7 +15,7 @@ import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fu
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createDeploymentSourceMaterializationPort } from '@/deployments/targets/ownServer/exactCommitRelease';
 import { createScmBackendRegistry } from '@/scm/registry';
@@ -265,7 +265,7 @@ describe('Machine service watch front door', () => {
             return { read: async () => capturedBasis === metadataBasis ? port.read() : { status: 'unavailable' as const },
                 compareAndSwap: async input => capturedBasis === metadataBasis ? port.compareAndSwap(input) : { status: 'unavailable' as const } };
         } });
-        let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+        let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
         let releaseHome = () => {};
         let releaseDiscovery = () => {};
         let discoveryEntered = () => {};

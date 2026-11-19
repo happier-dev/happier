@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import {
     createLocalPathPluginDistributionIdentity,
     createPluginTrustRecord,
@@ -50,7 +50,7 @@ describe('installed external plugin Lane 10 Actions', () => {
             return { resources: [], nextCursor: null };
         });
         const restoreHttp = installAxiosFastifyAdapter({ app: home, origin: homeUrl });
-        let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let registry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'never');
         vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', '');
 

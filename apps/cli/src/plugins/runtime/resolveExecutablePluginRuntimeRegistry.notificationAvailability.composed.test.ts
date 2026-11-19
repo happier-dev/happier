@@ -13,7 +13,7 @@ import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 const PLUGIN_ID = 'acme.notification-availability';
 const CHANNEL_ID = `${PLUGIN_ID}/external`;
@@ -23,7 +23,7 @@ describe('notification discovery after plugin activation failure', () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-notification-availability-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-notification-availability-plugin-'));
         const activationMarker = join(pluginRoot, 'activation-count');
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | undefined;
         try {
             await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
             await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({

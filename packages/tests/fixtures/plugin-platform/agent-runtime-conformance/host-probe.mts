@@ -6,7 +6,7 @@ import {
   createLocalPathPluginDistributionIdentity,
   createPluginTrustRecord,
 } from '../../../../../apps/cli/src/plugins/store/install/trustIdentity';
-import { resolveExecutablePluginRuntimeRegistry } from '../../../../../apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '../../../../../apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createPluginReloadController } from '../../../../../apps/cli/src/plugins/runtime/reload/controller';
 import { createDaemonPluginRegistryRuntimeLifecycle } from '../../../../../apps/cli/src/plugins/runtime/reload/registryRuntimeLifecycle';
 import { spawnSupervisedPluginProcess } from '../../../../../apps/cli/src/plugins/runtime/exec/processSupervisor';
@@ -89,14 +89,14 @@ try {
 }
 
 type Opened = Readonly<{
-  registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>;
+  registry: ResolvedExecutablePluginRuntimeRegistry;
   operations: Record<string, (...args: never[]) => unknown>;
   events: Array<Record<string, unknown>>;
   delivery: Array<Record<string, unknown>>;
 }>;
 
 const invokeSafeAction = async (
-  registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>,
+  registry: ResolvedExecutablePluginRuntimeRegistry,
   phase: 'before-agent-open' | 'while-agent-active' | 'after-reload',
 ): Promise<void> => {
   await registry.activateContributionsOnDemand([{ pluginId, family: 'actions', localId: actionId }]);

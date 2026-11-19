@@ -442,7 +442,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
         ...retainedPreparedPeerActivationLeases,
         ...preparedActivationRegistryLeases,
       ];
-      let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>;
+      let registry: ResolvedExecutablePluginRuntimeRegistry;
       try {
         const stableEventsBroker =
           params.readStableEventsBroker?.() ?? null;

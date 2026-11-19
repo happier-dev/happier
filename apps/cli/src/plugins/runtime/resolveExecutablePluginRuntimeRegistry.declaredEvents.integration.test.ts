@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import { createPluginReloadController } from './reload/controller';
 
 describe('executable plugin declared event ownership', () => {
@@ -56,8 +56,8 @@ describe('executable plugin declared event ownership', () => {
             manifestVersion: '1.0.0',
         });
 
-        let firstRuntime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
-        let secondRuntime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let firstRuntime: ResolvedExecutablePluginRuntimeRegistry | null = null;
+        let secondRuntime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let firstLease: Awaited<ReturnType<ReturnType<typeof createPluginReloadController>['acquireRuntimeRegistry']>> | null = null;
         let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
         try {

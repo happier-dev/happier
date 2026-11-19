@@ -20,7 +20,7 @@ import { resolveLocalPathPluginSource } from '@/plugins/discovery/sources/localP
 import { evaluateManifestPluginDevelopmentCandidate } from '@/plugins/authoring/sourceModule';
 import { bindPluginRuntimeSourceAuthority } from './sourceAuthority';
 
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 const pluginId = 'acme.collection-candidate';
 const collectionId = 'tasks';
@@ -211,7 +211,7 @@ describe('Collection candidate preparation runtime owner', () => {
     it('loads the declaring release-less module and migrates retained rows before an Action reads them', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-release-less-preparation-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-release-less-preparation-plugin-'));
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         const [source] = normalizePluginAccountCollectionContractsV1({ pluginId, contributions: [sourceCollection] });
         const ref = (contract: NonNullable<typeof source>) => ({ pluginId, collectionId, schemaVersion: contract.schemaVersion, contractDigest: contract.contractDigest });
         let staged = false;
@@ -290,7 +290,7 @@ describe('Collection candidate preparation runtime owner', () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-candidate-preparation-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-candidate-preparation-plugin-'));
         const postCalls: unknown[] = [];
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
         try {
             await seedCandidateFixture({ happyHomeDir, pluginRoot });

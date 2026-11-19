@@ -114,7 +114,7 @@ import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fu
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture, retireAdmittedPluginRuntimeRegistry } from '@/plugins/testkit/admittedRuntime';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
@@ -2382,7 +2382,7 @@ describe('managed catalog original Account transport', () => {
     } };
     const runtime = createMachineServicesRuntime({ target, readMetadata: () => metadata,
       captureMetadataPort: () => ({ read: async () => metadata, compareAndSwap: async () => ({ status: 'unavailable' }) }) });
-    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
     const app = Fastify().withTypeProvider<ZodTypeProvider>();
     const io = new Server(createServer());
     let resourceContext: RpcHandlerContext | undefined;

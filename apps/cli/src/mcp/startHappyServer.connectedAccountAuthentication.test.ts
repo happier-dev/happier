@@ -7,7 +7,7 @@ import { startHappyServer } from './startHappyServer';
 import type { HappyMcpSessionClient } from './startHappyServer';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createPortableConnectedAccountAuthenticationHttpFixture } from '@/testkit/connectedAccountAuthentication';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import * as daemonControl from '@/daemon/controlClient';
@@ -39,7 +39,7 @@ it.each([false, true])('retains authored Account manual authentication across MC
         }),
     } satisfies Pick<HappyMcpSessionClient, 'getActiveTurnAdmissionWitness' | 'getActiveTurnPermissionWitness'>);
     const client = new Client({ name: 'portable-account-authentication', version: '1' });
-    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
     let server: Awaited<ReturnType<typeof startHappyServer>> | undefined;
     try {
         registry = await resolveExecutablePluginRuntimeRegistry({ accountExecution: { credentials, serverUrl: origin, isCurrent: () => true,

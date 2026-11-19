@@ -8,7 +8,7 @@ import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/f
 import type { PluginReloadController, PluginRuntimeRegistryLease } from './reload/controller';
 import { pluginReloadController } from './reload/singleton';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from './reload/runtimeLease';
-import type { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import type { resolveExecutablePluginRuntimeRegistry, ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 type RegistryInput = NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>;
 export type AccountExecutionRuntimeInput = Readonly<{
@@ -38,7 +38,7 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
     return await runWithServerHttpBaseUrl(authority.serverUrl, async () => {
         const operationContext = authority.savedSecretOperationContext;
         const accountId = readAccountIdFromToken(authority.credentials.token);
-        let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>;
+        let registry: ResolvedExecutablePluginRuntimeRegistry;
         const readCredentialRegistry = () => input.credentialRuntimeRegistry ?? registry;
         const borrowCredentialRegistry = (): PluginRuntimeRegistryLease => ({
             registry: readCredentialRegistry(), source: 'ephemeral', durableRevision: -1, release: async () => {},

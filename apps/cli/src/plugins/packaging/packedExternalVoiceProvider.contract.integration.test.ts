@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import * as tar from 'tar';
 import { assertAgentSessionRealtimeRuntime, type AgentSessionRealtimeLifecycleEvent, type AgentSessionRealtimeRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { cleanupStagedNpmArtifactCandidate, stageDownloadedNpmArtifactCandidate } from '../distribution/npm/stage';
-import { resolveExecutablePluginRuntimeRegistry } from '../runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '../runtime/resolveExecutablePluginRuntimeRegistry';
 import { loadRetainedAgentRuntimeLeaf } from '../runtime/runner/loadRetainedAgentRuntimeLeaf';
 import { resolvePluginStorePaths } from '../store/paths';
 import { seedCurrentLocalPathPluginFixture } from '../store/registry/currentState.testkit';
@@ -92,7 +92,7 @@ describe('packed external Voice provider author contract', () => {
     const installRoot = join(parent, 'installed');
     const runtimeHome = join(parent, 'runtime-home');
     let staged: Awaited<ReturnType<typeof stageDownloadedNpmArtifactCandidate>> | null = null;
-    let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+    let runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     let session: AgentSessionRealtimeRuntime | null = null;
     try {
       const packed = await packLocalPlugin({ locator: fixtureRoot, outPath: archivePath });

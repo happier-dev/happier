@@ -11,7 +11,7 @@ import { resolvePluginContributes } from '@/plugins/projection/registry/resolveP
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { readCurrentAccountPluginEnablements, readCurrentAccountPluginExecutionSelection, readCurrentMountedAccountPluginExecutionSelection, resolveAccountPluginActivationSources } from './accountPluginActivationSource';
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import { createCommittedContributedActionInvoker, createCommittedContributedActionDefinitionLister,
     createCommittedContributedActionSchemaReader } from './invocation/actions/createCommittedContributedActionDeps';
 import { createActionExecutor, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
@@ -171,7 +171,7 @@ describe('Account activation source assembly', () => {
         app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
         await app.ready();
         const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-portable-authentication.test' });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | undefined;
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: home,
                 accountExecution: { credentials: { token: 'fixture', encryption: null },
@@ -222,7 +222,7 @@ describe('Account activation source assembly', () => {
         app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
         await app.ready();
         const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-portable-resource.test' });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | undefined;
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: home,
                 accountExecution: { credentials: { token: 'fixture', encryption: null },
@@ -264,7 +264,7 @@ describe('Account activation source assembly', () => {
         }));
         await app.ready();
         const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-resource-realm.test' });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | undefined;
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: home,
                 contributes: createResolvedContributionRegistry(projectLoadedPluginContributes({ provenance: 'first_party',
@@ -557,7 +557,7 @@ describe('Account activation source assembly', () => {
             signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
         await app.ready();
         const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-hosted-identity.test' });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | undefined;
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: home,
                 contributes: createResolvedContributionRegistry({}), accountExecution: {

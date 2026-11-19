@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AuthoritativePackagedRuntimeCustody } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 // Filesystem boundary only: keep bundled ingestion and contribution projection real.
 vi.mock('node:fs', async (importOriginal) => {
@@ -87,12 +87,8 @@ describe('resolveExecutablePluginRuntimeRegistry packaged serving occurrences', 
       }),
       provenance: 'packaged-module' as const,
     });
-    let first: Awaited<
-      ReturnType<typeof resolveExecutablePluginRuntimeRegistry>
-    > | null = null;
-    let second: Awaited<
-      ReturnType<typeof resolveExecutablePluginRuntimeRegistry>
-    > | null = null;
+    let first: ResolvedExecutablePluginRuntimeRegistry | null = null;
+    let second: ResolvedExecutablePluginRuntimeRegistry | null = null;
     try {
       // Cold start: OpenCode is declared and dormant until its demand.
       first = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });

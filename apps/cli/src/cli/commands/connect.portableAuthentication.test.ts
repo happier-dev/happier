@@ -1,3 +1,4 @@
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { afterAll, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -101,7 +102,7 @@ it('keeps retained Account reconnect routing on captured Home A under an outer H
     const origin = 'http://connect-captured-home-a.test';
     const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin);
     boundary.credentials = fixture.credentials;
-    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
     try {
         await runWithServerHttpBaseUrl(origin, () => ensureCliActionPolicySettings(fixture.credentials, origin));
         registry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: taskDirectory,

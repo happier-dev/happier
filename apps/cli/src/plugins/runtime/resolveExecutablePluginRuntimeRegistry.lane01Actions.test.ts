@@ -10,7 +10,7 @@ import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import {
     createLocalPathPluginDistributionIdentity,
     createPluginTrustRecord,
@@ -76,7 +76,7 @@ describe('installed external plugin Lane 01 Actions', () => {
             return team;
         });
         const restoreHttp = installAxiosFastifyAdapter({ app: home, origin: homeUrl });
-        let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let registry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'never');
         // Credential-scoped runtimes must ignore this unscoped environment
         // policy and consume the matching Account snapshot below.

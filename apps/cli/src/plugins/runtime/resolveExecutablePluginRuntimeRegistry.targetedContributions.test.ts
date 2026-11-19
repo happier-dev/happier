@@ -42,7 +42,7 @@ import type {
 } from '@/plugins/store/registry/generationStore';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
-import { resolveExecutablePluginRuntimeRegistry, type PluginRuntimeGenerationAuthority } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type PluginRuntimeGenerationAuthority, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 const targetPluginId = 'examples.cold-target';
 const contributorPluginId = 'examples.cold-contributor';
@@ -164,7 +164,7 @@ function createProjectionRegistrar() {
 }
 
 async function readMountedTargetedUiProjection(input: Readonly<{
-    runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>;
+    runtime: ResolvedExecutablePluginRuntimeRegistry;
     generation: number;
     mountedTarget: Readonly<{ pluginId: string; occurrenceId: PluginRuntimeOccurrenceId }>;
 }>): Promise<Extract<DaemonPluginUiTargetedContributionsReadResponse, { status: 'current' }>> {
@@ -450,7 +450,7 @@ describe('executable targeted contribution admission', () => {
             manifestVersion: '1.0.0',
         });
 
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             const loaded = await loadInstalledPlugins({ happyHomeDir });
             const contributes = createResolvedContributionRegistry(

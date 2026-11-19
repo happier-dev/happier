@@ -18,7 +18,7 @@ import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAuthoredAccountActionRelease } from './accountPluginActions.testkit';
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import { resolveAccountExecutionRuntime } from './accountExecutionRuntime';
 import { PLUGIN_MANIFEST as boatManifest } from '../../../../../packages/plugins/machine-boat/src/manifest';
 import { PLUGIN_MANIFEST as agent37Manifest } from '../../../../../packages/plugins/machine-agent37/src/manifest';
@@ -87,7 +87,7 @@ it.each([
     }));
     await app.ready();
     const restoreHttp = installAxiosFastifyAdapter({ app, origin: home });
-    let native: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let native: ResolvedExecutablePluginRuntimeRegistry | undefined;
     let runtime: Awaited<ReturnType<typeof resolveAccountExecutionRuntime>> | undefined;
     let current = true;
     vendor.request.mockReset();
@@ -215,7 +215,7 @@ it('follows real Vercel Account runtime frames through the canonical deployment 
         accounts: [{ ref: account, authenticationModeId: 'token', status: 'connected', revisionSemantics: 'revisioned',
             credentialRevision: revision, configurationRevision: 'configuration-1', configurationReady: true, scopes: [] }] }));
     const home = await app.listen({ port: 0, host: '127.0.0.1' });
-    let native: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let native: ResolvedExecutablePluginRuntimeRegistry | undefined;
     let runtime: Awaited<ReturnType<typeof resolveAccountExecutionRuntime>> | undefined;
     const watches = createStablePluginUiResourceWatchOwner({ isPluginConsumerCurrent: () => false, readPluginOccurrenceId: () => null });
     const cancelled: number[] = [];

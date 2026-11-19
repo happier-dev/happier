@@ -48,7 +48,7 @@ import {
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 
-import { resolveExecutablePluginRuntimeRegistry as resolveExecutablePluginRuntimeRegistryProduction } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry as resolveExecutablePluginRuntimeRegistryProduction, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 // These Account boundary fixtures serve the installed test declarations, not
 // every bundled plugin's distinct Account/service requirements. Discovery,
@@ -572,7 +572,7 @@ describe('executable plugin Account Collections binding', () => {
         const pluginRoots = await Promise.all([0, 1].map(() => mkdtemp(join(tmpdir(), 'happier-publication-refusals-plugin-'))));
         const pluginIds = [PLUGIN_ID, 'acme.publication-peer'];
         const attempted: string[] = [];
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let controller: ReturnType<typeof createPluginReloadController> | null = null;
         let owner: ReturnType<typeof createDaemonPluginRuntimeOwner> | null = null;
         const debug = vi.spyOn(logger, 'debug');
@@ -640,7 +640,7 @@ describe('executable plugin Account Collections binding', () => {
         const providerRoot = await mkdtemp(join(tmpdir(), 'happier-release-less-provider-plugin-'));
         const providerPluginId = 'acme.email-transport';
         let originMachineId = 'machine-page';
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         const controller = createPluginReloadController();
         try {
             await seedAccountCollectionsActionFixture({ happyHomeDir, pluginRoot, includePage: true, includeNestedAction: true, providerPluginId });
@@ -747,7 +747,7 @@ describe('executable plugin Account Collections binding', () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-account-collections-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-account-collections-plugin-'));
         const credentials = { token: 'fixture-account-token', encryption: null } satisfies StoredCredentials;
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
         try {
             await seedAccountCollectionsActionFixture({ happyHomeDir, pluginRoot });
@@ -785,7 +785,7 @@ describe('executable plugin Account Collections binding', () => {
     it('omits Account Data from an activated action that omits its HostAccess declaration', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-account-collections-undeclared-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-account-collections-undeclared-plugin-'));
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
         try {
             await seedAccountCollectionsActionFixture({
@@ -829,7 +829,7 @@ describe('executable plugin Account Collections binding', () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-account-collections-live-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-account-collections-live-plugin-'));
         const credentials = { token: 'live-account-token', encryption: null } satisfies StoredCredentials;
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
         accountDataBoundary.readStoredCredentials.mockResolvedValue(credentials);
         accountDataBoundary.get.mockImplementation(async (url: string) => {
@@ -959,7 +959,7 @@ describe('executable plugin Account Collections binding', () => {
         for (const scenario of scenarios) {
             const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-account-notification-home-'));
             const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-account-notification-plugin-'));
-            let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+            let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
             try {
                 await seedAccountNotificationChannelFixture({
@@ -1042,7 +1042,7 @@ describe('executable plugin Account Collections binding', () => {
         setActiveAccountSettingsSnapshot({ source: 'network', settings, settingsVersion: 1,
             loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials),
             notificationChannelCatalog: notificationCatalogFixture(settings).notificationChannelCatalog });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             await seedAccountNotificationChannelFixture({ happyHomeDir, pluginRoot, hostAccess: 'optional' });
             runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
@@ -1077,7 +1077,7 @@ describe('executable plugin Account Collections binding', () => {
         const credentialsReadStarted = deferred<void>();
         const releaseCredentials = deferred<StoredCredentials>();
         let holdCredentials = false;
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
         accountDataBoundary.readStoredCredentials.mockImplementation(async () => {
             if (!holdCredentials) return credentials;

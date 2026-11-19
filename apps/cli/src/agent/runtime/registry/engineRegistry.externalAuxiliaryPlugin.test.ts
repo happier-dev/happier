@@ -9,7 +9,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from '@/session/external/agentExternalSessionsInvocation';
 
 import { resolveBackendEngineAdapterResolution } from './engineRegistry';
@@ -462,7 +462,7 @@ describe('non-bundled auxiliary-only Agent contribution', () => {
     it('activates, catalogs, and resolves External Sessions without a primary runtime factory', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-external-aux-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-external-aux-plugin-'));
-        let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             await materializeAuxiliaryOnlyPlugin(pluginRoot);
             await seedCurrentLocalPathPluginFixture({
@@ -993,7 +993,7 @@ describe('non-bundled auxiliary-only Agent contribution', () => {
     it('keeps one external Agent handoff callback bound to its current generation context', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-external-handoff-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-external-handoff-plugin-'));
-        let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             await materializeExternalHandoffPlugin(pluginRoot);
             await seedCurrentLocalPathPluginFixture({

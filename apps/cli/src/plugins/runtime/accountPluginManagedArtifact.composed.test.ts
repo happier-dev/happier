@@ -6,7 +6,7 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { registerAuthoredAccountActionRelease } from './accountPluginActions.testkit';
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import { executeContributedAction } from './invocation/actions/executeContributedAction';
 
 it('preserves missing Account execution artifacts when demand activation retires a managed contributor', async () => {
@@ -23,7 +23,7 @@ it('preserves missing Account execution artifacts when demand activation retires
     const { generatedUiArtifactsManifest: _generated, ...unpreparedDeclaration } = declaration;
     await app.ready();
     const restore = installAxiosFastifyAdapter({ app, origin: endpoint });
-    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
     try {
         registry = await resolveExecutablePluginRuntimeRegistry({
             contributes: createResolvedContributionRegistry(projectLoadedPluginContributes({ provenance: 'first_party',

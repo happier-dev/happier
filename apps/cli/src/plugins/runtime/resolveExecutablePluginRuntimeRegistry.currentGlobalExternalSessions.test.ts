@@ -24,7 +24,7 @@ import {
     setActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import { createPluginReloadController } from './reload/controller';
 
 const PLUGIN_ID = 'acme.current-global-external-sessions';
@@ -492,7 +492,7 @@ describe('current global External Sessions publication', () => {
         });
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-external-warning-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-external-warning-plugin-'));
-        let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let registry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
         const publicationWarnings = () => warning.mock.calls.filter(([message]) => (
             message === '[PLUGIN RUNTIME] Current-global External Sessions service is unavailable'
@@ -565,7 +565,7 @@ describe('current global External Sessions publication', () => {
         }]));
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-failed-external-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-failed-external-plugin-'));
-        let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let registry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
         try {
             await writeExternalSessionsPlugin({ pluginRoot, version: 'H' });
@@ -659,8 +659,8 @@ describe('current global External Sessions publication', () => {
         const followInstallation = await hostOperationOwner.install({
             followOperation,
         });
-        let hRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
-        let iRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let hRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
+        let iRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
         try {
             await writeExternalSessionsPlugin({ pluginRoot, version: 'H' });
@@ -839,8 +839,8 @@ describe('current global External Sessions publication', () => {
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-current-global-pair-h-plugin-'));
         const iHappyHomeDir = await mkdtemp(join(tmpdir(), 'happier-current-global-pair-i-home-'));
         const iPluginRoot = await mkdtemp(join(tmpdir(), 'happier-current-global-pair-i-plugin-'));
-        let hRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
-        let iRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let hRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
+        let iRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
         try {
             await writeExternalSessionsPlugin({
@@ -986,7 +986,7 @@ describe('current global External Sessions publication', () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-current-global-background-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-current-global-background-plugin-'));
         const backgroundProbeOutputPath = join(pluginRoot, 'background-probe.json');
-        let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let registry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
         try {
             await writeExternalSessionsPlugin({
@@ -1073,7 +1073,7 @@ describe('current global External Sessions publication', () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-current-global-background-denied-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-current-global-background-denied-plugin-'));
         const backgroundProbeOutputPath = join(pluginRoot, 'background-probe.json');
-        let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let registry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
         try {
             await writeExternalSessionsPlugin({
@@ -1139,7 +1139,7 @@ describe('current global External Sessions publication', () => {
             const happyHomeDir = await mkdtemp(join(tmpdir(), `happier-current-global-scope-${sessionsHostAccess}-home-`));
             const pluginRoot = await mkdtemp(join(tmpdir(), `happier-current-global-scope-${sessionsHostAccess}-plugin-`));
             const backgroundProbeOutputPath = join(pluginRoot, 'background-probe.json');
-            let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+            let registry: ResolvedExecutablePluginRuntimeRegistry | null = null;
             let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
             try {
                 await writeExternalSessionsPlugin({
@@ -1216,7 +1216,7 @@ describe('current global External Sessions publication', () => {
         resetActiveAccountSettingsSnapshotForTests();
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-current-global-refusals-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-current-global-refusals-plugin-'));
-        let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let registry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
         let connectedProfilePresent = false;
         boundaries.fetchAccountProfile.mockClear();
@@ -1317,7 +1317,7 @@ describe('current global External Sessions publication', () => {
         resetActiveAccountSettingsSnapshotForTests();
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-current-global-cold-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-current-global-cold-plugin-'));
-        let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let registry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
         let releaseFirstAccount!: () => void;
         let releaseSecondAccount!: () => void;

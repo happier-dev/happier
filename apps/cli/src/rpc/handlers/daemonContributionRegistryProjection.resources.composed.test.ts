@@ -3,7 +3,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createMachineLiveStreamCaptureRegistry } from '@/daemon/peer/mediation/stream/captureRegistry';
 import { logger } from '@/ui/logger';
 import { evaluateManifestPluginDevelopmentCandidate } from '@/plugins/authoring/sourceModule';
@@ -20,7 +20,7 @@ it('keeps declared reads across retained activation replacement and identifies a
         files: { 'daemon.mjs': 'export function activate() {}', 'status.txt': 'private resource contents' },
     }] });
     let registry = fixture.registry;
-    let successor: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let successor: ResolvedExecutablePluginRuntimeRegistry | undefined;
     // File logging is an OS boundary; keep the actual RPC, admission and Resource owners.
     const diagnostics = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     const rpc = new RpcHandlerManager({ scopePrefix: 'resource-machine', encryptionMode: 'plain', logger: () => {} });
@@ -115,7 +115,7 @@ it('keeps a mounted development caller current when its capture producer is repl
             export function activate(api) { ${manifest.id === producer.id
                 ? "api.captureSources.register('screen', { async start() { return { stop() {} }; } });" : ''} }` },
     })) });
-    let incumbent: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let incumbent: ResolvedExecutablePluginRuntimeRegistry | undefined;
     let successor: typeof incumbent;
     try {
         const graphs = await Promise.all([viewer, producer].map(async manifest => {

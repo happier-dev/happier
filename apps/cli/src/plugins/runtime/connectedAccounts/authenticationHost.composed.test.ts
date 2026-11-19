@@ -17,7 +17,7 @@ import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secret
 import * as persistence from '@/persistence';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createConnectedAccountAttemptTransactionApi } from '@/api/client/connectedAccountAttemptTransactionApi';
-import { resolveExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
@@ -70,7 +70,7 @@ it('routes configuration for a daemon-only service to its selected Machine', asy
     const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, {
         includeBundledPluginIds: [service.pluginId],
     });
-    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
     try {
         await runWithServerHttpBaseUrl(origin, async () => {
             registry = await resolveExecutablePluginRuntimeRegistry({ accountExecution: {
@@ -129,7 +129,7 @@ it.each(['native-import', 'device'] as const)('tests a saved Muse subscription w
 it('continues a refused manual Account attempt in a fresh host', async () => {
     const origin = 'http://manual-account-host-handoff.test';
     const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin);
-    const registries: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>[] = [];
+    const registries: ResolvedExecutablePluginRuntimeRegistry[] = [];
     try {
         await runWithServerHttpBaseUrl(origin, async () => {
             await ensureCliActionPolicySettings(fixture.credentials, origin);
@@ -182,7 +182,7 @@ it('continues a refused manual Account attempt in a fresh host', async () => {
 it('lets the selected Machine admit a mode unavailable in the Account runtime', async () => {
     const origin = 'http://machine-authentication-mode.test';
     const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin);
-    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
     try {
         await runWithServerHttpBaseUrl(origin, async () => {
             registry = await resolveExecutablePluginRuntimeRegistry({ accountExecution: {
@@ -203,7 +203,7 @@ it('retains a Linear provider-refused attempt through the CLI host for corrected
     const origin = 'http://linear-provider-refusal.test';
     const service = { pluginId: 'happier.linear', localId: 'linear-account' };
     const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, { includeBundledPluginIds: [service.pluginId] });
-    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
     // Substitute only the vendor HTTP boundary. The actual plugin, host,
     // transaction storage and credential settlement remain in the path.
     let accepted = false;
@@ -243,7 +243,7 @@ it('retains a Gemini provider-refused attempt through the CLI host for corrected
         entryPath: resolve(projectRoot, 'src/connectedAccounts/portableAuthentication.ts'),
         activateExport: 'activate', manifestExport: null,
     }] });
-    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
     try {
         await runWithServerHttpBaseUrl(origin, async () => {
             registry = await resolveExecutablePluginRuntimeRegistry({ accountExecution: {
@@ -283,7 +283,7 @@ it('reports missing Account artifact availability on first and repeated lookup i
     if (!declaration) throw new Error('Expected the bundled Claude declaration');
     // The filesystem projection has no generated graph when its compiled artifact is absent.
     const { generatedUiArtifactsManifest: _generated, ...unpreparedDeclaration } = declaration;
-    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
     try {
         registry = await resolveExecutablePluginRuntimeRegistry({
             contributes: createResolvedContributionRegistry(projectLoadedPluginContributes({ provenance: 'first_party',
@@ -317,7 +317,7 @@ it('routes required attempt configuration through the selected physical host and
     const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, { requireAccountConfiguration: true });
     const credentialFiles = vi.spyOn(persistence, 'readCredentials').mockRejectedValue(new Error('Credential files are unavailable in this fixture'));
     const lifetime = new AbortController();
-    let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
     try {
         await runWithServerHttpBaseUrl(origin, async () => {
             await ensureCliActionPolicySettings(fixture.credentials, origin);

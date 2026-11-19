@@ -65,6 +65,7 @@ import {
 import {
     resolveExecutablePluginRuntimeRegistry as resolveExecutablePluginRuntimeRegistryProduction,
     type RetainedManagedProviderRuntimeInvocationScope,
+    type ResolvedExecutablePluginRuntimeRegistry,
 } from './resolveExecutablePluginRuntimeRegistry';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
 import { adaptTargetActivationFacts } from '@/plugins/projection/introspection/targetActivationFacts';
@@ -2523,7 +2524,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
         });
         await scopedRuntime.dispose();
 
-        let mismatchedRuntime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+        let mismatchedRuntime: ResolvedExecutablePluginRuntimeRegistry | undefined;
         let mismatchError: unknown;
         try {
             mismatchedRuntime = await resolveExecutablePluginRuntimeRegistry({
@@ -3438,7 +3439,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
     it('projects an installed external Agent registration into the catalog daemon spawn hook with connected-service inputs', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-agent-spawn-hook-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-agent-spawn-hook-plugin-'));
-        let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             await materializeSamplePluginFixture(pluginRoot);
             const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');

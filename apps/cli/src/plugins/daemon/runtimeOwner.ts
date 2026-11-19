@@ -26,6 +26,7 @@ import {
 import {
   resolveExecutablePluginRuntimeRegistry,
   type PluginRuntimeMachineAdmissionTransport,
+  type ResolvedExecutablePluginRuntimeRegistry,
 } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { getResolvedContributionRegistry, readCurrentBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/snapshot';
 import { applyMachineRoleAdmission } from '@/plugins/projection/registry/builtIn/machineRoles';
@@ -242,7 +243,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
   };
   const beforePublish = params.reconcileConnectedAccountPurposePublication
     ? async (
-        registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>,
+        registry: ResolvedExecutablePluginRuntimeRegistry,
         publish: () => void,
       ) => {
         const candidateActivePluginIds = new Set(registry.activatedPluginIds);
@@ -264,7 +265,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
     || params.signal
   )
     ? async (
-        registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>,
+        registry: ResolvedExecutablePluginRuntimeRegistry,
         publish: () => void,
       ) => {
         const publishCurrent = () => {

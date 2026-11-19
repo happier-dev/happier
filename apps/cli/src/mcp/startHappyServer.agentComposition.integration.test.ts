@@ -392,7 +392,7 @@ async function createPublicAuthoringRuntimeRegistry(): Promise<Readonly<{
   const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-agent-composition-home-'));
   const sourceParentDir = await mkdtemp(join(tmpdir(), 'happier-agent-composition-plugin-'));
   const pluginRoot = join(sourceParentDir, 'public-authoring');
-  let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+  let runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
   try {
     await cp(publicAuthoringSourceRoot, pluginRoot, { recursive: true });
     await linkCanonicalPublicRuntimePackages(pluginRoot);

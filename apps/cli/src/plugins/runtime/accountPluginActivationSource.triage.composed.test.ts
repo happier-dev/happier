@@ -8,14 +8,14 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/triage/src/manifest';
 import { registerAuthoredAccountActionRelease } from './accountPluginActions.testkit';
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 it('publishes the real portable Triage source-links handler through Account artifact admission', async () => {
     const home = await mkdtemp(join(tmpdir(), 'triage-account-handler-'));
     const app = fastify();
     const projectRoot = join(import.meta.dirname, '../../../../../packages/plugins/triage');
     let restore: (() => void) | undefined;
-    let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let runtime: ResolvedExecutablePluginRuntimeRegistry | undefined;
     try {
         await registerAuthoredAccountActionRelease(app, 'owner', { primary: {
             manifest: PLUGIN_MANIFEST, projectRoot,

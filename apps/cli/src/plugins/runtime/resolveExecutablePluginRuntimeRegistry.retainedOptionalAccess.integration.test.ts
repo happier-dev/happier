@@ -26,7 +26,7 @@ import type {
     StablePluginConnectedAccountsOwner,
 } from '@/plugins/runtime/invocation/services/connectedAccounts';
 
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 const PLUGIN_ID = 'acme.retained-optional-access';
 const AGENT_ID = 'retained-optional-agent';
@@ -267,12 +267,8 @@ describe('retained Agent optional HostAccess', () => {
             tmpdir(),
             'happier-retained-optional-plugin-',
         ));
-        let gRegistry: Awaited<
-            ReturnType<typeof resolveExecutablePluginRuntimeRegistry>
-        > | null = null;
-        let hRegistry: Awaited<
-            ReturnType<typeof resolveExecutablePluginRuntimeRegistry>
-        > | null = null;
+        let gRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
+        let hRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         const getBindingCalls: Array<Readonly<{
             purpose: string;
             serviceId: string;

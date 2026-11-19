@@ -18,7 +18,7 @@ import { createDaemonPluginTransferRpcResolver } from '@/plugins/daemon/runtimeO
 import { releaseComposerMediaStageViaLocalRpc } from '@/transfers/rpc/uploadComposerMediaStageViaLocalRpc';
 import { createDirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
 
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -43,7 +43,7 @@ describe('executable plugin Composer content invocation binding', () => {
         const machineId = 'machine-composer-content';
         const paths = resolvePluginStorePaths({ happyHomeDir });
         const pluginDataRoot = join(paths.storageDir, pluginId, 'fs');
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let stagedHandle: ReturnType<typeof ComposerContentHandleV1Schema.parse> | null = null;
         let apiMachine: ApiMachineClient | null = null;
         const previousWorkingDirectory = process.env.HAPPIER_MACHINE_RPC_WORKING_DIRECTORY;

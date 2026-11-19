@@ -32,7 +32,7 @@ import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/curr
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 
-import { resolveExecutablePluginRuntimeRegistry as resolveExecutablePluginRuntimeRegistryProduction } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry as resolveExecutablePluginRuntimeRegistryProduction, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import type { AccountPluginDataStorageHostDependencies } from './context/accountPluginDataStorage';
 import { createPluginReloadController } from './reload/controller';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from './reload/runtimeLease';
@@ -333,7 +333,7 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 describe('executable plugin dynamic resource observation (EU-4b)', () => {
     it('serves first-party locale bytes over the daemon RPC without an installed-store generation', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-bundled-locale-home-'));
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             const locales = [
                 { pluginId: 'happier.triage', packageName: 'triage', locale: 'en' },
@@ -366,7 +366,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
 
     it.each([false, true])('preserves a cold registered context factory through the daemon Resource consumer (watch first: %s)', async watchFirst => {
         const { happyHomeDir, pluginRoot } = await seedFixture({ dormantAction: true, contextProducer: true });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir,
                 contributes: await resolveScopedDynamicResourceFixtureContributes(happyHomeDir) });
@@ -396,8 +396,8 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
 
     it.each([false, true])('describes and reads a dormant external dynamic Resource from its first demanded Action (scoped replacement: %s)', async (scopedReplacement) => {
         const { happyHomeDir, pluginRoot } = await seedFixture({ dormantAction: true });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
-        let firstRuntime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
+        let firstRuntime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let peer: Awaited<ReturnType<typeof seedScopedDynamicResourcePeerFixture>> | null = null;
         try {
             if (scopedReplacement) peer = await seedScopedDynamicResourcePeerFixture(happyHomeDir);
@@ -447,7 +447,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
 
     it('preserves a refused Resource producer reason through public registration and the daemon RPC', async () => {
         const { happyHomeDir, pluginRoot } = await seedFixture({ admissionFailure: 'plugin_collection_contract_conflict' });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({
                 happyHomeDir, contributes: await resolveScopedDynamicResourceFixtureContributes(happyHomeDir),
@@ -473,7 +473,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
     }, 60_000);
     it('admits a public-author Coach finding Resource and Action and retires their occurrence', async () => {
         const { happyHomeDir, pluginRoot } = await seedFixture({ usageCoach: true });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({
                 happyHomeDir,
@@ -572,7 +572,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
     }, 60_000);
     it('keeps the bundled Channels dynamic Resource declaration cold when external install activation is scoped', async () => {
         const { happyHomeDir, pluginRoot } = await seedFixture();
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
         try {
             const fullContributes = await resolveMergedContributionRegistry({ happyHomeDir });
@@ -665,7 +665,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
     it('keeps unrelated dynamic Resource producers cold for a scoped external install', async () => {
         const { happyHomeDir, pluginRoot } = await seedFixture();
         let peer: Awaited<ReturnType<typeof seedScopedDynamicResourcePeerFixture>> | null = null;
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
         try {
             peer = await seedScopedDynamicResourcePeerFixture(happyHomeDir);
@@ -708,7 +708,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
 
     it.each([false, true])('isolates a missing dynamic producer at its plugin boundary while a healthy peer keeps serving (activation throws: %s)', async (activationFailure) => {
         const { happyHomeDir, pluginRoot } = await seedFixture({ registerDynamicProducer: false, activationFailure });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let controller: ReturnType<typeof createPluginReloadController> | null = null;
         let lease: Awaited<ReturnType<ReturnType<typeof createPluginReloadController>['acquireRuntimeRegistry']>> | null = null;
         let peer: Awaited<ReturnType<typeof seedScopedDynamicResourcePeerFixture>> | null = null;
@@ -776,8 +776,8 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
     it('reuses a retained dynamic Resource producer for a scoped external replacement', async () => {
         const { happyHomeDir, pluginRoot } = await seedFixture();
         let peer: Awaited<ReturnType<typeof seedScopedDynamicResourcePeerFixture>> | null = null;
-        let firstRuntime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
-        let secondRuntime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let firstRuntime: ResolvedExecutablePluginRuntimeRegistry | null = null;
+        let secondRuntime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
         try {
             peer = await seedScopedDynamicResourcePeerFixture(happyHomeDir);
@@ -831,7 +831,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
 
     it('joins manifest HostAccess to the real Resource callbacks without a general invocation context', async () => {
         const { happyHomeDir, pluginRoot } = await seedFixture({ accountStorage: true });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         const accountDataRequests: string[] = [];
         const currentAccountChecks: string[] = [];
         const resolveAccountEncryptionCurrentness = vi.fn(async () => ({
@@ -914,7 +914,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
 
     it('uses exact server Session proof for production UI reads and watches', async () => {
         const { happyHomeDir, pluginRoot } = await seedFixture({ sessionScoped: true });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         const resolveSessionResourceAccess = vi.fn<ResolveSessionResourceAccess>(async (input) => ({
             accountId: input.accountId,
             throughCursor: 2,
@@ -969,7 +969,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
 
     it('delivers a real producer invalidation to a parked host poll and re-reads the new snapshot', async () => {
         const { happyHomeDir, pluginRoot } = await seedFixture();
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
             expect(runtime.pluginDiagnosticsByPluginId[PLUGIN_ID]).toEqual([]);
@@ -1022,7 +1022,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
         // still carries the re-read instruction immediately rather than parking.
         // A silent stale view is what this refutes.
         const { happyHomeDir, pluginRoot } = await seedFixture();
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
             const expectedCallerOccurrenceId = requirePluginOccurrenceId(runtime, PLUGIN_ID);
@@ -1069,7 +1069,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
 
     it('reads the packaged resource in the same plugin and refuses to advertise a watch for it', async () => {
         const { happyHomeDir, pluginRoot } = await seedFixture();
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
             const expectedCallerOccurrenceId = requirePluginOccurrenceId(runtime, PLUGIN_ID);
@@ -1096,7 +1096,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
 
     it('exposes only the Resource owner capability for the current runtime generation', async () => {
         const { happyHomeDir, pluginRoot } = await seedFixture();
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
 
@@ -1124,8 +1124,8 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
         // expires — the observer sits on a stale view for up to a minute and the
         // old generation's producers stay subscribed behind it.
         const { happyHomeDir, pluginRoot } = await seedFixture();
-        let firstRuntime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
-        let secondRuntime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let firstRuntime: ResolvedExecutablePluginRuntimeRegistry | null = null;
+        let secondRuntime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
         let firstLease: Awaited<ReturnType<ReturnType<typeof createPluginReloadController>['acquireRuntimeRegistry']>> | null = null;
         try {
@@ -1243,7 +1243,7 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
         const accountScopeKey = 'channels-resource-account';
         let changeCursor = 0;
         let accountDataAvailable = false;
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let runtimeLease: Awaited<ReturnType<ReturnType<typeof createPluginReloadController>['acquireRuntimeRegistry']>> | null = null;
         let reloadController: ReturnType<typeof createPluginReloadController> | null = null;
         const readStoredCredentials = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue({

@@ -18,6 +18,7 @@ import { hasBlockingPluginReloadDiagnostic } from './reload/controller';
 import { executeContributedAction } from './invocation/actions/executeContributedAction';
 import {
     resolveExecutablePluginRuntimeRegistry,
+    type ResolvedExecutablePluginRuntimeRegistry,
 } from './resolveExecutablePluginRuntimeRegistry';
 import type { PluginRuntimeActivationRegistryLease } from './composition/activationAssembly';
 
@@ -121,7 +122,7 @@ describe('executable plugin readiness fencing', () => {
         const address = server.address();
         if (!address || typeof address === 'string') throw new Error('Expected a TCP fixture address');
         const fixture = await seedFixture({ finiteHookUrl: `http://127.0.0.1:${address.port}/finite` });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             const inputs = await resolveFixtureRuntimeInputs(fixture.happyHomeDir);
             runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir: fixture.happyHomeDir,
@@ -153,7 +154,7 @@ describe('executable plugin readiness fencing', () => {
     // serving, undiagnosed and unfenced.
     it('fences an activated plugin whose readiness was rejected and stops advertising it as active', async () => {
         const fixture = await seedFixture();
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
         try {
             const inputs = await resolveFixtureRuntimeInputs(fixture.happyHomeDir);
@@ -211,8 +212,8 @@ describe('executable plugin readiness fencing', () => {
 
     it('rebuilds a populated Action catalog after retiring a failed prepared readiness participant', async () => {
         const fixture = await seedFixture({ activationCleanup: true, settlingBackgroundService: true });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
-        let successor: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
+        let successor: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let prepared: readonly PluginRuntimeActivationRegistryLease[] = [];
         const runtimeDisposableCalls: string[] = [];
 
@@ -281,7 +282,7 @@ describe('executable plugin readiness fencing', () => {
     }, 60_000);
     it('keeps independent Actions available after a background service normally completes', async () => {
         const fixture = await seedFixture({ settlingBackgroundService: true });
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
 
         try {
             const inputs = await resolveFixtureRuntimeInputs(fixture.happyHomeDir);
@@ -330,8 +331,8 @@ describe('executable plugin readiness fencing', () => {
     // only thing that can keep its component out of the successor registry.
     it('does not donate a fenced plugin activation component to a successor registry', async () => {
         const fixture = await seedFixture();
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
-        let successor: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
+        let successor: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let retained: readonly PluginRuntimeActivationRegistryLease[] = [];
 
         try {

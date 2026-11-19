@@ -1,3 +1,4 @@
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { Session } from 'node:inspector/promises';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -133,7 +134,7 @@ it.skipIf(process.env.HAPPIER_PROJECTION_BENCHMARK !== 'handler')('profiles the 
     const artifactDir = await mkdtemp(join(tmpdir(), 'happier-projection-handler-'));
     const session = new Session();
     session.connect();
-    let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
+    let runtime: ResolvedExecutablePluginRuntimeRegistry | undefined;
     try {
         await session.post('Profiler.enable');
         await session.post('Profiler.start');

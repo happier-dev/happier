@@ -109,6 +109,7 @@ import type {
 
 import {
     resolveExecutablePluginRuntimeRegistry as resolveExecutablePluginRuntimeRegistryProduction,
+    type ResolvedExecutablePluginRuntimeRegistry,
 } from './resolveExecutablePluginRuntimeRegistry';
 import { createPluginReloadController } from './reload/controller';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
@@ -963,7 +964,7 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
                 }),
             };
         });
-        let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let registry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'never');
         vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', '');
         resetInMemoryAccountSettingsContextForTests();
@@ -1129,12 +1130,8 @@ describe('retained Agent composed daemon-service routing (integration)', () => {
             ),
         }) satisfies StablePluginConnectedAccountsOwner;
 
-        let gRegistry: Awaited<
-            ReturnType<typeof resolveExecutablePluginRuntimeRegistry>
-        > | null = null;
-        let hRegistry: Awaited<
-            ReturnType<typeof resolveExecutablePluginRuntimeRegistry>
-        > | null = null;
+        let gRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
+        let hRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
         let pluginServicesHost: ReturnType<
             typeof createRunnerDaemonPluginServicesHost
         > | null = null;

@@ -9,7 +9,7 @@ import type {
     ResolvedActivatedHookRegistration,
 } from '@/plugins/projection/registry/types';
 
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
@@ -49,7 +49,7 @@ describe('executable plugin hook activation ownership', () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-warm-activation-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-warm-activation-plugin-'));
         const pluginId = 'acme.warm-activation';
-        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
             await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(createPluginManifestV2Fixture({

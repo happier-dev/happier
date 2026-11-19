@@ -5,7 +5,7 @@ import { setImmediate } from 'node:timers/promises';
 
 import { describe, expect, it } from 'vitest';
 
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
 import { getVendorResumeSupport } from './catalogHooks';
@@ -30,7 +30,7 @@ import type { RestartSessionRunnerRequestV1 } from '@happier-dev/protocol';
 describe('session resume through the applied plugin runtime', () => {
   it('demands the Codex resume hook and fences it after its runtime retires', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-resume-catalog-'));
-    let unownedRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+    let unownedRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     let adopted = false;
     try {
       unownedRegistry = await resolveExecutablePluginRuntimeRegistry({
