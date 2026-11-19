@@ -747,6 +747,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       if (applyOnSettle !== null) dispatch(applyOnSettle);
       return Promise.resolve(intent);
     }
+    if (routeWriteFailure !== null) setRouteWriteFailure(null);
     return new Promise(resolve => {
       routeQueue.write(lens, ({ result, superseded }) => {
         const previous = route.settled;
@@ -779,7 +780,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         resolve(null);
       });
     });
-  }, [route, routeQueue]);
+  }, [route, routeQueue, routeWriteFailure]);
 
   const requestLensEdit = React.useCallback((
     action: TriageSurfaceActionV1,
@@ -799,7 +800,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       return null;
     }
     if (routeRefused !== null) setRouteRefused(null);
-    if (routeWriteFailure !== null) setRouteWriteFailure(null);
     if (route.intent === route.settled
       && buildTriageRouteSubPathV1(readTriageRouteLensV1(surface)) === route.settled.subPath) {
       // Keep local section/focus facts for rollback when the host's lens agrees.
@@ -811,7 +811,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     }
     return submitRoute({ subPath: preflight.subPath, state: unchanged ? surface : next },
       lens, optimistic || unchanged ? null : action);
-  }, [reduceSurface, route, routeRefused, routeWriteFailure, submitRoute, surface, window.setLens]);
+  }, [reduceSurface, route, routeRefused, submitRoute, surface, window.setLens]);
 
   const applyLensEdit = React.useCallback((action: TriageSurfaceActionV1, refusal: 'selection' | 'lens') => {
     void requestLensEdit(action, refusal, true);
