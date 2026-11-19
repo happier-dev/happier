@@ -65,10 +65,8 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> {
  * over the same canonical result — the three friendly spellings share one
  * parser, one binder and one Action invocation.
  *
- * The Action's output is the whole admission/settlement union: only
- * `accepted` and `alreadyAccepted` mean the message reached the Session. Every
- * other status is classified as a failure here, so a refused, failed,
- * cancelled or unknown-outcome send never prints "Message sent" or exits zero.
+ * Admission failures are classified before rendering success. A settled
+ * inline reply carries the Action's result alongside the legacy envelope fields.
  */
 export const SESSION_SEND_PRESENTATION: ActionCliPresentation = {
   envelopeKind: (command) => (
@@ -98,15 +96,15 @@ export const SESSION_SEND_PRESENTATION: ActionCliPresentation = {
       ? context.input.sessionId
       : null;
     const waited = context.input.wait === true;
+    const replied = result.status === 'replied';
     if (context.json) {
-      // Only an accepted/alreadyAccepted payload reaches this presenter, so the
-      // released `sent` field is derived from that status, never assumed.
+      const legacyFields = isRunSendSpelling(context)
+        ? { sessionId, runId, sent: true }
+        : { sessionId, localId: result.localId, waited };
       await printJsonEnvelope({
         ok: true,
         kind: isRunSendSpelling(context) ? 'session_run_send' : 'session_send',
-        data: isRunSendSpelling(context)
-          ? { sessionId, runId, sent: true }
-          : { sessionId, localId: result.localId, waited },
+        data: replied ? { ...result, ...legacyFields } : legacyFields,
       });
       return true;
     }
@@ -117,6 +115,12 @@ export const SESSION_SEND_PRESENTATION: ActionCliPresentation = {
       ? result.localId
       : null;
     console.log(ok(localId ? `Message sent (local id ${localId})` : 'Message sent'));
+    if (replied) {
+      const outcome = readRecord(result.outcome);
+      const text = readString(outcome.text) ?? readString(outcome.partialText);
+      if (outcome.kind !== 'answer' || text === null) console.log(`Reply outcome: ${outcome.kind}`);
+      if (text !== null) console.log(text);
+    }
     return true;
   },
   failureFields: (failure, context) => {

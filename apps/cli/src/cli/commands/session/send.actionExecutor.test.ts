@@ -183,6 +183,45 @@ describe('happier session send (action executor)', () => {
     }
   });
 
+  it.each([true, false])('prints the inline reply from send --reply wait (json=%s)', async (json) => {
+    const messageRef = (messageId: string) => ({
+      kind: 'session',
+      session: { serverId: 'server-1', sessionId: 'sess-1' },
+      messageId,
+    });
+    const reply = {
+      status: 'replied',
+      localId: 'local-1',
+      inputMessageRef: messageRef('input-1'),
+      outcome: { kind: 'answer', text: 'The answer from Muse', messageRef: messageRef('reply-1') },
+    };
+    execute.mockResolvedValueOnce({ ok: true, result: reply });
+    const { handleSessionCommand } = await import('./handleSessionCommand');
+    const output = captureConsoleText();
+    try {
+      await handleSessionCommand([
+        'send', 'sess-1', 'Hello', '--local-id', 'local-1', '--reply', 'wait', '--timeout-seconds', '60',
+        ...(json ? ['--json'] : []),
+      ], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+        }),
+      });
+      if (json) {
+        expect(JSON.parse(output.text())).toMatchObject({
+          ok: true,
+          kind: 'session_send',
+          data: { sessionId: 'sess-1', ...reply },
+        });
+      } else {
+        expect(output.text()).toContain(reply.outcome.text);
+      }
+    } finally {
+      output.restore();
+    }
+  });
+
   it('rejects a flag token where the positional message belongs', async () => {
     execute.mockResolvedValueOnce({
       ok: true,
