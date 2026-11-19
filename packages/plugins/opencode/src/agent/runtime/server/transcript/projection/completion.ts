@@ -55,6 +55,10 @@ export function classifyOpenCodeAssistantCompletion(messageOrInfo: unknown): Ope
     return { kind: 'non_terminal', messageId, completedAtMs: null, finish };
   }
 
+  if (info?.error !== undefined && info.error !== null) {
+    return { kind: 'terminal_failure', messageId, completedAtMs, finish };
+  }
+
   if (finish && !TERMINAL_SUCCESS_FINISHES.has(finish)) {
     return { kind: 'non_terminal', messageId, completedAtMs, finish };
   }

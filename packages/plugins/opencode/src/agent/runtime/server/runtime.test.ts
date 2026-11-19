@@ -5843,19 +5843,23 @@ describe('createOpenCodeServerRuntime', () => {
     native.watch(event => { events.push(event); });
     beginTestHostTurn(operations);
     await operations.sendTurnPrompt('hello');
-    // Released OpenCode v2.0.15 (6f3639d82...) SessionMessage.Assistant owns model
-    // and SessionError.Error { type, message, status }; this is the external server boundary.
+    // OpenCode 2.3.2 recorded this assistant and idle shape after a local model
+    // endpoint refused an admitted prompt with HTTP 400.
     client.setMessages(normalizeOpenCodeV2Messages([
       { id: providerUserMessageId, type: 'user', text: 'hello', time: { created: '2026-10-13T01:00:00.000Z' } },
-      { id: 'msg_native_limit', type: 'assistant', content: [],
+      { id: 'msg_native_refusal', type: 'assistant', content: [],
         model: { providerID: 'openai', id: 'native-model' }, time: { created: '2026-10-13T01:00:01.000Z', completed: '2026-10-13T01:00:02.000Z' },
-        error: { type: 'api_error', message: 'Provider rejected request', status: 429, token: 'private-provider-token' } },
+        finish: 'error', error: { type: 'provider.invalid-request', message: 'Synthetic provider refused the prompt', status: 400,
+          response: { body: JSON.stringify({ error: { code: 'invalid_request_error', message: 'private-provider-prose' } }) } } },
+      { id: 'msg_native_idle', type: 'idle', outcome: 'failed', time: { created: '2026-10-13T01:00:02.000Z' } },
     ], 'ses-1'));
-    await operations.handleProviderEvent({ payload: { type: 'session.idle', properties: { sessionID: 'ses-1' } } });
+    await operations.waitForTurnCompletion();
     expect(events).toContainEqual(expect.objectContaining({ kind: 'turn-failed', diagnostic: expect.objectContaining({
-      details: expect.objectContaining({ nativeProviderFailure: { providerId: 'openai', httpStatus: 429 } }),
+      code: 'opencode_provider_session_error',
+      details: expect.objectContaining({ nativeProviderFailure: { providerId: 'openai', httpStatus: 400 },
+        failureCause: expect.objectContaining({ providerErrorCode: 'invalid_request_error', httpStatus: 400 }) }),
     }) }));
-    expect(JSON.stringify(events)).not.toContain('private-provider-token');
+    expect(JSON.stringify(events)).not.toContain('private-provider-prose');
     await native.dispose();
   });
 

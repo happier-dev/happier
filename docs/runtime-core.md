@@ -3167,6 +3167,12 @@ native lifecycle; an assistant `finish:stop` alone does not settle the turn whil
 the native operation remains active. The plugin supplies this evidence through
 the existing Session SDK input receipt; the host retains custody and turn ownership.
 
+In 0.3 development source, OpenCode idle reconciliation carries a completed
+assistant error tied to the current native prompt through the existing Session
+and Execution Run failure projection. OpenCode V2 places its HTTP response
+body under `error.response.body`. The plugin extracts the provider code and HTTP
+status and excludes the response body from the published diagnostic.
+
 In 0.3 development, a missing launchable Agent CLI carries `agent_cli_missing` from both the command/terminal launch owner and the native plugin system-tool binding. Startup sanitization preserves that code; the primary Session issue classifier projects `dependency_failure` with static installation/path remediation. It does not expose raw startup error text or infer acceptance from a failed prerequisite.
 
 The same closed startup-diagnostic owner preserves

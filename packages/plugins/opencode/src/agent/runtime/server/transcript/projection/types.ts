@@ -34,6 +34,7 @@ export type OpenCodePartProjection = Readonly<{
 
 export type OpenCodeAssistantCompletionKind =
   | 'terminal_success'
+  | 'terminal_failure'
   | 'continuation'
   | 'ignored_internal'
   | 'non_terminal';

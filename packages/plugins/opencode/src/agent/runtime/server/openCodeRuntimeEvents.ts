@@ -83,14 +83,19 @@ export function buildOpenCodeProviderErrorIssue(params: Readonly<{
   const rawStatus = record?.status ?? data?.status ?? record?.statusCode ?? data?.statusCode;
   const status = typeof rawStatus === 'number' ? rawStatus : Number.parseInt(normalizeString(rawStatus), 10);
   const httpStatus = Number.isInteger(status) && status >= 100 && status <= 599 ? status : null;
-  let body: unknown = data?.responseBody ?? record?.responseBodyPreview ?? record?.body;
+  let body: unknown = data?.responseBody ?? asRecord(record?.response)?.body
+    ?? record?.responseBodyPreview ?? record?.body;
   if (typeof body === 'string') {
     try { body = JSON.parse(body); } catch { body = null; }
   }
   const response = asRecord(body);
   const responseError = asRecord(response?.error);
   const vendorFacts = readProviderErrorDiagnosticFacts(response);
-  const message = formatOpenCodeServerPromptErrorMessage(params.error);
+  const message = formatOpenCodeServerPromptErrorMessage(
+    record && !(params.error instanceof Error)
+      ? normalizeString(record.message) || normalizeString(data?.message) || 'OpenCode provider request failed.'
+      : params.error,
+  );
   const nativeAuthEvidence = isOpenCodeServerAuthFailure(params.error) || record?.name === 'ProviderAuthError'
     ? 'Authentication failed' : '';
   const failureCause = safeOpenCodeFailureCause(projectProviderSessionFailureCause(params.error, params.phase ?? 'turn', {

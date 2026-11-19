@@ -895,7 +895,8 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       if (readNonBlankOpaqueIdentifier(projection.info?.sessionID) !== providerSessionId) continue;
       if (readNonBlankOpaqueIdentifier(projection.info?.parentID) !== providerUserMessageId) continue;
       currentTurnAssistantMessages.push(message);
-      if (classifyOpenCodeAssistantCompletion(message).kind !== 'terminal_success') continue;
+      const completion = classifyOpenCodeAssistantCompletion(message);
+      if (completion.kind !== 'terminal_success' && completion.kind !== 'terminal_failure') continue;
 
       const text = readProjectedTranscriptText(message);
       const providerError = projection.info?.error;
@@ -924,7 +925,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     const [messageId, candidate] = candidatesByMessageId.entries().next().value ?? [];
     if (!messageId || !candidate) return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
     const providerMessageKey = buildOpenCodeProviderSessionMessageKey(providerSessionId, messageId);
-    if (state.emittedAssistantMessageIds.has(providerMessageKey)) {
+    if (candidate.providerErrorFingerprint === null && state.emittedAssistantMessageIds.has(providerMessageKey)) {
       return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
     }
     observeCurrentTurnMessageId(messageId);
