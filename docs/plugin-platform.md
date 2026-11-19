@@ -7530,6 +7530,12 @@ selector and declaration types there. The schema delegates to Protocol's
 `actions/sessionTargetV1` owner. Existing `/actions` type imports for this
 unpublished surface must move to `/sessions`.
 
+That surface also projects the development Session input handoff schemas and
+shared runner. Invoke `session.input.handoff` through the ordinary Actions front
+door; source plugins supply content and configuration adapters. The
+[Session input owner](runtime-core.md#session-input-and-inline-references) owns
+destination, creation and delivery behavior.
+
 In 0.3 development source, Session-targeted Action declarations project the
 same `sessionTarget` operand/cardinality metadata through built-in and contributed
 catalogs. Plugin callers submit selector intent to the Actions front door;

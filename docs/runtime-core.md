@@ -285,6 +285,15 @@ result, including a schema refusal before dispatch. An unanswered transport call
 can still settle `outcomeUnknown`. Triage links the created Session before its
 one idempotent input admission; it does not put the receipt in spawn initial input.
 
+The 0.3 development `session.input.handoff` Action uses Protocol's shared Session
+destination and input runner. Native hosts and the SDK consume that owner for
+existing destinations, configured creation and send; an explicit New choice
+enters ordinary Session authoring. Source adapters retain their content, saved
+configuration and source relationships, including linking before delivery.
+Native child Action failures and approval results remain visible. Composer
+effects require a mounted client port; editable evidence preview remains under
+implementation and composed validation.
+
 Image admission is a concrete dispatcher fact, published in owner metadata at
 `agentRuntimeCapabilitiesV1.backend.session.media.acceptsImageInput.supported`.
 ACP publishes its negotiated image-prompt support. Claude publishes support for

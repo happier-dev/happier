@@ -20006,6 +20006,26 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `includeMeta` (boolean): Include meta
 - `includeStructuredPayload` (boolean): Include structured payload
 
+## `session.input.handoff`
+
+**Hand input to a Session** — Resolve configured, existing or new Session delivery through the shared Session host. Explicit New opens an editable draft without starting or sending. Existing sends retain ordinary Pending admission and the supplied intent key.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `sessionChoice` (json, required): Session destination
+- `delivery` (select, required): Delivery choice
+- `defaults` (json): Configured launch defaults
+- `newSession` (json): New Session placement and seed
+- `input` (json, required): Requested work and descriptive evidence
+- `idempotencyKey` (text, required): Delivery intent key
+- `v` (number, required): V
+
 ## `session.input.result.get`
 
 **Get Session input result** — Read one original input’s host-proven native start and current result without waiting, or select projection: reply for its live Ask reply custody (including queued originals).

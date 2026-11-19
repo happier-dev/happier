@@ -1848,6 +1848,12 @@ export type ActionExecutorDeps = Readonly<{
     input: SessionAuthoringOpenV1;
     context: ActionExecutorContext;
   }>) => Promise<SessionAuthoringOpenResultV1>;
+  /** The answering client's mounted ordinary composer; headless hosts omit it. */
+  sessionInputHandoffCompose?: (args: Readonly<{
+    session: import('../sessionAddressV1.js').ActionSessionAddressV1;
+    input: import('../../sessions/messages/sessionInputHandoffV1.js').SessionInputHandoffContentV1;
+    context: ActionExecutorContext;
+  }>) => Promise<'composed' | 'composerUnavailable'>;
   /** Host front door for ordinary children whose mounted parent may already have returned. */
   executeOrdinaryChildAction?: (args: Readonly<{
     actionId: ActionId;

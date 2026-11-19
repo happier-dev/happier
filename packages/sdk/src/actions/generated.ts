@@ -744,6 +744,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "session.goal.set",
   "session.handoff",
   "session.handoff.prepare_target.resume",
+  "session.input.handoff",
   "session.instructions.set",
   "session.list.view.reset",
   "session.list.view.set",
@@ -3182,6 +3183,7 @@ export type GeneratedActions = Readonly<{
       readonly get: (input: PublicActionInputById["session.history.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.history.get">>;
     }> ;
     readonly input: Readonly<{
+      readonly handoff: (input: PublicActionInputById["session.input.handoff"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.input.handoff">>;
       readonly result: Readonly<{
         readonly get: (input: PublicActionInputById["session.input.result.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.input.result.get">>;
       }> ;
@@ -6196,6 +6198,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         get: (input: PublicActionInputById["session.history.get"], options?: ActionExecutionOptions) => execute("session.history.get", input, options),
       },
       input: {
+        handoff: (input: PublicActionInputById["session.input.handoff"], options?: ActionExecutionOptions) => execute("session.input.handoff", input, options),
         result: {
           get: (input: PublicActionInputById["session.input.result.get"], options?: ActionExecutionOptions) => execute("session.input.result.get", input, options),
         },

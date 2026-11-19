@@ -461,7 +461,7 @@ export const ACTION_SPEC_FAMILY_IDS: readonly (readonly string[])[] = [
   ["execution.run.start", "execution.run.list", "execution.run.get", "execution.run.send", "execution.run.ensure", "execution.run.ensure_or_start", "execution.run.stream.start", "execution.run.stream.read", "execution.run.stream.cancel", "execution.run.stop", "execution.run.cancel_turn", "execution.run.action", "execution.run.permission.respond", "execution.run.wait"],
   ["session.workspace.return.capture", "session.workspace.return.prepare", "session.workspace.return.apply", "session.open", "session.fork", "session.continue_with_replay", "session.rollback", "session.checkpoint_code_rollback", "session.checkpoint", "session.restore", "session.handoff", "session.handoff.prepare_target", "session.handoff.prepare_target_result.get", "session.handoff.prepare_target.resume", "session.handoff.commit", "session.handoff.abort", "session.handoff.status.get"],
   ["workspace.sync.conflict.resolve", "workspace.sync.relationship.create", "workspace.sync.relationship.replace", "workspace.sync.relationship.disable", "workspace.sync.relationship.enable", "workspace.sync.relationship.flush", "workspace.sync.relationship.terminate", "workspace.sync.relationships.list", "workspace.sync.conflicts.list", "workspace.sync.conflict.inspect"],
-  ["session.authoring.open"],
+  ["session.authoring.open", "session.input.handoff"],
   ["session.spawn_new"],
   ["projects.setup.set", "projects.sessionDefaults.get", "paths.list_recent", "projects.context.update", "projects.organization.update", "projects.visibility.set", "projects.workspace.update", "projects.services.pin", "projects.workspace.forget", "projects.list", "projects.open"],
   ["prompts.invocations.list", "prompts.invocation.resolve"],

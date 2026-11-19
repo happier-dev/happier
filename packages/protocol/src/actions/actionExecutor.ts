@@ -26,7 +26,7 @@ import { readSessionStopConfirmationFailure } from './executor/session/stopConfi
 import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
 import type { StampedStartV1 } from '../account/settings/admitAgentStartV1.js';
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
-import { isWorkspaceSyncRelationshipWriteActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
+import { isWorkspaceSyncRelationshipWriteActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_INPUT_HANDOFF_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
 import { isProjectSourceActionIdV1 } from './specs/projectSourcesActionIdsV1.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
 import { COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
@@ -58,6 +58,8 @@ import { dispatchAgentsCatalog } from './executor/agents/catalog.js';
 import { dispatchSessionAwareness } from './executor/session/awareness.js';
 import { dispatchSessionWork } from './executor/session/work.js';
 import { dispatchSessionHandoff } from './executor/session/handoff.js';
+import { executeSessionInputHandoffV1 } from './executor/session/inputHandoff.js';
+import type { SessionInputHandoffInputV1 } from '../sessions/messages/sessionInputHandoffV1.js';
 import { dispatchSessionLifecycle1, dispatchSessionLifecycle2 } from './executor/session/lifecycle.js';
 import { dispatchSessionMessages } from './executor/session/messages.js';
 import { dispatchSessionPendingEdit } from './executor/session/pendingEdit.js';
@@ -4367,6 +4369,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (actionId === 'session.space_membership.set') {
         if (!deps.sessionSpaceMembershipSet) return clientActionUnavailable(actionId);
         return await deps.sessionSpaceMembershipSet({ input: admittedInput as SessionSpaceMembershipSetInputV1, context: ctx });
+      }
+
+      if (actionId === SESSION_INPUT_HANDOFF_ACTION_ID_V1) {
+        return executeSessionInputHandoffV1({ input: admittedInput as SessionInputHandoffInputV1, context: ctx, deps,
+          executeChild: (childId, childInput, childContext) => executeChild(childId, childInput, childContext, false),
+        });
       }
 
       if (actionId === 'session.authoring.open') {

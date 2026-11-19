@@ -1,5 +1,8 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { SessionAuthoringOpenV1Schema, SessionAuthoringOpenResultV1Schema } from '../../../plugins/ui/hostApiRequests.js';
+import { SessionInputHandoffInputV1Schema, SessionInputHandoffResultV1Schema } from '../../../sessions/messages/sessionInputHandoffV1.js';
+import { SESSION_INPUT_HANDOFF_ACTION_ID_V1 } from '../../actionIds.js';
+import { redactObservationInputPaths } from '../observationRedaction.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 
 
@@ -25,6 +28,27 @@ function createSessionAuthoringActionSpecs() {
     examples: { voice: { argsExample: '{"seed":{"prompt":"Help me author this checkout."}}' } },
     inputSchema: SessionAuthoringOpenV1Schema,
     outputSchema: SessionAuthoringOpenResultV1Schema,
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: SESSION_INPUT_HANDOFF_ACTION_ID_V1, approval: { result: 'required' },
+    title: 'Hand input to a Session',
+    description: 'Resolve configured, existing or new Session delivery through the shared Session host. Explicit New opens an editable draft without starting or sending. Existing sends retain ordinary Pending admission and the supplied intent key.',
+    sideEffectClass: 'write', safety: 'safe', executionPlacement: 'account',
+    projectObservationInput: redactObservationInputPaths('input', 'defaults.destination.seed', 'defaults.destination.spawn', 'newSession'),
+    placements: [], bindings: { mcpToolName: 'session_input_handoff' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'input', 'handoff'], visibility: 'canonical' }] },
+    inputHints: { title: 'Hand input to a Session', fields: [
+      { path: 'sessionChoice', title: 'Session destination', widget: 'json', required: true },
+      { path: 'delivery', title: 'Delivery choice', widget: 'select', required: true, options: [
+        { value: 'configured', label: 'Configured' }, { value: 'compose', label: 'Compose' }, { value: 'send', label: 'Send' },
+      ] },
+      { path: 'defaults', title: 'Configured launch defaults', widget: 'json' },
+      { path: 'newSession', title: 'New Session placement and seed', widget: 'json' },
+      { path: 'input', title: 'Requested work and descriptive evidence', widget: 'json', required: true },
+      { path: 'idempotencyKey', title: 'Delivery intent key', widget: 'text', required: true },
+    ] },
+    inputSchema: SessionInputHandoffInputV1Schema, outputSchema: SessionInputHandoffResultV1Schema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
 }
