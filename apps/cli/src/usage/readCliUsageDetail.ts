@@ -12,6 +12,7 @@ import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSe
     type UsageSessionEvidenceRequest, type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { UsageCoachRemedySession } from '@happier-dev/protocol/usage/coach/buildUsageCoachRemedies';
 import { getUsageQueryKey, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageHowYouWorkDetailInput } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
@@ -252,7 +253,9 @@ export async function readCliUsageDetail(input: Readonly<{
     const work = await collectUsageWorkSources({ queries: workQueries, accounting: input.accounting, assertCurrent: input.assertCurrent,
         resolveSession: async sessionId => {
             const session = sessions.get(sessionId);
-            if (!session?.canReadWork || !session.machineId || !session.cwd) return null;
+            if (!session) return null;
+            if (!session.canReadWork) return { errorCode: RPC_ERROR_CODES.FORBIDDEN };
+            if (!session.machineId || !session.cwd) return { errorCode: RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE };
             return { machineId: session.machineId, cwd: session.cwd };
         },
         readMachine: async (machineId, request) => {
@@ -269,8 +272,9 @@ export async function readCliUsageDetail(input: Readonly<{
             const ids = membership.get(getUsageQueryKey(source.query))?.turns?.map(row => row.sessionId) ?? accounting.get(getUsageQueryKey(source.query))
                 ?.flatMap(row => row.sessionId !== null && row.turnId !== null ? [row.sessionId] : []) ?? [];
             const failure = requestFailure ?? selectReadFailure(ids);
-            return failure?.updateRequired ? { ...source, ...failure,
-                status: source.evidence?.length || source.branchEvidence?.length ? 'partial' : 'unsupported' } : source;
+            if (!failure?.updateRequired) return source;
+            return source.status === 'partial' ? { ...source, updateRequired: failure.updateRequired }
+                : { ...source, ...failure, status: 'unsupported' };
         }), sessions: [...sessions.values()].map(row => row.remedySession),
         howYouWork: evidenceQueries.map(query => {
             const ids = idsByQuery.get(getUsageQueryKey(query)) ?? [];

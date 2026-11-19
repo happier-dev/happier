@@ -2764,7 +2764,8 @@ describe('usage query captured Resource adapter', () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       previous = await read(previous);
       expect.soft(previous.results[0]?.work?.branchAllocations[0]?.reason).toBe('allocated');
-      expect.soft(previous.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', errorCode: 'work_evidence_failed' });
+      expect.soft(previous.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', errorCode: 'work_evidence_failed',
+        unreadSessions: { failed: 1 } });
     }
     status = 403;
     expect((await read(previous)).results[0]?.work?.branchAllocations[0]?.reason).toBe('missing_evidence');
@@ -8785,9 +8786,15 @@ describe('usage query Work composition', () => {
       modelId: null, machineId: null, projectKey: null, workspaceId: null, source: null, tokens,
       cost: { reportedUsd: 1, estimatedUsd: 0, currency: 'USD' } };
     const captured = await context(request => {
-        if (request.path === '/v2/usage/query') return Response.json({ v: 1, totals: {
-          eventCount: 1, tokens, cost: contribution.cost }, contributions: [{ ...contribution,
-            ...(UsageAnalyticsQueryRequestSchema.parse(request.body).filters?.agentIds?.includes('different') ? { turnId: 'other-turn' } : {}) }] });
+        if (request.path === '/v2/usage/query') {
+          const input = UsageAnalyticsQueryRequestSchema.parse(request.body);
+          return Response.json({ v: 1, totals: { eventCount: 1, tokens, cost: contribution.cost },
+            contributions: [{ ...contribution,
+              ...(input.filters?.agentIds?.includes('different') ? { turnId: 'other-turn' } : {}) }],
+            coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [], sources: [],
+              range: { ...input.dateRange, complete: true } },
+          });
+        }
         if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
           signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
         if (request.path === '/v2/sessions/session') return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: 'session',
@@ -8950,7 +8957,8 @@ describe('usage query Work composition', () => {
     expect(standalone.results[0]?.sources).toContainEqual({ source: 'work', status: 'partial', asOfMs: expect.any(Number) });
     scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [merged], errorCode: 'COMMAND_FAILED' }));
     const partial = await readUiUsageQueryBatch(captured, { queries: [query] });
-    expect(partial.results[0]?.sources).toContainEqual({ source: 'work', status: 'partial', asOfMs: expect.any(Number) });
+    expect(partial.results[0]?.sources).toContainEqual({ source: 'work', status: 'partial', asOfMs: expect.any(Number),
+      unreadSessions: { failed: 1 } });
     expect(partial.results[0]?.work?.allocations[0]?.reason).toBe('allocated');
     scmTransport.mockRejectedValue(new RetryableServerResponseError(503, 'Unavailable'));
     const partialFailure = await readUiUsageQueryBatch(captured, { queries: [query] }, undefined, partial);

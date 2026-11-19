@@ -1239,7 +1239,8 @@ async function readSessionWorkEvidence(context: UsageQueryAccountContext, querie
         resolveSession: async sessionId => {
             const scope = context.accountLifetime.scope;
             const target = resolveSessionScmRequestTarget(sessionId, RPC_METHODS.SCM_WORK_EVIDENCE_READ, {}, scope.serverId, scope.accountId);
-            return target.ok ? { machineId: target.machineId, cwd: target.cwd } : null;
+            return target.ok ? { machineId: target.machineId, cwd: target.cwd }
+                : { errorCode: target.failure.actionErrorCode ?? target.failure.errorCode };
         },
         readMachine: (machineId, request) => machineScmWorkEvidenceRead(machineId, request, { ...context.accountLifetime.scope, signal }),
     });
