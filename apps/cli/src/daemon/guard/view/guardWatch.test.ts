@@ -187,7 +187,7 @@ describe('Guard requester view and parked watch', () => {
         return () => { changes.delete(listener); };
       } });
     cleanup.push(() => view.dispose());
-    return { view, sampler, policy, ownership, readFacts, activityLog, inventory, sessionState,
+    return { view, sampler, policy, ownership, readFacts, activityLog, inventory, sessionState, tracked,
       holdActivityReply: () => {
         let release!: () => void;
         let entered!: () => void;
@@ -293,6 +293,23 @@ describe('Guard requester view and parked watch', () => {
     await expect(h.view.readView({ ...requester, serverId: 'another-home' })).rejects.toMatchObject({ reason: 'wrong_target' });
     h.policy.stop();
     await expect(h.view.readView(requester)).rejects.toMatchObject({ name: 'GuardViewUnavailableError', reason: 'policy_unavailable' });
+  });
+
+  it('projects the declared Agent of an idle Session even with stale legacy flavor', async () => {
+    const h = await setup();
+    h.tracked[0]!.happySessionMetadataFromLocalWebhook = {
+      path: '/project',
+      host: 'fixture-machine',
+      homeDir: '/home/fixture',
+      happyHomeDir: '/home/fixture/.happier',
+      happyLibDir: '/fixture/happier',
+      happyToolsDir: '/fixture/happier/tools',
+      flavor: 'codex',
+      runtimeDescriptorV1: { v: 1, agentId: 'acme.agent/codex', agent: {} },
+    };
+
+    const own = await h.view.readView(requester);
+    expect(own.idle).toMatchObject([{ sessionRef: 's0', agentId: 'acme.agent/codex' }]);
   });
 
   it('projects actual PTY private preview rows only for the exact requester, retaining aggregate others counts', async () => {

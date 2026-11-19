@@ -15,6 +15,7 @@ import type { createGuardRuntime } from '../guardRuntime';
 import type { MachineGuardPolicyV1 } from '@happier-dev/protocol/machines/guard/guardPolicyV1';
 import { attributeMachineUsage } from '@happier-dev/protocol/machines/resources/machineUsageAttribution';
 import { processTotals } from '../../processes/view/projectMachineProcesses';
+import { resolveTrackedSessionRuntimeAgentId } from '../../sessions/resolveTrackedSessionCatalogAgentId';
 
 export type GuardTerminalPreview = Readonly<{
   terminalId: string; terminalKey: string; label: string; idleMs: number; eligible: boolean;
@@ -143,7 +144,6 @@ export function createGuardWatch(input: GuardWatchInput) {
         if (target.kind !== 'session' || !target.tracked.happySessionId) return [];
         const sessionRef = target.tracked.happySessionId;
         const session = target.tracked;
-        const metadata = session.happySessionMetadataFromLocalWebhook;
         const settledAt = target.eligibility.eligible ? target.eligibility.settledAt
           : facts.inventory.items.find(item => item.ownerRef === session && item.category === 'session')?.settledAt;
         const keptAt = input.sessionState.readKeepRunningAnchor(sessionRef);
@@ -152,7 +152,7 @@ export function createGuardWatch(input: GuardWatchInput) {
         const reason = target.eligibility.eligible ? undefined : target.eligibility.reasons[0]?.kind ?? 'activity_unknown';
         // A countdown is a live runtime warning, never a preview promise from a configured rule.
         const stopAt = input.sessionState.readSessionWarning(sessionRef)?.stopAt;
-        return [{ sessionRef, title: target.label, agentId: metadata?.flavor ?? '',
+        return [{ sessionRef, title: target.label, agentId: resolveTrackedSessionRuntimeAgentId(session) ?? '',
           status: reason || keptRunning && stopAt === undefined ? 'kept' as const
             : stopAt === undefined ? 'not_yet' as const : 'stops_at' as const,
           ...(reason ? { reason } : keptRunning && stopAt === undefined ? { reason: 'kept_running' as const } : {}),
