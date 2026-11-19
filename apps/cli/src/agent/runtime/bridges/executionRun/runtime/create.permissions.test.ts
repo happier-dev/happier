@@ -449,7 +449,7 @@ describe('execution run permission handler', () => {
     });
   });
 
-  it('allows only curated exact git inspection commands in read-only execution runs', async () => {
+  it('allows curated git inspection arguments and denies shell composition in read-only execution runs', async () => {
     const handler = createExecutionRunPermissionHandler({
       backendId: 'claude',
       permissionMode: 'read_only',
@@ -462,7 +462,7 @@ describe('execution run permission handler', () => {
       decision: 'denied',
     });
     await expect(handler.handleToolCall('git-args', 'bash', { command: 'git status --porcelain' })).resolves.toEqual({
-      decision: 'denied',
+      decision: 'approved',
     });
     await expect(handler.handleToolCall('git-compound', 'bash', { command: 'git status && id' })).resolves.toEqual({
       decision: 'denied',
