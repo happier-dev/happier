@@ -38,7 +38,8 @@ export async function runWithHolderWorkspaceSource<T>(input: Readonly<{
 }
 
 type TargetEntry = Readonly<{ kind: string; size: number; atimeMs: number; mtimeMs: number; ctimeMs: number; mode: number; dev: number; ino: number }>;
-type TargetResult = Readonly<{ status: string; entry?: TargetEntry; entries?: readonly Readonly<{ name: string; kind: string }>[];
+type TargetListEntry = Readonly<{ name: string; kind: string; stats?: Pick<TargetEntry, 'size' | 'mtimeMs'> | null }>;
+type TargetResult = Readonly<{ status: string; entry?: TargetEntry; entries?: readonly TargetListEntry[];
   target?: string; path?: string; sha256?: string; code?: string; message?: string }>;
 
 function unavailable(operation: string): PluginError {
@@ -247,7 +248,10 @@ export function createHolderWorkspaceSource(input: Readonly<{
     // The native JSON codec omits an empty entries slice.
     readdir: async target => ((await meta(target, 'list')).entries ?? []).map((entry): WorkspaceDirent => ({
       name: entry.name, isFile: () => entry.kind === 'file', isDirectory: () => entry.kind === 'directory', isSymbolicLink: () => entry.kind === 'symlink',
-    })) as WorkspaceDirent[],
+      ...(entry.stats === undefined ? {} : {
+        stats: entry.stats === null ? null : { size: entry.stats.size, mtime: new Date(entry.stats.mtimeMs) },
+      }),
+    })),
     realpath: async target => path.posix.join(root, (await meta(target, 'realpath')).path ?? ''),
     readlink: async target => {
       // A link's raw text; an absolute target inside the guest root is reported at the addressed root.

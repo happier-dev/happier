@@ -12,7 +12,10 @@ import type { RpcHandler, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/r
 
 /** Facts a consumer reads from an entry; node `Stats` satisfies it for the local disk. */
 export type WorkspaceEntryStats = Pick<Stats, 'isFile' | 'isDirectory' | 'isSymbolicLink' | 'size' | 'mtimeMs' | 'ctimeMs' | 'mtime' | 'dev' | 'ino' | 'mode'>;
-export type WorkspaceDirent = Pick<Dirent, 'name' | 'isFile' | 'isDirectory' | 'isSymbolicLink'>;
+export type WorkspaceDirent = Pick<Dirent, 'name' | 'isFile' | 'isDirectory' | 'isSymbolicLink'> & Readonly<{
+  /** null means stat was unavailable; undefined means this source did not supply it. */
+  stats?: Pick<WorkspaceEntryStats, 'size' | 'mtime'> | null;
+}>;
 /** Positional reads over one opened file; node `FileHandle` satisfies it. */
 export type WorkspaceReadHandle = Pick<FileHandle, 'read' | 'close'> & Readonly<{ stat(): Promise<WorkspaceEntryStats> }>;
 

@@ -16,7 +16,7 @@ import (
 // workspace-confined-meta  {v, rootPath, relativePath ("" = root), op}
 //   op lstat    -> {status:"entry", entry}
 //   op stat     -> {status:"entry", entry, path}   (links followed inside the root)
-//   op list     -> {status:"entries", entries:[{name, kind}]}
+//   op list     -> {status:"entries", entries:[{name, kind, stats}]}
 //   op readlink -> {status:"link", target}
 //   op realpath -> {status:"path", path}           (root-relative, "" = root)
 //   missing     -> {status:"missing"}
@@ -40,9 +40,15 @@ type workspaceTargetEntry struct {
 	Ino     uint64  `json:"ino"`
 }
 
+type workspaceTargetListStats struct {
+	Size    uint64  `json:"size"`
+	MtimeMs float64 `json:"mtimeMs"`
+}
+
 type workspaceTargetListEntry struct {
-	Name string `json:"name"`
-	Kind string `json:"kind"`
+	Name  string                    `json:"name"`
+	Kind  string                    `json:"kind"`
+	Stats *workspaceTargetListStats `json:"stats"`
 }
 
 type workspaceTargetResult struct {

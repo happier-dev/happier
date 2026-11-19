@@ -119,7 +119,21 @@ func runWorkspaceTargetMeta(request workspaceTargetMetaRequest) workspaceTargetR
 			if err != nil {
 				kind = "other"
 			}
-			entries = append(entries, workspaceTargetListEntry{Name: name, Kind: string(kind)})
+			entry := workspaceTargetListEntry{Name: name, Kind: string(kind)}
+			switch kind {
+			case workspaceConfinedKindSymlink:
+				// Use the same confined stat as a single-file request. An escaping
+				// or broken link is listed without the destination's metadata.
+				result := runWorkspaceTargetMeta(workspaceTargetMetaRequest{rootPath: request.rootPath,
+					relativePath: filepath.Join(request.relativePath, name), op: "stat"})
+				if result.Entry != nil {
+					entry.Stats = &workspaceTargetListStats{Size: result.Entry.Size, MtimeMs: result.Entry.MtimeMs}
+				}
+			case workspaceConfinedKindDirectory, workspaceConfinedKindFile:
+				statEntry := workspaceTargetEntryOf(workspaceConfinedLinuxHandle{kind: kind, stat: stat})
+				entry.Stats = &workspaceTargetListStats{Size: statEntry.Size, MtimeMs: statEntry.MtimeMs}
+			}
+			entries = append(entries, entry)
 		}
 		result := workspaceTargetStatus("entries")
 		result.Entries = entries

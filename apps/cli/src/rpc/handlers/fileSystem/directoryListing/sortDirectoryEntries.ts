@@ -4,7 +4,7 @@ function normalizeName(name: string): string {
   return name.normalize('NFKC')
 }
 
-export function sortDirectoryEntries(entries: readonly DirectoryListingEntry[]): DirectoryListingEntry[] {
+export function sortDirectoryEntries<T extends DirectoryListingEntry>(entries: readonly T[]): T[] {
   // Reuse ICU comparison state for this listing rather than rebuilding it for
   // every comparison in a large directory's sort.
   const compareNames = new Intl.Collator(undefined, { sensitivity: 'base' }).compare

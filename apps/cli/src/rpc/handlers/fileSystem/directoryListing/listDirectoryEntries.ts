@@ -34,7 +34,8 @@ export async function listDirectoryEntries(input: ListDirectoryEntriesInput): Pr
         name: dirent.name,
         absolutePath: join(input.directoryPath, dirent.name),
         type,
-      } satisfies Pick<DirectoryListingEntry, 'name' | 'absolutePath' | 'type'>
+        stats: dirent.stats,
+      }
     })
     .filter((entry) => {
       if (input.includeFiles) return true
@@ -49,9 +50,10 @@ export async function listDirectoryEntries(input: ListDirectoryEntriesInput): Pr
   const truncated = normalizedMaxEntries != null && sortedEntries.length > normalizedMaxEntries
   const visibleEntries = truncated ? sortedEntries.slice(0, normalizedMaxEntries) : sortedEntries
 
-  const entries = await mapWithConcurrency(visibleEntries, input.statConcurrency, async (entry) => {
+  const entries = await mapWithConcurrency(visibleEntries, input.statConcurrency, async ({ stats: listedStats, ...entry }) => {
+    if (listedStats === null) return entry
     try {
-      const stats = await source.stat(entry.absolutePath)
+      const stats = listedStats ?? await source.stat(entry.absolutePath)
       return {
         ...entry,
         size: stats.size,

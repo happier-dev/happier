@@ -89,6 +89,40 @@ func TestWorkspaceTargetMetaListsStatsAndResolvesInsideTheRootOnly(t *testing.T)
 	if kinds["src"] != "directory" || kinds["inside-link"] != "symlink" || kinds["escape"] != "symlink" {
 		t.Fatalf("kinds: %v", kinds)
 	}
+	// A single page supplies the same browse metadata as an individual stat,
+	// including a confined link, without disclosing stat data outside the root.
+	var sourceFile, insideLink, escapeLink map[string]json.RawMessage
+	decodeEntry := func(entry workspaceTargetListEntry) map[string]json.RawMessage {
+		encoded, err := json.Marshal(entry)
+		must(t, err)
+		var fields map[string]json.RawMessage
+		must(t, json.Unmarshal(encoded, &fields))
+		return fields
+	}
+	for _, entry := range listed.Entries {
+		switch entry.Name {
+		case "inside-link":
+			insideLink = decodeEntry(entry)
+		case "escape":
+			escapeLink = decodeEntry(entry)
+		}
+	}
+	for _, entry := range meta(t, root, "src", "list").Entries {
+		if entry.Name == "a.txt" {
+			sourceFile = decodeEntry(entry)
+		}
+	}
+	var stats struct {
+		Size    uint64  `json:"size"`
+		MtimeMs float64 `json:"mtimeMs"`
+	}
+	must(t, json.Unmarshal(sourceFile["stats"], &stats))
+	if stats.Size != 5 || stats.MtimeMs == 0 || !bytes.Equal(sourceFile["stats"], insideLink["stats"]) {
+		t.Fatalf("list did not supply stat data for file and confined link: %s %s", sourceFile["stats"], insideLink["stats"])
+	}
+	if string(escapeLink["stats"]) != "null" {
+		t.Fatalf("list disclosed or omitted the refusal of outside stat data: %s", escapeLink["stats"])
+	}
 	if got := meta(t, root, "src/a.txt", "lstat"); got.Status != "entry" || got.Entry.Kind != "file" || got.Entry.Size != 5 || got.Entry.Ino == 0 {
 		t.Fatalf("lstat: %+v", got)
 	}
