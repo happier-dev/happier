@@ -132,22 +132,26 @@ Resolve the address problem there instead of creating another copy of the app.
 
 ## Private service connections
 
-Keep a database private when another Environment needs to use it. The current
-**Private sharing** editor configures an observed private network; both Machines
-need access to that same network. Save the export, deploy its publication, then
-use an Environment reference for the consuming variable. A declaration alone
-does not make a service reachable, and variable changes apply on deployment.
+To share a database privately in unreleased 0.3, open the source Environment's
+**Settings** tab and find **Private sharing**. For a stored Compose definition
+on one Machine, choose the service and TCP port, then choose how another app
+will reach it.
 
-Unreleased 0.3 source also accepts an Iroh export through the Environment update
-Action: `exposure: 'loopback'` with `transport: { kind: 'iroh' }` and no private
-network selection. It requires a TCP publication bound to loopback. An exact
-private-network export may also carry Iroh with an additional loopback publication.
-An `auto` reference chooses the shared observed network first, then Iroh, and its
-receipt records the selected route. The sharing
-editor shows **Happier network** as **Not available yet** while its native and
-security validation is pending. Machine forwarding,
-container networking and platform validation are separate from accepting that
-declaration; this guide does not yet certify the Iroh connection journey.
+- **Happier network** creates a loopback publication for Machine forwarding over
+  Iroh. The Machines can be on separate networks.
+- A joined private network publishes on the selected network address. Both
+  Machines need access to that network.
+
+Review and save the share, then deploy the source Environment. On the database
+page, use **Connect to an app** to choose the destination Environment and save
+the reference variable. Deploy the destination to apply the variable. An
+automatic reference prefers an available shared network when the export offers
+one, then uses Iroh when the export offers it. The deployment receipt records the
+selected route.
+
+The Iroh forwarding path for Compose containers targets native Linux Docker.
+Two-Machine connectivity, recovery after a daemon restart, and refusal after
+removing an export require separate live verification.
 
 ## Production telemetry in development
 

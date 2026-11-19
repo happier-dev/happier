@@ -1963,17 +1963,20 @@ destination failure; an older connection's traffic does not prove recovery.
 Accepting a declaration does not prove connectivity; managed two-Machine and
 platform validation remain separate from these source contracts.
 
-The 0.3 development Environment Settings surface places private sharing after
-Servers & build. Its editor reviews the selected service, container port,
-observed private network and concrete host publication before calling that same
-update Action. Missing network observations remain a visible prerequisite.
-The Happier network choice remains disabled as “Not available yet” until its
-native and security validation closes; its authoring arm uses this same Action.
-This editor authors a stored definition for one native Machine: a shared Compose
-document cannot use one Machine's concrete address on several Machines. It does
-not restrict existing multi-Machine deployment or Connect readers. Connect's
-missing-share remedy opens this Settings section; saving still requires an
-explicit deployment before an observed endpoint can be connected.
+The unreleased 0.3 Environment Settings surface places Private sharing after
+Servers & build. The editor reviews the selected service, container port, route,
+and host port before calling that same update Action. Happier network publishes
+TCP on `127.0.0.1` and declares the Iroh export without requiring a private network
+observation. Choosing a joined network instead requires a current observed
+network and an address on that network.
+
+The editor authors a stored definition for one native Machine. Connect opens
+Private sharing when the source needs an export and writes an `auto` reference
+to the chosen consuming Environment. Deploy the source to apply the publication
+and deploy the consumer to materialize its reference. To withdraw an export,
+update `serviceExports` to exclude it, then deploy the source to apply the revised
+declarations. The target daemon checks those applied declarations on the next
+tunnel open.
 
 An explicit deployment supplies its exact private workload binding to the
 existing Machine firewall transition. The native writer retains the applied
