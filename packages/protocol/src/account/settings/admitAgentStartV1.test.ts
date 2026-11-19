@@ -43,6 +43,20 @@ const leaf = (facts: AgentStartFactsV1 = {}): MaterializedWorkflowLeafV1 => ({ b
 const spawn = (facts: AgentStartFactsV1 = {}): AgentStartRequestV1 => ({ kind: 'spawn_new', facts });
 
 describe('admitAgentStartV1', () => {
+  it('starts a host root at its own depth without granting automation the present-user exemption', () => {
+    const host = { ...baseline, caller: { kind: 'host' as const } };
+    const request = spawn({ agentTarget: target, permissionMode: 'default' });
+    expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, request, host))
+      .toMatchObject({ ok: true, stamped: { workDepth: 1 } });
+    expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, request, { ...host, workDepthLimit: 0 }))
+      .toMatchObject({ ok: false, refusal: { code: 'work_depth_exceeded' } });
+    const restricted = { ...host, allowLists: { allowedRoleIds: null, allowedAgentTargetKeys: [] } };
+    expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, request, restricted))
+      .toMatchObject({ ok: false, refusal: { code: 'policy_denied_field', field: 'agentTarget' } });
+    expect(admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, request, { ...restricted, initiator: 'user' }))
+      .toMatchObject({ ok: true, stamped: { workDepth: 0 } });
+  });
+
   it('retains the exact Team model source and rejects changing it to an identically named native model', () => {
     const selection = { v: 2 as const, updatedAt: 1, ref: { source: 'team_resource' as const, teamId: 'team', resourceId: 'resource',
       expectedResourceRevision: 2, deliveryMode: 'direct' as const, agentTargetKey: engine.agentTargetKey, modelId: engine.modelId } };

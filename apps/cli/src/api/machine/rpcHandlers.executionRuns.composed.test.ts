@@ -27,12 +27,15 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import type { PtyExitEvent, PtyProcess, PtySpawnParams } from '@/terminal/pty/provider';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { registerMachineRpcHandlers } from './rpcHandlers';
+import { readRetainedExecutionRunRecord } from '@/daemon/executionRunRegistry';
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { decodeBase64 } from '@/api/encryption';
 import type { AccountSettingsSnapshotResolver } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 
 const ptyBoundary = vi.hoisted(() => ({ spawns: [] as Array<{ launch: PtySpawnParams; finish(): void }> }));
 const requesterAccountToken = `e30.${Buffer.from(JSON.stringify({ sub: 'requester',
@@ -135,13 +138,15 @@ describe('detached execution-run Machine composition', () => {
   it.each([
     { requesterKind: 'session', rootActionId: 'execution.run.start' },
     { requesterKind: 'account', rootActionId: 'execution.run.start' },
+    { requesterKind: 'account', rootActionId: 'execution.run.start', roleId: 'scout' },
     { requesterKind: 'account', rootActionId: 'scm.diffSummary.generate' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', selectedMcp: 'owner' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', selectedMcp: 'member' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', selectedMcp: 'foreign-requester' },
-  ] as const)('carries the captured $requesterKind requester under $rootActionId through real Action dispatch, Machine registration, native launch and cold resume ($selectedMcp)', async row => {
+  ] as const)('carries the captured $requesterKind requester under $rootActionId through real Action dispatch and Machine registration ($selectedMcp, Role $roleId)', async row => {
     const { requesterKind, rootActionId } = row;
     const selectedMcp = 'selectedMcp' in row ? row.selectedMcp : undefined;
+    const roleId = 'roleId' in row ? row.roleId : undefined;
     const custodianAccountId = selectedMcp === 'member' ? 'other-custodian' : 'requester';
     const actorAccountId = selectedMcp === 'foreign-requester' ? 'member' : 'requester';
     const memberCredentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'member',
@@ -161,6 +166,13 @@ describe('detached execution-run Machine composition', () => {
           target: { t: 'allMachines' }, createdAt: 1, updatedAt: 1 }] } } : {}),
     });
     const { f, cwd, finite } = h;
+    if (roleId) {
+      // The Home rows are the storage boundary. Seed the current empty library
+      // so Role admission does not require unrelated legacy history migration.
+      for (const key of PromptLibraryCatalogKeyV1Schema.options) f.mutatePromptLibraryRow(key, {
+        expectedRevision: 'absent', sourceSettingsVersion: 0, content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) },
+      });
+    }
     const callerCredentials = selectedMcp === 'foreign-requester' ? memberCredentials : f.bootstrap.credentials;
     expect(f.bootstrap.savedSecretOperationContext.readSnapshot()?.scopeKey, 'The admitted requester must belong to the current fixture Home')
       .toBe(resolveAccountSettingsScopeKey(f.bootstrap.credentials));
@@ -177,6 +189,8 @@ describe('detached execution-run Machine composition', () => {
       executable: process.execPath, cwd: process.cwd(), native: process.env.NATIVE, original: process.env.ORIGINAL,
       owner: process.env[${JSON.stringify(PROCESS_OWNER_ENV_KEY)}], args: process.argv.slice(1) }));`;
     const pluginId = 'acme.detached-project';
+    const backendTarget = roleId ? { kind: 'agent' as const, identity: { pluginId, localId: 'agent' } }
+      : { kind: 'backend' as const, backendId: `${pluginId}/agent` };
     const plugin = await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: f.directory, controller: pluginReloadController,
       plugins: [{ manifest: createPluginManifestV2Fixture({ id: pluginId,
         hostAccess: { required: [{ id: 'process', capability: 'process', reason: 'Launch the fixture Agent',
@@ -284,8 +298,8 @@ describe('detached execution-run Machine composition', () => {
       serverHttpBaseUrl: 'https://session-home.test', machineActionDirectTargetTransport: {
         machineId: 'machine', invoke: (method, request, options) => rpc.invokeLocal(method, request, options),
       } });
-    expect(await unscopedCli.executionRunStart(null, { intent: 'agent',
-      backendTarget: { kind: 'backend', backendId: `${pluginId}/agent` }, instructions: 'Run the native Project Agent.',
+    expect(await unscopedCli.executionRunStart(null, { intent: 'agent', ...(roleId ? { roleId } : {}),
+      backendTarget, instructions: 'Run the native Project Agent.',
       cwd, permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
     }, { exactMachineId: 'machine' })).toMatchObject({ ok: false,
       errorCode: 'project_requester_credentials_unavailable', details: { executionRunStart: { runCreation: 'noRunCreated' } } });
@@ -330,9 +344,9 @@ describe('detached execution-run Machine composition', () => {
     const options = { exactMachineId: 'machine', surface: 'cli' as const, authority: 'present_user' as const };
     phase = 'initial native Run admission';
     const action = await createActionExecutor(deps).execute('execution.run.start', { sessionId: null,
-      intent: 'agent', backendTarget: { kind: 'backend', backendId: `${pluginId}/agent` },
-      instructions: 'Run the native Project Agent.', permissionMode: 'read_only', retentionPolicy: requesterKind === 'account' && !selectedMcp ? 'resumable' : 'ephemeral',
-      cwd, runClass: requesterKind === 'account' && !selectedMcp ? 'long_lived' : 'bounded', ioMode: 'request_response',
+      intent: 'agent', ...(roleId ? { roleId } : {}), backendTarget,
+      instructions: 'Run the native Project Agent.', permissionMode: 'read_only', retentionPolicy: requesterKind === 'account' && !selectedMcp && !roleId ? 'resumable' : 'ephemeral',
+      cwd, runClass: requesterKind === 'account' && !selectedMcp && !roleId ? 'long_lived' : 'bounded', ioMode: 'request_response',
       ...(selectedMcp ? { capabilitySelection: { mcp: { managedServersEnabled: true } } } : {}),
       ...(requesterKind === 'account' ? { connectedServices: { v: 2, bindingsByServiceId: {} } } : {}),
     }, { surface: 'cli', authority: 'present_user',
@@ -353,6 +367,21 @@ describe('detached execution-run Machine composition', () => {
     const started = action.result;
     expect(started, JSON.stringify(started)).toMatchObject({ runId: expect.any(String) });
     const runId = ExecutionRunStartResponseSchema.parse(started).runId;
+    if (roleId) {
+      phase = 'admitted Role Run projection';
+      expect(await deps.executionRunGet(null, { runId }, options)).toMatchObject({ run: {
+        runId, intent: 'task', permissionMode: 'read-only', retentionPolicy: 'ephemeral', runClass: 'bounded',
+      } });
+      // The real persisted Run records the canonical admission output even if
+      // this fixture's custom Agent cannot complete its later native launch.
+      await vi.waitFor(async () => {
+        expect(await readRetainedExecutionRunRecord(runId)).toMatchObject({ state: {
+          runId, sessionId: null, roleId: 'scout', intent: 'task', depth: 0,
+          permissionMode: 'read-only', workspaceWrites: 'deny',
+        } });
+      });
+      return;
+    }
     if (selectedMcp) {
       phase = 'bounded Machine selected-MCP settlement';
       const settled = await deps.executionRunWait(null, { runId, timeoutSeconds: 30 }, options);

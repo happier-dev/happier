@@ -117,11 +117,13 @@ export type AgentStartSessionCallerV1 = Readonly<z.infer<typeof AgentStartSessio
 
 export type AgentStartCallerV1 =
   | AgentStartSessionCallerV1
+  | Readonly<{ kind: 'host' }>
   | Readonly<{ kind: 'originless'; runId: string; runDepth: number; runOriginSessionId?: string }>;
 
 /** Host caller depth projection shared by admission and authenticated Session witnesses. */
 export function readAgentStartCallerWorkDepthV1(caller: AgentStartCallerV1): number {
-  return caller.kind === 'session' ? Math.max(caller.starterDepth, caller.turnDepth) : caller.runDepth;
+  return caller.kind === 'session' ? Math.max(caller.starterDepth, caller.turnDepth)
+    : caller.kind === 'originless' ? caller.runDepth : 0;
 }
 
 export type AgentStartContextV1 = Readonly<{
@@ -210,7 +212,8 @@ export function admitAgentStartV1(
   const refuse = (refusal: AgentStartRefusalV1): AgentStartAdmissionV1 => ({ ok: false, refusal });
   const targetSessionId = 'targetSessionId' in request ? request.targetSessionId : undefined;
   if (targetSessionId !== undefined && context.initiator !== 'user') {
-    const ownSessionId = context.caller.kind === 'session' ? context.caller.sessionId : context.caller.runOriginSessionId;
+    const ownSessionId = context.caller.kind === 'session' ? context.caller.sessionId
+      : context.caller.kind === 'originless' ? context.caller.runOriginSessionId : undefined;
     if (!ownSessionId || (targetSessionId !== ownSessionId && !context.ledSubtreeSessionIds.includes(targetSessionId))) {
       return refuse({ code: 'subtree_denied' });
     }

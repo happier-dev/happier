@@ -94,6 +94,7 @@ import {
   type DirectTransferExportPrepareRequest,
 } from './rpcHandlers.directTransferExports';
 import { registerMachineDiagnosticsRpcHandlers } from './rpcHandlers.diagnostics';
+import { createMachineExecutionRunAgentStartContextResolver } from './resolveExecutionRunAgentStartContext';
 import {
   registerMachineWorkspaceSyncRpcHandlers,
   type MachineWorkspaceSyncRpcService,
@@ -703,6 +704,9 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
       ? { actionsSettingsProvider: params.deps.actionsSettingsProvider }
       : {}),
     ...(params.deps?.executionRunAccountSettings ?? {}),
+    resolveAgentStartContext: createMachineExecutionRunAgentStartContextResolver({
+      machineId: params.deps?.currentMachineId, cwd: params.deps?.workingDirectory ?? process.cwd(),
+    }),
     ...(params.deps?.prepareRunTeamCredentialProviderBinding
       ? { prepareRunTeamCredentialProviderBinding: params.deps.prepareRunTeamCredentialProviderBinding }
       : {}),

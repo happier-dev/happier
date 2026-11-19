@@ -194,7 +194,7 @@ type ExecutionRunRpcActionContext = Readonly<{
   /** Session-owned Run listing dependency, injected by the runtime principal owner. */
   sessionList?: ActionExecutorDeps['sessionList'];
   /** Exact target-host role/context owner for a present-user start. */
-  resolveAgentStartContext?: ActionExecutorDeps['resolveAgentStartContext'];
+  resolveAgentStartContext?: ExecutionRunRpcHandlerContext['resolveAgentStartContext'];
   readPromptCredentials?: () => Promise<import('@/persistence').StoredCredentials | null>;
   readRequesterNativeOfferedModel?: ExecutionRunRpcHandlerContext['readRequesterNativeOfferedModel'];
   readRequesterWorkAttributionV1?: () => Promise<import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1 | null>;
@@ -1173,7 +1173,7 @@ export function createExecutionRunRpcActionExecutor(
         let resolved: Awaited<ReturnType<NonNullable<ActionExecutorDeps['resolveAgentStartContext']>>> | undefined;
         let errorCode = 'target_unavailable';
         try {
-          resolved = await params.context.resolveAgentStartContext?.(context);
+          resolved = await params.context.resolveAgentStartContext?.(context, undefined, input);
         } catch (error) {
           const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error ? error.code : undefined);
           const reason = WorkflowTargetUnavailableReasonV1Schema.safeParse(

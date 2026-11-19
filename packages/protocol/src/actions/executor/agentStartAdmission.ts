@@ -582,7 +582,8 @@ export async function resolveActionAgentStartContextV1(deps: Pick<ActionExecutor
     }
     if (!resolved || targetSessionId === undefined)
         return resolved;
-    const origin = resolved.caller.kind === 'session' ? resolved.caller.sessionId : resolved.caller.runOriginSessionId;
+    const origin = resolved.caller.kind === 'session' ? resolved.caller.sessionId
+      : resolved.caller.kind === 'originless' ? resolved.caller.runOriginSessionId : undefined;
     const targets = (typeof targetSessionId === 'string' ? [targetSessionId] : targetSessionId).filter(id => id !== origin);
     if (!origin || targets.length === 0)
         return resolved;
@@ -691,7 +692,14 @@ export function projectAgentStartSelectionV1(input: Readonly<Record<string, unkn
     }
     if (stamped.engine.modelId) {
         const inputSelection = SessionModelSelectionSchema.safeParse(input.modelSelection);
-        const inherited = modelSelection ?? (inputSelection.success ? inputSelection.data : baseline.configuration?.modelSelection);
+        const inputTeam = TeamCredentialProviderModelSelectionV1Schema.safeParse(input.teamCredentialModel);
+        let explicitTeam: SessionModelSelection | undefined;
+        if (inputTeam.success) {
+            const { kind: _kind, ...ref } = inputTeam.data;
+            explicitTeam = { v: 2, updatedAt: 0, ref: { source: 'team_resource', ...ref } };
+        }
+        const inherited = modelSelection ?? (inputSelection.success ? inputSelection.data
+            : explicitTeam ?? baseline.configuration?.modelSelection);
         const selected = readRoleEngineSessionModelSelectionV1(stamped.engine, inherited)!;
         if (kind === 'spawn_new')
             result.modelSelection = selected;

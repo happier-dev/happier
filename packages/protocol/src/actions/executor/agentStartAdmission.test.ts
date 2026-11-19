@@ -307,6 +307,26 @@ describe('canonical Action agent-start adapter', () => {
     expect(stampAgentStartSelectionV1(input, { workDepth: 1 }, 'spawn_new', context)).toEqual(input);
   });
 
+  it('keeps an explicit Team source when a host Role selects the same model', () => {
+    const context: AgentStartContextV1 = {
+      caller: { kind: 'host' }, initiator: 'user',
+      baseline: { machineId: 'machine', directory: '/repo' }, roles: {},
+      ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'yolo',
+    };
+    const teamCredentialModel = { kind: 'team_credential_provider_model', teamId: 'team', resourceId: 'model-resource',
+      expectedResourceRevision: 4, deliveryMode: 'brokered', agentTargetKey: 'agent:native.agent/agent', modelId: 'team-model' } as const;
+    const input = { backendTarget: nativeTarget, roleId: 'scout', intent: 'task',
+      instructions: 'Read the supplied file.', teamCredentialModel };
+    const stamped = { workDepth: 0, roleId: 'scout',
+      engine: { agentTargetKey: teamCredentialModel.agentTargetKey, modelId: teamCredentialModel.modelId } };
+    expect(stampAgentStartSelectionV1(input, stamped, 'execution_run', context))
+      .toMatchObject({ teamCredentialModel });
+    const changed = stampAgentStartSelectionV1(input, { ...stamped,
+      engine: { ...stamped.engine, modelId: 'different-native-model' } }, 'execution_run', context);
+    expect(changed).not.toHaveProperty('teamCredentialModel');
+    expect(changed).toMatchObject({ modelSelection: { providerConnectionId: null, modelId: 'different-native-model' } });
+  });
+
   it('keeps current-Session start authority narrower than a readable led Session', async () => {
     const agentStartContext: AgentStartContextV1 = {
       caller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 },

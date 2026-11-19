@@ -86,7 +86,9 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   readRequesterWorkAttributionV1?: () => Promise<import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1 | null>;
   /** Session-owned Run listing dependency, injected by the runtime principal owner. */
   sessionList?: ActionExecutorDeps['sessionList'];
-  resolveAgentStartContext?: ActionExecutorDeps['resolveAgentStartContext'];
+  resolveAgentStartContext?: (context: RpcActionExecutorContext,
+    options?: Parameters<NonNullable<ActionExecutorDeps['resolveAgentStartContext']>>[1],
+    startInput?: Readonly<Record<string, unknown>>) => ReturnType<NonNullable<ActionExecutorDeps['resolveAgentStartContext']>>;
   readPromptCredentials?: () => Promise<import('@/persistence').StoredCredentials | null>;
   /** The daemon borrows the admitted Workflow requester for native catalog admission. */
   readRequesterNativeOfferedModel?: (bootstrap: AdmittedRequesterSessionBootstrap,

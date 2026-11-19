@@ -3879,7 +3879,14 @@ resolves and stamps the role. The request carries role identity only; installed
 Agents use the same host preparation. A live Session supplies freshly resolved
 roles from its retained role owner; its runner's cold built-in Agent inventory
 cannot replace that installed-source observation. Standalone callers retain
-their Account-backed inventory and the same Protocol role resolver. An unavailable
+their Account-backed inventory and the same Protocol role resolver. A detached
+host start does not invent a Session or Workflow caller: Machine admission
+resolves its selected Role from the admitted requester's private Account context.
+The existing policy owner assigns present-user starts depth zero and applies
+ordinary depth, permission and allow-list restrictions to Account automation.
+A matching explicit Team model retains its resource identity when the Role is
+stamped; a Role selecting a different model follows the existing model override
+rule. An unavailable
 context returns `target_unavailable`; typed role-owner refusals retain their
 error code. Both carry `details.executionRunStart.runCreation: 'noRunCreated'`
 and a closed `refusal: { code, phase: 'agent_start_context' }`. The refusal code reuses
