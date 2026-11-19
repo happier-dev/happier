@@ -20439,6 +20439,17 @@ settingsSession: {
       installCanceled: "Installation abgebrochen",
       updateCanceled: "Update abgebrochen",
       installOnMachines: "Auf mehreren Maschinen installieren",
+      gitInstall: {
+        mode: 'Git-Repository',
+        repository: 'HTTPS-URL des Repositorys',
+        subdirectory: 'Plugin-Ordner (optional)',
+        notImported: 'Nicht importiert',
+        omittedHooks: ({ count }: { count: number }) => `${count} ${count === 1 ? 'Hook' : 'Hooks'}`,
+        omittedCommands: ({ count }: { count: number }) => `${count} ${count === 1 ? 'Befehl' : 'Befehle'}`,
+        omittedAgents: ({ count }: { count: number }) => `${count} ${count === 1 ? 'Agent' : 'Agenten'}`,
+        omittedMcp: ({ count }: { count: number }) => `${count} ${count === 1 ? 'MCP-Server' : 'MCP-Server'}`,
+        latestNote: 'Installiert das neueste Release oder, falls es keins gibt, den Standard-Branch und notiert den Commit.',
+      },
       multiInstall: {
           chooseDescription: "Wähle die Maschinen für die Installation. Jede prüft diese Version, dann bestätigst du einmal.",
           machinesTitle: "Maschinen",

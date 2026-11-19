@@ -20,10 +20,11 @@ export type PluginSettingSetupObservation = Readonly<{
 }>;
 
 export type InstalledPluginSetupRow =
-    | Readonly<{ kind: 'connectedAccount'; service: PluginContributionIdentityV1 }>
+    /** `title` is the plugin's projected display text (resolve with the plugin text resolver); null when undeclared. */
+    | Readonly<{ kind: 'connectedAccount'; service: PluginContributionIdentityV1; title: unknown }>
     | Readonly<{ kind: 'mcpSignIn'; serverId: string; title: string }>
     | Readonly<{ kind: 'setting' | 'secret'; fieldId: string; title: SettingsSetupField['title'] }>
-    | Readonly<{ kind: 'machineRecipe'; ref: MachineRecipeReferenceV1 }>;
+    | Readonly<{ kind: 'machineRecipe'; ref: MachineRecipeReferenceV1; title: unknown }>;
 
 /** Reads only the admitted projection and published presence. Unknown facts contribute no row. */
 export function projectInstalledPluginSetup(input: Readonly<{
@@ -49,7 +50,9 @@ export function projectInstalledPluginSetup(input: Readonly<{
         for (const service of requiredServices.values()) {
             const targets = connectedAccountPurposeServiceTargets(connections.profiles, connections.groups, service);
             if (targets.groups.length === 0 && targets.accounts.every(account => isConnectedAccountSignedOut(account.status))) {
-                rows.push({ kind: 'connectedAccount', service });
+                const declared = Object.values(projection.familiesById.connectedAccounts?.entriesById ?? {})
+                    .find(entry => entry.pluginId === service.pluginId && entry.serviceId === service.localId);
+                rows.push({ kind: 'connectedAccount', service, title: declared?.title ?? null });
             }
         }
 
@@ -73,7 +76,8 @@ export function projectInstalledPluginSetup(input: Readonly<{
 
     for (const recipe of input.machineSetup?.recipes ?? []) {
         if (recipe.ref.pluginId === pluginId && recipe.status === 'drifted') {
-            rows.push({ kind: 'machineRecipe', ref: recipe.ref });
+            const declared = projection?.familiesById.machineRecipes?.entriesById[`${recipe.ref.pluginId}/${recipe.ref.recipeId}`];
+            rows.push({ kind: 'machineRecipe', ref: recipe.ref, title: declared?.definition.title ?? null });
         }
     }
 

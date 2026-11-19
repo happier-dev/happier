@@ -2,12 +2,15 @@ import * as React from 'react';
 import type { RegistryItemPointerV1 } from '@happier-dev/protocol/registries';
 import { PluginGitSourceV1Schema, type PluginGitSourceV1 } from '@happier-dev/protocol/plugins/source-spec';
 
-import { CapabilityAddDetailAction, CapabilityAddModalBody, openCapabilityAddModalHost, type CapabilityAddModalConfig } from '@/components/capabilities/add/CapabilityAddModal';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { CapabilityAddDetailAction, CapabilityAddModalBody, openCapabilityAddModalHost, useAddDialogEdge, type CapabilityAddModalConfig } from '@/components/capabilities/add/CapabilityAddModal';
 import { CapabilityDetailHeader } from '@/components/capabilities/detail/CapabilityDetailHeader';
 import { buildCapabilityCollectionAnatomy } from '@/components/capabilities/row/buildCapabilityCollectionAnatomy';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Text } from '@/components/ui/text/Text';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { useRegistrySources } from '@/registries/useRegistrySources';
@@ -104,22 +107,42 @@ export function PluginAddModal(props: CustomModalInjectedProps & Readonly<{ para
     return <CapabilityAddModalBody {...props} config={config} />;
 }
 
+/**
+ * The Git mode of the shared Add dialog (lab ideas-1118-platform scene 1, "Add from GitHub"): the repository link
+ * with Review beside it, the optional folder, and one line on what installs. Review leads to the listing's single
+ * evaluated confirmation; nothing installs from this body.
+ */
 function PluginGitSourceInput({ onInstall }: Readonly<{ onInstall: (source: PluginGitSourceV1) => void }>) {
+    const edge = useAddDialogEdge();
+    const { theme } = useUnistyles();
     const [locator, setLocator] = React.useState('');
     const [subdirectory, setSubdirectory] = React.useState('');
     const source = PluginGitSourceV1Schema.safeParse({ locator: locator.trim(), subdirectory: subdirectory.trim() || undefined });
     const submit = () => { if (source.success) onInstall(source.data); };
-    return <>
-        <FieldTextInput testID={`${TEST_ID}.git.url`} value={locator} onChangeText={setLocator}
-            accessibilityLabel={t('settingsPlugins.gitInstall.repository')} placeholder={t('settingsPlugins.gitInstall.repository')}
-            inputMode="url" autoCapitalize="none" />
-        <FieldTextInput testID={`${TEST_ID}.git.subdirectory`} value={subdirectory} onChangeText={setSubdirectory}
-            accessibilityLabel={t('settingsPlugins.gitInstall.subdirectory')} placeholder={t('settingsPlugins.gitInstall.subdirectory')}
-            autoCapitalize="none" onSubmitEditing={submit} />
-        <RoundButton testID={`${TEST_ID}.git.review`} title={t('settingsPlugins.pendingChangeReviewAction')}
-            disabled={!source.success} onPress={submit} />
-    </>;
+    return (
+        <View style={[gitStyles.body, edge]}>
+            <View style={gitStyles.fieldRow}>
+                <View style={gitStyles.field}>
+                    <FieldTextInput testID={`${TEST_ID}.git.url`} value={locator} onChangeText={setLocator}
+                        accessibilityLabel={t('settingsPlugins.gitInstall.repository')} placeholder={t('settingsPlugins.gitInstall.repository')}
+                        inputMode="url" autoCapitalize="none" autoFocus monospace returnKeyType="go" onSubmitEditing={submit} />
+                </View>
+                <RoundButton testID={`${TEST_ID}.git.review`} size="normal" display="secondary"
+                    title={t('settingsPlugins.pendingChangeReviewAction')} disabled={!source.success} onPress={submit} />
+            </View>
+            <FieldTextInput testID={`${TEST_ID}.git.subdirectory`} value={subdirectory} onChangeText={setSubdirectory}
+                accessibilityLabel={t('settingsPlugins.gitInstall.subdirectory')} placeholder={t('settingsPlugins.gitInstall.subdirectory')}
+                autoCapitalize="none" monospace onSubmitEditing={submit} />
+            <Text variant="meta" style={{ color: theme.colors.text.secondary }}>{t('settingsPlugins.gitInstall.latestNote')}</Text>
+        </View>
+    );
 }
+
+const gitStyles = StyleSheet.create((theme) => ({
+    body: { paddingTop: theme.space.s16, paddingBottom: theme.space.s24, gap: theme.space.s12 },
+    fieldRow: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s12 },
+    field: { flex: 1, minWidth: 0 },
+}));
 
 function PluginAddDetail(props: Readonly<{ entry: PluginMarketplaceCatalogEntry; sources: ReturnType<typeof useRegistrySources>;
     onSelection: (selection: Selection) => void }>) {

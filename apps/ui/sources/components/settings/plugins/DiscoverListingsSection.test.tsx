@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { measureMountedCollections, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
@@ -30,10 +30,14 @@ async function renderMeasured(element: React.ReactElement) {
 }
 
 describe('DiscoverListingsSection', () => {
+    // The section's module graph is imported once, outside each case's budget.
+    let DiscoverListingsSection: typeof import('./PluginMarketplaceSections').DiscoverListingsSection;
+    beforeAll(async () => {
+        ({ DiscoverListingsSection } = await import('./PluginMarketplaceSections'));
+    }, 600_000);
     afterEach(standardCleanup);
 
     it('opens the listing page from the card body without installing', async () => {
-        const { DiscoverListingsSection } = await import('./PluginMarketplaceSections');
         const onOpenListing = vi.fn();
         const onAction = vi.fn();
         const screen = await renderMeasured(<DiscoverListingsSection entries={[entry]} loading={false} loadingMore={false}
@@ -45,7 +49,6 @@ describe('DiscoverListingsSection', () => {
     });
 
     it('keeps shelves compact with See all, and narrows them by category chip', async () => {
-        const { DiscoverListingsSection } = await import('./PluginMarketplaceSections');
         const curated = (id: string, categories: string[]) => ({
             ...entry, id, sourceId: 'curated', sourceKind: 'curated' as const, reviewStatus: 'approved' as const, warning: undefined, categories,
         });
@@ -66,24 +69,23 @@ describe('DiscoverListingsSection', () => {
     });
 
     it('keeps benefit and source visible and opens installed listings without installation', async () => {
-        const { DiscoverListingsSection } = await import('./PluginMarketplaceSections');
-        const navigate = vi.fn();
+        const openListing = vi.fn();
         const action = vi.fn();
         const screen = await renderMeasured(<DiscoverListingsSection entries={[entry]} loading={false} loadingMore={false}
             canLoadMore={false} installedPluginById={new Map([[entry.id, installed]])} canRunActions={false}
-            isPluginActionInFlight={() => false} onAction={action} onLoadMore={() => {}} onNavigateToPlugin={navigate}
-            onOpenListing={() => {}} />);
+            isPluginActionInFlight={() => false} onAction={action} onLoadMore={() => {}} onNavigateToPlugin={() => {}}
+            onOpenListing={openListing} />);
         expect(screen.getTextContent()).toContain(entry.description);
-        // Installed replaces the review state in the footer: the trust decision was already made.
+        // Installed is the card's status and it has no install action: the trust decision was already made.
         expect(screen.findByTestId('settings.plugins.marketplace.installedStatus.community.acme.plugin')).not.toBeNull();
-        expect(screen.getTextContent()).toContain('Acme · Community');
-        await screen.pressByTestIdAsync('settings.plugins.marketplace.action.manage.community.acme.plugin');
-        expect(navigate).toHaveBeenCalledWith(entry.id);
+        expect(screen.findByTestId('settings.plugins.marketplace.action.install.community.acme.plugin')).toBeNull();
+        expect(screen.getTextContent()).toContain('Community');
+        await screen.pressByTestIdAsync('settings.plugins.marketplace.entry.community.acme.plugin');
+        expect(openListing).toHaveBeenCalledWith(entry);
         expect(action).not.toHaveBeenCalled();
     });
 
     it('keeps install review reachable without expanding details and blocks new withdrawn installs', async () => {
-        const { DiscoverListingsSection } = await import('./PluginMarketplaceSections');
         const action = vi.fn();
         const screen = await renderMeasured(<DiscoverListingsSection
             entries={[entry, { ...entry, id: 'withdrawn.plugin', installable: false, warning: 'withdrawn', reviewStatus: 'withdrawn' }]}
@@ -92,12 +94,11 @@ describe('DiscoverListingsSection', () => {
             onOpenListing={() => {}} />);
         expect(screen.findByTestId('settings.plugins.marketplace.reviewStatus.community.withdrawn.plugin')).not.toBeNull();
         expect(screen.findByTestId('settings.plugins.marketplace.action.install.community.withdrawn.plugin')).toBeNull();
-        expect(screen.getTextContent()).toContain('Acme · Community');
+        expect(screen.getTextContent()).toContain('Community');
         await screen.pressByTestIdAsync('settings.plugins.marketplace.action.install.community.acme.plugin');
         expect(action).toHaveBeenCalledWith({ method: 'install', pluginId: entry.id, sourceId: entry.sourceId });
     });
     it('lists the same listings as rows, with the same open and install targets', async () => {
-        const { DiscoverListingsSection } = await import('./PluginMarketplaceSections');
         const onOpenListing = vi.fn();
         const onAction = vi.fn();
         const screen = await renderMeasured(<DiscoverListingsSection entries={[entry]} presentation="list" loading={false}
@@ -111,7 +112,6 @@ describe('DiscoverListingsSection', () => {
     });
 
     it('does not snap back to a stale chip or "See all" when the results change and change back', async () => {
-        const { DiscoverListingsSection } = await import('./PluginMarketplaceSections');
         const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
         const curated = (id: string, categories: string[]) => ({
             ...entry, id, sourceId: 'curated', sourceKind: 'curated' as const, reviewStatus: 'approved' as const, warning: undefined, categories,

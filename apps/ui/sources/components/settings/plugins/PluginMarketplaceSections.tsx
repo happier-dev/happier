@@ -27,6 +27,7 @@ import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { SurfaceFreshnessLine, SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Typography } from '@/constants/Typography';
 import { t, type TranslationKeyNoParams } from '@/text';
@@ -35,7 +36,7 @@ import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToH
 import { PluginMark } from './PluginMark';
 import { PluginsPageCollection } from './collection/PluginsPageCollection';
 import { buildPluginMarketplaceDiscoverIssues } from './model/pluginMarketplaceDiscoverIssues';
-import { PLUGIN_KIND_SHELF_ORDER, pluginKindShelfTitle, resolvePluginKindShelf, type PluginKindShelfKey } from './model/pluginContributionKindLabel';
+import { PLUGIN_KIND_SHELF_ORDER, pluginKindShelfTitle, pluginListingAdds, resolvePluginKindShelf, type PluginKindShelfKey } from './model/pluginContributionKindLabel';
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 
 /** The machine's contribution projection facts a plugin row reads: its Agent mark and what it adds. */
@@ -1345,30 +1346,25 @@ type DiscoverListingActionInputs = Readonly<{
 }>;
 
 /**
- * A listing's one action: Install, or Open once installed. "Installed" stays a status and never turns into an
- * uninstall affordance.
+ * A listing's one quick action: "+" installs on the Machine named in the header (pressing it is the consent, as on the
+ * listing). Installed listings have no action: "Installed" is their status, and the card opens the listing, which
+ * leads to its management. "Installed" never turns into an uninstall affordance.
  */
 function discoverListingControl(entry: PluginMarketplaceCatalogEntry, props: DiscoverListingActionInputs): React.ReactNode {
-    const installed = props.installedPluginById.has(entry.id);
-    if (!installed && !entry.installable) return null;
-    const action = installed ? 'manage' : 'install';
+    if (props.installedPluginById.has(entry.id) || !entry.installable) return null;
     const installDisabled = !props.canRunActions || props.isPluginActionInFlight(entry.id) || props.loading;
     return (
-        <RoundButton
-            size="small"
-            display="secondary"
-            testID={`settings.plugins.marketplace.action.${action}.${entry.sourceId}.${entry.id}`}
-            title={installed ? t('settingsPlugins.surfaces.open') : t('common.install')}
-            disabledReason={installed ? undefined : props.installDisabledReason ?? undefined}
-            accessibilityLabel={buildActionRowAccessibilityLabel([
-                installed ? t('settingsPlugins.managePlugin') : t('settingsPlugins.installAndTrust'),
-                entry.title, entry.sourceTitle,
-            ])}
-            accessibilityHint={installed ? undefined : t('settingsPlugins.discover.installSubtitle', { source: entry.sourceTitle })}
-            disabled={!installed && installDisabled}
-            onPress={() => installed ? props.onNavigateToPlugin(entry.id) : props.onAction({
-                method: 'install', pluginId: entry.id, sourceId: entry.sourceId,
-            })}
+        <IconButton
+            testID={`settings.plugins.marketplace.action.install.${entry.sourceId}.${entry.id}`}
+            iconName="plus"
+            variant="plain"
+            tooltip={t('settingsPlugins.installAndTrust')}
+            disabledReason={props.installDisabledReason ?? undefined}
+            accessibilityLabel={buildActionRowAccessibilityLabel([t('settingsPlugins.installAndTrust'), entry.title, entry.sourceTitle])
+                ?? t('settingsPlugins.installAndTrust')}
+            accessibilityHint={t('settingsPlugins.discover.installSubtitle', { source: entry.sourceTitle })}
+            disabled={installDisabled}
+            onPress={() => props.onAction({ method: 'install', pluginId: entry.id, sourceId: entry.sourceId })}
         />
     );
 }
@@ -1393,22 +1389,23 @@ function useDiscoverListingAnatomy(props: DiscoverListingActionInputs & Readonly
         // takes the byline's place until the listing is installed.
         where: ({ entry }) => (!installedPluginById.has(entry.id) && entry.registrySelectionOrigin !== null
             ? t('settingsPlugins.discover.registrySelectionRequired', { origin: entry.registrySelectionOrigin })
-            : [entry.publisher.displayName, entry.sourceTitle].filter(Boolean).join(' · ')),
+            // Where it comes from first, then what it adds (lab ideas-1118-platform scene 1).
+            : [entry.sourceTitle, ...pluginListingAdds(entry.contributions).map((add) => add.title)].filter(Boolean).join(' · ')),
         description: ({ entry }) => entry.description || null,
-        reason: ({ entry }) => (installedPluginById.has(entry.id) && entry.warning !== 'withdrawn' ? (
+        // Healthy is quiet: only a withdrawal or "Installed" speaks; a withdrawal outranks "Installed".
+        reason: ({ entry }) => entry.warning === 'withdrawn' ? (
+            <Status
+                testID={`settings.plugins.marketplace.reviewStatus.${entry.sourceId}.${entry.id}`}
+                label={catalogReviewStatusLabel(entry)}
+                tone="warning" presentation="inline" indicator
+            />
+        ) : installedPluginById.has(entry.id) ? (
             <Status
                 testID={`settings.plugins.marketplace.installedStatus.${entry.sourceId}.${entry.id}`}
                 label={t('settingsPlugins.surfaces.installed')}
                 tone="secondary" presentation="inline" indicator={false}
             />
-        ) : (
-            <Status
-                testID={`settings.plugins.marketplace.reviewStatus.${entry.sourceId}.${entry.id}`}
-                label={catalogReviewStatusLabel(entry)}
-                tone={entry.warning === 'withdrawn' ? 'warning' : 'secondary'}
-                presentation="inline" indicator={entry.warning === 'withdrawn'}
-            />
-        )),
+        ) : null,
         // A card's control sits in its footer; a list row's is its row action (`useDiscoverListingRowActions`),
         // which the Collection draws in every list geometry, so the list does not draw it a second time.
         ...(presentation === 'grid' ? { action: (item: DiscoverListingItem) => discoverListingControl(item.entry, props) } : {}),

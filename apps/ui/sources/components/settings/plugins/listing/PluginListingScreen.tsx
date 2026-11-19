@@ -10,8 +10,8 @@ import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewI
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
 import { Icon } from '@/components/ui/icons/Icon';
+import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -19,10 +19,10 @@ import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGro
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
-import { StatusPill } from '@/components/ui/status/StatusPill';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 
 import { catalogReviewStatusLabel, formatCatalogEntryVersion } from '../model/pluginMarketplaceModel';
@@ -36,6 +36,8 @@ import { PluginReadOnlySnapshotNotice } from '../PluginReadOnlySnapshotNotice';
 import type { PluginMarketplaceCatalogEntry } from '../readPluginMarketplaceCatalog';
 import { PluginListingAddsSection, PluginListingFacts } from './PluginListingFacts';
 import { usePluginInstallOnMachines } from './PluginInstallOnMachines';
+import { PluginProjectScopeItem } from '../detail/PluginProjectScopeItem';
+import { PluginSetupSection } from '../detail/PluginSetupSection';
 
 /**
  * A marketplace listing before install (lab PL4): identity, what it is for and what it adds; beside
@@ -81,6 +83,7 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
     const maxWidthStyle = useLayoutMaxWidthStyle();
     const { state } = props;
     const pane = props.presentation === 'pane';
+    const phone = useDeviceType() === 'phone';
     const noTarget = state.administrationTargetSelection.state.kind === 'unselected';
     // A machine that is chosen but cannot answer (offline, projection failed) is explained, with
     // its recovery, instead of an endless loading row. "Refreshing" is transient and stays loading.
@@ -112,6 +115,43 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
         </>
     );
 
+    const install = entry && !installed ? (
+        <ListingInstall
+            entry={entry}
+            disabled={!state.canRunDiscoverActions || state.loadingDiscover || state.isPluginActionInFlight(entry.id)}
+            targetMachine={state.administrationTargetLabel?.machine ?? null}
+            onInstall={() => state.runCatalogAction({ method: 'install', pluginId: entry.id, sourceId: entry.sourceId })}
+            onInstallOnMachines={installOnMachines.available ? installOnMachines.open : undefined}
+        />
+    ) : null;
+    // Once installed the listing reads as the installed plugin: what it still needs, then who can use it and the
+    // way into its full management.
+    const installedSetup = entry && installed ? (
+        <>
+            <PluginSetupSection
+                pluginId={props.pluginId}
+                host={host}
+                projection={state.pluginProjectionV2}
+                machineId={state.executionMachineId}
+                serverId={state.executionServerId}
+                testID="settings.plugins.listing.setup"
+            />
+            <ItemGroup>
+                <PluginProjectScopeItem pluginId={props.pluginId} testID="settings.plugins.listing.projectScope" />
+                <Item
+                    testID="settings.plugins.listing.manage"
+                    title={t('settingsPlugins.managePlugin')}
+                    onPress={() => router.push(buildPluginDetailRoute(host, entry.id))}
+                />
+            </ItemGroup>
+        </>
+    ) : null;
+    const installedStatus = entry && installed ? (
+        // Outside a Collection, the app's inline status opens the plugin-ui scope it draws in.
+        <InlineStatus testID="settings.plugins.listing.installedStatus" label={t('settingsPlugins.surfaces.installed')}
+            tone="secondary" indicator={false} />
+    ) : null;
+
     return (
         <ItemList style={{ paddingTop: 0 }} testID="settings.plugins.listing">
             {pane ? null : <HappierBreadcrumb style={[styles.crumbs, maxWidthStyle]} accessibilityRole="toolbar"
@@ -127,20 +167,28 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
                 testID="settings.plugins.listing.header"
                 alwaysShowTitle
                 title={title}
+                // Beside the collection and on a phone the column is narrow: the name sits beside the mark and the
+                // purpose and facts start at the mark's edge.
+                {...(pane || phone ? { markSpan: 'title' as const } : {})}
                 leading={<PluginMark title={title} pluginId={props.pluginId} iconAgentId={state.pluginProjectionById[props.pluginId]?.iconAgentId ?? null} size="page"
                     installedPackage={state.pluginProjectionById[props.pluginId]?.installedPackage} machineId={state.executionMachineId} serverId={state.executionServerId} />}
+                {...(entry?.description ? { description: entry.description } : {})}
                 meta={entry ? [
-                    { key: 'publisher', text: entry.publisher.displayName },
-                    { key: 'review', text: catalogReviewStatusLabel(entry), testID: 'settings.plugins.listing.reviewStatus' },
+                    ...(entry.publisher.displayName ? [{ key: 'publisher', text: entry.publisher.displayName }] : []),
                     ...(entry.version ? [{ key: 'version', text: formatCatalogEntryVersion(entry.version) ?? entry.version }] : []),
+                    { key: 'source', text: entry.sourceTitle },
+                    ...(entry.reviewStatus !== null ? [{ key: 'review', text: catalogReviewStatusLabel(entry), testID: 'settings.plugins.listing.reviewStatus' }] : []),
                 ] : []}
-                actions={pane ? undefined : (
-                    <MachineAdministrationTargetSelector
-                        presentation="chip"
-                        selection={state.administrationTargetSelection}
-                        testIDPrefix="settings.plugins.listing.target"
-                        groupTitle={t('settingsPlugins.administrationMachineTitle')}
-                    />
+                actions={pane ? installedStatus ?? undefined : (
+                    <>
+                        {installedStatus}
+                        <MachineAdministrationTargetSelector
+                            presentation="chip"
+                            selection={state.administrationTargetSelection}
+                            testIDPrefix="settings.plugins.listing.target"
+                            groupTitle={t('settingsPlugins.administrationMachineTitle')}
+                        />
+                    </>
                 )}
             />
             {notice && !pane ? (
@@ -151,39 +199,26 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
                 />
             ) : null}
             {entry && pane ? (
-                // Beside the page: the install card comes right under the identity, then the rest.
+                // Beside the page: the one action right under the identity, then what it adds, then the facts.
                 <>
-                    <ListingActionCard
-                        entry={entry}
-                        installed={installed}
-                        disabled={!state.canRunDiscoverActions || state.loadingDiscover || state.isPluginActionInFlight(entry.id)}
-                        targetMachine={state.administrationTargetLabel?.machine ?? null}
-                        onInstall={() => state.runCatalogAction({ method: 'install', pluginId: entry.id, sourceId: entry.sourceId })}
-                        onInstallOnMachines={installOnMachines.available ? installOnMachines.open : undefined}
-                        onManage={() => router.push(buildPluginDetailRoute(host, entry.id))}
-                    />
+                    {install}
                     {outcome}
-                    {entry.description ? <Text style={styles.description}>{entry.description}</Text> : null}
+                    {installedSetup}
                     <PluginListingAddsSection entry={entry} />
                     <PluginListingFacts entry={entry} />
                 </>
             ) : entry ? (
-                <ItemGroupColumns columns={3} minColumnWidthPx={260} columnGap={24} paddingHorizontal={0}>
+                // Its own page: the action and what it adds lead; the published facts sit beside them.
+                <ItemGroupColumns columns={3} minColumnWidthPx={260} columnGap={24} paddingHorizontal={0}
+                    // On the header's column, so the action and facts share its edges.
+                    style={[styles.pageColumns, maxWidthStyle]}>
                     <ItemGroupColumn span={2}>
-                        {entry.description ? <Text style={styles.description}>{entry.description}</Text> : null}
+                        {install}
+                        {outcome}
+                        {installedSetup}
                         <PluginListingAddsSection entry={entry} />
                     </ItemGroupColumn>
                     <ItemGroupColumn span={1}>
-                        <ListingActionCard
-                            entry={entry}
-                            installed={installed}
-                            disabled={!state.canRunDiscoverActions || state.loadingDiscover || state.isPluginActionInFlight(entry.id)}
-                            targetMachine={state.administrationTargetLabel?.machine ?? null}
-                            onInstall={() => state.runCatalogAction({ method: 'install', pluginId: entry.id, sourceId: entry.sourceId })}
-                            onInstallOnMachines={installOnMachines.available ? installOnMachines.open : undefined}
-                            onManage={() => router.push(buildPluginDetailRoute(host, entry.id))}
-                        />
-                        {outcome}
                         <PluginListingFacts entry={entry} />
                     </ItemGroupColumn>
                 </ItemGroupColumns>
@@ -224,45 +259,46 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
     );
 });
 
-function ListingActionCard(props: Readonly<{
+/**
+ * Install, before the plugin is on the machine (lab ideas-1118-platform scene 2): one line saying where it goes and
+ * that pressing Install & Trust is the consent, then the quiet "several machines" door on the left and the one
+ * primary action on the right edge. No card: it is the page's lead action, not a separate object.
+ */
+function ListingInstall(props: Readonly<{
     entry: PluginMarketplaceCatalogEntry;
-    installed: boolean;
     disabled: boolean;
     targetMachine: string | null;
     onInstall: () => void;
     /** Present when the plugin can go to several of the person's Machines at once. */
     onInstallOnMachines?: () => void;
-    onManage: () => void;
 }>) {
     const styles = stylesheet;
     const { entry } = props;
-    if (!props.installed && !entry.installable) return null;
+    if (!entry.installable) return null;
     return (
-        <SurfaceCard padding="md" style={styles.actionCard}>
-            <RoundButton size="normal" titleNumberOfLines="complete"
-                testID={props.installed ? 'settings.plugins.listing.manage' : 'settings.plugins.listing.install'}
-                title={props.installed ? t('settingsPlugins.managePlugin') : t('settingsPlugins.installAndTrust')}
-                disabled={!props.installed && props.disabled}
-                onPress={props.installed ? props.onManage : props.onInstall} />
-            {props.installed ? (
-                <StatusPill variant="success" labelVariant="phrase" label={t('settingsPlugins.surfaces.installed')} />
-            ) : (
-                <Text style={styles.actionNote}>
-                    {props.targetMachine
-                        ? t('settingsPlugins.surfaces.listingInstallsOn', { machine: props.targetMachine })
-                        : t('settingsPlugins.surfaces.listingChooseMachine')}
-                </Text>
-            )}
-            {!props.installed && props.onInstallOnMachines ? (
-                <TextLinkButton testID="settings.plugins.listing.installOnMachines" size="meta"
-                    label={t('settingsPlugins.installOnMachines')} disabled={props.disabled} onPress={props.onInstallOnMachines} />
-            ) : null}
-            {!props.installed && entry.registrySelectionOrigin !== null ? (
-                <Text testID="settings.plugins.listing.registrySelection" style={styles.actionNote}>
+        <View style={styles.install}>
+            <Text style={styles.installNote}>
+                {props.targetMachine
+                    ? t('settingsPlugins.surfaces.listingInstallsOn', { machine: props.targetMachine })
+                    : t('settingsPlugins.surfaces.listingChooseMachine')}
+            </Text>
+            {entry.registrySelectionOrigin !== null ? (
+                <Text testID="settings.plugins.listing.registrySelection" style={styles.installNote}>
                     {t('settingsPlugins.discover.registrySelectionRequired', { origin: entry.registrySelectionOrigin })}
                 </Text>
             ) : null}
-        </SurfaceCard>
+            <View style={styles.installRow}>
+                {props.onInstallOnMachines ? (
+                    <TextLinkButton testID="settings.plugins.listing.installOnMachines" size="meta"
+                        label={t('settingsPlugins.installOnMachines')} disabled={props.disabled} onPress={props.onInstallOnMachines} />
+                ) : <View />}
+                <RoundButton size="normal" titleNumberOfLines="complete"
+                    testID="settings.plugins.listing.install"
+                    title={t('settingsPlugins.installAndTrust')}
+                    disabled={props.disabled}
+                    onPress={props.onInstall} />
+            </View>
+        </View>
     );
 }
 
@@ -287,20 +323,24 @@ const stylesheet = StyleSheet.create((theme) => ({
     crumbSeparator: {
         color: theme.colors.text.tertiary,
     },
-    description: {
-        ...Typography.variant('reading'),
-        color: theme.colors.text.primary,
-        paddingHorizontal: 18,
+    pageColumns: {
+        width: '100%',
+        alignSelf: 'center',
+    },
+    // On the section edge, so the note and the button line up with the sheets below.
+    install: {
+        paddingHorizontal: PAGE_LIST_METRICS.pageTextInsetPx,
         paddingTop: theme.space.s8,
-        paddingBottom: theme.space.s4,
+        paddingBottom: theme.space.s8,
+        gap: theme.space.s12,
     },
-    actionCard: {
-        marginTop: theme.space.s8,
-        width: 'auto',
-        marginHorizontal: theme.space.s16,
-        gap: theme.space.s10,
+    installRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space.s12,
     },
-    actionNote: {
+    installNote: {
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
     },

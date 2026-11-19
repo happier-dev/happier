@@ -22,6 +22,7 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { useLocalSettingMutable } from '@/sync/store/hooks';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { t } from '@/text';
@@ -162,7 +163,9 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
     // Grid | List, remembered per view on this device.
     const [presentationByView, setPresentationByView] = useLocalSettingMutable('pluginsCollectionViewV1');
     const presentationKey = activeView === 'installed' ? 'installed' : 'discover';
-    const presentation: PluginsCollectionPresentation = presentationByView?.[presentationKey] ?? 'grid';
+    // A phone reads plugins as rows (lab ideas-1118-platform scene 1 at 390) until the person picks a layout.
+    const phone = useDeviceType() === 'phone';
+    const presentation: PluginsCollectionPresentation = presentationByView?.[presentationKey] ?? (phone ? 'list' : 'grid');
     const setPresentation = React.useCallback((next: PluginsCollectionPresentation) => {
         setPresentationByView({ ...(presentationByView ?? {}), [presentationKey]: next });
     }, [presentationByView, setPresentationByView, presentationKey]);

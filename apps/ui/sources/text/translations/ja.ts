@@ -20269,6 +20269,17 @@ settingsSession: {
     installCanceled: "インストールをキャンセルしました",
     updateCanceled: "更新をキャンセルしました",
     installOnMachines: "複数のマシンにインストール",
+    gitInstall: {
+      mode: 'Git リポジトリ',
+      repository: 'リポジトリの HTTPS URL',
+      subdirectory: 'プラグインのフォルダー（任意）',
+      notImported: 'インポートされていません',
+      omittedHooks: ({ count }: { count: number }) => `${count} フック`,
+      omittedCommands: ({ count }: { count: number }) => `${count} コマンド`,
+      omittedAgents: ({ count }: { count: number }) => `${count} エージェント`,
+      omittedMcp: ({ count }: { count: number }) => `${count} MCP サーバー`,
+      latestNote: '最新のリリース（なければデフォルトブランチ）をインストールし、コミットを記録します。',
+    },
     multiInstall: {
         chooseDescription: "インストール先のマシンを選んでください。各マシンがこのリリースを確認したあと、1回だけ確認します。",
         machinesTitle: "マシン",

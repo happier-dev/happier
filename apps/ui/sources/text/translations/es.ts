@@ -20355,6 +20355,17 @@ settingsSession: {
     installCanceled: "Instalación cancelada",
     updateCanceled: "Actualización cancelada",
     installOnMachines: "Instalar en varias máquinas",
+    gitInstall: {
+      mode: 'Repositorio Git',
+      repository: 'URL HTTPS del repositorio',
+      subdirectory: 'Carpeta del plugin (opcional)',
+      notImported: 'No importado',
+      omittedHooks: ({ count }: { count: number }) => `${count} ${count === 1 ? 'hook' : 'hooks'}`,
+      omittedCommands: ({ count }: { count: number }) => `${count} ${count === 1 ? 'comando' : 'comandos'}`,
+      omittedAgents: ({ count }: { count: number }) => `${count} ${count === 1 ? 'agente' : 'agentes'}`,
+      omittedMcp: ({ count }: { count: number }) => `${count} ${count === 1 ? 'servidor MCP' : 'servidores MCP'}`,
+      latestNote: 'Instala la última versión publicada, o la rama por defecto si no hay ninguna, y anota el commit.',
+    },
     multiInstall: {
         chooseDescription: "Elige las máquinas donde instalarlo. Cada una comprueba esta versión y luego confirmas una sola vez.",
         machinesTitle: "Máquinas",

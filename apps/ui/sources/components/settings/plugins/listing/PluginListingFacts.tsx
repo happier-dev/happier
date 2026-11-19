@@ -125,18 +125,23 @@ function PluginCatalogListingFacts(props: PluginCatalogListingFactsProps) {
         title={props.title ?? t('common.details')}
         {...(props.description ? { description: props.description } : {})}
       >
-        <Item
-          title={t('settingsPlugins.surfaces.listingRunsIn')}
-          detail={describeCatalogFacts(realmLabels(entry))}
-          mode="info"
-          showChevron={false}
-        />
-        <Item
-          title={t('settingsPlugins.surfaces.listingPlatforms')}
-          detail={describeCatalogFacts(platformLabels(entry))}
-          mode="info"
-          showChevron={false}
-        />
+        {/* An undeclared fact (a content-only plugin runs nowhere of its own) has no row rather than "None". */}
+        {entry.executableRealms.length > 0 ? (
+          <Item
+            title={t('settingsPlugins.surfaces.listingRunsIn')}
+            detail={describeCatalogFacts(realmLabels(entry))}
+            mode="info"
+            showChevron={false}
+          />
+        ) : null}
+        {entry.platforms.length > 0 ? (
+          <Item
+            title={t('settingsPlugins.surfaces.listingPlatforms')}
+            detail={describeCatalogFacts(platformLabels(entry))}
+            mode="info"
+            showChevron={false}
+          />
+        ) : null}
         <Item
           title={t('settingsPlugins.surfaces.listingSource')}
           detail={entry.sourceTitle}

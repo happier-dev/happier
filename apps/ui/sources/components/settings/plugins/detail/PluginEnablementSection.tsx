@@ -4,6 +4,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
 import { t } from '@/text';
 import type { InstalledPluginEntry } from '../model/pluginMarketplaceModel';
+import { PluginProjectScopeItem } from './PluginProjectScopeItem';
 
 type EnablementScope = 'account' | 'machine';
 
@@ -54,6 +55,8 @@ export function PluginEnablementSection(props: Readonly<{
                     />
                 );
             })}
+            {/* Who can use it: the same Account intent, narrowed to chosen Projects. */}
+            <PluginProjectScopeItem pluginId={installed.pluginId} disabled={props.disabled} />
         </ItemGroup>
     );
 }

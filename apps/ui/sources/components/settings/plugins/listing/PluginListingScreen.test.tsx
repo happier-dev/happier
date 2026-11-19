@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
@@ -66,8 +66,13 @@ function screenState(overrides: Record<string, unknown> = {}) {
     };
 }
 
+// The screen's module graph (setup rows, Project scope, Connect sheet) is imported once, outside each case's budget.
+let PluginListingScreen: typeof import('./PluginListingScreen').PluginListingScreen;
+beforeAll(async () => {
+    ({ PluginListingScreen } = await import('./PluginListingScreen'));
+}, 600_000);
+
 async function renderListing() {
-    const { PluginListingScreen } = await import('./PluginListingScreen');
     return renderSettingsView(<PluginListingScreen sourceId="marketplace:curated" pluginId="acme.tools" />);
 }
 

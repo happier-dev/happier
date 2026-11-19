@@ -14998,6 +14998,17 @@ settingsSession: {
     installCanceled: "已取消安裝",
     updateCanceled: "已取消更新",
     installOnMachines: "安裝到多台機器",
+    gitInstall: {
+      mode: 'Git 儲存庫',
+      repository: '儲存庫的 HTTPS 網址',
+      subdirectory: '外掛程式資料夾（選填）',
+      notImported: '未匯入',
+      omittedHooks: ({ count }: { count: number }) => `${count}個鉤子`,
+      omittedCommands: ({ count }: { count: number }) => `${count}個指令`,
+      omittedAgents: ({ count }: { count: number }) => `${count}個代理`,
+      omittedMcp: ({ count }: { count: number }) => `${count}個 MCP 伺服器`,
+      latestNote: '安裝最新發佈版本；若沒有，則安裝預設分支，並記錄提交。',
+    },
     multiInstall: {
         chooseDescription: "選擇要安裝的機器。每台機器會檢查此版本，然後你只需確認一次。",
         machinesTitle: "機器",

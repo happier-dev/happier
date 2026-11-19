@@ -63,11 +63,11 @@ describe('installed plugin setup', () => {
         });
         const input = { pluginId, projection, machineSetup, connections: { groups: [], profiles: [] }, settings };
         expect(projectInstalledPluginSetup(input)).toEqual([
-            { kind: 'connectedAccount', service },
+            { kind: 'connectedAccount', service, title: null },
             { kind: 'mcpSignIn', serverId: mcpPluginItemIdV1(server), title: 'Remote tools' },
             { kind: 'setting', fieldId: 'workspace', title: 'Workspace' },
             { kind: 'secret', fieldId: 'token', title: 'Token' },
-            { kind: 'machineRecipe', ref },
+            { kind: 'machineRecipe', ref, title: null },
         ]);
         expect(projectInstalledPluginSetup({
             ...input, connections: null, machineSetup: null,

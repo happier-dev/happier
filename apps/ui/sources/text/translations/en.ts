@@ -23572,6 +23572,7 @@ const enSettingsPlugins = {
     omittedCommands: ({ count }: { count: number }) => `${count} ${count === 1 ? 'command' : 'commands'}`,
     omittedAgents: ({ count }: { count: number }) => `${count} ${count === 1 ? 'agent' : 'agents'}`,
     omittedMcp: ({ count }: { count: number }) => `${count} MCP ${count === 1 ? 'server' : 'servers'}`,
+    latestNote: 'Installs the latest release, or the default branch when there is none, and records the commit.',
   },
   publish: pluginPublishTranslations['en'],
   updateReview: pluginUpdateReviewTranslations.en,

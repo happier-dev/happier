@@ -20180,6 +20180,17 @@ settingsSession: {
           installCanceled: "Instalacja anulowana",
           updateCanceled: "Aktualizacja anulowana",
           installOnMachines: "Zainstaluj na kilku maszynach",
+          gitInstall: {
+            mode: 'Repozytorium Git',
+            repository: 'Adres HTTPS repozytorium',
+            subdirectory: 'Folder wtyczki (opcjonalnie)',
+            notImported: 'Nie zaimportowano',
+            omittedHooks: ({ count }: { count: number }) => `${count} ${count === 1 ? 'hook' : 'hooki'}`,
+            omittedCommands: ({ count }: { count: number }) => `${count} ${count === 1 ? 'polecenie' : 'polecenia'}`,
+            omittedAgents: ({ count }: { count: number }) => `${count} ${count === 1 ? 'agent' : 'agenty'}`,
+            omittedMcp: ({ count }: { count: number }) => `${count} ${count === 1 ? 'serwer MCP' : 'serwery MCP'}`,
+            latestNote: 'Instaluje najnowsze wydanie, a jeśli go nie ma, domyślną gałąź, i zapisuje commit.',
+          },
           multiInstall: {
               chooseDescription: "Wybierz maszyny, na których ją zainstalować. Każda sprawdzi to wydanie, a potem potwierdzisz raz.",
               machinesTitle: "Maszyny",

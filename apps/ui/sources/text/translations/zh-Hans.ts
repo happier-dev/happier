@@ -19975,6 +19975,17 @@ settingsSession: {
     installCanceled: "已取消安装",
     updateCanceled: "已取消更新",
     installOnMachines: "安装到多台机器",
+    gitInstall: {
+      mode: 'Git 仓库',
+      repository: '仓库的 HTTPS 地址',
+      subdirectory: '插件文件夹（可选）',
+      notImported: '未导入',
+      omittedHooks: ({ count }: { count: number }) => `${count}个钩子`,
+      omittedCommands: ({ count }: { count: number }) => `${count}个命令`,
+      omittedAgents: ({ count }: { count: number }) => `${count}个代理`,
+      omittedMcp: ({ count }: { count: number }) => `${count}个 MCP 服务器`,
+      latestNote: '安装最新发布版本；若没有，则安装默认分支，并记录提交。',
+    },
     multiInstall: {
         chooseDescription: "选择要安装的机器。每台机器会检查此版本，然后你只需确认一次。",
         machinesTitle: "机器",

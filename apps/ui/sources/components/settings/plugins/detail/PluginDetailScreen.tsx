@@ -44,6 +44,10 @@ import {
 import { PluginAccountReleaseSelectionSection } from '../PluginAccountReleaseSelectionSection';
 import { PluginReadOnlySnapshotNotice } from '../PluginReadOnlySnapshotNotice';
 import { PluginEnablementSection } from './PluginEnablementSection';
+import { PluginProjectScopeItem } from './PluginProjectScopeItem';
+import { PluginSetupSection } from './PluginSetupSection';
+import type { PluginSettingSetupObservation } from '../model/installedPluginSetup';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PluginUpdatePolicySection } from './PluginUpdatePolicySection';
 import { PluginRoutineOperationSettlementRow } from '../PluginMarketplaceSections';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
@@ -75,6 +79,14 @@ function PluginDetailCurrentContent(props: Readonly<{
         pluginId: props.pluginId, projection: appProjection.pluginUiProjection, enabled: true,
     });
     const { installed, state } = props;
+    const host = usePluginsSurfaceHost();
+    // Required Settings presence, published by the mounted Settings owner below; "Finish setting up" reads it.
+    const [setupSettings, setSetupSettings] = React.useState<readonly PluginSettingSetupObservation[]>(NO_SETUP_SETTINGS);
+    const onSetupObservation = React.useCallback((observation: PluginSettingSetupObservation) => setSetupSettings((current) => {
+        const index = current.findIndex((entry) => entry.field.key === observation.field.key);
+        if (index >= 0 && current[index]!.status === observation.status) return current;
+        return index >= 0 ? current.map((entry, at) => at === index ? observation : entry) : [...current, observation];
+    }), []);
     const accountReleaseVersion = installed?.version ?? props.projection?.version ?? null;
     const capabilities = installed ? projectInstalledPluginLifecycleCapabilities(installed) : null;
     const actionsDisabled = !state.canRefreshInstalledPlugins
@@ -150,6 +162,21 @@ function PluginDetailCurrentContent(props: Readonly<{
                 settlement={state.routineOperationSettlement}
                 scope="installed"
             />
+            {installed ? (
+                <PluginSetupSection
+                    pluginId={props.pluginId}
+                    host={host}
+                    projection={state.pluginProjectionV2}
+                    machineId={state.executionMachineId}
+                    serverId={state.executionServerId}
+                    settings={setupSettings}
+                />
+            ) : null}
+            {installed && !scopedEnablement ? (
+                <ItemGroup>
+                    <PluginProjectScopeItem pluginId={installed.pluginId} disabled={actionsDisabled} />
+                </ItemGroup>
+            ) : null}
             {installed && scopedEnablement ? (
                 <PluginEnablementSection
                     installed={installed}
@@ -169,6 +196,7 @@ function PluginDetailCurrentContent(props: Readonly<{
                 perActiveServerIdentityId={state.selectedServerIdentityId}
                 daemonOperationsAvailable={state.daemonOperationsAvailable}
                 isDaemonTargetCurrent={state.isDaemonSettingsTargetCurrent}
+                onSetupObservation={onSetupObservation}
             />
             <PluginMachineExecutionOriginSelectorView
                 selection={selection}
@@ -242,6 +270,8 @@ function PluginDetailCurrentContent(props: Readonly<{
         </ItemList>
     );
 }
+
+const NO_SETUP_SETTINGS: readonly PluginSettingSetupObservation[] = Object.freeze([]);
 
 /** A plugin's own page (`page`), or its detail beside the Plugins page (`pane`). */
 export type PluginDetailPresentation = 'page' | 'pane';

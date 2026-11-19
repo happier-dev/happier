@@ -20309,6 +20309,17 @@ settingsSession: {
     installCanceled: "Установка отменена",
     updateCanceled: "Обновление отменено",
     installOnMachines: "Установить на несколько машин",
+    gitInstall: {
+      mode: 'Git-репозиторий',
+      repository: 'HTTPS-адрес репозитория',
+      subdirectory: 'Папка плагина (необязательно)',
+      notImported: 'Не импортировано',
+      omittedHooks: ({ count }: { count: number }) => `${count} ${count === 1 ? 'хук' : 'хуков'}`,
+      omittedCommands: ({ count }: { count: number }) => `${count} ${count === 1 ? 'команда' : 'команд'}`,
+      omittedAgents: ({ count }: { count: number }) => `${count} ${count === 1 ? 'агент' : 'агентов'}`,
+      omittedMcp: ({ count }: { count: number }) => `${count} ${count === 1 ? 'MCP-сервер' : 'MCP-серверов'}`,
+      latestNote: 'Устанавливает последний релиз, а если его нет — ветку по умолчанию, и записывает коммит.',
+    },
     multiInstall: {
         chooseDescription: "Выберите машины для установки. Каждая проверит этот выпуск, затем вы подтвердите один раз.",
         machinesTitle: "Машины",
