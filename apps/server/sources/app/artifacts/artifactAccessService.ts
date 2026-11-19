@@ -837,7 +837,8 @@ async function readArtifactCensusAccountsInTx(tx: Tx, accountIds: readonly strin
     const readAccounts = (ids: readonly string[]) => tx.account.findMany({ where: { id: { in: [...ids] } },
         select: RECIPIENT_READINESS_SELECT, orderBy: { id: 'asc' } });
     const accounts: Awaited<ReturnType<typeof readAccounts>> = [];
-    for (const ids of portableQueryChunks({ values: [...new Set(accountIds)].sort(), bindingsPerValue: 1, fixedBindings: 1 })) {
+    // Prisma's ordered SQLite lookup binds both its implicit LIMIT and OFFSET.
+    for (const ids of portableQueryChunks({ values: [...new Set(accountIds)].sort(), bindingsPerValue: 1, fixedBindings: 2 })) {
         accounts.push(...await readAccounts(ids));
     }
     return accounts;
@@ -1222,7 +1223,7 @@ export async function readArtifactRecipientCensusInTx(tx: Tx, input: Readonly<{ 
     const audience = inspectAudience ? [...new Set([...await resolveArtifactAudienceInTx(tx, input.artifactId),
         ...sourceReaders.map(reader => reader.accountId)])] : [input.actorAccountId];
     const [accounts, envelopes] = await Promise.all([
-        tx.account.findMany({ where: { id: { in: audience } }, select: RECIPIENT_READINESS_SELECT, orderBy: { id: "asc" } }),
+        readArtifactCensusAccountsInTx(tx, audience),
         tx.artifactKeyEnvelope.findMany({ where: { artifactId: input.artifactId,
             ...(inspectAudience ? {} : { recipientAccountId: input.actorAccountId }) } }),
     ]);
