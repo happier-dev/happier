@@ -35,7 +35,7 @@ export function readMachineControlTargetForSession(
 
 type SessionAuthorityReader = typeof import('@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority').readSessionSnapshotForAuthority;
 
-/** Resolve an operation's target from its exact Home without requiring a mounted Session view. */
+/** Resolve an operation's target from the exact Home Session detail. Turn history is a separate demand. */
 export async function readMachineControlTargetForSessionAuthority(
     input: Pick<Parameters<SessionAuthorityReader>[0], 'authority' | 'sessionId' | 'signal' | 'isCurrent'>,
 ): Promise<Readonly<{
@@ -43,7 +43,7 @@ export async function readMachineControlTargetForSessionAuthority(
     target: SessionMachineControlTarget | null;
 }>> {
     const { readSessionSnapshotForAuthority } = await import('@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority');
-    const { session } = await readSessionSnapshotForAuthority(input);
+    const { session } = await readSessionSnapshotForAuthority({ ...input, includeTurns: false });
     return { session, target: resolveMachineControlTargetForSessionFromState({
         ...storage.getState(), sessions: { [input.sessionId]: session }, sessionListRowsByServerId: {},
     }, { ...input.authority.scope, sessionId: input.sessionId }) };

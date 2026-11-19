@@ -848,6 +848,38 @@ it('lets finite operations share the reconnect observation while its read is sti
     } finally { context.dispose(); }
 });
 
+it('reads the exact Home Machine target without requesting its turn history', async () => {
+    const accountId = 'machine-target-detail';
+    const serverUrl = 'https://machine-target-detail.test';
+    const credentials = { token: createAccountTokenForTests(accountId, { currentAccount: true }) };
+    const serverId = await home.addHome({ name: 'Machine target', serverUrl, accountId, credentials,
+        accountEncryptionMode: 'plain', currentAccount: true });
+    const sessionId = 'machine-target-session';
+    const { ownerMetadata: _ownerMetadata, ...record } = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId });
+    const reads: string[] = [];
+    setRuntimeFetch(createSessionReadBatchFetchBoundary(async (rawUrl, init) => {
+        const path = new URL(String(rawUrl)).pathname;
+        if (path === `/v2/sessions/${sessionId}`) {
+            reads.push('detail');
+            return Response.json({ session: { ...record, metadataLayoutVersion: 0,
+                metadata: JSON.stringify({ machineId: 'm1', path: '/repo' }) } });
+        }
+        if (path === `/v1/sessions/${sessionId}/turns`) {
+            reads.push('turns');
+            return Response.json({ v: 1, sessionId, updatedAt: 1, turns: [] });
+        }
+        return home.request(rawUrl, init);
+    }));
+    const context = await captureLazyActionAccountContext(serverId);
+    try {
+        const { readMachineControlTargetForSessionAuthority } = await import('@/sync/ops/sessionMachineTarget');
+        const result = await runWithServerRequestAuthorityForServerAccountScope({ scope: context.accountLifetime.scope,
+            activeRequest: context.request }, authority => readMachineControlTargetForSessionAuthority({ authority, sessionId }));
+        expect(result.target).toMatchObject({ machineId: 'm1', basePath: '/repo' });
+        expect(reads).toEqual(['detail']);
+    } finally { context.dispose(); }
+});
+
 it('lets owner display maintenance after a full legacy Session read borrow the settled Account observation', async () => {
     // A full read of an owned legacy-layout Session (0.2 data) needs no Account currentness itself,
     // but schedules owner display maintenance, which does. That maintenance must borrow the socket

@@ -2,11 +2,10 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { prepareManagedMachineWakeChildren, type ManagedWakePreparationReads } from '@happier-dev/cli-common/machines/managed';
 import { createManagedMachineActionClient, ManagedMachineActionError } from '@/sync/api/machines/managedMachineActions';
-import { readSessionSnapshotForAuthority, SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
+import { SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
-import { resolveMachineControlTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
+import { readMachineControlTargetForSessionAuthority } from '@/sync/ops/sessionMachineTarget';
 import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
-import { storage } from '@/sync/domains/state/storage';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { readOriginalAccountActionMachine } from '@/sync/api/externalActionAccountTransport';
 import type { LazyActionAccountContext } from './actionAccountContext';
@@ -54,14 +53,12 @@ export function createUiManagedMachineWakeReads(account: LazyActionAccountContex
         },
         readSessionMachineId: async (target, context) => {
             try {
-                const { session } = await runWithServerRequestAuthorityForServerAccountScope({
+                const { target: controlTarget } = await runWithServerRequestAuthorityForServerAccountScope({
                     scope: account.accountLifetime.scope, activeRequest: account.request,
-                }, authority => readSessionSnapshotForAuthority({ authority, sessionId: target.sessionId,
-                    includeTurns: false, signal: context.signal, isCurrent: account.accountLifetime.isCurrent }));
+                }, authority => readMachineControlTargetForSessionAuthority({ authority, sessionId: target.sessionId,
+                    signal: context.signal, isCurrent: account.accountLifetime.isCurrent }));
                 account.assertCurrent();
-                return resolveMachineControlTargetForSessionFromState({ ...storage.getState(),
-                    sessions: { [target.sessionId]: session }, sessionListRowsByServerId: {},
-                }, { ...account.accountLifetime.scope, sessionId: target.sessionId })?.machineId ?? null;
+                return controlTarget?.machineId ?? null;
             } catch (error) {
                 const code = context.signal?.aborted ? 'cancelled'
                     : error instanceof SessionSnapshotReadError ? error.errorCode : 'session_target_unavailable';
