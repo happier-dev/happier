@@ -5,7 +5,7 @@ import { WIDGET_INPUTS_GET_ACTION_ID_V1, WIDGET_INPUTS_RESET_ACTION_ID_V1, WIDGE
 import type { WidgetSurfaceRefV1 } from '../../widgets/widgetInstanceV1.js';
 import { WidgetProjectAreaV1Schema } from '../../widgets/widgetPresentationV1.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
-import { ActionExecuteFailureSchema, ActionApprovalRequestCreatedResultSchema } from '../../actions/actionExecutionResult.js';
+import { ActionExecuteResultSchema, ActionApprovalRequestCreatedResultSchema } from '../../actions/actionExecutionResult.js';
 import { WidgetAreaLayoutV1Schema, WidgetAreaPresetUndoV1Schema } from '../../widgets/widgetSurfaceArtifactV1.js';
 
 const input = WidgetInstanceActionInputSchemasV1;
@@ -91,12 +91,16 @@ export const PluginUiWidgetAreaRequestV1Schema = z.strictObject({
 });
 export type PluginUiWidgetAreaRequestV1 = z.infer<typeof PluginUiWidgetAreaRequestV1Schema>;
 const outputs = WidgetInstanceActionOutputSchemasV1;
-export const PluginUiWidgetAreaResultV1Schema = z.union([ActionExecuteFailureSchema,
-    z.strictObject({ ok: z.literal(true), result: z.union([
-        outputs['widgets.catalog.list'], outputs['widgets.item.list'], outputs['widgets.item.add'],
-        outputs['widgets.item.inputs.get'], outputs['widgets.item.inputs.validate'], outputs['widgets.item.refresh'],
-        outputs['widgets.area.layout.list'], outputs['widgets.area.layout.create'], outputs['widgets.area.layout.delete'], outputs['widgets.area.layout.reset'],
-        ActionApprovalRequestCreatedResultSchema,
-    ]) }),
-]);
+export const PluginUiWidgetAreaResultV1Schema = lazyZodSchema(() => {
+    const [success, failure] = ActionExecuteResultSchema._zod.def.options;
+    return z.union([
+        z.safeExtend(success, { result: z.union([
+            outputs['widgets.catalog.list'], outputs['widgets.item.list'], outputs['widgets.item.add'],
+            outputs['widgets.item.inputs.get'], outputs['widgets.item.inputs.validate'], outputs['widgets.item.refresh'],
+            outputs['widgets.area.layout.list'], outputs['widgets.area.layout.create'], outputs['widgets.area.layout.delete'], outputs['widgets.area.layout.reset'],
+            ActionApprovalRequestCreatedResultSchema,
+        ]) }),
+        failure,
+    ]);
+});
 export type PluginUiWidgetAreaResultV1 = z.infer<typeof PluginUiWidgetAreaResultV1Schema>;

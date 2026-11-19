@@ -3,15 +3,52 @@ import { createPluginWidgetAreaHostPortV1 } from './widgetAreaHost.js';
 import { createWorkBoardArtifactBoundary } from '../../boards/workBoardArtifactV1.testkit.js';
 import { createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1, createWidgetAreaLayoutArtifactPortV1, WidgetAreaPresetResultV1Schema } from '../../widgets/widgetSurfaceArtifactV1.js';
 import { createWidgetActionInputResolverV1 } from '../../widgets/widgetActionInputResolverV1.js';
+import { ActionExecuteResultSchema } from '../../actions/actionExecutionResult.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../../actions/actionExecutor.js';
 import { getActionSpec } from '../../actions/actionSpecs.js';
-import { buildWidgetAreaActionInputV1, PluginUiWidgetAreaOperationV1Schema } from './widgetArea.js';
+import { buildWidgetAreaActionInputV1, PluginUiWidgetAreaOperationV1Schema, PluginUiWidgetAreaResultV1Schema } from './widgetArea.js';
 import { flattenWidgetLayoutWidgetsV1 } from '../../widgets/widgetLayoutItemV1.js';
 import type { WidgetSurfaceRefV1 } from '../../widgets/widgetInstanceV1.js';
 
 const scope = { serverId: 'home', accountId: 'viewer' };
 const instance = { v: 1 as const, id: 'follow', definition: { kind: 'builtin' as const, id: 'counter' }, bindings: { count: { kind: 'context' as const, slot: 'count' } } };
 const declarations = [{ name: 'pinned', contextSchema: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'], additionalProperties: false } }];
+
+describe('Widget Area Action results', () => {
+    const result = {
+        ref: { surface: { ...scope, owner: { kind: 'corePage', pageId: 'usage', area: 'main' } }, instanceId: 'displayed' },
+        instance: { ...instance, id: 'displayed' },
+    };
+    const success = { ok: true, result };
+    const failure = { ok: false, errorCode: 'widget_not_found', error: 'widget_not_found' };
+    const metadata = {
+        automationNotices: [{ code: 'action_automations_not_checked', reason: 'fixture_unavailable' }],
+        operationCredentialUses: [{
+            v: 1, kind: 'connected_account', label: null, owner: null,
+            service: { pluginId: 'acme.github', localId: 'github' },
+            why: { kind: 'purpose_binding', purpose: { consumer: { pluginId: 'acme.alpha', localId: 'run' }, purpose: 'write' }, target: 'account' },
+            currentness: { kind: 'current_at_materialization' },
+        }],
+    };
+
+    it.each([
+        { name: 'success', envelope: success },
+        { name: 'failure', envelope: failure },
+    ])('preserves canonical Action metadata on $name', ({ envelope }) => {
+        const settlement = ActionExecuteResultSchema.parse({ ...envelope, ...metadata });
+        expect(PluginUiWidgetAreaResultV1Schema.parse(settlement)).toEqual(settlement);
+    });
+
+    it('accepts earlier settlements and rejects unknown envelope fields and non-Widget payloads', () => {
+        expect(PluginUiWidgetAreaResultV1Schema.parse(success)).toEqual(success);
+        expect(PluginUiWidgetAreaResultV1Schema.parse(failure)).toEqual(failure);
+        expect(PluginUiWidgetAreaResultV1Schema.safeParse({ ...success, extra: true }).success).toBe(false);
+        expect(PluginUiWidgetAreaResultV1Schema.safeParse({ ...failure, extra: true }).success).toBe(false);
+        expect(PluginUiWidgetAreaResultV1Schema.safeParse({ ...success, result: { ...result, extra: true } }).success).toBe(false);
+        expect(PluginUiWidgetAreaResultV1Schema.safeParse({ ...success, result: { unrelated: true } }).success).toBe(false);
+    });
+});
+
 describe('mounted area operations through the canonical Action/Artifact/binder owners', () => {
     it('places layout selection on the answering client as a presentation effect', () => {
         const spec = getActionSpec('widgets.area.layout.select');
