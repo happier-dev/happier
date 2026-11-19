@@ -12,8 +12,8 @@
  *
  * GitLab never reaches `merged` either: a merge request cannot change project, and a
  * project moving between groups keeps its id, so the identity scope survives the
- * move. Requests still route from the row's canonical repository locator, and a
- * response whose fresh locator differs is refused rather than treated as a redirect.
+ * move. A known repository locator must still match the response. A first read
+ * uses the immutable project id and takes its current locator from the response.
  */
 
 import type {
@@ -29,12 +29,13 @@ import { fitActionResultTextV1 } from '@happier-dev/triage-sources/projection/ac
 import { authorizeGitlabConfiguredInstance } from './configuredInstance.js';
 import {
   admitGitlabItemIdentity,
+  GITLAB_SCOPE_OUTSIDE_BINDING_FAILURE,
   resolveGitlabItemRoute,
 } from './admission.js';
 import { GITLAB_PLUGIN_ID, GITLAB_TRIAGE_DETAIL_ACTION_IDS, GITLAB_TRIAGE_KIND_IDS } from './contribution.js';
 import { GITLAB_CHANGES_PAGE_SIZE_V1 } from './detail/routes.js';
 import { readGitlabComparisonEndpoints } from './mapping/mergeRequestHead.js';
-import { buildGitlabComparisonRepositoryKey } from './identity.js';
+import { buildGitlabComparisonRepositoryKey, readGitlabProjectIdWithinOrigin } from './identity.js';
 import {
   requestGitlabJson,
   type GitlabConnectedAccounts,
@@ -97,17 +98,22 @@ async function executeGitlabTriageEntry(
   }
   const { origin, invocation } = authorized.resolved;
 
-  const routed = resolveGitlabItemRoute(
-    identity.identity,
-    origin,
-    input.get.lastKnownLocator?.routingToken,
-  );
-  if (!routed.ok) return unresolved(localRef, routed.failure, input.requestId);
-  const { kindId } = routed.route;
+  const { kindId, iid } = identity.identity;
+  const locator = input.get.lastKnownLocator;
+  let route: Parameters<typeof buildGitlabItemUrl>[0];
+  if (locator === undefined) {
+    const projectId = readGitlabProjectIdWithinOrigin(identity.identity, origin);
+    if (projectId === null) return unresolved(localRef, GITLAB_SCOPE_OUTSIDE_BINDING_FAILURE, input.requestId);
+    route = { origin, kindId, iid, projectId };
+  } else {
+    const routed = resolveGitlabItemRoute(identity.identity, origin, locator.routingToken);
+    if (!routed.ok) return unresolved(localRef, routed.failure, input.requestId);
+    route = routed.route;
+  }
 
   const item = await requestGitlabJson({
     invocation,
-    url: buildGitlabItemUrl(routed.route),
+    url: buildGitlabItemUrl(route),
     fetcher: input.fetcher,
     signal: input.signal,
     nowMs: input.nowMs,
@@ -144,7 +150,7 @@ async function executeGitlabTriageEntry(
       detail: 'GitLab answered with an entry other than the one addressed.',
     }, input.requestId);
   }
-  if (entry.locator.routingToken !== routed.route.repositoryKey) {
+  if ('repositoryKey' in route && entry.locator.routingToken !== route.repositoryKey) {
     return unresolved(localRef, {
       class: 'unsupportedContract',
       code: 'locator-mismatch',
@@ -154,7 +160,7 @@ async function executeGitlabTriageEntry(
   if (captureDescription !== undefined) {
     const body = item.response.body as Readonly<Record<string, unknown>>;
     captureDescription(typeof body.description === 'string' ? body.description : null, entry, {
-      route: routed.route,
+      route: { origin, kindId, iid, repositoryKey: entry.locator.repositoryKey },
       dependencies: { invocation, fetcher: input.fetcher, signal: input.signal, nowMs: input.nowMs },
     }, body);
   }

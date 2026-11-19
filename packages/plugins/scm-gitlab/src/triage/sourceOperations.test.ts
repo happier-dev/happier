@@ -1033,8 +1033,10 @@ describe('GitLab get', () => {
       .toBe(false);
   });
 
-  it('refuses a reference keyed against another deployment without calling the provider', async () => {
+  it.each([{ v: 1, routingToken: REPOSITORY_KEY } as const, null])(
+    'refuses a reference keyed against another deployment without calling the provider (locator %j)', async lastKnownLocator => {
     const { result, seam } = await get({}, {
+      lastKnownLocator,
       localRef: {
         kindId: 'merge-request',
         collisionScope: `gitlab:${Buffer.from('https://gitlab.example.test', 'utf8').toString('base64url')}:3`,
@@ -1049,13 +1051,16 @@ describe('GitLab get', () => {
     expect(seam.fetcher).not.toHaveBeenCalled();
   });
 
-  it('treats a differently identified answer as invalid rather than as a redirect', async () => {
+  it.each([
+    { project: ENCODED_REPOSITORY_KEY, lastKnownLocator: { v: 1, routingToken: REPOSITORY_KEY } as const },
+    { project: '3', lastKnownLocator: null },
+  ])('rejects a different item returned on the $project route', async ({ project, lastKnownLocator }) => {
     const { result } = await get({
-      [`/api/v4/projects/${ENCODED_REPOSITORY_KEY}/merge_requests/7`]: {
+      [`/api/v4/projects/${project}/merge_requests/7`]: {
         body: { ...mergeRequestList[0], iid: 9 },
       },
       '/api/v4/user': { body: VIEWER },
-    });
+    }, { lastKnownLocator });
 
     expect(result).toMatchObject({
       kind: 'unresolved',
@@ -1098,8 +1103,23 @@ describe('GitLab get', () => {
     expect(itemRequests).toEqual([issuePath, mergeRequestPath, issuePath]);
   });
 
-  it('requires the newest locator and never reconstructs a route from collision scope', async () => {
-    const { result, seam } = await get({}, { lastKnownLocator: null });
+  it.each([
+    { ref: localRef, segment: 'merge_requests', item: mergeRequestList[0]! },
+    { ref: { ...localRef, kindId: 'issue' }, segment: 'issues', item: issueList[0]! },
+  ])('opens the exact $segment item from its immutable project id with no locator', async ({ ref, segment, item }) => {
+    const path = `/api/v4/projects/3/${segment}/7`;
+    const { result, seam } = await get({
+      [path]: { body: item },
+      '/api/v4/user': { body: VIEWER },
+    }, { localRef: ref, lastKnownLocator: null });
+
+    expect(result).toMatchObject({ kind: 'present', localRef: ref,
+      locator: { routingToken: REPOSITORY_KEY }, snapshot: { title: item.title } });
+    expect(new URL(seam.requested[0]!).pathname).toBe(path);
+  });
+
+  it('refuses a supplied invalid locator without changing the route', async () => {
+    const { result, seam } = await get({}, { lastKnownLocator: { v: 1, routingToken: 'invalid' } });
 
     expect(result).toMatchObject({
       kind: 'unresolved',

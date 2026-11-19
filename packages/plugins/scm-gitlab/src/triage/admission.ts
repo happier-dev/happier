@@ -8,10 +8,9 @@
  * different rule than the read the user acted on could write to a project the
  * reference was never keyed against.
  *
- * The collision scope is re-validated only as origin-bound identity evidence;
- * it is never decoded into a route. Every provider request instead uses the
- * canonical repository locator the source minted for the row. The account is
- * rematerialized on every invocation and grants no standing authority.
+ * Detail and mutation routes use the repository locator minted for the row.
+ * An identity-only `get` uses the same origin-bound identity codec and reads
+ * the immutable project directly. Each invocation materializes its account.
  *
  * Action entry points carry the host-stamped invocation signal through this
  * admission rule and every later request. This source adds no second timer.

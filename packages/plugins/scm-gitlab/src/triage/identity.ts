@@ -141,15 +141,24 @@ export function isGitlabIdentityWithinOrigin(
   identity: Readonly<{ collisionScope: string }>,
   origin: GitlabConfiguredOrigin,
 ): boolean {
+  return readGitlabProjectIdWithinOrigin(identity, origin) !== null;
+}
+
+/** An identity-only read can use the immutable project id on its authorized deployment. */
+export function readGitlabProjectIdWithinOrigin(
+  identity: Readonly<{ collisionScope: string }>,
+  origin: GitlabConfiguredOrigin,
+): string | null {
   const prefix = `gitlab:${encodeGitlabConfiguredOriginScope(origin)}:`;
-  if (!identity.collisionScope.startsWith(prefix)) return false;
-  return /^[1-9][0-9]*$/u.test(identity.collisionScope.slice(prefix.length));
+  if (!identity.collisionScope.startsWith(prefix)) return null;
+  const projectId = identity.collisionScope.slice(prefix.length);
+  return /^[1-9][0-9]*$/u.test(projectId) ? projectId : null;
 }
 
 /**
  * Admits the opaque routing token this identity owner mints. The token is the
  * full repository path and is the provider-supported project locator; the
- * collision scope remains identity evidence and is never decoded into a route.
+ * collision scope separately identifies the immutable project for a first read.
  */
 export function readGitlabRepositoryRoutingToken(value: unknown): string | null {
   if (typeof value !== 'string' || value === '' || value !== value.trim()) return null;

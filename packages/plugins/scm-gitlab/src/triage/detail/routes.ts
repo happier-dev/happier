@@ -1,8 +1,8 @@
 /**
  * Every GitLab detail URL this source builds, built here and nowhere else.
  *
- * The first request of a walk is constructed from the canonical repository
- * locator this source minted for the row and an IID it proved is a positive decimal.
+ * A detail walk starts from the repository locator and positive decimal IID.
+ * A first item read may instead address the project's immutable numeric ID.
  * Every FOLLOWING request is GitLab's own `Link rel="next"` URL, byte-for-byte:
  * GitLab documents keyset pagination as "use only the given link", so a rebuilt
  * page URL is not the page GitLab offered. That is the exact opposite of the
@@ -82,10 +82,15 @@ export type GitlabDetailRouteInputV1 = Readonly<{
   kindId: GitlabKindId;
 }>;
 
-function assertRoute(input: GitlabDetailRouteInputV1, perPage?: number): void {
-  if (input.repositoryKey === '' || input.repositoryKey !== input.repositoryKey.trim()
-    || !input.repositoryKey.includes('/')) {
-    throw new Error('gitlab_detail_repository_invalid');
+type GitlabItemReadRouteV1 = GitlabDetailRouteInputV1
+  | Readonly<Omit<GitlabDetailRouteInputV1, 'repositoryKey'> & { projectId: string }>;
+
+function assertRoute(input: GitlabItemReadRouteV1, perPage?: number): void {
+  if ('repositoryKey' in input) {
+    const key = input.repositoryKey;
+    if (key === '' || key !== key.trim() || !key.includes('/')) {
+      throw new Error('gitlab_detail_repository_invalid');
+    }
   }
   if (!IID_PATTERN.test(input.iid)) {
     throw new Error('gitlab_detail_iid_invalid');
@@ -96,8 +101,9 @@ function assertRoute(input: GitlabDetailRouteInputV1, perPage?: number): void {
   }
 }
 
-function itemPath(input: GitlabDetailRouteInputV1, suffix: string): string {
-  return `/projects/${encodeURIComponent(input.repositoryKey)}/${KIND_ITEM_SEGMENT[input.kindId]}/${input.iid}${suffix}`;
+function itemPath(input: GitlabItemReadRouteV1, suffix: string): string {
+  const project = 'projectId' in input ? input.projectId : input.repositoryKey;
+  return `/projects/${encodeURIComponent(project)}/${KIND_ITEM_SEGMENT[input.kindId]}/${input.iid}${suffix}`;
 }
 
 /**
@@ -109,7 +115,7 @@ function itemPath(input: GitlabDetailRouteInputV1, suffix: string): string {
  * for all three is the point: a confirming read that addressed a different route
  * than the write would confirm nothing.
  */
-export function buildGitlabItemUrl(input: GitlabDetailRouteInputV1): string {
+export function buildGitlabItemUrl(input: GitlabItemReadRouteV1): string {
   assertRoute(input);
   return buildGitlabApiUrl(input.origin, itemPath(input, ''));
 }
