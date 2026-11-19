@@ -1,4 +1,5 @@
 import { describeApprovalRequestFields, formatApprovalFieldValues, getApprovalFieldValues } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { PluginActionContributionV2Schema, type PluginActionContributionV2 } from '@happier-dev/protocol';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
@@ -9,7 +10,7 @@ import { LINEAR_ACTIONS } from '../../../linear/src/contracts.js';
 import { PLUGIN_MANIFEST as LINEAR_MANIFEST } from '../../../linear/src/manifest.js';
 import { GITHUB_TRIAGE_ACTION_IDS_V1, PLUGIN_MANIFEST } from '../manifest.js';
 
-function reviewFacts(action: (typeof PLUGIN_MANIFEST.contributes.actions)[number], input: unknown) {
+function reviewFacts(action: PluginActionContributionV2, input: unknown) {
     const facts = (action.confirmation?.inputFields ?? []).flatMap(({ path, title }) => {
         const value = formatApprovalFieldValues(getApprovalFieldValues(input, path));
         return value === null ? [] : [[resolvePluginLocalizedStringV2Text(title), value]];
@@ -19,7 +20,9 @@ function reviewFacts(action: (typeof PLUGIN_MANIFEST.contributes.actions)[number
 
 describe('Triage write approval facts', () => {
     it('shows the repository, Account and supplied issue fields in normal approval Details', () => {
-        const action = PLUGIN_MANIFEST.contributes.actions.find(({ id }) => id === GITHUB_TRIAGE_ACTION_IDS_V1.create)!;
+        const action = PluginActionContributionV2Schema.parse(
+            PLUGIN_MANIFEST.contributes.actions?.find(({ id }) => id === GITHUB_TRIAGE_ACTION_IDS_V1.create),
+        );
         const token = 'fixture-source-configuration';
         const input = {
             v: 1,
@@ -56,13 +59,17 @@ describe('Triage write approval facts', () => {
     });
 
     it('shows the Jira issue key on a comment approval', () => {
-        const action = JIRA_MANIFEST.contributes.actions.find(({ id }) => id === JIRA_ACTIONS.comment)!;
+        const action = PluginActionContributionV2Schema.parse(
+            JIRA_MANIFEST.contributes.actions?.find(({ id }) => id === JIRA_ACTIONS.comment),
+        );
         const input = { entry: { lastKnownLocator: { displayPath: 'OPS-42' } }, body: 'Deployment verified' };
         expect(reviewFacts(action, input)).toMatchObject({ Issue: 'OPS-42', Comment: 'Deployment verified' });
     });
 
     it('shows the Linear issue identifier on an edit approval', () => {
-        const action = LINEAR_MANIFEST.contributes.actions.find(({ id }) => id === LINEAR_ACTIONS.edit)!;
+        const action = PluginActionContributionV2Schema.parse(
+            LINEAR_MANIFEST.contributes.actions?.find(({ id }) => id === LINEAR_ACTIONS.edit),
+        );
         const input = { lastKnownLocator: { displayPath: 'APP-21' }, fields: { title: 'Fix workspace launch' } };
         expect(reviewFacts(action, input)).toMatchObject({ Issue: 'APP-21', Title: 'Fix workspace launch' });
     });

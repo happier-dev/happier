@@ -13,6 +13,7 @@ import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
   measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '@happier-dev/plugin-sdk/actions';
 import { MAX_TRIAGE_TEXT_UTF8_BYTES_V1, readTriageSourceOperationOutcomeV1 } from '@happier-dev/triage-protocol/v1';
 
+import { GithubPreviewResultV1Schema } from './detail/contracts.js';
 import {
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
   GITHUB_PLUGIN_ID,
@@ -223,14 +224,18 @@ describe('GitHub preview-status registered Action', () => {
     const stub = previewStatusTransport({ operation: 'deploy', pullRequestState: 'open', domainState: 'active' });
     const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: stub.context.services });
     try {
-      const before = await testkit.invokeAction('github/pull-request/preview', { ...stateInput(), serverId: 'srv_preview' });
+      const before = GithubPreviewResultV1Schema.parse(
+        await testkit.invokeAction('github/pull-request/preview', { ...stateInput(), serverId: 'srv_preview' }),
+      );
       expect(before).toMatchObject({ kind: 'preview', previews: [{ state: 'ready', publication: {
         kind: 'unpublished', input: { environmentId: 'preview-child', deploymentId: 'preview-teardown',
           expectedHeadSha: OBSERVED_HEAD, status: 'ready', targetUrl: 'https://pr-1284.example.test/' },
       } }] });
-      if (before.kind !== 'preview' || before.previews[0]?.kind !== 'preview' || !before.previews[0].publication
-        || before.previews[0].publication.kind === 'current') throw new Error('Expected publication retry');
-      expect(await testkit.invokeAction('github/pull-request/preview-status', before.previews[0].publication.input))
+      const preview = before.kind === 'preview' ? before.previews[0] : undefined;
+      if (preview?.kind !== 'preview' || preview.publication?.kind !== 'unpublished') {
+        throw new Error('Expected an unpublished preview with retry input');
+      }
+      expect(await testkit.invokeAction('github/pull-request/preview-status', preview.publication.input))
         .toMatchObject({ kind: 'applied' });
       expect(await testkit.invokeAction('github/pull-request/preview', { ...stateInput(), serverId: 'srv_preview' }))
         .toMatchObject({ kind: 'preview', previews: [{ state: 'ready', publication: { kind: 'current' } }] });
