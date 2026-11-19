@@ -33,6 +33,26 @@ const otherService = {
   localId: 'subscription',
 } as const;
 
+it('selects native credentials only for an unbound purpose and never for unavailable admitted selections', async () => {
+  const { owner, store } = createOwner();
+  const signal = new AbortController().signal;
+  const request = { purpose, serviceRefs: [service], signal };
+  expect(await owner.getBinding(request)).toBeNull();
+  expect(await owner.resolveSelection!(request)).toEqual({ credentialSource: 'machineLogin' });
+  await store.update(() => ({ v: 1, bindings: [{ purpose, target: { kind: 'account', account: { service, accountId: 'selected' } } }] }));
+  expect(await owner.resolveSelection!(request)).toMatchObject({ credentialSource: 'connectedAccount', binding: { account: { accountId: 'selected' } } });
+  await expect(owner.resolveSelection!({ ...request, serviceRefs: [otherService] })).rejects.toMatchObject({
+    code: 'plugin_connected_account_binding_unavailable', details: { reasonCode: 'scope_unauthorized' },
+  });
+  const missing = createOwner({ store, resolveAvailable: () => false }).owner;
+  await expect(missing.resolveSelection!(request)).rejects.toMatchObject({
+    code: 'plugin_connected_account_binding_unavailable', details: { reasonCode: 'target_unavailable' },
+  });
+  await expect(owner.resolveSelection!({ ...request, exactPurposeBindingSubjectId: 'retired-run' })).rejects.toMatchObject({
+    code: 'plugin_connected_account_binding_unavailable',
+  });
+});
+
 it('uses an explicit finite Account selection without replacing the default, and retires it after disposal', async () => {
   const { owner, store } = createOwner();
   const signal = new AbortController().signal;
@@ -442,6 +462,13 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
         await expect(owner.getBinding({ ...request, requireSelected: true })).rejects.toMatchObject({
           code: 'plugin_connected_account_binding_unavailable', details: { reasonCode },
         });
+        if (reasonCode === 'unselected') {
+          await expect(owner.resolveSelection!(request)).resolves.toEqual({ credentialSource: 'machineLogin' });
+        } else {
+          await expect(owner.resolveSelection!(request)).rejects.toMatchObject({
+            code: 'plugin_connected_account_binding_unavailable', details: { reasonCode },
+          });
+        }
         expect(store.current().bindings[0]?.target).toMatchObject({ account: { accountId: 'durable' } });
       } finally { lease.dispose(); }
     },

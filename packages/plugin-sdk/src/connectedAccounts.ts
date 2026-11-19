@@ -529,6 +529,19 @@ export interface ConnectedAccountRuntime {
 /** The host-owned selection and materialization service exposed to a plugin. */
 export interface ConnectedAccountsService {
     /**
+     * Resolves the host's credential source for this purpose. Only an
+     * intentionally unselected purpose permits Machine login; unavailable or
+     * unauthorized selections fail with the host's typed binding error.
+     * Hosts predating this additive operation may omit it.
+     */
+    resolveSelection?(
+        purpose: string,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<Readonly<
+        | { credentialSource: 'connectedAccount'; binding: ConnectedAccountBindingSummary }
+        | { credentialSource: 'machineLogin' }
+    >>;
+    /**
      * Session and Run services read the request's admitted selection for this
      * purpose. Plugins consume this binding rather than copying request selections.
      */

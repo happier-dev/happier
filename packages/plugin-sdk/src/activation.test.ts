@@ -206,6 +206,7 @@ describe('plugin activation contract', () => {
             | 'materialize'
             | 'materializeListedAccount'
             | 'requestSelection'
+            | 'resolveSelection'
             | 'watch'
         >();
         expectTypeOf<ConnectedAccountsService>().not.toHaveProperty('list');

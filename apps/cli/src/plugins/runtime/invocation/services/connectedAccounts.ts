@@ -70,6 +70,13 @@ export type StablePluginConnectedAccountsOwner = Readonly<{
     }>): Promise<import('@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner').ConnectedAccountCurrentSessionPurposeBindingSnapshot>;
     /** Host Agent factories bind an already-admitted Run, rather than durable defaults. */
     readExecutionRunPurposeBindingSubjectId?(runId: string): string | null;
+    resolveSelection?(
+        input: StablePluginConnectedAccountsAuthorizedPurpose & Readonly<{
+            exactPurposeBindingSubjectId?: string;
+            sessionId?: string;
+            signal: AbortSignal;
+        }>,
+    ): ReturnType<NonNullable<ConnectedAccountsService['resolveSelection']>>;
     getBinding(
         input: StablePluginConnectedAccountsAuthorizedPurpose & Readonly<{
             exactPurposeBindingSubjectId?: string;
@@ -687,7 +694,35 @@ export function createStablePluginConnectedAccountsHost(
                 : undefined;
             const exactPurposeBindingSubjectId =
                 bindOptions?.exactPurposeBindingSubjectId?.trim() || null;
+            const resolveSelection = owner.resolveSelection;
             return Object.freeze<ConnectedAccountsService>({
+                ...(resolveSelection ? {
+                    async resolveSelection(purpose: string, options: Readonly<{ signal?: AbortSignal }> = {}) {
+                        assertCurrent(seed);
+                        const scope = resolveScope(scopes, purpose);
+                        return withConnectedAccountBindingDiagnostic({
+                            correlationId: seed.correlationId, ...(seed.session ? { sessionId: seed.session.id } : {}),
+                            pluginId: seed.plugin.id, localId: seed.contribution.id, purpose: scope.purpose,
+                        }, () => runConnectedAccountBindingStage('binding_read', async () => {
+                            const signals = combineSignals(seed.signal, options.signal);
+                            assertCurrent(seed);
+                            try {
+                                const selection = await resolveSelection({
+                                    ...authorizedPurpose(seed, scope),
+                                    ...(exactPurposeBindingSubjectId ? { exactPurposeBindingSubjectId } : {}),
+                                    ...(seed.session ? { sessionId: seed.session.id } : {}),
+                                    signal: signals.signal,
+                                });
+                                assertNotCancelled(signals.signal);
+                                return selection.credentialSource === 'connectedAccount'
+                                    ? { ...selection, binding: assertAuthorizedSummary(scope, selection.binding) }
+                                    : selection;
+                            } finally {
+                                signals.dispose();
+                            }
+                        }));
+                    },
+                } : {}),
                 async getBinding(purpose, options = {}) {
                     assertCurrent(seed);
                     const scope = resolveScope(scopes, purpose);

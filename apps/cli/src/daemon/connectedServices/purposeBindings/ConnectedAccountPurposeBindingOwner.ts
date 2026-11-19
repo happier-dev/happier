@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { readConnectedAccountPurposeProfileLabel, type ConnectedAccountPurposeResolvedTarget,
   type ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import type { QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountGroupV4 } from '@happier-dev/protocol';
 import type {
   ConnectedAccountMetadataList as PluginConnectedAccountMetadataList,
@@ -2026,6 +2026,20 @@ export function createConnectedAccountPurposeBindingOwner(
       }
     },
     getBinding,
+    async resolveSelection(input) {
+      try {
+        // The existing strict read returns a binding or throws a classified
+        // refusal; its public legacy signature also covers nullable reads.
+        const binding = (await getBinding({ ...input, requireSelected: true }))!;
+        return { credentialSource: 'connectedAccount', binding };
+      } catch (error) {
+        if (isPluginError(error) && error.code === 'plugin_connected_account_binding_unavailable'
+          && error.details?.reasonCode === 'unselected') {
+          return { credentialSource: 'machineLogin' };
+        }
+        throw error;
+      }
+    },
     async requestSelection(input) {
       input.signal.throwIfAborted();
       const purpose = QualifiedConnectedAccountPurposeV1Schema.parse(input.purpose);
