@@ -195,13 +195,13 @@ export type MachinesAgentsListOutput = z.output<typeof MachinesAgentsListOutputS
 
 export type MachineAgentInventoryDescriptor = Readonly<{ agentId: string; definitionId?: string; title: string }>;
 
-/** The target machine's projected registry owns the session-capable roster. */
+/** The target Machine's projected registry owns its executable Agent roster. */
 export function buildMachineAgentInventoryDescriptors(
   projection: Pick<PluginProjectionV2, 'agentsById'>,
   definitions: readonly Pick<MachineAcpInventoryDefinition, 'definitionId' | 'title'>[] = [],
 ): readonly MachineAgentInventoryDescriptor[] {
   return [...Object.entries(projection.agentsById)
-    .filter(([, agent]) => Boolean(agent.capabilities?.sessions))
+    .filter(([, agent]) => Boolean(agent.capabilities?.sessions || agent.capabilities?.executionRuns))
     .map(([agentId, agent]) => ({ agentId, title: agent.title?.trim() || agentId })),
     ...definitions.map(definition => ({ agentId: buildConfiguredAcpAgentSelectionV1(definition.definitionId).agentId,
       definitionId: definition.definitionId, title: definition.title }))];
