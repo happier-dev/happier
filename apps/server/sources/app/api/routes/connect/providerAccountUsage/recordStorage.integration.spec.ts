@@ -129,16 +129,17 @@ describe("provider account usage record storage (integration)", () => {
             .toEqual({ projection: pageProjection, complete: true });
         await write({ ...first, fetchedAtMs: first.fetchedAtMs + 500, observedAtMs: first.observedAtMs + 500 });
         expect((await readProviderAccountUsageRecordWithCurrentGuard(readParams, db))?.record.metadata?.pageProjection).toEqual(pageProjection);
-        expect(await readProviderAccountUsageHistory({ ...readParams, history: { range, pageSize: 100 } })).toEqual(history);
-        expect(await writeProviderAccountUsagePageProjection({ accountId: account.id, value: pageProjection }, db)).toEqual(pageProjection);
-        expect(await readProviderAccountUsageHistory({ ...readParams, history: { range, pageSize: 100 } })).toEqual(history);
+        expect(await readProviderAccountUsagePageProjection({ ...readParams, projection: pageProjection.demand }, db))
+            .toEqual({ projection: pageProjection, complete: false });
+        expect(await writeProviderAccountUsagePageProjection({ accountId: account.id, value: pageProjection }, db)).toBeNull();
         await write({ ...first, planLabel: 'new plan', fetchedAtMs: first.fetchedAtMs + 1000, observedAtMs: first.observedAtMs + 1000 });
         const row = await db.providerAccountUsageRecord.findUniqueOrThrow({ where: { accountId_recordId: { accountId: account.id, recordId: first.recordId } } });
         expect(row.metadata).toMatchObject({ pageProjection });
         const accepted = await readProviderAccountUsageHistory({ accountId: account.id, recordId: first.recordId,
             history: { range, pageSize: 100 } });
-        expect(accepted.entries).toHaveLength(2);
-        expect(accepted.entries[1]!.record.metadata).not.toHaveProperty('pageProjection');
+        expect(accepted.entries.map(entry => entry.observedAtMs))
+            .toEqual([first.fetchedAtMs, first.fetchedAtMs + 500, first.fetchedAtMs + 1000]);
+        expect(accepted.entries[2]!.record.metadata).not.toHaveProperty('pageProjection');
         expect(await readProviderAccountUsageHistoryWitness({ accountId: account.id, recordId: first.recordId,
             witness: pageProjection.frontier })).toEqual(witness);
     });
@@ -211,7 +212,7 @@ describe("provider account usage record storage (integration)", () => {
         await write(2000, changed); await write(3000, changed);
         const after = await readProviderAccountUsageHistory({ accountId: account.id, recordId: first.recordId, history });
         expect(after.entries.map(entry => entry.observedAtMs)).toEqual([
-            first.fetchedAtMs, first.fetchedAtMs + 1000, first.fetchedAtMs + 2000,
+            first.fetchedAtMs, first.fetchedAtMs + 1000, first.fetchedAtMs + 2000, first.fetchedAtMs + 3000,
         ]);
         expect(await readProviderAccountUsageHistoryWitness({ accountId: account.id, recordId: first.recordId,
             witness: { id: pinned.id, observedAtMs: pinned.observedAtMs } })).toEqual(pinned);
@@ -442,7 +443,7 @@ describe("provider account usage record storage (integration)", () => {
             .toEqual([{ t: "encrypted", c: "opaque-base", recoveryCreditDetails }]);
     });
 
-    it('retains material accepted history, omits refresh-only changes and pages the requested range', async () => {
+    it('retains advancing observation clocks and pages the requested range', async () => {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' }, select: { id: true } });
         const first = { ...createUsageSnapshot({ fetchedAt: Date.now() - 3000 }),
             diagnostics: [{ kind: 'provider_http' as const, status: 200, observedAtMs: 1, headers: { 'x-request-id': 'first' } }] };
@@ -456,8 +457,8 @@ describe("provider account usage record storage (integration)", () => {
         const page = await readProviderAccountUsageHistory({ accountId: account.id, recordId: first.recordId, history: { range, pageSize: 1 } });
         expect(page.entries.map(entry => entry.record.snapshot)).toEqual([first]);
         expect(page.nextCursor).not.toBeNull();
-        const next = await readProviderAccountUsageHistory({ accountId: account.id, recordId: first.recordId, history: { range, pageSize: 1, cursor: page.nextCursor! } });
-        expect(next.entries.map(entry => entry.record.snapshot)).toEqual([changed]);
+        const next = await readProviderAccountUsageHistory({ accountId: account.id, recordId: first.recordId, history: { range, pageSize: 2, cursor: page.nextCursor! } });
+        expect(next.entries.map(entry => entry.observedAtMs)).toEqual([first.fetchedAtMs + 1000, changed.fetchedAtMs]);
         expect(next.nextCursor).toBeNull();
     });
 
@@ -477,7 +478,44 @@ describe("provider account usage record storage (integration)", () => {
             .toBe(snapshots.length * buildProviderAccountUsageMaterialChangesV1(base.recordId).length);
     });
 
-    it('deduplicates against the last retained observation when the current record has diverged', async () => {
+    it('keeps both witnessed endpoints of a flat quota run across UTC days', async () => {
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const dayMs = 86_400_000;
+        const day1 = Math.floor(Date.now() / dayMs) * dayMs - 7 * dayMs;
+        const day6 = day1 + 5 * dayMs;
+        const first = createUsageSnapshot({ fetchedAt: day1 });
+        const reading = (time: number) => ({ ...first, fetchedAtMs: time, observedAtMs: time,
+            meters: first.meters.map(meter => ({ ...meter, used: 20, remaining: 80, remainingPct: 80,
+                usedPct: 20, utilizationPct: 20, resetsAt: day1 + 7 * dayMs,
+                windowDurationMs: 7 * dayMs })) });
+        const write = (snapshot: typeof first) => writeProviderAccountUsageRecordWithPolicy({
+            accountId: account.id, recordId: snapshot.recordId, recordKey: snapshot.recordKey,
+            payloadMode: 'plain_json_v1', status: 'ok', snapshot, fetchedAt: snapshot.fetchedAtMs,
+            staleAfterMs: snapshot.staleAfterMs, materialFingerprint: 'flat-twenty-percent',
+        });
+        const read = () => readProviderAccountUsageHistory({ accountId: account.id, recordId: first.recordId,
+            history: { range: { startAtMs: day1, endAtMs: day6 + dayMs }, pageSize: 10 } });
+
+        await write(reading(day1 + 1000));
+        await write(reading(day6 + 1000));
+        expect((await read()).entries.map(entry => entry.observedAtMs)).toEqual([day1 + 1000, day6 + 1000]);
+
+        await write(reading(day6 + 2000));
+        const held = (await read()).entries[2]!;
+        await write(reading(day6 + 3000));
+        expect((await read()).entries.map(entry => entry.observedAtMs)).toEqual(
+            [day1 + 1000, day6 + 1000, day6 + 2000, day6 + 3000]);
+        expect(await readProviderAccountUsageHistoryWitness({ accountId: account.id, recordId: first.recordId,
+            witness: { id: held.id, observedAtMs: held.observedAtMs } })).toEqual(held);
+        const change = await db.accountChange.findFirstOrThrow({
+            where: { accountId: account.id, kind: 'account', entityId: 'provider-account-usage' },
+        });
+        expect(change.hint).toMatchObject({
+            providerAccountUsageHistoryChange: { fromAtMs: day6 + 3000 },
+        });
+    });
+
+    it('keeps the new witness when the current record has diverged from the retained run', async () => {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const first = createUsageSnapshot({ fetchedAt: Date.now() - 4000 });
         const writeParams = (snapshot: typeof first) => ({ accountId: account.id, recordId: snapshot.recordId,
@@ -491,7 +529,7 @@ describe("provider account usage record storage (integration)", () => {
         await expect(readProviderAccountUsageRecord(readParams)).resolves.toMatchObject({ snapshot: repeat });
         const history = { range: { startAtMs: first.fetchedAtMs, endAtMs: first.fetchedAtMs + 4000 }, pageSize: 10 };
         const page = await readProviderAccountUsageHistory({ ...readParams, history });
-        expect(page.entries.map(entry => entry.record.snapshot)).toEqual([first]);
+        expect(page.entries.map(entry => entry.record.snapshot)).toEqual([first, repeat]);
     });
 
     it('coalesces plain subscription-only observation refreshes without relying on caller fingerprints', async () => {
@@ -518,7 +556,7 @@ describe("provider account usage record storage (integration)", () => {
         expect(page.entries.map(entry => entry.record.snapshot)).toEqual([observed]);
     });
 
-    it('persists accepted freshness without publishing material Account changes or retaining unchanged history', async () => {
+    it('ignores identical timestamps and publishes a new history witness for advanced freshness', async () => {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' }, select: { id: true } });
         const first = createUsageSnapshot({ fetchedAt: Date.now() - 3000 });
         const write = (snapshot: typeof first, materialFingerprint: string) => writeProviderAccountUsageRecordWithPolicy({ accountId: account.id, recordId: snapshot.recordId, recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1', status: 'ok', fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, snapshot, materialFingerprint });
@@ -536,9 +574,9 @@ describe("provider account usage record storage (integration)", () => {
         await expect(write(refreshed, 'first')).resolves.toBe('written');
         await expect(readProviderAccountUsageRecord({ accountId: account.id, recordId: first.recordId })).resolves.toMatchObject({ fetchedAt: refreshed.fetchedAtMs, snapshot: refreshed });
         const freshnessChanged = await db.accountChange.findFirst({ where: { accountId: account.id, kind: 'account', entityId: 'provider-account-usage' } });
-        expect(freshnessChanged?.cursor).toBe(initial!.cursor);
+        expect(freshnessChanged?.cursor).toBeGreaterThan(initial!.cursor);
         const history = await readProviderAccountUsageHistory({ accountId: account.id, recordId: first.recordId, history: { range: { startAtMs: first.fetchedAtMs, endAtMs: refreshed.fetchedAtMs + 1 }, pageSize: 10 } });
-        expect(history.entries.map(entry => entry.record.snapshot)).toEqual([first]);
+        expect(history.entries.map(entry => entry.record.snapshot)).toEqual([first, refreshed]);
         await write({ ...first, fetchedAtMs: first.fetchedAtMs + 2000, observedAtMs: first.observedAtMs + 2000, planLabel: 'new tier' }, 'changed');
         const changed = await db.accountChange.findFirst({ where: { accountId: account.id, kind: 'account', entityId: 'provider-account-usage' } });
         expect(changed?.cursor).toBeGreaterThan(freshnessChanged!.cursor);
@@ -676,9 +714,8 @@ describe("provider account usage record storage (integration)", () => {
             });
         const history = { range: { startAtMs: fetchedAt, endAtMs: fetchedAt + 3000 }, pageSize: 10 };
         const knownMaterial = await readProviderAccountUsageHistory({ accountId: account.id, recordId, history });
-        expect(knownMaterial.entries.map(entry => entry.observedAtMs)).toEqual([fetchedAt]);
-        // A legacy opaque writer without a material witness cannot establish
-        // equality. Keep its accepted observation rather than guessing it away.
+        expect(knownMaterial.entries.map(entry => [entry.observedAtMs, entry.record.sealedPayload?.ciphertext]))
+            .toEqual([[fetchedAt, 'old-quota'], [fetchedAt + 1000, 'new-quota']]);
         await writeProviderAccountUsageRecordWithPolicy({
             accountId: account.id, recordId, recordKey,
             payloadMode: 'sealed_account_scoped_v1', status: 'ok',
@@ -692,7 +729,8 @@ describe("provider account usage record storage (integration)", () => {
             sealedPayload: { format: 'account_scoped_v1', ciphertext: 'unknown-material-quota' },
         });
         const unknownMaterial = await readProviderAccountUsageHistory({ accountId: account.id, recordId, history });
-        expect(unknownMaterial.entries.map(entry => entry.observedAtMs)).toEqual([fetchedAt, fetchedAt + 1500]);
+        expect(unknownMaterial.entries.map(entry => entry.observedAtMs)).toEqual(
+            [fetchedAt, fetchedAt + 1000, fetchedAt + 1500, fetchedAt + 1750]);
     });
 
     it("preserves a plain subscription when a newer quota write omits it", async () => {

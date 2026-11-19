@@ -102,7 +102,7 @@ it('reader coverage retains summary prefixes while reporting pending and unsumma
         expect(complete.missingDays).toEqual([]);
         expect(queries.filter(sql => sql.sql.includes('ProviderAccountUsageHistory'))).toHaveLength(0);
     });
-    const pendingSecond = { ...second, fetchedAtMs: second.fetchedAtMs + 1000, observedAtMs: second.observedAtMs + 1000, planLabel: 'changed' };
+    const pendingSecond = { ...second, fetchedAtMs: second.fetchedAtMs + 1000, observedAtMs: second.observedAtMs + 1000 };
     const third = { ...second, fetchedAtMs: start + 2 * dayMs + 1000, observedAtMs: start + 2 * dayMs + 1000, planLabel: 'third' };
     await write(pendingSecond);
     await write(third);
@@ -189,7 +189,7 @@ it('clock-bound backfill selects legacy summaries even after their exact detail 
     });
 });
 
-it('accepted material owns pending days, exact publication clears them and empty work stays initialized', async () => {
+it('accepted observations own pending days, exact publication clears them and empty work stays initialized', async () => {
     const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
     const dayStartAtMs = Date.UTC(2026, 0, 1);
     const snapshot = createUsageSnapshot({ fetchedAt: dayStartAtMs + 1000 });
@@ -219,9 +219,6 @@ it('accepted material owns pending days, exact publication clears them and empty
     expect(await metadata()).toMatchObject({ daySummaryPendingDays: [] });
     const history = await db.providerAccountUsageHistory.findMany({ where: { accountId: account.id } });
     expect(history[0]!.payload).not.toHaveProperty('metadata.daySummaryPendingDays');
-    const next = { ...snapshot, fetchedAtMs: snapshot.fetchedAtMs + 1000, observedAtMs: snapshot.observedAtMs + 1000 };
-    await write(next); // Freshness does not create pending work or lose explicit initialization.
-    expect(await metadata()).toMatchObject({ daySummaryPendingDays: [] });
     await inTx(async tx => {
         let summaryKeyReads = 0;
         const boundary = new Proxy(tx, { get(target, property, receiver) {

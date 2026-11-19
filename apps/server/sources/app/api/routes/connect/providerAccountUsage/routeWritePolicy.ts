@@ -323,14 +323,12 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
         await params.beforeWrite?.();
         const updated = await updateProviderAccountUsageRecordIfCurrent(nextWrite, captured.guard, params.client);
         if (updated) {
-            const changedMaterial = !sameProviderAccountUsageHistoryMaterial(nextWrite, existing);
             const historyChanged = await retainProviderAccountUsageHistory(nextWrite, params.client);
-            // Freshness is persisted on the exact record, not a material
-            // allowance invalidation. Reuse the history/writer equality basis:
-            // it preserves quota reset phases and excludes observation clocks.
-            // Opaque writers without a fingerprint remain conservative.
-            if (changedMaterial || historyChanged || nextWrite.status !== existing.status
-                || nextWrite.staleAfterMs !== existing.staleAfterMs || clearsRefreshRequest || advancesFailure) {
+            // Publishing a measured point also wakes Daily summary and
+            // history readers when the allowance itself has stayed flat.
+            if (historyChanged || !sameProviderAccountUsageHistoryMaterial(nextWrite, existing)
+                || nextWrite.status !== existing.status || nextWrite.staleAfterMs !== existing.staleAfterMs
+                || clearsRefreshRequest || advancesFailure) {
                 publishUsageRecordChange(params.client, { accountId: params.accountId, recordId: params.recordId,
                     ...(historyChanged ? { dayStartAtMs: Math.floor(nextWrite.fetchedAt / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS,
                         historyFromAtMs: nextWrite.fetchedAt } : {}) });

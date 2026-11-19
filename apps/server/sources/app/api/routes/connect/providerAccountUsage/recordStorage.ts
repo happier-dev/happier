@@ -128,24 +128,20 @@ export async function retainProviderAccountUsageHistory(
 ): Promise<boolean> {
     const parsed = parseProviderAccountUsageRecordWrite(raw);
     if (parsed.fetchedAt === undefined || (!parsed.snapshot && !parsed.sealedPayload)) return false;
-    // The accepted current-record CAS serializes this indexed tail read and append.
-    const latest = await client.providerAccountUsageHistory.findFirst({
-        where: { accountId: parsed.accountId, recordId: parsed.recordId },
-        orderBy: [{ observedAt: "desc" }, { id: "desc" }],
+    const observedAt = new Date(parsed.fetchedAt);
+    // The accepted current-record CAS serializes equal-clock checks. A new
+    // clock is its own measured point; reset recovery addresses exact rows.
+    const sameClock = await client.providerAccountUsageHistory.findFirst({
+        where: { accountId: parsed.accountId, recordId: parsed.recordId, observedAt },
+        orderBy: { id: "desc" },
         select: { payload: true },
     });
-    if (latest && sameProviderAccountUsageHistoryMaterial(parsed, parseHistoryRecord(latest.payload))) {
-        return false;
-    }
-    // The read materialization belongs only to the current record. Embedding it
-    // into every accepted observation would recursively duplicate its history.
+    if (sameClock && sameProviderAccountUsageHistoryMaterial(parsed, parseHistoryRecord(sameClock.payload))) return false;
+    // Derived history metadata belongs only to the current record.
     const { pageProjection: _derived, daySummaryPendingDays: _pending, ...metadata } = parsed.metadata ?? {};
     const retained = { ...parsed, ...(parsed.metadata ? { metadata } : {}) };
-    // The policy already owns the accepted parent CAS in this transaction.
-    // Insert through the existing composite FK without updating that parent again.
     await client.providerAccountUsageHistory.create({
-        data: { accountId: parsed.accountId, recordId: parsed.recordId,
-            observedAt: new Date(parsed.fetchedAt), payload: retained as Prisma.InputJsonValue },
+        data: { accountId: parsed.accountId, recordId: parsed.recordId, observedAt, payload: retained as Prisma.InputJsonValue },
         select: { id: true },
     });
     // Empty coverage proves no remaining detail. A newly retained observation
