@@ -5,7 +5,7 @@ import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev
 
 const id = defineProtocolString({ minLength: 1 });
 const number = defineProtocolNumber({ integer: true, minimum: 0 });
-const target = { v: defineProtocolLiteral(1), serverId: id, machineId: id };
+const target = { v: defineProtocolLiteral(1), serverId: id, machineId: id.optional() };
 const setup = defineProtocolObject(target, { policy: 'closed' });
 const source = defineProtocolObject({ ...target, afterRevision: number }, { policy: 'closed' });
 const descriptors = [
@@ -31,11 +31,14 @@ export const machinePresenceEventActions = Object.fromEntries(descriptors.map(ev
     inputSchema: setup, resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, source.jsonSchema),
     async run(input: unknown, context: PluginInvocationContext) {
         const selected = setup.parse(input);
-        const retained = await read(context, selected);
+        // Any-Machine sources consume the native Account pushes; they do not
+        // select a current Machine or enumerate presence during authoring.
+        const retained = selected.machineId === undefined ? null
+            : await read(context, { serverId: selected.serverId, machineId: selected.machineId });
         const config = source.parse({ ...selected, afterRevision: retained?.revision ?? 0 });
         return { v: 1 as const, sourceInstanceId: `presence:${computeCanonicalDomainSeparatedDigest('happier.machine.presence.source.v1',
-            [selected.serverId, selected.machineId, event.id, String(context.invokedAtMs)])}`,
-            sourceContractVersion: 1, sourceConfig: config, displayLabel: selected.machineId };
+            [selected.serverId, selected.machineId ?? '', event.id, String(context.invokedAtMs)])}`,
+            sourceContractVersion: 1, sourceConfig: config, displayLabel: selected.machineId ?? 'Any Machine' };
     },
 }]));
 export const machinePresenceEvents = Object.fromEntries(descriptors.map(event => [event.id, { declaration: {

@@ -660,6 +660,8 @@ additional access. A daemon presence observer is no longer involved.
 and returns the same retained candidate facts for known-key reconnect replay.
 Replay reads only demanded Machine keys; an any-Machine subscription consumes
 future native pushes without scanning Machine inventory.
+Both presence setup Actions accept an omitted `machineId` for any visible Machine;
+only exact-Machine setup reads and captures that Machine's retained revision.
 The source stack database owner must deploy the append-only
 `20261102101034_add_machine_presence_transitions` migration before loading the
 producer and catalog. The retained pair does not recover overwritten cycles
