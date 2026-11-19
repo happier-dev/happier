@@ -1173,8 +1173,11 @@ it('requires every template hostname, omits empty optional domains and preserves
     expect(screen.getTextContent()).toContain(t('capabilities.store.appPage.domainRequired'));
     await typeHostname('web', 'status.example.com');
     expect(screen.findHostByTestId('store.app.prepare.review')!.props.disabled).toBe(true);
-    // Format admission belongs to template preparation; the presenter displays its typed refusal.
     await typeHostname('admin', 'https://admin.example.com');
+    expect(screen.findHostByTestId('store.app.prepare.review')!.props.disabled).toBe(true);
+    expect(screen.findHostByTestId('store.app.prepare.domain.admin.error')).toBeTruthy();
+    expect(fixture.preparations).toEqual([]);
+    await typeHostname('admin', 'admin.example.com');
     expect(screen.findHostByTestId('store.app.prepare.review')!.props.disabled).toBe(false);
     await toReview();
     fixture.createMode.value = 'needsReview';
@@ -1183,14 +1186,14 @@ it('requires every template hostname, omits empty optional domains and preserves
       && node.props.diagnosticCode === 'template_needs_review')).not.toHaveLength(0));
     expect(pushed).toEqual([]);
     expect(fixture.creations[0]?.domainBindings).toEqual([
-      { templateDomainId: 'web', hostname: 'status.example.com' }, { templateDomainId: 'admin', hostname: 'https://admin.example.com' },
+      { templateDomainId: 'web', hostname: 'status.example.com' }, { templateDomainId: 'admin', hostname: 'admin.example.com' },
     ]);
     // Back keeps what was typed, so a refused address is corrected where it was entered.
     await reviewAgain();
     expect(screen.findHostByTestId('store.app.prepare.environmentName')!.props.value).toBe('Status page');
     await typeHostname('admin', 'admin.example.com');
     await typeHostname('extra', 'https://extra.example.com');
-    expect(screen.findHostByTestId('store.app.prepare.review')!.props.disabled).toBe(false);
+    expect(screen.findHostByTestId('store.app.prepare.review')!.props.disabled).toBe(true);
     await typeHostname('extra', '');
     expect(screen.findHostByTestId('store.app.prepare.review')!.props.disabled).toBe(false);
     await toReview();
