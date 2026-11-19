@@ -709,6 +709,23 @@ describe('Work and Coach widget bodies', () => {
     await screen.pressByTestIdAsync('coach.digest.configure');
     expect(screen.findByTestId('coach.digest.editor')).toBeNull();
   });
+  it.each([true, false])('keeps the Session value token qualifier at the scope it describes (all from parts: %s)', async allFromParts => {
+    const parts = { ...contribution('parts', 's1', 't1'),
+      tokens: { input: 10, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null } };
+    const reported = contribution('second', 's2', 't2');
+    const work = allocateUsageOutcomes({
+      contributions: [parts, allFromParts ? { ...reported, tokens: parts.tokens } : reported], evidence: [],
+    });
+    const screen = await renderScreen(<UsageSessionValueWidget {...props}
+      query={normalizeUsageQuery({ ...query, metric: 'tokens' })} slice={{ ...slice, work }}
+      id="usage_session_value" testID="value" />);
+    const rows = screen.findAllByType(RankedRows).find(node => node.props.testID === 'value.unlinked')!.props.rows as
+      readonly { id: string; annotation?: string }[];
+    const qualifier = t('usage.board.page.tokensFromParts');
+    expect(Object.fromEntries(rows.map(row => [row.id, row.annotation?.includes(qualifier) ?? false])))
+      .toEqual({ s1: !allFromParts, s2: false });
+    expect(screen.getTextContent().split(t('usage.board.page.tokensFromPartsOnce'))).toHaveLength(allFromParts ? 2 : 1);
+  });
   it('collapses the ledger summary to one sentence when nothing is linked, instead of repeating the total', async () => {
     const unlinked = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions, evidence: [] }));
     const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={{ ...slice, work: unlinked }} id="usage_project_ledger" testID="ledger" />);

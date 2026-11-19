@@ -109,6 +109,37 @@ describe('one selected money basis across Usage bodies', () => {
     expect.soft(metrics.find(row => row.props.testID === 'parts-facts.fact.unpriced')?.props.value).toBe(1713);
     expect.soft(metrics.find(row => row.props.testID === 'parts-unpriced.tokens')?.props.value).toBe(1713);
   });
+  it.each([true, false])('locates the token-parts qualification on facts and breakdowns (all from parts: %s)', async allFromParts => {
+    const props = mountedCosts();
+    const query = normalizeUsageQuery({ ...props.query, metric: 'tokens', breakdown: ['model'] });
+    const partsOnly = { ...tokens, total: null };
+    const cost = props.slice.accounting!.totals.cost;
+    const models = [
+      { key: 'parts-model', eventCount: 1, tokens: partsOnly, cost },
+      { key: 'second-model', eventCount: 1, tokens: allFromParts ? partsOnly : tokens, cost },
+    ];
+    const facts = props.slice.costFactTotals!.filter(fact => fact.kind === 'estimated' || fact.kind === 'reported')
+      .map(fact => ({ ...fact, tokens: allFromParts || fact.kind === 'reported' ? partsOnly : tokens }));
+    const slice = { ...props.slice, costFactTotals: facts,
+      accounting: { ...props.slice.accounting!, breakdowns: { model: models } } };
+    const screen = await renderScreen(<>
+      <UsageCostFactsWidget {...props} query={query} slice={slice} id="usage_cost_facts" testID="parts-facts" />
+      <UsageBreakdownsWidget {...props} query={query} slice={slice} id="usage_breakdowns" testID="parts-breakdown" />
+    </>);
+    const localQualifier = t('usage.board.page.tokensFromParts');
+    const sharedQualifier = t('usage.board.page.tokensFromPartsOnce');
+    const captions = screen.findAllByType(HappierDataMetric)
+      .filter(metric => String(metric.props.testID).startsWith('parts-facts.fact.'));
+    expect.soft(captions.map(metric => [
+      metric.props.testID, metric.props.caption.includes(localQualifier),
+    ])).toEqual([
+      ['parts-facts.fact.reported', !allFromParts], ['parts-facts.fact.estimated', false],
+    ]);
+    const rows = screen.findByType(RankedRows).props.rows as readonly { id: string; value: number; annotation?: string }[];
+    expect.soft(Object.fromEntries(rows.map(row => [row.id, [row.value, row.annotation?.includes(localQualifier) ?? false]])))
+      .toEqual({ 'parts-model': [10, !allFromParts], 'second-model': [10, false] });
+    expect(screen.getTextContent().split(sharedQualifier)).toHaveLength(allFromParts ? 3 : 1);
+  });
   it('omits unmeasured model rows while retaining measured zero and known model amounts', async () => {
     const base = mountedCosts();
     const query = normalizeUsageQuery({ ...base.query, metric: 'tokens', breakdown: ['model'] });
