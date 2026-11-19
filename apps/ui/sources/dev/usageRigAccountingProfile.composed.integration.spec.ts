@@ -1,4 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import type { HeapProfiler } from 'node:inspector';
+import { Session } from 'node:inspector/promises';
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { db } from '../../../server/sources/storage/db';
 import { createGeneratedPrismaClient, onDbClientQuery } from '../../../server/sources/storage/prismaClientConstruction';
@@ -13,6 +15,7 @@ import { captureUsageAnalyticsBatchInTx, getUsageAnalyticsPopulationKey, getUsag
 import { readDatabaseTransactionConfigFromEnv } from '../../../server/sources/config/databaseTransactions';
 import { databaseQueryDurationHistogram } from '../../../server/sources/app/monitoring/metrics/databaseDriverMetrics';
 import { initializeSessionSystemRecordsProtocolV1Activation, resetSessionSystemRecordsProtocolV1ActivationForTests } from '../../../server/sources/app/session/systemRecords/sessionSystemRecordProtocolContract';
+import { readRecord, readRecordListProperty } from '@happier-dev/protocol/inputs/inputRecords';
 import { getUsageQueryKey, resolveUsageQueryPeriod, usageQueryNeedsContributionRows, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { readUsageContributionProjection, resolveEffectiveUsageCostUsd } from '@happier-dev/protocol/usage/usageCost';
 import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema,
@@ -30,6 +33,12 @@ import { createRootLayoutFeaturesResponse } from './testkit/fixtures/featureFixt
 import { seedUsageRigAccountingRows, USAGE_RIG_NOW } from './testkit/fixtures/usageRigAccounting';
 import { buildUsageRigPresetPlans } from './testkit/fixtures/usageRigPresets';
 
+type GroupedWireFieldObservation = {
+    frameBytes: number;
+    overheadBytes: number;
+    resultValueFields: Array<Record<string, number>>;
+};
+
 type RequestObservation = {
     status: number;
     bytes: number;
@@ -37,9 +46,19 @@ type RequestObservation = {
     headersMs: number;
     bodyAwaitMs: number;
     decodeAndAdmitMs: number;
+    coalescing?: { bytes: number; bufferingMs: number; memoryBefore: NodeJS.MemoryUsage; memoryAfter: NodeJS.MemoryUsage };
+    framing?: {
+        lines: number;
+        maxChunkBytes: number;
+        maxLineBytes: number;
+        carriedPrefixBytes: number;
+        unreadSuffixBytes: number;
+        censusMs: number;
+    };
     server: Record<string, number>;
     driver?: { statements: number; durationMs: number };
-    delivery?: { catalogBytes: number; groupedBytes: number; detailBytes: number; groupedResults: number; exactInputs: number; censusMs: number };
+    delivery?: { catalogBytes: number; groupedBytes: number; detailBytes: number; groupedResults: number; exactInputs: number;
+        censusMs: number; groupedWireFields?: GroupedWireFieldObservation[] };
     demand: { queries: number; populations: number; coordinates: number; detail: number; sessions: number; compact: boolean; projection: string | null };
 };
 
@@ -47,13 +66,105 @@ const periods = ['year', '7days', '30days'] as const satisfies readonly UsagePer
 const costBases = ['auto', 'estimated'] as const satisfies readonly UsageQuery['costBasis'][];
 const tokenFields = ['input', 'output', 'reasoning', 'cacheRead', 'cacheWrite', 'total'] as const;
 
+function summarizeAccountingAllocations(head: HeapProfiler.SamplingHeapProfileNode) {
+    const owners = new Map<string, { selfSizeBytes: number; sites: Map<string, number> }>();
+    const protocolByCallerSelfSizeBytes = { ui: 0, server: 0, other: 0, unattributed: 0 };
+    type Caller = keyof typeof protocolByCallerSelfSizeBytes;
+    const remaining: Array<{ node: HeapProfiler.SamplingHeapProfileNode; caller: Caller }> = [{ node: head, caller: 'unattributed' }];
+    while (remaining.length) {
+        const { node, caller } = remaining.pop()!;
+        const { url, functionName, lineNumber } = node.callFrame;
+        const normalizedUrl = url.replaceAll('\\', '/');
+        const source = normalizedUrl.match(/(?:^|\/)(apps\/(ui|server)\/sources|packages\/(protocol)\/(?:src|dist))\/([^?#]+)/);
+        const observer = normalizedUrl.match(/(?:^|\/)((?:@vitest\/spy|vitest)\/[^?#]+)/);
+        const owner = observer || source?.[4] === 'dev/usageRigAccountingProfile.composed.integration.spec.ts' ? 'rig'
+            : source ? (source[2] ?? source[3]!) : url.startsWith('node:') ? 'node' : 'unattributed';
+        // Use the nearest recognized UI, server, or rig caller on the sampled stack.
+        // VM and library frames leave that ancestry intact. Async callers may be missing.
+        const childCaller = owner === 'ui' || owner === 'server' ? owner : owner === 'rig' ? 'other' : caller;
+        for (const child of node.children) remaining.push({ node: child, caller: childCaller });
+        if (node.selfSize === 0) continue;
+        if (owner === 'protocol') protocolByCallerSelfSizeBytes[caller] += node.selfSize;
+        const sourceFile = source ? `${source[1]}/${source[4]}` : observer?.[1] ?? (owner === 'node' ? url : null);
+        const site = sourceFile ? `${sourceFile}:${lineNumber + 1} ${functionName || '(anonymous)'}` : '(unknown source)';
+        const entry = owners.get(owner) ?? { selfSizeBytes: 0, sites: new Map<string, number>() };
+        entry.selfSizeBytes += node.selfSize;
+        entry.sites.set(site, (entry.sites.get(site) ?? 0) + node.selfSize);
+        owners.set(owner, entry);
+    }
+    const leafOwners = Object.fromEntries([...owners].map(([owner, { selfSizeBytes, sites }]) => [owner, { selfSizeBytes,
+        topSites: Array.from(sites, ([site, bytes]) => ({ site, selfSizeBytes: bytes }))
+            .sort((a, b) => b.selfSizeBytes - a.selfSizeBytes).slice(0, 10) }]));
+    return { owners: leafOwners, protocolByCallerSelfSizeBytes };
+}
+
+type AccountingAllocationSample =
+    | { status: 'unavailable'; phase: 'start' | 'stop' }
+    | ({ status: 'sampled'; nodeVersion: string; includeCollectedRequested: true;
+        memoryBefore: NodeJS.MemoryUsage; memoryAfter: NodeJS.MemoryUsage } & ReturnType<typeof summarizeAccountingAllocations>);
+
+async function sampleAccountingColdRead<T>(read: () => Promise<T>, report: (sample: AccountingAllocationSample) => void): Promise<T> {
+    const inspector = new Session();
+    try {
+        inspector.connect();
+        // Use the inspector protocol's default interval. Its bundled type omits the GC flags.
+        const options = { samplingInterval: 32_768, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true };
+        await inspector.post('HeapProfiler.startSampling', options);
+    } catch {
+        inspector.disconnect();
+        report({ status: 'unavailable', phase: 'start' });
+        return await read();
+    }
+    // The sampled isolate includes the UI, Fastify/SQLite, and the rig observers.
+    const memoryBefore = process.memoryUsage();
+    try {
+        return await read();
+    } finally {
+        const memoryAfter = process.memoryUsage();
+        try {
+            const { profile } = await inspector.post('HeapProfiler.stopSampling');
+            report({ status: 'sampled', nodeVersion: process.version, includeCollectedRequested: true, memoryBefore, memoryAfter,
+                ...summarizeAccountingAllocations(profile.head) });
+        } catch {
+            report({ status: 'unavailable', phase: 'stop' });
+        } finally {
+            inspector.disconnect();
+        }
+    }
+}
+
+/** Count disjoint JSON field values, with their surrounding keys and syntax left as overhead. */
+function observeGroupedWireFields(wire: unknown, frameBytes: number): GroupedWireFieldObservation {
+    let valueBytes = 0;
+    const resultValueFields = readRecordListProperty(wire, 'results').map(result => {
+        const fields: Array<[string, number]> = [];
+        function measureFields(record: Readonly<Record<string, unknown>>, parent = '') {
+            for (const [field, value] of Object.entries(record)) {
+                const path = parent ? `${parent}.${field}` : field;
+                // Admission closes these objects. Pricing maps, IDs, and all other values stay opaque.
+                if (path === 'summary' || path === 'summary.accountingCalendar') {
+                    measureFields(readRecord(value), path);
+                } else {
+                    const bytes = Buffer.byteLength(JSON.stringify(value));
+                    valueBytes += bytes;
+                    fields.push([path, bytes]);
+                }
+            }
+        }
+        measureFields(readRecord(result.value));
+        return Object.fromEntries(fields);
+    });
+    return { frameBytes, overheadBytes: frameBytes - valueBytes, resultValueFields };
+}
+
 /** Inspect the admitted NDJSON without reopening the stream or retaining row bodies. */
-function observeAccountingDelivery(input: UsageAnalyticsQueryBatchRequest, eventTimes: ReadonlyMap<string, number>) {
+function observeAccountingDelivery(input: UsageAnalyticsQueryBatchRequest, eventTimes: ReadonlyMap<string, number>, profileAllocations: boolean) {
     const queries = new Set(input.queries.map(getUsageAnalyticsQueryRequestKey));
     const detail = new Set((input.contributionQueries ?? []).map(getUsageAnalyticsQueryRequestKey));
     const delivered = new Set<string>();
     const exactInputs = new Map([...detail].map(key => [key, new Set<string>()]));
-    const counts = { catalogBytes: 0, groupedBytes: 0, detailBytes: 0, groupedResults: 0, exactInputs: 0, censusMs: 0 };
+    const counts: NonNullable<RequestObservation['delivery']> = { catalogBytes: 0, groupedBytes: 0, detailBytes: 0,
+        groupedResults: 0, exactInputs: 0, censusMs: 0, ...(profileAllocations ? { groupedWireFields: [] } : {}) };
     const errors = new Set<string>();
     let opened = false;
     return { counts, errors, record: (wire: unknown, batch: UsageAnalyticsQueryBatchResponse) => {
@@ -62,6 +173,7 @@ function observeAccountingDelivery(input: UsageAnalyticsQueryBatchRequest, event
         // that carry authorized units. The network byte counter observes the full body independently.
         const bytes = Buffer.byteLength(JSON.stringify(wire)) + 1;
         if (batch.results.length) {
+            counts.groupedWireFields?.push(observeGroupedWireFields(wire, bytes));
             let allowed = opened && !batch.priceCatalog && !batch.contributionPages;
             for (const result of batch.results) {
                 const key = getUsageAnalyticsQueryRequestKey(result.query);
@@ -114,14 +226,13 @@ function observeAccountingDelivery(input: UsageAnalyticsQueryBatchRequest, event
 
 const deliveryScope = new AsyncLocalStorage<ReturnType<typeof observeAccountingDelivery>>();
 
-function observeAccountingBoundary(): () => void {
+function observeAccountingBoundary() {
     const safeParse = UsageAnalyticsQueryBatchResponseSchema.safeParse;
-    const observation = vi.spyOn(UsageAnalyticsQueryBatchResponseSchema, 'safeParse').mockImplementation((wire, options) => {
+    return vi.spyOn(UsageAnalyticsQueryBatchResponseSchema, 'safeParse').mockImplementation((wire, options) => {
         const admitted = safeParse(wire, options);
         if (admitted.success) deliveryScope.getStore()?.record(wire, admitted.data);
         return admitted;
     });
-    return () => observation.mockRestore();
 }
 
 function observeAccountingDriverStatements(app: ReturnType<typeof createAuthenticatedTestApp>): () => void {
@@ -179,17 +290,47 @@ function verifyAccountingGroups(accounting: UsageAnalyticsQueryResponse, query: 
 function observeAccountingResponse(response: Response, observation: RequestObservation): Response {
     const body = response.body;
     if (!body) return response;
+    const framing = response.headers.get('content-type')?.includes('application/x-ndjson')
+        ? { lines: 0, maxChunkBytes: 0, maxLineBytes: 0, carriedPrefixBytes: 0, unreadSuffixBytes: 0, censusMs: 0 }
+        : undefined;
+    observation.framing = framing;
     const acquire = body.getReader.bind(body);
     Object.defineProperty(body, 'getReader', { value: () => {
         const reader = acquire();
         const read = reader.read.bind(reader);
+        let partialLineBytes = 0;
         reader.read = async () => {
             const started = performance.now();
             const result = await read();
-            observation.bodyAwaitMs += performance.now() - started;
-            if (result.value) {
-                observation.bytes += result.value.byteLength;
+            const receivedAt = performance.now();
+            observation.bodyAwaitMs += receivedAt - started;
+            const chunk = result.value;
+            if (chunk) {
+                observation.bytes += chunk.byteLength;
                 observation.chunks++;
+            }
+            if (framing) {
+                if (chunk?.byteLength) {
+                    framing.maxChunkBytes = Math.max(framing.maxChunkBytes, chunk.byteLength);
+                    // These volumes describe operands the current parser can revisit or slice.
+                    // They describe the decoded body shape, independent of engine string allocation.
+                    framing.carriedPrefixBytes += partialLineBytes;
+                    let start = 0;
+                    for (let newline = chunk.indexOf(0x0a); newline !== -1; newline = chunk.indexOf(0x0a, start)) {
+                        framing.lines++;
+                        framing.maxLineBytes = Math.max(framing.maxLineBytes, partialLineBytes + newline - start);
+                        framing.unreadSuffixBytes += chunk.byteLength - newline - 1;
+                        partialLineBytes = 0;
+                        start = newline + 1;
+                    }
+                    partialLineBytes += chunk.byteLength - start;
+                }
+                if (result.done && partialLineBytes > 0) {
+                    framing.lines++;
+                    framing.maxLineBytes = Math.max(framing.maxLineBytes, partialLineBytes);
+                    partialLineBytes = 0;
+                }
+                framing.censusMs += performance.now() - receivedAt;
             }
             return result;
         };
@@ -198,8 +339,23 @@ function observeAccountingResponse(response: Response, observation: RequestObser
     return response;
 }
 
+async function coalesceAccountingResponse(response: Response, observation: RequestObservation): Promise<Response> {
+    if (!response.ok || !response.body || !response.headers.get('content-type')?.includes('application/x-ndjson')) return response;
+    const memoryBefore = process.memoryUsage();
+    const started = performance.now();
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const body = new ReadableStream<Uint8Array>({ start(controller) {
+        if (bytes.byteLength) controller.enqueue(bytes);
+        controller.close();
+    } });
+    const replay = new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+    observation.coalescing = { bytes: bytes.byteLength, bufferingMs: performance.now() - started, memoryBefore, memoryAfter: process.memoryUsage() };
+    return replay;
+}
+
 function makeContext(origin: string, credentials: UsageQueryAccountContext['credentials'],
-    scope: UsageQueryAccountContext['accountLifetime']['scope'], observations: RequestObservation[], eventTimes?: ReadonlyMap<string, number>) {
+    scope: UsageQueryAccountContext['accountLifetime']['scope'], observations: RequestObservation[], eventTimes?: ReadonlyMap<string, number>,
+    diagnostics?: Readonly<{ coalesceBody: boolean; profileAllocations: boolean }>) {
     let current = true;
     const settlements: Promise<void>[] = [];
     let batch: UsageAnalyticsQueryBatchRequest | undefined;
@@ -244,12 +400,15 @@ function makeContext(origin: string, credentials: UsageQueryAccountContext['cred
                         projection: readUsageContributionProjection(new Headers(init?.headers).get('Accept')) ?? null },
                 };
                 observations.push(observation);
+                const delivered = diagnostics?.coalesceBody ? await coalesceAccountingResponse(response, observation) : response;
                 const consumeStarted = performance.now();
-                const delivery = eventTimes && input.contributionQueries !== undefined ? observeAccountingDelivery(input, eventTimes) : undefined;
-                const observed = observeAccountingResponse(response, observation);
+                const delivery = eventTimes && input.contributionQueries !== undefined
+                    ? observeAccountingDelivery(input, eventTimes, diagnostics?.profileAllocations ?? false) : undefined;
+                const observed = observeAccountingResponse(delivered, observation);
                 const pending = delivery ? deliveryScope.run(delivery, () => consume(observed)) : consume(observed);
                 const observeSettlement = () => {
-                    observation.decodeAndAdmitMs = performance.now() - consumeStarted - observation.bodyAwaitMs - (delivery?.counts.censusMs ?? 0);
+                    observation.decodeAndAdmitMs = performance.now() - consumeStarted - observation.bodyAwaitMs
+                        - (delivery?.counts.censusMs ?? 0) - (observation.framing?.censusMs ?? 0);
                     if (!delivery) return;
                     observation.delivery = delivery.counts;
                     for (const error of delivery.errors) deliveryErrors.add(error);
@@ -329,7 +488,7 @@ describe('Usage RIG accounting phase census', () => {
     let app: ReturnType<typeof createAuthenticatedTestApp>;
     let origin: string;
     let stopObservingDriver: (() => void) | undefined;
-    let stopObservingDelivery: (() => void) | undefined;
+    let deliveryObserver: ReturnType<typeof observeAccountingBoundary> | undefined;
     const seededTotals = new Map<UsagePeriod, { eventCount: number; tokens: number }>();
     const eventTimes = new Map<string, number>();
     beforeAll(async () => {
@@ -359,7 +518,7 @@ describe('Usage RIG accounting phase census', () => {
         }
         app = createAuthenticatedTestApp({ authentication: 'real' });
         stopObservingDriver = observeAccountingDriverStatements(app);
-        stopObservingDelivery = observeAccountingBoundary();
+        deliveryObserver = observeAccountingBoundary();
         registerAccountUsageRoutes(app);
         registerAccountEncryptionRoutes(app);
         kvRoutes(app);
@@ -370,7 +529,7 @@ describe('Usage RIG accounting phase census', () => {
         try {
             if (app) await app.close();
         } finally {
-            stopObservingDelivery?.();
+            deliveryObserver?.mockRestore();
             stopObservingDriver?.();
             resetSessionSystemRecordsProtocolV1ActivationForTests();
             if (harness) await harness.close();
@@ -387,6 +546,9 @@ describe('Usage RIG accounting phase census', () => {
         try {
             const { scope, credentials } = await openAccount(origin, accountId);
             const selectedViews = process.env.HAPPIER_USAGE_RIG_PROFILE_VIEWS?.split(',');
+            const profileAllocations = process.env.HAPPIER_USAGE_RIG_PROFILE_ALLOCATIONS === '1';
+            const coalesceBody = process.env.HAPPIER_USAGE_RIG_COALESCE_BODY === '1';
+            const bodyMode = coalesceBody ? 'coalesced' : 'network';
             const plans = buildUsageRigPresetPlans(scope, period, costBasis).filter(plan => !selectedViews || selectedViews.includes(plan.id));
             if (selectedViews) expect(plans.map(plan => plan.id).sort()).toEqual([...selectedViews].sort());
             const presentationPlans = (['tokens', 'cost'] as const).map(metric => ({ metric,
@@ -395,9 +557,9 @@ describe('Usage RIG accounting phase census', () => {
                 selectTransport(scope.serverId, compact);
                 for (const { id: view, plan, inventory } of plans.filter(plan => compact || plan.id === 'sources')) {
                     const observations: RequestObservation[] = [];
-                    const { context, deliveryErrors, readBatch, settleTransport, retire } = makeContext(origin, credentials, scope, observations, eventTimes);
+                    const { context, deliveryErrors, readBatch, settleTransport, retire } = makeContext(origin, credentials, scope, observations, eventTimes,
+                        { coalesceBody, profileAllocations });
                     const input = plan.input!;
-                    const started = performance.now();
                     let projectMs = 0;
                     let projects = 0;
                     let pendingProjection: Promise<void> | undefined;
@@ -406,24 +568,36 @@ describe('Usage RIG accounting phase census', () => {
                     const needsContributionRows = input.queries.some(query => query.includeAccounting && usageQueryNeedsContributionRows(query));
                     let slices: unknown;
                     let observedCold = false;
+                    let allocations: AccountingAllocationSample | undefined;
+                    let started = performance.now();
                     try {
-                        const result = await readUiUsageQueryBatch(context, input, undefined, undefined, { onProgress(reproject) {
-                            // A finite read's consumer may select a projection on progress. Queue only
-                            // the latest available closure and account for the actual projection call.
-                            latestProjection = () => {
-                                const projectionStarted = performance.now();
-                                reproject(undefined);
-                                projectMs += performance.now() - projectionStarted;
-                                projects++;
-                            };
-                            return pendingProjection ??= Promise.resolve().then(() => {
-                                pendingProjection = undefined;
-                                latestProjection?.();
-                                latestProjection = undefined;
-                            });
-                        } });
-                        const elapsedMs = performance.now() - started;
-                        await settleTransport();
+                        const readCold = async () => {
+                            started = performance.now();
+                            try {
+                                const result = await readUiUsageQueryBatch(context, input, undefined, undefined, { onProgress(reproject) {
+                                    // Queue the latest progress projection and time its actual call.
+                                    latestProjection = () => {
+                                        const projectionStarted = performance.now();
+                                        reproject(undefined);
+                                        projectMs += performance.now() - projectionStarted;
+                                        projects++;
+                                    };
+                                    return pendingProjection ??= Promise.resolve().then(() => {
+                                        pendingProjection = undefined;
+                                        latestProjection?.();
+                                        latestProjection = undefined;
+                                    });
+                                } });
+                                return { result, elapsedMs: performance.now() - started };
+                            } finally {
+                                await settleTransport();
+                                // Counts already live in deliveryScope; drop the spy's raw call and result references.
+                                if (profileAllocations) deliveryObserver?.mockClear();
+                            }
+                        };
+                        if (profileAllocations) deliveryObserver?.mockClear();
+                        const { result, elapsedMs } = profileAllocations
+                            ? await sampleAccountingColdRead(readCold, sample => { allocations = sample; }) : await readCold();
                         const byKey = new Map(result.results.map(slice => [slice.key, slice]));
                         const inventoryAccounting = byKey.get(getUsageQueryKey(inventory))?.accounting;
                         const expected = seededTotals.get(period)!;
@@ -501,7 +675,7 @@ describe('Usage RIG accounting phase census', () => {
                             }
                         }
                         const wireShape = !compact ? 'legacy contributions' : needsContributionRows ? 'exact detail' : 'grouped summary';
-                        console.info(JSON.stringify({ kind: 'usage-accounting-phases', view, period, costBasis, compact, metrics,
+                        console.info(JSON.stringify({ kind: 'usage-accounting-phases', view, period, costBasis, compact, metrics, bodyMode, allocations,
                             elapsedMs, projectMs, projects, workPresentationMs, shapeCensusMs, observations, slices, wireShape }));
                         observedCold = true;
                         if (compact) {
@@ -531,7 +705,7 @@ describe('Usage RIG accounting phase census', () => {
                                     return metric === 'cost' ? resolveEffectiveUsageCostUsd(slice.accounting.totals.cost, costBasis)
                                         : slice.accounting.totals.tokens.total;
                                 });
-                                console.info(JSON.stringify({ kind: 'usage-accounting-metric-switch', view, period, costBasis, metric,
+                                console.info(JSON.stringify({ kind: 'usage-accounting-metric-switch', view, period, costBasis, metric, bodyMode,
                                     elapsedMs: performance.now() - presentationStarted, accountingRequests, projectedAmounts,
                                     observations: observations.slice(before) }));
                                 const expectedAmount = metric === 'cost' && inventoryAccounting
@@ -547,7 +721,7 @@ describe('Usage RIG accounting phase census', () => {
                         const elapsedMs = performance.now() - started;
                         await settleTransport();
                         failures.push({ view, compact, error: reason });
-                        if (!observedCold) console.info(JSON.stringify({ kind: 'usage-accounting-phases', view, period, costBasis, compact, metrics,
+                        if (!observedCold) console.info(JSON.stringify({ kind: 'usage-accounting-phases', view, period, costBasis, compact, metrics, bodyMode, allocations,
                             elapsedMs, projectMs, projects, observations, slices, error: reason }));
                     } finally {
                         if (compact && view === 'sources') sqliteProbe = readBatch();

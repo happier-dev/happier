@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { UsageAnalyticsQueryBatchRequestSchema, type UsageAnalyticsQueryBatchResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
-import { encodeUsageAnalyticsBatchDelivery } from '@happier-dev/protocol/usage/usageCost';
+import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema, type UsageAnalyticsQueryBatchResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { encodeUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery } from '@happier-dev/protocol/usage/usageCost';
 import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -13,6 +13,79 @@ import { queryUsageAnalyticsBatch } from './apiUsageBatch';
 const input = UsageAnalyticsQueryBatchRequestSchema.parse({ queries: [{ dateRange: { startMs: 0, endMs: 1000 } }],
     contributionQueries: [], sessionQueries: [] });
 const legacyBody = JSON.stringify({ queries: input.queries, includeContributions: true });
+
+it('frames a coalesced native accounting delivery with copy work proportional to its bytes', async () => {
+    const row = {
+        id: 'native-shape-event', observedAtMs: 1, sessionId: 'session', turnId: null, agentId: 'agent',
+        modelId: '模型🧪', machineId: null, projectKey: null, workspaceId: null, source: 'runtime',
+        tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
+        cost: { reportedUsd: 0, estimatedUsd: 1, currency: 'USD' },
+    };
+    // The native capture delivered a 5,135,949-byte frame in one 6,920,879-byte
+    // chunk. Keep the producer's real framing and vary only transport chunks.
+    const rows = Array.from({ length: Math.ceil(5_135_949 / JSON.stringify(row).length) }, (_, index) => ({ ...row, id: `event-${index}` }));
+    // Both a large rendered frame and ordinary rendered-unit pages must stay
+    // linear when native fetch delivers the whole body in one chunk.
+    for (const topLimit of [rows.length, undefined]) {
+        const deliveryShape = topLimit === undefined ? 'rendered-pages' : 'large-frame';
+        const query = { dateRange: { startMs: 0, endMs: 1000 }, ...(topLimit === undefined ? {} : { topLimit }) };
+        const deliveryInput = UsageAnalyticsQueryBatchRequestSchema.parse({ queries: [query], contributionQueries: [query], sessionQueries: [] });
+        const batch = UsageAnalyticsQueryBatchResponseSchema.parse({ v: 1, results: [{ query: deliveryInput.queries[0],
+            value: { v: 1, totals: { eventCount: rows.length,
+                tokens: { ...row.tokens, input: rows.length, total: rows.length },
+                cost: { ...row.cost, estimatedUsd: rows.length } }, contributions: rows } }] });
+        const frames = [...projectUsageAnalyticsBatchDelivery(batch, deliveryInput, true)];
+        const text = frames.map(frame => JSON.stringify(frame)).join('\n') + '\n \r\n';
+        const bytes = new TextEncoder().encode(text);
+        const slice = String.prototype.slice;
+        const trim = String.prototype.trim;
+        const indexOf = String.prototype.indexOf;
+        primeServerFeaturesSnapshot({ serverId: 'native-framing-home', snapshot: { status: 'ready',
+            features: createRootLayoutFeaturesResponse({ features: { usage: { compactBatch: { enabled: true } } } }) } });
+        for (const fragmentation of ['coalesced', 'fragmented'] as const) {
+          let copiedUnits = 0, searchedUnits = 0;
+          const received: UsageAnalyticsQueryBatchResponse[] = [];
+          const transport: CapturedServerReadTransport = { serverId: 'native-framing-home', key: 'native-framing-cost', async read(_path, _init, _options, consume) {
+            const response = new Response(new ReadableStream<Uint8Array>({ start(controller) {
+                // A cut inside the multibyte model name also exercises decoder state.
+                const multibyte = bytes.indexOf(new TextEncoder().encode('🧪')[0]!, Math.floor(bytes.length / 2));
+                const cuts = fragmentation === 'coalesced' ? [bytes.length]
+                    : [Math.floor(bytes.length / 4), Math.floor(bytes.length / 2), multibyte + 1, Math.floor(bytes.length * 3 / 4), bytes.length];
+                let start = 0;
+                for (const end of cuts) { controller.enqueue(bytes.subarray(start, end)); start = end; }
+                controller.close();
+            } }), { headers: { 'Content-Type': 'application/x-ndjson' } });
+            // Observe standard string operations without replacing the real parser,
+            // decoder, schema admission, response, reader, or returned strings.
+            const slices = vi.spyOn(String.prototype, 'slice').mockImplementation(function (this: string, start, end) {
+                const value = slice.call(this, start, end);
+                copiedUnits += value.length;
+                return value;
+            });
+            const trims = vi.spyOn(String.prototype, 'trim').mockImplementation(function (this: string) {
+                const value = trim.call(this);
+                copiedUnits += value.length;
+                return value;
+            });
+            const searches = vi.spyOn(String.prototype, 'indexOf').mockImplementation(function (this: string, search, position = 0) {
+                const result = indexOf.call(this, search, position);
+                if (search === '\n') searchedUnits += Math.max(0, (result < 0 ? this.length : result + 1) - position);
+                return result;
+            });
+            try { return await consume(response); }
+            finally { slices.mockRestore(); trims.mockRestore(); searches.mockRestore(); }
+          } };
+          await queryUsageAnalyticsBatch({ token: 'test' }, deliveryInput, { readTransport: transport,
+            signal: new AbortController().signal, onChunk: value => received.push(value) });
+          expect(received).toEqual(frames);
+          console.info(JSON.stringify({ kind: 'usage-native-framing-cost', deliveryShape, fragmentation, bytes: bytes.length,
+              frames: frames.length, copiedUnits, searchedUnits }));
+          // One scan, line extraction, cross-chunk join and whitespace handling may
+          // each visit the input once; repeated prefix scans/suffix copies may not.
+          expect.soft(copiedUnits + searchedUnits, `${deliveryShape}/${fragmentation}`).toBeLessThanOrEqual(bytes.length * 4);
+        }
+    }
+});
 
 it.each(['stream', 'buffered', 'older-home'] as const)('admits identical contribution operands from %s NDJSON', async mode => {
     const tokens = { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 };

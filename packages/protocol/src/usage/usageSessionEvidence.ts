@@ -7,6 +7,7 @@ import { UsageSessionMessageEvidenceSchema, UsageSessionStateEvidenceSchema,
 import { SessionSystemRecordContentSchema } from '../sessions/system/records/sessionSystemRecordContent.js';
 import { SessionEffectiveAccessV1Schema } from '../sessions/access/sessionEffectiveAccessV1.js';
 import { UsageSessionFactKindV1Schema, getUsageSessionFactKinds } from './usageSessionFactKinds.js';
+import { createUsageNdjsonFramer } from './usageNdjson.js';
 
 export const USAGE_SESSION_EVIDENCE_PATH = '/v2/usage/session-evidence';
 /** Full Session histories retain relative window identity as its read end advances. */
@@ -75,11 +76,9 @@ export function createUsageSessionEvidenceStreamDecoder(input: Readonly<{
 }>): Readonly<{ write: (text: string) => void; finish: () => void }> {
     let headerRead = false;
     let finished = false;
-    const fragments: string[] = [];
-    const readLine = () => {
-        const line = fragments.join('');
-        fragments.length = 0;
-        if (!line.trim()) return;
+    const framer = createUsageNdjsonFramer();
+    const readLine = (line: string) => {
+        if (!/\S/.test(line)) return;
         const value: unknown = JSON.parse(line);
         if (!headerRead) {
             const header = UsageSessionEvidenceHeaderSchema.parse(value);
@@ -90,18 +89,13 @@ export function createUsageSessionEvidenceStreamDecoder(input: Readonly<{
     return {
         write(text) {
             if (finished) throw new Error('Usage evidence stream already finished');
-            let offset = 0;
-            for (let newline = text.indexOf('\n', offset); newline !== -1; newline = text.indexOf('\n', offset)) {
-                fragments.push(text.slice(offset, newline));
-                readLine();
-                offset = newline + 1;
-            }
-            if (offset < text.length) fragments.push(text.slice(offset));
+            for (const line of framer.write(text)) readLine(line);
         },
         finish() {
             if (finished) throw new Error('Usage evidence stream already finished');
             finished = true;
-            if (fragments.length) readLine();
+            const line = framer.finish();
+            if (line !== undefined) readLine(line);
             if (!headerRead) throw new Error('Missing Usage evidence stream header');
         },
     };

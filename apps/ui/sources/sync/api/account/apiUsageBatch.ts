@@ -8,6 +8,7 @@ import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabl
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { UsageContributionProjection } from '@happier-dev/protocol/usage/usageCost';
+import { createUsageNdjsonFramer } from '@happier-dev/protocol/usage/usageNdjson';
 
 /** Accounting batches retain their caller's Home transport and finite read lifetime. */
 export async function queryUsageAnalyticsBatch(credentials: AuthCredentials,
@@ -49,28 +50,26 @@ export async function queryUsageAnalyticsBatch(credentials: AuthCredentials,
             return;
         }
         const reader = typeof response.body?.getReader === 'function' ? response.body.getReader() : undefined;
+        const framer = createUsageNdjsonFramer();
+        const admitLine = (line: string) => { if (/\S/.test(line)) admit(JSON.parse(line)); };
         // Native fetch implementations without a stream still read this one
         // response; they never fan it back out into scalar requests.
         if (!reader) {
-            for (const line of (await response.text()).split('\n')) if (line.trim()) admit(JSON.parse(line));
+            for (const line of framer.write(await response.text())) admitLine(line);
+            const line = framer.finish();
+            if (line !== undefined) admitLine(line);
             return;
         }
         const decoder = new TextDecoder();
-        let pending = '';
         try {
             while (true) {
                 const chunk = await reader.read();
                 throwIfAborted(options.signal);
-                pending += decoder.decode(chunk.value, { stream: !chunk.done });
-                let newline: number;
-                while ((newline = pending.indexOf('\n')) !== -1) {
-                    const line = pending.slice(0, newline);
-                    pending = pending.slice(newline + 1);
-                    if (line.trim()) admit(JSON.parse(line));
-                }
+                for (const line of framer.write(decoder.decode(chunk.value, { stream: !chunk.done }))) admitLine(line);
                 if (chunk.done) break;
             }
-            if (pending.trim()) admit(JSON.parse(pending));
+            const line = framer.finish();
+            if (line !== undefined) admitLine(line);
         } finally {
             await reader.cancel().catch(() => {});
             reader.releaseLock();
