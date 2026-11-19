@@ -12,6 +12,7 @@ import { useActiveServerAccountScope, useSettingsSelector } from '@/sync/domains
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { isExpoPushNotificationChannelEnabled } from '@happier-dev/protocol/account/settings/accountSettings';
+import { createActionExecuteFailureError, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -37,6 +38,7 @@ import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHead
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { NOTIFICATIONS_PUSH_SETTINGS } from '@/components/settings/notifications/notificationsPushSettings';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 export const PushNotificationTroubleshootingView = React.memo(function PushNotificationTroubleshootingView() {
     const router = useRouter();
@@ -177,16 +179,19 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
         }
         setDeletingToken(token.tokenId);
         try {
-            const result = await execution.execute('notifications.push.tokens.remove', { tokenId: token.tokenId });
-            if (!result.ok) throw new Error(result.error);
+            const result = await execution.executeForPresentation('notifications.push.tokens.remove', { tokenId: token.tokenId });
+            if (!result || (!result.ok && isActionApprovalDeclinedErrorCode(result.errorCode))) return;
+            if (!result.ok) throw createActionExecuteFailureError(result);
             NotificationConfigurationActionOutputSchemas['notifications.push.tokens.remove'].parse(result.result);
             if (execution.isCurrent()) await loadTroubleshootingState();
-        } catch {
-            if (execution.isCurrent()) await Modal.alert(t('common.error'), t('settingsNotifications.pushTroubleshooting.remove.error'));
+        } catch (error) {
+            if (execution.isCurrent()) {
+                await Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('settingsNotifications.pushTroubleshooting.remove.error')));
+            }
         } finally {
             if (execution.isCurrent()) setDeletingToken(null);
         }
-    }, [auth.credentials, execution.execute, execution.isCurrent, loadTroubleshootingState]);
+    }, [auth.credentials, execution.executeForPresentation, execution.isCurrent, loadTroubleshootingState]);
 
     const tokenFingerprint = currentToken ? formatPushTokenFingerprint(currentToken) : null;
     const currentTokenPresentOnServer = tokens?.some(row => row.isCurrentDevice) === true;

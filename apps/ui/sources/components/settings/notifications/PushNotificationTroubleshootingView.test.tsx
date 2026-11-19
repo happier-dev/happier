@@ -308,7 +308,7 @@ describe('PushNotificationTroubleshootingView', () => {
         if (disabled) {
             await flushHookEffects({ cycles: 20 });
             expect(harness.requestsFor(`/v1/push-tokens/${encodeURIComponent('ExponentPushToken[stale]')}`)).toEqual([]);
-            await waitForHomeGovernance(() => expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'settingsNotifications.pushTroubleshooting.remove.error'));
+            await waitForHomeGovernance(() => expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage'));
         } else {
             await waitForHomeGovernance(() => expect(harness.requestsFor(`/v1/push-tokens/${encodeURIComponent('ExponentPushToken[stale]')}`)).toHaveLength(1));
         }
