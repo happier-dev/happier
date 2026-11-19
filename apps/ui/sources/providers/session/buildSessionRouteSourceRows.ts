@@ -87,5 +87,6 @@ export function presentSessionRouteSourceSubtitle(row: SessionRouteSourceRow): s
     if (row.availability === 'unavailable' && row.unavailableReason) return row.unavailableReason;
     if (row.modelCount === null) return t('agentInput.model.browseSource', { source: row.label });
     const models = t('settingsProviders.detail.modelCount', { count: row.modelCount });
-    return row.hiddenFromPicker ? `${models} · ${t('agentInput.model.hiddenFromMainPicker')}` : models;
+    // A hidden source carries one quiet mark (owner 2026-11-19), the same in every list of sources.
+    return row.hiddenFromPicker ? `${models} · ${t('agentInput.model.sourceHidden')}` : models;
 }

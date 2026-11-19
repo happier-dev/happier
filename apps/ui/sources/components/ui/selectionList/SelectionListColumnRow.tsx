@@ -8,13 +8,10 @@
  *
  * Choices worth stating:
  *
- *  - Rows. The block paints rows of `columnCount` cards in reading order, and an
- *    option's expanded content (its band) sits directly under the row that holds
- *    it, across every column (lab A2, owner pick 2026-11-18). That supersedes the
- *    11-05 column stacks, whose reason was an idle neighbour sitting above empty
- *    pane beside the open card: the band now fills that space. The option row
- *    registers its band through `SelectionListRowBandContext`; its gridcell owns
- *    the band (`aria-owns`), so assistive tech reads it as part of that option.
+ *  - Columns, never rows. An option goes to column `index % columnCount`, so
+ *    reading order still alternates while each column stacks on its own: the
+ *    open card grows its own column and reserves nothing beside it. A row-based
+ *    grid made the card's idle neighbour sit above empty pane (owner, 11-05).
  *
  *  - A last column that is shorter keeps its width: the block always lays out
  *    every column. A section too SHORT to fill a row is a different case and is
@@ -30,7 +27,7 @@
  *    `ItemGroup` divider that a gap would tear open.
  *
  *  - In `grid` mode each card is one `role="row"` holding its one gridcell,
- *    numbered in reading order (the row model counts cards, not painted rows). In
+ *    numbered in reading order, since no painted row holds two cards. In
  *    `listbox` mode the wrappers are pure layout and remove themselves with
  *    `role="presentation"`. (A single-column list has no
  *    `SelectionListColumnRow` at all; there the option wrapper is still the row.)
@@ -50,13 +47,9 @@ import {
 } from './_constants';
 import { SelectionListA11yPatternContext } from './SelectionListA11yPatternContext';
 import { SelectionListOptionPresentationContext } from './SelectionListOptionPresentationContext';
-import { SelectionListRowBandContext, type SelectionListRowBand } from './SelectionListRowBandContext';
 import { SelectionListScrollOffsetFrame } from './SelectionListScrollOffsetFrame';
 
 const stylesheet = StyleSheet.create(() => ({
-    block: {
-        alignSelf: 'stretch',
-    },
     row: {
         flexDirection: 'row',
         alignItems: 'flex-start',
@@ -69,15 +62,10 @@ const stylesheet = StyleSheet.create(() => ({
         flexGrow: 1,
         minWidth: 0,
     },
-    band: {
-        alignSelf: 'stretch',
-    },
-    cardRowGap: {
-        marginTop: SELECTION_LIST_CARD_ROW_GAP_PX,
+    cardColumn: {
+        rowGap: SELECTION_LIST_CARD_ROW_GAP_PX,
     },
 }));
-
-const NO_BANDS: ReadonlyMap<number, SelectionListRowBand> = new Map();
 
 export const selectionListColumnRowStyles = stylesheet;
 
@@ -152,70 +140,41 @@ export function SelectionListColumnRow(props: Readonly<{
     });
     const pattern = React.useContext(SelectionListA11yPatternContext);
     const columnCount = Math.max(1, Math.floor(props.columnCount));
-    const cellCount = props.children.length;
-    // Each cell's expanded content, registered by its option row; painted under that cell's row.
-    const [bands, setBands] = React.useState<ReadonlyMap<number, SelectionListRowBand>>(NO_BANDS);
-    const registrars = React.useMemo(() => Array.from({ length: cellCount }, (_, index) => (band: SelectionListRowBand | null) => {
-        setBands((previous) => {
-            const held = previous.get(index);
-            if (band === null ? held === undefined : held?.id === band.id && held.content === band.content) return previous;
-            const next = new Map(previous);
-            if (band === null) next.delete(index);
-            else next.set(index, band);
-            return next;
-        });
-    }), [cellCount]);
-    const rowCount = Math.ceil(cellCount / columnCount);
     return (
         <SelectionListScrollOffsetFrame
-            style={[styles.block, rowGapPx === undefined ? null : { marginTop: rowGapPx }]}
+            style={[
+                styles.row,
+                { columnGap: gapPx },
+                rowGapPx === undefined ? null : { marginTop: rowGapPx },
+            ]}
             role={pattern === 'grid' ? undefined : 'presentation'}
         >
-            {Array.from({ length: rowCount }, (_, row) => {
-                const start = row * columnCount;
-                const rowBands = Array.from({ length: columnCount }, (_, column) => bands.get(start + column))
-                    .filter((band): band is SelectionListRowBand => band !== undefined);
-                return (
-                    <React.Fragment key={`row-${row}`}>
-                        <View
-                            role={pattern === 'grid' ? undefined : 'presentation'}
-                            style={[styles.row, { columnGap: gapPx }, row > 0 && isCard ? styles.cardRowGap : null]}
-                        >
-                            {Array.from({ length: columnCount }, (_, column) => {
-                                const index = start + column;
-                                const cell = index < cellCount ? props.children[index] : undefined;
-                                const rowAria = cell === undefined || props.rowIndex === undefined
-                                    ? null
-                                    : buildSelectionListRowA11yProps({ pattern, rowIndex: props.rowIndex + index });
-                                return (
-                                    <View
-                                        key={`column-${column}`}
-                                        role={pattern === 'grid' ? undefined : 'presentation'}
-                                        style={styles.column}
-                                    >
-                                        {cell === undefined ? null : (
-                                            <SelectionListRowBandContext.Provider value={registrars[index] ?? null}>
-                                                <SelectionListScrollOffsetFrame
-                                                    style={null}
-                                                    role={rowAria === null ? 'presentation' : rowAria.role}
-                                                    {...(rowAria === null
-                                                        ? {}
-                                                        : { ariaProps: { 'aria-rowindex': rowAria['aria-rowindex'] } })}
-                                                >
-                                                    {cell}
-                                                </SelectionListScrollOffsetFrame>
-                                            </SelectionListRowBandContext.Provider>
-                                        )}
-                                    </View>
-                                );
-                            })}
-                        </View>
-                        {rowBands.map((band) => (
-                            <View key={band.id} id={band.id} style={styles.band}>{band.content}</View>
-                        ))}
-                    </React.Fragment>
-                );
-            })}
+            {Array.from({ length: columnCount }, (_, column) => (
+                <View
+                    key={`column-${column}`}
+                    role={pattern === 'grid' ? undefined : 'presentation'}
+                    style={[styles.column, isCard ? styles.cardColumn : null]}
+                >
+                    {props.children.flatMap((cell, index) => {
+                        if (index % columnCount !== column) return [];
+                        const rowAria = props.rowIndex === undefined
+                            ? null
+                            : buildSelectionListRowA11yProps({ pattern, rowIndex: props.rowIndex + index });
+                        return [(
+                            <SelectionListScrollOffsetFrame
+                                key={`cell-${index}`}
+                                style={null}
+                                role={rowAria === null ? 'presentation' : rowAria.role}
+                                {...(rowAria === null
+                                    ? {}
+                                    : { ariaProps: { 'aria-rowindex': rowAria['aria-rowindex'] } })}
+                            >
+                                {cell}
+                            </SelectionListScrollOffsetFrame>
+                        )];
+                    })}
+                </View>
+            ))}
         </SelectionListScrollOffsetFrame>
     );
 }

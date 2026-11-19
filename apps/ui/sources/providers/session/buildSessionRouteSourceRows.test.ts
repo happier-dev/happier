@@ -100,7 +100,8 @@ describe('buildSessionRouteSourceRows', () => {
         });
         const subtitle = (id: string) => presentSessionRouteSourceSubtitle(rows.providers.find(row => row.connectionId === id)!);
         expect(subtitle('pc_off')).toBe(t(presentProviderError('provider_endpoint_unreachable').titleKey));
-        expect(subtitle('pc_hidden')).toBe(`${t('settingsProviders.detail.modelCount', { count: 3 })} · ${t('agentInput.model.hiddenFromMainPicker')}`);
+        // Owner 2026-11-19: a hidden source carries a quiet 'Hidden' mark, the same in every list of sources.
+        expect(subtitle('pc_hidden')).toBe(`${t('settingsProviders.detail.modelCount', { count: 3 })} · ${t('agentInput.model.sourceHidden')}`);
         expect(subtitle('pc_shown')).toBe(t('settingsProviders.detail.modelCount', { count: 2 }));
     });
 });

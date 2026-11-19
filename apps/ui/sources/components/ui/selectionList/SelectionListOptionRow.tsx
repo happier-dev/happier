@@ -14,7 +14,6 @@
 
 import * as React from 'react';
 import { Typography } from '@/constants/Typography';
-import { SelectionListRowBandContext } from './SelectionListRowBandContext';
 import {
   HappierListRowFollowedContext,
   HappierListRowPrecedesSelectedContext,
@@ -306,11 +305,6 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
       paddingBottom: PAGE_LIST_METRICS.groupHeadingGapPx,
     }}>{expandedVisual}</View>
   ) : expandedVisual;
-  // In a columned grid the row paints this option's expanded content under the whole row and this card stays
-  // its title and description (lab A2). The cell owns the band for assistive tech through `aria-owns`.
-  const registerRowBand = React.useContext(SelectionListRowBandContext);
-  const rowBand = registerRowBand === null ? undefined : expandedContent;
-  const inlineExpandedContent = registerRowBand === null ? expandedContent : undefined;
   const registerScrollItemLayout = React.useContext(
     SelectionListScrollIntoViewContext,
   );
@@ -326,13 +320,6 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
     rootTestID: props.rootTestID,
     stepId: props.stepId,
   });
-  const rowBandId = `${optionTestId}:band`;
-  // Before paint, so the band appears in the same frame as the selection that opened it.
-  React.useLayoutEffect(() => {
-    if (registerRowBand === null) return;
-    registerRowBand(rowBand === undefined ? null : { id: rowBandId, content: rowBand });
-  }, [registerRowBand, rowBand, rowBandId]);
-  React.useLayoutEffect(() => (registerRowBand === null ? undefined : () => registerRowBand(null)), [registerRowBand]);
   const optionWrapperTestId = selectionListTestId(
     props.rootTestID,
     props.stepId,
@@ -440,10 +427,14 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
   // slab on a floating glass material), and a selected one paints the selected
   // surface over both the row and its expanded controls. Resolved per render so
   // the card follows a live theme swap; the geometry above is theme-independent.
-  // No tile (lab A2, owner pick 2026-11-18): a selected card is its bold title and check; the soft well
-  // belongs to its expanded band (`OptionPickerSelectedControls`), so the card itself paints the row base.
+  // The selected card is one tile around the model and its options (lab round 4 B, owner 2026-11-19); its title is
+  // bold beside its check. Idle cards paint the row base.
   const cardFillStyle = isCard
-    ? { backgroundColor: resolveSelectionListPaint(theme, 'row').background.color }
+    ? {
+        backgroundColor: isSelected
+          ? resolveSelectionListPaint(theme, 'row', 'selected', paintColor(theme.colors.surface.selected)).background.color
+          : resolveSelectionListPaint(theme, 'row').background.color,
+      }
     : null;
   // At one column there is no `SelectionListColumnRow`, so this envelope IS
   // the card row and carries the gap that separates it from the row above —
@@ -658,7 +649,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
           {...itemBottomProps}
         />
         {renderCardAccessoryOverlay(false)}
-        {inlineExpandedContent}
+        {expandedContent}
       </View>
     );
   }
@@ -801,7 +792,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
     <SelectionListOptionStateContext.Provider value={optionState}>
       {orderedRow}
       {renderCardAccessoryOverlay(true)}
-      {inlineExpandedContent}
+      {expandedContent}
     </SelectionListOptionStateContext.Provider>
   );
   return (
@@ -813,9 +804,6 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
         string,
         never
       >)}
-      {...(rowBand !== undefined && wrapperCellAria !== null
-        ? ({ 'aria-owns': rowBandId } as unknown as Record<string, never>)
-        : {})}
     >
       {innerCellAria === null ? (
         optionOwnedContent

@@ -174,4 +174,27 @@ describe('SessionModelRunsThrough', () => {
       await screen.unmount();
     }
   });
+
+  it('names its source button with the value, says it opens a menu, and lets the source line open it too', async () => {
+    const { IconButton } = await import('@/components/ui/buttons/IconButton');
+    const screen = await renderScreen(
+      <SessionModelRunsThrough group={group} selectedKey={JSON.stringify([AGENT, 'pc_key', 'sonnet'])}
+        sourceLabel={() => 'Claude subscription · Work pool'} routeRows={routeRows} onPick={() => {}} />,
+    );
+    try {
+      const button = screen.root.findAll((node) => node.type === IconButton
+        && node.props.testID === 'model-picker-runs-through:sources')[0]!;
+      const keyRow = routeRows.find((row) => row.connectionId === 'pc_key')!;
+      expect(button.props.accessibilityLabel).toContain(keyRow.label);
+      expect(button.props.hasPopup).toBe('menu');
+      expect(button.props.expanded).toBe(false);
+      // The source line is a second target for the same menu, under the same name (opening it mounts the
+      // real popover, which this node environment cannot host; the live frames open it).
+      const value = screen.findByTestId('model-picker-runs-through:value-press');
+      expect(value?.props.accessibilityLabel).toBe(button.props.accessibilityLabel);
+      expect(typeof value?.props.onPress).toBe('function');
+    } finally {
+      await screen.unmount();
+    }
+  });
 });

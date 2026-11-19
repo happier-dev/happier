@@ -114,7 +114,9 @@ describe('SessionModelPicker header and selected-model choices', () => {
     const screen = await renderScreen(picker(levels, onChange));
     expect(screen.findByTestId(`${OPTION}:select`)).not.toBeNull();
     expect(screen.findByTestId(`${OPTION}:low`)).toBeNull();
-    const menu = screen.root.findByType(DropdownMenu);
+    // The effort select's menu; the band's Runs through button owns a second one.
+    const menu = screen.root.findAll((node) => node.type === DropdownMenu
+      && node.props.items?.[0]?.id === levels[0])[0]!;
     expect(menu.props.items.map((item: { id: string }) => item.id)).toEqual(levels);
     expect(menu.props.selectedId).toBe('medium');
     act(() => {

@@ -136,7 +136,7 @@ const texts = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
     .map((node) => node.children.join(''));
 
 describe('SessionModelPicker Runs through', () => {
-  it('states one source as a plain value with nothing to press', async () => {
+  it('names one source with its source button and no Change (lab round 4)', async () => {
     const screen = await renderScreen(
       picker({ selected: native('claude-opus-5-5') }),
     );
@@ -144,7 +144,11 @@ describe('SessionModelPicker Runs through', () => {
       expect(screen.findByTestId(`${ROW}:value`)).not.toBeNull();
       expect(texts(screen)).toContain('Claude subscription · Work pool');
       expect(screen.findByTestId(`${ROW}:switch`)).toBeNull();
-      expect(screen.findByTestId(`${ROW}:select`)).toBeNull();
+      // One icon button opens the source menu; it lists the one source, checked.
+      expect(screen.findByTestId(`${ROW}:sources`)).not.toBeNull();
+      const menu = screen.root.findAll((node) => node.type === DropdownMenu
+        && String(node.props.items?.[0]?.testID ?? '').startsWith(`${ROW}:menu`))[0]!;
+      expect(menu.props.items).toEqual([expect.objectContaining({ title: 'Claude subscription · Work pool', checked: true })]);
     } finally {
       await screen.unmount();
     }
@@ -224,7 +228,7 @@ describe('SessionModelPicker Runs through', () => {
         (node) =>
           node.type === DropdownMenu &&
           String(node.props.items?.[0]?.testID ?? '').startsWith(
-            `${ROW}:select`,
+            `${ROW}:menu`,
           ),
       )[0]!;
       // Every serving source, then the one that needs a key; their states come from the Runs-through
