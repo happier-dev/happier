@@ -389,7 +389,8 @@ describe('requestSessionStop machine transport', () => {
       : variant === 'target' ? { ...original, externalActionTarget: { kind: 'session' as const, sessionId: 'another-session' } }
       : variant === 'agent' ? { ...original, surface: 'agent' as const, authority: 'account_automation' as const } : original;
     expect(await createDeleteExecutor().execute('session.delete', { sessionId: variant === 'input' ? 'another-session' : sessionId }, context))
-      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+      // 02102e614e18: own UI product review cannot become an agent approval Artifact.
+      .toMatchObject({ ok: false, errorCode: variant === 'agent' ? 'approvals_not_supported' : 'action_interactive_review_required' });
     expect(http).not.toHaveBeenCalled();
     expect(issuedMethods).toEqual([]);
   });
@@ -437,12 +438,14 @@ describe('requestSessionStop machine transport', () => {
         if (String(args[0]).endsWith('/v1/account/encryption/currentness')) throw error;
         return await get(...args);
       });
-      const result = await requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId,
-        invokeMachineRpc: async () => { throw error; },
-      });
+      const invokeMachineRpc = vi.fn(async () => { throw error; });
+      const result = await requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId, invokeMachineRpc });
+      // 9d190d48557e (SEC-ODEPLOY-178): preserve the injected closed transport cause, not an undeclared wrapper code.
+      // This EACCES is thrown by the HTTP fixture above; no filesystem operation produces it.
+      if (phase === 'read_account_currentness') expect(invokeMachineRpc).not.toHaveBeenCalled();
       expect(result).toMatchObject({ ok: true, stopped: false,
         failureCause: { phase: `stop.${phase}`, errorClass: 'Error',
-          errorCode: phase === 'owner_rpc' ? 'EACCES' : 'account_encryption_currentness_unavailable', httpStatus: null },
+          errorCode: 'EACCES', httpStatus: null },
         stopOutcome: { status: 'physical_stop_unconfirmed', reason: phase === 'owner_rpc' ? 'target_daemon_unavailable' : 'unexpected_error' },
       });
     });
