@@ -40,7 +40,10 @@ const STEP_OPTIONS: AgentInputExtraActionChip = {
   }),
 };
 
-async function renderEditable(panelPresentation?: 'document' | 'embedded') {
+async function renderEditable(
+  panelPresentation?: 'document' | 'embedded',
+  props: Partial<React.ComponentProps<typeof import('./AgentInput').AgentInput>> = {},
+) {
   const { AgentInput } = await import('./AgentInput');
   return renderScreen(
     <AgentInput
@@ -52,6 +55,7 @@ async function renderEditable(panelPresentation?: 'document' | 'embedded') {
       showAbortButton={false}
       extraActionChips={[STEP_OPTIONS]}
       {...(panelPresentation === undefined ? {} : { panelPresentation })}
+      {...props}
     />,
     { wrapper: runtime.Wrapper },
   );
@@ -116,6 +120,17 @@ describe('AgentInput embedded in a host card', () => {
       if (node === panel) break;
     }
     expect(inset).toBe(0);
+  });
+
+  it('gives the prompt every point its tools do not take: the field keeps no corner for them or the expand toggle', async () => {
+    // A step's prompt clips like a Session's, so the expand toggle is configured (WorkflowStepPromptField).
+    const screen = await renderEditable('embedded', {
+      inputExpansion: { expanded: false, collapsedMaxHeight: 120, onToggle: () => {} },
+    });
+    const field = screen.findAll(
+      (node) => node.props?.testID === INPUT && 'paddingRight' in node.props,
+    )[0]!;
+    expect(field.props.paddingRight ?? 0).toBe(0);
   });
 
   it.each([undefined, 'document'] as const)(

@@ -1003,7 +1003,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         embeddedLine: {
             flexDirection: 'row',
             alignItems: 'flex-start',
-            columnGap: theme.space.s8,
+            columnGap: theme.space.s4,
         },
         embeddedTextSection: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0 },
         /** No rail follows the text, so no gap is kept for one. */
@@ -1018,7 +1018,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
             flexShrink: 0,
             height: AGENT_INPUT_ACTION_CHIP_HEIGHT_PX,
             marginVertical: (MULTI_TEXT_INPUT_BASE_LINE_HEIGHT - AGENT_INPUT_ACTION_CHIP_HEIGHT_PX) / 2,
-            ...(Platform.OS === 'web' ? { columnGap: AGENT_INPUT_ACTION_CHIP_GAP_X } : {}),
+            // The tools touch sideways, as the field corner's do: the column is only as wide as they are.
         },
         readOnlyPanel: {
             ...resolveAgentInputPanelLayoutStyle(theme),
@@ -3606,8 +3606,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         belowToggle: shouldShowInputExpansionToggle,
     });
     const trailingAccessory = props.trailingAccessory ?? (mountsVoiceComposerPlanet ? voiceComposerPlanet : null);
-    // Embedded, the tools stand beside the field on its line, so the field keeps no corner for them.
-    const fieldInputPaddingRight = Math.max(embeddedPanel ? 0 : fieldAccessoryGeometry.paddingRight ?? 0,
+    // Embedded, the tools (and the expand toggle) stand beside the field on its line, so the field keeps no
+    // corner for them and the prompt takes every point they do not.
+    const fieldInputPaddingRight = embeddedPanel ? undefined : Math.max(fieldAccessoryGeometry.paddingRight ?? 0,
         shouldReserveInputExpansionToggleSpace ? INPUT_EXPANSION_TOGGLE_INPUT_PADDING_RIGHT : 0) || undefined;
     const accessoryMenuChips = React.useMemo<readonly AgentInputExtraActionChip[]>(() => {
         const { promptLibrary, dictate } = accessoryPlacements;
@@ -4357,6 +4358,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 {secondaryTrailingControlsForWrap}
             </AgentInputChipRowReach>
             {fieldAccessories}
+            {props.inputExpansion && shouldShowInputExpansionToggle ? (
+                <AgentInputExpansionToggle
+                    expanded={props.inputExpansion.expanded}
+                    onToggle={props.inputExpansion.onToggle}
+                    placement="inline"
+                />
+            ) : null}
             {trailingAccessory}
             {submitButtonNode}
         </View>
@@ -4431,7 +4439,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         onContentHeightChange={handleInputContentHeightChange}
                     />
                     </ComposerHistorySwipeArea>
-                    {props.inputExpansion && shouldShowInputExpansionToggle ? (
+                    {props.inputExpansion && shouldShowInputExpansionToggle && !embeddedPanel ? (
                         <AgentInputExpansionToggle
                             expanded={props.inputExpansion.expanded}
                             onToggle={props.inputExpansion.onToggle}
@@ -4504,7 +4512,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         onContentHeightChange={handleInputContentHeightChange}
                     />
                     </ComposerHistorySwipeArea>
-                    {props.inputExpansion && shouldShowInputExpansionToggle ? (
+                    {props.inputExpansion && shouldShowInputExpansionToggle && !embeddedPanel ? (
                         <AgentInputExpansionToggle
                             expanded={props.inputExpansion.expanded}
                             onToggle={props.inputExpansion.onToggle}

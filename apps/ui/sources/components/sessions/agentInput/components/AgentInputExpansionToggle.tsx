@@ -9,9 +9,12 @@ import { AGENT_INPUT_EXPANSION_TOGGLE_HIT_REACH } from './agentInputChromeStyles
 export function AgentInputExpansionToggle({
     expanded,
     onToggle,
+    placement = 'corner',
 }: Readonly<{
     expanded: boolean;
     onToggle: () => void;
+    /** `inline`: in an embedded composer's tool line, beside the other tools, not over the field's corner. */
+    placement?: 'corner' | 'inline';
 }>) {
     const { theme } = useUnistyles();
     return (
@@ -23,6 +26,7 @@ export function AgentInputExpansionToggle({
             onPress={onToggle}
             style={({ pressed }) => [
                 styles.inputExpansionToggle,
+                placement === 'inline' ? styles.inline : null,
                 pressed ? { backgroundColor: theme.colors.surface.pressed } : null,
             ]}
         >
@@ -46,5 +50,10 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    inline: {
+        position: 'relative',
+        top: 0,
+        right: 0,
     },
 });
