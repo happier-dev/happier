@@ -10,7 +10,7 @@ import { formatTokenCount } from '@/utils/format/usageNumbers';
 import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 import { UsageModelPricesLine } from './UsageModelPrices';
 import { useUsageRetryCommand } from './usageMountedControls';
-import { UsageBodyInsufficient, UsageBodyNoUsage, UsageCoverageLine, UsageShowAllRows, leadingUsageRows, readUsageCoverageGaps,
+import { UsageBodyInsufficient, UsageBodyNoUsage, UsageCoverageLine, UsageShowAllRows, leadingUsageRows, readUsageCoverageGaps, usagePartialHistoryLabel,
   usageCoverageDescription, usageCoverageSummary, usagePeriodPhrase, usageSourceTitle, useUsagePluginTheme, type UsageBodyProps } from './usageBodyKit';
 
 const statusKeys = {
@@ -28,11 +28,13 @@ export function UsageSourceCoverageWidget(props: UsageBodyProps) {
   const theme = useUsagePluginTheme();
   useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
   const [expanded, setExpanded] = React.useState(false);
-  const rows = React.useMemo(() => groupCoverageRows(props.slice.accounting?.coverage?.sources ?? []), [props.slice.accounting]);
-  const led = leadingUsageRows(rows, expanded);
   const failed = !!props.slice.accounting && readUsageCoverageGaps(props.slice, ['accounting']).some(gap => gap.status === 'error');
   const description = props.slice.accounting ? usageCoverageDescription(props.slice, ['accounting']) : null;
   const summary = props.slice.accounting ? usageCoverageSummary(props.slice, ['accounting']) : null;
+  // A status every row shares is said once, by the caveat line under the rows, never again on each row.
+  const rows = React.useMemo(() => groupCoverageRows(props.slice.accounting?.coverage?.sources ?? [], summary === usagePartialHistoryLabel()),
+    [props.slice.accounting, summary]);
+  const led = leadingUsageRows(rows, expanded);
   // The caveat is one compact line; its sources and reasons are one press away (detail on demand), never a paragraph.
   const [detailOpen, setDetailOpen] = React.useState(false);
   const hasMore = !!description && description !== summary;
@@ -55,7 +57,7 @@ export function UsageSourceCoverageWidget(props: UsageBodyProps) {
 /**
  * Coverage shows one row per recognizable source. Several capture paths can share a title and a Machine.
  */
-function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][number][]) {
+function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][number][], partialSaid: boolean) {
   const groups = new Map<string, { title: string; kinds: Set<keyof typeof captureKeys | null>; status: CoverageStatus; machines: Set<string>; unbound: boolean }>();
   for (const source of sources) {
     // A source's own title can be a mid-sentence fragment ("usage"); a row opens with a capital.
@@ -70,11 +72,12 @@ function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][n
     groups.set(title, group);
   }
   // One status per row, the most limiting one; how it is captured only when every machine captures it the same way.
+  const shared = partialSaid && [...groups.values()].every(group => group.status === 'partial');
   return [...groups.values()].map(({ title, kinds, status, machines, unbound }) => {
     const kind = kinds.size === 1 ? [...kinds][0] : null;
     const capture = kind && (kind !== 'measured' || status === 'available') ? t(captureKeys[kind]) : null;
     return { title, label: [!unbound && machines.size > 1 ? t('usage.board.page.machinesCount', { count: machines.size }) : null,
-      capture, t(statusKeys[status])].filter(Boolean).join(' · ') };
+      capture, shared ? null : t(statusKeys[status])].filter(Boolean).join(' · ') };
   });
 }
 

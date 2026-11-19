@@ -489,6 +489,8 @@ describe('one selected money basis across Usage bodies', () => {
     const screen = await renderControls(<UsageSourceCoverageWidget {...props} slice={slice} id="usage_source_coverage" testID="coverage" />);
     expect(screen.findByType(HappierDataRows).props.rows).toHaveLength(1);
     expect(screen.getTextContent()).toContain(t('usage.board.page.sourceKindFromLogs'));
+    // Every row's status is the one the caveat line under the rows already says: it is said once, there (USAGE-ACCEPT 1118 #14).
+    expect(screen.findByType(HappierDataRows).props.rows[0][1]).not.toContain(t('usage.board.page.factIncomplete'));
     // The caveat is one compact line; its reasons are one press away, never a paragraph under the rows.
     expect(screen.getTextContent()).not.toContain(t('usage.board.page.coverageReason_missing_baseline'));
     await screen.pressByTestIdAsync('coverage.detail.action');
@@ -526,7 +528,9 @@ describe('one selected money basis across Usage bodies', () => {
     // never a stacked list of every capture's status.
     expect(mixedRows[0]![0]).not.toContain('×');
     expect(mixedRows[0]![1]).toContain(t('usage.board.page.machinesCount', { count: 5 }));
-    expect(mixedRows[0]![1]).toContain(t('usage.board.page.factIncomplete'));
+    // Its most limiting status (partial) is the one the caveat line under the rows says, so it is said there, once (#14).
+    expect(mixedRows[0]![1]).not.toContain(t('usage.board.page.factIncomplete'));
+    expect(mixed.getTextContent()).toContain(usagePartialHistoryLabel());
     expect(mixedRows[0]![1]).not.toContain(';');
     expect(mixedRows[0]![1]).not.toContain(t('usage.board.sources.coverageUnknown'));
     const distinct = await renderControls(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
