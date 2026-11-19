@@ -150,12 +150,11 @@ function extractModuleSpecifiers(source) {
   const call = /(?:import|require)\s*\(\s*["']([^"'`]+)["']\s*\)/y;
 
   for (const keyword of keywords) {
-    if (isKeywordMasked(keyword.index)) continue;
     // Inspect each actual keyword once. A local export must not scan the
     // remaining file for another statement's `from` clause.
     declaration.lastIndex = call.lastIndex = keyword.index;
     const match = declaration.exec(text) ?? call.exec(text);
-    if (match) specifiers.add(match[1]);
+    if (match && !isKeywordMasked(keyword.index)) specifiers.add(match[1]);
   }
 
   return [...specifiers];
