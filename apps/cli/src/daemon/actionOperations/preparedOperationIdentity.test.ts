@@ -14,6 +14,8 @@ import { createActionOperationRunner } from './actionOperationRunner';
 import { createActionOperationStore } from './actionOperationStore';
 import { createHostActionOperationRuntime } from './createHostActionOperationRuntime';
 import { prepareProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
+import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 
 const authored = { serverId: 'srv_identity_retry', environmentId: 'staging', targetLinkId: 'runtime', requestKey: 'deploy-a' };
 const accountId = 'owner';
@@ -28,7 +30,8 @@ const context = (actionRequestId: string): ActionExecutorContext => ({
   serverId: authored.serverId, actionRequestId,
 });
 
-function fixture(deploy = vi.fn<NonNullable<Parameters<typeof createActionExecutor>[0]['deploymentAction']>>(async () => receipt)) {
+function fixture(deploy = vi.fn<NonNullable<Parameters<typeof createActionExecutor>[0]['deploymentAction']>>(async () => receipt),
+  extra: Partial<Parameters<typeof createActionExecutor>[0]> = {}) {
   let revision = 1;
   let installationId = '';
   const runtime = createHostActionOperationRuntime({ serverId: authored.serverId, machineId,
@@ -41,10 +44,47 @@ function fixture(deploy = vi.fn<NonNullable<Parameters<typeof createActionExecut
     prepareDeploymentAction: async () => ({ input: preparedInput(revision++),
       preview: { sourceMethod: 'gitIntegration' } }),
     deploymentAction: deploy,
+    ...extra,
   });
-  return { runtime, deploy, setInstallationId: (id: string) => { installationId = id; },
+  return { runtime, executor, deploy, setInstallationId: (id: string) => { installationId = id; },
     invoke: (input: typeof authored, id: string) => executor.execute('deployments.deploy', input, context(id)) };
 }
+
+it('joins an identical authored Deploy after each CLI request is approved in the app', async () => {
+  let stored: ApprovalRequestV2 | null = null;
+  const { executor, deploy } = fixture(undefined, {
+    // Approval Artifact storage is external; admission, decisions and operation identity remain real.
+    approvalsCreate: async ({ request }) => {
+      stored = ApprovalRequestV2Schema.parse(structuredClone(request));
+      return { artifactId: 'deploy-review' };
+    },
+    approvalsGet: async () => structuredClone(stored),
+    approvalsUpdate: async ({ request, expectedStatus }) => {
+      if (!stored) throw new Error('Missing deployment review');
+      const next = ApprovalRequestV2Schema.parse(request);
+      const transition = decideApprovalRequestTransition(stored, next, { expectedStatus });
+      if (!transition.ok) return transition;
+      stored = structuredClone(next);
+      return { ok: true };
+    },
+    isApprovalExecutionOriginCurrent: async () => true,
+  });
+  const cli = { ...context('request-1'), surface: 'cli' as const, authority: 'account_automation' as const,
+    serverIdentityId: authored.serverId, defaultSessionMachineId: machineId };
+  const approve = () => executor.execute('approval.request.decide', { artifactId: 'deploy-review', decision: 'approve' },
+    { ...cli, surface: 'ui', authority: 'present_user' });
+  expect(await executor.execute('deployments.deploy', authored, cli)).toMatchObject({ ok: true,
+    result: { kind: 'approval_request_created' } });
+  expect(await approve()).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+  expect(await executor.execute('deployments.deploy', authored, { ...cli, actionRequestId: 'request-2' }))
+    .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+  expect(await approve()).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+  expect(await executor.execute('deployments.deploy', { ...authored, whenBusy: 'refuse' },
+    { ...cli, actionRequestId: 'request-3' })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+  expect(await approve()).toMatchObject({ ok: true, result: { status: 'failed',
+    execution: { ok: false, errorCode: 'action_request_input_conflict' } } });
+  expect(deploy).toHaveBeenCalledTimes(1);
+});
 
 it('reconstructs the prepared operand and joins an already pending Deploy', async () => {
   const releaseEffect = Promise.withResolvers<void>();

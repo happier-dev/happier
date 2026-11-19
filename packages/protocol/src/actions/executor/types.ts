@@ -1095,6 +1095,8 @@ export type ActionExecutorContext = Readonly<{
     pluginInstallReview?: import('../actionApprovalPresentation.js').PluginInstallApprovalPendingReview;
     /** Validated stored review facts; comparison evidence, never effect authority. */
     deploymentReview?: import('../../json/strictJsonValue.js').JsonValue;
+    /** Original compact operands for operation matching. The prepared actionArgs still drive execution. */
+    deploymentRolloutIdentity?: Readonly<{ actionId: ActionId; input: unknown }>;
     /** Exact demanded children recovered from this parent's approved preview. */
     hostReviewedChildren?: HostReviewedChildrenPlanV1;
     origin?: Pick<ApprovalExecutionOriginV1, 'surface' | 'caller' | 'sessionId' | 'accountId'> }>;

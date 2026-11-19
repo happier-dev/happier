@@ -18,7 +18,8 @@ import { formatQualifiedPluginActionId } from '../../plugins/actions/qualifiedAc
 import { ComputerSelectedTargetResponseV1Schema, type ComputerApprovalDisplayV1 } from '../../computer/v1.js';
 import { type ActionId } from '../actionIds.js';
 import { DeploymentActionInputSchemasV1, DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentEnvironmentCreateInputV1Schema,
-  DeploymentEnvironmentCreationReviewV1Schema, DeploymentTeardownPreparedInputV1Schema, DeploymentPromoteInputV1Schema } from '../../deployments/deploymentActionsV1.js';
+  DeploymentEnvironmentCreationReviewV1Schema, DeploymentTeardownPreparedInputV1Schema, DeploymentPromoteInputV1Schema,
+  DeploymentDeployIntentInputV1Schema, DeploymentRollbackIntentInputV1Schema, DeploymentPromoteIntentInputV1Schema } from '../../deployments/deploymentActionsV1.js';
 import { DeploymentTemplateInstantiationReviewV1Schema } from '../../deployments/deploymentTemplateInstantiationV1.js';
 import { WidgetSurfaceReadV1Schema, readWidgetActionSurfaceV1 } from '../../widgets/actionsV1.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '../../json/strictJsonValue.js';
@@ -256,6 +257,16 @@ function readContributedActionReview(deps: ActionExecutorDeps, input: unknown) {
   };
 }
 
+/** Compact rollout operands supply operation identity across a persisted approval. */
+export function readDeploymentRolloutSemanticInput(actionId: ActionId, input: unknown) {
+  switch (actionId) {
+    case 'deployments.deploy': return DeploymentDeployIntentInputV1Schema.safeParse(input).data;
+    case 'deployments.promote': return DeploymentPromoteIntentInputV1Schema.safeParse(input).data;
+    case 'deployments.rollback': return DeploymentRollbackIntentInputV1Schema.safeParse(input).data;
+    default: return undefined;
+  }
+}
+
 export async function prepareApprovalRequest(params: Readonly<{
   deps: ActionExecutorDeps;
   actionId: ActionId;
@@ -265,6 +276,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   computerApprovalDisplay?: ComputerApprovalDisplayV1;
   widgetSurfaceRead?: ReturnType<typeof WidgetSurfaceReadV1Schema.parse>;
   deploymentReview?: JsonValue;
+  semanticInput?: unknown;
   hostReviewedChildren?: HostReviewedChildrenPlanV1;
   hostReviewedContent?: JsonValue;
   handoffTargetReplacementApproval?: NonNullable<ActionExecutorContext['handoffTargetReplacementApproval']>;
@@ -388,9 +400,11 @@ export async function prepareApprovalRequest(params: Readonly<{
   // Observation callbacks stay host-private; review only the ordinary Action input.
   if (deployment && !('observePendingOperation' in deployment)) {
     if ('errorCode' in deployment) return deployment;
+    const rolloutInput = readDeploymentRolloutSemanticInput(params.actionId, params.semanticInput ?? params.input);
     return { actionArgs: deployment.input, preview: { actionId: params.actionId, actionArgs: deployment.input,
       summary: appendTeamCredentialSourceSummary(buildApprovalSummary(spec, deployment.input, deployment.preview), teamCredentialSources),
       ...(teamCredentialSources.length ? { teamCredentialSources } : {}), deploymentReview: deployment.preview,
+      ...(rolloutInput === undefined ? {} : { deploymentRolloutSemanticInput: rolloutInput }),
       ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}) } };
   }
   if (params.actionId === 'localServices.launcher.start') {
