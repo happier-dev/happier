@@ -7,7 +7,7 @@ export { ScmFileViewedStateV1Schema, ScmFileViewedReadResultV1Schema, ScmFileVie
 export type { ScmFileViewedStateV1, ScmFileViewedReadResultV1, ScmFileViewedSetResultV1 } from './fileViewed.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ScmCommitOidSchema } from './commitPublication.js';
-import { ScmDiffAreaProtocolSchema, type ScmDiffArea } from './workingSnapshot.js';
+import { ScmDiffAreaProtocolSchema, type ScmDiffArea } from './diffArea.js';
 import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolJsonValue, type ProtocolSchemaInput, type ProtocolSchemaOutput } from '../plugins/actions/protocolComposableSchema.js';
 
 /** Views of one comparison; Commits requires a complete working-tree capture. */

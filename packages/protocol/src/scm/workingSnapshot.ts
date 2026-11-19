@@ -1,10 +1,9 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
-import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
-import { defineProtocolLiteral, defineProtocolUnion } from '../plugins/actions/protocolComposableSchema.js';
 
 import { ScmBackendIdSchema } from './backendIdentity.js';
 import { ScmDefaultBranchPushPolicySchema } from './defaultBranchPushPolicy.js';
+import { ScmDiffAreaSchema } from './diffArea.js';
 import { ScmOperationStateSchema } from './operationState.js';
 export * from './operationState.js';
 import {
@@ -19,11 +18,7 @@ import {
 export const ScmRepoModeSchema = lazyZodSchema(() => z.enum(['.git', '.sl']));
 export type ScmRepoMode = z.infer<typeof ScmRepoModeSchema>;
 
-export const ScmDiffAreaProtocolSchema = defineProtocolUnion([
-  defineProtocolLiteral('included'), defineProtocolLiteral('pending'), defineProtocolLiteral('both'),
-]);
-export const ScmDiffAreaSchema = asProtocolZod(ScmDiffAreaProtocolSchema);
-export type ScmDiffArea = z.infer<typeof ScmDiffAreaSchema>;
+export { ScmDiffAreaProtocolSchema, ScmDiffAreaSchema, type ScmDiffArea } from './diffArea.js';
 
 export const ScmChangeSetModelSchema = lazyZodSchema(() => z.enum(['index', 'working-copy']));
 export type ScmChangeSetModel = z.infer<typeof ScmChangeSetModelSchema>;
