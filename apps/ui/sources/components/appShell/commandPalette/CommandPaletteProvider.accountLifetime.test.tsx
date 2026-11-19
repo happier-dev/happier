@@ -33,7 +33,7 @@ it('opens Home Search Actions on their individual selected origins when the cata
     publishAppliedActiveServerSnapshot({ serverId, serverUrl: 'https://palette-flowers.test', generation: 1 });
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Flower Home must be current');
-    const pluginIds = ['qa.flowers', 'qa.notes'];
+    const pluginIds = ['qa.flowers', 'qa.notes', 'qa.flowers'];
     storage.setState({ machineListByServerId: { [serverId]: pluginIds.map((_, index) => createMachineFixture({
         id: `palette-machine-${index}`, isShared: false,
     })) } });
@@ -70,23 +70,23 @@ it('opens Home Search Actions on their individual selected origins when the cata
     expect(presentation).toBeDefined();
     if (!presentation) throw new Error('Home Search must consume the selected Action union');
     const actions = presentation.controller.list({ placement: 'commandPalette', scope: 'global' });
-    expect(actions.map(action => action.qualifiedActionId)).toEqual(pluginIds.map(id => `${id}/change`));
+    expect(actions.map(action => action.qualifiedActionId)).toEqual(['qa.flowers/change', 'qa.notes/change']);
     const commands = buildCommandPaletteCommands({ sessionsById: {}, isDev: false, activeSessionId: null,
         features: { executionRunsEnabled: false, voiceEnabled: false },
         nav: { push() {}, openNewSession() {}, navigateToSession() {} }, actions: { execute: async () => ({ ok: true, result: {} }) },
         alert: async () => {}, pluginActionPresentation: presentation });
-    expect(commands.filter(command => command.id.startsWith('plugin-action:')).map(command => command.title)).toEqual(['Change 0', 'Change 1']);
+    expect(commands.filter(command => command.id.startsWith('plugin-action:')).map(command => command.title)).toEqual(['Change 2', 'Change 1']);
     const forms = [];
     for (const [index, action] of actions.entries()) {
         const opened = await presentation.controller.open(action);
         expect(opened.kind).toBe('form');
         if (opened.kind !== 'form') throw new Error('Action form must open');
-        expect(opened.form.pickerContext).toMatchObject({ machineId: members[index]!.machineId, serverId });
+        expect(opened.form.pickerContext).toMatchObject({ machineId: members[index === 0 ? 2 : 1]!.machineId, serverId });
         forms.push(opened.form);
     }
     // Reading the selected AppShell publication does not fetch a second Machine catalog.
     expect(machineRpc).not.toHaveBeenCalled();
-    union = publication.publish(members.map((member, index) => index === 0
+    union = publication.publish(members.map((member, index) => index === 2
         ? { ...member, phase: 'unavailable' as const, interactionEnabled: false } : member), selectedOrigins).pluginUiProjection;
     await mounted.rerender();
     expect(forms[0]!.isRetired()).toBe(true);

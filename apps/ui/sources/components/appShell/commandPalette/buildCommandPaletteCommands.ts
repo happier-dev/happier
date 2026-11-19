@@ -2,6 +2,7 @@ import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadat
 import type { ExecutionRunLauncherDraftSeed } from '@/components/sessions/runs/launcher/prepareExecutionRunLauncherDraft';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import { VoiceConversationActionResultSchema, type VoiceConversationActionId, type VoiceConversationStatus } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 
 import type { Command } from './types';
@@ -626,16 +627,25 @@ export function buildCommandPaletteCommands(
     }
     // Parameterized model/artifact operations keep the same anchored selection UI.
     // Discovery is declaration-owned; opening that picker never reports operation completion.
-    const routes = new Map(flattenSettingsPageCatalog(SETTINGS_PAGE_CATALOG).map(page => [page.id, page.route]));
+    const pages = new Map(flattenSettingsPageCatalog(SETTINGS_PAGE_CATALOG).map(page => [page.id, page]));
     for (const page of getSettingsPageDeclarations(undefined, { voice: voiceSettingsParse(state.settings?.voice) })) {
       if (!page.pageId.startsWith('voice')) continue;
       for (const ref of Object.values(page.settings)) {
         if (ref.operation?.kind !== 'invoke' || !settingRendersOnHost(ref)) continue;
-        const route = page.subpage?.route ?? routes.get(page.pageId);
+        const catalogPage = pages.get(page.pageId);
+        const route = page.subpage?.route ?? catalogPage?.route;
         const href = route ? buildSettingHref(route, ref) : null;
         if (!href) continue;
+        // Setting labels are local to their page. Search also needs the page and
+        // speech direction to distinguish controls without losing their anchors.
+        const operation = readBuiltInSettingDeclarationV1(ref.anchor)?.operation;
+        const kind = operation?.owner === 'voiceSettingsOperation' ? operation.options?.[0] : undefined;
+        const speechModels = kind?.startsWith('stt_') ? t('settingsVoice.local.models.sttGroupTitle')
+          : kind?.startsWith('tts_') ? t('settingsVoice.local.models.ttsGroupTitle') : undefined;
+        const title = [ref.title ?? t(ref.titleKey), catalogPage && t(catalogPage.titleKey), speechModels]
+          .filter(Boolean).join(' · ');
         cmds.push({
-          id: `setting-operation:${ref.anchor}`, title: ref.title ?? t(ref.titleKey), icon: 'gear',
+          id: `setting-operation:${ref.anchor}`, title, icon: 'gear',
           category: t('commandPalette.commands.voiceCategory'), action: () => nav.push(href),
         });
       }

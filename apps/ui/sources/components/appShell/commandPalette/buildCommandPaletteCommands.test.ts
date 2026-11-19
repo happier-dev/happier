@@ -920,6 +920,21 @@ describe('buildCommandPaletteCommands', () => {
     expect(install).toBeDefined();
     await install?.action();
     expect(pushes[0]).toContain('voiceAdvanced.installSpeechModel');
+
+    for (const anchors of [
+      ['voiceDictation.sttPrepareModel', 'voiceConversations.sttPrepareModel'],
+      ['voiceDictation.readiness', 'voiceConversations.readiness'],
+      ['voiceDictation.sttRemoveModel', 'voiceConversations.sttRemoveModel'],
+      ['voiceDictation.sttUpdateModel', 'voiceConversations.sttUpdateModel', 'voiceConversations.ttsUpdateModel'],
+    ]) {
+      const rows = commands.filter(command => anchors.some(anchor => command.id === `setting-operation:${anchor}`));
+      expect(rows).toHaveLength(anchors.length);
+      expect(new Set(rows.map(command => command.title)).size).toBe(anchors.length);
+      for (const row of rows) {
+        await row.action();
+        expect(pushes.at(-1)).toContain(row.id.slice('setting-operation:'.length));
+      }
+    }
   });
 
   it('shows an alert when a session-scoped ActionSpec command is used without an active session', async () => {
