@@ -39,6 +39,7 @@ import {
 } from '../corpus/testkit/observations.test-support.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1, TRIAGE_LIST_DEFAULT_LENS_V1, triageEntryRowKey } from './listWindow.js';
 import { createTriageListWindowStore } from './listWindowStore.js';
+import { createNoPersistenceTriageFixture, NO_PERSISTENCE_EXTERNAL_INSTANCE_IDS } from './noPersistence.test-support.js';
 import { readTriageListFailureNotice, readTriageSourceFailureRowV1, resolveTriageListShellState } from '../ui/shell/windowState.js';
 import { projectTriagePickerCorpusFacts } from '../composer/pickerFacts.js';
 import { projectTriageWindowRow } from '../ui/marks/pinnedRows.js';
@@ -63,6 +64,67 @@ it('keeps the read model off device storage and starts fresh after its populated
     }
     expect(results[0]?.pid).not.toBe(results[1]?.pid);
 }, fixtureCommandTimeoutMs * 2);
+
+it('materializes one configured source independently on two Machines without shared writes', async () => {
+    const [sourceInstanceId] = NO_PERSISTENCE_EXTERNAL_INSTANCE_IDS;
+    const fixture = createNoPersistenceTriageFixture({ sourceInstanceIds: [sourceInstanceId], externalOnly: true });
+    await fixture.verifyDurableWriteTraps();
+
+    const nowMs = 1_760_000_000_000;
+    const firstEntered = Promise.withResolvers<void>();
+    const secondEntered = Promise.withResolvers<void>();
+    const firstReply = Promise.withResolvers<TriageScanResultV1>();
+    const secondReply = Promise.withResolvers<TriageScanResultV1>();
+    const pending = [
+        { entered: firstEntered, response: firstReply },
+        { entered: secondEntered, response: secondReply },
+    ];
+    fixture.setScan(async () => {
+        const next = pending.shift();
+        if (!next) throw new Error('Unexpected provider read');
+        next.entered.resolve();
+        return next.response.promise;
+    });
+    function result(title: string, sourceUpdatedAtMs: number): TriageScanResultV1 {
+        return { kind: 'complete', evidence: { kind: 'walkFinished' }, observations: [{
+            kind: 'present',
+            localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: 'same-entry' },
+            locator: testkitLocator(), snapshot: testkitSnapshot({ title }), viewer: testkitViewer(), sourceUpdatedAtMs,
+        }] };
+    }
+
+    // Each store represents its Machine's process-local projection. Both read
+    // through the same Account Collections and aggregate Action boundary.
+    const first = createTriageListWindowStore({ readEntries: fixture.readEntries, nowMs: () => nowMs });
+    const second = createTriageListWindowStore({ readEntries: fixture.readEntries, nowMs: () => nowMs });
+    const newer = result('First Machine, newer provider observation', nowMs);
+    const older = result('Second Machine, older provider observation', nowMs - 1);
+    try {
+        const firstPass = first.refresh('view');
+        await firstEntered.promise;
+        const secondPass = second.refresh('view');
+        await secondEntered.promise;
+        secondReply.resolve(older);
+        await secondPass;
+        expect(first.getSnapshot().window).toBeUndefined();
+        expect(second.getSnapshot().window?.rows.map(row => row.content?.outcome.snapshot.title))
+            .toEqual(['Second Machine, older provider observation']);
+
+        firstReply.resolve(newer);
+        await firstPass;
+        expect(first.getSnapshot().window?.rows.map(row => row.content?.outcome.snapshot.title))
+            .toEqual(['First Machine, newer provider observation']);
+        expect(second.getSnapshot().window?.rows.map(row => row.content?.outcome.snapshot.title))
+            .toEqual(['Second Machine, older provider observation']);
+        expect(fixture.scannedPages.get(sourceInstanceId)).toEqual(['initial', 'initial']);
+        expect(fixture.durableWriteAttempts).toEqual([]);
+    } finally {
+        firstReply.resolve(newer);
+        secondReply.resolve(older);
+        first.dispose();
+        second.dispose();
+    }
+});
 
 /**
  * The composed PRs & Issues vertical, driven end to end.
