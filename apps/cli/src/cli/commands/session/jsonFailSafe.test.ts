@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { handleSessionCommand } from './handleSessionCommand';
 
 const { createCliActionExecutorFromCredentials, execute } = vi.hoisted(() => ({
   createCliActionExecutorFromCredentials: vi.fn(),
@@ -18,8 +19,6 @@ describe('happier session --json fail-safe', () => {
       err.code = 'ECONNREFUSED';
       throw err;
     });
-
-    const { handleSessionCommand } = await import('./handleSessionCommand');
 
     const output = captureConsoleJsonOutput();
 
@@ -49,8 +48,6 @@ describe('happier session --json fail-safe', () => {
   });
 
   it('keeps the legacy planner envelope kind for unauthenticated plan starts', async () => {
-    const { handleSessionCommand } = await import('./handleSessionCommand');
-
     const output = captureConsoleJsonOutput();
 
     try {
@@ -68,8 +65,6 @@ describe('happier session --json fail-safe', () => {
   });
 
   it('keeps the legacy delegate envelope kind for unauthenticated delegate starts', async () => {
-    const { handleSessionCommand } = await import('./handleSessionCommand');
-
     const output = captureConsoleJsonOutput();
 
     try {
