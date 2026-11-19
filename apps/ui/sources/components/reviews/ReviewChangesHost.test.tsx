@@ -8,7 +8,7 @@ import { buildScmReviewedMarksKey } from '@happier-dev/protocol/scm/reviewedMark
 import { decodeBase64StoredJsonContentEnvelope } from '@/sync/encryption/base64StoredJsonContent';
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 import type { ReviewRoundComparisonCaptureV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
-import type { ScmComparisonCaptureOutput } from '@happier-dev/protocol/scm/diffSummary';
+import { ScmComparisonCaptureInputSchema, type ScmComparisonCaptureOutput } from '@happier-dev/protocol/scm/diffSummary';
 import { flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { createSessionFilesViewFixture, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '@/components/sessions/files/views/sessionFilesViewTestkit';
@@ -67,8 +67,9 @@ it('keeps sealed finding excerpts readable without a capture or Machine read', a
     await screen.unmount();
 });
 
-it('keeps a persisted ordinary gutter comment visible on its captured diff side after reopening', async () => {
-    const comparison = ScmComparisonSchema.parse({ id: 'd'.repeat(64), source: { kind: 'workingTree' },
+it.each([undefined, 'cmwnalobm00h105mc6nucsgo7'])('keeps saved gutter comments and Viewed marks in the captured Session namespace %s', async comparisonSessionId => {
+    // Retained QA Review f8c93a92 captured a working tree inside this Session namespace.
+    const comparison = ScmComparisonSchema.parse({ id: '46dae58ca4a04ab832497525f9b8ece106f331bde36322d8ed070e7161c8b1f8', source: { kind: 'workingTree', area: 'pending' },
         repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [{
             path: 'total.ts', changeKind: 'modified', binary: false, generated: false, lockfile: false,
             occurrences: [{ id: 'total-change', alias: 'total-change', path: 'total.ts', position: 0,
@@ -77,9 +78,14 @@ it('keeps a persisted ordinary gutter comment visible on its captured diff side 
         }] } });
     const kv = createAccountKvHttpFixture();
     const marksKey = buildScmReviewedMarksKey(buildScmReviewScopeId({ repositoryRootPath: '/repo', source: comparison.source }));
-    fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => {
-        if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return { success: true, comparison,
-            metadata: { sourceKey: comparison.id, source: comparison.source } };
+    fixture = await createSessionFilesViewFixture({ rootPath: '/repo', sessionId: comparisonSessionId, rpc: request => {
+        if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) {
+            const input = ScmComparisonCaptureInputSchema.parse(request.payload);
+            // The retained evidence owner never searches another Session's shelf.
+            return input.sessionId === comparisonSessionId ? { success: true, comparison,
+                metadata: { sourceKey: comparison.id, source: comparison.source } }
+                : { success: false, errorCode: 'DIFF_UNAVAILABLE', error: 'The captured comparison is unavailable in this namespace.' };
+        }
         return undefined;
     }, request: kv.handleFetch });
     const { ReviewChangesHost } = await import('./ReviewChangesHost');
@@ -91,7 +97,7 @@ it('keeps a persisted ordinary gutter comment visible on its captured diff side 
         body: 'Preserve addition: subtraction returns a negative total.', snapshot: { kind: 'none', capturedAt: 1 } });
     const props = { reviewId: 'gutter-review', roundOrdinal: 1, scope: { serverId: fixture.scope.serverId, accountId: 'alice' },
         capture: { target: { kind: 'machine', machineId: 'm1' }, input: { cwd: '/repo', comparisonId: comparison.id,
-            source: { kind: 'workingTree' } } } satisfies ReviewRoundComparisonCaptureV1,
+            source: comparison.source, ...(comparisonSessionId ? { sessionId: comparisonSessionId } : {}) } } satisfies ReviewRoundComparisonCaptureV1,
         comments: [comment], view: 'files', onSelectView() {}, onOpenComment() {} } as const;
     const screen = await fixture.render(<ReviewChangesHost {...props} />);
     await vi.waitFor(() => expect(screen.findAllByType(WorkspaceScmReviewBody)).toHaveLength(1));
@@ -106,7 +112,9 @@ it('keeps a persisted ordinary gutter comment visible on its captured diff side 
     expect(renderAfterLine(lines.find((line: { kind: string }) => line.kind === 'add'))).not.toBeNull();
     await screen.pressByTestIdAsync('diff-file-menu:total.ts');
     await vi.waitFor(() => expect(screen.findByTestId('diff-file-viewed')).not.toBeNull());
-    expect(screen.findByTestId('diff-file-viewed').props.disabled).not.toBe(true);
+    const viewedControl = screen.findByTestId('diff-file-viewed');
+    if (!viewedControl) throw new Error('The file menu must expose its Viewed control');
+    expect(viewedControl.props.disabled).not.toBe(true);
     await screen.pressByTestIdAsync('diff-file-viewed');
     const expectedKeys = buildScmFileReviewUnits(comparison.inventory.files[0]!).map(unit => unit.key);
     await vi.waitFor(() => expect(decodeBase64StoredJsonContentEnvelope(kv.read(marksKey)?.value ?? ''))

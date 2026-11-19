@@ -38,6 +38,8 @@ const UNAVAILABLE: ScmReviewedMarks = { record: null, pending: false, unavailabl
 export function useScmReviewedMarks(params: Readonly<{
     comparison: ScmComparison | null; source?: ScmReviewedMarksSource; serverId: string | null;
     host: ScmDiffSummaryHost | null;
+    /** Retained capture namespace, independent of its Machine execution target. */
+    comparisonSessionId?: string;
     writeUnavailableReason?: string | null;
     observation?: 'keyed';
 }>): ScmReviewedMarks {
@@ -48,8 +50,8 @@ export function useScmReviewedMarks(params: Readonly<{
         : params.source ? { source: params.source } : null;
     const selectionRef = React.useRef(selection);
     selectionRef.current = selection;
-    const writeTarget = React.useRef({ host: params.host, unavailableReason: params.writeUnavailableReason });
-    writeTarget.current = { host: params.host, unavailableReason: params.writeUnavailableReason };
+    const writeTarget = React.useRef({ host: params.host, unavailableReason: params.writeUnavailableReason, comparisonSessionId: params.comparisonSessionId });
+    writeTarget.current = { host: params.host, unavailableReason: params.writeUnavailableReason, comparisonSessionId: params.comparisonSessionId };
     const executeRef = React.useRef(execution.execute);
     executeRef.current = execution.execute;
     const scopeId = selection ? buildScmReviewScopeId(selection.comparison
@@ -108,7 +110,7 @@ export function useScmReviewedMarks(params: Readonly<{
                     }) }),
                     accountId: lifetime.scope.accountId, shouldContinue: () => shouldContinue() && writeTarget.current.host?.sessionId === target.host?.sessionId
                         && writeTarget.current.host?.machineId === target.host?.machineId && !writeTarget.current.unavailableReason,
-                }).setReviewed(input, reviewed);
+                }).setReviewed({ ...input, ...(target.comparisonSessionId ? { sessionId: target.comparisonSessionId } : {}) }, reviewed);
             },
             getSelection: () => {
                 const current = selectionRef.current;

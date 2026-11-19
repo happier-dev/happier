@@ -163,7 +163,7 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
     const activeReviewFile = React.useMemo(() => ({ key: identity, presented: true, externalLifecycle: true }), [identity]);
     const index = useCapturedScmComparison({ host, comparisonSessionId: sessionId, machine, identity: machine,
         serverId, comparison, active: props.view === 'files' && !reachability.unreachable, indexPageSize });
-    const marks = useScmReviewedMarks({ host, serverId, comparison: props.view === 'files' ? index.comparison : null,
+    const marks = useScmReviewedMarks({ host, serverId, comparisonSessionId: sessionId, comparison: props.view === 'files' ? index.comparison : null,
         observation: 'keyed' });
     const limits = useScmReviewLimits();
     const { executeValue } = useMountedActionExecution(scope);
