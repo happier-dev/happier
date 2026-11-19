@@ -7,6 +7,7 @@ import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/wor
 import type { WorkflowDraftSettingsPatchV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import type { WorkflowEditorDraft } from './workflowEditorDraft';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowTriggerSnapshot } from '@/components/workflows/triggers/workflowTriggerDraft';
 import type { WorkflowTriggerAddRequestV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { WorkflowTriggerIncomplete, WorkflowTriggerDraftSeedIntent, WorkflowTriggerStartContext } from '@/components/workflows/triggers/workflowTriggerStarts';
@@ -21,6 +22,8 @@ export type WorkflowDefinitionDraftSeed = Readonly<{
     definition?: WorkflowDefinitionV1;
     /** A mounted authoring draft can be incomplete; only Save parses a stored definition. */
     draft?: WorkflowEditorDraft;
+    /** Initial Run form values only; Save keeps them outside the reusable definition and triggers. */
+    inputValues?: Readonly<Record<string, JsonValue>>;
     /** Desired trigger rows and unfinished choices travel together through private navigation. */
     triggers?: WorkflowTriggerSnapshot;
     incompleteTriggers?: WorkflowTriggerIncomplete;

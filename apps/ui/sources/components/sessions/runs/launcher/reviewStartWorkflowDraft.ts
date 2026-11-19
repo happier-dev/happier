@@ -18,15 +18,20 @@ export function buildReviewStartWorkflowDraftSeed(params: Readonly<{
     project: WorkflowDefinitionDraftSeed['project'];
     executionTarget: NonNullable<WorkflowDefinitionDraftSeed['executionTarget']>;
 }>): WorkflowDefinitionDraftSeed {
-    const input = ReviewStartInputSchema.parse(compileReviewLauncherInput(params.input, params.instructions, params.sourceSession));
+    const { sessionId: _sessionId, sourceSession, ...input } = ReviewStartInputSchema.parse(
+        compileReviewLauncherInput(params.input, params.instructions, params.sourceSession));
     const bindings: Record<string, WorkflowActionFieldBindingV1> = {};
-    for (const [key, value] of Object.entries(input)) {
+    // Workflow Reviews execute against the admitted workspace; a source Session is an input, never placement.
+    for (const [key, value] of Object.entries({ ...input, target: { kind: 'detached' } })) {
         if (value !== undefined) bindings[key] = { kind: 'literal', value: projectNativeJsonValueForTransport(value) };
     }
-    const inserted = insertWorkflowEditorBlock(createWorkflowEditorDraft({ draftId: randomUUID(), name: params.name, blocks: [] }), {
+    if (sourceSession) bindings.sourceSession = { kind: 'input', name: 'sourceSession' };
+    const initialDraft = createWorkflowEditorDraft({ draftId: randomUUID(), name: params.name, blocks: [] });
+    const inserted = insertWorkflowEditorBlock({ ...initialDraft, inputs: sourceSession ? [{ name: 'sourceSession',
+        valueType: 'json', required: true, inputType: { hostType: 'session' }, defaultFrom: 'origin_session' }] : [] }, {
         request: { kind: 'action', actionId: 'review.start' }, list: { kind: 'root' },
     });
     const draft = updateWorkflowBlock(inserted.draft, inserted.block.id, block => block.kind === 'action'
         ? { ...block, input: bindings } : block);
-    return { name: params.name, draft, executionTarget: params.executionTarget, ...(params.project ? { project: params.project } : {}) };
+    return { name: params.name, draft, ...(sourceSession ? { inputValues: { sourceSession } } : {}), executionTarget: params.executionTarget, ...(params.project ? { project: params.project } : {}) };
 }

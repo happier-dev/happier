@@ -497,7 +497,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const hydrationRefreshRef = React.useRef<(() => void) | null>(null);
     const [view, setView] = React.useState<WorkflowEditorView>(definitionDraftSeed?.initialView ?? 'steps');
     const [selection, setSelection] = React.useState<WorkflowEditorViewState>(EMPTY_WORKFLOW_EDITOR_VIEW_STATE);
-    const [inputValues, setInputValues] = React.useState<Readonly<Record<string, JsonValue | undefined>>>(reviewedRunSeed?.inputs ?? {});
+    const [inputValues, setInputValues] = React.useState<Readonly<Record<string, JsonValue | undefined>>>(reviewedRunSeed?.inputs ?? definitionDraftSeed?.inputValues ?? {});
     const [inputRawTextValues, setInputRawTextValues] = React.useState<Readonly<Record<string, string>>>({});
     const [inputSheetOpen, setInputSheetOpen] = React.useState(reviewedRunSeed?.planReview !== undefined);
     const [planEditingAccepted, setPlanEditingAccepted] = React.useState(false);
@@ -681,7 +681,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         setHydrationFailure(null);
         setSelection(EMPTY_WORKFLOW_EDITOR_VIEW_STATE);
         setView(withdrawn ? 'steps' : definitionDraftSeed?.initialView ?? 'steps');
-        setInputValues(withdrawn ? {} : nextReviewedRunSeed?.inputs ?? {});
+        setInputValues(withdrawn ? {} : nextReviewedRunSeed?.inputs ?? definitionDraftSeed?.inputValues ?? {});
         setInputRawTextValues({});
         setInputSheetOpen(!withdrawn && nextReviewedRunSeed?.planReview !== undefined);
         setPlanEditingAccepted(false);

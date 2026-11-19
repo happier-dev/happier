@@ -4971,6 +4971,28 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(runStartSpy).not.toHaveBeenCalled();
     });
 
+    it('retains a launcher source only as initial Run inputs while saving origin-relative habit parameters', async () => {
+        await prepareRunAdmissionFixture();
+        const { buildReviewStartWorkflowDraftSeed } = await import('@/components/sessions/runs/launcher/reviewStartWorkflowDraft');
+        const sourceSession = { serverId: 'server-a', sessionId: 'launcher-source' };
+        const seed = buildReviewStartWorkflowDraftSeed({ input: { sessionId: sourceSession.sessionId,
+            scope: 'repository', reviewers: [{ kind: 'engine', engineId: 'codex', includeSessionTranscript: true }] },
+            instructions: 'Review the project', sourceSession, name: 'Review habit',
+            project: { machineId: 'machine-a', directory: '/repo' }, executionTarget: 'session' });
+        const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'new',
+            definitionDraftSeedId: storeWorkflowDefinitionDraftSeed(seed) }} />);
+        await act(async () => readBodyProps()?.onRunNow?.());
+        expect(screen.findByType(WorkflowRunComposer).props.values).toEqual({ sourceSession });
+        await dismissRunComposer(screen);
+        await saveDirectlyFromUi();
+        expect(definitionActions.create.mock.calls.at(-1)?.[0].definition).toMatchObject({ inputs: [
+            { name: 'sourceSession', defaultFrom: 'origin_session', inputType: { hostType: 'session' } },
+        ] });
+        expect(JSON.stringify(definitionActions.create.mock.calls.at(-1)?.[0].definition)).not.toContain(sourceSession.sessionId);
+        expect(editorAutomations.reconciles).toHaveLength(0);
+        await screen.unmount();
+    });
+
     it('owns Run as at page scope and carries the selected target into admission', async () => {
         await prepareRunAdmissionFixture();
         const { WorkflowEditorHostScreen } = await import('./WorkflowEditorHostScreen');
