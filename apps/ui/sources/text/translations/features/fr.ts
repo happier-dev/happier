@@ -19414,7 +19414,7 @@ const fr: WorkflowsDestinationTranslations = {
     noMatch: ({ query }) => `Aucun flux de travail ne correspond à « ${query} »`,
     views: {
         all: 'Tous',
-        triggered: 'Déclenchés',
+        triggered: 'Avec déclencheur',
         active: 'Actives',
         needsYou: 'Besoin de toi',
         libraryAccessibility: 'Flux de travail à afficher',

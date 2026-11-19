@@ -18851,7 +18851,7 @@ const de: WorkflowsDestinationTranslations = {
     noMatch: ({ query }) => `Keine Workflows passen zu „${query}“`,
     views: {
         all: 'Alle',
-        triggered: 'Ausgelöst',
+        triggered: 'Mit Auslöser',
         active: 'Aktiv',
         needsYou: 'Braucht dich',
         libraryAccessibility: 'Welche Workflows angezeigt werden',

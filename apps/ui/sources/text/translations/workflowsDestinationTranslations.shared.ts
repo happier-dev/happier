@@ -50,7 +50,7 @@ export const en = {
     noMatch: ({ query }: { query: string }) => `No workflows match “${query}”`,
     views: {
         all: 'All',
-        triggered: 'Triggered',
+        triggered: 'Has triggers',
         active: 'Active',
         needsYou: 'Needs you',
         libraryAccessibility: 'Which workflows to show',
