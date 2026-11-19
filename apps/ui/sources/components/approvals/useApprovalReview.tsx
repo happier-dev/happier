@@ -214,10 +214,18 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   // Secret inputs a consuming Action waits for are chosen in the same prompt; plain Approve never answers them.
   const confidentialInputs = review?.confidentialInputs ?? null;
   const secretPrompt = confidentialAction || confidentialInputs !== null;
-  const confidentialReviewKey = (confidentialApproval || confidentialInputs) && parsed?.kind === 'built_in'
-    ? JSON.stringify([parsed.request.actionId, parsed.request.actionArgs,
-        parsed.request.v === 2 ? parsed.request.executionOriginV1 : null, parsed.request.createdBy])
-    : null;
+  // The private prompt is keyed by what the person reviews: its continuation binding. Settlement rewrites the
+  // stored request (it retires the replay envelope and projects the Action input), so once the request leaves
+  // `open` the binding reviewed while open stays the key; a remount would cancel the person's Remember (C61).
+  const confidentialPrompt = confidentialApproval ?? confidentialInputs;
+  const reviewedBindingKey = confidentialPrompt && parsed?.kind === 'built_in' ? JSON.stringify(confidentialPrompt) : null;
+  const [openReviewKey, setOpenReviewKey] = React.useState<Readonly<{ artifactId: string; key: string }> | null>(null);
+  if (reviewedBindingKey && parsed?.request.status === 'open'
+    && (openReviewKey?.key !== reviewedBindingKey || openReviewKey.artifactId !== props.artifactId)) {
+    setOpenReviewKey({ artifactId: props.artifactId, key: reviewedBindingKey });
+  }
+  const confidentialReviewKey = reviewedBindingKey && parsed?.request.status !== 'open' && openReviewKey?.artifactId === props.artifactId
+    ? openReviewKey.key : reviewedBindingKey;
   const requesterSurface = readApprovalRequesterSurface(parsed?.request ?? null, parsed?.kind === 'built_in');
   const sessionId = parsed?.kind === 'built_in'
     ? parsed.request.v === 2
@@ -796,7 +804,6 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         : null}
     />
   ) : null;
-  const confidentialPrompt = confidentialApproval ?? confidentialInputs;
   const confidential = confidentialPrompt ? <ConfidentialSecretApproval key={confidentialReviewKey} artifactId={props.artifactId}
         approval={confidentialPrompt} serverId={approvalServerId} isOpen={parsed.request.status === 'open' && !answeredWhileOpen}
         outcomeRecorded={fillNotEntered}

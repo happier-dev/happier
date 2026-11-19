@@ -5,6 +5,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import {
     AccountSettingsV2GetResponseSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { settleApprovalRequestReplayInputs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { CurrentCursorResponseSchema} from '@happier-dev/protocol/changes';
 import {
     FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
@@ -627,6 +629,60 @@ describe('confidential approval human continuation', () => {
         for (const spy of logSpies) spy.mockRestore();
         expect(storage.getState().artifacts['approval-1']?.body).not.toContain('one-time-value');
         expect(screen.findByTestId('approvals.secret-value')?.props.value ?? '').toBe('');
+    });
+
+    it('keeps the private continuation and its Remember when settlement retires the replay envelope before the reply', async () => {
+        // C61: an Agent's Ask carries its original invocation envelope until settlement retires it. That
+        // lifecycle write lands before the private reply; it must not remount the prompt and cancel Remember.
+        rememberSucceeds = true;
+        const marker = 'c61-synthetic-marker';
+        let releaseReply!: () => void;
+        holdPrivateReply = new Promise<void>(resolve => { releaseReply = resolve; });
+        const logged: unknown[][] = [];
+        const logSpies = (['log', 'warn', 'error'] as const).map(method => vi.spyOn(console, method).mockImplementation((...args) => { logged.push(args); }));
+        const artifact = storage.getState().artifacts['approval-1'];
+        if (typeof artifact?.body !== 'string') throw new Error('missing_test_approval');
+        const original = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
+        const origin = original.executionOriginV1;
+        const envelope = { v: 1 as const, requestId: origin.requestId, target: { kind: 'session' as const, sessionId: 'session-1' }, input: original.actionArgs };
+        const open = ApprovalRequestV2Schema.parse({ ...original, executionOriginV1: { ...origin, accountId: 'account-a', originalActionEnvelope: envelope,
+            externalActionExecutionAuthorization: { v: 1, token: 'signed-invocation', binding: { accountId: 'account-a',
+                authentication: { kind: 'terminal', tokenEpoch: 1 }, custodianAccountId: 'account-a', serverIdentityId: 'srv_confidential-home',
+                machineId: 'machine-1', installationId: 'machine-1-installation', accountEncryptionMode: 'plain', actionId: original.actionId,
+                requestId: origin.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target } } } });
+        storage.getState().applyArtifacts([{ ...artifact, header: buildApprovalRequestArtifactHeaderV1(open), body: JSON.stringify(open) }]);
+        try {
+            const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+            const screen = await renderScreen(<ApprovalDetailScreen artifactId="approval-1" />);
+            await vi.waitFor(() => expect(screen.findByTestId('approvals.secret-value')?.props.editable).toBe(true), { timeout: 5_000 });
+            await act(async () => { screen.changeTextByTestId('approvals.secret-value', marker); });
+            await act(async () => { screen.findByTestId('approvals.secret-remember')?.props.onValueChange(true); });
+            await act(async () => { screen.changeTextByTestId('approvals.secret-name', 'Remembered password'); });
+            await act(async () => {
+                screen.findByTestId('approvals.secret-continue')?.props.onPress();
+                await vi.waitFor(() => expect(deliveries).toHaveLength(1));
+            });
+            const executed = settleApprovalRequestReplayInputs(ApprovalRequestV2Schema.parse({ ...open, status: 'executed', updatedAtMs: 3,
+                decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' },
+                execution: { executedAtMs: 3, ok: true, result: { status: 'filled', code: 'filled' } } }));
+            expect(executed.executionOriginV1).not.toHaveProperty('originalActionEnvelope');
+            await act(async () => { storage.getState().applyArtifacts([{ ...artifact, bodyVersion: 2, updatedAt: 3,
+                header: buildApprovalRequestArtifactHeaderV1(executed), body: JSON.stringify(executed) }]); });
+            expect(writes).toEqual([]);
+            await act(async () => { releaseReply(); });
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('approvals.confidential.rememberSaved'));
+            expect(screen.getTextContent()).toContain('approvals.confidential.filled');
+            expect(deliveries).toHaveLength(1);
+            expect(writes.filter(path => path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.create'])).toHaveLength(1);
+            const produced = SharedSavedSecretCreateInputV1Schema.parse(rememberedResource);
+            expect(openSavedSecretResourceStoredContentV1({ resourceId: produced.resourceId, mode: 'plain', storedContent: produced.storedContent }))
+                .toMatchObject({ name: 'Remembered password', value: marker });
+            expect(JSON.stringify(Object.values(storage.getState().artifacts))).not.toContain(marker);
+            expect(JSON.stringify(logged)).not.toContain(marker);
+        } finally {
+            releaseReply();
+            for (const spy of logSpies) spy.mockRestore();
+        }
     });
 
     it('does not claim Remember succeeded when the Saved Secret Resource Action is unavailable', async () => {
