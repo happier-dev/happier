@@ -66,6 +66,37 @@ describe('RPC action dispatch adapter', () => {
         expect(context.workspaceWrites).toBeUndefined();
     });
 
+    it('marks continuation provenance only for verified requester custody or the in-process transport', () => {
+        const target = { kind: 'machine' as const, machineId: 'machine' };
+        const requestId = 'voice-run-start';
+        const authorization = (token: string) => ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token, binding: {
+            accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 },
+            accountEncryptionMode: 'plain', machineId: 'machine', installationId: 'installation', serverIdentityId: 'home',
+            actionId: 'execution.run.start', requestId, target,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target, input: {} }),
+        } });
+        // RpcHandlerManager attaches opened requester custody only after Home verified the signed hop.
+        const verified = authorization('home-verified-hop');
+        Object.defineProperty(verified, 'requesterAccountProjection', { value: Object.defineProperty({}, requesterActionContext, {
+            value: { invocation: ExternalActionRequesterInvocationV1Schema.parse({ caller: { kind: 'host' }, surface: 'voice',
+                authority: 'present_user' }) } }) });
+        const inProcess = authorization('in-process-transport');
+        const ingress = authorization('root-ingress');
+        const fact = (context: ReturnType<typeof buildActionExecutorContextForRpc>) => context.externalActionContinuation;
+
+        expect(fact(buildActionExecutorContextForRpc({ callerInputAuthorization: verified }))).toBe(true);
+        // The registrar may forward the same verified object as the explicit authorization.
+        expect(fact(buildActionExecutorContextForRpc({ callerInputAuthorization: verified,
+            externalActionExecutionAuthorization: verified }))).toBe(true);
+        expect(fact(buildActionExecutorContextForRpc({ localActionContext: { externalActionExecutionAuthorization: inProcess } }))).toBe(true);
+        // Root ingress, or any explicit authorization that is not the verified hop, never sets it.
+        expect(fact(buildActionExecutorContextForRpc({ externalActionExecutionAuthorization: ingress }))).toBeUndefined();
+        expect(fact(buildActionExecutorContextForRpc({ callerInputAuthorization: verified,
+            externalActionExecutionAuthorization: ingress }))).toBeUndefined();
+        // A Home-forwarded root without opened requester custody is not a continuation either.
+        expect(fact(buildActionExecutorContextForRpc({ callerInputAuthorization: authorization('unopened-hop') }))).toBeUndefined();
+    });
+
     it('preserves the explicit original authorization before host-local authorization', () => {
         const target = { kind: 'machine' as const, machineId: 'machine' };
         const requestId = 'original-action';

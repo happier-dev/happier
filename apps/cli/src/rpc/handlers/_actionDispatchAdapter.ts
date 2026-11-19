@@ -136,6 +136,12 @@ export function buildActionExecutorContextForRpc(
             || defaultSessionId && defaultSessionId !== handoff.sessionId) return undefined;
         return authorization;
     })();
+    const effectiveAuthorization = (workflowOrigin ? workflowAuthorization : originalHandoffAuthorization)
+        ?? externalActionExecutionAuthorization;
+    // The registrar can forward the same verified requester object as the explicit authorization too.
+    const externalActionContinuation = effectiveAuthorization !== undefined
+        && (effectiveAuthorization === requesterAuthorization
+            || effectiveAuthorization === localActionContext?.externalActionExecutionAuthorization);
     const workspaceSourceContext = params.workspaceSyncSourceWriterTargetRouting?.source.sourceContext
         ?? params.workspaceSyncSeedRouting?.sourceWriterTarget.source.sourceContext;
     const movePacket = params.workspaceSyncSourceExecution;
@@ -340,6 +346,7 @@ export function buildActionExecutorContextForRpc(
             // Preserve the issuer's exact credential object across adapter projection.
             externalActionCredential: params.reviewedChildActionContext.externalActionCredential,
         } : {}),
+        ...(externalActionContinuation ? { externalActionContinuation: true as const } : {}),
     };
 }
 

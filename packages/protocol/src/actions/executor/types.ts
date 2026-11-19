@@ -899,6 +899,8 @@ export type ActionExecutorContext = Readonly<{
   }>;
   /** Home-issued authorization, usable only with the exact Machine's request signature. */
   externalActionExecutionAuthorization?: ExternalActionExecutionAuthorizationV1;
+  /** Host-only provenance for this invocation's verified RPC or in-process continuation. Never Action input. */
+  externalActionContinuation?: true;
   /** Exact admitted public envelope retained locally for closed Project SOURCE routing. */
   originalActionEnvelope?: import('../externalActionApi.js').ExternalActionRequestEnvelope;
   /** Host-only decoded setup root, retained only for this invocation's finite child purposes. */

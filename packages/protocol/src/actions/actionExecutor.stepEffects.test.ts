@@ -5,6 +5,7 @@ import { getActionSpec } from './actionSpecs.js';
 import { WorkflowBlockSchema, WorkflowIngressBlockSchema, WorkflowInsertBlockV1Schema } from '../workflows/workflowV1.js';
 import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionExecutionAuthorization.js';
+import { createActionAutomationPortV1 } from './executor/actionAutomationAdmission.js';
 
 describe('workflow effect Actions', () => {
   it('exposes webhook and command effects through the same Action catalog used by MCP and workflow leaves', () => {
@@ -58,7 +59,14 @@ describe('workflow effect Actions', () => {
     expect(calls[0]?.context).not.toHaveProperty('externalActionExecutionAuthorization');
   });
 
-  it('fails closed when an externally admitted effect has no automation admission port', async () => {
+  it.each([
+    { bindingActionId: 'machines.command.run', externalActionContinuation: true, withPort: false, expectedEffects: 1 },
+    { bindingActionId: 'machines.command.run', externalActionContinuation: true, withPort: true, expectedEffects: 1 },
+    { bindingActionId: 'execution.run.start', externalActionContinuation: true, withPort: false, expectedEffects: 0 },
+    { bindingActionId: 'machines.command.run', externalActionContinuation: undefined, withPort: false, expectedEffects: 0 },
+  ] as const)('requires automation admission with binding $bindingActionId, continuation $externalActionContinuation and port $withPort', async ({
+    bindingActionId, externalActionContinuation, withPort, expectedEffects,
+  }) => {
     let effects = 0;
     const actionId = 'machines.command.run' as const;
     const input = { command: 'printf bypass' };
@@ -66,16 +74,47 @@ describe('workflow effect Actions', () => {
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admission', binding: {
       serverIdentityId: 'home', accountId: 'owner', custodianAccountId: 'owner',
       authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
-      machineId: 'machine', installationId: 'installation', actionId,
+      machineId: 'machine', installationId: 'installation', actionId: bindingActionId,
       requestId: envelope.requestId, target: envelope.target,
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
     } });
-    const executor = createActionExecutor({ machineCommandRun: async () => { effects++; return { exitCode: 0, stdout: 'bypassed', stderr: '' }; } });
-    const result = await executor.execute(actionId, input, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+    let selections = 0;
+    const executor = createActionExecutor({
+      machineCommandRun: async () => { effects++; return { exitCode: 0, stdout: 'bypassed', stderr: '' }; },
+      ...(withPort ? { actionAutomations: {
+        select: async () => { selections++; return { status: 'unavailable' as const, subjects: [], before: [], after: [], notices: [] }; },
+        settle: async () => {},
+      } } : {}),
+    });
+    const context = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
       bypassApprovals: true, actionRequestId: envelope.requestId, runtimeAccountId: 'owner', serverId: 'home',
-      serverIdentityId: 'home', externalActionTarget: envelope.target, externalActionExecutionAuthorization: authorization });
-    expect(result).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', requestId: envelope.requestId });
-    expect(effects).toBe(0);
+      serverIdentityId: 'home', externalActionTarget: envelope.target, externalActionExecutionAuthorization: authorization,
+      externalActionContinuation } as const;
+    const result = await executor.execute(actionId, input, context);
+    expect(result).toMatchObject(expectedEffects ? { ok: true } : { ok: false, errorCode: 'target_unavailable', requestId: envelope.requestId });
+    expect(effects).toBe(expectedEffects);
+    expect(selections).toBe(0);
+  });
+
+  it('starts Before checks once when a host-prepared execution continues the admitted invocation', async () => {
+    const actionId = 'machines.command.run' as const;
+    let starts = 0;
+    let effects = 0;
+    // The Home automation index and the Workflow start are external boundaries.
+    const actionAutomations = createActionAutomationPortV1({ accountId: 'owner', seed: async () => ({ v: 1, rows: [
+      { automationId: 'notify', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
+        ownerAccountId: 'owner', actionIds: [actionId], phase: 'before', mode: 'notify' },
+    ] }), start: async () => { starts++; return { runs: [], notices: [] }; }, settle: async () => {} });
+    const executor = createActionExecutor({ actionAutomations,
+      // A domain owner continues the admitted invocation through its own execution wrapper.
+      prepareHostReviewedChildren: async () => ({ children: [], executeAdmittedAction: ({ context, execute }) => execute(context) }),
+      machineCommandRun: async () => { effects++; return { exitCode: 0, stdout: 'ran', stderr: '' }; } });
+    const result = await executor.execute(actionId, { command: 'printf once' }, { surface: 'cli', authority: 'present_user',
+      actionCaller: { kind: 'host' }, bypassApprovals: true, actionRequestId: 'continued-once', runtimeAccountId: 'owner',
+      serverId: 'home', defaultSessionMachineId: 'machine' });
+    expect(result).toMatchObject({ ok: true });
+    expect(effects).toBe(1);
+    expect(starts).toBe(1);
   });
 
   it('fails closed when automatic admission reports an unavailable before check', async () => {

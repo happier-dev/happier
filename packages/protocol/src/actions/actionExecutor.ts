@@ -3413,7 +3413,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const { approvalScope } = scopeAdmission;
     // One admitted operand snapshot serves both phases, including approval continuation.
     // Contributed invocations consume their declaration's input-sensitive effect fact at its owner.
+    // A Home-verified hop (or in-process dispatch) of the exact root Action continues
+    // an invocation whose signing root already settled its single Automation admission.
+    const isSameExternalActionContinuation = ctx.externalActionContinuation === true
+      && ctx.externalActionExecutionAuthorization?.binding.actionId === actionId;
     const requiresExternalActionAutomationAdmission = !existingAdmission
+      && !isSameExternalActionContinuation
       && !options?.reviewOnly
       && actionId !== 'action.invoke'
       && !isApprovalActionId(actionId)
@@ -3428,7 +3433,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
     if (deps.actionAutomations) {
       ctx = { ...ctx, actionAutomationPort: deps.actionAutomations };
-      if (actionId !== 'action.invoke' && !isApprovalActionId(actionId)
+      if (!isSameExternalActionContinuation && actionId !== 'action.invoke' && !isApprovalActionId(actionId)
         && isActionEffectHookableV1(spec.sideEffectClass)
         && !(sessionTarget && ctx.sessionTargetsV1 && !ctx.sessionTargetsV1.operands && !options?.sessionTargetLeaf)
         && ctx.actionAutomationAdmission?.actionId !== actionId && !options?.reviewOnly) {
@@ -3724,7 +3729,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
 
     try {
-      if (!approvalRouting.required && !approvalRouting.uiConfirmationRequired && !isApprovalAction && !ctx.approvedActionReplay) {
+      // A continued execution or observed operation re-enters after its admitting
+      // pass already ran these checks; starting them again duplicates Before runs.
+      if (!approvalRouting.required && !approvalRouting.uiConfirmationRequired && !isApprovalAction && !ctx.approvedActionReplay
+        && !existingAdmission?.admittedExecutionContinued && !existingAdmission?.operationObserved) {
         const checks = automaticChecksFor(ctx, false);
         if (checks && (checks.selected.some(row => row.phase === 'before')
           || checks.consents.some(row => row.decision === 'pending'))) {
