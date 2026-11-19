@@ -4615,6 +4615,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const createCapturedPluginInvocationServices = createDeploymentDatabasesInvocationServicesForHost({
         contributes: authoritativeContributes, targetRegistrations: activatedRegistry.targetRegistrations,
         readHost: readDeploymentTargetRoleAdmissionHost,
+        ...(params?.ensureEnvironmentServices ? { ensureEnvironmentServices: params.ensureEnvironmentServices } : {}),
         prepareTarget: async (pluginId, localId) => {
             await activateContributionsOnDemand([{ pluginId, family: 'deploymentTargets', localId }]);
         },

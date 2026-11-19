@@ -39,7 +39,7 @@ for (const shape of ['acquisition-refusals', 'postgresql', 'postgresql-private',
 const engine = shape === 'mysql' ? 'mysql' : 'postgresql';
 const acquisitionRefusals = shape === 'acquisition-refusals';
 it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql' ? !nativeMysqlImage : shape === 'postgresql-private' && !nativePostgresqlImage)(
-    acquisitionRefusals ? 'retains native database acquisition refusals before opening a connection'
+    acquisitionRefusals ? 'recovers the selected cold database service before enforcing native container custody'
         : `opens the exact native ${shape} deployment through installed custody and retains exclusion until close`, async () => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-native-database-', env: {
         HAPPIER_SERVER_URL: 'https://home.test', HAPPIER_WEBAPP_URL: 'https://home.test',
@@ -98,7 +98,7 @@ it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql
                 await release.commit();
                 const keys = [{ kind: 'composeProject' as const, dockerEndpoint: 'fixture-pg-engine', projectName: 'native-database' }];
                 let observedComposeProject = 'native-database';
-                await fixture.registry.projectManagedServices.superviseProject({ kind: 'environment', serverId: identity.homeServerIdentityId,
+                const mountService = () => fixture.registry.projectManagedServices.superviseProject({ kind: 'environment', serverId: identity.homeServerIdentityId,
                     machineId: 'machine-a', environmentId: detail.environment.id, environmentInstanceId: identity.environmentInstanceId,
                     deploymentId: target.deploymentId, release, composeService: 'database', serviceId: `${identity.environmentInstanceId}/database`,
                     specIdentity: 'native-database', isCurrent: () => true, releaseObservation: async () => {}, nativeEffects: { keys },
@@ -114,6 +114,7 @@ it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql
                             return { exitCode: 0, stdout: JSON.stringify('unix:///var/run/docker.sock') };
                         }, ...(container ? { openStream: container.openStream } : {}) }; },
                     } } } });
+                if (!acquisitionRefusals) await mountService();
                 const receipt = createDeploymentReceiptDetailV1();
                 receipt.deployment.id = target.deploymentId;
                 receipt.deployment.environmentId = detail.environment.id;
@@ -195,7 +196,15 @@ it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql
                 }
                 activeRoot = root;
                 secretReads = 0;
-                const service = createDeploymentDatabasesServiceForHost({ seed: { plugin: { id: action.pluginId, version: '0.0.0' },
+                const recoveryRequests: unknown[] = [];
+                const recovery = {
+                    async ensureEnvironmentServices(scope: unknown) {
+                        recoveryRequests.push(scope);
+                        await mountService();
+                    },
+                };
+                const createService = (signal: AbortSignal, recover = false) => createDeploymentDatabasesServiceForHost({
+                    ...(recover ? recovery : {}), seed: { plugin: { id: action.pluginId, version: '0.0.0' },
                     contribution: { id: action.localId, qualifiedId: DATABASE_STATEMENT_RUN_ACTION_ID_V1 }, occurrenceId: 'native',
                     correlationId: 'native-real-pg', surface: 'cli', signal, approvalContext: { authority: 'present_user', signal,
                         externalActionExecutionAuthorization: authorization, externalActionTarget: machineTarget,
@@ -204,6 +213,7 @@ it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql
                     resolveInvocationHostPolicy: owners.resolveInvocationHostPolicy, readHost: async () => ({ serverId: 'home', machineId: 'machine-a',
                         installationId: installation.installationId, credentialOwnerAccountId: accountId, credentials, serverHttpBaseUrl: 'https://home.test',
                         async assertCurrent() {}, async readEnvironment() { return detail; }, async readReceipt() { return receipt; } }) });
+                const service = createService(signal);
                 const executeAdmin = pg ? (sql: string) => pg.execute(sql) : (sql: string) => container!.execute(sql);
                 if (engine === 'postgresql') {
                     const member = link.members[0]!;
@@ -227,12 +237,18 @@ it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql
                     expect(secretReads).toBe(0);
                 }
                 if (acquisitionRefusals) {
-                    observedComposeProject = 'neighbor-runtime-project';
                     await expect(service.resolve({ operation: 'describe', target }, 'read'))
+                        .rejects.toMatchObject({ code: 'service_unavailable', data: {
+                            details: { reason: 'mounted_service_unconfirmed' },
+                            failureCause: { phase: 'deployment.data.service', errorCode: 'service_unavailable' },
+                        } });
+                    observedComposeProject = 'neighbor-runtime-project';
+                    await expect(createService(signal, true).resolve({ operation: 'describe', target }, 'read'))
                         .rejects.toMatchObject({ code: 'service_unavailable', data: {
                             details: { reason: 'native_container_unconfirmed', remedy: expect.any(String) },
                             failureCause: { phase: 'deployment.data.container', errorCode: 'service_unavailable', httpStatus: null },
                         } });
+                    expect(recoveryRequests).toEqual([{ environmentId: target.environment.environmentId, composeService: target.serviceId }]);
                     expect(secretReads).toBe(0);
                     return;
                 }

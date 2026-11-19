@@ -39,6 +39,7 @@ export type DeploymentDatabasesHostInput = Readonly<{
     contributes: Pick<ResolvedContributionRegistry, 'deploymentTargets' | 'activationTargets'>;
     targetRegistrations: readonly Readonly<{ pluginId: string; occurrenceId: string; registration: ContributionRuntimeRegistration }>[];
     readHost: (context: NonNullable<PluginInvocationServicesSeed['approvalContext']>) => Promise<AttachmentHost | null>;
+    ensureEnvironmentServices?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
     prepareTarget?(pluginId: string, localId: string): Promise<void>;
     readCurrentOccurrenceId?(pluginId: string): string | null;
     readCurrentSourceCustody?(pluginId: string): PluginInvocationServicesSeed['sourceCustody'] | null;
@@ -251,7 +252,8 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             if (admitted.target.kind === 'deployment_service') {
                 const { target, admission, summary } = admitted;
                 // A write opens the bounded writer; a missing write binding refuses with `write_role_setup_required`.
-                const connection = await openOwnServerDatabaseConnectionForHost({ host: admission.host, target,
+                const host = { ...admission.host, ensureServiceObservations: input.ensureEnvironmentServices };
+                const connection = await openOwnServerDatabaseConnectionForHost({ host, target,
                     environment: admission.detail, installationId: admission.placement.installationId,
                     context: admission.context, signal: input.seed.signal, operationId: input.seed.correlationId, access: operation });
                 return { descriptor: { target, engine: connection.engine, label: target.database,
