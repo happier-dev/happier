@@ -60,8 +60,12 @@ import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflow
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { SESSION_RPC_METHODS, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
+import { artifactViewRoute } from './artifactViewRoute';
 
 const reviewDestinationNavigation = vi.hoisted(() => ({ push: vi.fn() }));
+// Native recycler geometry is an OS boundary; keep the real list adapter and a three-row viewport.
+vi.mock('@legendapp/list/react-native', async () =>
+    (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock({ renderItemLimit: 3 }));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({ router: reviewDestinationNavigation }).module;
@@ -1133,6 +1137,71 @@ describe('Artifact composed view reads', () => {
             expect(screen.findByTestId('review-finding-triage:unreadable-root:accept')).toBeNull();
         } finally { await screen.unmount(); }
     });
+    it('demands exact Seen before for the opened native finding and links its authorized earlier thread', async () => {
+        const reviewId = 'review-seen-before';
+        const comments = ['a', 'b'].map((identity, index) => buildReviewCommentFixture({
+            id: `seen-root-${index}`, accountId: 'owner', reviewId, roundOrdinal: 1, findingIdentity: identity.repeat(64),
+            finding: { id: `finding-${index}`, title: `Native finding ${index}`, summary: 'Captured evidence', severity: 'high', category: 'correctness' },
+        }));
+        const held = createDeferred<Response>();
+        let retry = false;
+        const earlierMatches = Array.from({ length: 2000 }, (_, index) => ({ reviewId: 'authorized-earlier',
+            commentId: index === 0 ? 'earlier-root' : `earlier-root-${index}`, createdAt: 1 }));
+        const artifact: DecryptedArtifact = { id: reviewId, title: 'Native history', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId, title: 'Native history' },
+            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] }] }),
+            ownerAccountId: 'owner', access: 'view', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        const { served } = await setup('document', undefined, false, request => {
+            if (request.path === `/v1/artifacts/${reviewId}`) return Response.json(createPlainArtifactHttpFixture(artifact, 'owner'));
+            if (request.path === '/v1/reviews/get') return Response.json({ review: { reviewId, projectSourceId: null, workflowId: null,
+                subjectKind: 'repository', sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 1,
+                startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 2, needsDecision: 2 } },
+                human: { reviewId, roundOrdinal: 1, requests: [], verdicts: [], needsYou: { reviewId, roundOrdinal: 1,
+                    reason: 'review_needs_you', needsYou: false, requestedVerdict: false, pendingDecisions: true, canSubmitVerdict: false } } });
+            if (request.path === '/v1/reviews/comments') return Response.json({ items: comments.map(storePlainReviewCommentFixture), cursor: null });
+            if (request.path === '/v1/reviews/history/list') {
+                const { findingIdentity } = request.body as { findingIdentity: string };
+                if (findingIdentity === comments[1]!.findingIdentity) return Response.json({ matches: [] });
+                return retry ? Response.json({ matches: earlierMatches }) : held.promise;
+            }
+        });
+        const scope = captureActiveServerAccountScopeLifetime()!.scope;
+        const screen = await renderScreen(<ArtifactView artifactId={reviewId} artifact={{ ...artifact, sourceServerId: scope.serverId }} presentation="page" />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-finding-toggle:seen-root-0'),
+                `${screen.getTextContent()}\n${JSON.stringify(served.requests.map(request => ({ path: request.path, method: request.method })))}`).not.toBeNull());
+            expect(served.requests.filter(request => request.path === '/v1/reviews/history/list')).toHaveLength(0);
+            await screen.pressByTestIdAsync('review-finding-toggle:seen-root-0');
+            await waitForHomeGovernance(() => expect(served.requests.filter(request => request.path === '/v1/reviews/history/list')).toMatchObject([
+                { accountId: 'owner', body: { reviewId, findingIdentity: comments[0]!.findingIdentity } },
+            ]));
+            expect(screen.findByTestId('review-finding-seen-loading:seen-root-0')).not.toBeNull();
+            await act(async () => { held.resolve(Response.json({ error: 'history_temporarily_unavailable' }, { status: 503 })); });
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-finding-seen-retry:seen-root-0')).not.toBeNull());
+            retry = true;
+            await screen.pressByTestIdAsync('review-finding-seen-retry:seen-root-0');
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-finding-seen-link:seen-root-0:earlier-root')).not.toBeNull());
+            // The canonical Expo boundary renders Link as an inert native node; its href is the navigation contract.
+            expect(screen.findByTestId('review-finding-seen-link:seen-root-0:earlier-root')?.props.href)
+                .toBe(artifactViewRoute('authorized-earlier', { thread: 'earlier-root' }));
+            expect(screen.findAll(node => typeof node.type === 'string'
+                && String(node.props.testID).startsWith('review-finding-seen-link:seen-root-0:'))).toHaveLength(3);
+            // The external recycler retains the complete result; off-screen matches are not truncated.
+            expect(screen.findByTestId('review-finding-seen-matches:seen-root-0')?.props.data).toHaveLength(earlierMatches.length);
+            await screen.pressByTestIdAsync('review-finding-toggle:seen-root-1');
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-finding-seen-empty:seen-root-1')).not.toBeNull());
+            expect(screen.findByTestId('review-finding-seen-link:seen-root-0:earlier-root')).toBeNull();
+            expect(served.requests.filter(request => request.path === '/v1/reviews/history/list')).toMatchObject([
+                { body: { reviewId, findingIdentity: comments[0]!.findingIdentity } },
+                { body: { reviewId, findingIdentity: comments[0]!.findingIdentity } },
+                { body: { reviewId, findingIdentity: comments[1]!.findingIdentity } },
+            ]);
+            await screen.pressByTestIdAsync('review-finding-toggle:seen-root-1');
+            await flushHookEffects();
+            expect(served.requests.filter(request => request.path === '/v1/reviews/history/list')).toHaveLength(3);
+        } finally { held.resolve(Response.json({ matches: [] })); await screen.unmount(); }
+    });
+
     it('opens workflow finding history only from the Review Activity tab and makes no history read for a direct Review', async () => {
         const { served } = await setup('document', undefined, false, request => {
             if (request.path === '/v1/reviews/get') {

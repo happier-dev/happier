@@ -1,19 +1,28 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
+import type { ReviewSeenBeforeResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
 
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { Link } from '@/components/appShell/workspace/destinationRoute';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { ReviewFindingPluginContent } from '@/components/reviews/plugins/ReviewPluginContent';
 import { CodeBlockViewFrame } from '@/components/ui/code/blocks/CodeBlockViewFrame';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
+import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
+import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Typography } from '@/constants/Typography';
+import type { ReviewHistorySnapshot } from '@/sync/store/domains/reviews/history';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
+import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 
 import { formatReviewFindingLocation } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
 
@@ -21,6 +30,12 @@ import { formatReviewFindingLocation } from '@/components/sessions/reviews/findi
 export type ReviewFindingReviewer = Readonly<{
   label: string;
   backendId: string;
+}>;
+
+export type ReviewFindingSeenBefore = Readonly<{
+  history: Pick<ReviewHistorySnapshot, 'status' | 'error'> & Readonly<{ data: ReviewSeenBeforeResponseV1 | null }>;
+  href: (match: ReviewSeenBeforeResponseV1['matches'][number]) => string;
+  onRetry: () => void;
 }>;
 
 /**
@@ -36,6 +51,7 @@ export function ReviewFindingBody(
     /** The canonical comment's current explanation; finding evidence remains its original snapshot. */
     currentBodyMarkdown?: string;
     reviewContext?: Readonly<{ reviewId: string; commentId: string; serverId: string }>;
+    seenBefore?: ReviewFindingSeenBefore;
     reviewers: readonly ReviewFindingReviewer[];
     /** A line between the cause and the code ("Updated after your question", why a decision can't be saved). */
     notice?: React.ReactNode;
@@ -82,6 +98,7 @@ export function ReviewFindingBody(
       {props.reviewContext && finding.extensions ? (
         <ReviewFindingPluginContent {...props.reviewContext} extensions={finding.extensions} />
       ) : null}
+      {props.seenBefore ? <ReviewFindingSeenBeforeHistory rowId={props.rowId} {...props.seenBefore} /> : null}
       <View
         testID={`review-finding-conversation:${props.rowId}`}
         style={styles.section}
@@ -99,6 +116,33 @@ export function ReviewFindingBody(
       </View>
     </View>
   );
+}
+
+function ReviewFindingSeenBeforeHistory(props: ReviewFindingSeenBefore & Readonly<{ rowId: string }>) {
+  const { history, rowId } = props;
+  const { height } = useWindowDimensions();
+  const retry = { testID: `review-finding-seen-retry:${rowId}`, label: t('common.retry'), onPress: props.onRetry };
+  const failure = history.error ? resolveActionExecutionErrorMessage(history.error, t('common.error')) : null;
+  return <View testID={`review-finding-seen:${rowId}`} style={styles.section}>
+    <Text accessibilityRole="header" variant="label" emphasis="semiBold" style={styles.label}>
+      {t('reviewWalkthrough.detail.seenBefore')}
+    </Text>
+    {!history.data && history.status !== 'error' ? <SurfaceStateCard testID={`review-finding-seen-loading:${rowId}`}
+      kind="loading" size="line" title={t('common.loading')} /> : null}
+    {failure ? history.data ? <SurfaceFreshnessLine reason={failure} action={retry} />
+      : <SurfaceStateCard kind="error" size="line" title={failure} action={retry} /> : null}
+    {history.data?.matches.length === 0 ? <SurfaceStateCard testID={`review-finding-seen-empty:${rowId}`}
+      kind="empty" size="line" title={t('reviewWalkthrough.detail.historyEmpty')} /> : null}
+    {history.data && history.data.matches.length > 0 ? <VirtualizedList
+      testID={`review-finding-seen-matches:${rowId}`} data={history.data.matches}
+      style={{ height: Math.min(height, history.data.matches.length * PAGE_ROW_TOUCH_MIN_HEIGHT_PX) }}
+      estimatedItemSize={PAGE_ROW_TOUCH_MIN_HEIGHT_PX}
+      keyExtractor={match => `${match.reviewId}:${match.commentId}`}
+      renderItem={({ item: match }) => <Link testID={`review-finding-seen-link:${rowId}:${match.commentId}`}
+        href={props.href(match) as never} style={styles.cause}>
+        {t('reviewWalkthrough.fromReviewAt', { time: formatShortRelativeTime(match.createdAt) })}
+      </Link>} /> : null}
+  </View>;
 }
 
 /** Where: the flagged lines with the suggested fix applied, or the place alone when no fix came with it. */

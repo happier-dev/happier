@@ -12927,6 +12927,7 @@ const pl: ReviewWalkthroughTranslations = {
         tabRuns: 'Uruchomienia',
         tabActivity: 'Aktywność',
         historyEarlierRuns: ({ count }) => `Także w ${count} wcześniejszych uruchomieniach`,
+        seenBefore: 'Widziane wcześniej',
         historyEmpty: 'Brak wcześniejszych ustaleń do wyświetlenia',
         newInRound: ({ round }) => `Nowe w rundzie ${round}`,
         stillThere: 'Nadal występuje',

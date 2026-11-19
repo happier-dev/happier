@@ -12927,6 +12927,7 @@ const ru: ReviewWalkthroughTranslations = {
         tabRuns: 'Запуски',
         tabActivity: 'Активность',
         historyEarlierRuns: ({ count }) => `Также в предыдущих запусках: ${count}`,
+        seenBefore: 'Встречалось ранее',
         historyEmpty: 'Нет предыдущих замечаний для показа',
         newInRound: ({ round }) => `Новое в раунде ${round}`,
         stillThere: 'Всё ещё есть',

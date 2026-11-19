@@ -12790,6 +12790,7 @@ const zhHant: ReviewWalkthroughTranslations = {
         tabRuns: '執行',
         tabActivity: '動態',
         historyEarlierRuns: ({ count }) => `也出現在先前的 ${count} 次執行中`,
+        seenBefore: '先前曾出現',
         historyEmpty: '沒有可顯示的先前發現',
         newInRound: ({ round }) => `第 ${round} 輪新增`,
         stillThere: '仍然存在',

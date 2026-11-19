@@ -10,6 +10,7 @@ import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { ReviewHumanActionStateV1, ReviewVerdictKindV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { artifactViewRoute } from '@/components/artifacts/artifactViewRoute';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useSharePrincipalNames } from '@/components/sharing/sharePrincipalNames';
 import { presentSharePrincipal, sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
@@ -269,6 +270,10 @@ export function ReviewDetailHost(props: Readonly<{
     onDecideComment: decide });
   const findingById = React.useMemo(() => new Map(findings.rows.map(row => [row.rowId, row])), [findings.rows]);
   const commentById = React.useMemo(() => new Map(comments.comments.map(comment => [comment.id, comment])), [comments.comments]);
+  const openedFindingComment = openFinding && findingById.has(openFinding) ? commentById.get(openFinding) : undefined;
+  const seenBefore = useReviewHistory({ reviewId: record?.reviewId ?? artifact.id,
+    findingIdentity: openedFindingComment?.findingIdentity ?? '' },
+  { scope, enabled: presented && activeTab === 'findings' && openedFindingComment !== undefined });
   const findingTitles = React.useMemo(() => new Map(comments.comments.flatMap(comment =>
     comment.findingIdentity && comment.finding ? [[comment.findingIdentity, comment.finding.title] as const] : [])), [comments.comments]);
   const history = useReviewHistory({ reviewId: record?.reviewId ?? artifact.id, workflowId: review?.workflowId },
@@ -344,6 +349,8 @@ export function ReviewDetailHost(props: Readonly<{
                 const row = findingById.get(rowId);
                 return row ? <ReviewFindingRow rowId={row.rowId} finding={row.finding} currentBodyMarkdown={row.currentBodyMarkdown}
                   reviewContext={scope ? { reviewId: record.reviewId, commentId: row.rowId, serverId: scope.serverId } : undefined}
+                  seenBefore={openFinding === row.rowId ? { history: seenBefore, onRetry: () => void seenBefore.refresh(),
+                    href: match => artifactViewRoute(match.reviewId, { thread: match.commentId }) } : undefined}
                   attribution={row.attribution} reviewers={row.reviewers} original={row.original} density="page" divided={divided}
                   decision={canEdit ? row.decision : null} decisionDisabled={!row.decidable} decisionNote={null}
                   onDecide={findings.onDecide} followUp={row.followUp} threadEntries={row.threadEntries} pendingQuestion={null}

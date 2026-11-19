@@ -12790,6 +12790,7 @@ const zhHans: ReviewWalkthroughTranslations = {
         tabRuns: '运行',
         tabActivity: '动态',
         historyEarlierRuns: ({ count }) => `也出现在之前的 ${count} 次运行中`,
+        seenBefore: '此前出现过',
         historyEmpty: '没有可显示的先前发现',
         newInRound: ({ round }) => `第 ${round} 轮新增`,
         stillThere: '仍然存在',

@@ -12850,6 +12850,7 @@ const ja: ReviewWalkthroughTranslations = {
         tabRuns: '実行',
         tabActivity: 'アクティビティ',
         historyEarlierRuns: ({ count }) => `過去の ${count} 回の実行にも出現`,
+        seenBefore: '以前にも検出',
         historyEmpty: '表示する過去の指摘はありません',
         newInRound: ({ round }) => `ラウンド${round}で新規`,
         stillThere: 'まだ残っています',

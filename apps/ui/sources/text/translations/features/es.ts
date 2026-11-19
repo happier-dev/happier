@@ -12798,6 +12798,7 @@ const es: ReviewWalkthroughTranslations = {
         tabRuns: 'Ejecuciones',
         tabActivity: 'Actividad',
         historyEarlierRuns: ({ count }) => `También en ${count} ejecuciones anteriores`,
+        seenBefore: 'Visto antes',
         historyEmpty: 'No hay hallazgos anteriores que mostrar',
         newInRound: ({ round }) => `Nuevo en la ronda ${round}`,
         stillThere: 'Sigue ahí',
