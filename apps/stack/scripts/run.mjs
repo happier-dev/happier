@@ -988,7 +988,6 @@ async function main() {
       ? await readRunningStackIdentityDaemons({
         runtimeState: sourceRuntime, cliHomeDir, skipped,
         stackName, serverUrl: effectiveInternalServerUrl, env: daemonScopeEnv,
-        excludeRuntimeEntrypoint: sourceLaunch.entrypoint,
       }) : [];
     const launchOptions = {
       cliBin,
@@ -1035,6 +1034,7 @@ async function main() {
           cliIdentity: identity,
           env: { ...daemonScopeEnv, HAPPIER_STACK_CLI_IDENTITY: identity },
           forceRestart: true, preserveExistingRunning: false, preserveSessionsOnRestart: true,
+          refreshSelectedSource: true,
           sourceRuntimeLaunchUpdate: {
             launch: sourceLaunch,
             identity: sourceRuntime.sourceRuntimeIdentities.daemon.selected,

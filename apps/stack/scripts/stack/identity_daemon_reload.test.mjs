@@ -129,11 +129,12 @@ for (const thrown of [false, true]) test(`reload publishes exactly one outcome p
   t.after(() => { console.log = log; console.warn = warn; });
   const skipped = [];
   const identities = await readRunningStackIdentityDaemons({
-    runtimeState: { daemon: { desiredStateByIdentity: { restored: 'running', refused: 'running', stopped: 'stopped' } } },
+    runtimeState: { daemon: { desiredStateByIdentity: { current: 'running', restored: 'running', refused: 'running', stopped: 'stopped' } } },
     cliHomeDir: join(root, 'cli'), stackName: 'outcomes', env: {}, skipped,
   }, { checkDaemonStateImpl: async () => ({ status: 'running' }) });
   const result = await restartStackIdentityDaemons({ stackName: 'outcomes', identities, skipped, stackBaseDir: root }, {
     startIdentityDaemonImpl: async identity => {
+      if (identity === 'current') return { ok: true, started: false, reason: 'already_selected' };
       if (identity === 'restored') return { started: true };
       const refusal = { ok: false, code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', reason: 'closure_changed' };
       if (thrown) throw Object.assign(new Error('private diagnostic'), refusal);
@@ -141,7 +142,7 @@ for (const thrown of [false, true]) test(`reload publishes exactly one outcome p
     },
   });
   assert.deepEqual(result.failures, [{ identity: 'refused', code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', reason: 'closure_changed' }]);
-  for (const identity of ['restored', 'refused', 'stopped']) {
+  for (const identity of ['current', 'restored', 'refused', 'stopped']) {
     assert.equal(lines.filter(line => line.includes(`identity daemon ${identity} `)).length, 1);
   }
   assert.match(lines.find(line => line.includes('identity daemon restored ')), /restored/);
@@ -152,6 +153,10 @@ for (const thrown of [false, true]) test(`reload publishes exactly one outcome p
   assert.equal(status.status, thrown ? 'ready' : undefined);
   assert.equal(status.logPath, thrown ? '/existing-log' : undefined);
   assert.deepEqual(status.identityRestore.failures, result.failures);
+  assert.deepEqual(status.identityRestore.skipped, [
+    { identity: 'stopped', reason: 'owner_stopped' },
+    { identity: 'current', reason: 'already_selected' },
+  ]);
 });
 
 test('a daemon start that did not start is never reported restored', async () => {

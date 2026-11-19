@@ -125,6 +125,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
   const action = (positionals[0] ?? 'status').toString().trim();
   const identity = parseCliIdentityOrThrow((kv.get('--identity') ?? '').trim());
   const noOpen = flags.has('--no-open') || flags.has('--no-browser') || flags.has('--no-browser-open');
+  const refreshSelectedSource = flags.has('--if-source-stale');
 
   if (wantsHelpFlag || !action || action === 'help') {
     printResult({
@@ -245,7 +246,9 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
           }
         }
 
-        await recordStackRuntimeDaemonDesiredState(runtimePath, 'running', { cliIdentity: identity });
+        if (!refreshSelectedSource) {
+          await recordStackRuntimeDaemonDesiredState(runtimePath, 'running', { cliIdentity: identity });
+        }
         const startResult = await startLocalDaemonWithAuth({
           cliBin,
           cliEntrypoint,
@@ -264,6 +267,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
           ...runtimeProvenance,
           sourceRuntimeLaunchUpdate,
           preserveSessionsOnRestart: Boolean(sourceRuntimeLaunchUpdate),
+          refreshSelectedSource,
         });
         if (startResult?.ok === false) {
           return {

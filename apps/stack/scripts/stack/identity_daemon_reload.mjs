@@ -16,7 +16,6 @@ export async function readRunningStackIdentityDaemons({
   stackName,
   serverUrl,
   env,
-  excludeRuntimeEntrypoint = null,
   skipped = [],
 } = {}, {
   checkDaemonStateImpl = checkDaemonStatePingAware,
@@ -50,11 +49,10 @@ export async function readRunningStackIdentityDaemons({
       skip(identity, typedReason(observation.reason));
       continue;
     }
-    if (observation?.status === 'running'
-      && (!excludeRuntimeEntrypoint || observation.runtimeEntrypoint !== excludeRuntimeEntrypoint)) {
+    if (observation?.status === 'running') {
       running.push(identity);
     } else {
-      skip(identity, observation?.status === 'running' ? 'already_selected' : typedReason(observation?.status ?? 'not_running'));
+      skip(identity, typedReason(observation?.status ?? 'not_running'));
     }
   }
   return running;
@@ -75,6 +73,7 @@ export async function restartStackIdentityDaemons({
       stackName,
       argv: [
         'restart',
+        '--if-source-stale',
         ...(String(env?.HAPPIER_STACK_RUNTIME_MODE ?? '').trim() === 'source' ? ['--runtime=source'] : []),
         `--identity=${identity}`,
       ],
@@ -96,7 +95,7 @@ export async function restartStackIdentityDaemons({
     try {
       const result = await startIdentityDaemonImpl(identity);
       if (result?.ok === false || result?.started === false) {
-        if (result?.reason === 'daemon-stopped-by-owner') {
+        if (result?.reason === 'daemon-stopped-by-owner' || result?.reason === 'already_selected') {
           skipped.push({ identity, reason: result.reason });
           outcome = `skipped (reason=${result.reason})`;
         } else {

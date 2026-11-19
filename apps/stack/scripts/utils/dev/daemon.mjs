@@ -365,7 +365,6 @@ export function createHappyCliReloadExecutor({
         ? await readRunningStackIdentityDaemons({
           runtimeState: await readStackRuntimeStateFileImpl(runtimeStatePath), cliHomeDir, skipped,
           stackName, serverUrl: internalServerUrl, env,
-          excludeRuntimeEntrypoint: successor.launch.entrypoint,
         }) : [];
       const refreshIdentities = () => restartStackIdentityDaemons({ stackName, identities, skipped,
         stackBaseDir: runtimeStatePath ? dirname(runtimeStatePath) : null }, {
@@ -374,6 +373,7 @@ export function createHappyCliReloadExecutor({
           cliIdentity: identity,
           env: { ...env, HAPPIER_STACK_CLI_IDENTITY: identity },
           forceRestart: true, preserveSessionsOnRestart: true,
+          refreshSelectedSource: true,
         }),
       });
       const ping = await pingDaemonImpl({

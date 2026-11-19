@@ -1983,6 +1983,7 @@ export async function startLocalDaemonWithAuth({
   admittedDistClosureFingerprint = null,
   sourceRuntimeLaunchUpdate = null,
   preserveSessionsOnRestart = false,
+  refreshSelectedSource = false,
   allowSignInRequired = false,
   // Set when this runner's server readiness already proved the live server publishes this stack's
   // own recorded Home identity; otherwise profile reconciliation proves it for this CLI identity.
@@ -2235,6 +2236,18 @@ export async function startLocalDaemonWithAuth({
       throw new Error('[stack] session-preserving source restart requires a prepared source daemon launch and runtime state.');
     }
     const { launch, identity } = sourceRuntimeLaunchUpdate;
+    // A participant may have loaded this source while waiting for the lifecycle lock.
+    if (refreshSelectedSource) {
+      const daemon = await checkDaemonStatePingAware(cliHomeDir, {
+        serverUrl: internalServerUrl, env: daemonEnv, stackName: resolvedStackName,
+      });
+      if (daemon.status === 'running'
+        && daemon.runtimeEntrypoint === launch.entrypoint
+        && !daemon.sourceRuntimeReloadRequired
+        && await daemonEnvMatches({ pid: daemon.pid, cliHomeDir, internalServerUrl, publicServerUrl }) !== false) {
+        return { ok: true, started: false, reason: 'already_selected' };
+      }
+    }
     await recordStackRuntimeUpdate(runtimeStatePath, {
       sourceRuntimeLaunch: launch,
       ...(recordsDefaultSourceIdentity ? { sourceRuntimeIdentities: { daemon: { selected: identity, loaded: null } } } : {}),
