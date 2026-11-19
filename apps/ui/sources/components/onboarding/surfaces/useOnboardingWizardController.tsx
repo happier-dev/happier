@@ -1208,8 +1208,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     const handleAccountDirectoryHomeAuthenticationBack = React.useCallback(() => {
         setAccountDirectoryHomeRecovery(null);
         setAccountDirectoryKeyRequest(null);
-        dispatch({ type: 'wizard/goToStep', stepId: 'welcome' });
-    }, []);
+        handleBackToWelcome();
+    }, [handleBackToWelcome]);
 
     const handleOpenAccountServiceSelection = React.useCallback(() => {
         dispatch({ type: 'wizard/goToStep', stepId: 'auth_service_select' });
@@ -1521,7 +1521,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         onRestoreNavigationLockChange: setRestoreNavigationLocked,
         onRelayAccessAdvance: handleRelayAccessAdvance,
         onHostRelayRemoteAdvance: () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_access' }),
-        onHostRelayRemoteCancel: () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' }),
+        onHostRelayRemoteCancel: () => dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' }, 'back'),
         onRemoteRelayRuntimeCompleted: handleRemoteRelayRuntimeCompletedChange,
     });
 

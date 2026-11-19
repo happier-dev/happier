@@ -1,6 +1,6 @@
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -74,7 +74,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     const actionId = props.actionId ?? props.testID;
     const pending = !escape && admission.pendingActionId === actionId;
     const row = props.presentation === 'row';
-    const subtitleId = props.subtitle && !row ? `welcome-action-description-${encodeURIComponent(actionId)}` : undefined;
+    const web = Platform.OS === 'web';
+    const subtitleId = web && props.subtitle && !row ? `welcome-action-description-${encodeURIComponent(actionId)}` : undefined;
     const foreground = primary ? theme.colors.button.primary.tint : props.presentation === 'link' ? theme.colors.text.secondary : theme.colors.text.primary;
     const subtitleColor = primary ? theme.colors.button.primary.tint : theme.colors.text.secondary;
     const pressFeedback = usePressFeedback();
@@ -105,6 +106,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     return (
         <HappierPressable
             testID={props.testID}
+            nativeID={web ? undefined : props.testID}
             controlRef={props.controlRef}
             accessibilityRole={props.selectionRole ?? 'button'}
             {...(props.selectionRole

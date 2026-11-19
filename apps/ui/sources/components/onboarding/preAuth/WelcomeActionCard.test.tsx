@@ -25,7 +25,9 @@ describe('WelcomeActionCard', () => {
             accessibilityRole: 'button',
             accessibilityLabel: 'Continue',
             accessibilityHint: 'Use this Home',
+            nativeID: 'welcome-action',
         });
+        expect(screen.findByTestId('welcome-action-subtitle')?.props.nativeID).toBeUndefined();
         await screen.pressByTestIdAsync('welcome-action');
         expect(onPress).toHaveBeenCalledOnce();
     });
