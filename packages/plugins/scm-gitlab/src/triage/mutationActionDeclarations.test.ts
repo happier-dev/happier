@@ -3,9 +3,8 @@
  * human control and centrally approved agent surfaces.
  *
  * The mounted contributed-Action dispatcher host-stamps `executionSurface: 'ui'`.
- * `plugin` is reserved for direct plugin/backend execution, so adding it here
- * would widen these human mutations beyond the detail-panel interaction that
- * owns them. Agent, MCP and CLI invocation use the shared host approval owner.
+ * The same declarations admit direct plugin execution for authorized callers.
+ * Agent, MCP, CLI and plugin invocation use the shared host approval owner.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -66,8 +65,8 @@ describe('GitLab merge-request write declarations', () => {
     expect(new Set(declared).size).toBe(declared.length);
   });
 
-  it.each(WRITE_IDS)('%s preserves its native surfaces and central approval metadata', (id) => {
-    expect(declarationOf(id).surfaces).toEqual(['ui', 'agent', 'mcp', 'cli']);
+  it.each(WRITE_IDS)('%s declares the mounted and automation surfaces', (id) => {
+    expect(declarationOf(id).surfaces).toEqual(['ui', 'agent', 'mcp', 'cli', 'plugin']);
   });
 
   it.each(WRITE_IDS)('%s carries a confirmation and a non-safe danger level', (id) => {
@@ -86,6 +85,6 @@ describe('GitLab merge-request write declarations', () => {
 
     expect(inputSchema).toContain('"approve"');
     expect(inputSchema).toContain('"comment"');
-    expect(inputSchema).not.toContain('"requestChanges"');
+    expect(inputSchema).toContain('"requestChanges"');
   });
 });
