@@ -6470,10 +6470,12 @@ below for this Session's Agent tree. The context the Agent can read
 through `agentVisibleSessionMcpContext`) names the socket only, so an Agent's
 shell context carries no Session MCP bearer. In current 0.3 development, each
 local Agent relay receives its own bridge registration's bearer only in its MCP
-client config env (`HAPPIER_SESSION_MCP_BEARER`; Codex projects that env as a
-config override on its own command line). This selects the parent or Run's exact
-catalog when both bridges belong to the same Session holder; anonymous peer
-proof still refuses ambiguous registrations. The Session message writer
+client config env (`HAPPIER_SESSION_MCP_BEARER`). Codex supplies that config in
+the app-server's `thread/start`, `thread/resume`, and `thread/fork` requests.
+Restricted launches apply the native confinement policy at process startup and
+bind the allowed MCP servers on the thread. The bearer selects the parent or
+Run's exact catalog when both bridges belong to the same Session holder.
+Anonymous peer proof still refuses ambiguous registrations. The Session message writer
 (`buildOutboundSessionMessagePayload`) redacts each live registration bearer by
 exact value before storage. Where no socket transport exists (Windows), the
 127.0.0.1 endpoint stays bearer-only; the follow-up is a Windows named-pipe

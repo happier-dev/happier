@@ -1,3 +1,5 @@
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+
 import { readThreadId } from '../../../runtime/appServer/wire/fields.js';
 import { isCodexAppServerApplicationRejectionForMethod } from '../../../runtime/appServer/compatibility.js';
 import { readExactCodexProviderSessionId } from '../../../../protocol/runtimeDescriptorV1.js';
@@ -13,6 +15,7 @@ export type CodexAppServerNativeForkClient = Readonly<{
       threadId: string;
       persistExtendedHistory: true;
       excludeTurns?: true;
+      config?: Readonly<Record<string, JsonValue>>;
     }>,
     options?: Readonly<{ signal?: AbortSignal; timeoutMs?: number | null }>,
   ): Promise<unknown>;
@@ -68,6 +71,7 @@ function isDefinitiveNativeForkMethodUnsupported(
 async function attemptCodexNativeAppServerConversationFork(params: Readonly<{
   client: CodexAppServerNativeForkClient;
   parentCodexSessionId: string;
+  config?: Readonly<Record<string, JsonValue>>;
   signal?: AbortSignal;
   onEvent?: (event: CodexAppServerNativeForkEvent) => void;
 }>): Promise<CodexAppServerNativeForkOutcome> {
@@ -90,6 +94,7 @@ async function attemptCodexNativeAppServerConversationFork(params: Readonly<{
         threadId: parentCodexSessionId,
         persistExtendedHistory: true,
         ...(method === 'thread/fork' ? { excludeTurns: true } : {}),
+        ...(params.config && Object.keys(params.config).length > 0 ? { config: params.config } : {}),
       }, {
         ...NATIVE_FORK_REQUEST_OPTIONS,
         ...(params.signal ? { signal: params.signal } : {}),
@@ -130,6 +135,7 @@ async function attemptCodexNativeAppServerConversationFork(params: Readonly<{
 export async function forkCodexNativeAppServerConversation(params: Readonly<{
   client: CodexAppServerNativeForkClient;
   parentCodexSessionId: string;
+  config?: Readonly<Record<string, JsonValue>>;
   signal?: AbortSignal;
   onEvent?: (event: CodexAppServerNativeForkEvent) => void;
 }>): Promise<CodexAppServerNativeForkResult | null> {

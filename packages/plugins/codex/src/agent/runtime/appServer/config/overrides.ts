@@ -168,7 +168,7 @@ export function buildCodexAppServerConfigOverrides(
         promptProfile?: AgentSessionOpenRequest['promptProfile'];
         mcpToolPolicy?: Readonly<Record<string, AgentSessionMcpToolPolicy>>;
     }> & CodexToolRestrictionConfiguration = {},
-): string[] {
+): Readonly<{ processOverrides: readonly string[]; mcpOverrides: readonly string[] }> {
     const serverNames = listCodexAppServerMcpServerNames(mcpServers, options);
     const injectedKeys = assignInjectedServerKeys(serverNames);
     const overrides = buildCodexUnlistedToolConfigOverrides(options);
@@ -196,6 +196,8 @@ export function buildCodexAppServerConfigOverrides(
         overrides.push('features.tool_call_mcp_elicitation=false');
     }
 
+    // These entries carry Session values and are delivered only by thread RPC.
+    const mcpOverrides: string[] = [];
     for (const serverName of [...serverNames].sort((left, right) => left.localeCompare(right))) {
         const config = mcpServers[serverName];
         const injectedKey = injectedKeys.get(serverName);
@@ -207,17 +209,17 @@ export function buildCodexAppServerConfigOverrides(
             });
         }
 
-        overrides.push(`mcp_servers.${injectedKey}.command=${quoteTomlString(config.command)}`);
+        mcpOverrides.push(`mcp_servers.${injectedKey}.command=${quoteTomlString(config.command)}`);
         if (Array.isArray(config.args) && config.args.length > 0) {
-            overrides.push(`mcp_servers.${injectedKey}.args=${serializeTomlStringArray(config.args)}`);
+            mcpOverrides.push(`mcp_servers.${injectedKey}.args=${serializeTomlStringArray(config.args)}`);
         }
         if (config.env && Object.keys(config.env).length > 0) {
-            overrides.push(`mcp_servers.${injectedKey}.env=${serializeTomlInlineTable(config.env)}`);
+            mcpOverrides.push(`mcp_servers.${injectedKey}.env=${serializeTomlInlineTable(config.env)}`);
         }
-        overrides.push(`mcp_servers.${injectedKey}.enabled=true`);
+        mcpOverrides.push(`mcp_servers.${injectedKey}.enabled=true`);
         if (isFirstPartyHappierMcpBridgeServerName(serverName)) {
-            overrides.push(`mcp_servers.${injectedKey}.required=true`);
-            overrides.push(`mcp_servers.${injectedKey}.startup_timeout_sec=${happierMcpStartupTimeoutMs / 1_000}`);
+            mcpOverrides.push(`mcp_servers.${injectedKey}.required=true`);
+            mcpOverrides.push(`mcp_servers.${injectedKey}.startup_timeout_sec=${happierMcpStartupTimeoutMs / 1_000}`);
         }
         const policy = isFirstPartyHappierMcpBridgeServerName(serverName) ? undefined : options.mcpToolPolicy?.[serverName];
         const disabledTools = policy ? Object.entries(policy.tools)
@@ -227,27 +229,27 @@ export function buildCodexAppServerConfigOverrides(
             : policy?.unlisted === 'deny' ? Object.entries(policy.tools)
                 .filter(([, setting]) => setting === 'ask' || setting === 'allow').map(([tool]) => tool) : undefined;
         if (enabledTools) {
-            overrides.push(`mcp_servers.${injectedKey}.enabled_tools=${serializeTomlStringArray(enabledTools)}`);
+            mcpOverrides.push(`mcp_servers.${injectedKey}.enabled_tools=${serializeTomlStringArray(enabledTools)}`);
         }
         if (policy) {
-            if (disabledTools.length) overrides.push(`mcp_servers.${injectedKey}.disabled_tools=${serializeTomlStringArray(disabledTools)}`);
+            if (disabledTools.length) mcpOverrides.push(`mcp_servers.${injectedKey}.disabled_tools=${serializeTomlStringArray(disabledTools)}`);
             // Native Runs have no live configuration setter. Even Allow must
             // ask the existing host handler rather than bypass revocation.
-            overrides.push(`mcp_servers.${injectedKey}.default_tools_approval_mode=${quoteTomlString('prompt')}`);
+            mcpOverrides.push(`mcp_servers.${injectedKey}.default_tools_approval_mode=${quoteTomlString('prompt')}`);
             for (const [tool, setting] of Object.entries(policy.tools)) {
                 if (setting === 'ask' || setting === 'allow') {
-                    overrides.push(`mcp_servers.${injectedKey}.tools.${quoteTomlString(tool)}.approval_mode=${quoteTomlString('prompt')}`);
+                    mcpOverrides.push(`mcp_servers.${injectedKey}.tools.${quoteTomlString(tool)}.approval_mode=${quoteTomlString('prompt')}`);
                 }
             }
         } else if (config.enabledTools) {
-            overrides.push(`mcp_servers.${injectedKey}.default_tools_approval_mode=${quoteTomlString('approve')}`);
+            mcpOverrides.push(`mcp_servers.${injectedKey}.default_tools_approval_mode=${quoteTomlString('approve')}`);
         }
         if (isFirstPartyHappierMcpBridgeServerName(serverName)) {
             const timeoutMs = readCodexHappierMcpToolCallTimeoutMs(options.processEnv);
-            overrides.push(`mcp_servers.${injectedKey}.tool_timeout_sec=${timeoutMs / 1_000}`);
-            appendHappierMcpStaticApprovalOverrides(overrides, injectedKey);
+            mcpOverrides.push(`mcp_servers.${injectedKey}.tool_timeout_sec=${timeoutMs / 1_000}`);
+            appendHappierMcpStaticApprovalOverrides(mcpOverrides, injectedKey);
         }
     }
 
-    return overrides;
+    return { processOverrides: overrides, mcpOverrides };
 }

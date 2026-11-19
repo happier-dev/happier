@@ -23,7 +23,6 @@ export async function readCodexToolRestrictionEvidence(params: Readonly<{
     timeoutMs: number;
     configOverrides?: readonly string[];
     cwd?: string;
-    allowedMcpServerKeys?: readonly string[];
     nativeHome?: AgentSessionNativeHomeService;
     signal?: AbortSignal;
 }>): Promise<Pick<DisposableCodexAppServerClient['launchFeatures'], 'toolRestrictionSupportedModelIds' | 'toolRestrictionAccountId'>> {
@@ -37,9 +36,10 @@ export async function readCodexToolRestrictionEvidence(params: Readonly<{
         throw new PluginError({ code: 'codex_tool_restriction_unsupported_runtime', message: 'Codex did not apply its native tool-namespace exclusion.' });
     }
     const mcpServers = config && typeof config === 'object' ? (config as { mcp_servers?: unknown }).mcp_servers : null;
-    const allowedServerKeys = new Set(params.allowedMcpServerKeys ?? []);
-    if (!mcpServers || typeof mcpServers !== 'object' || Array.isArray(mcpServers) || Object.entries(mcpServers).some(([key, value]) => (
-        !allowedServerKeys.has(key) && (!value || typeof value !== 'object' || (value as { enabled?: unknown }).enabled !== false)
+    // Every host-selected server is configured on its thread. Any enabled entry
+    // here would come from ambient Codex configuration.
+    if (!mcpServers || typeof mcpServers !== 'object' || Array.isArray(mcpServers) || Object.values(mcpServers).some(value => (
+        !value || typeof value !== 'object' || (value as { enabled?: unknown }).enabled !== false
     ))) {
         throw new PluginError({ code: 'codex_tool_restriction_unsupported_runtime', message: 'Codex has enabled MCP servers outside the host-selected recipe.' });
     }

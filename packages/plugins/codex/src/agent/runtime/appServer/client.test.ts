@@ -313,6 +313,43 @@ describe('createCodexAppServerClient', () => {
         }
     });
 
+    it('delivers Session MCP credentials on the native fork RPC without putting them on a spawn or probe argv', async () => {
+        const capture = createCapturingExec({
+            async request(method, params): Promise<JsonValue> {
+                capture.requests.push({ method, params });
+                if (method === 'initialize') return { userAgent: 'happier_cli/0.162.1 (fixture)' };
+                if (method.startsWith('thread/')) return { thread: { id: '22222222-2222-4222-8222-222222222222' } };
+                return {};
+            },
+        });
+        const context = { signal: new AbortController().signal, services: { exec: capture.exec,
+            logger: { debug() {}, warn() {} }, sessions: { current: null } },
+            session: { id: 'fork-mcp', services: {} } } as unknown as AgentSessionRuntimeContext;
+        const runs = vi.mocked(capture.exec.run);
+        // A stdio-only native fixture needs no Unix socket service.
+        runs.mockImplementation(async request => processResult(request.args.includes('--version') ? 'codex-cli 0.130.0' : ''));
+
+        const runtime = await openCodexNativeAppServerSession({
+            kind: 'fork', sessionId: 'fork-mcp', cwd: osBoundary.home,
+            source: { sessionId: 'source-session', providerSessionId: '11111111-1111-4111-8111-111111111111' },
+            launchEnvironment: { values: { CODEX_HOME: osBoundary.home, CODEX_SQLITE_HOME: osBoundary.home }, unset: [] },
+            mcpServers: { happier: { command: 'fixture-bridge', env: { HAPPIER_SESSION_MCP_BEARER: 'fixture-fork-mcp-bearer' } } },
+        }, context);
+        try {
+            expect(capture.specs.length).toBeGreaterThan(0);
+            expect(capture.specs.flatMap(spec => spec.launch.args).join(' ')).not.toContain('fixture-fork-mcp-bearer');
+            expect(vi.mocked(capture.exec.run).mock.calls.flatMap(([request]) => request.args).join(' ')).not.toContain('fixture-fork-mcp-bearer');
+            expect(capture.requests.find(request => request.method === 'thread/fork')?.params).toMatchObject({
+                config: {
+                    'mcp_servers.happier.command': 'fixture-bridge',
+                    'mcp_servers.happier.env': { HAPPIER_SESSION_MCP_BEARER: 'fixture-fork-mcp-bearer' },
+                },
+            });
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
     it('launches one byte-equal app-server for Sessions that differ only in late-bound inputs and binds them at thread/start', async () => {
         // A parked app-server is adopted only when its launch is byte-equal to the Session's.
         // Exec is the genuine process boundary; the native Session, runtime and launch builder stay real.
@@ -478,7 +515,7 @@ describe('createCodexAppServerClient', () => {
         }, processResult(JSON.stringify({ models: [{ slug: 'fixture', tool_mode: 'code_mode_only' }] })));
         const client = await createCodexNativeAppServerClient({
             exec: capture.exec, processEnv: {}, toolRestrictionRequired: true,
-            configOverrides: buildCodexAppServerConfigOverrides({}, { unlistedTools: 'deny', allowedTools: [] }),
+            configOverrides: buildCodexAppServerConfigOverrides({}, { unlistedTools: 'deny', allowedTools: [] }).processOverrides,
         });
         await client.dispose();
     });
@@ -533,7 +570,7 @@ describe('createCodexAppServerClient', () => {
         await expect(createCodexNativeAppServerClient({
             exec: capture.exec, processEnv: {},
             toolRestrictionRequired: true,
-            configOverrides: buildCodexAppServerConfigOverrides({}, { unlistedTools: 'deny', allowedTools: [] }),
+            configOverrides: buildCodexAppServerConfigOverrides({}, { unlistedTools: 'deny', allowedTools: [] }).processOverrides,
         })).rejects.toMatchObject({
             code: 'codex_tool_restriction_unsupported_runtime',
             message: expect.stringContaining('machines.agents.install'),

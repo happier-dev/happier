@@ -69,7 +69,7 @@ import {
 } from './sharedServer.js';
 import { buildCodexExecutionRunBaseEnv } from '../../executionRuns/environment.js';
 import { readAgentStartupFailureDetails, readSessionStartupFailurePreview, sanitizeSessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, listCodexAppServerMcpServerNames } from './config/overrides.js';
+import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, codexConfigOverridesToThreadConfig, listCodexAppServerMcpServerNames } from './config/overrides.js';
 
 type CodexSharedAppServer = NonNullable<Awaited<ReturnType<typeof createCodexSharedAppServer>>>;
 
@@ -1068,6 +1068,7 @@ export async function openCodexNativeAppServerSession(
     throw new Error('Codex resume index reconciliation failed.');
   }
   if (request.kind === 'fork') {
+    const { processOverrides, mcpOverrides } = buildCodexAppServerConfigOverrides(request.mcpServers ?? {}, { ...request.configuration, skills: request.skills, mcpToolPolicy: request.mcpToolPolicy, promptProfile: request.promptProfile });
     const forkClient = await createCodexNativeAppServerClient({
       exec: context.services.exec,
       logger: context.services.logger,
@@ -1076,7 +1077,7 @@ export async function openCodexNativeAppServerSession(
       onStartupWaiting: waiting => context.session.services.publishWorkStatus?.(waiting ? 'waiting_for_startup_lock' : null),
       processEnv,
       signal: context.signal,
-      configOverrides: buildCodexAppServerConfigOverrides(request.mcpServers ?? {}, { ...request.configuration, skills: request.skills, mcpToolPolicy: request.mcpToolPolicy, promptProfile: request.promptProfile }),
+      configOverrides: processOverrides,
       disableUserMcpServers: request.configuration?.unlistedTools === 'deny',
       toolRestrictionRequired: request.configuration?.unlistedTools === 'deny',
       toolRestrictionAllowedMcpServerKeys: [...assignInjectedServerKeys(listCodexAppServerMcpServerNames(request.mcpServers ?? {}, request.configuration)).values()],
@@ -1089,6 +1090,7 @@ export async function openCodexNativeAppServerSession(
     try {
       const forked = await forkCodexNativeAppServerConversation({
         client: forkClient,
+        config: codexConfigOverridesToThreadConfig(mcpOverrides),
         parentCodexSessionId: request.source.providerSessionId,
         signal: context.signal,
       });
@@ -1254,13 +1256,14 @@ export async function openCodexNativeAppServerExecutionRunConversation(
     if (!sourceProviderSessionId) {
       throw new Error('Codex detached fork requires an exact provider checkpoint.');
     }
+    const { processOverrides, mcpOverrides } = buildCodexAppServerConfigOverrides(request.mcpServers ?? {}, { ...request.configuration, skills: request.skills, mcpToolPolicy: request.mcpToolPolicy });
     const forkClient = await createCodexNativeAppServerClient({
       exec: context.services.exec,
       logger: context.services.logger,
       cwd: request.cwd,
       processEnv,
       signal: context.signal,
-      configOverrides: buildCodexAppServerConfigOverrides(request.mcpServers ?? {}, { ...request.configuration, skills: request.skills, mcpToolPolicy: request.mcpToolPolicy }),
+      configOverrides: processOverrides,
       disableUserMcpServers: request.configuration?.unlistedTools === 'deny',
       initializeRequestOptions: { signal: context.signal, timeoutMs: null },
       toolRestrictionRequired: request.configuration?.unlistedTools === 'deny',
@@ -1271,6 +1274,7 @@ export async function openCodexNativeAppServerExecutionRunConversation(
     try {
       const forked = await forkCodexNativeAppServerConversation({
         client: forkClient,
+        config: codexConfigOverridesToThreadConfig(mcpOverrides),
         parentCodexSessionId: sourceProviderSessionId,
         signal: context.signal,
       });

@@ -2496,7 +2496,7 @@ export function createCodexAppServerRuntime(
     if (!clientPromise) {
       const clientStartedAt = Date.now();
       const processEnv = readRuntimeProcessEnv();
-      const sessionConfigOverrides = buildCodexAppServerConfigOverrides(mcpServers, {
+      const { processOverrides, mcpOverrides } = buildCodexAppServerConfigOverrides(mcpServers, {
         processEnv,
         ...params.toolRestriction,
         functionTools: params.functionTools,
@@ -2504,19 +2504,19 @@ export function createCodexAppServerRuntime(
         mcpToolPolicy: params.mcpToolPolicy,
         ...(params.appServerTransport !== 'daemonProxy' ? { skills: params.skills } : {}),
       });
-      // Session overrides bind per thread, so the app-server launch depends only on
-      // the executable, environment and transport. Two launches keep them at spawn:
-      // tool restriction proves its confinement from the process-level config
-      // (config/read, `debug models`), and a daemon proxy carries no launch overrides.
+      // The restricted server and its model probe need process-level confinement.
+      // MCP values are thread-scoped even for that process. An existing daemon
+      // proxy retains its own configuration.
       const bindsOverridesPerThread = params.toolRestriction?.unlistedTools !== 'deny'
         && params.appServerTransport !== 'daemonProxy';
-      clientThreadConfig = bindsOverridesPerThread
-        ? codexConfigOverridesToThreadConfig([...buildCodexUserMcpServerDisableOverrides(processEnv), ...sessionConfigOverrides])
-        : {};
+      clientThreadConfig = params.appServerTransport === 'daemonProxy' ? {} : codexConfigOverridesToThreadConfig([
+        ...(bindsOverridesPerThread ? [...buildCodexUserMcpServerDisableOverrides(processEnv), ...processOverrides] : []),
+        ...mcpOverrides,
+      ]);
       clientPromise = params.host.createClient({
         cwd: params.directory,
         processEnv,
-        configOverrides: bindsOverridesPerThread ? [] : sessionConfigOverrides,
+        configOverrides: bindsOverridesPerThread ? [] : processOverrides,
         disableUserMcpServers: !bindsOverridesPerThread,
         toolRestrictionRequired: params.toolRestriction?.unlistedTools === 'deny',
         toolRestrictionAllowedMcpServerKeys: [...mcpServerKeys.values()],

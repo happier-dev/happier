@@ -2966,20 +2966,34 @@ describe('native Codex attachment preparation', () => {
     },
   );
   it.skipIf(process.platform === 'win32')(
-    'launches the shared native server with the frozen recipe and canonical filtered MCP catalog',
+    'delivers the restricted MCP recipe to the thread without exposing credentials on shared server argv',
     async () => {
       await withFixture(
-        async ({ openConfiguredSession, nativeLaunches }) => {
+        async ({ exec, openConfiguredSession, nativeLaunches, requests }) => {
+          const nativeProbe = vi.spyOn(exec, 'run');
           await openConfiguredSession();
+          expect(nativeLaunches[0]?.join(' ')).not.toContain('fixture-mcp-bearer');
+          const modelProbeArgs = nativeProbe.mock.calls.find(
+            ([request]) => request.args[0] === 'debug' && request.args[1] === 'models',
+          )?.[0].args;
+          expect(modelProbeArgs).toContain('features.shell_tool=false');
+          expect(modelProbeArgs?.join(' ')).not.toContain('fixture-mcp-bearer');
           expect(nativeLaunches[0]).toEqual(
             expect.arrayContaining([
               'features.shell_tool=false',
               'features.view_image=false',
               'web_search="disabled"',
-              'mcp_servers.happier__wilson.enabled_tools=["allowed_echo"]',
-              'mcp_servers.happier__wilson.default_tools_approval_mode="approve"',
             ]),
           );
+          expect(requests.find(request => request.method === 'thread/start')?.params).toMatchObject({
+            config: {
+              'mcp_servers.happier__wilson.command': 'fixture-bridge',
+              'mcp_servers.happier__wilson.args': ['fixture-mcp-bearer-arg'],
+              'mcp_servers.happier__wilson.env': { SESSION_BEARER: 'fixture-mcp-bearer-env' },
+              'mcp_servers.happier__wilson.enabled_tools': ['allowed_echo'],
+              'mcp_servers.happier__wilson.default_tools_approval_mode': 'approve',
+            },
+          });
         },
         {
           toolRestriction: {
@@ -2989,6 +3003,8 @@ describe('native Codex attachment preparation', () => {
           mcpServers: {
             wilson: {
               command: 'fixture-bridge',
+              args: ['fixture-mcp-bearer-arg'],
+              env: { SESSION_BEARER: 'fixture-mcp-bearer-env' },
               enabledTools: ['allowed_echo'],
             },
           },

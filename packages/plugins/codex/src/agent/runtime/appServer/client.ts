@@ -478,7 +478,7 @@ export async function verifyCodexNativeAppServerClient(
         const resolvedExecutable = executable ?? (await params.exec.systemTools.resolve({ toolId: 'codex-cli', purpose: 'Verify the Codex native tool catalog' })).executable;
         const evidence = await readCodexToolRestrictionEvidence({ client, exec: params.exec, executable: resolvedExecutable,
             env: buildCodexAppServerEnv(params.processEnv ?? process.env), timeoutMs: readCodexAppServerRpcTimeoutMs(params.processEnv ?? process.env), cwd: params.cwd, configOverrides: params.configOverrides,
-            allowedMcpServerKeys: params.toolRestrictionAllowedMcpServerKeys, nativeHome: params.nativeHome, signal: params.signal });
+            nativeHome: params.nativeHome, signal: params.signal });
         return { ...client, launchFeatures: { ...client.launchFeatures, ...evidence } };
     } catch (error) {
         await client.dispose().catch(() => undefined);

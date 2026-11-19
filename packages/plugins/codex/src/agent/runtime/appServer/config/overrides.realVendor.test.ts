@@ -55,11 +55,13 @@ async function runCodexFirstTurn(mcpServers: Parameters<typeof buildCodexAppServ
     const address = model.address();
     if (!address || typeof address === 'string') throw new Error('No loopback model address');
 
+    const { processOverrides, mcpOverrides } = buildCodexAppServerConfigOverrides(mcpServers);
     const overrides = [
         'model="gpt-5"',
         'model_provider="fixture"',
         `model_providers.fixture={name="fixture",base_url="http://127.0.0.1:${address.port}/v1",wire_api="responses"}`,
-        ...buildCodexAppServerConfigOverrides(mcpServers),
+        ...processOverrides,
+        ...mcpOverrides,
     ];
     const codex = spawn(codexBin, ['exec', '--skip-git-repo-check', ...overrides.flatMap(value => ['-c', value]), 'hi'], {
         cwd: dir,

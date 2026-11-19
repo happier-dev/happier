@@ -70,7 +70,7 @@ describe('createCodexSharedAppServer', () => {
     if (!server) throw new Error('Expected shared server');
     try {
       await expect(server.createClient({ cwd: osBoundary.home, processEnv: {},
-        configOverrides: buildCodexAppServerConfigOverrides({}, { unlistedTools: 'deny', allowedTools: ['mcp__context7__*'] }),
+        configOverrides: buildCodexAppServerConfigOverrides({}, { unlistedTools: 'deny', allowedTools: ['mcp__context7__*'] }).processOverrides,
         disableUserMcpServers: true, toolRestrictionRequired: true,
       })).rejects.toMatchObject({ code: 'codex_tool_restriction_unsupported_runtime',
         message: expect.stringContaining('machines.agents.install') });

@@ -3,12 +3,17 @@ import { listHappierToolAutoApprovedNamesV1 } from '@happier-dev/protocol/tools/
 
 import { buildCodexAppServerConfigOverrides } from './overrides';
 
+function listOverrides(...args: Parameters<typeof buildCodexAppServerConfigOverrides>): readonly string[] {
+    const { processOverrides, mcpOverrides } = buildCodexAppServerConfigOverrides(...args);
+    return [...processOverrides, ...mcpOverrides];
+}
+
 describe('buildCodexAppServerConfigOverrides', () => {
     it.each(['no_tools', 'read_only'] as const)('projects normalized %s Run configuration into native launch restrictions', (permissionMode) => {
         const configuration = permissionMode === 'no_tools'
             ? { allowedTools: [], unlistedTools: 'deny' as const }
             : { allowedTools: ['WebSearch', 'mcp__docs__*'] };
-        const overrides = buildCodexAppServerConfigOverrides({ docs: { command: 'docs-server', enabledTools: ['read'] } }, configuration);
+        const overrides = listOverrides({ docs: { command: 'docs-server', enabledTools: ['read'] } }, configuration);
         if (permissionMode === 'no_tools') {
             expect(overrides).toEqual(expect.arrayContaining(['features.shell_tool=false', 'features.view_image=false', 'web_search="disabled"']));
             expect(overrides.some(value => value.startsWith('mcp_servers.'))).toBe(false);
@@ -18,7 +23,7 @@ describe('buildCodexAppServerConfigOverrides', () => {
         }
     });
     it('projects Off and deny through native filters and mediates Allow as prompt', () => {
-        const overrides = buildCodexAppServerConfigOverrides({
+        const overrides = listOverrides({
             'linear__team': { command: 'bridge', enabledTools: ['read', 'write', 'inspect'] },
             locked: { command: 'bridge' },
             happier: { command: 'bridge' },
@@ -38,7 +43,7 @@ describe('buildCodexAppServerConfigOverrides', () => {
         expect(overrides).not.toContain('mcp_servers.happier__linear_team.default_tools_approval_mode="approve"');
     });
     it('removes native command, file, connector and delegation tools under an exclusive MCP recipe', () => {
-        const overrides = buildCodexAppServerConfigOverrides({}, {
+        const overrides = listOverrides({}, {
             unlistedTools: 'deny',
             allowedTools: ['mcp__wilson-intake__*'],
         });
@@ -57,14 +62,14 @@ describe('buildCodexAppServerConfigOverrides', () => {
     });
 
     it('keeps explicitly listed native web search available under deny', () => {
-        const overrides = buildCodexAppServerConfigOverrides({}, {
+        const overrides = listOverrides({}, {
             unlistedTools: 'deny', allowedTools: ['WebSearch'],
         });
         expect(overrides).toContain('web_search="cached"');
     });
 
     it('retains the host-filtered native MCP tool catalog including an empty catalog', () => {
-        const overrides = buildCodexAppServerConfigOverrides({
+        const overrides = listOverrides({
             'wilson-intake': { command: 'bridge', enabledTools: ['intake_lead'] },
             happier: { command: 'bridge', enabledTools: [] },
         });
@@ -74,13 +79,13 @@ describe('buildCodexAppServerConfigOverrides', () => {
     });
 
     it('refuses a confined MCP server without the canonical host tool catalog', () => {
-        expect(() => buildCodexAppServerConfigOverrides({ wilson: { command: 'bridge' } }, {
+        expect(() => listOverrides({ wilson: { command: 'bridge' } }, {
             unlistedTools: 'deny', allowedTools: ['mcp__wilson__*'],
         })).toThrow(expect.objectContaining({ code: 'codex_tool_restriction_catalog_unavailable' }));
     });
 
     it('translates materialized Happier MCP servers into additive app-server config overrides', () => {
-        const overrides = buildCodexAppServerConfigOverrides({
+        const overrides = listOverrides({
             happier: {
                 command: '/tmp/happier-mcp-bridge',
                 args: ['--url', 'http://127.0.0.1:0'],
@@ -103,7 +108,7 @@ describe('buildCodexAppServerConfigOverrides', () => {
     });
 
     it('requires the first-party Happier bridge within the app-server startup budget', () => {
-        const overrides = buildCodexAppServerConfigOverrides({
+        const overrides = listOverrides({
             happier: { command: 'happier-mcp' },
         }, {
             processEnv: {
@@ -119,7 +124,7 @@ describe('buildCodexAppServerConfigOverrides', () => {
     });
 
     it('leaves injected third-party servers on Codex startup defaults so they cannot hold the first turn', () => {
-        const overrides = buildCodexAppServerConfigOverrides({
+        const overrides = listOverrides({
             happier: { command: 'happier-mcp' },
             docs: { command: 'docs-mcp' },
         }, {
@@ -133,7 +138,7 @@ describe('buildCodexAppServerConfigOverrides', () => {
     });
 
     it('prefixes configured server names so user Codex MCP entries cannot collide with Happier-injected ones', () => {
-        const overrides = buildCodexAppServerConfigOverrides({
+        const overrides = listOverrides({
             context7: {
                 command: 'echo',
                 args: ['hello'],
@@ -151,7 +156,7 @@ describe('buildCodexAppServerConfigOverrides', () => {
     });
 
     it('uses the bounded configured timeout only for the first-party Happier MCP bridge', () => {
-        const overrides = buildCodexAppServerConfigOverrides({
+        const overrides = listOverrides({
             happier: { command: 'happier-mcp' },
             context7: { command: 'context7-mcp' },
         }, {
@@ -170,19 +175,19 @@ describe('buildCodexAppServerConfigOverrides', () => {
     it('falls back to the safe default and caps oversized configured timeouts', () => {
         const servers = { happier: { command: 'happier-mcp' } };
 
-        expect(buildCodexAppServerConfigOverrides(servers, {
+        expect(listOverrides(servers, {
             processEnv: { HAPPIER_CODEX_HAPPIER_MCP_TOOL_CALL_TIMEOUT_MS: 'not-a-number' },
         })).toContain('mcp_servers.happier.tool_timeout_sec=2147000');
-        expect(buildCodexAppServerConfigOverrides(servers, {
+        expect(listOverrides(servers, {
             processEnv: { HAPPIER_CODEX_HAPPIER_MCP_TOOL_CALL_TIMEOUT_MS: '59999' },
         })).toContain('mcp_servers.happier.tool_timeout_sec=2147000');
-        expect(buildCodexAppServerConfigOverrides(servers, {
+        expect(listOverrides(servers, {
             processEnv: { HAPPIER_CODEX_HAPPIER_MCP_TOOL_CALL_TIMEOUT_MS: '999999999999' },
         })).toContain('mcp_servers.happier.tool_timeout_sec=2147000');
     });
 
     it('does not generate ambiguous injected server keys with namespace separators in the sanitized fragment', () => {
-        const overrides = buildCodexAppServerConfigOverrides({
+        const overrides = listOverrides({
             'foo__bar': {
                 command: 'echo',
             },

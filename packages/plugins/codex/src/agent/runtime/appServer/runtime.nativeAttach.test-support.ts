@@ -222,7 +222,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
         result = { userAgent: `happier_cli/${CODEX_SUPPORTED_RUNTIME_VERSION} (fixture)` };
         error = options.initializeFailure;
       } else if (message.method === 'config/read') {
-        result = { config: { cli_auth_credentials_store: 'file', mcp_servers: options.nativeMcpServers ?? (options.mcpServers ? { happier__wilson: { enabled: true } } : {}), features: { code_mode: { excluded_tool_namespaces: ['functions'] } } } };
+        result = { config: { cli_auth_credentials_store: 'file', mcp_servers: options.nativeMcpServers ?? {}, features: { code_mode: { excluded_tool_namespaces: ['functions'] } } } };
       } else if (message.method === 'account/login/start') {
         error = options.loginStartFailure;
       } else if (message.method === 'account/read') {
