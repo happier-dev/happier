@@ -269,7 +269,19 @@ function createAgentCatalogActionSpecs() {
     id: 'machines.agents.install', executionPlacement: 'machine', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'policy' },
     confirmVerb: { key: 'common.install', fallback: 'Install' },
     title: 'Install or update an agent',
-    approvalPresentation: { summary: () => 'Install or update the agent on this machine. Runs the agent vendor installer when required.' },
+    // The review reads by the Agent it installs and says install or update in words; the raw intent and the vendor
+    // consent the sentence already states stay under Technical details.
+    approvalPresentation: {
+      summary: (input: unknown) => {
+        const record = input && typeof input === 'object' ? input as Readonly<Record<string, unknown>> : {};
+        return record.intent === 'update'
+          ? 'Update this agent on this machine. Runs the agent vendor installer when required.'
+          : 'Install this agent on this machine. Runs the agent vendor installer when required.';
+      },
+      referenceForField: (path: string, value: unknown) => path === 'agentId' && typeof value === 'string' && value.trim()
+        ? { kind: 'agent' as const, id: value.trim() } : undefined,
+      technicalInputPaths: ['intent', 'consent'],
+    },
     sideEffectClass: 'danger',
     description: 'Start a daemon-owned agent install or update job.',
     safety: 'danger',

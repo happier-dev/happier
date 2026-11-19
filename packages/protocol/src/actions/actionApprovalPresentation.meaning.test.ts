@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { describeApprovalActionFields, type ApprovalActionFieldRow } from './actionApprovalPresentation.js';
+import { getActionSpec } from './actionSpecs.js';
 
 function visible(rows: readonly ApprovalActionFieldRow[]) {
   return rows.filter((row) => !(row.kind === 'value' && row.technical));
@@ -111,5 +112,16 @@ describe('Action arguments read by meaning', () => {
     expect(visible(presentation.rows).map((row) => row.path)).toEqual(['serverId', 'environmentId']);
     expect(presentation.rows.filter((row) => row.kind === 'value' && row.technical).map((row) => row.path))
       .toEqual(expect.arrayContaining(['requestKey', 'targetLinkId', 'contentArtifactId', 'contentHeaderVersion', 'contentBodyVersion']));
+  });
+
+  it('reads an Agent install by the Agent it installs and says the install in words, not raw intent and consent', () => {
+    const input = { machineId: 'machine-1', agentId: 'muse', intent: 'install', consent: { vendorRecipe: true } };
+    const presentation = describeApprovalActionFields({ actionId: 'machines.agents.install', actionArgs: input });
+    const byPath = Object.fromEntries(visible(presentation.rows).map((row) => [row.path, row]));
+    expect(byPath.agentId).toMatchObject({ reference: { kind: 'agent', id: 'muse' } });
+    expect(Object.keys(byPath)).not.toEqual(expect.arrayContaining(['intent']));
+    expect(Object.keys(byPath).some((path) => path === 'consent' || path.startsWith('consent.'))).toBe(false);
+    const summary = getActionSpec('machines.agents.install').approvalPresentation?.summary;
+    expect(summary?.(input, undefined as never)).not.toBe(summary?.({ ...input, intent: 'update' }, undefined as never));
   });
 });
