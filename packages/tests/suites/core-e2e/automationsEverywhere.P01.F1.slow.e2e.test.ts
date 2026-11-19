@@ -163,15 +163,20 @@ it('P01.F1 health failure opens diagnose Session', async () => {
   const foreignSource = await addSavedSource(foreign, foreignMachine, 'Private foreign resource', '/foreign');
   const foreignSelection = await invoke('health-check-failed/setup', { v: 1, serverId: fixture.serverId }, foreign, foreignMachine);
   const foreignLinked = await addListener(foreign, foreignMachine, foreignSelection);
-  const retainedCheck = async (sourceInstanceId: string, status: 'up' | 'down', after = 0, owner = actor, observer = machine) => {
+  const retainedCheckSnapshot = async (sourceInstanceId: string, owner = actor, observer = machine) => {
     let cursor: string | undefined;
     do {
       const page = healthResultProjectionPageSchema.parse(await invokeResult(HEALTH_RESULTS_ACTION_ID, cursor ? { cursor } : {}, owner, observer));
-      if (page.items.some(item => item.source?.sourceInstanceId === sourceInstanceId
-        && item.projection.checks.some(check => check.checkId === 'external' && check.result.status === status && check.result.observedAt > after))) return true;
+      const check = page.items.filter(item => item.source?.sourceInstanceId === sourceInstanceId)
+        .flatMap(item => item.projection.checks).find(check => check.checkId === 'external');
+      if (check) return { found: true as const, status: check.result.status, lastCheckedAt: check.result.observedAt };
       cursor = page.nextCursor;
     } while (cursor);
-    return false;
+    return { found: false as const };
+  };
+  const retainedCheck = async (sourceInstanceId: string, status: 'up' | 'down', after = 0, owner = actor, observer = machine) => {
+    const snapshot = await retainedCheckSnapshot(sourceInstanceId, owner, observer);
+    return snapshot.found && snapshot.status === status && snapshot.lastCheckedAt > after;
   };
   expect(await runs()).toEqual([]);
   await waitFor(() => retainedCheck(second.sourceInstanceId, 'up'), { context: 'Second resource probe is saved before its failure' });
@@ -183,22 +188,25 @@ it('P01.F1 health failure opens diagnose Session', async () => {
   } catch (error) {
     // Keep only public lifecycle facts; never print opened content or envelopes.
     const diagnostic = await Promise.allSettled([
-      retainedCheck(saved.sourceInstanceId, 'down'),
+      Promise.all([retainedCheckSnapshot(saved.sourceInstanceId), retainedCheckSnapshot(second.sourceInstanceId)])
+        .then(([first, second]) => ({ first, second })),
       actor.execute('workflow.trigger.list', { scope: 'account_all' }).then(listed => {
         if (!listed.ok) return { errorCode: listed.errorCode };
         const page = WorkflowTriggerListResultV1Schema.parse(listed.result);
-        return page.attached?.filter(row => row.summary.kind === 'pluginEvent'
-          && row.summary.eventRef.pluginId === event.event.identity.pluginId).map(row => ({
-          event: row.summary.kind === 'pluginEvent' ? row.summary.eventRef.localId : undefined,
-          listener: row.triggerId === linked.triggerId ? 'omitted-subject' : row.triggerId === exact.triggerId ? 'exact-subject' : 'probe',
-          sourceStatus: row.sourceStatus && {
-            state: row.sourceStatus.state, code: row.sourceStatus.code,
-            observedCount: row.sourceStatus.observedCount, admittedCount: row.sourceStatus.admittedCount,
-            skippedCount: row.sourceStatus.skippedCount, lastObservedAt: row.sourceStatus.lastObservedAt,
-            lastDispositionAt: row.sourceStatus.lastDispositionAt, nextRetryAt: row.sourceStatus.nextRetryAt,
-          },
-          sourceCatalogStatus: row.sourceCatalogStatus,
-        }));
+        return page.sets.flatMap(set => set.triggers).flatMap(row => {
+          if (row.kind !== 'pluginEvent' || row.eventRef.pluginId !== event.event.identity.pluginId) return [];
+          return [{
+            event: row.eventRef.localId,
+            listener: row.id === linked.triggerId ? 'omitted-subject' : row.id === exact.triggerId ? 'exact-subject' : 'probe',
+            sourceStatus: row.sourceStatus && {
+              state: row.sourceStatus.state, code: row.sourceStatus.code,
+              observedCount: row.sourceStatus.observedCount, admittedCount: row.sourceStatus.admittedCount,
+              skippedCount: row.sourceStatus.skippedCount, lastObservedAt: row.sourceStatus.lastObservedAt,
+              lastDispositionAt: row.sourceStatus.lastDispositionAt, nextRetryAt: row.sourceStatus.nextRetryAt,
+            },
+            sourceCatalogStatus: row.sourceCatalogStatus,
+          }];
+        });
       }),
       runs().then(async current => Promise.all(current.map(async run => {
         const listed = await actor.execute('workflow.run.invocations.list', { runId: run.id, includeContent: true });
