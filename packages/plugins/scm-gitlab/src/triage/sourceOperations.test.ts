@@ -1063,20 +1063,39 @@ describe('GitLab get', () => {
     });
   });
 
-  it('dispatches on kind before a route, so an issue never reads a merge-request path', async () => {
-    const { result, seam } = await get({
-      [`/api/v4/projects/${ENCODED_REPOSITORY_KEY}/issues/7`]: { body: issueList[0] },
+  it('reads an issue and merge request with the same project and IID through their own routes', async () => {
+    const issueRef = { kindId: 'issue', collisionScope: PROJECT_SCOPE, entryId: '7' } as const;
+    const issuePath = `/api/v4/projects/${ENCODED_REPOSITORY_KEY}/issues/7`;
+    const mergeRequestPath = `/api/v4/projects/${ENCODED_REPOSITORY_KEY}/merge_requests/7`;
+    const routes: Record<string, RouteResponse> = {
+      [issuePath]: { body: issueList[0] },
+      [mergeRequestPath]: { body: mergeRequestList[0] },
       '/api/v4/user': { body: VIEWER },
-    }, {
-      localRef: { kindId: 'issue', collisionScope: PROJECT_SCOPE, entryId: '7' },
-    });
+    };
+    const seam = harness(routes);
+    const instance = configuredInstance();
+    const read = async (ref: TriageSourceEntryLocalRefV1) => TriageGetResultV1Schema.parse(await getGitlabTriageEntry({
+      get: { v: 1, instance, localRef: ref, lastKnownLocator: { v: 1, routingToken: REPOSITORY_KEY } },
+      connectedAccounts: seam.connectedAccounts,
+      fetcher: seam.fetcher,
+      signal: new AbortController().signal,
+      nowMs: NOW_MS,
+    }));
 
-    if (result.kind !== 'present') throw new Error(`expected present, got ${result.kind}`);
-    expect(result.localRef.kindId).toBe('issue');
-    expect(seam.requested.some((url) => url.includes('/merge_requests/'))).toBe(false);
-    // Issues carry no merge-request-only content, whatever the two kinds share.
-    expect(JSON.stringify(result.snapshot)).not.toContain('detailed_merge_status');
-    expect(result.snapshot.facts.some((fact) => fact.id === 'gitlab/merge-status')).toBe(false);
+    const issue = await read(issueRef);
+    expect(issue).toMatchObject({ kind: 'present', localRef: issueRef, snapshot: { title: issueList[0]!.title } });
+    if (issue.kind !== 'present') throw new Error(`expected present, got ${issue.kind}`);
+    expect(issue.snapshot.facts.some((fact) => fact.id === 'gitlab/merge-status')).toBe(false);
+    expect(seam.requested.map((url) => new URL(url).pathname)).toEqual([issuePath, '/api/v4/user']);
+
+    expect(await read(localRef)).toMatchObject({
+      kind: 'present', localRef, snapshot: { title: mergeRequestList[0]!.title },
+    });
+    routes[issuePath] = { body: { message: '404 Not found' }, status: 404 };
+    expect(await read(issueRef)).toMatchObject({ kind: 'unresolved', localRef: issueRef, failure: { code: 'item-unreadable' } });
+    const itemRequests = seam.requested.map((url) => new URL(url).pathname)
+      .filter(path => path === issuePath || path === mergeRequestPath);
+    expect(itemRequests).toEqual([issuePath, mergeRequestPath, issuePath]);
   });
 
   it('requires the newest locator and never reconstructs a route from collision scope', async () => {
