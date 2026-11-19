@@ -6030,6 +6030,7 @@
     "sources/sync/ops/machineNpmRegistryProfiles.ts",
     "sources/sync/ops/machinePoolPrivateLabelProjection.ts",
     "sources/sync/ops/machinePools.ts",
+    "sources/sync/ops/machineProjectionSectionStore.ts",
     "sources/sync/ops/machineProjectionSections.ts",
     "sources/sync/ops/machineResourcesPolicy.ts",
     "sources/sync/ops/machineRpcTarget.ts",
