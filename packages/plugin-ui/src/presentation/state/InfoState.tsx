@@ -104,9 +104,11 @@ export function HappierStateLine(props: Readonly<{
    * that carries Details is a small block, so its actions form one row under the sentence, on its edge
    * (owner 11-08), and the opened code follows them. `after`: the way forward follows its sentence, on the
    * same line while both fit and beneath the words when the sentence needs the row, never at the far end of a
-   * wide column (WAVE-ACCEPT-1117C: "Show all kinds" floated ~460 px from its sentence).
+   * wide column (WAVE-ACCEPT-1117C: "Show all kinds" floated ~460 px from its sentence). `end`: a door-width notice's
+   * one round recovery (first-open notices): flush on the line's far end and centred on the whole text block, never
+   * moved beneath it, so a title and its second line read beside one button.
    */
-  actionPlacement?: 'trailing' | 'below' | 'after';
+  actionPlacement?: 'trailing' | 'below' | 'after' | 'end';
   /** The sentence's line height, so the glyph centres on its first line; absent, the line text's. */
   textLineHeightPx?: number;
   accessibilitySemantics?: 'status' | 'alert';
@@ -147,6 +149,7 @@ export function HappierStateLine(props: Readonly<{
   const sentenceEdgePx = props.icon ? glyphColumn.boxPx + glyphColumn.gapPx : 0;
   const actionsBelow = props.actionPlacement === 'below';
   const actionsAfter = props.actionPlacement === 'after' && props.action != null;
+  const actionsEnd = props.actionPlacement === 'end' && props.action != null;
   return (
     <View testID={props.testID} {...resolveHappierStateAnnouncement(props.accessibilitySemantics)} style={{
       minHeight: menu ? HAPPIER_MENU_ROW_METRICS.minHeightPx : metrics.minHeightPx,
@@ -164,7 +167,7 @@ export function HappierStateLine(props: Readonly<{
       // The recovery stays on the line's trailing edge and the sentence wraps beside it (owner 11-06: Retry
       // belongs on the right of its error). Only a column too narrow for a readable sentence beside it puts
       // the recovery under the words.
-      flexWrap: 'wrap',
+      flexWrap: actionsEnd ? 'nowrap' : 'wrap',
       alignItems: 'center',
       gap: metrics.gapPx,
     }}>
@@ -178,7 +181,8 @@ export function HappierStateLine(props: Readonly<{
         minWidth: 0,
         // The sentence takes the room the recovery leaves and wraps there; it moves the recovery beneath only
         // when that room is narrower than a readable sentence.
-        ...(props.action && !actionsAfter ? actionsBelow ? { flexBasis: '100%' } : { flexGrow: 1, flexBasis: menu ? LINE_TEXT_BASIS_PX : STATE_LINE_TEXT_BASIS_PX } : {}),
+        ...(props.action && !actionsAfter ? actionsBelow ? { flexBasis: '100%' } : actionsEnd ? { flexGrow: 1, flexBasis: 0 }
+          : { flexGrow: 1, flexBasis: menu ? LINE_TEXT_BASIS_PX : STATE_LINE_TEXT_BASIS_PX } : {}),
       }}>
         {props.icon ? <View style={{ flexShrink: 0, width: glyphColumn.boxPx, height: props.textLineHeightPx ?? metrics.text.lineHeight, alignItems: 'center', justifyContent: 'center' }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{props.icon}</View> : null}
         {actionsAfter ? (
@@ -194,7 +198,8 @@ export function HappierStateLine(props: Readonly<{
           sentence's edge, under the words it recovers, rather than alone at the far end of its own row. */}
       {/* On the trailing edge the recovery stands on the sentence's first line, like the glyph, never centred on a
           wrapped paragraph (LABPARITY-ACCEPT-B-1118 fix 11): a box one text line tall centres it there. */}
-      {props.action && !actionsAfter ? <View style={actionsBelow ? { flexBasis: '100%', paddingLeft: sentenceEdgePx } : {
+      {actionsEnd ? <View style={{ flexShrink: 0, alignSelf: 'center' }}>{props.action}</View> : null}
+      {props.action && !actionsAfter && !actionsEnd ? <View style={actionsBelow ? { flexBasis: '100%', paddingLeft: sentenceEdgePx } : {
         flexShrink: 0, marginLeft: sentenceEdgePx, alignSelf: 'flex-start',
         height: props.textLineHeightPx ?? metrics.text.lineHeight, justifyContent: 'center',
       }}>{props.action}</View> : null}

@@ -1,6 +1,7 @@
+import { HappierDivider } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -47,13 +48,17 @@ export function stepFieldLabelStyle() {
     return styles.label;
 }
 
-/** A thin rule with "or" in the middle, between two ways to do the same thing. */
+/**
+ * The one centred "or" between two ways to do the same thing: two decorative hairlines from the shared divider with the
+ * word on the column's axis. The whole divider is hidden from assistive technology; the ways it separates are named.
+ */
 export function StepOrDivider(props: Readonly<{ label: string }>) {
+    const { theme } = useUnistyles();
     return (
-        <View style={styles.or} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-            <View style={styles.orRule} />
+        <View testID="step-or-divider" style={styles.or} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            <HappierDivider decorative color={theme.colors.border.default} style={styles.orRule} />
             <Text style={styles.orText}>{props.label}</Text>
-            <View style={styles.orRule} />
+            <HappierDivider decorative color={theme.colors.border.default} style={styles.orRule} />
         </View>
     );
 }
@@ -80,10 +85,11 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: theme.space.s10,
     },
+    // Both strokes share the row equally, so the word sits on the column's axis whatever its length.
     orRule: {
         flex: 1,
-        height: StyleSheet.hairlineWidth,
-        backgroundColor: theme.colors.border.default,
+        flexBasis: 0,
+        alignSelf: 'center',
     },
     orText: {
         ...Typography.variant('meta'),

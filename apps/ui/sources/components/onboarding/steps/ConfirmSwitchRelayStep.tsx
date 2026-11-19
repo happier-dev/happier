@@ -5,15 +5,16 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-import { WizardChoiceRow } from '../ui/WizardChoiceRow';
+import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 
 export type RelaySwitchDecision = 'keep' | 'switch';
 
+const CHOICES = [
+    { id: 'keep', icon: 'minus-circle', titleKey: 'setupOnboarding.confirmSwitchRelayKeepTitle', subtitleKey: 'setupOnboarding.confirmSwitchRelayKeepSubtitle' },
+    { id: 'switch', icon: 'arrows-left-right', titleKey: 'setupOnboarding.confirmSwitchRelaySwitchTitle', subtitleKey: 'setupOnboarding.confirmSwitchRelaySwitchSubtitle' },
+] as const satisfies readonly Readonly<{ id: RelaySwitchDecision; icon: string; titleKey: string; subtitleKey: string }>[];
+
 const stylesheet = StyleSheet.create((theme) => ({
-    confirmChoices: {
-        width: '100%',
-        gap: theme.space.s6,
-    },
     selectedRelayCard: {
         width: '100%',
         borderRadius: 12,
@@ -56,24 +57,16 @@ export const ConfirmSwitchRelayStep = React.memo(function ConfirmSwitchRelayStep
                     {relayUrl}
                 </Text>
             </View>
-            <View style={styles.confirmChoices}>
-                <WizardChoiceRow
-                    testID={`${props.testIDPrefix}-confirmSwitchRelay.choice:keep`}
-                    selected={props.decision === 'keep'}
-                    onPress={() => props.onDecisionChange('keep')}
-                    icon="minus-circle"
-                    title={t('setupOnboarding.confirmSwitchRelayKeepTitle')}
-                    subtitle={t('setupOnboarding.confirmSwitchRelayKeepSubtitle')}
-                />
-                <WizardChoiceRow
-                    testID={`${props.testIDPrefix}-confirmSwitchRelay.choice:switch`}
-                    selected={props.decision === 'switch'}
-                    onPress={() => props.onDecisionChange('switch')}
-                    icon="arrows-left-right"
-                    title={t('setupOnboarding.confirmSwitchRelaySwitchTitle')}
-                    subtitle={t('setupOnboarding.confirmSwitchRelaySwitchSubtitle')}
-                />
-            </View>
+            <SelectionTiles<RelaySwitchDecision>
+                testIdPrefix={`${props.testIDPrefix}-confirmSwitchRelay.choice`}
+                accessibilityLabel={t('setupOnboarding.selectedRelayFooterLabel')}
+                // Two columns in the welcome column, one where a card would be narrower than its sentence.
+                maximumColumns={2}
+                minimumTileWidth={240}
+                options={CHOICES.map((choice) => ({ id: choice.id, icon: choice.icon, title: t(choice.titleKey), subtitle: t(choice.subtitleKey) }))}
+                value={props.decision}
+                onChange={(next) => { if (next) props.onDecisionChange(next); }}
+            />
             <Text style={styles.confirmWarning}>{t('setupOnboarding.confirmSwitchRelayWarning')}</Text>
         </>
     );

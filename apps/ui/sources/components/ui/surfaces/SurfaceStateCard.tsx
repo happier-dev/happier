@@ -1,10 +1,11 @@
-import { defineHappierScene, HAPPIER_STATE_LINE_METRICS, HAPPIER_STATE_SIZE_METRICS, HappierDisclosureToggle, HappierSurfaceState, HappierSurfaceStateLiveLine, resolveHappierStateFailureGlyph, resolveHappierStateLineGlyphTone, resolveHappierSurfaceStateQuiet, type HappierSceneInput, type HappierStateSize, type HappierSurfaceStateAction, type HappierSurfaceStateBindings, type HappierSurfaceStateKind, type HappierSurfaceStateLive } from '@happier-dev/plugin-ui/presentation';
+import { defineHappierScene, HAPPIER_ICON_BUTTON_WELL_SIZE, HAPPIER_STATE_LINE_METRICS, HAPPIER_STATE_SIZE_METRICS, HappierDisclosureToggle, HappierSurfaceState, HappierSurfaceStateLiveLine, resolveHappierStateFailureGlyph, resolveHappierStateLineGlyphTone, resolveHappierSurfaceStateQuiet, type HappierSceneInput, type HappierStateSize, type HappierSurfaceStateAction, type HappierSurfaceStateBindings, type HappierSurfaceStateKind, type HappierSurfaceStateLive } from '@happier-dev/plugin-ui/presentation';
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import * as React from 'react';
 import { Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -38,6 +39,9 @@ export type SurfaceStateContentReport = Readonly<{ empty: boolean; line: boolean
 export const SurfaceStateContentContext = React.createContext<((key: symbol, report: SurfaceStateContentReport | null) => void) | null>(null);
 
 export type SurfaceStateAction = HappierSurfaceStateAction;
+
+/** A notice's round recovery: the phone toolbar's well size, so it reads as an object on the line, not a glyph. */
+const NOTICE_ROUND_ACTION_PX = HAPPIER_ICON_BUTTON_WELL_SIZE;
 
 const DEFAULT_ICONS: Partial<Record<SurfaceStateKind, IconName>> = {
     empty: 'tray',
@@ -91,6 +95,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         color: theme.colors.text.primary,
     },
+    /** A notice's title over its quiet second line: the words in ink, one weight up. */
+    lineTitle: {
+        ...Typography.default('semiBold'),
+        color: theme.colors.text.primary,
+    },
     /** A state line is prose: proportional figures, so host names and ids keep their natural spacing. */
     lineText: {
         ...Typography.default(),
@@ -138,6 +147,13 @@ export function SurfaceStateCard(props: Readonly<{
     layout?: 'centered' | 'inline';
     /** `menu`: a line state among a transient menu's rows (a picker's empty or failed list) sits on their label edge. */
     lineDensity?: 'menu' | 'catalog';
+    /**
+     * `notice`: a door-width notice in a centred column (first-open welcome): the title over the reason on its own quiet
+     * line, the action as a round icon button flush on the line's end (`actionGlyph`). Line size only.
+     */
+    lineLayout?: 'sentence' | 'notice';
+    /** A notice's round action: `retry` for Try again, `forward` for the alternative choice. */
+    actionGlyph?: 'retry' | 'forward';
     /** Already-translated title: what is here, or what failed, in the person's words. */
     title: string;
     /** Optional glyph decoration inside the existing title Text; semantic copy stays in `title`. */
@@ -258,7 +274,11 @@ export function SurfaceStateCard(props: Readonly<{
                 fillsContainer={props.replacesContent}
                 lineDensity={props.lineDensity}
                 glyph={lineGlyph}
-                lineText={<>{props.titleContent ?? props.title}{props.reason ? (props.reasonContent != null ? <>{' · '}{props.reasonContent}</> : ` · ${props.reason}`) : null}</>}
+                lineText={props.lineLayout === 'notice'
+                    ? props.titleContent ?? props.title
+                    : <>{props.titleContent ?? props.title}{props.reason ? (props.reasonContent != null ? <>{' · '}{props.reasonContent}</> : ` · ${props.reason}`) : null}</>}
+                lineSubtitle={props.lineLayout === 'notice' ? props.reasonContent ?? props.reason : undefined}
+                lineActionGlyph={props.lineLayout === 'notice' ? props.actionGlyph : undefined}
             />
         );
         // Among a bare page section's rows the line stands on the rows' own text edge (`BareSectionLineEdge`).
@@ -354,7 +374,7 @@ function useSurfaceStateBindings(testID: string | undefined, animationEnabled: b
             if (role === 'quietLink') {
                 return <Text testID={textTestID} accessibilityRole="link" onPress={onPress} style={stylesheet.quietLink}>{children}</Text>;
             }
-            const roleStyle = role === 'lineAction' ? stylesheet.lineAction : role === 'quiet' ? stylesheet.quiet
+            const roleStyle = role === 'lineAction' ? stylesheet.lineAction : role === 'lineTitle' ? stylesheet.lineTitle : role === 'quiet' ? stylesheet.quiet
                 : role === 'live' ? stylesheet.liveText : stylesheet.lineText;
             return <Text testID={textTestID} style={[roleStyle, metrics, role === 'quiet' && align === 'start' ? { textAlign: 'auto' } : null]}>{children}</Text>;
         },
@@ -388,6 +408,18 @@ function useSurfaceStateBindings(testID: string | undefined, animationEnabled: b
             <DisclosedCodeText testID={testID ? `${testID}-details-code` : undefined} align={align === 'center' ? 'center' : undefined}>{detail}</DisclosedCodeText>
         ),
         pressedFill: theme.colors.surface.pressed,
+        renderRoundAction: ({ action, glyph, testID: actionTestID }) => (
+            <IconButton
+                testID={actionTestID}
+                size={NOTICE_ROUND_ACTION_PX}
+                iconName={glyph === 'retry' ? 'arrow-clockwise' : 'caret-right'}
+                accessibilityLabel={action.label}
+                tooltip={action.label}
+                disabled={action.disabled}
+                busy={action.busy}
+                onPress={(event) => { void action.onPress(event); }}
+            />
+        ),
     }), [animationEnabled, disclosure, testID, theme, title]);
 }
 

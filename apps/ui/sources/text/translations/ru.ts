@@ -3125,6 +3125,8 @@ export const ru: TranslationStructure = {
     scanExistingHomeQrTitle: "Отсканируйте QR-код или вставьте ссылку для связывания",
     scanExistingHomeQrBody: "Этот Home не связан с вашей службой входа на этом устройстве. Отсканируйте его QR-код или вставьте ссылку для связывания, чтобы подключиться напрямую.",
     waitingForApproval: "Ожидание подтверждения…",
+    waitingForApprovalNewCodeIn: ({ time }: { time: string }) => `Ожидание подтверждения · новый код через ${time}`,
+    requesterApproved: 'Подтверждено',
     securingCredentials: "Защита учётных данных…",
     showQrInstead: "Показать QR‑код вместо этого",
     addPhoneQrInstructions: "Отсканируйте этот QR‑код в мобильном приложении Happier, чтобы войти на телефоне.",

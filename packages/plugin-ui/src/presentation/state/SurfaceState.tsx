@@ -59,6 +59,8 @@ export type HappierSurfaceStateQuietMetrics = Readonly<{
  */
 export type HappierSurfaceStateTextRole =
   | 'line'
+  /** A door-width notice's title over its second line: the line's words in the ink of a heading line. */
+  | 'lineTitle'
   | 'lineAction'
   | 'live'
   | 'quiet'
@@ -127,6 +129,11 @@ export type HappierSurfaceStateBindings = Readonly<{
   focusRing?: string;
   /** Fill under a pressed or hovered inline recovery. */
   pressedFill: string;
+  /**
+   * A door-width notice's one recovery as a round icon button (`retry` for Try again, `forward` for the alternative
+   * choice); the action's label is its accessible name. Absent, the notice keeps its recovery as words.
+   */
+  renderRoundAction?: (input: Readonly<{ action: HappierSurfaceStateAction; glyph: 'retry' | 'forward'; testID?: string }>) => ReactNode;
 }>;
 
 export type HappierSurfaceStateProps = Readonly<{
@@ -137,6 +144,16 @@ export type HappierSurfaceStateProps = Readonly<{
   layout?: 'centered' | 'inline';
   /** The line's sentence (title · reason), already composed by the adapter. */
   lineText?: ReactNode;
+  /**
+   * A door-width notice: the quiet second line under `lineText`, which then reads as the notice's title (icon, title
+   * and this line on the leading edge, the recovery flush on the trailing edge; first-open notices).
+   */
+  lineSubtitle?: ReactNode;
+  /**
+   * The notice's recovery as a round icon button on the line's end: `retry` (Try again) or `forward` (the alternative
+   * choice). Drawn through `bindings.renderRoundAction`; a line that offers Details keeps its words.
+   */
+  lineActionGlyph?: 'retry' | 'forward';
   /** The glyph for this size step (a spinner while loading), already themed by the adapter. */
   glyph?: ReactNode;
   /** A line that replaces a body sits in the middle of the room it holds. */
@@ -563,7 +580,14 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
   };
   const detailsToggle = details ? bindings.renderDetailsToggle
     ? bindings.renderDetailsToggle(toggleProps) : <HappierDisclosureToggle {...toggleProps} /> : null;
-  const lineActions = actions.some(Boolean) || detailsToggle ? (
+  const roundAction = props.lineActionGlyph && props.action && !details && bindings.renderRoundAction
+    ? bindings.renderRoundAction({
+      action: props.action,
+      glyph: props.lineActionGlyph,
+      testID: props.action.testID ?? (props.testID ? `${props.testID}-action` : undefined),
+    })
+    : null;
+  const lineActions = roundAction ?? (actions.some(Boolean) || detailsToggle ? (
     <View
       // A narrow column (a field inside a step card) wraps the recoveries rather than run them past its edge.
       style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: LINE_ACTION_LABEL_GAP_PX }}
@@ -608,7 +632,7 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
     </View>
   ) : (
     props.actionSlot
-  );
+  ));
   return (
     <View
       style={
@@ -624,14 +648,19 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
           action={lineActions}
           // One line (OWNER-UI-1115B A2): the recoveries stay beside the sentence where they fit and wrap under it,
           // on its words, where they don't. A failure that carries its code is the small block (owner 11-08).
-          actionPlacement={details ? 'below' : 'trailing'}
+          actionPlacement={details ? 'below' : roundAction ? 'end' : 'trailing'}
           textLineHeightPx={textMetrics.lineHeight}
           density={props.lineDensity}
           below={details && detailsOpen ? bindings.renderDetailsCode?.(details, 'start') ?? (
             <HappierText testID={props.testID ? `${props.testID}-details-code` : undefined} variant="code" tone="secondary" selectable>{details}</HappierText>
           ) : undefined}
         >
-          {bindings.renderText({
+          {props.lineSubtitle != null ? (
+            <View>
+              {bindings.renderText({ role: 'lineTitle', metrics: textMetrics, children: props.lineText })}
+              {bindings.renderText({ role: 'line', metrics: textMetrics, children: props.lineSubtitle })}
+            </View>
+          ) : bindings.renderText({
             role: 'line',
             metrics: textMetrics,
             children: props.lineText,

@@ -190,6 +190,20 @@ describe('SurfaceStateCard', () => {
         await act(async () => { retry?.props.onPress?.(); });
         expect(onRetry).not.toHaveBeenCalled();
     });
+    // A door-width notice (first-open welcome): the cause over its consequence, and one round recovery named by its label.
+    it('draws a notice as a title over its reason with one round recovery that keeps its name', async () => {
+        const onRetry = vi.fn();
+        const screen = await renderScreen(<SurfaceStateCard testID="notice" size="line" lineLayout="notice" actionGlyph="retry" kind="unavailable"
+            title="Can't reach your sign-in service" reason="You can still use this Home."
+            action={{ testID: 'notice-retry', label: 'Try again', onPress: onRetry }} />);
+        const texts = screen.findAllByType('Text' as never).map((node) => String(node.props.children));
+        expect(texts).toEqual(expect.arrayContaining(["Can't reach your sign-in service", 'You can still use this Home.']));
+        expect(texts.some((text) => text.includes(' · '))).toBe(false);
+        const retry = screen.findByTestId('notice-retry');
+        expect(retry?.props.accessibilityLabel).toBe('Try again');
+        await screen.pressByTestIdAsync('notice-retry');
+        expect(onRetry).toHaveBeenCalledOnce();
+    });
     // A line's second way forward can open a panel (a recovery strip's Details): it says whether that panel is open.
     it('announces whether a line recovery that opens a panel has it open', async () => {
         const screen = await renderScreen(<SurfaceStateCard testID="error" size="line" kind="error" title="Couldn’t start"

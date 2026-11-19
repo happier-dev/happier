@@ -276,6 +276,7 @@ export type {
 export { HAPPIER_GESTURE_TIMING } from './media/inputGesture.js';
 export {
   HAPPIER_ICON_BUTTON_SIZE,
+  HAPPIER_ICON_BUTTON_WELL_SIZE,
   resolveHappierIconButtonChrome,
   resolveHappierIconButtonRadius,
 } from './interaction/iconButtonChrome.js';

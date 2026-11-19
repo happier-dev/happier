@@ -3697,6 +3697,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         scanExistingHomeQrTitle: "掃描 QR 碼或貼上配對連結",
         scanExistingHomeQrBody: '此 Home 尚未連結到此裝置上的登入服務。掃描它的 QR 碼或貼上 配對連結即可直接連線。',
         waitingForApproval: '等待確認…',
+        waitingForApprovalNewCodeIn: ({ time }: { time: string }) => `等待核准 · ${time} 後產生新代碼`,
+        requesterApproved: '已核准',
         securingCredentials: '正在保護憑證…',
         showQrInstead: '改為顯示 QR 碼',
         addPhoneQrInstructions: '使用 Happier 手機 App 掃描此 QR 碼，在手機上登入。',

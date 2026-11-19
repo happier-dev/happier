@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import { StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
+
 import { buildMachineAddCommand } from '@/components/machines/add/machineAddCommand';
 import { useMachineAddHomeTargetAtUrl } from '@/components/machines/add/machineAddHomeTarget';
 import { Text } from '@/components/ui/text/Text';
@@ -7,7 +9,6 @@ import { t } from '@/text';
 import { buildWebDesktopBackgroundServiceHandoffSteps } from '../../commands/webDesktopHandoffSteps';
 import {
     WizardGuidedHandoff,
-    WizardGuidedHandoffDivider,
     WizardGuidedHandoffDownloadCta,
     WizardGuidedHandoffTerminal,
 } from '../../ui/WizardGuidedHandoff';
@@ -34,7 +35,7 @@ export function WebDesktopBackgroundServiceHandoffContent(props: WebDesktopBackg
                 testID={`${props.testID}-terminal`}
                 steps={steps}
             /> : <Text>{t('common.unavailable')}</Text>}
-            <WizardGuidedHandoffDivider testID={`${props.testID}-divider`} />
+            <StepOrDivider label={t('common.or')} />
             <WizardGuidedHandoffDownloadCta testIDPrefix={props.testID} />
         </WizardGuidedHandoff>
     );

@@ -14,13 +14,13 @@ import type { RestoreRedirectReason, RestoreRedirectNotice } from '@/auth/provid
 import { Text } from '@/components/ui/text/Text';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { useReversePairingSession } from '@/hooks/auth/useReversePairingSession';
-import { PairingQrCode } from '@/components/auth/pairing/PairingQrCode';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import {
     formatHomeEnrollmentTargetLabel,
     resolveHomeEnrollmentPresentation,
 } from '@/auth/pairing/pairingPresentation';
 import { usePreventRemove } from '@react-navigation/native';
+import { RequesterCodeCard } from './RequesterCodeCard';
 import { PairingLinkDisclosure } from '@/components/auth/pairing/PairingLinkDisclosure';
 import type { HomeQrEntryIntent } from '@/auth/pairing/homeQrEntryIntent';
 import { openEnrolledHomeOrReturnToShell } from '@/auth/pairing/openEnrolledHome';
@@ -276,9 +276,16 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
         };
     }, []);
 
+    // The code a signed-in device approved stays where it was through the approved entrance (M4): the last shown code
+    // is kept while the approval lands and the Home is added, and forgotten on any other phase.
+    const shownCodeRef = React.useRef<Readonly<{ link: string; qrAvailable: boolean }> | null>(null);
+    if (pairing.phase === 'ready') shownCodeRef.current = { link: pairing.link, qrAvailable: pairing.qrAvailable };
+    else if (pairing.phase !== 'adding' && pairing.phase !== 'succeeded') shownCodeRef.current = null;
+    const approvedCode = pairing.phase === 'adding' || pairing.phase === 'succeeded' ? shownCodeRef.current : null;
     const hasStatusContent = presentation.activity
         || (presentation.contextualFacts !== 'none' && targetLabel != null)
-        || pairing.phase === 'ready';
+        || pairing.phase === 'ready'
+        || approvedCode !== null;
     const openSecretKeyLogin = () => {
         if (embedded && props.onOpenSecretKeyLogin) {
             props.onOpenSecretKeyLogin();
@@ -326,21 +333,24 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                     style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}
                     accessibilityLiveRegion={presentation.liveRegion}
                 >
-                    {presentation.activity ? (
+                    {presentation.activity && approvedCode === null ? (
                         <ActivitySpinner size="small" />
                     ) : null}
                     {presentation.contextualFacts !== 'none' && targetLabel ? (
                         <Text style={[styles.targetName, embedded ? styles.embeddedTargetName : null]}>{targetLabel}</Text>
                     ) : null}
+                    {pairing.phase === 'ready' || approvedCode !== null ? (
+                        <View style={[styles.qrBlock, embedded ? styles.embeddedQrBlockInner : null]}>
+                            <RequesterCodeCard
+                                link={pairing.phase === 'ready' ? pairing.link : approvedCode!.link}
+                                qrAvailable={pairing.phase === 'ready' ? pairing.qrAvailable : approvedCode!.qrAvailable}
+                                expiresAtMs={pairing.phase === 'ready' ? pairing.invite.expiresAtMs : null}
+                                approved={approvedCode !== null}
+                            />
+                        </View>
+                    ) : null}
                     {pairing.phase === 'ready' ? (
                         <>
-                            <View testID="restore-requester-qr" style={[styles.qrBlock, embedded ? styles.embeddedQrBlockInner : null]}>
-                                {pairing.qrAvailable ? (
-                                    <PairingQrCode link={pairing.link} size={264} />
-                                ) : (
-                                    <Text style={styles.noticeBody}>{t('connect.pairingQrTooLargeBody')}</Text>
-                                )}
-                            </View>
                             <PairingLinkDisclosure
                                 testIDPrefix="restore-requester-link"
                                 link={pairing.link}

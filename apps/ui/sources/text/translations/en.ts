@@ -3424,6 +3424,8 @@ const enConnect = {
   scanExistingHomeQrBody:
     'This Home is not linked to your sign-in service on this device. Scan its QR code or paste its pairing link to connect directly.',
   waitingForApproval: 'Waiting for approval…',
+  waitingForApprovalNewCodeIn: ({ time }: { time: string }) => `Waiting for approval · new code in ${time}`,
+  requesterApproved: 'Approved',
   securingCredentials: 'Securing credentials…',
   showQrInstead: 'Other recovery options',
   addPhoneQrInstructions:

@@ -3756,6 +3756,8 @@ export const ja: TranslationStructure = {
     scanExistingHomeQrTitle: "QRコードをスキャンするかペアリングリンクを貼り付ける",
     scanExistingHomeQrBody: "このHomeは、このデバイスのサインインサービスにリンクされていません。QRコードをスキャンするかペアリングリンクを貼り付けて、直接接続してください。",
     waitingForApproval: "承認待ち…",
+    waitingForApprovalNewCodeIn: ({ time }: { time: string }) => `承認待ち · ${time} 後に新しいコード`,
+    requesterApproved: '承認されました',
     securingCredentials: "認証情報を保護しています…",
     showQrInstead: "代わりにQRコードを表示",
     addPhoneQrInstructions: "Happier モバイルアプリでこのQRコードをスキャンして、スマホでサインインします。",

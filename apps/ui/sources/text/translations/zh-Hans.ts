@@ -3204,6 +3204,8 @@ export const zhHans: TranslationStructure = {
     scanExistingHomeQrTitle: "扫描二维码或粘贴配对链接",
     scanExistingHomeQrBody: "此 Home 尚未关联到此设备上的登录服务。扫描它的二维码或粘贴 配对链接即可直接连接。",
     waitingForApproval: "等待确认…",
+    waitingForApprovalNewCodeIn: ({ time }: { time: string }) => `等待批准 · ${time} 后生成新代码`,
+    requesterApproved: '已批准',
     securingCredentials: "正在保护凭据…",
     showQrInstead: "改为显示二维码",
     addPhoneQrInstructions: "用 Happier 手机应用扫描此二维码，在手机上登录。",

@@ -1,10 +1,13 @@
 import * as React from 'react';
 
+import { StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
+
+import { t } from '@/text';
+
 import { buildCliInstallAndRunCommandForCurrentApp, buildCliInstallAndRunPowershellCommandForCurrentApp } from '../../commands/wizardCliCommands';
 import { buildWebDesktopRelayHostHandoffSteps } from '../../commands/webDesktopHandoffSteps';
 import {
     WizardGuidedHandoff,
-    WizardGuidedHandoffDivider,
     WizardGuidedHandoffDownloadCta,
     WizardGuidedHandoffTerminal,
 } from '../../ui/WizardGuidedHandoff';
@@ -26,7 +29,7 @@ export function WebDesktopRelayHostHandoffContent(props: WebDesktopRelayHostHand
                     installAndSetupRelayWindowsCommand,
                 })}
             />
-            <WizardGuidedHandoffDivider testID={`${props.testID}-divider`} />
+            <StepOrDivider label={t('common.or')} />
             <WizardGuidedHandoffDownloadCta testIDPrefix={props.testID} />
         </WizardGuidedHandoff>
     );
