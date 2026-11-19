@@ -62,9 +62,10 @@ it.each([
 });
 
 it.each([
-    { sources: 'repository and repository-free Sources', secondRepository: false },
-    { sources: 'repository-only Sources', secondRepository: true },
-])('shows the admitted Project Source total in Joined and setup for $sources', async ({ secondRepository }) => {
+    { sources: 'repository and repository-free Sources', firstRepository: true, secondRepository: false },
+    { sources: 'repository-only Sources', firstRepository: true, secondRepository: true },
+    { sources: 'repository-free Sources only', firstRepository: false, secondRepository: false },
+])('shows the admitted Project Source total in Joined and setup for $sources', async ({ firstRepository, secondRepository }) => {
     onTestFinished(await installRealActionExecutorModuleLoader());
     const serverId = await homes.addHome({ name: 'Joined Home', serverUrl: 'https://joined-resources.example.test',
         serverIdentityId: 'srv_joined_resources', accountId: 'member', currentAccount: true, teamsEnabled: true });
@@ -81,7 +82,8 @@ it.each([
     const repository = { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
         repository: { nameWithOwner: 'team/application' }, protocol: 'https' };
     homes.answer(serverId, '/v1/projects/sources', { body: { ok: true, sources: [
-        { id: 'shared-app', revision: 1, name: 'Team application', audience: [], createdByAccountId: 'member', repository },
+        { id: 'shared-app', revision: 1, name: 'Team application', audience: [], createdByAccountId: 'member',
+            ...(firstRepository ? { repository } : {}) },
         { id: 'shared-tools', revision: 1, name: 'Team tools', audience: [], createdByAccountId: 'member',
             ...(secondRepository ? { repository } : {}) },
     ], coverage: { complete: true, nextCursor: null } } });
