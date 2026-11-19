@@ -105,11 +105,6 @@ export function useNotchMotion(
     const token = transitionTokenRef.current + 1;
     transitionTokenRef.current = token;
 
-    const settle = () => {
-      if (transitionTokenRef.current !== token) return;
-      void presentRef.current(true);
-    };
-
     if (params.reduceMotion || placementChanged) {
       width.value = target.body.width;
       height.value = target.body.height;
@@ -143,22 +138,28 @@ export function useNotchMotion(
     const run = () => {
       if (transitionTokenRef.current !== token) return;
       const spring = reanimatedMotionTokens.spring.travel;
-      const shape = (toValue: number) =>
-        withDelay(shapeDelayMs, withSpring(toValue, spring));
+      // A height-only resize can finish the width spring before the body fits the target frame.
+      let sizeSpringsRemaining = 2;
+      const settleSize = () => {
+        if (transitionTokenRef.current !== token) return;
+        sizeSpringsRemaining -= 1;
+        if (sizeSpringsRemaining === 0) void presentRef.current(true);
+      };
+      const onSizeFinished = (finished?: boolean) => {
+        'worklet';
+        if (finished) runOnJS(settleSize)();
+      };
+      const shape = (toValue: number, onFinished?: typeof onSizeFinished) =>
+        withDelay(shapeDelayMs, withSpring(toValue, spring, onFinished));
       enter(standardOpacity, target.standardShown);
       enter(openOpacity, target.openShown);
       islandOpacity.value = 1;
-      height.value = shape(target.body.height);
+      height.value = shape(target.body.height, onSizeFinished);
       corner.value = shape(target.corner);
       shoulder.value = shape(target.shoulder);
       centreX.value = shape(target.centre.x);
       centreY.value = shape(target.centre.y);
-      width.value = withDelay(
-        shapeDelayMs,
-        withSpring(target.body.width, spring, (finished) => {
-          if (finished) runOnJS(settle)();
-        }),
-      );
+      width.value = shape(target.body.width, onSizeFinished);
     };
 
     const grown = presentRef.current(false);
