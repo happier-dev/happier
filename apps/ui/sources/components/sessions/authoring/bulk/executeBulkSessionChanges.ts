@@ -20,6 +20,24 @@ export type BulkSessionChangeRow = Readonly<{
 }>;
 export const bulkChangeTargetKey = sessionAddressKey;
 
+export function projectBulkSessionInitialRows(
+    plan: ExistingSessionChangePlan,
+    targets: readonly ActionSessionAddressV1[],
+): BulkSessionChangeRow[] {
+    const firstActions = new Map<string, ActionId>();
+    for (const stage of plan.stages) {
+        for (const target of stage.targets) {
+            const key = bulkChangeTargetKey(target);
+            if (!firstActions.has(key)) firstActions.set(key, stage.actionId);
+        }
+    }
+    return targets.map(target => {
+        const actionId = firstActions.get(bulkChangeTargetKey(target));
+        return actionId ? { target, actionId, state: 'applying' }
+            : { target, actionId: 'session.message.send', state: 'skipped', code: 'no_change' };
+    });
+}
+
 function projectRow(target: ActionSessionAddressV1, actionId: ActionId, result: ActionExecuteResult): BulkSessionChangeRow {
     if (!result.ok) return { target, actionId, result, state: result.errorCode === 'managed_wake_unconfirmed' ? 'waking' : 'failed',
         code: result.errorCode ?? 'action_failed', reason: result.error };

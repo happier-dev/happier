@@ -68,6 +68,37 @@ it('includes owner-skipped targets in consequences and the submitted results', a
     ]));
 });
 
+it('settles the unchanged peer while an empty-draft Agent switch is still running', async () => {
+    const switching = { serverId: 'home', sessionId: 'muse' };
+    const unchanged = { serverId: 'home', sessionId: 'codex' };
+    const codex = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+    const targets = [
+        { address: switching, agentId: 'happier.agent.muse/muse', machineId: 'machine' },
+        { address: unchanged, agentId: 'happier.agent.codex/codex', machineId: 'machine' },
+    ];
+    const transition = Promise.withResolvers<void>();
+    const hook = await renderHook(() => useBulkSessionComposer({
+        targets,
+        executeConfirmed: async (_id, input) => {
+            expect(input).toMatchObject({ sessionId: { selector: 'sessions', addresses: [switching] } });
+            await transition.promise;
+            return { ok: true, result: { type: 'accepted' } };
+        },
+    }));
+    await act(async () => hook.getCurrent().setSelection({ agentTarget: codex }));
+    let submission: Promise<void> | undefined;
+    await act(async () => { submission = hook.getCurrent().send(); });
+    try {
+        expect(hook.getCurrent().rows).toMatchObject([
+            { target: switching, state: 'applying' },
+            { target: unchanged, state: 'skipped', code: 'no_change' },
+        ]);
+    } finally {
+        await act(async () => { transition.resolve(); await submission; });
+    }
+    expect(hook.getCurrent().rows.map(row => row.state)).toEqual(['switched', 'skipped']);
+});
+
 it('keeps changes pending until Send and retries failures using the captured message and selection', async () => {
     const a = { serverId: 'home', sessionId: 'a' };
     const b = { serverId: 'home', sessionId: 'b' };
@@ -76,7 +107,8 @@ it('keeps changes pending until Send and retries failures using the captured mes
     const hook = await renderHook(() => useBulkSessionComposer({ targets, initialText: 'original',
         executeConfirmed: async (actionId, input) => {
             calls.push({ actionId, input });
-            return { ok: true, result: { kind: 'fanout', results: calls.length === 1 ? [
+            if (actionId === 'session.permission_mode.set') return { ok: true, result: {} };
+            return { ok: true, result: { kind: 'fanout', results: calls.length === 2 ? [
                 { target: a, result: { ok: true, result: { status: 'accepted', localId: 'a-input' } } },
                 { target: b, result: { ok: false, errorCode: 'target_unavailable', error: 'offline' } },
             ] : [{ target: b, result: { ok: true, result: { status: 'accepted', localId: 'b-input' } } }] } };
@@ -86,10 +118,10 @@ it('keeps changes pending until Send and retries failures using the captured mes
     await act(async () => { await hook.getCurrent().send(); });
     await act(async () => { hook.getCurrent().setText('edited'); hook.getCurrent().setSelection({ permissionMode: 'read-only' }); });
     await act(async () => { await hook.getCurrent().retryFailed(); });
-    expect(calls).toHaveLength(2);
-    expect(calls[1]).toMatchObject({ actionId: 'session.message.send', input: {
-        message: 'original', permissionModeOverride: 'yolo', sessionId: { selector: 'sessions', addresses: [b] },
-    } });
+    expect(calls.slice(2)).toEqual([
+        { actionId: 'session.permission_mode.set', input: { permissionMode: 'yolo', sessionId: { selector: 'sessions', addresses: [b] } } },
+        { actionId: 'session.message.send', input: { message: 'original', permissionModeOverride: 'yolo', sessionId: { selector: 'sessions', addresses: [b] } } },
+    ]);
     expect(hook.getCurrent().rows.map(row => row.state)).toEqual(['sent', 'sent']);
 });
 

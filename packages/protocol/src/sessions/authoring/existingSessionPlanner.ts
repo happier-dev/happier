@@ -124,16 +124,17 @@ export function planExistingSessionChanges(
       add(3, EXISTING_SESSION_FIELD_APPLICATIONS.capabilitySelection.actionId,
         buildExistingSessionCapabilitiesActionInput({ sessionId, ...delta }), target.address);
     }
+    if (selection.permissionMode !== undefined) add(4, 'session.permission_mode.set',
+      buildExistingSessionPermissionModeActionInput({ sessionId, permissionMode: selection.permissionMode ?? 'default' }), target.address);
     if (model?.teamCredentialModel) add(4, 'session.model.set', buildExistingSessionModelActionInput({ sessionId, teamCredentialModel: model.teamCredentialModel }), target.address);
+    else if (flatModel && !transitioning) add(4, 'session.model.set', buildExistingSessionModelActionInput({
+      sessionId, modelId: flatModel.modelId, providerConnectionId: flatModel.providerConnectionId,
+    }), target.address);
     if (hasMessage) {
       add(5, 'session.message.send', { message,
         ...(selection.permissionMode === undefined ? {} : { permissionModeOverride: selection.permissionMode ?? 'default' }),
         ...(flatModel ? { modelOverride: selection.modelSelection === null ? null : flatModel.modelId, providerConnectionId: flatModel.providerConnectionId } : {}),
       }, target.address);
-    } else {
-      if (selection.permissionMode !== undefined) add(4, 'session.permission_mode.set',
-        buildExistingSessionPermissionModeActionInput({ sessionId, permissionMode: selection.permissionMode ?? 'default' }), target.address);
-      if (flatModel && !transitioning) add(4, 'session.model.set', buildExistingSessionModelActionInput({ sessionId, ...flatModel }), target.address);
     }
   }
   return { stages: [...phases.entries()].sort(([a], [b]) => a - b).flatMap(([, groups]) => [...groups.values()]), unsupportedFields, skippedTargets: [] };

@@ -13,6 +13,8 @@ export function describeBulkSkipReason(
   reason: string | null | undefined,
 ): string {
   switch (reason) {
+    case 'no_change':
+      return t('session.participants.bulk.keepsOwnOne');
     case 'archived':
       return t('session.participants.bulk.reasonArchived');
     case 'cannot_resume':

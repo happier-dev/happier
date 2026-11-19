@@ -5,7 +5,7 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import type { UiActionExecutorContext } from '@/sync/ops/actions/defaultActionExecutor';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useComposerTextSelector, useComposerTextStore } from '@/components/sessions/agentInput/composerTextStore';
-import { bulkChangeTargetKey, executeBulkSessionChanges, isBulkSessionRetryable, orderBulkSessionChangeRows, summarizeBulkSessionChanges, type BulkSessionChangeRow } from './executeBulkSessionChanges';
+import { bulkChangeTargetKey, executeBulkSessionChanges, isBulkSessionRetryable, orderBulkSessionChangeRows, projectBulkSessionInitialRows, summarizeBulkSessionChanges, type BulkSessionChangeRow } from './executeBulkSessionChanges';
 
 type Submission = Readonly<{ selection: ExistingSessionChangeSet; text: string; targets: readonly ExistingSessionPlanningTarget[];
     skippedTargets: ExistingSessionChangePlan['skippedTargets'] }>;
@@ -52,10 +52,11 @@ export function useBulkSessionComposer(input: Readonly<{
         running.current = true;
         setSubmitting(true);
         const planned = planSubmission(snapshot);
-        const keys = new Set(snapshot.targets.map(target => bulkChangeTargetKey(target.address)));
+        const initialRows = projectBulkSessionInitialRows(planned, snapshot.targets.map(target => target.address));
+        const keys = new Set(initialRows.map(row => bulkChangeTargetKey(row.target)));
         setRows(previous => orderBulkSessionChangeRows([
             ...previous.filter(row => !keys.has(bulkChangeTargetKey(row.target))),
-            ...snapshot.targets.map(({ address }): BulkSessionChangeRow => ({ target: address, actionId: planned.stages[0]?.actionId ?? 'session.message.send', state: 'applying' })),
+            ...initialRows,
         ]));
         try {
             await executeBulkSessionChanges({ plan: planned, executeConfirmed: input.executeConfirmed ?? frontDoor.confirmed,

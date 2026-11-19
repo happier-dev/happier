@@ -42,9 +42,14 @@ describe('existing Session change planner', () => {
     const plan = planExistingSessionChanges({ permissionMode: 'read-only', modelSelection: {
       v: 1, updatedAt: 1, ref: { agentTargetKey: 'claude', providerConnectionId: 'provider', modelId: 'model' },
     } }, targets, 'hello');
-    expect(plan.stages).toEqual([{ actionId: 'session.message.send', input: {
-      message: 'hello', permissionModeOverride: 'read-only', modelOverride: 'model', providerConnectionId: 'provider',
-    }, targets: targets.map(t => t.address) }]);
+    const addresses = targets.map(t => t.address);
+    expect(plan.stages).toEqual([
+      { actionId: 'session.permission_mode.set', input: { permissionMode: 'read-only' }, targets: addresses },
+      { actionId: 'session.model.set', input: { modelId: 'model', providerConnectionId: 'provider' }, targets: addresses },
+      { actionId: 'session.message.send', input: {
+        message: 'hello', permissionModeOverride: 'read-only', modelOverride: 'model', providerConnectionId: 'provider',
+      }, targets: addresses },
+    ]);
   });
 
   it('orders mode/config before account auth, capabilities and message; groups auth by Agent and Machine', () => {
@@ -101,13 +106,14 @@ describe('existing Session change planner', () => {
 
   it('switches mixed Agents without delivering until account auth and capabilities have applied', () => {
     const plan = planExistingSessionChanges({ agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      permissionMode: 'read-only',
       connectedServices: { v: 2, bindingsByServiceId: {} }, capabilityDeltas: [{ kind: 'skill', id: 'skill', state: 'on' }],
       modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'happier.agent.codex/codex', modelId: 'model', providerConnectionId: 'provider' } },
     }, targets, 'hello');
     expect(plan.stages.map(stage => stage.actionId)).toEqual([
       'session.agent.transition', 'session.agent.transition',
       'session.connected_services_auth.set', 'session.connected_services_auth.set',
-      'session.capabilities.set', 'session.message.send',
+      'session.capabilities.set', 'session.permission_mode.set', 'session.model.set', 'session.message.send',
     ]);
     const transitions = plan.stages.filter(stage => stage.actionId === 'session.agent.transition');
     expect(transitions.map(stage => stage.input.expectedCurrentAgentId)).toEqual([targets[0].agentId, targets[2].agentId]);
@@ -116,11 +122,17 @@ describe('existing Session change planner', () => {
       modelSelection: { agentTargetKey: 'happier.agent.codex/codex', modelId: 'model', providerConnectionId: 'provider' } });
     expect(plan.stages.filter(stage => stage.actionId === 'session.connected_services_auth.set').map(stage => stage.input.agentId))
       .toEqual(['happier.agent.codex/codex', 'happier.agent.codex/codex']);
+    expect(plan.stages.find(stage => stage.actionId === 'session.permission_mode.set')).toMatchObject({
+      input: { permissionMode: 'read-only' }, targets: targets.map(target => target.address),
+    });
+    expect(plan.stages.find(stage => stage.actionId === 'session.model.set')).toMatchObject({
+      input: { modelId: 'model', providerConnectionId: 'provider' }, targets: [targets[1].address],
+    });
   });
 
   it('uses the message owner clear operand for an explicit null model selection', () => {
     const plan = planExistingSessionChanges({ modelSelection: null }, targets, 'hello');
-    expect(plan.stages[0].input).toEqual({ message: 'hello', modelOverride: null, providerConnectionId: null });
+    expect(plan.stages.at(-1)?.input).toEqual({ message: 'hello', modelOverride: null, providerConnectionId: null });
   });
 
   it('applies mode/config through the transition selection for switched targets and Actions for unchanged targets', () => {

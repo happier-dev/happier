@@ -769,10 +769,13 @@ reuse applies its own policy to the shared map and input builders.
 
 `planExistingSessionChanges` turns pending edits into ordered stages grouped
 by Action and operands. Capability edits carry one Skill or MCP server item
-per Action and preserve other overrides. An Agent switch runs before the
-message stage. A target that fails a stage or has a non-accepted transition
-is filtered out of later stages. The planner returns intent and skipped
-targets. The [Action executor](actions.md) owns admission and effects.
+per Action and preserve other overrides. Bulk Compose applies staged permission
+through its settings Action even when the draft is empty. An Agent switch
+carries the staged model in the transition selection. A target that keeps its
+Agent gets the staged model through the model Action. Message delivery runs
+after the settings stages. A target that fails a stage or has a non-accepted
+transition is filtered out of later stages. The planner returns intent and
+skipped targets. The [Action executor](actions.md) owns admission and effects.
 
 ## Compatibility
 
