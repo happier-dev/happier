@@ -1,6 +1,6 @@
 import { t } from '@/text';
 import { activityInstanceKey, normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import { buildSessionPermissionChoiceActionAnswer, isRefusingPermissionChoice, resolveSessionPermissionChoiceShortLabel,
+import { buildSessionPermissionChoiceActionAnswer, isRefusingPermissionChoice, resolveSessionPermissionChoiceShortLabels,
     selectPrimaryPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
 
 import type { DesktopActivityOverlayExpandedCard, DesktopActivityOverlaySessionRowModel } from './desktopActivityOverlayModelTypes';
@@ -79,9 +79,10 @@ function buildPermissionActions(
 ) {
     const choices = request.permissionChoices ?? [];
     const primaryId = selectPrimaryPermissionChoice(choices);
+    const shortLabels = resolveSessionPermissionChoiceShortLabels(choices);
     const actions = choices.map((choice) => {
         const response = buildSessionPermissionChoiceActionAnswer(choice);
-        const label = resolveSessionPermissionChoiceShortLabel(choice);
+        const label = shortLabels.get(choice.id) ?? choice.label;
         return {
             id: choice.id,
             label,

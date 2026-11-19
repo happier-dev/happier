@@ -31,8 +31,8 @@ import {
   resolveNotchMaterialRect,
   resolveNotchPaintInsets,
   resolveNotchCastsShadow,
+  resolveNotchShoulderOffset,
   resolveNotchCloseStart,
-  resolveNotchOpenContentProgress,
   isNotchEdgeDock,
   isNotchVerticalDock,
   resolveNotchBodySize,
@@ -363,17 +363,12 @@ export function NotchShape(
     height: motion.shoulder.value,
     opacity: motion.islandOpacity.value,
   }));
-  function shoulderPosition(index: 0 | 1) {
-    'worklet';
-    const size = motion.shoulder.value;
-    if (dock === 'top') {
-      return { left: index === 0 ? -size : bodyWidth.value, top: 0 };
-    }
-    const top = index === 0 ? -size : bodyHeight.value;
-    return { left: dock === 'left' ? 0 : bodyWidth.value - size, top };
-  }
-  const shoulderLeadingStyle = useAnimatedStyle(() => shoulderPosition(0));
-  const shoulderTrailingStyle = useAnimatedStyle(() => shoulderPosition(1));
+  // Each style reads the live body size itself: a nested worklet's reads were not tracked on the web, so the
+  // trailing shoulder stayed at the rest height inside the open body, a second 95% plane (taste #11).
+  const shoulderLeadingStyle = useAnimatedStyle(() =>
+    resolveNotchShoulderOffset(dock, 0, motion.shoulder.value, bodyWidth.value, bodyHeight.value));
+  const shoulderTrailingStyle = useAnimatedStyle(() =>
+    resolveNotchShoulderOffset(dock, 1, motion.shoulder.value, bodyWidth.value, bodyHeight.value));
 
   // The status row stays put while the body grows around it; the strip/row fades on the other docks.
   const standardLayerStyle = useAnimatedStyle(() => {
@@ -395,14 +390,9 @@ export function NotchShape(
       transform: [{ translateX }],
     };
   });
-  // The open content fades in with the shape's growth, so its edge never crops it (R2 N6); no timer.
-  const restSize = standardContent;
-  const openSize = drawnBody;
-  const opening = props.form === 'open';
+  // The open content waits for the shape to cover it, then fades in (`useNotchMotion`, R2 N6).
   const openLayerStyle = useAnimatedStyle(() => ({
-    opacity: motion.openOpacity.value * (opening
-      ? resolveNotchOpenContentProgress({ width: bodyWidth.value, height: bodyHeight.value }, restSize, openSize)
-      : 1),
+    opacity: motion.openOpacity.value,
   }));
   const castShadow = castsShadow;
   const openMaxHeight = Math.max(0, windowHeight - statusRowOffset - 2 * padY * openShoulder);

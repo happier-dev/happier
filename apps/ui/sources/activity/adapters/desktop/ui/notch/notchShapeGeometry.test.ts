@@ -9,9 +9,9 @@ import {
   resolveNotchMaterialRect,
   resolveNotchCastsShadow,
   resolveNotchCloseStart,
-  resolveNotchOpenContentProgress,
   resolveNotchPaintInsets,
   resolveNotchShoulder,
+  resolveNotchShoulderOffset,
   resolveNotchStatusRowShift,
   type NotchMetrics,
 } from './notchShapeGeometry';
@@ -239,15 +239,15 @@ describe('notch material', () => {
     expect(resolveNotchCastsShadow('floating', 'standard', 'standard')).toBe(true);
   });
 
-  it('fades the open content in with the shape, not ahead of it (R2 N6)', () => {
-    const rest = { width: 32, height: 140 };
-    const open = { width: 464, height: 600 };
-    expect(resolveNotchOpenContentProgress(rest, rest, open)).toBe(0);
-    expect(resolveNotchOpenContentProgress({ width: 248, height: 600 }, rest, open)).toBeCloseTo(0.5);
-    expect(resolveNotchOpenContentProgress({ width: 464, height: 370 }, rest, open)).toBeCloseTo(0.5);
-    expect(resolveNotchOpenContentProgress(open, rest, open)).toBe(1);
-    // An axis that does not grow (or overshoots in the spring) never holds content back.
-    expect(resolveNotchOpenContentProgress({ width: 480, height: 140 }, rest, { width: 464, height: 140 })).toBe(1);
+  it('stands the shoulders just outside the body at its live size, never over it (taste #11)', () => {
+    for (const dock of ['left', 'right'] as const) {
+      const lead = resolveNotchShoulderOffset(dock, 0, 8, 464, 359);
+      const trail = resolveNotchShoulderOffset(dock, 1, 8, 464, 359);
+      expect(lead.top + 8).toBeLessThanOrEqual(0);
+      expect(trail.top).toBeGreaterThanOrEqual(359);
+    }
+    expect(resolveNotchShoulderOffset('top', 0, 8, 464, 300).left + 8).toBeLessThanOrEqual(0);
+    expect(resolveNotchShoulderOffset('top', 1, 8, 464, 300).left).toBeGreaterThanOrEqual(464);
   });
 
   it('holds the black row at the hardware, then eases it away with no step', () => {

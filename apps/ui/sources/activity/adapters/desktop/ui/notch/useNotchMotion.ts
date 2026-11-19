@@ -140,10 +140,15 @@ export function useNotchMotion(
       const spring = reanimatedMotionTokens.spring.travel;
       // A height-only resize can finish the width spring before the body fits the target frame.
       let sizeSpringsRemaining = 2;
+      // Growing into the open panel, the panel's content waits until the shape covers it: it is laid out at
+      // the panel's full size, so any earlier frame would show it cut by the moving edge (taste R2 N6).
+      const contentWaitsForShape = !shrinking && target.openShown;
       const settleSize = () => {
         if (transitionTokenRef.current !== token) return;
         sizeSpringsRemaining -= 1;
-        if (sizeSpringsRemaining === 0) void presentRef.current(true);
+        if (sizeSpringsRemaining !== 0) return;
+        if (contentWaitsForShape) openOpacity.value = withTiming(1, { duration: motionTokens.durationMs.fast });
+        void presentRef.current(true);
       };
       const onSizeFinished = (finished?: boolean) => {
         'worklet';
@@ -152,7 +157,8 @@ export function useNotchMotion(
       const shape = (toValue: number, onFinished?: typeof onSizeFinished) =>
         withDelay(shapeDelayMs, withSpring(toValue, spring, onFinished));
       enter(standardOpacity, target.standardShown);
-      enter(openOpacity, target.openShown);
+      if (contentWaitsForShape) openOpacity.value = 0;
+      else enter(openOpacity, target.openShown);
       islandOpacity.value = 1;
       height.value = shape(target.body.height, onSizeFinished);
       corner.value = shape(target.corner);

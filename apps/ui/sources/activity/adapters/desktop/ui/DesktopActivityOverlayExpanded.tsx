@@ -2,6 +2,7 @@ import * as React from 'react';
 import { HAPPIER_ICON_BUTTON_SIZE } from '@happier-dev/plugin-ui/presentation';
 import { ScrollView, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { resolveDesktopActivityOverlayPanelInsets } from './desktopActivityOverlayPanelInsets';
 
 import { DesktopActivityOverlayPanelRoomContext, type DesktopActivityOverlayPanelRoom } from './panelRoom';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
@@ -115,7 +116,7 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
     ) : null;
 
     // The first row's trailing end clears the corner pin by a step: the pin's inset and width, less the panel's own inset.
-    const cornerPinClearance = theme.space.s8 + HAPPIER_ICON_BUTTON_SIZE + theme.space.s4 - theme.space.s12;
+    const cornerPinClearance = theme.space.s8 + HAPPIER_ICON_BUTTON_SIZE + theme.space.s4 - resolveDesktopActivityOverlayPanelInsets(theme).panel;
 
     return (
         // The shell only tracks hover to pause completion auto-dismiss. A `Pressable` would make it
@@ -174,7 +175,8 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         width: '100%',
         position: 'relative',
-        paddingHorizontal: theme.space.s12,
+        // The panel's own inset: rows' hover plates start here, everything else one content step in.
+        paddingHorizontal: resolveDesktopActivityOverlayPanelInsets(theme).panel,
     },
     pinInStatusRow: {
         position: 'absolute',

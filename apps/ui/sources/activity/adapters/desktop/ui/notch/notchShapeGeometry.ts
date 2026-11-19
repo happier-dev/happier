@@ -336,14 +336,15 @@ export function resolveNotchCastsShadow(dock: NotchDock, form: NotchForm, settle
   return !isNotchEdgeDock(dock) || form === 'open' || settledForm === 'open';
 }
 
+
 /**
- * How far the open shape has grown from rest toward the panel, 0 to 1, on the axis that has grown least:
- * the open content's opacity follows it, so content arrives with the shape and is never cut by its moving
- * edge (taste R2 N6). An axis that does not grow never holds content back.
+ * Where a concave shoulder stands against the island's shape box (its own coordinates): just outside the body,
+ * on the edge, before and after it. It never overlaps the body, where its 95% plane would stack on the body's.
  */
-export function resolveNotchOpenContentProgress(size: NotchSize, rest: NotchSize, open: NotchSize): number {
+export function resolveNotchShoulderOffset(
+  dock: NotchDock, index: 0 | 1, size: number, width: number, height: number,
+): Readonly<{ left: number; top: number }> {
   'worklet';
-  const axis = (value: number, from: number, to: number) =>
-    to - from <= 0 ? 1 : Math.min(1, Math.max(0, (value - from) / (to - from)));
-  return Math.min(axis(size.width, rest.width, open.width), axis(size.height, rest.height, open.height));
+  if (dock === 'top') return { left: index === 0 ? -size : width, top: 0 };
+  return { left: dock === 'left' ? 0 : width - size, top: index === 0 ? -size : height };
 }

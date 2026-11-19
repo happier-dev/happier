@@ -30,9 +30,10 @@ export function DesktopActivityOverlayCardFrame(props: Readonly<{
     children?: React.ReactNode;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
-    // The source line ("Bash", "Question") only when neither the title nor the subject already says it.
+    // The source line ("Bash", "Question") only when neither the title nor the subject already says it,
+    // anywhere in the title ("Permission required: list_allowed_directories · Filesystem", owner 11-19 O9).
     const eyebrow = !props.subject && props.eyebrow?.trim()
-        && !props.title.trim().toLowerCase().startsWith(props.eyebrow.trim().toLowerCase())
+        && !props.title.trim().toLowerCase().includes(props.eyebrow.trim().toLowerCase())
         ? props.eyebrow.trim()
         : null;
     const subject = props.subject ?? null;

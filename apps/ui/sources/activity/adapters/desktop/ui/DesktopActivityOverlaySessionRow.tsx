@@ -3,6 +3,7 @@ import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
 import type { SessionBotFaceFacts } from '@/components/sessions/bots/face/sessionBotFaceFacts';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { resolveDesktopActivityOverlayPanelInsets } from './desktopActivityOverlayPanelInsets';
 
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { Text } from '@/components/ui/text/Text';
@@ -218,7 +219,8 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s10,
-        paddingHorizontal: theme.space.s8,
+        // From the hover plate to the mark: the mark column is the panel's content edge.
+        paddingHorizontal: resolveDesktopActivityOverlayPanelInsets(theme).content,
         paddingVertical: theme.space.s6,
         // Carried on the base row so the hover wash and the keyboard focus outline share one shape.
         borderRadius: theme.borderRadius.md,

@@ -360,6 +360,32 @@ describe('buildDesktopActivityOverlayModel', () => {
         expect(model.expanded.cards?.[0]?.actions?.find(action => action.id === 'opaque:once')?.label).toBe('Allow once');
     });
 
+    it('tells two lasting grants apart by what each saves, never two identical pills', () => {
+        const identity = { item: { kind: 'mcp', serverId: 'filesystem' }, server: 'filesystem', tool: 'list_allowed_directories' } as never;
+        const permissionChoices = resolveSessionPermissionChoices({ toolName: 'mcp__filesystem__list_allowed_directories', mcpTool: identity,
+            nativeChoices: { requirementId: 'native-two-lasting', source: 'claude', choices: [
+                { id: 'opaque:once', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+                { id: 'opaque:local', label: 'Always allow in this workspace: list_allowed_directories', decision: 'approved', scope: 'localPersistent',
+                    response: { approved: true, decision: 'approved' } },
+                { id: 'opaque:catalog', label: 'Always allow list_allowed_directories', decision: 'approved', scope: 'localPersistent',
+                    followUp: { actionId: 'mcp.catalog.allow', input: {} }, response: { approved: true, decision: 'approved' } },
+            ] } });
+        const model = buildDesktopActivityOverlayModel({ snapshot: createSnapshot({ permissionRequests: [{
+            kind: 'permission_request', requestId: 'native-two-lasting', serverId: 'server-1', sessionId: 'session-primary',
+            title: 'Approve tool', summary: null, toolLabel: 'Filesystem', questionText: null, count: 1,
+            openActionIdentifier: 'open-session:session-primary', allowActionIdentifier: 'session.permission.respond',
+            denyActionIdentifier: 'session.permission.respond', directOptions: [], permissionChoices,
+        }] }), policy: createPolicy() });
+        const actions = model.expanded.cards?.[0]?.actions ?? [];
+        const local = actions.find(action => action.id === 'opaque:local');
+        const catalog = actions.find(action => action.id === 'opaque:catalog');
+        expect(local?.label).toBeTruthy();
+        expect(catalog?.label).toBeTruthy();
+        expect(local?.label).not.toBe(catalog?.label);
+        expect(local?.accessibilityLabel).toBe('Always allow in this workspace: list_allowed_directories');
+        expect(catalog?.accessibilityLabel ?? catalog?.label).toContain('list_allowed_directories');
+    });
+
     it('marks offered native refusals by their kind rather than their opaque IDs', () => {
         const permissionChoices = resolveSessionPermissionChoices({ toolName: 'Bash', nativeChoices: {
             requirementId: 'native-refusals', source: 'codex', choices: [

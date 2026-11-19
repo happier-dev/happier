@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { resolveDesktopActivityOverlayPanelInsets } from '../desktopActivityOverlayPanelInsets';
 import { VirtualizedList, type VirtualizedListProps } from '@/components/ui/lists/virtualized';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 
@@ -398,7 +399,7 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
                 () => <View testID={index === 0 ? resolveDesktopActivityOverlayCardKindTestID(card.kind) : undefined}>
                     <View testID={index === 0 ? resolveDesktopActivityOverlayCardInstanceTestID(card) : undefined}>{sessionRow(row)}</View>
                 </View>, false, index > 0, isFocusedSession(row.sessionId, row.serverId));
-        } else add(`card:${card.id}`, () => render(card), false, false,
+        } else add(`card:${card.id}`, () => <View style={styles.onContentEdge}>{render(card)}</View>, false, false,
             containsFocusCard([card]) || card.kind === 'session_overview' && isFocusedSession(card.sessionId, card.serverId));
     }
     const leadClearance = props.leadRowClearance ?? 0;
@@ -453,10 +454,15 @@ const styles = StyleSheet.create((theme) => ({
         gap: theme.space.s2,
     },
     // An ask well sits a step below its identity row and a step above whatever follows.
+    // Cards stand on the panel's content edge, under the row marks (owner 11-19 O9).
     asks: {
+        marginHorizontal: resolveDesktopActivityOverlayPanelInsets(theme).content,
         gap: theme.space.s8,
         marginTop: theme.space.s4,
         marginBottom: theme.space.s6,
+    },
+    onContentEdge: {
+        marginHorizontal: resolveDesktopActivityOverlayPanelInsets(theme).content,
     },
     // Under a header that already names the asker, the asks keep only their own rhythm.
     asksOnly: {
@@ -464,7 +470,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     separator: {
         height: StyleSheet.hairlineWidth,
-        marginHorizontal: theme.space.s4,
+        marginHorizontal: resolveDesktopActivityOverlayPanelInsets(theme).content,
         backgroundColor: theme.colors.border.default,
     },
 }));

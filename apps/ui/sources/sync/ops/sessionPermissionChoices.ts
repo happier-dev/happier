@@ -59,17 +59,24 @@ export function selectPrimaryPermissionChoice(choices: readonly SessionPermissio
 }
 
 /**
- * A choice's name on a compact surface (the notch's pill): a lasting grant is named by the scope it grants,
- * never by the producer's rule text, which a pill would cut mid-scope. Callers keep `choice.label` as the
- * accessible name so the full consequence is still read.
+ * The choices' names on a compact surface (the notch's pills): a grant is named by the scope it grants, never
+ * by the producer's rule text, which a pill would cut mid-scope. Two lasting grants are told apart by what each
+ * saves: the tool catalog's (every session) or the producer's own (here). Names that would still repeat keep
+ * the producer's words. Callers keep `choice.label` as the accessible name so the full consequence is read.
  */
-export function resolveSessionPermissionChoiceShortLabel(choice: SessionPermissionChoice): string {
-    if (isRefusingPermissionChoice(choice)) return choice.label;
-    switch (choice.scope) {
-        case 'session': return t('capabilities.session.ask.allowSession');
-        case 'localPersistent': return t('capabilities.session.toolAsk.alwaysAllow');
-        default: return choice.label;
-    }
+export function resolveSessionPermissionChoiceShortLabels(choices: readonly SessionPermissionChoice[]): ReadonlyMap<string, string> {
+    const lasting = choices.filter(choice => choice.scope === 'localPersistent' && !isRefusingPermissionChoice(choice));
+    const short = (choice: SessionPermissionChoice): string => {
+        if (isRefusingPermissionChoice(choice)) return choice.label;
+        if (choice.scope === 'session') return t('capabilities.session.ask.allowSession');
+        if (choice.scope !== 'localPersistent') return choice.label;
+        if (lasting.length === 1) return t('settingsDesktop.overlay.notchAlwaysAllow');
+        return t(choice.catalog ? 'settingsDesktop.overlay.notchAlwaysAllowEverywhere' : 'settingsDesktop.overlay.notchAlwaysAllowHere');
+    };
+    const labels = choices.map(choice => [choice.id, short(choice)] as const);
+    const counts = new Map<string, number>();
+    for (const [, label] of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
+    return new Map(labels.map(([id, label], index) => [id, (counts.get(label) ?? 0) > 1 ? choices[index]!.label : label]));
 }
 
 /** Yes grants this occurrence; No prefers Deny, otherwise the offered Stop. */

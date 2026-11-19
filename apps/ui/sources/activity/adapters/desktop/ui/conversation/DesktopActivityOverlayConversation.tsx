@@ -16,6 +16,8 @@ import { playElementRectFlight } from '@/components/ui/motion/rectFlight';
 import { resolveVerticalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { HAPPIER_PAGE_METRICS, HappierPageSectionContext } from '@happier-dev/plugin-ui/presentation';
+import { DESKTOP_ACTIVITY_OVERLAY_LINE_ON_CONTENT_EDGE, resolveDesktopActivityOverlayPanelInsets } from '../desktopActivityOverlayPanelInsets';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
@@ -35,10 +37,8 @@ import { DesktopActivityOverlayExpandedCards } from '../cards/DesktopActivityOve
 import { DesktopActivityOverlayPinButton } from '../DesktopActivityOverlayPinButton';
 import {
   DESKTOP_ACTIVITY_OVERLAY_AGENT_MARK_SIZE,
-  DESKTOP_ACTIVITY_OVERLAY_ROW_LEADING_SIZE,
   DesktopActivityOverlayContextLine,
 } from '../DesktopActivityOverlaySessionRow';
-import { NOTCH_FACE_PANEL_SIZE } from '../faces/DesktopActivityOverlayFaces';
 import { DesktopActivityOverlayConversationLiftContext } from './conversationLift';
 import { resolveConversationTurnsLayout } from './conversationTurnsLayout';
 import { DesktopActivityOverlayPanelRoomContext } from '../panelRoom';
@@ -222,13 +222,13 @@ export function DesktopActivityOverlayConversation(
             {face ? (
               <BotFaceMarker
                 facts={face.face}
-                size={NOTCH_FACE_PANEL_SIZE}
+                size={HAPPIER_PAGE_METRICS.pageHeaderMarkGlyphPx}
                 activity={face.activity}
                 monochrome={!face.live}
                 planeColor={theme.colors.overlay.stageImmersive}
               />
             ) : row?.botFace ? (
-              <SessionBotFace facts={row.botFace} size={NOTCH_FACE_PANEL_SIZE} />
+              <SessionBotFace facts={row.botFace} size={HAPPIER_PAGE_METRICS.pageHeaderMarkGlyphPx} />
             ) : row?.agentId ? (
               <SessionAgentCatalogIdentityIcon
                 agentId={row.agentId}
@@ -368,14 +368,14 @@ export function DesktopActivityOverlayConversation(
           </View>
         ) : null}
         {conversation.refreshing && reply.state === 'ready' ? (
-          <SurfaceFreshnessLine
+          <DesktopActivityOverlayEdgeLine
             testID="desktop-activity-overlay-conversation-refreshing"
             busy
             reason={t('settingsDesktop.overlay.notchUpdating')}
           />
         ) : null}
         {!conversation.reachable ? (
-          <SurfaceFreshnessLine
+          <DesktopActivityOverlayEdgeLine
             testID="desktop-activity-overlay-conversation-unreachable"
             tone="warning"
             glyph="wifi-slash"
@@ -383,7 +383,7 @@ export function DesktopActivityOverlayConversation(
           />
         ) : null}
         {extract === 'failed' ? (
-          <SurfaceFreshnessLine
+          <DesktopActivityOverlayEdgeLine
             testID="desktop-activity-overlay-conversation-extract-failed"
             tone="warning"
             reason={t('settingsDesktop.overlay.notchOpenWindowFailed')}
@@ -401,7 +401,7 @@ export function DesktopActivityOverlayConversation(
           />
         ) : null}
         {props.draftWriteError ? (
-          <SurfaceFreshnessLine
+          <DesktopActivityOverlayEdgeLine
             testID="desktop-activity-overlay-conversation-draft-failed"
             tone="warning"
             reason={t('common.saveError')}
@@ -428,6 +428,15 @@ export function DesktopActivityOverlayConversation(
   );
 }
 
+/** A banner on the conversation's content edge, not inset again by a list's tool inset (O9). */
+function DesktopActivityOverlayEdgeLine(props: React.ComponentProps<typeof SurfaceFreshnessLine>): React.ReactElement {
+  return (
+    <HappierPageSectionContext.Provider value={DESKTOP_ACTIVITY_OVERLAY_LINE_ON_CONTENT_EDGE}>
+      <SurfaceFreshnessLine {...props} />
+    </HappierPageSectionContext.Provider>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
   container: {
     gap: theme.space.s10,
@@ -436,7 +445,8 @@ const styles = StyleSheet.create((theme) => ({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: theme.space.s8,
+    // Back sits close to the identity it returns from (owner 11-19 O9).
+    gap: theme.space.s4,
     minHeight: PAGE_LIST_METRICS.smallControlHeightPx,
   },
   // The list row's anatomy (`DesktopActivityOverlaySessionRow`): mark slot, then name over state · where.
@@ -446,10 +456,10 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.s10,
-    paddingHorizontal: theme.space.s8,
   },
+  // The header's face reads a step up from the rows' (the page header's mark glyph): it is the asker.
   mark: {
-    width: DESKTOP_ACTIVITY_OVERLAY_ROW_LEADING_SIZE,
+    width: HAPPIER_PAGE_METRICS.pageHeaderMarkGlyphPx,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
@@ -468,8 +478,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.state.attention.textForeground,
     flexShrink: 0,
   },
+  // The turns, the Loading row, banners, asks and the reply field all stand on the panel's content edge.
   body: {
     gap: theme.space.s10,
+    paddingHorizontal: resolveDesktopActivityOverlayPanelInsets(theme).content,
   },
   reply: {
     color: theme.colors.text.primary,
@@ -479,7 +491,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   turnsContent: {
     gap: theme.space.s8,
-    paddingHorizontal: theme.space.s4,
   },
   // Your turns stand right in the transcript's own bubble; the agent's read as plain text (lab `ntshape` C).
   yourTurn: {
@@ -497,11 +508,9 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.s8,
-    paddingHorizontal: theme.space.s4,
   },
   hidden: {
     gap: theme.space.s8,
-    paddingHorizontal: theme.space.s4,
   },
   hiddenAction: {
     flexDirection: 'row',
