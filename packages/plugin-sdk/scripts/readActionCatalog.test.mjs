@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 import { readActionCatalog } from './deriveActionDtos.mjs';
 
-test('canonical Action families resolve named object members without executing their owner', t => {
+test('canonical Action families and exclusions resolve imported object members without executing their owner', t => {
   const root = mkdtempSync(resolve(tmpdir(), 'happier-action-members-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const actions = resolve(root, 'packages/protocol/src/actions');
@@ -25,9 +25,21 @@ test('canonical Action families resolve named object members without executing t
       lookups: [IDS[WRITE_KEY], ID_MAP.get(READ_KEY), ID_MAP.get('write')],
     } as const;
   `);
-  writeFileSync(resolve(actions, 'pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {} as const;');
-  assert.deepEqual(readActionCatalog(root).families, {
+  writeFileSync(resolve(actions, 'pluginActionSurface.ts'), `
+    import { IDS as IMPORTED_IDS } from './priceIds.js';
+    const OTHER_EXCLUSIONS = { 'usage.private.read': 'private' } as const;
+    export const PLUGIN_SURFACE_EXCLUSION_REASONS = Object.freeze({
+      [IMPORTED_IDS.get]: 'person',
+      ...OTHER_EXCLUSIONS,
+      'usage.internal.read': 'internal',
+    } as const);
+  `);
+  const catalog = readActionCatalog(root);
+  assert.deepEqual(catalog.families, {
     reads: ['usage.price.get'], writes: ['usage.price.set'],
     lookups: ['usage.price.set', 'usage.price.get', 'usage.price.set'],
+  });
+  assert.deepEqual(catalog.excluded, {
+    'usage.price.get': 'person', 'usage.private.read': 'private', 'usage.internal.read': 'internal',
   });
 });

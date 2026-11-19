@@ -59,7 +59,9 @@ export function createActionCatalogReader(readSource = path => readFileSync(path
     }
     if (ts.isElementAccessExpression(node)) return evaluate(path, node.expression, bindings)[evaluate(path, node.argumentExpression, bindings)];
     if (ts.isArrayLiteralExpression(node)) return node.elements.flatMap(n => ts.isSpreadElement(n) ? evaluate(path, n.expression, bindings) : [evaluate(path, n, bindings)]);
-    if (ts.isObjectLiteralExpression(node)) return Object.assign({}, ...node.properties.map(n => ts.isSpreadAssignment(n) ? evaluate(path, n.expression, bindings) : { [n.name.text]: evaluate(path, n.initializer, bindings) }));
+    if (ts.isObjectLiteralExpression(node)) return Object.assign({}, ...node.properties.map(n => ts.isSpreadAssignment(n) ? evaluate(path, n.expression, bindings) : {
+      [ts.isComputedPropertyName(n.name) ? evaluate(path, n.name.expression, bindings) : n.name.text]: evaluate(path, n.initializer, bindings),
+    }));
     if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'Map' && node.arguments?.length === 1) {
       return new Map(evaluate(path, node.arguments[0], bindings));
     }
