@@ -140,6 +140,8 @@ export function createUiMachineOutputFixture(serverId: string): Readonly<{
 
 // Cross-app tests resolve the real UI module at runtime, without merging its
 // importer-relative @/* aliases into the CLI-oriented TypeScript program.
+export const mountUiWorkflowActionCatalog: typeof import('./workflowAuthoringIntegrationTestkit.js').mountUiWorkflowActionCatalog;
+
 export function mountUiAutomationSubjectPicker(params: Omit<Extract<
     import('../../sync/domains/workflows/useAutomationSubjectPicker.js').AutomationSubjectPickerInput,
     { kind: { kind: 'plugin' } }

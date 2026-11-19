@@ -2,7 +2,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { expect, it } from 'vitest';
-import { connectUiPersonActionClient, mountUiAutomationSubjectPicker, readUiMachineProjection } from '@happier-tests/ui-action-client';
+import { connectUiPersonActionClient, mountUiAutomationSubjectPicker, mountUiWorkflowActionCatalog, readUiMachineProjection } from '@happier-tests/ui-action-client';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { createExternalTicketPlugin } from '../../../plugin-ui/fixtures/external-authoring/src/ticketAutomationPlugin';
@@ -94,6 +95,34 @@ it('reacquires the adopted projection after two Accounts and two Machines prewar
       principal: { kind: 'account', accountId: readerId }, accessLevel: 'view' });
     expect(granted.ok, JSON.stringify(granted.ok ? { ok: true } : { ok: false,
       errorCode: granted.errorCode, failureCause: granted.failureCause })).toBe(true);
+    ui = await connectUiPersonActionClient({ serverUrl: fixture.actionServerApiUrl,
+      addressAnchorUrl: fixture.server.baseUrl, accountSecret: actor.auth.accountSigningSeed });
+    const catalogs: Awaited<ReturnType<typeof mountUiWorkflowActionCatalog>>[] = [];
+    try {
+      const actionIds = pluginIds.map(pluginId => formatQualifiedPluginActionId({ pluginId, localId: 'close-ticket' }));
+      for (const phase of ['before', 'after'] as const) {
+        const catalog = await mountUiWorkflowActionCatalog({ serverId: ui.serverId,
+          machineId: machine.target.machineId, phase });
+        catalogs.push(catalog);
+        await catalog.waitForSettled();
+        expect(catalog.read().phase).toBe('ready');
+        expect(catalog.read().specs.map(spec => spec.id)).toEqual(expect.arrayContaining(actionIds));
+        const linked = await ui.executeConfirmed('workflow.trigger.add', {
+          workflow: definitionId, project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
+          trigger: { kind: 'action', phase, ...(phase === 'before' ? { mode: 'notify' } : {}), enabled: true, actionIds,
+            subject: { kind: 'plugin', serverId: fixture.serverId, pluginId: pluginIds[0],
+              subjectKindId: 'ticket', identity: { ticketId: 'ticket-1' } } },
+        }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+          serverId: ui.serverId, serverIdentityId: fixture.serverId, actionRequestId: randomUUID(),
+          externalActionTarget: { kind: 'machine', machineId: machine.target.machineId,
+            project: { machineId: machine.target.machineId, directory: machine.workspaceDir } } });
+        expect(linked.ok, JSON.stringify(linked.ok ? { ok: true } : { errorCode: linked.errorCode,
+          failureCause: linked.failureCause })).toBe(true);
+      }
+    } finally {
+      for (const catalog of catalogs.reverse()) await catalog.close();
+      await ui.close(); ui = undefined;
+    }
     const closed = await actor.executeAsPerson('action.invoke', {
       action: { pluginId: pluginIds[0], localId: 'close-ticket' }, input: { ticket: { ticketId: 'ticket-1' } },
     }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId,

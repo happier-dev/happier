@@ -18,7 +18,7 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { readWorkflowChildSession, waitForWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 import { installExternalTicketAutomationFixture } from '../../src/testkit/pluginPlatform/externalTicketAutomationFixture';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
-import { connectUiPersonActionClient, mountUiAutomationSubjectPicker } from '@happier-tests/ui-action-client';
+import { connectUiPersonActionClient, mountUiAutomationSubjectPicker, mountUiWorkflowActionCatalog } from '@happier-tests/ui-action-client';
 import { captureActiveServerAccountScopeLifetime } from '../../../../apps/ui/sources/sync/domains/scope/activeServerAccountScope';
 import { acquireDaemonMergedWorkflowActionCatalog, loadDaemonMergedProjectionCacheEntry } from '../../../../apps/ui/sources/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { listWorkflowStepActionSpecs } from '../../../../apps/ui/sources/components/workflows/presentation/workflowActionCatalog';
@@ -167,27 +167,50 @@ describe('Automations everywhere: qualified plugin subjects', () => {
       .toMatchObject({ ok: true });
     // The shared Workflow is real; sharing it must not create a grant owner for plugin identities.
     expectAction(await actor.executeAsPerson('workflow.definition.get', { definitionId: workflowId })).toMatchObject({ ok: true });
-    const linked = await actor.executeAsPerson('workflow.trigger.add', {
-      workflow: workflowId, project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
-      trigger: { kind: 'action', phase: 'after', enabled: true,
-        actionIds: pluginIds.map(pluginId => formatQualifiedPluginActionId({ pluginId, localId: 'close-ticket' })),
-        subject: selectedTicket },
-    }, context);
-    expect(linked.ok, JSON.stringify(linked)).toBe(true);
-    if (!linked.ok) throw new Error(`Ticket attachment refused (${linked.errorCode})`);
-    const saved = WorkflowTriggerWriteResultV1Schema.parse(linked.result);
-    expect(saved.set.triggers).toContainEqual(expect.objectContaining({ subject: {
-      kind: 'plugin', serverId: fixture.serverId, pluginId: pluginIds[0], subjectKindId: 'ticket', identity: { ticketId: 'ticket-1' },
-    } }));
-    const before = await actor.executeAsPerson('workflow.trigger.add', {
-      workflow: workflowId, project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
-      trigger: { kind: 'action', phase: 'before', mode: 'notify', enabled: true,
-        actionIds: pluginIds.map(pluginId => formatQualifiedPluginActionId({ pluginId, localId: 'close-ticket' })),
-        subject: { kind: 'plugin', serverId: fixture.serverId, pluginId: pluginIds[0], subjectKindId: 'ticket', identity: { ticketId: 'ticket-1' } } },
-    }, context);
-    expect(before.ok, JSON.stringify(before)).toBe(true);
-    if (!before.ok) throw new Error(`Before-ticket attachment refused (${before.errorCode})`);
-    const beforeSaved = WorkflowTriggerWriteResultV1Schema.parse(before.result);
+    const { saved, beforeSaved } = await (async () => {
+      const editorClient = await connectUiPersonActionClient({ serverUrl: fixture!.actionServerApiUrl,
+        addressAnchorUrl: fixture!.server.baseUrl, accountSecret: actor.auth.accountSigningSeed });
+      const catalogs: Awaited<ReturnType<typeof mountUiWorkflowActionCatalog>>[] = [];
+      try {
+        // ActionTrackRows keeps both native catalogs mounted throughout Save.
+        for (const phase of ['before', 'after'] as const) {
+          const catalog = await mountUiWorkflowActionCatalog({ serverId: editorClient.serverId,
+            machineId: machine.target.machineId, phase });
+          catalogs.push(catalog);
+          await catalog.waitForSettled();
+          expect(catalog.read().phase).toBe('ready');
+          expect(catalog.read().specs.map(spec => spec.id)).toEqual(expect.arrayContaining(
+            pluginIds.map(pluginId => formatQualifiedPluginActionId({ pluginId, localId: 'close-ticket' }))));
+        }
+        const linked = await editorClient.executeConfirmed('workflow.trigger.add', {
+          workflow: workflowId, project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
+          trigger: { kind: 'action', phase: 'after', enabled: true,
+            actionIds: pluginIds.map(pluginId => formatQualifiedPluginActionId({ pluginId, localId: 'close-ticket' })),
+            subject: selectedTicket },
+        }, { ...context, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId: editorClient.serverId, serverIdentityId: fixture!.serverId, actionRequestId: randomUUID() });
+        expect(linked.ok, JSON.stringify(linked)).toBe(true);
+        if (!linked.ok) throw new Error(`Ticket attachment refused (${linked.errorCode})`);
+        const saved = WorkflowTriggerWriteResultV1Schema.parse(linked.result);
+        expect(saved.set.triggers).toContainEqual(expect.objectContaining({ subject: {
+          kind: 'plugin', serverId: fixture.serverId, pluginId: pluginIds[0], subjectKindId: 'ticket', identity: { ticketId: 'ticket-1' },
+        } }));
+        const before = await editorClient.executeConfirmed('workflow.trigger.add', {
+          workflow: workflowId, project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
+          trigger: { kind: 'action', phase: 'before', mode: 'notify', enabled: true,
+            actionIds: pluginIds.map(pluginId => formatQualifiedPluginActionId({ pluginId, localId: 'close-ticket' })),
+            subject: { kind: 'plugin', serverId: fixture.serverId, pluginId: pluginIds[0], subjectKindId: 'ticket', identity: { ticketId: 'ticket-1' } } },
+        }, { ...context, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId: editorClient.serverId, serverIdentityId: fixture!.serverId, actionRequestId: randomUUID() });
+        expect(before.ok, JSON.stringify(before)).toBe(true);
+        if (!before.ok) throw new Error(`Before-ticket attachment refused (${before.errorCode})`);
+        const beforeSaved = WorkflowTriggerWriteResultV1Schema.parse(before.result);
+        return { saved, beforeSaved };
+      } finally {
+        for (const catalog of catalogs.reverse()) await catalog.close();
+        await editorClient.close();
+      }
+    })();
     const automationIds = [...new Set([saved.set.automationId, beforeSaved.set.automationId])];
     const runs = async () => {
       const pages = await Promise.all(automationIds.map(async automationId => {

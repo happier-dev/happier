@@ -3,6 +3,26 @@ import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protoc
 
 type ModelRow = Readonly<{ disabled: boolean; selected: boolean }>;
 
+/** Keep the native Trigger editor's Action catalog mounted while its Save runs. */
+export async function mountUiWorkflowActionCatalog(params: Readonly<{
+    serverId: string; machineId: string; phase: 'before' | 'after';
+}>) {
+    const [{ useWorkflowActionCatalog }, { renderHook }, { waitForTestEvent }] = await Promise.all([
+        import('@/components/workflows/presentation/useWorkflowActionCatalog'),
+        import('./hooks/renderHook'), import('./hooks/waitForTestEvent'),
+    ]);
+    const scope = { kind: 'machine' as const, serverId: params.serverId, machineId: params.machineId };
+    const hook = await renderHook(() => useWorkflowActionCatalog(scope, params.phase));
+    return {
+        read: hook.getCurrent,
+        close: hook.unmount,
+        async waitForSettled() {
+            await waitForTestEvent(hook.subscribe, hook.getCurrent,
+                value => value.phase === 'ready' || value.phase === 'error' || value.phase === 'unsupported');
+        },
+    };
+}
+
 export async function readUiBundledClaudeDeclaration() {
     const { getBundledAgentDeclaration } = await import('@/agents/catalog/catalog');
     const declaration = getBundledAgentDeclaration('claude');
