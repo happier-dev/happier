@@ -2,8 +2,26 @@ import { describe, expect, it } from 'vitest';
 import { UpdateBodySchema } from '@happier-dev/protocol/updates';
 import { AccountEntitiesInvalidatedHostEventV1Schema } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import { projectAccountEntitiesInvalidationForHost } from './accountEntityInvalidation';
+import { deriveArtifactStoredKindV1, REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 
 describe('Account retained-fact invalidation addresses', () => {
+    it('routes exact Artifact addresses without forwarding Review comment content', () => {
+        const hint = { artifactKinds: [deriveArtifactStoredKindV1({ kind: REVIEW_ARTIFACT_KIND_V1 })] };
+        const body = UpdateBodySchema.parse({ t: 'account-change', rows: { v: 1, after: 0, page: {
+            nextCursor: 5, changes: [
+                { cursor: 1, kind: 'artifact', entityId: 'review', changedAt: 1, hint },
+                { cursor: 2, kind: 'artifact', entityId: 'review', changedAt: 2, hint: { ...hint, private: 'sealed-content' } },
+                { cursor: 3, kind: 'session', entityId: 'session', changedAt: 3 },
+                { cursor: 4, kind: 'artifact', entityId: 'unrelated', changedAt: 4, hint: { artifactKinds: ['v1:other:bot_template.v1'] } },
+                { cursor: 5, kind: 'artifact', entityId: 'legacy', changedAt: 5 },
+            ],
+        } } });
+        if (body.t !== 'account-change') throw Error('Expected Account change');
+        const event = projectAccountEntitiesInvalidationForHost(body);
+        expect(event?.payload).toEqual({ entityIds: [], reviewIds: ['review', 'legacy'] });
+        expect(AccountEntitiesInvalidatedHostEventV1Schema.parse(event?.payload)).toEqual(event?.payload);
+    });
+
     it('preserves canonical plugin KV hints and native Account KV keys from the authorized change page', () => {
         const body = UpdateBodySchema.parse({ t: 'account-change', rows: { v: 1, after: 0, page: {
             nextCursor: 5, changes: [
