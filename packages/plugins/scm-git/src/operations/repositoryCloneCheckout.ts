@@ -9,6 +9,7 @@ export function checkoutInitialClone(input: Readonly<{
     branch: NonNullable<ScmRepositoryCloneInput['initialCheckout']>['branch'];
     runCommand: typeof runScmCommand;
     timeoutMs: number;
+    signal?: AbortSignal;
 }>): Promise<ScmExecResult> {
     return input.runCommand({
         bin: 'git', cwd: input.path, args: input.branch === null
@@ -16,6 +17,6 @@ export function checkoutInitialClone(input: Readonly<{
             : input.commit
                 ? ['checkout', '-B', input.branch, input.commit]
                 : ['checkout', '-B', input.branch, '--track', `refs/remotes/origin/${input.branch}`],
-        timeoutMs: input.timeoutMs, env: buildScmNonInteractiveEnv(),
+        timeoutMs: input.timeoutMs, env: buildScmNonInteractiveEnv(), signal: input.signal,
     });
 }

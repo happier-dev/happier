@@ -122,6 +122,27 @@ describe('git repository clone operation', () => {
         expect(runGit(join(dirname(remotePath), 'source'), ['branch', '--show-current'])).toBe('main');
     });
 
+    it('checks out a reviewed commit that the origin serves only by exact object ID', async () => {
+        const parent = createWorkspace();
+        const remotePath = createBareRemoteRepository();
+        const source = join(dirname(remotePath), 'source');
+        writeFileSync(join(source, 'README.md'), 'exact reviewed commit\n');
+        runGit(source, ['add', 'README.md']);
+        runGit(source, ['commit', '-m', 'reviewed contents']);
+        const pin = runGit(source, ['rev-parse', 'HEAD']);
+        runGit(source, ['push', remotePath, 'HEAD:refs/private/reviewed']);
+        runGit(remotePath, ['config', 'uploadpack.hideRefs', 'refs/private']);
+        runGit(remotePath, ['config', 'uploadpack.allowTipSHA1InWant', 'true']);
+
+        const clone = getRepositoryCloneOperation({ registry: makeProviderRegistry(makeCloneTargetDescription(remotePath)) });
+        const response = await cloneWithRealGitRuntime(clone, { context: makeContext(parent),
+            request: { ...makeRequest(parent, remotePath), initialCheckout: { branch: null, commit: pin } } });
+
+        expect(response).toMatchObject({ success: true, snapshot: { branch: { detached: true, headOid: pin } } });
+        if (!response.success) throw new Error(response.error);
+        expect(runGit(response.destinationPath, ['show', 'HEAD:README.md'])).toBe('exact reviewed commit');
+    });
+
     it.each(['main', null] as const)('creates initial %s at an exact reviewed commit before publishing a fresh clone even when upstream main advanced', async branch => {
         const parent = createWorkspace();
         const remotePath = createBareRemoteRepository();

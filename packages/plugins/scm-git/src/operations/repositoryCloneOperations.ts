@@ -18,7 +18,7 @@ import { type HostingProviderRuntimeServices as ScmHostingProviderRuntimeService
 import { readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';
 
 import type { ScmBackendContext } from '../types.js';
-import { runScmCommand, type ScmExecResult } from '../runtime.js';
+import { getScmCommandIndeterminateErrorCode, runScmCommand, type ScmExecResult } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { mapGitErrorCode } from '../remote.js';
 import { detectGitRepo, getGitSnapshot } from '../repository.js';
@@ -400,19 +400,22 @@ export function createGitRepositoryCloneOperation(
             const reservedDestination = await reserveCloneDestination(finalDestination);
             if (!reservedDestination.ok) return unpublishedCloneFailure(reservedDestination.response);
 
-            let clone;
-            try {
+            const runOriginCommand = (cwd: string, args: string[]) => {
                 const command = {
-                    bin: 'git',
-                    cwd: reservedDestination.parentPath,
-                    args: ['clone', '--', cloneTarget.target.url, reservedDestination.cloneDestinationPath],
+                    cwd,
+                    args,
                     timeoutMs: GIT_REPOSITORY_CLONE_TIMEOUT_MS,
                     env: buildScmNonInteractiveEnv(), signal,
                 };
-                clone = cloneTarget.authorizationHeader && transport
-                    ? await transport.run({ repositories: [{ url: cloneTarget.target.url, authorizationHeader: cloneTarget.authorizationHeader }],
+                return cloneTarget.authorizationHeader && transport
+                    ? transport.run({ repositories: [{ url: cloneTarget.target.url, authorizationHeader: cloneTarget.authorizationHeader }],
                         command: { ...command, command: 'git', installableKey: GIT_INSTALLABLE_DEP_ID } })
-                    : await runCommand({ ...command, bin: 'git' });
+                    : runCommand({ ...command, bin: 'git' });
+            };
+            let clone;
+            try {
+                clone = await runOriginCommand(reservedDestination.parentPath,
+                    ['clone', '--', cloneTarget.target.url, reservedDestination.cloneDestinationPath]);
             } catch (error) {
                 await reservedDestination.privateTempHandle.close();
                 if (cloneTarget.authorizationHeader) return errorResponse('Authenticated repository clone failed.', SCM_OPERATION_ERROR_CODES.COMMAND_FAILED);
@@ -429,16 +432,33 @@ export function createGitRepositoryCloneOperation(
 
             if (cloneTarget.initialCheckout) {
                 let checkout: ScmExecResult;
+                let originFetchFailed = false;
                 try {
-                    checkout = await checkoutInitialClone({
-                        path: reservedDestination.cloneDestinationPath,
-                        commit: cloneTarget.initialCheckout.commit,
-                        branch: cloneTarget.initialCheckout.branch,
-                        runCommand,
-                        timeoutMs: GIT_REPOSITORY_CLONE_TIMEOUT_MS,
-                    });
+                    const path = reservedDestination.cloneDestinationPath;
+                    const initial = { ...cloneTarget.initialCheckout, path, runCommand, signal, timeoutMs: GIT_REPOSITORY_CLONE_TIMEOUT_MS };
+                    checkout = await checkoutInitialClone(initial);
+                    const requested = request.initialCheckout;
+                    if (!checkout.success && !getScmCommandIndeterminateErrorCode(checkout) && requested && 'commit' in requested) {
+                        signal?.throwIfAborted();
+                        const present = await runCommand({ bin: 'git', cwd: path, args: ['cat-file', '-e', `${requested.commit}^{commit}`],
+                            timeoutMs: GIT_REPOSITORY_CLONE_TIMEOUT_MS, env: buildScmNonInteractiveEnv(), signal });
+                        // A normal clone can omit a reviewed commit that the same origin still serves by object ID.
+                        if (!present.success && !getScmCommandIndeterminateErrorCode(present)) {
+                            signal?.throwIfAborted();
+                            originFetchFailed = true;
+                            const acquired = await runOriginCommand(path, ['fetch', '--no-tags', '--no-write-fetch-head',
+                                '--no-recurse-submodules', '--', cloneTarget.target.url, requested.commit]);
+                            originFetchFailed = !acquired.success;
+                            checkout = acquired.success ? await checkoutInitialClone(initial) : acquired;
+                        }
+                    }
                 } catch (error) {
                     await reservedDestination.privateTempHandle.close();
+                    await cleanupPrivateCloneDestination({ path: reservedDestination.privateTempPath, identity: reservedDestination.privateTempIdentity });
+                    signal?.throwIfAborted();
+                    if (originFetchFailed && cloneTarget.authorizationHeader) {
+                        return errorResponse('Authenticated repository clone failed.', SCM_OPERATION_ERROR_CODES.COMMAND_FAILED);
+                    }
                     throw error;
                 }
                 if (!checkout.success) {
@@ -447,7 +467,7 @@ export function createGitRepositoryCloneOperation(
                         path: reservedDestination.privateTempPath,
                         identity: reservedDestination.privateTempIdentity,
                     });
-                    return mapCloneCommandFailure(checkout);
+                    return mapCloneCommandFailure(checkout, originFetchFailed && Boolean(cloneTarget.authorizationHeader));
                 }
             }
 
