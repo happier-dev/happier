@@ -67,6 +67,29 @@ afterEach(() => {
 });
 
 describe('WorkflowPanel Android Back', () => {
+  it('disposes the outgoing step as soon as the next step commits', async () => {
+    const disposePairing = vi.fn();
+    function PairingStep() {
+      React.useEffect(() => disposePairing, []);
+      return <></>;
+    }
+    const panel = (step: 'auth_restore' | 'connect_home') => (
+      <WorkflowPanel
+        variant="mobile"
+        isWelcomeStep={false}
+        transitionKey={step}
+        transitionDirection="forward"
+        onOpenRelayCustomFlow={() => {}}
+      >
+        {step === 'auth_restore' ? <PairingStep /> : null}
+      </WorkflowPanel>
+    );
+    const screen = await renderScreen(panel('auth_restore'));
+    expect(disposePairing).not.toHaveBeenCalled();
+    await screen.update(panel('connect_home'));
+    expect(disposePairing).toHaveBeenCalledOnce();
+  });
+
   it('takes the hardware Back the same way as its on-screen Back, and leaves it to the app when there is none', async () => {
     const onBack = vi.fn();
     const panel = (back?: () => void) => (

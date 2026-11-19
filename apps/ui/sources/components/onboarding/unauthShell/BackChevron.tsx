@@ -5,6 +5,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
+export const UNAUTH_BACK_TEST_ID = 'unauth-shell-back-chevron';
+
 export type BackChevronProps = Readonly<{
     onPress: () => void;
     /** Accessibility label, e.g. translated "Back". */
@@ -26,7 +28,7 @@ export const BackChevron = React.memo(function BackChevron(props: BackChevronPro
             onPress={props.onPress}
             accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel}
-            testID={props.testID ?? 'unauth-shell-back-chevron'}
+            testID={props.testID ?? UNAUTH_BACK_TEST_ID}
             onPressIn={feedback.onPressIn}
             onPressOut={feedback.onPressOut}
             style={styles.button}

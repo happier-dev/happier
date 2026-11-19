@@ -17,6 +17,8 @@ import {
     resolveStepTransitionDirection,
     type StepTransitionDirection,
 } from '@/components/ui/motion/StepTransitionFrame';
+import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
+import type { WizardAction } from '../state/wizardTypes';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
@@ -195,39 +197,56 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         homeServerIdentityId: string;
     }> | null>(null);
     const defaultRelayAccessTarget = React.useMemo<RelayAccessTaskTarget>(() => ({ kind: 'local' }), []);
-    const [state, dispatch] = React.useReducer(
-        wizardReducer,
-        null,
-        () => {
-            const context = {
-                mode: 'onboarding',
-                platform: props.isDesktopShell ? 'desktop' : (Platform.OS === 'web' ? 'web' : 'native'),
-                canScanQr,
-                scanStepEnabled: false,
-                canRunSystemTasks: props.isDesktopShell,
-                relaySelection: buildDefaultRelaySelection(),
-                relayAccessProviderId: null,
-                relayLockConfirmationPending: false,
-                relaySwitchConfirmationPending: false,
-                authIntent: 'standard',
-            } as const;
+    const [state, setState] = React.useState(() => {
+        const context = {
+            mode: 'onboarding',
+            platform: props.isDesktopShell ? 'desktop' : (Platform.OS === 'web' ? 'web' : 'native'),
+            canScanQr,
+            scanStepEnabled: false,
+            canRunSystemTasks: props.isDesktopShell,
+            relaySelection: buildDefaultRelaySelection(),
+            relayAccessProviderId: null,
+            relayLockConfirmationPending: false,
+            relaySwitchConfirmationPending: false,
+            authIntent: 'standard',
+        } as const;
 
-            const requestedStepId = props.initialStepId ?? 'welcome';
-            const requestedStep = getWizardStepDefinition(requestedStepId);
-            const isRequestedOpenable = requestedStep.directEntry === true || requestedStep.visibleWhen(context);
-            const initialStepId = isRequestedOpenable ? requestedStepId : 'welcome';
+        const requestedStepId = props.initialStepId ?? 'welcome';
+        const requestedStep = getWizardStepDefinition(requestedStepId);
+        const isRequestedOpenable = requestedStep.directEntry === true || requestedStep.visibleWhen(context);
+        const initialStepId = isRequestedOpenable ? requestedStepId : 'welcome';
 
-            return createWizardState({
-                context: {
-                    ...context,
-                },
-                currentStepId: initialStepId,
-                history: [],
-                resumeState: null,
-                parsedScanPayload: null,
-            });
-        },
-    );
+        return createWizardState({
+            context: {
+                ...context,
+            },
+            currentStepId: initialStepId,
+            history: [],
+            resumeState: null,
+            parsedScanPayload: null,
+        });
+    });
+    const currentState = React.useRef(state);
+    const dispatch = React.useCallback((action: WizardAction) => {
+        const previous = currentState.current;
+        const next = wizardReducer(previous, action);
+        if (next === previous) return;
+        const commit = () => {
+            currentState.current = next;
+            setState(next);
+        };
+        if (next.currentStepId === previous.currentStepId) {
+            commit();
+            return;
+        }
+        runStepMove({
+            layer: 'workflow',
+            kind: action.type === 'wizard/back' ? 'back' : 'step',
+            fromWelcome: previous.currentStepId === 'welcome',
+            toWelcome: next.currentStepId === 'welcome',
+            commit,
+        });
+    }, []);
     const canCreatePersonalHome = requestPersonalHomeBootstrap != null
         && !state.context.relaySelection.locked;
 

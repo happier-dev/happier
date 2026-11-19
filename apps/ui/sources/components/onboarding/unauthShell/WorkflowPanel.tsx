@@ -5,15 +5,14 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
-import {
-    StepTransitionFrame,
-    type StepTransitionDirection,
-} from '@/components/ui/motion/StepTransitionFrame';
+import type { StepTransitionDirection } from '@/components/ui/motion/StepTransitionFrame';
+import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import { useModalCardDimensions } from '@/modal/components/card/useModalCardDimensions';
 import { t } from '@/text';
 import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
 
-import { BackChevron } from './BackChevron';
+import { BackChevron, UNAUTH_BACK_TEST_ID } from './BackChevron';
 import { BrandWordmark } from './BrandWordmark';
 import { PlanetBackground } from './PlanetBackground';
 import { WelcomeFooterLinks } from './WelcomeFooterLinks';
@@ -97,8 +96,8 @@ export type WorkflowPanelProps = Readonly<{
 
 /**
  * The workflow pane of the desktop split (or the full-screen content area on
- * mobile-workflow). Wraps the current step body in a StepTransitionFrame so
- * step swaps fade/slide; renders a slim BackChevron when the wizard/route
+ * mobile-workflow). Registers the step body with the app motion stage and
+ * renders a slim BackChevron when the wizard/route
  * supports back navigation; renders the welcome footer links only when the
  * current step is the welcome decision screen.
  *
@@ -114,6 +113,11 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     useNativeBackLayerBackHandler(props.onBack != null, () => {
         props.onBack?.();
         return true;
+    });
+    useEscapeLayer({
+        enabled: props.onBack != null,
+        priority: ESCAPE_LAYER_PRIORITIES.pane,
+        onEscape: () => { props.onBack?.(); },
     });
     // Match the legacy WizardCardLayout card-width derivation so the workflow
     // pane caps at ~500px on desktop and scales down gracefully on narrow
@@ -297,17 +301,16 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                                     />
                                     <View style={[styles.welcomeScrimFill, { backgroundColor: brandPaneTokens.scrim }]} />
                                 </View>
-                                <StepTransitionFrame
+                                <StepMotionLayer
+                                    layerKey="workflow"
+                                    backTestID={UNAUTH_BACK_TEST_ID}
                                     testID="unauth-shell-step-transition"
-                                    transitionKey={props.transitionKey}
-                                    direction={props.transitionDirection}
+                                    stepKey={props.transitionKey}
+                                    compact={isMobile}
                                     style={STEP_TRANSITION_NATURAL_STYLE}
-                                    contentStyle={STEP_TRANSITION_NATURAL_STYLE}
                                 >
-                                    <View style={STEP_TRANSITION_NATURAL_STYLE}>
-                                        {props.children}
-                                    </View>
-                                </StepTransitionFrame>
+                                    {props.children}
+                                </StepMotionLayer>
                                 <WelcomeFooterLinks
                                     variant="mobile"
                                     retentionDisclosure={props.retentionDisclosure}
@@ -317,17 +320,16 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                         </>
                     ) : (
                         <>
-                            <StepTransitionFrame
+                            <StepMotionLayer
+                                layerKey="workflow"
+                                backTestID={UNAUTH_BACK_TEST_ID}
                                 testID="unauth-shell-step-transition"
-                                transitionKey={props.transitionKey}
-                                direction={props.transitionDirection}
+                                stepKey={props.transitionKey}
+                                compact={isMobile}
                                 style={STEP_TRANSITION_NATURAL_STYLE}
-                                contentStyle={STEP_TRANSITION_NATURAL_STYLE}
                             >
-                                <View style={STEP_TRANSITION_NATURAL_STYLE}>
-                                    {props.children}
-                                </View>
-                            </StepTransitionFrame>
+                                {props.children}
+                            </StepMotionLayer>
                             <View style={styles.footerSpacer} />
                             <WelcomeFooterLinks
                                 variant="desktop"
@@ -341,17 +343,16 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     // bodies that center themselves vertically (restore, scan…)
                     // continue to look right.
                     <>
-                        <StepTransitionFrame
+                        <StepMotionLayer
+                            layerKey="workflow"
+                            backTestID={UNAUTH_BACK_TEST_ID}
                             testID="unauth-shell-step-transition"
-                            transitionKey={props.transitionKey}
-                            direction={props.transitionDirection}
+                            stepKey={props.transitionKey}
+                            compact={isMobile}
                             style={STEP_TRANSITION_FILL_STYLE}
-                            contentStyle={STEP_TRANSITION_FILL_STYLE}
                         >
-                            <View style={STEP_TRANSITION_FILL_STYLE}>
-                                {props.children}
-                            </View>
-                        </StepTransitionFrame>
+                            {props.children}
+                        </StepMotionLayer>
                         {props.footerAccessory ? (
                             <View
                                 testID="unauth-shell-footer-accessory"

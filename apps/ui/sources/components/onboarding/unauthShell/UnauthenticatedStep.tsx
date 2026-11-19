@@ -2,12 +2,10 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import {
-  StepTransitionFrame,
-  type StepTransitionDirection,
-} from '@/components/ui/motion/StepTransitionFrame';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+
+import { useStepFocal } from '@/components/ui/motion/stepMotion/useStepFocal';
 
 export type UnauthenticatedStepProps = Readonly<{
   /** The step's page heading. Omit when the body owns its own heading (a form with sub-views). */
@@ -18,9 +16,6 @@ export type UnauthenticatedStepProps = Readonly<{
   children?: React.ReactNode;
   /** Actions under the body: the primary button, a quiet escape. */
   footer?: React.ReactNode;
-  /** Animates only the body when the step changes inside a host that keeps the heading mounted. */
-  bodyTransitionKey?: string | number;
-  bodyTransitionDirection?: StepTransitionDirection;
   testID?: string;
 }>;
 
@@ -42,10 +37,11 @@ export function UnauthenticatedStepHeading(props: Readonly<{
 }>) {
   useUnistyles();
   const styles = stylesheet;
+  const headingRef = useStepFocal('heading');
   return (
     <View style={styles.header}>
       {props.context ? <View style={styles.context}>{props.context}</View> : null}
-      <Text testID={props.testID} accessibilityRole="header" style={styles.title}>
+      <Text ref={headingRef} testID={props.testID} accessibilityRole="header" style={styles.title}>
         {props.title}
       </Text>
       {props.subtitle ? <Text style={styles.subtitle}>{props.subtitle}</Text> : null}
@@ -70,17 +66,7 @@ export function UnauthenticatedStep(props: UnauthenticatedStepProps) {
             testID={props.testID ? `${props.testID}-title` : undefined}
           />
         ) : null}
-        {body && props.bodyTransitionKey != null ? (
-          <StepTransitionFrame
-            transitionKey={props.bodyTransitionKey}
-            direction={props.bodyTransitionDirection ?? 'forward'}
-            testID={props.testID ? `${props.testID}-body-transition` : undefined}
-          >
-            {body}
-          </StepTransitionFrame>
-        ) : (
-          body
-        )}
+        {body}
       </View>
       {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
     </View>

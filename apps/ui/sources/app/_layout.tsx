@@ -20,6 +20,7 @@ import { initialWindowMetrics, SafeAreaProvider } from 'react-native-safe-area-c
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SidebarNavigator } from '@/components/navigation/shell/SidebarNavigator';
 import { HorizontalSafeAreaRoot } from '@/components/navigation/safeArea/HorizontalSafeArea';
+import { StepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { WindowFoldMetricsProvider } from '@/utils/platform/useWindowFoldMetrics';
 import sodium from '@/encryption/libsodium.lib';
 import { View, Platform } from 'react-native';
@@ -860,6 +861,7 @@ function AppBoot() {
             <KeyboardProvider>
                 <GestureHandlerRootView style={{ flex: 1 }}>
                     <WindowFoldMetricsProvider>
+                    <StepMotionStage>
                     {/*
                       * Keyed on the boot auth generation: `0` on every normal boot, so the key never
                       * changes and nothing remounts. It only advances when a keychain read that missed
@@ -900,6 +902,7 @@ function AppBoot() {
                             </AppPaneModalProvider>
                         </GlassNavigationThemeProvider>
                     </AuthProvider>}
+                    </StepMotionStage>
                     </WindowFoldMetricsProvider>
                 </GestureHandlerRootView>
             </KeyboardProvider>

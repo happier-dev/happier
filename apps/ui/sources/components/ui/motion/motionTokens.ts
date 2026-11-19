@@ -4,6 +4,7 @@ import { gestureTokens } from './gestureTokens';
 
 export const motionTokens = {
     gesture: gestureTokens,
+    stepMotion: { noticeCrossFadeMs: 200 },
     durationMs: {
         instant: 0,
         /** Press acknowledgement: fast enough to feel immediate under the finger. */
