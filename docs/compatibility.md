@@ -10917,12 +10917,13 @@ errors without it. No Action, persisted format, wire epoch or adapter changes.
 The inspected `../0.2` frontier at `7b37d65ca75e58560f8f3ca850958ac5407d2e75`
 has no Session creation launch-error schema in tracked or scoped local source.
 
-Unreleased 0.3 Voice Session creation allows `agentTarget` omission on its Voice
-surface only. The Voice host binds the existing inventory's complete default
-target before strict Action admission, review or daemon dispatch. Named tools,
-discovered execution and Voice action blocks use the same surface schema.
-Canonical Action/RPC inputs, stored approval operands and Agent identities stay
-closed and fully bound; malformed explicit targets remain invalid. Refresh the
+Unreleased 0.3 Voice Session creation uses the ordinary Session creation Action
+schema. Ordinary creation preparation settles an omitted `agentTarget` through
+the managed defaults and default-Agent resolver before native Machine/Agent
+admission. Named tools, discovered execution and Voice action blocks use this
+same preparation path. Admitted Action/RPC inputs, stored approval operands and
+Agent identities stay closed and fully bound; malformed explicit targets remain
+invalid. Refresh the
 UI host with the matching Protocol source. No daemon change, wire epoch,
 persisted format or compatibility adapter is introduced. Refresh the UI and
 tool hosts together when dropping the temporary Voice authoring field
