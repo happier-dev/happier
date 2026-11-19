@@ -2,7 +2,7 @@ import type { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@
 import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
+import { readAdmittedAgentCatalogSnapshotForRequest, readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isLegacyConfiguredAcpFlavorCarrier } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 import type { AccountProfile, ActionExecutorContext, ActionExecutorDeps, BackendTargetRefV2 } from '@happier-dev/protocol';
@@ -680,12 +680,14 @@ export function createCliActionInventoryDeps(params: Readonly<{
     },
     agentsBackendsList: async (args) => {
       const captured = await readAcpCatalogSnapshot();
+      const agentCatalogSnapshot = params.getSessionRoleContext?.().readAgentCatalogSnapshot?.()
+        ?? await readAdmittedAgentCatalogSnapshotForRequest();
       const items = await (await import('./buildAgentBackendInventoryItemsLazy')).buildAgentBackendInventoryItemsLazy({
         limit: args.limit,
         includeDisabled: (args as { includeDisabled?: boolean }).includeDisabled === true,
         accountSettings: captured.account.settings,
         acpCatalogSnapshot: captured.catalog,
-        agentCatalogSnapshot: params.getSessionRoleContext?.().readAgentCatalogSnapshot?.(),
+        agentCatalogSnapshot,
       });
       await captured.assertCurrent();
       return { items };

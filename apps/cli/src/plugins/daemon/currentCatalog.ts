@@ -1,4 +1,5 @@
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
+import { acquireActiveAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { DaemonPluginCatalogReadRequest } from './catalogProjection';
 import {
   projectBundledPluginCatalogEntries,
@@ -95,9 +96,7 @@ export async function readCurrentDaemonPluginCatalogSnapshot(params: Readonly<{
 }>): Promise<CurrentDaemonPluginCatalogSnapshot> {
   // An existing failed admission recovers through the same lease owner used
   // by Session creation. An administrative read never starts a cold runtime.
-  const lease = params.reloadController.getState().activeRegistry
-    ? await params.reloadController.acquireRuntimeRegistry()
-    : null;
+  const lease = await acquireActiveAuthoritativePluginRuntimeRegistryLease({ controller: params.reloadController });
   try {
     if (params.selection === 'tools') {
       // The controller observes durable adoption before serving publication,

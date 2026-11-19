@@ -820,6 +820,7 @@ function toReactNativeHostRuntimeReadinessIdentity(
 
 async function acquireProjectionRuntimeRegistryLease(
     opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
+    recoverAccountCensus?: true,
 ): Promise<Readonly<{
     registry: ResolvedExecutablePluginRuntimeRegistry;
     resolveCurrentPluginMaterializationRef?: NonNullable<
@@ -838,6 +839,7 @@ async function acquireProjectionRuntimeRegistryLease(
 
     return await acquireAuthoritativePluginRuntimeRegistryLease({
         happyHomeDir: configuration.happyHomeDir,
+        ...(recoverAccountCensus ? { recoverAccountCensus } : {}),
     });
 }
 
@@ -1215,7 +1217,6 @@ async function readPluginSettingsSnapshot(params: Readonly<{
 
 async function acquireProjectionContributionRegistryLease(
     opts: DaemonContributionRegistryProjectionRegistrationOptions | undefined,
-    generation: number,
     requireRuntimeRegistry = false,
 ): Promise<Readonly<{
     registry: ResolvedContributionRegistry;
@@ -1226,13 +1227,13 @@ async function acquireProjectionContributionRegistryLease(
     release: () => Promise<void>;
 }>> {
     const leaseRuntimeRegistry = async () => {
-        const lease = await acquireProjectionRuntimeRegistryLease(opts);
+        const lease = await acquireProjectionRuntimeRegistryLease(opts, true);
         return {
             registry: lease.registry.contributes,
             pluginDiagnosticsByPluginId: lease.registry.pluginDiagnosticsByPluginId,
             targetActivationFacts: lease.registry.targetActivationFacts ?? null,
             runtimeRegistry: lease.registry,
-            cacheToken: `runtime:${generation}`,
+            cacheToken: 'runtime',
             release: lease.release,
         };
     };
@@ -1253,7 +1254,7 @@ async function acquireProjectionContributionRegistryLease(
         pluginDiagnosticsByPluginId: registry.pluginDiagnosticsByPluginId,
         targetActivationFacts: null,
         runtimeRegistry: null,
-        cacheToken: `metadata:${generation}`,
+        cacheToken: 'metadata',
         release: async () => {},
     };
 }
@@ -1303,9 +1304,10 @@ async function withProjectionBuild<T>(
     consume: (build: ProjectionBuild, lease: ProjectionLease) => T | Promise<T>,
     signal?: AbortSignal,
 ): Promise<T> {
-    const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
-    const lease = await acquireProjectionContributionRegistryLease(opts, generation, requireRuntimeRegistry);
+    const lease = await acquireProjectionContributionRegistryLease(opts, requireRuntimeRegistry);
     try {
+        // Lease acquisition can publish a recovered Account census.
+        const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
         signal?.throwIfAborted();
         const full = context.selection === undefined;
         const admission = context.selection === 'connectedAccountAdmission';
@@ -1690,9 +1692,9 @@ async function describeProjection(
     | ReturnType<typeof buildDeferredDaemonProjectionSections>['manifest']
     | NonNullable<ReturnType<ReturnType<typeof buildDeferredDaemonProjectionSections>['read']>>> {
     if (request.selection === 'mountedActions') {
-        const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
-        const lease = await acquireProjectionContributionRegistryLease(opts, generation, true);
+        const lease = await acquireProjectionContributionRegistryLease(opts, true);
         try {
+            const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
             signal?.throwIfAborted();
             const assertCallersCurrent = () => {
                 signal?.throwIfAborted();
@@ -1768,9 +1770,9 @@ async function describeProjection(
         return response;
     }
     if (request.selection === 'skills') {
-        const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
-        const lease = await acquireProjectionContributionRegistryLease(opts, generation, true);
+        const lease = await acquireProjectionContributionRegistryLease(opts, true);
         try {
+            const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
             signal?.throwIfAborted();
             const registry = request.skillIds ? { ...lease.registry, skills: (lease.registry.skills ?? []).filter(
                 entry => request.skillIds!.includes(pluginSkillIdV1(entry.identity))) } : lease.registry;

@@ -1,6 +1,7 @@
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { acquireActiveAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
 /**
  * The one active-first reader for the current contribution registry.
@@ -34,4 +35,12 @@ export function readAgentCatalogSnapshot(): Pick<
   'agentDefinitionsById' | 'catalogEntriesById' | 'executionRunProfiles' | 'pluginEnablementById'
 > {
   return readCurrentContributionRegistry();
+}
+
+/** Read the daemon's admitted catalog for a new request, including census recovery. */
+export async function readAdmittedAgentCatalogSnapshotForRequest(): Promise<ResolvedContributionRegistry | undefined> {
+  const lease = await acquireActiveAuthoritativePluginRuntimeRegistryLease();
+  try {
+    return lease?.registry.contributes;
+  } finally { await lease?.release(); }
 }

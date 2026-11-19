@@ -50,13 +50,21 @@ export function readAuthoritativePluginSlotOccurrence(
     return resolveAuthoritativeController(params)?.readPluginSlot?.(pluginId)?.current ?? null;
 }
 
-export async function acquireAuthoritativePluginRuntimeRegistryLease(
+/** Acquire serving runtime state and allow its owner to recover a failed census. */
+export function acquireActiveAuthoritativePluginRuntimeRegistryLease(
     params?: AuthoritativeControllerParams,
+): Promise<PluginRuntimeRegistryLease> | null {
+    const controller = resolveAuthoritativeController(params);
+    return controller?.getState().activeRegistry ? controller.acquireRuntimeRegistry() : null;
+}
+
+export async function acquireAuthoritativePluginRuntimeRegistryLease(
+    params?: AuthoritativeControllerParams & Readonly<{ recoverAccountCensus?: true }>,
 ): Promise<PluginRuntimeRegistryLease> {
-    const lease = resolveAuthoritativeController(params)?.tryAcquireRuntimeRegistry() ?? null;
-    if (lease) {
-        return lease;
-    }
+    const lease = params?.recoverAccountCensus
+        ? await acquireActiveAuthoritativePluginRuntimeRegistryLease(params)
+        : tryAcquireAuthoritativePluginRuntimeRegistryLease(params);
+    if (lease) return lease;
 
     throw Object.assign(new Error(
         'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE: The canonical daemon-applied plugin runtime is unavailable in this process. '

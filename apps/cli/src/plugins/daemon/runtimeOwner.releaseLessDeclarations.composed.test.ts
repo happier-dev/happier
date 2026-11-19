@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema, PluginManifestV2Schema } from '@happier-dev/protocol';
 import { PLUGIN_MANIFEST as LIMA_MANIFEST } from '@happier-dev/plugins-machine-lima/manifest';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
+import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { createDaemonPluginRegistryRuntimeLifecycle } from '@/plugins/runtime/reload/registryRuntimeLifecycle';
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
 import type { AccountPluginDataStorageHostDependencies } from '@/plugins/runtime/context/accountPluginDataStorage';
@@ -84,7 +85,8 @@ describe('daemon release-less declaration publication', () => {
             vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
                 if (String(url).endsWith('/intents/list')) {
                     accountReadStates.push(accountReadable);
-                    if (!accountReadable) throw Object.assign(new axios.AxiosError('Account temporarily unavailable during reconnect', accountReadErrorCode), {
+                    if (!accountReadable) throw Object.assign(new axios.AxiosError('Account temporarily unavailable during reconnect'), {
+                        response: { status: 503, data: { errorCode: accountReadErrorCode } },
                         requestId: '0b54db2b-c37b-4cc0-9ad3-a8c54aab2616',
                     });
                     const pluginIds = readRequestedIntentPluginIds(body);
@@ -242,26 +244,35 @@ describe('daemon release-less declaration publication', () => {
             expect(claims[0]).toMatchObject({ manifest: { id: manifest.id, version: manifest.version } });
             const target = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
             accountReadable = false;
+            accountReadErrorCode = 'database_connection_unavailable';
             await refreshStore.refreshRuntime([manifest.id]);
             const unavailable = controller.getState().activeRegistry!;
             expect(unavailable.contributes.pluginEnablementById?.[target.identity.pluginId])
                 .toMatchObject({ enabled: false, unavailableCode: 'plugin_account_census_failed',
-                    unavailableCause: { errorClass: 'AxiosError', errorCode: 'ECONNRESET', phase: 'plugins.account_census' },
+                    unavailableCause: { errorClass: 'AxiosError', errorCode: 'database_connection_unavailable', phase: 'plugins.account_census', httpStatus: 503 },
                     unavailableRequestId: '0b54db2b-c37b-4cc0-9ad3-a8c54aab2616' });
             expect(() => resolveSessionCreationAgentTarget(target, unavailable.contributes))
                 .toThrow(expect.objectContaining({ code: 'plugin_account_census_failed' }));
             const readCensusDiagnostic = async () => (await owner!.readCatalog()).find(row => row.pluginId === target.identity.pluginId)
                 ?.contributionIntrospection.diagnostics.find(row => row.data.code === 'plugin_runtime_capability_missing')?.data.details;
-            expect(await readCensusDiagnostic()).toMatchObject({ failureCause: { errorCode: 'ECONNRESET' } });
+            expect(await readCensusDiagnostic()).toMatchObject({ failureCause: { errorCode: 'database_connection_unavailable', httpStatus: 503 } });
             // Remaining unavailable is not unchanged: the currently reported
             // cause must replace the preceding census's catalog diagnostic.
             accountReadErrorCode = 'ECONNREFUSED';
             await refreshStore.refreshRuntime([manifest.id]);
             expect(await readCensusDiagnostic()).toMatchObject({ failureCause: { errorCode: 'ECONNREFUSED' } });
             accountReadable = true;
-            // An ordinary retained-catalog read is sufficient recovery. No
-            // availability push or registry mutation primes this admission.
+            // The next consumer recovers even when no availability push or
+            // registry mutation primes admission.
             const readsBeforeRecovery = accountReadStates.length;
+            if (startupMode === 'normal') {
+                const recovered = await acquireAuthoritativePluginRuntimeRegistryLease({ controller, recoverAccountCensus: true });
+                try {
+                    expect(resolveSessionCreationAgentTarget(target, recovered.registry.contributes))
+                        .toMatchObject({ agentId: 'codex' });
+                } finally { await recovered.release(); }
+                expect(accountReadStates.length - readsBeforeRecovery).toBe(1);
+            }
             expect((await owner.readCatalog()).find(row => row.pluginId === target.identity.pluginId))
                 .toMatchObject({ enabled: true });
             expect(accountReadStates.length - readsBeforeRecovery).toBe(1);

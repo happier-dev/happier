@@ -60,7 +60,7 @@ import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { createFilesystemEffectAdmission, type FilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 import { SavedSecretVaultInvocationV1Schema, type SavedSecretVaultInvocationResultV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
 import { observeCurrentAgentSessionFactory, type AgentSessionFactoryObservations, type AgentSessionFactorySource } from '@/agent/catalog/runtimeEntry';
-import { acquireAuthoritativePluginRuntimeRegistryLease, tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import { acquireActiveAuthoritativePluginRuntimeRegistryLease, acquireAuthoritativePluginRuntimeRegistryLease, tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { createStablePluginManagedDependenciesHost } from '@/plugins/runtime/invocation/services/managedDependencies';
 import { createV2ManagedDependencySourceModel } from '@/plugins/runtime/invocation/services/managedDependencySourceModel';
 import { createProductionManagedDependencySourceAdapter } from '@/plugins/runtime/invocation/services/managedDependencySourceAdapters';
@@ -619,6 +619,12 @@ export function registerCapabilitiesHandlers(
         return pending;
     };
 
+    const getCurrentService = async () => {
+        // Resolve the census before selecting the service for this generation.
+        const lease = await acquireActiveAuthoritativePluginRuntimeRegistryLease();
+        try { return await getService(); } finally { await lease?.release(); }
+    };
+
     // Warm capability loaders at daemon boot to avoid late dynamic-import failures
     // if the local CLI dist is rebuilt while the daemon process is already running.
     if (dependencies.warmOnRegister === true) void getService().catch(() => undefined);
@@ -645,11 +651,11 @@ export function registerCapabilitiesHandlers(
     });
 
     rpcHandlerManager.registerHandler<{}, CapabilitiesDescribeResponse>(RPC_METHODS.CAPABILITIES_DESCRIBE, async () => {
-        return (await getService()).describe();
+        return (await getCurrentService()).describe();
     });
 
     rpcHandlerManager.registerHandler<CapabilitiesDetectRequest, CapabilitiesDetectResponse>(RPC_METHODS.CAPABILITIES_DETECT, async (data, ingress) => {
-        const service = await getService();
+        const service = await getCurrentService();
         try {
             const response = await service.detect(data, { accountId: ingress?.machineAdmission?.actorAccountId,
                 executeEffects: effectExecution(RPC_METHODS.CAPABILITIES_DETECT, data, ingress) });
@@ -665,7 +671,7 @@ export function registerCapabilitiesHandlers(
     });
 
     rpcHandlerManager.registerHandler<CapabilitiesInvokeRequest, CapabilitiesInvokeResponse>(RPC_METHODS.CAPABILITIES_INVOKE, async (data, context) => {
-        const service = await getService();
+        const service = await getCurrentService();
         const managed = ManagedInstallationServerOriginV1Schema.safeParse(context?.authorization);
         const response = await service.invoke(
             data,
@@ -742,6 +748,6 @@ export function registerCapabilitiesHandlers(
             return await execute();
         };
     }
-    return { invoke: async (request, context) => (await getService()).invoke(request, context) };
+    return { invoke: async (request, context) => (await getCurrentService()).invoke(request, context) };
 
 }

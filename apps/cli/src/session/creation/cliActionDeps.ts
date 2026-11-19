@@ -681,7 +681,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       }
 
       const { resolveSessionCreationAgentTarget } = await import("@/session/creation/resolveSessionCreationAgentTarget");
-      const resolvedAgentTarget = resolveSessionCreationAgentTarget(agentTarget);
+      const { readAdmittedAgentCatalogSnapshotForRequest } = await import('@/agent/catalog/snapshot');
+      const resolvedAgentTarget = resolveSessionCreationAgentTarget(agentTarget, await readAdmittedAgentCatalogSnapshotForRequest());
       if (!resolvedAgentTarget) {
         return { type: 'error', code: 'target_unavailable', retryable: false,
           failureCause: projectActionFailureCauseV1({ name: 'Error', code: 'agent_contribution_unavailable' }, 'session.agent_target') };
