@@ -56,10 +56,12 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
     props.query,
     props.serverId,
   );
+  // On a Session's own page the hero already reads "This session": the frame adds no caption ("1 session" says nothing).
   useWidgetFrameBodyCaption(
-    summary
-      ? t('usage.board.work.valueCaption', { count: summary.sessions.length })
-      : usagePeriodPhrase(props.query),
+    props.query.session !== null ? null
+      : summary
+        ? t('usage.board.work.valueCaption', { count: summary.sessions.length })
+        : usagePeriodPhrase(props.query),
   );
   if (!summary)
     return (

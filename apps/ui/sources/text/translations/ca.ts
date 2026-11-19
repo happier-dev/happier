@@ -15938,6 +15938,7 @@ settingsSession: {
           byAgent: "per agent",
           byModel: "per model",
           byWeek: "per setmana",
+          thisSession: "Aquesta sessió",
           noUsageTitle: "No hi ha ús en aquest període",
           noUsageReason: "Les sessions que executis a qualsevol màquina apareixeran aquí.",
           nothingYetTitle: "Encara res",

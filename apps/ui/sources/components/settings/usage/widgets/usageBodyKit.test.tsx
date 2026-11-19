@@ -234,6 +234,12 @@ describe('shared Usage identity and dependent coverage', () => {
         const head = trimUsageFlowUnreadTail([at(null, null, 0, 5, 3), at(null, null, null, 2, 4)]);
         expect(head.map(entry => entry.points.map(point => point.y))).toEqual([[0, 5, 3], [null, 2, 4]]);
     });
+    it('names a whole-life Session period "This session" and a narrowed one by its dates (USAGE-ACCEPT 1118 #17)', () => {
+        const whole = normalizeUsageQuery({ period: { relative: 'all' }, session: 's1' });
+        expect(usagePeriodPhrase(whole)).toBe(t('usage.board.page.thisSession'));
+        expect(usagePeriodPhrase(normalizeUsageQuery({ period: { relative: 'all' } }))).not.toBe(t('usage.board.page.thisSession'));
+        expect(usagePeriodPhrase(normalizeUsageQuery({ period: { relative: '7days' }, session: 's1' }))).not.toBe(t('usage.board.page.thisSession'));
+    });
     it('says a flow needs more history when only two adjacent days of a month were recorded, never one stray diagonal (USAGE-ACCEPT 1118 #13)', async () => {
         const day = 86_400_000;
         const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 30 * day }, metric: 'tokens' });

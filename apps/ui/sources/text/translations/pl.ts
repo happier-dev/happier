@@ -16888,6 +16888,7 @@ settingsSession: {
       byAgent: "według agenta",
       byModel: "według modelu",
       byWeek: "według tygodni",
+      thisSession: "Ta sesja",
       noUsageTitle: "Brak użycia w tym okresie",
       noUsageReason: "Sesje uruchamiane na dowolnej maszynie pojawią się tutaj.",
       nothingYetTitle: "Jeszcze nic",

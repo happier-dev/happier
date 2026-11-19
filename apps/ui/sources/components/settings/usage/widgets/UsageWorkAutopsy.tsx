@@ -73,7 +73,7 @@ export function UsageWorkAutopsy(
   const { theme: appTheme } = useUnistyles();
   const presentation = useWidgetPresentation();
   const rowMetrics = usePageRowMetrics('list');
-  const { format, cell, datum, sessionLabel, machineNames } = useUsageWork(props.slice, props.query, props.serverId);
+  const { format, cell, datum, machineNames } = useUsageWork(props.slice, props.query, props.serverId);
   const accounting = useUsageAnalyticsView(props.slice, props.query);
   const cost = accounting?.pageCost;
   const costCurrency = cost?.selection?.currency ?? accounting?.costPresentation.currency ?? 'USD';
@@ -106,8 +106,9 @@ export function UsageWorkAutopsy(
     return `${model} · ${machine}`;
   }))].join(', ');
   const width = presentation?.geometry?.width;
+  const pricedTimeline = Boolean(autopsy?.costTimeline.some(point => point.amount !== null));
   const details = useUsageChartDetails(`${t(`usage.widgets.${props.id}`)}: ${t('usage.board.work.costOverTime')}`,
-    selected !== null && Boolean(autopsy?.costTimeline.length) && (width === undefined || width >= PLOT_MIN_WIDTH_PX));
+    selected !== null && pricedTimeline && (width === undefined || width >= PLOT_MIN_WIDTH_PX));
   const [turnsExpanded, setTurnsExpanded] = React.useState(false);
   const [phasesExpanded, setPhasesExpanded] = React.useState(false);
   if (!selected) return null;
@@ -228,9 +229,11 @@ export function UsageWorkAutopsy(
               size="stat"
               showLabel
               label={t('usage.board.work.autopsyTitle')}
-              value={amount ?? t('common.unavailable')}
+              // Unknown is never the headline: a quiet dash, with the reason in the caption.
+              value={amount ?? '—'}
               valueFormatter={value => metric === 'cost' ? formatUsageCost(value, costCurrency) : format(value)}
-              caption={[sessionLabel(selected), metric === 'cost' && cost ? usagePageCostCaption(cost)
+              // The Session is named once, by the page or frame it sits in; the fact's caption says only what qualifies it.
+              caption={[metric === 'cost' && cost ? usagePageCostCaption(cost)
                 : accounting?.hero.totalTokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ')}
             />
             {metric !== 'cost' && cost ? (
@@ -239,7 +242,7 @@ export function UsageWorkAutopsy(
                 size="stat"
                 showLabel
                 label={t('usage.cost')}
-                value={cost.amountUsd ?? t('common.unavailable')}
+                value={cost.amountUsd ?? '—'}
                 valueFormatter={value => formatUsageCost(value, costCurrency)}
                 caption={usagePageCostCaption(cost)}
               />
@@ -310,7 +313,8 @@ export function UsageWorkAutopsy(
           reason={t('usage.board.work.workUnavailableReason')}
         />
       )}
-      {autopsy && autopsy.costTimeline.length > 0 ? (
+      {/* A Session with no priced moment draws no empty plot: its Cost fact already says the money is unknown. */}
+      {autopsy && pricedTimeline ? (
         <View style={styles.section}>
           <UsageWorkSectionTitle caption={autopsy.costTimelineBasis
             ? `${usageCostKindPhrase(autopsy.costTimelineBasis.kind)} · ${autopsy.costTimelineBasis.currency}`

@@ -78,7 +78,10 @@ export function useUsagePluginTheme(): PluginUiThemeV1 {
 }
 
 /** Exact shown dates; a date range does not establish a rolling preset identity. */
-export function usagePeriodPhrase(query: Pick<UsageQuery, 'period' | 'timeZoneOffsetMinutes'>): string {
+export function usagePeriodPhrase(query: Pick<UsageQuery, 'period' | 'timeZoneOffsetMinutes'> & Partial<Pick<UsageQuery, 'session'>>): string {
+  // One Session read over its whole life: the period is the Session itself.
+  const oneSession = typeof query.session === 'string' || (Array.isArray(query.session) && query.session.length === 1);
+  if (oneSession && 'relative' in query.period && query.period.relative === 'all') return t('usage.board.page.thisSession');
   return formatUsageCalendarPeriod({ ...query.period, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes });
 }
 

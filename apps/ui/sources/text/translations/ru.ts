@@ -16720,6 +16720,7 @@ settingsSession: {
             byAgent: "по агентам",
             byModel: "по моделям",
             byWeek: "по неделям",
+      thisSession: "Эта сессия",
             noUsageTitle: "За этот период использования нет",
             noUsageReason: "Здесь появятся сеансы с любой вашей машины.",
             nothingYetTitle: "Пока ничего",

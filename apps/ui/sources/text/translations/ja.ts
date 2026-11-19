@@ -17053,6 +17053,7 @@ settingsSession: {
             byAgent: "エージェント別",
             byModel: "モデル別",
             byWeek: "週別",
+      thisSession: "このセッション",
             noUsageTitle: "この期間の使用はありません",
             noUsageReason: "どのマシンで実行したセッションもここに表示されます。",
             nothingYetTitle: "まだありません",

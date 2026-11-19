@@ -20239,6 +20239,7 @@ const enUsage = {
       byAgent: "by agent",
       byModel: "by model",
       byWeek: "by week",
+      thisSession: "This session",
       noUsageTitle: "No usage in this period",
       noUsageReason: "Sessions you run on any machine show up here.",
       nothingYetTitle: "Nothing yet",

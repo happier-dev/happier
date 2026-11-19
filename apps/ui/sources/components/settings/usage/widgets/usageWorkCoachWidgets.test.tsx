@@ -1091,6 +1091,19 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.getTextContent()).toContain('$0.00');
     expect(freeRow).toBeTruthy();
   });
+  it('keeps an unpriced Session cost a quiet dash and draws no empty cost-over-time plot (USAGE-ACCEPT 1118 #17)', async () => {
+    const rows = [
+      { ...contribution('unknown', 'unpriced', 't1'), cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD', costSource: 'none' as const } },
+      { ...contribution('unknown-2', 'unpriced', 't2'), cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD', costSource: 'none' as const } },
+    ];
+    const unpriced = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
+    const sessionQuery = normalizeUsageQuery({ ...query, session: 'unpriced' });
+    const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery} slice={{ ...slice, shownQuery: sessionQuery, work: unpriced }}
+      id="usage_session_value" testID="value" />);
+    const values = screen.findAllByType(HappierDataMetric).map(node => node.props.value);
+    expect(values).not.toContain(t('common.unavailable'));
+    expect(screen.findByTestId('value.autopsy.costTimeline')).toBeNull();
+  });
   it('does not substitute an earlier quota reset for unused capacity at a later subscription end', async () => {
     const now = Date.UTC(2026, 9, 10, 12);
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
