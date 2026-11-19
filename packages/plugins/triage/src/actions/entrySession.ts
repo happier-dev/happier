@@ -337,9 +337,6 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
     TriageStartPullRequestReviewResultV1
 > {
     return async (input, context: PluginInvocationContext) => {
-        if ('source' in input.review.instance.binding && input.review.instance.binding.source === 'accountData') {
-            return { v: 1, status: 'refused', reason: 'scopeRefused' };
-        }
         const composition = 'reviewInput' in input;
         const compositionInput = composition && isJsonRecord(input.reviewInput) ? input.reviewInput : undefined;
         if (composition && compositionInput === undefined) {

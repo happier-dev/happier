@@ -993,7 +993,9 @@ The final `sessions/start-pull-request-review-v1` Action accepts an editable
 `reviewInput` composition and delegates roster, steps and launch admission to
 the canonical `review.start` schema. It binds that composition to the selected
 Session, prepared comparison ID and verified pinned PR scope, retaining the
-prepared comparison rather than capturing it a second time. Its `accepted` result retains the exact
+prepared comparison rather than capturing it a second time. Preparation consumes
+the selected source's prepared currentness directly; the final start invokes its
+workspace verifier once, after any intervening editing. Its `accepted` result retains the exact
 Review admission receipt, including a composed Workflow receipt; it does not
 claim that every reviewer has already started. Existing chooser requests retain
 their engine-start results through the same final verifier. A failed admitted

@@ -433,8 +433,7 @@ describe('workflow selected-PR preparation without Session creation', () => {
                 review: { ...formalReviewInput().review, observed }, comparisonId: REVIEW_COMPARISON.id,
                 scmPullRequestReviewScope: { kind: 'scm_pull_request_review_scope.v1', observed } });
             expect(kit.prepareInputs.at(-1)).toEqual({ ...kit.savedInput.prepareReviewWorkspaceSelection.input, observed });
-            expect(kit.verifyInputs.at(-1)).toMatchObject({ instance: kit.savedInput.request.instance, observed,
-                prepared: { repositoryPath: kit.preparedWorkspace.repositoryPath, pullRequest: kit.preparedWorkspace.pullRequest } });
+            expect(kit.verifyInputs).toEqual([]);
             expect(kit.captureInputs.at(-1)).toEqual({ sessionId: 'session-a', cwd: kit.preparedWorkspace.repositoryPath,
                 source: { ...REVIEW_COMPARISON_SOURCE, locator: { ...REVIEW_COMPARISON_SOURCE.locator,
                     baseOid: revision.baseSha, headOid: revision.headSha } } });
@@ -445,11 +444,11 @@ describe('workflow selected-PR preparation without Session creation', () => {
         });
         expect(stale).toEqual({ v: 1, status: 'refused', reason: 'revisionMismatch' });
         expect(kit.events).toEqual([
-            'source.get', 'source.prepareReviewWorkspace', 'source.verifyReviewWorkspace', 'scm.diffSummary.capture',
-            'source.get', 'source.prepareReviewWorkspace', 'source.verifyReviewWorkspace', 'scm.diffSummary.capture',
+            'source.get', 'source.prepareReviewWorkspace', 'scm.diffSummary.capture',
+            'source.get', 'source.prepareReviewWorkspace', 'scm.diffSummary.capture',
             'source.get',
         ]);
-        expect(kit.executionOptions).toEqual(Array.from({ length: 4 }, () => ({
+        expect(kit.executionOptions).toEqual(Array.from({ length: 2 }, () => ({
             expectedSelectedConnectedAccountRef: kit.savedInput.prepareReviewWorkspaceSelection.credentialRef,
             signal: kit.context.signal,
         })));
@@ -995,6 +994,7 @@ describe('the registered formal Review transition', () => {
         expect(TriageStartPullRequestReviewResultV1Schema.parse(answer)).toMatchObject({ status: 'accepted',
             reviewResult: { intent: 'review', results: reviewReviewerIdsForStartV1(ReviewStartInputSchema.parse(reviewInput)).map(key => ({ key })) } });
         expect(h.captureInputs).toHaveLength(1);
+        expect(h.verifyInputs).toHaveLength(1);
         expect(reviews).toEqual([expect.objectContaining({ ...reviewInput,
             sessionId: 'session-a', changeType: 'committed', scope: 'changes', cwd: parsed.review.repositoryPath,
             scmPullRequestReviewScope: expect.objectContaining({ observed: parsed.review.observed }),

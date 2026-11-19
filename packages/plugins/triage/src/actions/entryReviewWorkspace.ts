@@ -2,7 +2,7 @@ import { selectCurrentTargetedContribution, type JsonValue, type PluginInvocatio
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { pluginJsonValuesEqual, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { produceScmPullRequestReviewScope, type ScmPullRequestReviewScopeV1 } from '@happier-dev/plugin-sdk/reviews';
-import { ScmComparisonSchema, ScmComparisonSourceSchema, type ScmComparisonSource } from '@happier-dev/plugin-sdk/scm';
+import { ScmComparisonSchema, type ScmComparisonSource } from '@happier-dev/plugin-sdk/scm';
 import { projectTriagePrepareReviewWorkspaceInputV1, type TriagePrepareReviewWorkspaceInputV1, type TriageVerifyReviewWorkspaceResultV1 } from '@happier-dev/triage-protocol/v1';
 import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
@@ -142,96 +142,104 @@ export async function verifyTriagePullRequestReviewWorkspace(
     if ('source' in input.review.instance.binding && input.review.instance.binding.source === 'accountData') {
         return { v: 1, status: 'refused', reason: 'scopeRefused' };
     }
-        const operation = await readCurrentVerifyReviewWorkspaceOperation(
-            input.review.entryRef.source,
-            context,
-        );
-        if (operation === undefined) return { v: 1, status: 'refused', reason: 'sourceUnavailable' };
+    const operation = await readCurrentVerifyReviewWorkspaceOperation(
+        input.review.entryRef.source,
+        context,
+    );
+    if (operation === undefined) return { v: 1, status: 'refused', reason: 'sourceUnavailable' };
 
-        const verified: TriageVerifyReviewWorkspaceResultV1 = await context.services.actions
-            .executeAdmittedTargetedOperation(
-            operation,
-            {
-                v: 1,
-                instance: input.review.instance,
-                entryRef: input.review.entryRef,
-                lastKnownLocator: input.review.lastKnownLocator,
-                observed: input.review.observed,
-                workspace: input.review.workspace,
-                prepared: {
-                    repositoryPath: input.review.repositoryPath,
-                    pullRequest: input.review.pullRequest,
-                },
+    const verified: TriageVerifyReviewWorkspaceResultV1 = await context.services.actions
+        .executeAdmittedTargetedOperation(
+        operation,
+        {
+            v: 1,
+            instance: input.review.instance,
+            entryRef: input.review.entryRef,
+            lastKnownLocator: input.review.lastKnownLocator,
+            observed: input.review.observed,
+            workspace: input.review.workspace,
+            prepared: {
+                repositoryPath: input.review.repositoryPath,
+                pullRequest: input.review.pullRequest,
             },
-            {
-                ...('account' in input.review.instance.binding
-                    ? { expectedSelectedConnectedAccountRef: input.review.instance.binding.account }
-                    : {}),
-                ...(context.signal === undefined ? {} : { signal: context.signal }),
-            },
-        );
-        if (verified.kind !== 'verified') {
-            const failure = projectTriageNewSessionFailureV1(verified.failure);
-            return { v: 1, status: 'refused', sourceResult: verified,
-                reason: verified.kind === 'workspaceMismatch' ? 'workspaceMismatch'
-                    : verified.kind === 'unavailable' ? 'sourceUnavailable' : 'revisionMismatch',
-                ...(failure === undefined ? {} : { failure }),
-            };
-        }
+        },
+        {
+            ...('account' in input.review.instance.binding
+                ? { expectedSelectedConnectedAccountRef: input.review.instance.binding.account }
+                : {}),
+            ...(context.signal === undefined ? {} : { signal: context.signal }),
+        },
+    );
+    if (verified.kind !== 'verified') {
+        const failure = projectTriageNewSessionFailureV1(verified.failure);
+        return { v: 1, status: 'refused', sourceResult: verified,
+            reason: verified.kind === 'workspaceMismatch' ? 'workspaceMismatch'
+                : verified.kind === 'unavailable' ? 'sourceUnavailable' : 'revisionMismatch',
+            ...(failure === undefined ? {} : { failure }),
+        };
+    }
 
-        const reviewAuthority = 'account' in input.review.instance.binding
-            ? { account: input.review.instance.binding.account }
-            : { nativeService: input.review.instance.binding.service };
-        const scope = produceScmPullRequestReviewScope({
-            authoritative: {
-                ...reviewAuthority,
-                pullRequest: verified.pullRequest,
-                observed: input.review.observed,
-            },
-            expected: {
-                ...reviewAuthority,
-                baseSha: input.review.observed.baseSha,
-                headSha: input.review.observed.headSha,
-            },
-        });
-        if (scope.status === 'refused') {
+    return await captureTriagePullRequestReviewComparison({ ...input,
+        review: { ...input.review, pullRequest: verified.pullRequest },
+    }, context, captureComparison);
+}
+
+/** Consume source-owned preparation or final verification; SCM alone captures evidence. */
+async function captureTriagePullRequestReviewComparison(
+    input: Pick<TriageStartPullRequestReviewInputV1, 'sessionId' | 'review'> & Readonly<{ comparisonSource?: ScmComparisonSource }>,
+    context: PluginInvocationContext,
+    captureComparison: boolean,
+): ReturnType<typeof verifyTriagePullRequestReviewWorkspace> {
+    if ('source' in input.review.instance.binding && input.review.instance.binding.source === 'accountData') {
+        return { v: 1, status: 'refused', reason: 'scopeRefused' };
+    }
+    const reviewAuthority = 'account' in input.review.instance.binding
+        ? { account: input.review.instance.binding.account }
+        : { nativeService: input.review.instance.binding.service };
+    // The source result intentionally carries opaque PR metadata. Admit its
+    // grammar once; its provider/head/currentness decisions already belong
+    // to preparation or the final verifier, not a comparison of our own values.
+    const scope = produceScmPullRequestReviewScope({
+        authoritative: { ...reviewAuthority, pullRequest: input.review.pullRequest, observed: input.review.observed },
+        expected: { ...reviewAuthority, baseSha: input.review.observed.baseSha, headSha: input.review.observed.headSha },
+    });
+    if (scope.status === 'refused') {
+        return { v: 1, status: 'refused', reason: 'scopeRefused' };
+    }
+
+    let comparisonId: string | undefined;
+    if (captureComparison) {
+        const source = input.comparisonSource;
+        if (source?.kind !== 'pullRequest') {
             return { v: 1, status: 'refused', reason: 'scopeRefused' };
         }
-
-        let comparisonId: string | undefined;
-        if (captureComparison) {
-            const source = ScmComparisonSourceSchema.safeParse(input.comparisonSource);
-            if (!source.success || source.data.kind !== 'pullRequest') {
-                return { v: 1, status: 'refused', reason: 'scopeRefused' };
-            }
-            if ('number' in scope.scope.pullRequest
-                && source.data.locator.number !== scope.scope.pullRequest.number) {
-                return { v: 1, status: 'refused', reason: 'scopeRefused' };
-            }
-            if (source.data.locator.baseOid !== scope.scope.observed.baseSha
-                || source.data.locator.headOid !== scope.scope.observed.headSha) {
-                return { v: 1, status: 'refused', reason: 'revisionMismatch' };
-            }
-            const captured = await context.services.actions.execute('scm.diffSummary.capture', {
-                sessionId: input.sessionId,
-                cwd: input.review.repositoryPath,
-                source: source.data,
-            }, context.signal === undefined ? undefined : { signal: context.signal });
-            const capture = typeof captured === 'object' && captured !== null
-                ? captured as Readonly<{ success?: unknown; comparison?: unknown }>
-                : undefined;
-            const comparison = ScmComparisonSchema.safeParse(capture?.comparison);
-            if (capture?.success !== true || !comparison.success) {
-                return { v: 1, status: 'refused', reason: 'sourceUnavailable' };
-            }
-            if (!pluginJsonValuesEqual(comparison.data.source, source.data)
-                || !comparison.data.endpoints.before
-                || comparison.data.pullRequest?.baseOid !== scope.scope.observed.baseSha
-                || comparison.data.endpoints.after !== scope.scope.observed.headSha) {
-                return { v: 1, status: 'refused', reason: 'revisionMismatch' };
-            }
-            comparisonId = comparison.data.id;
+        if ('number' in scope.scope.pullRequest
+            && source.locator.number !== scope.scope.pullRequest.number) {
+            return { v: 1, status: 'refused', reason: 'scopeRefused' };
         }
+        if (source.locator.baseOid !== scope.scope.observed.baseSha
+            || source.locator.headOid !== scope.scope.observed.headSha) {
+            return { v: 1, status: 'refused', reason: 'revisionMismatch' };
+        }
+        const captured = await context.services.actions.execute('scm.diffSummary.capture', {
+            sessionId: input.sessionId,
+            cwd: input.review.repositoryPath,
+            source,
+        }, context.signal === undefined ? undefined : { signal: context.signal });
+        const capture = typeof captured === 'object' && captured !== null
+            ? captured as Readonly<{ success?: unknown; comparison?: unknown }>
+            : undefined;
+        const comparison = ScmComparisonSchema.safeParse(capture?.comparison);
+        if (capture?.success !== true || !comparison.success) {
+            return { v: 1, status: 'refused', reason: 'sourceUnavailable' };
+        }
+        if (!comparison.data.endpoints.before
+            || comparison.data.pullRequest?.baseOid !== scope.scope.observed.baseSha
+            || comparison.data.endpoints.after !== scope.scope.observed.headSha) {
+            return { v: 1, status: 'refused', reason: 'revisionMismatch' };
+        }
+        comparisonId = comparison.data.id;
+    }
 
     return { status: 'verified', scope: scope.scope, ...(comparisonId === undefined ? {} : { comparisonId }) };
 }
@@ -274,7 +282,7 @@ export function createTriagePreparePullRequestReviewActionHandler(): ActionHandl
         const targetSource = input.reviewTarget.comparisonSource;
         const comparisonSource = targetSource.kind === 'pullRequest' ? { ...targetSource,
             locator: { ...targetSource.locator, baseOid: request.observed.baseSha, headOid: request.observed.headSha } } : targetSource;
-        const verified = await verifyTriagePullRequestReviewWorkspace({ ...input, review, comparisonSource }, context, true);
+        const verified = await captureTriagePullRequestReviewComparison({ ...input, review, comparisonSource }, context, true);
         if (verified.status !== 'verified') return { ...verified, status: verified.reason === 'sourceUnavailable' ? 'unavailable' : 'refused' };
         if (verified.comparisonId === undefined) return { v: 1, status: 'unavailable', reason: 'sourceUnavailable' };
         return { v: 1, status: 'prepared', review, preparedWorkspace,
