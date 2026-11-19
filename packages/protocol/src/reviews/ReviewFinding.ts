@@ -2,9 +2,9 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { ReviewFindingExtensionsSchema } from './findingExtensions.js';
 
-import { ReviewFindingSeveritySchema, ReviewFindingCategorySchema, ReviewFindingScopeAttributionSchema } from './reviewFindingClassification.js';
+import { REVIEW_FINDING_SUMMARY_PLACEMENT_V1, ReviewFindingSeveritySchema, ReviewFindingCategorySchema, ReviewFindingScopeAttributionSchema } from './reviewFindingClassification.js';
 import { ReviewCommentScopeV1Schema, ReviewCommentStateV1Schema, validateReviewCommentScopeV1 } from './comments/v1.js';
-export { ReviewFindingSeveritySchema, ReviewFindingCategorySchema, type ReviewFindingSeverity, type ReviewFindingCategory } from './reviewFindingClassification.js';
+export { ReviewFindingSeveritySchema, ReviewFindingCategorySchema, reviewFindingFallsBelowThreshold, type ReviewFindingSeverity, type ReviewFindingCategory } from './reviewFindingClassification.js';
 
 export const ReviewFindingCommentReferenceV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.minLength(1)),
@@ -39,7 +39,10 @@ export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;
 export type ReviewFindingId = string;
 
 /** Durable finding content excludes the mutable reference back to its owning comment. */
-export const ReviewFindingContentSchema = lazyZodSchema(() => z.object(z.omit(ReviewFindingSchema, { comment: true }).shape));
+export const ReviewFindingContentSchema = lazyZodSchema(() => z.object({
+  ...z.omit(ReviewFindingSchema, { comment: true }).shape,
+  publicationPlacement: z.optional(z.literal(REVIEW_FINDING_SUMMARY_PLACEMENT_V1)),
+}));
 export type ReviewFindingContent = z.infer<typeof ReviewFindingContentSchema>;
 
 /** Model-authored content excludes host references and plugin-owned evidence namespaces. */

@@ -75,5 +75,6 @@ export async function prepareReviewRoundV1(input: ReviewPrepareRoundInputV1, dep
     } } : {}),
     startedAt: deps.startedAt, newRound: true, signal: deps.signal,
   }) : input.reviewRound;
-  return { reviewRound, ...(comparison ? { comparisonId: comparison.id, comparison } : {}) };
+  return { reviewRound, ...(comparison ? { comparisonId: comparison.id, comparison } : {}),
+    ...(input.reviewInput.inlineThreshold === undefined ? {} : { inlineThreshold: input.reviewInput.inlineThreshold }) };
 }

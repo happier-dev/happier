@@ -10,6 +10,7 @@ import {
   validateReviewCommentPublicationClaimAgainstPlanV1,
   validateReviewCommentPublicationResultAgainstPlanV1,
 } from '../../index.js';
+import * as publicationActions from './actions.js';
 import type {
   ReviewCommentPublicationEntryResultV1,
   ReviewCommentPublicationResultV1,
@@ -56,12 +57,53 @@ const target = {
 };
 
 describe('review comment publication contract', () => {
+  it('freezes what the reviewer will publish from the saved finding and preserves authored comments', () => {
+    const proposal = publicationEntry('comment-1');
+    const finding = {
+      id: 'finding-1',
+      severity: 'high' as const,
+      category: 'correctness' as const,
+      title: 'Retries lose the original failure',
+      summary: 'The retry replaces the original error.',
+      whyItMatters: 'Callers cannot explain why the operation failed.',
+      suggestion: 'Retain the original error as the cause.',
+      evidence: 'The catch overwrites the previous error.',
+    };
+    if (!('buildReviewCommentPublicationEntryV1' in publicationActions)
+      || typeof publicationActions.buildReviewCommentPublicationEntryV1 !== 'function') {
+      throw new Error('The publication owner cannot build entries from saved findings');
+    }
+    const { buildReviewCommentPublicationEntryV1 } = publicationActions;
+    const source = { ...proposal, id: proposal.happierCommentId, serverRevision: proposal.expectedServerRevision, bodyVersion: 1 };
+    const entry = buildReviewCommentPublicationEntryV1({ ...source, finding });
+
+    expect(entry.body).toContain('**High · Retries lose the original failure**');
+    expect(entry.body).toContain(finding.whyItMatters);
+    expect(entry.body).toContain(finding.suggestion);
+    expect(entry.body).toContain(`<details>\n<summary>Details</summary>\n\n${finding.evidence}\n\n</details>`);
+    expect(buildReviewCommentPublicationEntryV1(source)).toEqual(proposal);
+    expect(buildReviewCommentPublicationEntryV1({ ...source, finding, bodyVersion: 2 })).toEqual(proposal);
+  });
+
   it('recognizes canonical entry and verdict markers without treating attribution text as a marker', () => {
     expect(hasReviewCommentPublicationMarkerV1(`reply ${formatReviewCommentPublicationMarkerV1('entry', correlation('a'))}`)).toBe(true);
     expect(hasReviewCommentPublicationMarkerV1(formatReviewCommentPublicationMarkerV1('verdict', correlation('v')))).toBe(true);
     expect(hasReviewCommentPublicationMarkerV1('Posted by the agent')).toBe(false);
     expect(hasReviewCommentPublicationMarkerV1('<!-- happier-review-comment:v1:short -->')).toBe(false);
     expect(hasReviewCommentPublicationMarkerV1(`<!-- happier-review-comment:v2:${correlation('a')} -->`)).toBe(false);
+  });
+
+  it('routes a below-threshold finding into the same verdict summary without dropping its anchor', () => {
+    const anchored = publicationEntry('comment-1');
+    const summary = { ...anchored, placement: 'summary' as const };
+    const plan = ReviewCommentPublicationPlanV1Schema.parse({
+      target, baseRevision: 'base', headRevision: 'head', entries: [summary], verdict: { kind: 'comment', body: 'Review' },
+    });
+    expect(plan.entries[0]?.anchor).toEqual(anchored.anchor);
+    expect(preflightReviewCommentPublicationRoutingV1(plan)).toMatchObject({ inlineEntryIndexes: [], verdictSummaryEntryIndexes: [0] });
+    expect(preflightReviewCommentPublicationRoutingV1({ ...plan, verdict: null })).toMatchObject({
+      kind: 'ready', inlineEntryIndexes: [0], verdictSummaryEntryIndexes: [],
+    });
   });
 
   it('owns exact marker formatting and target/subtarget routing once', () => {

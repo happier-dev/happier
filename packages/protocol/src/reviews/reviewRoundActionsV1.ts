@@ -5,6 +5,7 @@ import { ScmComparisonSchema } from '../scm/comparison.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
 import { ReviewRoundBindingV1Schema } from './reviewArtifactV1.js';
 import { ReviewStartInputSchema } from './reviewStart.js';
+import { ReviewFindingSeveritySchema } from './reviewFindingClassification.js';
 import { ExecutionRunStartResponseSchema, type ExecutionRunPublicState } from '../execution/runs/responseSchemas.js';
 import { WorkflowRunStartResultV1Schema } from '../workflows/actionsV1.js';
 import { ExecutionRunActionResponseSchema } from '../execution/runs/index.js';
@@ -22,6 +23,7 @@ export type ReviewPrepareRoundInputV1 = z.infer<typeof ReviewPrepareRoundInputV1
 /** Actual admitted binding and captured evidence, shared by every leaf in this pass. */
 export const ReviewPreparedRoundV1Schema = lazyZodSchema(() => z.strictObject({
   reviewRound: ReviewRoundBindingV1Schema,
+  inlineThreshold: z.optional(ReviewFindingSeveritySchema),
   comparisonId: z.optional(z.string().check(z.minLength(1))),
   comparison: z.optional(ScmComparisonSchema),
 }));

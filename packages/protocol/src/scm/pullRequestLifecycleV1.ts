@@ -18,6 +18,8 @@ export const ScmHostingPullRequestLifecycleV1Schema = lazyZodSchema(() => z.stri
     action: ScmHostingPullRequestLifecycleActionV1Schema,
     headSha: z.string().check(z.regex(/^[a-fA-F0-9]{40}$/)),
     headRef: z.string().check(z.minLength(1)), baseRef: z.string().check(z.minLength(1)),
+    /** Omitted when the Forge did not supply draft status. */
+    draft: z.optional(z.boolean()),
     baseRepository: ScmHostingRepositoryIdentityV1Schema,
     /** A retained PR can outlive its source repository. */
     headRepository: z.nullable(ScmHostingRepositoryIdentityV1Schema),

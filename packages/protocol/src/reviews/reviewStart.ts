@@ -20,6 +20,7 @@ import { ExecutableSessionParticipantSelectionV1Schema, ExecutableModelParticipa
 import { ReviewRequestedReviewerInputV1Schema } from './reviewHumanV1.js';
 import { ReviewRoundBindingV1Schema } from './reviewArtifactV1.js';
 import type { ScmDiffArea } from '../scm/workingSnapshot.js';
+import { ReviewFindingSeveritySchema } from './reviewFindingClassification.js';
 
 /**
  * Canonical, cross-surface input contract for starting reviews.
@@ -163,6 +164,7 @@ export function hasConflictingReviewScope(input: Readonly<Record<string, unknown
 }
 
 export const ReviewStartInputFieldsSchema = lazyZodSchema(() => z.looseObject({
+    inlineThreshold: z.optional(ReviewFindingSeveritySchema),
     roleId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     launchProfileId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     approvalProfileId: ExecutionRunStartRequestBaseSchema.shape.approvalProfileId,

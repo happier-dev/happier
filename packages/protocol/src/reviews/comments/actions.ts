@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { ACTION_ID_FAMILIES_V1 } from '../../actions/actionIds.js';
+import { REVIEW_FINDING_SUMMARY_PLACEMENT_V1 } from '../reviewFindingClassification.js';
 
 import {
   ReviewCommentAttachEvidenceRequestV1Schema,
@@ -14,12 +15,14 @@ import {
   ReviewCommentReplyRequestV1Schema,
   ReviewCommentSetDispositionRequestV1Schema,
   ReviewCommentSnapshotV1Schema,
+  type ReviewCommentSnapshotV1,
   ReviewCommentStateV1Schema,
   ReviewCommentScopeV1Schema,
   ReviewCommentWorkspaceV1Schema,
   validateReviewCommentScopeV1,
   ReviewCommentTransitionRequestV1Schema,
   ReviewCommentV1Schema,
+  type ReviewCommentV1,
   reviewCommentStateTransitionRequiresEvidenceV1,
 } from './v1.js';
 import { StoredJsonContentEnvelopeSchema } from '../../storage/storedJsonContentEnvelope.js';
@@ -266,8 +269,38 @@ export const ReviewCommentPublicationEntryV1Schema = lazyZodSchema(() => z.stric
   anchor: ReviewCommentAnchorV1Schema,
   snapshot: ReviewCommentSnapshotV1Schema,
   body: z.string().check(z.minLength(1)),
+  placement: z.optional(z.literal(REVIEW_FINDING_SUMMARY_PLACEMENT_V1)),
 }));
 export type ReviewCommentPublicationEntryV1 = z.infer<typeof ReviewCommentPublicationEntryV1Schema>;
+
+export function buildReviewCommentPublicationEntryV1(proposal: Readonly<
+  Pick<ReviewCommentV1, 'id' | 'serverRevision' | 'anchor' | 'bodyVersion' | 'finding'>
+  & { snapshot: ReviewCommentSnapshotV1; body: string }
+>): ReviewCommentPublicationEntryV1 {
+  const { finding } = proposal;
+  let body = proposal.body;
+  if (finding && proposal.bodyVersion === 1) {
+    const severity = finding.severity[0].toUpperCase() + finding.severity.slice(1);
+    const title = finding.title.replace(/[\r\n\u2028\u2029]+/gu, ' ').replace(/[\\*_`\[\]<>]/g, '\\$&');
+    const detail = [finding.evidence, finding.patch].filter(Boolean).join('\n\n');
+    body = [
+      `**${severity} · ${title}**`,
+      finding.summary,
+      finding.whyItMatters,
+      finding.suggestion,
+      detail && `<details>\n<summary>Details</summary>\n\n${detail}\n\n</details>`,
+      'Reviewed with Happier',
+    ].filter(Boolean).join('\n\n');
+  }
+  return {
+    happierCommentId: proposal.id,
+    expectedServerRevision: proposal.serverRevision,
+    anchor: proposal.anchor,
+    snapshot: proposal.snapshot,
+    body,
+    ...(finding?.publicationPlacement ? { placement: finding.publicationPlacement } : {}),
+  };
+}
 
 export const ReviewCommentPublicationVerdictV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.enum(['approve', 'requestChanges', 'comment']),
@@ -355,9 +388,8 @@ export function reviewCommentPublicationEntryIsDiffLessV1(
 
 /**
  * Resolves pull-request review routes before the durable claim. Diff-less
- * entries fold into the one real user-authored verdict summary beside their
- * own exact markers. Without a verdict summary the complete plan is
- * unrouteable and must be rejected before any provider write.
+ * entries require the real user-authored verdict summary. A file-scoped
+ * finding's summary preference applies only to a plan that has a verdict.
  *
  * Providers remain responsible for deciding whether their native diff API
  * supports each file-scoped anchor; this helper never guesses that mapping.
@@ -368,7 +400,7 @@ export function preflightReviewCommentPublicationRoutingV1(
   const inlineEntryIndexes: number[] = [];
   const verdictSummaryEntryIndexes: number[] = [];
   plan.entries.forEach((entry, index) => {
-    (reviewCommentPublicationEntryIsDiffLessV1(entry)
+    ((plan.verdict !== null && entry.placement === REVIEW_FINDING_SUMMARY_PLACEMENT_V1) || reviewCommentPublicationEntryIsDiffLessV1(entry)
       ? verdictSummaryEntryIndexes
       : inlineEntryIndexes).push(index);
   });
@@ -587,6 +619,8 @@ export function validateReviewCommentPublicationResultAgainstPlanV1(
       ? verdictOutcome.externalRef
       : undefined;
     for (const index of routing.verdictSummaryEntryIndexes) {
+      // A non-dispatched marker can belong to an earlier Review on this target.
+      if (parsedClaim.instructions.entries[index] !== 'dispatch') continue;
       const outcome = parsed.entries[index]!.outcome;
       if (outcome.kind === 'published') {
         if (verdictExternalRef === undefined || verdictExternalRef !== outcome.externalRef) {
