@@ -29,7 +29,7 @@ type OwnerHydrationRead =
     | Readonly<{
         key: string;
         outcome: 'ready';
-        progress: ExternalSessionOperationProgressV1;
+        progress: ExternalSessionOperationProgressV1 | null;
     }>
     | Readonly<{ key: string; outcome: 'unavailable' }>;
 
@@ -188,10 +188,11 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
                 || current.key !== snapshot.key
                 || !result.ok
                 || !current.presentation
-                || !matchesExternalSessionOperationPresentation(
-                    result.progress,
-                    current.presentation,
-                )
+                || !('presentation' in result
+                    ? result.operation.sessionId === sessionId
+                        && createExternalSessionOperationPresentationIdentity(result.presentation)
+                            === createExternalSessionOperationPresentationIdentity(current.presentation)
+                    : matchesExternalSessionOperationPresentation(result.progress, current.presentation))
             ) {
                 if (current.key === snapshot.key) {
                     const settled = hydratedRef.current;
@@ -205,7 +206,7 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
             commitRead({
                 key: snapshot.key,
                 outcome: 'ready',
-                progress: result.progress,
+                progress: 'progress' in result ? result.progress : null,
             });
             return 'ready';
         } catch {
@@ -346,6 +347,7 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
     const progress = (
         authorized
         && currentRead?.outcome === 'ready'
+        && currentRead.progress !== null
         && presentation
         && matchesExternalSessionOperationPresentation(
             currentRead.progress,
@@ -362,7 +364,7 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
                 ? 'unavailable'
                 : !readEligible
                     ? 'offline'
-                    : progress !== null
+                    : currentRead?.outcome === 'ready'
                         ? 'ready'
                         : 'loading';
 

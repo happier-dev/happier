@@ -8,6 +8,7 @@ import type { ActionSurfaceBindingContext, PreNormalizedActionSpec } from '../de
 import { type ActionInputHints } from '../../metadata.js';
 import { ExternalSessionBackgroundFollowActionResultV1Schema, ExternalSessionFollowPolicySetResponseSchema, ExternalSessionStatusGetResponseSchema, ExternalSessionStatusActionResultV1Schema } from '../../../sessions/external/daemonRpcV1.js';
 import { ExternalSessionMaterializeStartInputV1Schema, ExternalSessionMaterializeActionInputV1Schema, ExternalSessionMaterializeActionResultV1Schema, ExternalSessionOperationActionResultV1Schema, ExternalSessionOperationActionResponseV1Schema, ExternalSessionOperationCancelInputV1Schema, ExternalSessionOperationDiscardInputV1Schema, ExternalSessionOperationResumeInputV1Schema, ExternalSessionOperationRetryInputV1Schema, ExternalSessionOperationStatusInputV1Schema, ExternalSessionOperationTransportReferenceV1Schema, ExternalSessionTakeoverStartInputV1Schema, ExternalSessionTakeoverActionInputV1Schema, projectExternalSessionMaterializeActionResultV1, projectExternalSessionOperationActionResultV1 } from '../../../sessions/external/operationActionSchemasV1.js';
+import { ExternalSessionOperationStatusResponseV1Schema } from '../../../sessions/external/operationActionSchemasV1.js';
 import { RPC_METHODS } from '../../../rpc/methods.js';
 
 
@@ -25,7 +26,6 @@ export function projectExternalSessionOperationResult(
   value: unknown,
   context: ActionSurfaceBindingContext,
 ): unknown {
-  const semantic = ExternalSessionOperationActionResultV1Schema.safeParse(value);
   const materialize = ExternalSessionMaterializeActionInputV1Schema.safeParse(
     context.input,
   );
@@ -38,15 +38,6 @@ export function projectExternalSessionOperationResult(
       ? reference.data.sessionId
       : null;
   if (!sessionId) throw new Error('external_session_operation_input_required');
-  if (semantic.success) {
-    if (
-      semantic.data.ok
-      && semantic.data.operation.sessionId !== sessionId
-    ) {
-      throw new Error('external_session_operation_session_mismatch');
-    }
-    return semantic.data;
-  }
   return projectExternalSessionOperationActionResultV1(value, sessionId);
 }
 
@@ -182,7 +173,7 @@ function createExternalSessionOperationActionSpecsV1() {
       rpc: {
         inputSchema: ExternalSessionOperationTransportReferenceV1Schema,
         decodeInput: identityActionSurfaceValue,
-        outputSchema: ExternalSessionOperationActionResponseV1Schema,
+        outputSchema: ExternalSessionOperationStatusResponseV1Schema,
         encodeOutput: identityActionSurfaceValue,
       },
       plugin: {

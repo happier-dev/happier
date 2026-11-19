@@ -260,10 +260,27 @@ export type ExternalSessionOperationActionResultV1 = z.infer<
   typeof ExternalSessionOperationActionResultV1Schema
 >;
 
+/** Full progress while retained, or the existing public result after compaction. */
+export const ExternalSessionOperationStatusResponseV1Schema = lazyZodSchema(() => z.union([
+  ExternalSessionOperationActionResponseV1Schema,
+  ExternalSessionOperationActionResultV1Schema,
+]));
+export type ExternalSessionOperationStatusResponseV1 = z.infer<
+  typeof ExternalSessionOperationStatusResponseV1Schema
+>;
+
 export function projectExternalSessionOperationActionResultV1(
   value: unknown,
   sessionId: string,
 ): ExternalSessionOperationActionResultV1 {
+  const semantic = ExternalSessionOperationActionResultV1Schema.safeParse(value);
+  if (semantic.success) {
+    if (semantic.data.ok && semantic.data.operation.sessionId !== sessionId) {
+      throw new Error('external_session_operation_session_mismatch');
+    }
+    return semantic.data;
+  }
+
   const response = ExternalSessionOperationActionResponseV1Schema.parse(value);
   if (!response.ok) return response;
   return ExternalSessionOperationActionResultV1Schema.parse({

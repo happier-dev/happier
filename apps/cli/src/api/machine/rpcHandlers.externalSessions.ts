@@ -3,7 +3,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { EXTERNAL_SESSION_IMPORT_PUBLICATION_FENCE_VERSION_V1, EXTERNAL_SESSION_RUNTIME_BOUND_ADMISSION_VERSION_V3 } from '@happier-dev/protocol/clientCompatibility/primitives';
 import { EXTERNAL_SESSION_SOURCE_UNAVAILABLE_OCCURRENCE_EVENT_V1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
 import { PLUGIN_SESSION_HOOK_MANAGEMENT_FEATURE_ID } from '@happier-dev/protocol/sessions/external/hookManagementV1';
-import { ExternalSessionOperationActionResponseV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteResult, ActionId, ExternalSessionTranscriptInvalidationV1, ExternalSessionSourceUnavailableOccurrenceV1, ExternalSessionOperationActionResponseV1 } from '@happier-dev/protocol';
 
 import { createExternalSessionFollowLeaseManager } from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
@@ -500,13 +500,13 @@ function internalExternalSessionOperationActionFailure(): ActionExecuteResult {
 }
 
 function mapExternalSessionDurableOperationActionResult(
+  actionId: ActionId,
   result: ActionExecuteResult,
 ): ActionExecuteResult {
   if (!result.ok) return internalExternalSessionOperationActionFailure();
-  const parsed = ExternalSessionOperationActionResponseV1Schema.safeParse(
-    result.result,
-  );
-  return parsed.success
+  const schema = getActionSpec(actionId).surfaceBindings?.rpc?.outputSchema;
+  const parsed = schema?.safeParse(result.result);
+  return parsed?.success
     ? { ok: true, result: parsed.data }
     : internalExternalSessionOperationActionFailure();
 }
@@ -519,7 +519,7 @@ function createExternalSessionGenericRpcActionExecutor(
       try {
         const result = await executor.execute(actionId, input, context);
         if (isExternalSessionDurableOperationAction(actionId)) {
-          return mapExternalSessionDurableOperationActionResult(result);
+          return mapExternalSessionDurableOperationActionResult(actionId, result);
         }
         if (result.ok) {
           return result;

@@ -5,7 +5,10 @@ import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
 import { decideExternalSessionOperationUpdateV1, externalSessionOperationRetainsDiscardRecoveryV1, isExternalSessionOperationTerminalStatusV1, ExternalSessionOperationAuthorIntentV1Schema, ExternalSessionOperationRecordV1Schema, ExternalSessionOperationSharedPresentationV1Schema, projectExternalSessionOperationProgressV1, projectExternalSessionOperationSharedPresentationV1 } from '@happier-dev/protocol/sessions/external/operationV1';
-import { ExternalSessionOperationReferenceV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import {
+  ExternalSessionOperationReferenceV1Schema,
+  type ExternalSessionOperationActionResultV1,
+} from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
 import type { ExternalSessionOperationReferenceV1, ExternalSessionOperationAuthorIntentV1, ExternalSessionOperationRecordV1, ExternalSessionOperationSemanticRequestV1, ExternalSessionOperationSharedPresentationV1, ExternalSessionMaterializeStartInputV1, ExternalSessionTakeoverStartInputV1, ExternalSessionOperationUpdateDecisionV1 } from '@happier-dev/protocol';
 
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -374,6 +377,20 @@ const ExternalSessionOperationTerminalReceiptV1Schema = z.strictObject({
 export type ExternalSessionOperationTerminalReceiptV1 = z.infer<
   typeof ExternalSessionOperationTerminalReceiptV1Schema
 >;
+
+/** Project only the public status of a receipt already read in its Account partition. */
+export function projectExternalSessionTerminalReceiptStatus(
+  receipt: ExternalSessionOperationTerminalReceiptV1,
+  expectedRevision: ExternalSessionOperationReferenceV1['revision'],
+): ExternalSessionOperationActionResultV1 {
+  if (receipt.reference.revision !== expectedRevision) {
+    return {
+      ok: false,
+      error: { code: 'stale_revision', message: 'External session operation revision is stale.' },
+    };
+  }
+  return { ok: true, operation: receipt.reference, presentation: receipt.presentation };
+}
 
 export type ExternalSessionOperationStoredEntry = Readonly<
   | {

@@ -12,6 +12,10 @@ import {
     type ExternalSessionMaterializeStartInputV1,
     type ExternalSessionTakeoverStartInputV1,
 } from '@happier-dev/protocol/sessions';
+import {
+    ExternalSessionOperationStatusResponseV1Schema,
+    type ExternalSessionOperationStatusResponseV1,
+} from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ExternalSessionAttachRequestSchema, ExternalSessionAttachResponseSchema, ExternalSessionDetachRequestSchema, ExternalSessionDetachResponseSchema, ExternalSessionFollowPolicySetRequestSchema, ExternalSessionFollowPolicySetResponseSchema, ExternalSessionLinkEnsureRequestSchema, ExternalSessionLinkEnsureResponseSchema, ExternalSessionStatusGetRequestSchema, ExternalSessionStatusGetResponseSchema, ExternalSessionCandidateDeleteRequestSchema, ExternalSessionCandidateDeleteResponseSchema, ExternalSessionsCandidatesListRequestSchema, ExternalSessionsCandidatesListResponseSchema, ExternalSessionTranscriptPageRequestSchema, ExternalSessionTranscriptPageResponseSchema, ExternalSessionTranscriptReadAfterRequestSchema, ExternalSessionTranscriptReadAfterResponseSchema, type ExternalSessionAttachRequest, type ExternalSessionAttachResponse, type ExternalSessionDetachRequest, type ExternalSessionDetachResponse, type ExternalSessionFollowPolicySetRequest, type ExternalSessionFollowPolicySetResponse, type ExternalSessionLinkEnsureRequest, type ExternalSessionLinkEnsureResponse, type ExternalSessionStatusGetRequest, type ExternalSessionStatusGetResponse, type ExternalSessionCandidateDeleteRequest, type ExternalSessionCandidateDeleteResponse, type ExternalSessionsCandidatesListRequest, type ExternalSessionsCandidatesListResponse, type ExternalSessionTranscriptPageRequest, type ExternalSessionTranscriptPageResponse, type ExternalSessionTranscriptReadAfterRequest, type ExternalSessionTranscriptReadAfterResponse } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { ExternalSessionTranscriptRefreshReadAfterRequestV1Schema, ExternalSessionTranscriptRefreshReadAfterResponseV1Schema, shouldResyncExternalSessionTranscriptReadAfterV1, type ExternalSessionTranscriptRefreshReadAfterRequestV1, type ExternalSessionTranscriptRefreshReadAfterResponseV1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
@@ -644,14 +648,15 @@ export async function machineExternalSessionMaterializeStart(
     }
 }
 
-async function machineExternalSessionOperationAction(
+async function machineExternalSessionOperationAction<Response>(
     input: MachineExternalSessionOperationRequest,
     params: Readonly<{
         method: string;
         requestSchema: ZodMiniType<ExternalSessionOperationReferenceV1>;
+        responseSchema: ZodMiniType<Response>;
     }>,
     opts?: MachineExternalSessionsOpts,
-): Promise<ExternalSessionOperationActionResponseV1> {
+): Promise<Response | Extract<ExternalSessionOperationActionResponseV1, { ok: false }>> {
     const { machineId, ...reference } = input;
     const machine = resolveServerScopedMachine(storage.getState(), opts?.serverId, machineId);
     // An operation belongs to its original Machine's ledger. Supply only that
@@ -668,7 +673,7 @@ async function machineExternalSessionOperationAction(
             method: params.method,
             input: reference,
             requestSchema: params.requestSchema,
-            responseSchema: ExternalSessionOperationActionResponseV1Schema,
+            responseSchema: params.responseSchema,
             opts,
         });
     } catch (error) {
@@ -686,10 +691,11 @@ async function machineExternalSessionOperationAction(
 export async function machineExternalSessionOperationStatus(
     input: MachineExternalSessionOperationRequest,
     opts?: MachineExternalSessionsOpts,
-): Promise<ExternalSessionOperationActionResponseV1> {
+): Promise<ExternalSessionOperationStatusResponseV1> {
     return await machineExternalSessionOperationAction(input, {
         method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_STATUS_GET,
         requestSchema: ExternalSessionOperationStatusInputV1Schema,
+        responseSchema: ExternalSessionOperationStatusResponseV1Schema,
     }, opts);
 }
 
@@ -700,6 +706,7 @@ export async function machineExternalSessionOperationResume(
     return await machineExternalSessionOperationAction(input, {
         method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RESUME,
         requestSchema: ExternalSessionOperationResumeInputV1Schema,
+        responseSchema: ExternalSessionOperationActionResponseV1Schema,
     }, opts);
 }
 
@@ -710,6 +717,7 @@ export async function machineExternalSessionOperationRetry(
     return await machineExternalSessionOperationAction(input, {
         method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RETRY,
         requestSchema: ExternalSessionOperationRetryInputV1Schema,
+        responseSchema: ExternalSessionOperationActionResponseV1Schema,
     }, opts);
 }
 
@@ -720,6 +728,7 @@ export async function machineExternalSessionOperationCancel(
     return await machineExternalSessionOperationAction(input, {
         method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_CANCEL,
         requestSchema: ExternalSessionOperationCancelInputV1Schema,
+        responseSchema: ExternalSessionOperationActionResponseV1Schema,
     }, opts);
 }
 
@@ -730,5 +739,6 @@ export async function machineExternalSessionOperationDiscard(
     return await machineExternalSessionOperationAction(input, {
         method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_DISCARD,
         requestSchema: ExternalSessionOperationDiscardInputV1Schema,
+        responseSchema: ExternalSessionOperationActionResponseV1Schema,
     }, opts);
 }

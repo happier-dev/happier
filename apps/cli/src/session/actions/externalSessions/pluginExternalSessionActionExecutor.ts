@@ -1,6 +1,6 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol/actions';
-import { ExternalSessionMaterializeActionInputV1Schema, ExternalSessionOperationActionResultV1Schema, ExternalSessionOperationActionResponseV1Schema, ExternalSessionOperationStatusInputV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import { ExternalSessionMaterializeActionInputV1Schema, ExternalSessionOperationActionResponseV1Schema, ExternalSessionOperationStatusInputV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
 import type { ExternalSessionOperationAuthorIntentV1 } from '@happier-dev/protocol';
 
 import {
@@ -13,6 +13,7 @@ import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { configuration } from '@/configuration';
 import {
   readExternalSessionOperationStoredEntry,
+  projectExternalSessionTerminalReceiptStatus,
   resolveExternalSessionOperationAccountScope,
   resolveExternalSessionPluginOperationPreflightAdmission,
 } from './operationRecordStore';
@@ -57,7 +58,7 @@ function isViewerAction(actionId: PluginExternalSessionActionArgs['actionId']): 
 }
 
 function operationStatusFailure(
-  code: 'internal_error' | 'operation_not_found' | 'stale_revision',
+  code: 'internal_error' | 'operation_not_found',
   message: string,
 ): ActionExecuteResult {
   return { ok: true, result: { ok: false, error: { code, message } } };
@@ -277,34 +278,16 @@ export async function executePluginExternalSessionAction(args: Readonly<
       );
     }
     if (stored.kind === 'terminal_receipt') {
-      const { receipt } = stored;
-      if (
-        receipt.reference.sessionId !== parsed.data.sessionId
-        || receipt.reference.operationId !== parsed.data.operationId
-      ) {
+      if (stored.receipt.reference.sessionId !== parsed.data.sessionId) {
         return operationStatusFailure(
           'operation_not_found',
           'External session operation was not found.',
         );
       }
-      if (receipt.reference.revision !== parsed.data.revision) {
-        return operationStatusFailure(
-          'stale_revision',
-          'External session operation revision is stale.',
-        );
-      }
-      const result = ExternalSessionOperationActionResultV1Schema.safeParse({
+      return {
         ok: true,
-        operation: receipt.reference,
-        presentation: receipt.presentation,
-      });
-      if (!result.success) {
-        return operationStatusFailure(
-          'internal_error',
-          'External session operation status could not be read.',
-        );
-      }
-      return { ok: true, result: result.data };
+        result: projectExternalSessionTerminalReceiptStatus(stored.receipt, parsed.data.revision),
+      };
     }
   }
 

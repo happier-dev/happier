@@ -16,6 +16,7 @@ import type { ActionOperationDomainOwner } from '@/daemon/actionOperations/actio
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { createHostExternalSessionActionAdapter } from '@/session/actions/externalSessions/hostExternalSessionActionTransport';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 const environment = vi.hoisted(() => ({ activeServerDir: '', accountId: 'account-1' as string | null,
   afterCredentialRead: null as (() => void) | null,
@@ -106,8 +107,9 @@ async function register(retainedDirectory?: string) {
   const runtime = createHostActionOperationRuntime({ machineId: 'machine-1', resolveAccountId: async () => 'account-1', publishSnapshot: (snapshot) => { snapshots.push(snapshot); } });
   let installedOwner: ActionOperationDomainOwner | undefined;
   let onDeleted: Parameters<NonNullable<Parameters<typeof registerMachineExternalSessionsRpcHandlers>[0]['subscribeSessionDeletedChanges']>>[0] | null = null;
+  const rpcHandlerManager = new RpcHandlerManager({ scopePrefix: 'machine-1', encryptionMode: 'plain' });
   const registration = registerMachineExternalSessionsRpcHandlers({
-    rpcHandlerManager: new RpcHandlerManager({ scopePrefix: 'machine-1', encryptionMode: 'plain' }),
+    rpcHandlerManager,
     machineId: 'machine-1', actionOperations: {
       attachOwner(owner) { installedOwner = owner; return runtime.attachOwner(owner); },
     },
@@ -116,7 +118,7 @@ async function register(retainedDirectory?: string) {
   });
   registrations.push(registration);
   if (!installedOwner) throw new Error('External Action operation owner was not installed');
-  return { runtime, snapshots, owner: installedOwner, hostActionExecutor: registration.hostExternalSessionActionExecutor, deleteSession: async () => {
+  return { runtime, snapshots, owner: installedOwner, rpcHandlerManager, hostActionExecutor: registration.hostExternalSessionActionExecutor, deleteSession: async () => {
     if (!onDeleted) throw new Error('Session deletion feed is not attached');
     await onDeleted({ sessionId: 'session-1', cursor: 1, accountScope: { activeServerDir: environment.activeServerDir, accountSubject: 'account-1' } });
   } };
@@ -150,6 +152,66 @@ describe('durable external operations in shared Action Operations', () => {
       status: 'awaiting_user_resume', phase: 'staging',
     } } });
     expect(result.ok && spec.outputSchema.safeParse(result.result).success).toBe(true);
+  });
+
+  it.each([
+    { status: 'completed', revision: 5, stale: false },
+    { status: 'cancelled', revision: 5, stale: false },
+    { status: 'completed', revision: 4, stale: true },
+  ] as const)('reads compacted $status status at revision $revision through the local Action adapter', async ({ status, revision, stale }) => {
+    const { hostActionExecutor, rpcHandlerManager } = await register();
+    const initial = record();
+    const completed = status === 'completed';
+    // A cancelled initial import still has an actionable Discard. Use a
+    // cancelled external-linked takeover, which the owner can compact.
+    const request = completed ? initial.request : {
+      ...initial.request, plan: 'takeover' as const, targetDirectory: '/workspace', targetRuntimeMode: 'terminal' as const,
+    };
+    const phase = completed ? 'publishing' : 'finalizing';
+    const settled = ExternalSessionOperationRecordV1Schema.parse({
+      ...initial,
+      revision: 5,
+      request,
+      timeline: resolveExternalSessionOperationTimelineV1(request),
+      status,
+      phase,
+      currentStorageState: completed ? 'snapshot_complete' : 'machine_only',
+      retryTargetPhase: undefined,
+      ...(completed ? {
+        checkpoint: { ...initial.checkpoint, acceptedThroughServerSeq: 0, acknowledgedBatchId: 'final-batch' },
+        publication: {
+          materializationPublicationId: 'publication-1', materializedThroughSourceAt: 2, publishedThroughServerSeq: 0,
+        },
+      } : { cancellation: { requestedAtMs: initial.updatedAtMs, requestedAtRevision: 4 } }),
+      terminalResult: { kind: status },
+    });
+    await writeExternalSessionOperationRecord(environment.activeServerDir, settled);
+    await acknowledgeExternalSessionOperationProgressProjection({
+      activeServerDir: environment.activeServerDir, operationId: settled.operationId, projectedRevision: settled.revision,
+    });
+    await expect(compactExternalSessionOperationRecordToTerminalReceipt({
+      activeServerDir: environment.activeServerDir, operationId: settled.operationId,
+      expectedRevision: settled.revision, stagingDisposition: completed ? 'missing' : 'not_applicable',
+    })).resolves.toEqual(expect.objectContaining({ status: 'compacted' }));
+
+    const actionId = 'sessions.external.operation.status.get';
+    const reference = { sessionId: settled.request.sessionId, operationId: settled.operationId, revision };
+    const context = { surface: 'cli' as const };
+    const execute = createHostExternalSessionActionAdapter({
+      credentials: { token: 'e30.eyJzdWIiOiJhY2NvdW50LTEifQ.signature', encryption: null },
+      execute: ({ actionId, input, context }) => hostActionExecutor.execute(actionId, input, context),
+    });
+    const result = await execute({ actionId, input: reference, context });
+    if (stale) {
+      expect(result).toMatchObject({ ok: true, result: { ok: false, error: { code: 'stale_revision' } } });
+    } else {
+      expect(result).toEqual({ ok: true, result: { ok: true, operation: reference, presentation: {
+        v: 1, operationId: settled.operationId, revision, kind: completed ? 'materialize' : 'takeover_external_linked', status, phase,
+      } } });
+    }
+    if (!result.ok) throw new Error('Expected operation status result.');
+    await expect(rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_STATUS_GET, reference))
+      .resolves.toEqual(result.result);
   });
 
   it('reads semantic linked status through the same local transport owner', async () => {

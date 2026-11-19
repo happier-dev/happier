@@ -822,6 +822,13 @@ older strict 0.3 readers reject the added field. The current `../0.2` frontier h
 no `packages/protocol/src/sessions/external/operationV1.ts` counterpart. No server
 command, migration, capability or retry behavior changes.
 
+Exact-revision status reads of compacted External Session operations return the
+receipt's public operation reference and presentation. Full records continue
+to return owner progress on Machine RPC. Earlier strict 0.3 development UI
+readers need matching Protocol, daemon and UI source for the compact reply.
+The stored receipt and the public Action result keep their existing shapes.
+The inspected `../0.2` frontier at `73c533b470` has no operation status contract.
+
 ## Retained Provider helper models (unreleased 0.3)
 
 `ProviderRuntimeBindingBasisV1` retains optional `roleModels` through the existing

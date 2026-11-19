@@ -635,7 +635,7 @@ describe('external session materialize action', () => {
     expect(effect).not.toHaveBeenCalled();
   });
 
-  it('fails receipt-backed exact-owner actions as invalid state without effects', async () => {
+  it('reads a receipt while refusing exact-owner recovery actions without effects', async () => {
     const activeServerDir = await mkdtemp(join(
       tmpdir(),
       'happier-materialize-compacted-receipt-actions-',
@@ -705,8 +705,12 @@ describe('external session materialize action', () => {
       revision: completed.revision,
     };
 
+    await expect(executor.status(reference)).resolves.toMatchObject({
+      ok: true,
+      operation: reference,
+      presentation: { status: 'completed', phase: 'finalizing' },
+    });
     for (const run of [
-      () => executor.status(reference),
       () => executor.cancel(reference),
       () => executor.resume(reference),
       () => executor.retry(reference),
@@ -4342,12 +4346,9 @@ describe('external session materialize action', () => {
       },
     });
     let failCleanup = true;
-    let inspectCurrentOperation:
-      | (() => Promise<ExternalSessionOperationActionResponseV1>)
-      | undefined;
-    let progressObservedDuringFailedCleanup:
-      | ExternalSessionOperationActionResponseV1
-      | undefined;
+    type StatusResponse = ReturnType<ReturnType<typeof createExternalSessionMaterializeActionExecutor>['status']>;
+    let inspectCurrentOperation: (() => StatusResponse) | undefined;
+    let progressObservedDuringFailedCleanup: Awaited<StatusResponse> | undefined;
     let latestPublishedReference:
       | Readonly<{ sessionId: string; operationId: string; revision: number }>
       | undefined;
@@ -4520,7 +4521,7 @@ describe('external session materialize action', () => {
         currentStorageState: 'snapshot_complete',
       },
     });
-    if (!completed.ok) throw new Error('Expected recovered completion.');
+    if (!completed.ok || !('progress' in completed)) throw new Error('Expected recovered completion progress.');
     await expect(durableStaging.readReplayState(completed.progress.operationId)).resolves.toEqual({
       status: 'missing',
     });

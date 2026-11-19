@@ -151,6 +151,21 @@ describe('useExternalSessionOperationOwnerHydration', () => {
         await expect(hook.getCurrent().checkAgain()).resolves.toBe(false);
     });
 
+    it('settles a cancelled receipt without recovery progress or another status read', async () => {
+        const presentation = createPresentation({ status: 'cancelled' });
+        machineExternalSessionOperationStatusSpy.mockResolvedValue({
+            ok: true,
+            operation: { sessionId: 'session-1', operationId: presentation.operationId, revision: presentation.revision },
+            presentation,
+        });
+        const hook = await renderOwnerHydration({ isExactOwner: true, machineOnline: true, presentation });
+        await flushHookEffects();
+
+        expect(hook.getCurrent().status).toBe('ready');
+        expect(hook.getCurrent().progress).toBeNull();
+        expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('loads complete progress once per mounted exact key without rerender polling', async () => {
         const progress4 = createProgress();
         const progress5 = createProgress({ revision: 5, phase: 'staging' });

@@ -2,6 +2,7 @@ import { z } from 'zod/mini';
 
 import { canCancelExternalSessionOperationV1, EXTERNAL_SESSION_REQUIRED_ITEM_DIAGNOSTIC_CAP_V1, ExternalSessionOperationSemanticRequestV1Schema, projectExternalSessionOperationProgressV1, resolveExternalSessionOperationTimelineV1 } from '@happier-dev/protocol/sessions/external/operationV1';
 import { ExternalSessionOperationCancelInputV1Schema, ExternalSessionOperationDiscardInputV1Schema, ExternalSessionOperationResumeInputV1Schema, ExternalSessionOperationRetryInputV1Schema, ExternalSessionOperationStatusInputV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import type { ExternalSessionOperationStatusResponseV1 } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
 import { validateExternalSessionOperationSocketBatchV1 } from '@happier-dev/protocol/sessions/external/operationActionsV1';
 import type { ExternalSessionMaterializationPublicationV1, ExternalSessionOperationActionResponseV1, ExternalSessionOperationClaimV1, ExternalSessionOperationRecordV1, ExternalSessionDestructiveQuiescenceResultV1, ExternalSessionOperationAuthorIntentV1, ExternalSessionRequiredItemFailuresV1, ExternalSessionRequiredItemDiagnosticV1, ExternalSessionOperationSocketCommandV1, ExternalSessionOperationSocketResponseV1, ExternalSessionPriorStableStorageV1, ExternalSessionOperationSharedPresentationV1 } from '@happier-dev/protocol';
 
@@ -26,10 +27,12 @@ import {
   mutateExternalSessionOperationRecordAtRevision,
   readExternalSessionOperationRecord,
   readExternalSessionOperationStoredEntry,
+  projectExternalSessionTerminalReceiptStatus,
   resolveExternalSessionOperationStartAdmission,
   type ExternalSessionOperationAccountScope,
   type ExternalSessionOperationAccountAdmission,
   type ExternalSessionOperationPriorTerminalReceiptEvidence,
+  type ExternalSessionOperationTerminalReceiptV1,
   writeExternalSessionOperationRecord,
 } from './operationRecordStore';
 import { ExternalSessionPersistedTakeoverPreflightError } from './persistedTakeoverPreflightError';
@@ -115,7 +118,7 @@ export type ExternalSessionMaterializeActionExecutor = Readonly<{
       onAdmitted?: (record: ExternalSessionOperationRecordV1) => void;
     }>,
   ): Promise<ExternalSessionOperationActionResponseV1>;
-  status(input: unknown): Promise<ExternalSessionOperationActionResponseV1>;
+  status(input: unknown): Promise<ExternalSessionOperationStatusResponseV1>;
   cancel(input: unknown, context?: ExternalSessionMaterializeContinuationContext): Promise<ExternalSessionOperationActionResponseV1>;
   resume(input: unknown, context?: ExternalSessionMaterializeContinuationContext): Promise<ExternalSessionOperationActionResponseV1>;
   retry(input: unknown, context?: ExternalSessionMaterializeContinuationContext): Promise<ExternalSessionOperationActionResponseV1>;
@@ -342,7 +345,7 @@ async function readExactActionRecord(
   accountScope?: ExternalSessionOperationAccountScope,
 ): Promise<
   | Readonly<{ kind: 'record'; record: ExternalSessionOperationRecordV1 }>
-  | Readonly<{ kind: 'terminal_receipt' }>
+  | Readonly<{ kind: 'terminal_receipt'; receipt: ExternalSessionOperationTerminalReceiptV1 }>
   | Readonly<{ kind: 'unavailable' }>
   | Readonly<{ kind: 'missing' }>
 > {
@@ -362,7 +365,7 @@ async function readExactActionRecord(
   if (!stored) return { kind: 'missing' };
   if (stored.kind === 'terminal_receipt') {
     return stored.receipt.reference.sessionId === sessionId
-      ? { kind: 'terminal_receipt' }
+      ? stored
       : { kind: 'missing' };
   }
   return stored.record.request.sessionId === sessionId
@@ -2411,10 +2414,7 @@ export function createExternalSessionMaterializeActionExecutor(
         );
       }
       if (stored.kind === 'terminal_receipt') {
-        return failure(
-          'invalid_state',
-          'The settled operation no longer has private recovery state.',
-        );
+        return projectExternalSessionTerminalReceiptStatus(stored.receipt, parsed.data.revision);
       }
       if (stored.kind === 'missing') {
         return failure('operation_not_found', 'Materialization operation was not found.');
