@@ -514,6 +514,49 @@ describe('Invite people', () => {
         expect(chromeTitles.at(-1)).toBe('teams.invitations.inviteTitle(team=Design)');
     });
 
+    it('finds a later-page invitation Team through an empty local search without losing the current selection', async () => {
+        const home = await addHome();
+        const platform = answerTeam(home, 'team-platform', 'Platform');
+        const design = answerTeam(home, 'team-design', 'Design');
+        const later = answerTeam(home, 'team-later', 'TH177 API renamed');
+        harness.answer(home, TEAMS_LIST_PATH, {
+            body: { items: [platform, design], nextCursor: 'next-teams-page' },
+            select: (input) => (input as { cursor?: string } | undefined)?.cursor === 'next-teams-page'
+                ? { body: { items: [later], nextCursor: null } } : undefined,
+        });
+        harness.answer(home, TEAM_GET_PATH, {
+            body: platform,
+            select: (input) => (input as { teamId?: string } | undefined)?.teamId === later.id ? { body: later } : undefined,
+        });
+        harness.answer(home, INVITATION_LIST_PATH, {
+            body: { items: [], nextCursor: null, emailDelivery: 'available', linkDelivery: 'available' },
+        });
+        const screen = await renderDialog(home);
+        await waitForHomeGovernance(() => expect(ids(screen)).toContain('home-invite-people-team.trigger'));
+        await screen.pressByTestIdAsync('home-invite-people-team.trigger');
+        await waitForHomeGovernance(() => expect(ids(screen)).toContain('home-invite-people-team:team-platform'));
+        await screen.pressByTestIdAsync('home-invite-people-team:team-platform');
+        await waitForHomeGovernance(() => expect(ids(screen)).toContain('team-invite-submit'));
+        expect(chromeTitles.at(-1)).toBe('teams.invitations.inviteTitle(team=Platform)');
+
+        await screen.pressByTestIdAsync('home-invite-people-team.trigger');
+        await waitForHomeGovernance(() => expect(ids(screen)).toContain('home-invite-people-team:team-design'));
+        const search = screen.root.find((node) => typeof node.type === 'string'
+            && node.props.placeholder === 'homeGovernance.invite.teamSearch'
+            && typeof node.props.onChangeText === 'function');
+        await act(async () => search.props.onChangeText('TH177 API renamed'));
+        expect(ids(screen)).not.toContain('home-invite-people-team:team-platform');
+        expect(ids(screen)).not.toContain('home-invite-people-team:team-later');
+        expect(ids(screen)).toContain('home-invite-people-teams-load-more');
+        await screen.pressByTestIdAsync('home-invite-people-teams-load-more');
+        await waitForHomeGovernance(() => expect(ids(screen)).toContain('home-invite-people-team:team-later'));
+        expect(chromeTitles.at(-1)).toBe('teams.invitations.inviteTitle(team=Platform)');
+        expect(search.props.value).toBe('TH177 API renamed');
+        expect(ids(screen)).not.toContain('home-invite-people-teams-load-more');
+        await screen.pressByTestIdAsync('home-invite-people-team:team-later');
+        await waitForHomeGovernance(() => expect(chromeTitles.at(-1)).toBe('teams.invitations.inviteTitle(team=TH177 API renamed)'));
+    });
+
     it('says who invites when the Home has Teams but the viewer administers none of them', async () => {
         const home = await addHome();
         harness.answer(home, TEAMS_LIST_PATH, {

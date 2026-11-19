@@ -49,6 +49,8 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
     searchPlaceholder?: string;
     /** The menu's line when it has no choices (a list still loading, or none to choose). */
     emptyLabel?: string;
+    /** An action below the results, retained when the local search has no matches. */
+    footer?: React.ComponentProps<typeof DropdownMenu>['footer'];
     /** The menu opened or closed: a list read only while it is open starts here. */
     onOpenChange?: (open: boolean) => void;
     /** A choice that acts in place (a retry) and leaves the menu open on its result. */
@@ -90,6 +92,7 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
             }}
             {...(props.keepsOpen === undefined ? {} : { closeOnSelect: false })}
             {...(props.emptyLabel === undefined ? {} : { emptyLabel: props.emptyLabel })}
+            footer={props.footer}
             placement="bottom"
             // A select's menu opens under the field's leading edge (its own value column), never back over the
             // form's label column; the popover clamps a menu wider than the room left.

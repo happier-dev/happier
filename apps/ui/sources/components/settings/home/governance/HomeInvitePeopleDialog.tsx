@@ -119,7 +119,7 @@ const HomeInvitePeopleChooser = React.memo(function HomeInvitePeopleChooser(prop
     }, [onClose, props.serverId, router]);
     const [chosenTeamId, setChosenTeamId] = React.useState<string | null>(null);
     const teamItems = React.useMemo(() => teams.map((row) => ({ id: row.address.teamId, title: row.team.name })), [teams]);
-    const selected = teams.length === 1
+    const selected = teams.length === 1 && !directory.hasMore
         ? teams[0]!
         : teams.find((row) => row.address.teamId === chosenTeamId) ?? null;
     const loading = directory.kind === 'loading'
@@ -145,7 +145,7 @@ const HomeInvitePeopleChooser = React.memo(function HomeInvitePeopleChooser(prop
                         }}
                     />
                 </ItemGroup>
-            ) : teams.length === 0 && governedTeams > 0 ? (
+            ) : teams.length === 0 && !directory.hasMore && governedTeams > 0 ? (
                 // The Home has Teams, but a Team's own owners and admins are who invite to it.
                 <ItemGroup description={creation.kind === 'can_create'
                     ? t('homeGovernance.invite.notAdministeredBody')
@@ -157,7 +157,7 @@ const HomeInvitePeopleChooser = React.memo(function HomeInvitePeopleChooser(prop
                         showChevron={false}
                     />
                 </ItemGroup>
-            ) : teams.length === 0 ? (
+            ) : teams.length === 0 && !directory.hasMore ? (
                 <ItemGroup description={creation.kind === 'can_create'
                     ? t('homeGovernance.invite.noTeamsBody')
                     : [t('homeGovernance.invite.joinByTeam'), creation.kind === 'refused' ? creation.reason : null].filter(Boolean).join(' ')}>
@@ -168,7 +168,7 @@ const HomeInvitePeopleChooser = React.memo(function HomeInvitePeopleChooser(prop
                         showChevron={false}
                     />
                 </ItemGroup>
-            ) : teams.length > 1 ? (
+            ) : teams.length > 1 || directory.hasMore ? (
                 // One field, whatever the count (a Home can hold dozens of Teams): the dialog keeps its
                 // height and the Teams stay one search away in the field's menu.
                 <ItemGroup>
@@ -186,13 +186,21 @@ const HomeInvitePeopleChooser = React.memo(function HomeInvitePeopleChooser(prop
                                 fill
                                 placeholder={t('homeGovernance.invite.teamChoose')}
                                 searchPlaceholder={t('homeGovernance.invite.teamSearch')}
+                                footer={directory.hasMore ? (
+                                    <Item
+                                        testID="home-invite-people-teams-load-more"
+                                        title={t('homeGovernance.loadMore')}
+                                        onPress={directory.loadMore}
+                                        showChevron={false}
+                                    />
+                                ) : undefined}
                             />
                         )}
                     />
                 </ItemGroup>
             ) : null}
 
-            {teams.length === 0 && !loading && !failed && creation.kind === 'can_create' ? (
+            {teams.length === 0 && !directory.hasMore && !loading && !failed && creation.kind === 'can_create' ? (
                 // Nothing to invite to here: the next step is a Team of the viewer's own.
                 <ItemGroup surface="none">
                     <SectionButtonRow>
