@@ -58,8 +58,9 @@ function shapesBase(path) {
   return isRevisionDependencyInput(path)
     // The base executes this preparer's result contract before commit overlays.
     || path === 'apps/cli/scripts/prepareSourcePluginUiArtifacts.mjs'
-    // The base places the serialized package manifests this generator emits.
+    // The base publishes the generated plugin projections before commit overlays.
     || path === 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts'
+    || path === 'apps/stack/scripts/build/source_revision_tree.mjs'
     // The base schema check consumes the tracked enum output before commit overlays.
     || path === 'apps/server/sources/storage/enums.generated.ts'
     || isRevisionGeneratorInput(path);
@@ -212,6 +213,8 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi
 }
 
 const PROJECTIONS = '.source-daemon-projections';
+const CLI_PLUGIN_MANIFEST_ASSETS = 'apps/cli/assets/bundled-plugin-manifests';
+const CLI_PLUGIN_PROJECTION_MODULES = 'apps/cli/src/plugins/projection/registry/sources';
 const SUPPORT_STORE = 'daemon-support-store';
 
 /** Source locators read package-local graphs, just like the source CLI. Keep
@@ -321,6 +324,29 @@ async function deriveDaemonPluginPublication({ treeDir, env, signal }) {
   await mkdir(dirname(target), { recursive: true });
   await rm(target, { force: true });
   await writeFile(target, await readFile(join(output, 'apps/cli', BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH)));
+  // The source launcher resolves projections at the CLI's usual paths. Replace
+  // the whole manifest set so descriptors and their declaration sidecars agree.
+  const assets = join(output, CLI_PLUGIN_MANIFEST_ASSETS);
+  if (existsSync(assets)) {
+    const destination = join(treeDir, CLI_PLUGIN_MANIFEST_ASSETS);
+    await mkdir(dirname(destination), { recursive: true });
+    await rm(destination, { recursive: true, force: true });
+    await rename(assets, destination);
+  }
+  const modules = join(output, CLI_PLUGIN_PROJECTION_MODULES);
+  if (existsSync(modules)) {
+    const destination = join(treeDir, CLI_PLUGIN_PROJECTION_MODULES);
+    await mkdir(destination, { recursive: true });
+    for (const name of await readdir(destination)) {
+      // The full CLI generator owns generatedBundledPlugins.ts. The daemon
+      // generator owns the other generated bundled projection modules here.
+      if (name.startsWith('generatedBundled') && name.endsWith('.ts') && name !== 'generatedBundledPlugins.ts') {
+        await rm(join(destination, name), { force: true });
+      }
+    }
+    // Unlinking above also avoids writing through to the base's inodes.
+    for (const name of await readdir(modules)) await rename(join(modules, name), join(destination, name));
+  }
   // Serialized package manifests are ignored generated files: a revision archive
   // has only the tracked ones. Plugin UI preparation reads every package's.
   const manifests = join(output, 'packages/plugins');
@@ -339,7 +365,7 @@ const PLUGIN_MANIFEST = '.happier-plugin/plugin.json';
 
 function touchesPluginInputs(paths) {
   return paths.some(path => path.startsWith('packages/plugins/') || path.startsWith('apps/cli/src/plugins/')
-    || path.startsWith('apps/cli/scripts/build-owned/'));
+    || path.startsWith('apps/cli/scripts/build-owned/') || path.startsWith(`${CLI_PLUGIN_MANIFEST_ASSETS}/`));
 }
 
 function referencePath(baseDir, treeDir) {
@@ -534,8 +560,8 @@ export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeD
     if (!existsSync(join(treeDir, TREE_MARKER))) await rm(referencePath(base.baseDir, treeDir), { force: true });
     throw error;
   }
-  // Run where the tree's links resolve (its published path). The derivation
-  // writes only its own output root and the unlinked evidence file.
+  // Run where the tree's links resolve. Derivation replaces generated files
+  // before the tree is selected for launch.
   const changedPaths = [...Object.keys(descriptor.commit?.paths ?? {}), ...Object.keys(descriptor.overlay)];
   // Shared imports and compiler inputs can change outside plugin directories.
   // The compiler's retained-input inventory owns which graphs need rebuilding.

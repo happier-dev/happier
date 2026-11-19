@@ -878,6 +878,12 @@ write(join(out, 'apps/cli/.project/tmp/bundled-plugin-publication/failures.json'
 for (const id of readdirSync('packages/plugins')) {
   const authored = JSON.parse(readFileSync(join('packages/plugins', id, 'src/manifest.json'), 'utf8'));
   write(join(out, 'packages/plugins', id, '.happier-plugin/plugin.json'), JSON.stringify({ ...authored, serialized: true }) + '\\n');
+  if (authored.version === '3') continue;
+  write(join(out, 'apps/cli/assets/bundled-plugin-manifests', id + '.json'), JSON.stringify(authored));
+  write(join(out, 'apps/cli/assets/bundled-plugin-manifests/declarations', id + '.summary.json'), JSON.stringify(authored));
+  write(join(out, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
+    'export const capturedVersion = ' + JSON.stringify(authored.version) + '; export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES = [];');
+  if (authored.version === '1') write(join(out, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledRemovedPlugin.ts'), 'export {};');
 }
 `;
 
@@ -936,12 +942,13 @@ test('an incoherent described base cannot refuse a coherent requested revision',
     'an actually invalid requested revision still fails');
 });
 
-test('a revision tree derives its ignored package manifests from the revision; a plugin change re-derives only its clone', async t => {
+test('a revision tree publishes its derived plugin manifests to the running CLI and package paths', async t => {
   const { fixture, repoDir } = await createRevisionFixture(t);
   const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
   await writeFile(join(repoDir, '.gitignore'), 'node_modules\n/packages/plugins/*/.happier-plugin/plugin.json\n');
   await mkdir(join(repoDir, 'apps/cli/scripts/build-owned'), { recursive: true });
   await writeFile(join(repoDir, 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts'), FIXTURE_DAEMON_GENERATOR);
+  await writeFile(join(repoDir, 'apps/cli/scripts/prepareSourcePluginUiArtifacts.mjs'), 'export async function prepareSourceCliPluginUiArtifacts() {}');
   await mkdir(join(repoDir, 'apps/cli/src'), { recursive: true });
   await writeFile(join(repoDir, 'apps/cli/package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module' }));
   await writeFile(join(repoDir, 'apps/cli/src/index.ts'), 'export {};');
@@ -952,6 +959,18 @@ test('a revision tree derives its ignored package manifests from the revision; a
   await writeFile(join(plugin, 'src/manifest.json'), JSON.stringify({ id: 'happier.devcontainer', version: '1' }));
   // The checkout's own generated copy is stale; a base never takes it.
   await writeFile(join(plugin, '.happier-plugin/plugin.json'), JSON.stringify({ id: 'happier.devcontainer', version: 'stale-checkout' }));
+  const cliManifestPath = 'apps/cli/assets/bundled-plugin-manifests/devcontainer.json';
+  const summaryPath = 'apps/cli/assets/bundled-plugin-manifests/declarations/devcontainer.summary.json';
+  const locatorsPath = 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts';
+  const fullCliPath = join(dirname(locatorsPath), 'generatedBundledPlugins.ts');
+  const removedModulePath = join(dirname(locatorsPath), 'generatedBundledRemovedPlugin.ts');
+  const stale = JSON.stringify({ id: 'happier.devcontainer', version: 'stale-tracked' });
+  for (const path of [cliManifestPath, summaryPath, locatorsPath]) {
+    await mkdir(dirname(join(repoDir, path)), { recursive: true });
+    await writeFile(join(repoDir, path), path === locatorsPath
+      ? 'export const capturedVersion = "stale-tracked"; export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES = [];' : stale);
+  }
+  await writeFile(join(repoDir, fullCliPath), 'export const fullCliProjection = true;');
   await gitIn('add', '-A');
   await gitIn('commit', '--quiet', '-m', 'plugin with an ignored generated manifest');
   const env = { ...process.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(repoDir, 'manual-payload') };
@@ -966,12 +985,30 @@ test('a revision tree derives its ignored package manifests from the revision; a
   const tree = await prepare([]);
   assert.deepEqual(JSON.parse(await readFile(manifestIn(tree), 'utf8')), { id: 'happier.devcontainer', version: '1', serialized: true },
     'the tree carries the manifest derived from the revision\'s source, not a missing or checkout copy');
+  const readCliDeclarations = async treeDir => [
+    JSON.parse(await readFile(join(treeDir, cliManifestPath), 'utf8')).version,
+    JSON.parse(await readFile(join(treeDir, summaryPath), 'utf8')).version,
+    (await readFile(join(treeDir, locatorsPath), 'utf8')).match(/capturedVersion = "([^"]+)"/)?.[1],
+  ];
+  assert.deepEqual(await readCliDeclarations(tree), ['1', '1', '1']);
   const baseManifest = await lstat(manifestIn(tree));
   await writeFile(join(plugin, 'src/manifest.json'), JSON.stringify({ id: 'happier.devcontainer', version: '2' }));
   const changed = await prepare(['packages/plugins/devcontainer/src/manifest.json']);
   assert.equal(JSON.parse(await readFile(manifestIn(changed), 'utf8')).version, '2', 'a changed plugin source re-derives its manifest');
   assert.equal(JSON.parse(await readFile(manifestIn(tree), 'utf8')).version, '1', 'the earlier tree keeps its own manifest');
   assert.equal((await lstat(manifestIn(tree))).ino, baseManifest.ino, 'the clone never writes through its base inode');
+  assert.deepEqual(await readCliDeclarations(changed), ['2', '2', '2']);
+  assert.deepEqual(await readCliDeclarations(tree), ['1', '1', '1']);
+  await assert.rejects(readFile(join(changed, removedModulePath), 'utf8'), { code: 'ENOENT' });
+  assert.equal(await readFile(join(tree, removedModulePath), 'utf8'), 'export {};');
+  assert.equal(await readFile(join(changed, fullCliPath), 'utf8'), 'export const fullCliProjection = true;');
+
+  await writeFile(join(plugin, 'src/manifest.json'), JSON.stringify({ id: 'happier.devcontainer', version: '3' }));
+  const historical = await prepare(['packages/plugins/devcontainer/src/manifest.json']);
+  assert.equal(JSON.parse(await readFile(manifestIn(historical), 'utf8')).version, '3');
+  assert.deepEqual(await readCliDeclarations(historical), ['1', '1', '1'],
+    'a generator without CLI outputs preserves the inherited CLI projections');
+  assert.equal(await readFile(join(historical, removedModulePath), 'utf8'), 'export {};');
 });
 
 // 2026-11-17 00:41Z (Fork C RELOAD167, RU2 #111): base f6b7be69 held a committed schema
