@@ -198,12 +198,14 @@ export async function startProjectDaemonFixture(params: Readonly<{
     },
       async enrollDaemon(account: Awaited<ReturnType<typeof createAccount>>, options: Readonly<{
         env?: EnvOverrides;
+        /** Keep a journey's checkout independent of its retained log directory's SCM ancestry. */
+        workspaceDir?: string;
         cliLaunchSpec?: Parameters<typeof startTestDaemon>[0]['cliLaunchSpec'];
         pairedHome?: Readonly<{ homeDir: string; serverId: string; machineId: string }>;
       }> = {}) {
         const directory = join(params.testDir, account.name);
         const homeDir = options.pairedHome?.homeDir ?? join(directory, 'home');
-        const workspaceDir = join(directory, 'workspace');
+        const workspaceDir = options.workspaceDir ?? join(directory, 'workspace');
         const claudeConfigDir = join(homeDir, '.claude');
         await Promise.all([mkdir(workspaceDir, { recursive: true }), mkdir(claudeConfigDir, { recursive: true })]);
         const enrollment = options.pairedHome

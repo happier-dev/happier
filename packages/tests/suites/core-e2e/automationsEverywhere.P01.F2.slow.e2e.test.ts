@@ -16,9 +16,17 @@ import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
 import { readWorkflowChildSession, waitForWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 import { createRunDirs } from '../../src/testkit/runDir';
+import { createTempDirHandle, type TempDirHandle } from '../../src/testkit/fs/tempDir';
 
 let fixture: TeamSetupFFixture | undefined;
-afterEach(async () => { await fixture?.stop(); fixture = undefined; }, 0);
+let workspace: TempDirHandle | undefined;
+afterEach(async () => {
+  try { await fixture?.stop(); } finally {
+    fixture = undefined;
+    await workspace?.cleanup();
+    workspace = undefined;
+  }
+}, 0);
 
 type QueryTrace = Readonly<{ requestId: string; spanId: number; parentSpanId?: number; phase: string }>;
 function readQueryTraces(log: string): QueryTrace[] {
@@ -36,11 +44,16 @@ function readQueryTraces(log: string): QueryTrace[] {
 
 it('P01.F2 Session scopes and habit lifetime', async () => {
   const run = createRunDirs({ runLabel: 'automations-p01-f2' });
+  // Sessions start outside any repository before the explicit folder Project is attached.
+  const workspaceRoot = await createTempDirHandle({ prefix: 'automations-p01-f2-workspace-' });
+  workspace = workspaceRoot;
   fixture = await startTeamSetupFFixture({ testDir: run.testDir('scopes-and-lifetime'),
     serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1', HAPPIER_WEB_LATENCY_TRACE: '1',
       HAPPIER_SERVER_LOG_LEVEL: 'trace', HAPPIER_SERVER_LOG_FORMAT: 'json' } });
   const actor = await fixture.createAccount('habit-owner');
-  const machine = await fixture.enrollDaemon(actor, { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } })
+  const machine = await fixture.enrollDaemon(actor, {
+    workspaceDir: join(workspaceRoot.path, 'habit-owner', 'workspace'),
+    env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } })
     .catch(cause => { throw new Error('F2 prerequisite daemon enrollment failed', { cause }); });
   const person = (actionId: ActionId, input: unknown, context: Parameters<typeof actor.execute>[2] = {}) =>
     actor.executeAsPerson(actionId, input, {
@@ -102,8 +115,14 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
     { name: 'Machine', subject: { kind: 'machine', ...machine.target }, policy: { kind: 'everyMatch' } },
     { name: 'Any', policy: { kind: 'firstMatch' } },
   ];
-  await waitFor(async () => (await readSession(watched.sessionId)).projectKey === projectKey,
-    { context: 'The Session owner publishes its accepted Project key before Project matching' });
+  let observedProjectKey: string | null | undefined;
+  await waitFor(async () => {
+    observedProjectKey = (await readSession(watched.sessionId)).projectKey;
+    return observedProjectKey === projectKey;
+  }, { context: 'The Session owner publishes its accepted Project key before Project matching' })
+    .catch(cause => { throw new Error(`F2 Session Project association unavailable: ${JSON.stringify({
+      expectedProjectKey: projectKey, observedProjectKey,
+    })}`, { cause }); });
   for (const scope of scopes.slice(1)) await addScope(scope);
   for (const scope of scopes.slice(1)) {
     const invalid = await person('workflow.trigger.add', {
@@ -193,7 +212,8 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
     .not.toContain(neighborSaved.set.automationId);
   const other = await fixture.assertKnownGoodSessionControl(actor, machine);
   const secondMachine = await fixture.enrollDaemon({ ...actor, name: 'habit-second-machine' },
-    { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
+    { workspaceDir: join(workspaceRoot.path, 'habit-second-machine', 'workspace'),
+      env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
   const remote = await fixture.assertKnownGoodSessionControl(actor, secondMachine);
   const outsideDirectory = join(machine.workspaceDir, '..', 'other-project');
   await mkdir(outsideDirectory, { recursive: true });
