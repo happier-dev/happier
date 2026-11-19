@@ -1,4 +1,6 @@
 {
+  "plugins.triage.reviews.open": "Открыть ревью",
+  "plugins.triage.reviews.unavailable": "Не удалось открыть это ревью",
   "plugins.triage.tasks.review.partial": "Задача создана, но её связь с проверкой не подтверждена. Восстановите связь, не создавая ещё одну задачу.",
   "plugins.triage.tasks.review.repair": "Восстановить связь с проверкой",
   "plugins.triage.sourceFailure.phase": "Этап",

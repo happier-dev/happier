@@ -1,4 +1,6 @@
 {
+  "plugins.triage.reviews.open": "Abrir revisión",
+  "plugins.triage.reviews.unavailable": "No se pudo abrir esta revisión",
   "plugins.triage.tasks.review.partial": "La tarea se creó, pero su enlace a la revisión no está confirmado. Repara el enlace sin crear otra tarea.",
   "plugins.triage.tasks.review.repair": "Reparar enlace de revisión",
   "plugins.triage.sourceFailure.phase": "Fase",

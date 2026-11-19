@@ -1,4 +1,6 @@
 {
+  "plugins.triage.reviews.open": "Review öffnen",
+  "plugins.triage.reviews.unavailable": "Dieses Review konnte nicht geöffnet werden",
   "plugins.triage.tasks.review.partial": "Die Aufgabe wurde erstellt, aber ihr Review-Link ist nicht bestätigt. Repariere den Link, ohne eine weitere Aufgabe zu erstellen.",
   "plugins.triage.tasks.review.repair": "Review-Link reparieren",
   "plugins.triage.sourceFailure.phase": "Phase",

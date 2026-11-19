@@ -1,4 +1,6 @@
 {
+  "plugins.triage.reviews.open": "Otwórz przegląd",
+  "plugins.triage.reviews.unavailable": "Nie udało się otworzyć tego przeglądu",
   "plugins.triage.tasks.review.partial": "Zadanie zostało utworzone, ale jego łącze do przeglądu nie jest potwierdzone. Napraw łącze bez tworzenia kolejnego zadania.",
   "plugins.triage.tasks.review.repair": "Napraw łącze do przeglądu",
   "plugins.triage.sourceFailure.phase": "Etap",

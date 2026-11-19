@@ -1,4 +1,6 @@
 {
+  "plugins.triage.reviews.open": "打开评审",
+  "plugins.triage.reviews.unavailable": "无法打开此评审",
   "plugins.triage.tasks.review.partial": "任务已创建，但其评审链接尚未确认。请修复链接，不要再创建一个任务。",
   "plugins.triage.tasks.review.repair": "修复评审链接",
   "plugins.triage.sourceFailure.phase": "阶段",

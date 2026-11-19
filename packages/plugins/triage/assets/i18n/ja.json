@@ -1,4 +1,6 @@
 {
+  "plugins.triage.reviews.open": "レビューを開く",
+  "plugins.triage.reviews.unavailable": "このレビューを開けませんでした",
   "plugins.triage.tasks.review.partial": "タスクは作成されましたが、レビューへのリンクは確認できていません。別のタスクを作成せずにリンクを修復してください。",
   "plugins.triage.tasks.review.repair": "レビューのリンクを修復",
   "plugins.triage.sourceFailure.phase": "段階",

@@ -1,4 +1,6 @@
 {
+  "plugins.triage.reviews.open": "開啟審查",
+  "plugins.triage.reviews.unavailable": "無法開啟此審查",
   "plugins.triage.tasks.review.partial": "任務已建立，但其審查連結尚未確認。請修復連結，不要再建立一個任務。",
   "plugins.triage.tasks.review.repair": "修復審查連結",
   "plugins.triage.sourceFailure.phase": "階段",
