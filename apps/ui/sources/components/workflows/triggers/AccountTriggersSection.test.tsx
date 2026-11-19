@@ -713,6 +713,38 @@ describe('Account Workflow Library and settings', () => {
         expect(screen.getTextContent()).toContain('workflows.triggers.section.startsUnavailable');
         await screen.unmount();
     });
+    it('shows a single Automations state while its rows are pending and its starts are unreachable', async () => {
+        const { SubjectTriggersSectionContent } = await import('./SubjectTriggersSection');
+        const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+        const rowsPending = createDeferred<void>();
+        const rows = AutomationDefinitionListResponseSchema.parse({
+            automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0,
+        });
+        home.answer(serverId, 'POST /v3/automations/query', { respondAfter: rowsPending.promise, body: rows });
+        const subject = { kind: 'environment' as const, serverId, environmentId: 'first-deploy' };
+        let current!: ReturnType<typeof useResourceAutomationsSection>;
+        function EnvironmentAutomations() {
+            current = useResourceAutomationsSection({ subject,
+                executionContext: { machineId: 'unreachable-machine', directory: '~' } });
+            return <SubjectTriggersSectionContent subject={subject} subjectName="Production" automations={current} />;
+        }
+        const screen = await renderAccountScreen(<PluginSurfaceFocusEligibilityProvider active><ListPresentationProvider value="page">
+            <EnvironmentAutomations />
+        </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>);
+        try {
+            await waitForHomeGovernance(() => expect(current.link.whenStatus).toBe('unavailable'));
+            expect(screen.findByTestId('subject-triggers-read')).not.toBeNull();
+            expect.soft(screen.findByTestId('subject-triggers-starts-unavailable')).toBeNull();
+            rowsPending.resolve();
+            await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-starts-unavailable')).not.toBeNull());
+            expect(screen.findByTestId('subject-triggers-read')).toBeNull();
+        } finally {
+            rowsPending.resolve();
+            await screen.unmount();
+        }
+    });
     it('leaves a Machine\'s unread starts to the page when the page already says the Machine is offline', async () => {
         const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');

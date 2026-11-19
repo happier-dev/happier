@@ -293,7 +293,7 @@ export const SubjectTriggersSectionContent = React.memo(
               />
             ))}
         {/* Starts that could not be read say so under the rows they belong to, before the host's own rows. */}
-        {linkSlot === 'unavailable' && status !== 'failed' && props.offlineStatedAbove !== true ? (
+        {linkSlot === 'unavailable' && !unsettled && status !== 'failed' && props.offlineStatedAbove !== true ? (
           <SurfaceStateCard testID="subject-triggers-starts-unavailable" size="line" kind="unavailable"
             title={t('workflows.triggers.section.startsUnavailable')}
             action={link ? { label: t('common.retry'), onPress: link.retryWhen } : undefined} />
