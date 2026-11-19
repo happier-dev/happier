@@ -239,6 +239,7 @@ export type { PluginReference } from './identity.js';
 export type { PluginRemediationData } from './availability.js';
 export type { PluginServiceId } from './services/index.js';
 export type { PluginServices } from './services/index.js';
+export type { WorktreeEnvironmentServiceV1 } from './services/index.js';
 export type { MachineProvisionersService, MachineProvisionerBootstrapCredentialLeaseV1, MachineProvisionerNativeCredentialHeadersResultV1 } from './services/machineProvisioners.js';
 export type {
     ComposerContentCapabilitiesV1,

@@ -311,7 +311,9 @@ export type AutomationEventsActionResultById = {
                         machineId: string;
                         rootPath: string;
                         kind?: undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         v: 2;
                         kind: 'managed';
                         serverId: string;
@@ -323,7 +325,9 @@ export type AutomationEventsActionResultById = {
                         };
                         rootPath: string;
                         machineId?: undefined;
-                    }) & JsonValue;
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    });
                     installationId: string;
                     projectKey: string;
                     kind: 'manual';
@@ -347,7 +351,9 @@ export type AutomationEventsActionResultById = {
                         machineId: string;
                         rootPath: string;
                         kind?: undefined;
-                    } | {
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    }) | ({
                         v: 2;
                         kind: 'managed';
                         serverId: string;
@@ -359,7 +365,9 @@ export type AutomationEventsActionResultById = {
                         };
                         rootPath: string;
                         machineId?: undefined;
-                    }) & JsonValue;
+                    } & {
+                        readonly [key: string]: JsonValue;
+                    });
                     installationId: string;
                     projectKey: string;
                     kind: 'worktree';

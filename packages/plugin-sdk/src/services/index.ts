@@ -368,6 +368,12 @@ export type PluginServiceId =
     | 'interactions'
     | 'composerContent';
 
+/** Private, requester-bound Project input on the executing daemon. Values must stay in-process. */
+export type WorktreeEnvironmentServiceV1 = Readonly<{
+    readDotenv(input: Pick<DatabaseWorktreeTargetV1, 'workspace' | 'projectKey'> &
+        Readonly<{ path: string; variable: string }>): Promise<string | undefined>;
+}>;
+
 export interface PluginServices {
     availability(serviceId: PluginServiceId): PluginOperationAvailability;
     /** Present only for a controller invocation with its captured connector sink. @realm cli */
@@ -388,11 +394,7 @@ export interface PluginServices {
     readonly deploymentSource: DeploymentSourceMaterializationPortV1;
     readonly deploymentExecEnv: DeploymentExecEnvPortV1;
     readonly databaseEngines?: DatabaseEnginesServiceV1;
-    /** Private, requester-bound Project input on the executing daemon. Values must stay in-process. */
-    readonly worktreeEnvironment?: Readonly<{
-        readDotenv(input: Pick<DatabaseWorktreeTargetV1, 'workspace' | 'projectKey'> &
-            Readonly<{ path: string; variable: string }>): Promise<string | undefined>;
-    }>;
+    readonly worktreeEnvironment?: WorktreeEnvironmentServiceV1;
     readonly deploymentDatabases?: DeploymentDatabasesServiceV1;
     readonly deploymentTelemetry: DeploymentTelemetryServiceV1;
     readonly sessions: SessionsService;

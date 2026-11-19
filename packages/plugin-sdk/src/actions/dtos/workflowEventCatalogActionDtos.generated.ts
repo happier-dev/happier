@@ -213,6 +213,12 @@ export type WorkflowEventCatalogActionResultById = {
                     submitLabel?: string | undefined;
                 };
             };
+            webhookEndpointSetup?: undefined | {
+                kind: 'accountEndpointV1';
+                credential: 'serverGenerated';
+            } | {
+                kind: 'capabilityUrlV1';
+            };
             observationBinding?: undefined | {
                 executionOrigin: {
                     serverIdentityId: string;

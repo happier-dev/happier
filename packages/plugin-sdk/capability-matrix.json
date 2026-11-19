@@ -1058,6 +1058,28 @@
       "availabilityDisposition": "available"
     },
     {
+      "manifestFamily": "serviceLaunchEnvironments",
+      "pluginApiRegistrationFamily": "serviceLaunchEnvironments",
+      "registrationHost": "daemon",
+      "definePluginAuthorKey": "serviceLaunchEnvironments",
+      "definePluginInputShape": "structured",
+      "definePluginClassification": "adapter",
+      "authorEntrypoint": ".",
+      "realm": "any",
+      "lifecycle": [
+        "declared",
+        "normalized",
+        "projected",
+        "bound",
+        "active",
+        "unavailable",
+        "invalid"
+      ],
+      "catalogDisposition": "retained",
+      "producer": "packages/protocol/src/plugins/contributions/catalog.ts#serviceLaunchEnvironments",
+      "availabilityDisposition": "available"
+    },
+    {
       "manifestFamily": "sessionHeaderActions",
       "pluginApiRegistrationFamily": null,
       "registrationHost": null,
@@ -1187,6 +1209,28 @@
       ],
       "catalogDisposition": "retained",
       "producer": "packages/protocol/src/plugins/contributions/catalog.ts#storeKinds",
+      "availabilityDisposition": "available"
+    },
+    {
+      "manifestFamily": "subjectKinds",
+      "pluginApiRegistrationFamily": null,
+      "registrationHost": null,
+      "definePluginAuthorKey": "subjectKinds",
+      "definePluginInputShape": "descriptor",
+      "definePluginClassification": "descriptor-only",
+      "authorEntrypoint": ".",
+      "realm": "any",
+      "lifecycle": [
+        "declared",
+        "normalized",
+        "projected",
+        "bound",
+        "active",
+        "unavailable",
+        "invalid"
+      ],
+      "catalogDisposition": "retained",
+      "producer": "packages/protocol/src/plugins/contributions/catalog.ts#subjectKinds",
       "availabilityDisposition": "available"
     },
     {
@@ -1572,6 +1616,20 @@
       "availabilityDisposition": "available"
     },
     {
+      "serviceId": "deploymentDatabases",
+      "property": "deploymentDatabases",
+      "publicType": "DeploymentDatabasesServiceV1",
+      "authorEntrypoints": [
+        "."
+      ],
+      "realms": [
+        "daemon"
+      ],
+      "producer": "src/services/deployments.ts",
+      "lifecycle": "invocation-scoped",
+      "availabilityDisposition": "available"
+    },
+    {
       "serviceId": "deploymentExecEnv",
       "property": "deploymentExecEnv",
       "publicType": "DeploymentExecEnvPortV1",
@@ -1598,6 +1656,20 @@
       "producer": "src/services/deployments.ts",
       "lifecycle": "invocation-scoped",
       "availabilityDisposition": "preview"
+    },
+    {
+      "serviceId": "deploymentTelemetry",
+      "property": "deploymentTelemetry",
+      "publicType": "DeploymentTelemetryServiceV1",
+      "authorEntrypoints": [
+        "."
+      ],
+      "realms": [
+        "daemon"
+      ],
+      "producer": "src/services/deployments.ts",
+      "lifecycle": "invocation-scoped",
+      "availabilityDisposition": "available"
     },
     {
       "serviceId": "events",
@@ -1887,6 +1959,20 @@
         "members": "all"
       },
       "producer": "src/services/targetedContributions.ts",
+      "lifecycle": "invocation-scoped",
+      "availabilityDisposition": "available"
+    },
+    {
+      "serviceId": "worktreeEnvironment",
+      "property": "worktreeEnvironment",
+      "publicType": "WorktreeEnvironmentServiceV1",
+      "authorEntrypoints": [
+        "."
+      ],
+      "realms": [
+        "any"
+      ],
+      "producer": "src/services/index.ts",
       "lifecycle": "invocation-scoped",
       "availabilityDisposition": "available"
     }

@@ -293,6 +293,7 @@ export type { UiSurfaceSettingsPageDefinition } from './ui/surface.js';
 export type { UsageRunLengthObservation } from './usage.js';
 export type { UsageRunLengthObservationSummary } from './usage.js';
 export type { UsageRunLengthSummary } from './usage.js';
+export type { WorktreeEnvironmentServiceV1 } from './services/index.js';
 export { arePluginMachineExecutionOriginsEqual } from './executionOrigin.js';
 export { arePluginMachineMaterializationRefsEqual } from './executionOrigin.js';
 export { buildQualifiedPluginContributionKey } from './identity.js';

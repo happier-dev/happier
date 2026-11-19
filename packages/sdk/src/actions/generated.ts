@@ -822,9 +822,6 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "session.terminals.run_script",
   "session.terminals.split",
   "session.title.set",
-  "session.trigger.add",
-  "session.trigger.remove",
-  "session.trigger.update",
   "session.turn.cancel",
   "session.unarchive",
   "session.update.post",
@@ -2215,6 +2212,9 @@ export type GeneratedActions = Readonly<{
       readonly set: (input: PublicActionInputById["machines.replacement.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.replacement.set">>;
     }> ;
     readonly resources: Readonly<{
+      readonly outcomes: Readonly<{
+        readonly read: (input: PublicActionInputById["machines.resources.outcomes.read"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.resources.outcomes.read">>;
+      }> ;
       readonly policy: Readonly<{
         readonly get: (input: PublicActionInputById["machines.resources.policy.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.resources.policy.get">>;
         readonly set: (input: PublicActionInputById["machines.resources.policy.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.resources.policy.set">>;
@@ -3365,12 +3365,6 @@ export type GeneratedActions = Readonly<{
     readonly transcript: Readonly<{
       readonly get: (input: PublicActionInputById["session.transcript.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.transcript.get">>;
     }> ;
-    readonly trigger: Readonly<{
-      readonly add: (input: PublicActionInputById["session.trigger.add"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.trigger.add">>;
-      readonly list: (input: PublicActionInputById["session.trigger.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.trigger.list">>;
-      readonly remove: (input: PublicActionInputById["session.trigger.remove"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.trigger.remove">>;
-      readonly update: (input: PublicActionInputById["session.trigger.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.trigger.update">>;
-    }> ;
     readonly turn: Readonly<{
       readonly cancel: (input: PublicActionInputById["session.turn.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.turn.cancel">>;
     }> ;
@@ -3933,6 +3927,9 @@ export type GeneratedActions = Readonly<{
     }> ;
   }> ;
   readonly workflow: Readonly<{
+    readonly activity: Readonly<{
+      readonly list: (input: PublicActionInputById["workflow.activity.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.activity.list">>;
+    }> ;
     readonly authoring: Readonly<{
       readonly conversation: Readonly<{
         readonly bind: (input: PublicActionInputById["workflow.authoring.conversation.bind"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.authoring.conversation.bind">>;
@@ -5224,6 +5221,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         set: (input: PublicActionInputById["machines.replacement.set"], options?: ActionExecutionOptions) => execute("machines.replacement.set", input, options),
       },
       resources: {
+        outcomes: {
+          read: (input: PublicActionInputById["machines.resources.outcomes.read"], options?: ActionExecutionOptions) => execute("machines.resources.outcomes.read", input, options),
+        },
         policy: {
           get: (input: PublicActionInputById["machines.resources.policy.get"], options?: ActionExecutionOptions) => execute("machines.resources.policy.get", input, options),
           set: (input: PublicActionInputById["machines.resources.policy.set"], options?: ActionExecutionOptions) => execute("machines.resources.policy.set", input, options),
@@ -6374,12 +6374,6 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       transcript: {
         get: (input: PublicActionInputById["session.transcript.get"], options?: ActionExecutionOptions) => execute("session.transcript.get", input, options),
       },
-      trigger: {
-        add: (input: PublicActionInputById["session.trigger.add"], options?: ActionExecutionOptions) => execute("session.trigger.add", input, options),
-        list: (input: PublicActionInputById["session.trigger.list"], options?: ActionExecutionOptions) => execute("session.trigger.list", input, options),
-        remove: (input: PublicActionInputById["session.trigger.remove"], options?: ActionExecutionOptions) => execute("session.trigger.remove", input, options),
-        update: (input: PublicActionInputById["session.trigger.update"], options?: ActionExecutionOptions) => execute("session.trigger.update", input, options),
-      },
       turn: {
         cancel: (input: PublicActionInputById["session.turn.cancel"], options?: ActionExecutionOptions) => execute("session.turn.cancel", input, options),
       },
@@ -6942,6 +6936,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       },
     },
     workflow: {
+      activity: {
+        list: (input: PublicActionInputById["workflow.activity.list"], options?: ActionExecutionOptions) => execute("workflow.activity.list", input, options),
+      },
       authoring: {
         conversation: {
           bind: (input: PublicActionInputById["workflow.authoring.conversation.bind"], options?: ActionExecutionOptions) => execute("workflow.authoring.conversation.bind", input, options),

@@ -348,6 +348,7 @@
 | `.` | `UsageRunLengthObservation` | type | any |
 | `.` | `UsageRunLengthObservationSummary` | type | any |
 | `.` | `UsageRunLengthSummary` | type | any |
+| `.` | `WorktreeEnvironmentServiceV1` | type | any |
 | `.` | `arePluginMachineExecutionOriginsEqual` | value | any |
 | `.` | `arePluginMachineMaterializationRefsEqual` | value | any |
 | `.` | `buildQualifiedPluginContributionKey` | value | any |
@@ -2002,9 +2003,12 @@
 | `./events` | `HostEventScopeById` | type | any |
 | `./events` | `HostEventTarget` | type | any |
 | `./events` | `HostEvents` | type | any |
+| `./events` | `MACHINE_OUTCOME_SUMMARY_PREFIX` | value | any |
+| `./events` | `MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1` | value | any |
 | `./events` | `MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1` | value | any |
 | `./events` | `MCP_SERVER_CATALOG_ACCOUNT_KEY_V1` | value | any |
 | `./events` | `MachinePressureEventV1ProtocolSchema` | value | any |
+| `./events` | `MachineResourceOutcomeV1` | type | any |
 | `./events` | `MachineServiceObservationV1` | type | any |
 | `./events` | `PROJECT_PREPARE_ACTION_ID_V1` | value | any |
 | `./events` | `PluginEventAutomationHistoryGapResetActionInputV1` | type | any |
@@ -2026,7 +2030,10 @@
 | `./events` | `PluginEvents` | type | any |
 | `./events` | `ProjectSetupSettledEventV1` | type | any |
 | `./events` | `ProjectSetupSettledEventV1ProtocolSchema` | value | any |
+| `./events` | `SCM_WORKTREE_CREATE_ACTION_ID_V1` | value | any |
 | `./events` | `SCM_WORKTREE_REMOVE_ACTION_ID_V1` | value | any |
+| `./events` | `WorktreeCreatedEventV1` | type | any |
+| `./events` | `WorktreeCreatedEventV1ProtocolSchema` | value | any |
 | `./events` | `WorktreeRemovedEventV1` | type | any |
 | `./events` | `WorktreeRemovedEventV1ProtocolSchema` | value | any |
 | `./events` | `admitCheckpointedPluginEventObservationV1` | value | any |
@@ -2036,6 +2043,7 @@
 | `./events` | `createPluginEventAutomationSetupResultV1JsonSchema` | value | any |
 | `./events` | `deploymentInProgressStates` | value | any |
 | `./events` | `isAutomationEventSourcesListPageProgressingV1` | value | any |
+| `./events` | `machineOutcomeSummaryAddress` | value | any |
 | `./events` | `projectAutomationDatabaseSubjectV1` | value | any |
 | `./events` | `projectPluginEventAdmissionSourceStatusV1` | value | any |
 | `./events` | `projectPluginEventSourceConnectionStatusV1` | value | any |
