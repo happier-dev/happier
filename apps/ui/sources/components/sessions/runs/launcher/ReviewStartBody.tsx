@@ -101,12 +101,13 @@ function StepWho(props: Props & Readonly<{ stepIndex: number; steps: ReturnType<
                 const positions = enginePositions.get(id) ?? [];
                 if (positions.length === 0 && (choice.disabled || option.onSelect === undefined)) return [option];
                 const remove = (position: number) => changeReviewers(step.reviewers.filter((_reviewer, index) => index !== position));
-                if (positions.length > 1) return positions.map(position => ({ ...option,
+                const { openStep: _openStep, ...selection } = option;
+                if (positions.length > 1) return positions.map(position => ({ ...selection,
                     id: reviewReviewerIdForSelectionV1(position),
                     testID: `review-start-reviewer:${reviewReviewerIdForSelectionV1(position)}`,
                     onSelect: () => remove(position),
                 }));
-                return [{ ...option, onSelect: () => positions.length === 1 ? remove(positions[0]!)
+                return [{ ...selection, onSelect: () => positions.length === 1 ? remove(positions[0]!)
                     : changeReviewers([...step.reviewers, { kind: 'engine', engineId: id }]) }];
             }),
         } })),

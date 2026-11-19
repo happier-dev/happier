@@ -18,7 +18,6 @@ import { Typography } from '@/constants/Typography';
 import { useMachineListForServer, useServerScopedMachine } from '@/sync/domains/state/storage';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { readWorkflowBlockShape } from '@/sync/domains/workflows/workflowAuthoring';
-import { isWorkflowProjectTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
@@ -216,9 +215,6 @@ function WorkflowSentenceBuilderBody(
     machineName,
     ...(machines === undefined ? {} : { machines }),
     accountLifetime: lifetime,
-    onChange: (target) => {
-      if (isWorkflowProjectTarget(target)) sentence.changeProject(target);
-    },
   } satisfies NonNullable<React.ComponentProps<typeof WorkflowInspector>['place']>;
   return (
     <FloatingOverlay
