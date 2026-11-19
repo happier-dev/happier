@@ -393,14 +393,18 @@ function DetailsPaneOpenAsPageIconButton(input: import('@happier-dev/plugin-ui/c
         disabled={input.disabled} onPress={input.onPress} />;
 }
 
+// The workbench keeps its resources for the mounted page. Rebuilding icon or
+// navigation presentation must preserve these direction-independent services.
+const DATABASE_WORKBENCH_HOST = Object.freeze({
+    activityResource: createDatabaseActivityController,
+    lastLook: createDatabaseStatsLastLook,
+});
+
 function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDirection) {
     return Object.freeze({
     useScmFileViewed,
     usePeopleDirectory: usePluginUiPeopleDirectory,
-    databaseWorkbench: Object.freeze({
-        activityResource: createDatabaseActivityController,
-        lastLook: createDatabaseStatsLastLook,
-    }),
+    databaseWorkbench: DATABASE_WORKBENCH_HOST,
     renderCodeEditor({ editorRef, ...props }: HappierCodeEditorRequest) { return <CodeEditor {...props} ref={editorRef} />; },
     useShareGrantRowPresentation,
     shareSheet: SHARE_SHEET_HOST,

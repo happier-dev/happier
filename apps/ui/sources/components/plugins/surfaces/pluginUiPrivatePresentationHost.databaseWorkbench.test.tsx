@@ -2,7 +2,10 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseStatsObservationV1, DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
-import { createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { DATABASE_RELATIONS_LIST_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
+import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
+import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkitExecuteActionInput } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiHostApi, RenderContext } from '@happier-dev/plugin-sdk/ui';
 import * as hostApi from '@happier-dev/plugin-ui/hostApi';
 import { PluginUiPresentationHostProviderInternal } from '../../../../../../packages/plugin-ui/src/presentationHost/context';
@@ -74,6 +77,52 @@ describe('mounted database workbench host owners', () => {
             expect(otherViewer.getCurrent()!.lastLook(targetKey).observe(observation('40', 4000), ['shown']).comparison)
                 .toEqual({ status: 'unavailable', reason: 'previous_sample_required' });
         } finally { await otherViewer.unmount(); }
+    });
+
+    it('keeps loaded relation names when the same page opens a table and receives new presentation bindings', async () => {
+        const descriptor = { ...createDatabaseDescriptorV1Fixture(), target };
+        const targetKey = workbenchTargetKey(target);
+        const relation = { schema: 'public', name: 'invoices' };
+        const text = JSON.stringify({ descriptor, ownWriteRevision: 0, relationRevisions: [] });
+        const digest = `sha256:${computeSha256HexDigest(text)}`;
+        const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
+            expect(action).toBe(databaseActionLocalIdV1(DATABASE_RELATIONS_LIST_ACTION_ID_V1));
+            return { ok: true, operation: 'relations.list', relations: [{ relation, kind: 'table' }], completeness: { complete: true } };
+        });
+        const surface = await createPluginUiTestkit({
+            identity: { instanceId: 'workbench-rail', mountNonce: 'workbench-rail' },
+            authorPlugin: { id: 'happier.database', version: '0.0.0' },
+            surface: null, surfaceContext: createSurfaceContextFixture({ accountScope: scope }),
+            // renderHook mounts the Workbench below. Here only the transport needs a fixture.
+            adapter: { async mount() { return {
+                async snapshot() { return { revision: 1, nodes: [] }; }, async update() {}, async invoke() {}, async dispose() {},
+            }; } },
+            handlers: {
+                executeAction,
+                readResource: () => ({ contentType: 'application/json', digest, bytes: new TextEncoder().encode(text) }),
+                watchResource: () => ({ digest }),
+            },
+        });
+        let host = createPluginUiPrivatePresentationHost(undefined, { direction: 'ltr' });
+        const launch = { descriptor, scope: { kind: 'environment' as const, environment: target.environment } };
+        const mount = await renderHook((mode: 'overview' | 'data') => useWorkbenchMount(surface.context, launch, {
+            targetKey, mode, ...(mode === 'data' ? { relation } : {}), sort: [], columns: [], page: { rows: 50, offset: 0 }, fkTrail: [],
+        }, { pageLocation: false }), {
+            initialProps: 'overview',
+            wrapper: ({ children }) => <PluginUiPresentationHostProviderInternal host={host}>{children}</PluginUiPresentationHostProviderInternal>,
+        });
+        try {
+            const instance = mount.getCurrent()!;
+            const initial = instance.schemaRelations(targetKey, relation.schema);
+            await initial.demand();
+            expect(initial.get().data?.relations.map(item => item.name)).toEqual(['invoices']);
+            await instance.navigate({ mode: 'data', relation });
+            host = createPluginUiPrivatePresentationHost(undefined, { direction: 'ltr' });
+            const opened = (await mount.rerender('data'))!.schemaRelations(targetKey, relation.schema);
+            expect(opened.get().data?.relations.map(item => item.name)).toEqual(['invoices']);
+            await opened.demand();
+            expect(executeAction).toHaveBeenCalledTimes(1);
+        } finally { await mount.unmount(); await surface.dispose(); }
     });
 
     it('exposes one callable binding and leaves activity reads asleep without presented demand', async () => {
