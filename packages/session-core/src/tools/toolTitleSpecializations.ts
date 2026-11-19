@@ -18,7 +18,7 @@ function agentName(id: string): string {
 /** A published page has no authenticated catalog or Session model metadata. */
 export function createPublishedSubagentToolPresenter(translate: ToolTitleTranslator) {
     return createSubagentToolPresenter({
-        t: translate, getAgentCore: () => null, resolveAgentIdFromFlavor: () => null,
+        t: translate, getAgentCore: () => null, resolveSessionAgentId: () => null,
         formatAgentLikeIdForDisplay: agentName,
         resolveExecutionRunBackendLabel: target => {
             const ref = readBackendTargetRefV2(target);

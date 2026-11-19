@@ -1,4 +1,5 @@
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { getAgentCore } from '@/agents/catalog/catalog';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents/runtime/identity/resolveAgentIdFromSessionMetadata';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import { resolveExecutionRunTitle } from '@/components/sessions/runs/resolveExecutionRunTitle';
@@ -10,6 +11,6 @@ import { t } from '@/text';
 import { createSubagentToolPresenter, type ToolTitleTranslator } from '@happier-dev/session-core/tools';
 
 export const resolveSubagentToolPresentation = createSubagentToolPresenter({
-    getAgentCore, resolveAgentIdFromFlavor, formatAgentLikeIdForDisplay, resolveExecutionRunBackendLabel,
+    getAgentCore, resolveSessionAgentId: resolveAgentIdFromSessionMetadata, formatAgentLikeIdForDisplay, resolveExecutionRunBackendLabel,
     resolveExecutionRunTitle, describeEffectiveModelMode, resolveSessionModelLabel, t: t as ToolTitleTranslator,
 });

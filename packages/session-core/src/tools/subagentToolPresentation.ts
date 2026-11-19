@@ -5,7 +5,7 @@ import type { ToolTitleTranslator } from './toolTitleTranslations.js';
 
 export type SubagentTitleContext = Readonly<{
     getAgentCore: (id: string) => { displayNameKey: string } | null;
-    resolveAgentIdFromFlavor: (flavor: unknown) => string | null;
+    resolveSessionAgentId: (metadata: Metadata | null) => string | null;
     formatAgentLikeIdForDisplay: (id: string) => string;
     resolveExecutionRunBackendLabel: (target: BackendTargetRefV2Input) => string | null;
     resolveExecutionRunTitle: (run: { intent: string }) => string;
@@ -16,7 +16,7 @@ export type SubagentTitleContext = Readonly<{
 
 /** Hosts supply their admitted Agent/model catalog; title policy remains independent of React. */
 export function createSubagentToolPresenter(context: SubagentTitleContext) {
-    const { getAgentCore, resolveAgentIdFromFlavor, formatAgentLikeIdForDisplay, resolveExecutionRunBackendLabel,
+    const { getAgentCore, resolveSessionAgentId, formatAgentLikeIdForDisplay, resolveExecutionRunBackendLabel,
         resolveExecutionRunTitle, describeEffectiveModelMode, resolveSessionModelLabel, t } = context;
     type SubagentToolPresentation = Readonly<{
         title: string;
@@ -125,7 +125,7 @@ export function createSubagentToolPresenter(context: SubagentTitleContext) {
         const input = asRecord(params.tool.input) ?? {};
         const isManagedRun = params.tool.name === 'SubAgentRun';
         const managedTarget = isManagedRun ? resolveManagedTarget(input) : null;
-        const agentId = managedTarget?.agentId ?? resolveAgentIdFromFlavor(params.metadata?.flavor);
+        const agentId = managedTarget?.agentId ?? resolveSessionAgentId(params.metadata);
 
         if (isManagedRun && input.intent === 'scm_diff_summary') {
             return { title: resolveExecutionRunTitle({ intent: input.intent }), iconAgentId: agentId };

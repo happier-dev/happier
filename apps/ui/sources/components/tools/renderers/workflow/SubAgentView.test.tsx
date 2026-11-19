@@ -27,6 +27,17 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 describe('SubAgentView', () => {
     let messageId = 0;
 
+    it('uses the owning Session Agent for a native subagent mark when the flavor disagrees', async () => {
+        const { resolveSubagentToolPresentation } = await import('@/components/tools/catalog/core/subAgentPresentation');
+        const { createSessionFixture } = await import('@/dev/testkit');
+        const metadata = {
+            ...createSessionFixture().metadata!,
+            flavor: 'codex',
+            runtimeDescriptorV1: { v: 1 as const, agentId: 'acme.agent/codex', agent: {} },
+        };
+        expect(resolveSubagentToolPresentation({ tool: makeTaskTool(), metadata }).iconAgentId).toBe('acme.agent/codex');
+    });
+
     function makeTaskTool(overrides: Partial<ToolCall> = {}): ToolCall {
         return makeToolCall({
             name: 'Task',
