@@ -238,6 +238,7 @@ export function createCliMetadataActionDeps(
       }
       return { ok: true, sessionId: res.sessionId, ...(fieldId === 'display.title' ? { title: value }
         : fieldId === 'display.statusReason' ? { reason: value }
+        : fieldId === 'display.statusProgress' ? { progress: value === 'clear' ? null : value }
         : fieldId === 'display.bot' ? { bot: value } : fieldId === 'display.botFace' ? { face: value }
         : fieldId === 'intent.memoryEnabled' ? { enabled: value }
         : fieldId === 'intent.approvalProfileId' ? { approvalProfileId: value }

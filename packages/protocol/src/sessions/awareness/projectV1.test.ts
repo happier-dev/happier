@@ -103,10 +103,57 @@ describe('projectSessionAwarenessV1 — operational semantics', () => {
     const baseline = input();
     const ordinary = projectSessionAwarenessV1(baseline);
     expect(projectSessionAwarenessV1({ ...baseline, statusReason: 'Waiting for the build' }))
-      .toEqual({ ...ordinary, statusReason: 'Waiting for the build' });
+      .toEqual({ ...ordinary, statusReason: 'Waiting for the build', nowLine: 'Waiting for the build', nowLineKind: 'note' });
     const locked = { ...baseline, content: { mode: 'e2ee' as const, keyState: 'missing' as const } };
     expect(projectSessionAwarenessV1({ ...locked, statusReason: 'Private explanation' }))
       .toEqual(projectSessionAwarenessV1(locked));
+  });
+  it('keeps an authored note and explicit count through turn end, ages the note, and hides completed progress after reading', () => {
+    const settled = input({
+      lifecycle: { latestTurnStatus: 'completed', latestTurnStatusObservedAtMs: NOW },
+      statusReason: 'Build is ready',
+      statusReasonSetAt: NOW - 1,
+      statusProgress: { done: 3, total: 3, label: 'Checks' },
+      viewerUnread: true,
+    });
+    expect(projectSessionAwarenessV1(settled)).toMatchObject({
+      nowLine: 'Build is ready',
+      statusReasonSetAt: NOW - 1,
+      progress: { done: 3, total: 3, label: 'Checks', complete: true, dim: true },
+    });
+    expect(projectSessionAwarenessV1({ ...settled, viewerUnread: false })).not.toHaveProperty('progress');
+    expect(projectSessionAwarenessV1({ ...settled, statusReasonSetAt: NOW })).not.toHaveProperty('statusReasonSetAt');
+    const archived = projectSessionAwarenessV1({ ...settled, lifecycle: { ...settled.lifecycle, archivedAtMs: NOW } });
+    expect(archived).not.toHaveProperty('nowLine');
+    expect(archived).not.toHaveProperty('progress');
+    const unarchived = projectSessionAwarenessV1({ ...settled, lifecycle: { ...settled.lifecycle, archivedAtMs: null } });
+    expect(unarchived).toMatchObject({
+      nowLine: 'Build is ready',
+      progress: { done: 3, total: 3, dim: true },
+    });
+    const locked = projectSessionAwarenessV1({ ...settled, content: { mode: 'e2ee', keyState: 'missing' } });
+    expect(locked).not.toHaveProperty('nowLine');
+    expect(locked).not.toHaveProperty('progress');
+  });
+  it('uses the active task then current goal, ignores settled goals, and prefers task counts to managed totals', () => {
+    const work = {
+      v: 1 as const, hasActiveGoal: true, currentGoalTitle: 'Ship the release',
+      primaryItem: { id: 'task-1', kind: 'task' as const, status: 'active' as const, title: 'Run checks' },
+      taskProgress: { done: 1, total: 2 },
+    };
+    const reports = { total: 4, working: 1, needsYou: 0, stalled: 0, finished: 3, attentionPrimary: null };
+    expect(projectSessionAwarenessV1(input({ work, managedSessions: reports }))).toMatchObject({
+      nowLine: 'Run checks', nowLineKind: 'task', progress: { done: 1, total: 2, complete: false },
+    });
+    expect(projectSessionAwarenessV1(input({ work, statusProgress: { done: 4, total: 5 } })))
+      .toMatchObject({ progress: { done: 4, total: 5 } });
+    expect(projectSessionAwarenessV1(input({ work: { ...work, primaryItem: null } })))
+      .toMatchObject({ nowLine: 'Ship the release', nowLineKind: 'goal' });
+    const completedGoal = { ...work, hasActiveGoal: false, currentGoalTitle: undefined, taskProgress: undefined,
+      primaryItem: { id: 'goal-1', kind: 'goal' as const, status: 'complete' as const, title: 'Ship the release' } };
+    const awareness = projectSessionAwarenessV1(input({ work: completedGoal, managedSessions: reports }));
+    expect(awareness).not.toHaveProperty('nowLine');
+    expect(awareness.progress).toMatchObject({ done: 3, total: 4 });
   });
   it('preserves server-visible origin independently of private fork lineage', () => {
     const origin = { kind: 'run_step' as const, runId: 'workflow-run' };

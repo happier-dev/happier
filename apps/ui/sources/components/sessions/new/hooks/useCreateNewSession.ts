@@ -2144,7 +2144,7 @@ export function useCreateNewSession(params: Readonly<{
                     }
                     if (actionResult.result.code === 'machine_offline') {
                         showDaemonUnavailableAlert({
-                            titleKey: 'newSession.daemonRpcUnavailableTitle',
+                            titleKey: 'errors.daemonUnavailableTitle',
                             bodyKey: 'newSession.daemonRpcUnavailableBody',
                             machine: current.selectedMachine,
                             // The launcher is gone after presentation; its draft owns the retry.

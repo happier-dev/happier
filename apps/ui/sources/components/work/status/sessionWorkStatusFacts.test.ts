@@ -38,7 +38,7 @@ describe('readSessionWorkStatusFacts', () => {
         expect(row.currentRequestRef).toBe(facts.currentRequestRef);
         expect(facts.currentRequest).toBeUndefined();
         // The status slot names the request in one short word (lab `clicon:word`), not "Action required".
-        expect(facts.word).toBe(kind === 'permission' ? 'workStatus.words.permission' : 'workStatus.words.question');
+        expect(facts.word).toBe(kind === 'permission' ? 'status.permissionRequired' : 'workStatus.words.question');
     });
 
     it('carries admitted C1 attention beside awareness while preserving the existing viewer reference', () => {

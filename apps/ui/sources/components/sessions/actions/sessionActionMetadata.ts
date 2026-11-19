@@ -13,6 +13,7 @@ import {
     SESSION_ACTION_TALK_ID,
     SESSION_ACTION_TOOL_CALLS_TOGGLE_ID,
     SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID,
+    SESSION_ACTION_CLEAR_STATUS_ID,
     SESSION_ACTION_ARCHIVE_ID,
     SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_DELETE_ID,
@@ -64,6 +65,7 @@ const METADATA_BY_ACTION_ID: Readonly<Record<string, SessionActionMetadata>> = {
     [SESSION_ACTION_MAKE_REGULAR_ID]: { titleKey: 'bots.demote', subtitleKey: 'bots.menu.demoteSubtitle', icon: 'robot', group: 'behavior' },
     [SESSION_ACTION_TOOL_CALLS_TOGGLE_ID]: { titleKey: 'session.toolCallActions.show', subtitleKey: 'bots.menu.toolsSubtitle', icon: 'list-bullets', group: 'behavior' },
     [SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID]: { titleKey: 'session.toolCallActions.useDefault', icon: 'arrows-clockwise', group: 'behavior' },
+    [SESSION_ACTION_CLEAR_STATUS_ID]: { titleKey: 'session.clearStatus', icon: 'x', group: 'session' },
     [SESSION_ACTION_FOLLOW_ID]: {
         titleKey: 'session.follow.editor.title',
         icon: 'bell', group: 'session',

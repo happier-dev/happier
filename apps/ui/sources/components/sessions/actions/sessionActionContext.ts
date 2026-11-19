@@ -3,6 +3,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { readSessionListRenderableOwnerMetadataView } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { isSessionTerminalPermanentlyAbsent } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import { readSessionAuthoredDisplayV1 } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { readSessionOwnerMetadataView, readSessionOwnerMetadataViewPreferences } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import {
     canContinueSessionWithFreshSpawn,
@@ -76,10 +77,11 @@ export function createSessionActionTarget(params: Readonly<{
         && terminalControlServiceability.state === 'recoverable_unservable'
     );
     const deleteOwnerMetadata = ownerSession ? ownerMetadata : readSessionListRenderableOwnerMetadataView(session);
+    const authoredStatus = readSessionAuthoredDisplayV1(deleteOwnerMetadata?.work);
     const hasReadableOwnerMetadataWithoutTerminalLifecycle = deleteOwnerMetadata !== null
         && terminalControlServiceability === undefined;
-    const hasSettledUnavailableEncryptedContent =
-        readBlockedSessionContentAvailability(readSessionContentAvailability(session)) !== null;
+    const contentAvailability = readSessionContentAvailability(session);
+    const hasSettledUnavailableEncryptedContent = readBlockedSessionContentAvailability(contentAvailability) !== null;
     const canStop = session.access?.capabilities.stopSession === true;
     const canArchive = session.access?.capabilities.archiveSession === true && !isArchived && (!isActive || canStop);
     const hasWriteAccess = session.access?.capabilities.submitAgentInput === true;
@@ -110,6 +112,10 @@ export function createSessionActionTarget(params: Readonly<{
         canRename: session.access?.capabilities.renameSession === true,
         canWriteOwnerMetadata: isOwnedByCurrentUser && serverId !== null && ownerMetadata !== null
             && session.access?.capabilities.renameSession === true,
+        canClearStatus: isOwnedByCurrentUser && serverId !== null && !isArchived
+            && contentAvailability === 'ready'
+            && session.access?.capabilities.renameSession === true
+            && Boolean(authoredStatus?.statusReason || authoredStatus?.statusProgress),
         toolCallsOverride: viewPreferences?.showToolCalls ?? null,
         canResume,
         canStopAndDelete: serverId !== null

@@ -26,6 +26,7 @@ const FIELD_CAPABILITY_PATH = {
   'intent.acpConfigOption': ['intent', 'acpConfigOption'],
   'display.title': ['display', 'title'],
   'display.statusReason': ['display', 'statusReason'],
+  'display.statusProgress': ['display', 'statusProgress'],
   'display.bot': ['display', 'bot'],
   'display.botFace': ['display', 'botFace'],
   'runtime.workState': ['runtime', 'workState'],
@@ -44,6 +45,7 @@ const DEFERRED_PROVIDER_SYNC_FIELDS = new Set<SessionStateFieldId>([
   // The host lifecycle derives this fact; provider field synchronization cannot author it.
   'runtime.turnProgress',
   'display.statusReason',
+  'display.statusProgress',
   'intent.role',
   'intent.sessionRoles',
   'intent.memoryEnabled',

@@ -3,6 +3,7 @@ import type { SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/p
 import { selectOldestPendingRequest, type SessionPendingRequest } from '@happier-dev/session-core/pending';
 
 import {
+    presentSessionAwarenessNowLineV1,
     presentSessionAwarenessV1,
     type SessionAwarenessPresentationV1,
 } from '@/utils/sessions/sessionUtils';
@@ -148,6 +149,9 @@ export type SessionSummaryCardModel = Readonly<{
     sinceMs: number | null;
     /** The Plan step the agent is on (or about to take), as N of M. */
     progress: Readonly<{ step: number; total: number }> | null;
+    statusProgress?: SessionAwarenessProjectionV1['progress'];
+    nowLine?: SessionAwarenessProjectionV1['nowLine'];
+    statusReasonSetAt?: SessionAwarenessProjectionV1['statusReasonSetAt'];
     /** The agent's Plan itself, for the separate built-in Plan item. */
     plan: SessionAgentPlan | null;
     facts: readonly SessionSummaryFact[];
@@ -249,6 +253,9 @@ export function projectSessionSummaryCard(input: SessionSummaryInput): SessionSu
         needsYou,
         sinceMs: needsYou ? needsYou.request.createdAt : input.turnStartedAtMs ?? null,
         progress: plan && step !== null ? Object.freeze({ step, total: plan.total }) : null,
+        ...(input.awareness.progress ? { statusProgress: input.awareness.progress } : {}),
+        ...(input.awareness.nowLine ? { nowLine: presentSessionAwarenessNowLineV1(input.awareness) } : {}),
+        ...(input.awareness.statusReasonSetAt ? { statusReasonSetAt: input.awareness.statusReasonSetAt } : {}),
         plan,
         facts: resolveFacts(rows),
         scope: 'exact',

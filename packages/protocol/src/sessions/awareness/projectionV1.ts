@@ -4,7 +4,8 @@ import { SessionManagerV1Schema, SessionManagedSessionsV1Schema } from '../follo
 import { SessionOriginKindV1Schema } from '../creation/sessionCreateOriginV1.js';
 import { SessionDiscussionParticipantV1Schema } from '../creation/sessionDiscussionParticipantV1.js';
 import { ExecutionRunIdSchema } from '../idsV1.js';
-import { SessionTaskProgressV1Schema } from '../work/state/sessionWorkStatePrimary.js';
+import { SessionStatusProgressV1Schema, SessionTaskProgressV1Schema } from '../work/state/sessionWorkStatePrimary.js';
+import { SessionTurnProgressV1Schema } from '../state/valueSchemas/turnProgress.js';
 
 import {
   SessionWorkStateItemKindV1Schema,
@@ -195,6 +196,16 @@ export const SessionAwarenessProjectionV1Schema = lazyZodSchema(() => z.strictOb
     origin: z.optional(SessionAwarenessOriginV1Schema),
     title: z.optional(z.string().check(z.minLength(1))),
     statusReason: z.optional(z.string()),
+    nowLine: z.optional(z.string()),
+    nowLineKind: z.optional(z.enum(['note', 'task', 'goal'])),
+    statusReasonSetAt: z.optional(z.number().check(z.int(), z.positive())),
+    staleSinceObservationAtMs: z.optional(z.number().check(z.int(), z.positive())),
+    turnRetry: z.optional(z.pick(SessionTurnProgressV1Schema, { attempt: true, reason: true })),
+    progress: z.optional(z.strictObject({
+      ...SessionStatusProgressV1Schema.shape,
+      dim: z.boolean(),
+      complete: z.boolean(),
+    })),
     lifecycle: SessionAwarenessLifecycleV1Schema,
     processTerminalState: z.optional(z.literal('stopped')),
     runtime: SessionAwarenessRuntimeV1Schema,

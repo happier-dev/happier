@@ -49,6 +49,7 @@ import {
     SESSION_ACTION_TALK_ID,
     SESSION_ACTION_TOOL_CALLS_TOGGLE_ID,
     SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID,
+    SESSION_ACTION_CLEAR_STATUS_ID,
     SESSION_ACTION_ARCHIVE_ID,
     SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_DELETE_ID,
@@ -435,6 +436,11 @@ export async function executeSessionAction(params: Readonly<{
                 }).showToolCalls;
             const result = await sessionDisplayActions.setToolCalls(params.target.sessionId, showToolCalls,
                 { serverId: params.target.serverId });
+            if (!result.ok) throw new HappyError(result.error, false);
+            return;
+        }
+        case SESSION_ACTION_CLEAR_STATUS_ID: {
+            const result = await sessionDisplayActions.clearStatus(params.target.sessionId, { serverId: params.target.serverId });
             if (!result.ok) throw new HappyError(result.error, false);
             return;
         }

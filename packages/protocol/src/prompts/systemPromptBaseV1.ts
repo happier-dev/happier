@@ -149,6 +149,13 @@ export function buildHappierBaseSystemPromptV1(args?: Readonly<HappierBaseSystem
   if (args?.createdAsBot === true) blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_BOT_FIRST_MESSAGE_V1);
   const titleGuidance = buildHappierSessionTitleGuidanceV1(args);
   if (titleGuidance) blocks.push(titleGuidance);
+  if (isSessionHappierToolsEnabled(args?.sessionMetadata)) {
+    blocks.push(`## Session status
+
+When the goal tool is available, set a goal for work with a clear outcome that spans multiple turns. Update it if the outcome changes and clear it when the goal no longer applies.
+
+Use session_status_set_reason for a short note when it helps the user see what is happening now or what is blocking you. Use session_status_set_progress when you know how many units are done and the total. Update the note and count when the facts change. Use session_status_clear when the note and count no longer describe the session.`);
+  }
   if (resolveCodingPromptBehaviorV1(args?.settings).sessionCompactionNudge
     && args?.sessionCompactionToolAvailable === true && isSessionHappierToolsEnabled(args.sessionMetadata)) {
     const metadata = args.sessionMetadata && typeof args.sessionMetadata === 'object' && !Array.isArray(args.sessionMetadata)

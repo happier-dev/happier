@@ -1014,6 +1014,17 @@ export type SessionControlActionInputById = {
     readonly "session.status.set_reason": {
         reason: null | string;
     };
+    readonly "session.status.set_progress": {
+        progress: null | {
+            done: number;
+            total: number;
+            label?: string | undefined;
+        };
+        sessionId?: string | undefined;
+    };
+    readonly "session.status.clear": {
+        sessionId?: string | undefined;
+    };
     readonly "session.title.set": {
         [x: string]: unknown;
         title: string;
@@ -2242,6 +2253,26 @@ export type SessionControlActionResultById = {
         ok: true;
         sessionId: string;
         reason: null | string;
+        version: number;
+    };
+    readonly "session.status.set_progress": {
+        ok: true;
+        sessionId: string;
+        progress: null | {
+            done: number;
+            total: number;
+            label?: string | undefined;
+        };
+        version: number;
+    };
+    readonly "session.status.clear": {
+        ok: true;
+        sessionId: string;
+        progress: null | {
+            done: number;
+            total: number;
+            label?: string | undefined;
+        };
         version: number;
     };
     readonly "session.title.set": boolean | null | number | readonly JsonValue[] | string | {

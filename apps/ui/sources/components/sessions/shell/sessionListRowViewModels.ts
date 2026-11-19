@@ -148,6 +148,7 @@ export type SessionListRowViewModel = Readonly<{
 /** P5 row context (lab `clctx`): what the row says about where it runs, beyond its group. */
 export type SessionListRowContextPresentation = Readonly<{
     leadingMark: 'agent' | 'project' | 'projectWithAgent' | 'avatar' | 'none';
+    leadingMarkShowsProject: boolean;
     projectPlacement: 'none' | 'context' | 'trailing';
     /** Shown Project name; `yieldsToFavicon` when only a missing favicon puts it on screen. */
     project: Readonly<{ label: string; yieldsToFavicon: boolean }> | null;
@@ -283,10 +284,9 @@ function buildRowContextPresentation(input: Readonly<{
     const groupProject = input.context.rowContextGroupServerId && input.context.rowContextGroupProjectKey
         ? { serverId: input.context.rowContextGroupServerId, projectKey: input.context.rowContextGroupProjectKey } : null;
     const baseline = input.context.rowContextBaseline;
-    const shared = { facts: input.facts, groupProject, groupFallbackKey: input.context.rowContextGroupFallbackKey,
-        baseline, parent: input.parent, identityDisplay: input.context.rowContextIdentityDisplay };
-    const resolved = resolveSessionListRowContext({ ...shared, enabled: input.context.rowContextEnabled });
-    const withFavicon = resolveSessionListRowContext({ ...shared, enabled: input.context.rowContextEnabled, hasProjectFavicon: true });
+    const resolved = resolveSessionListRowContext({ facts: input.facts, groupProject,
+        groupFallbackKey: input.context.rowContextGroupFallbackKey, baseline, parent: input.parent,
+        identityDisplay: input.context.rowContextIdentityDisplay, enabled: input.context.rowContextEnabled });
     const projectTitle = input.context.rowContextProjectTitle;
     const branch = input.facts.branch;
     const inOwnGroup = (groupProject !== null && input.facts.project !== null
@@ -307,9 +307,10 @@ function buildRowContextPresentation(input: Readonly<{
     ].filter((part): part is string => Boolean(part)).join(', ');
     return {
         leadingMark: resolved.identity.leadingMark,
+        leadingMarkShowsProject: resolved.identity.leadingMarkShowsProject,
         projectPlacement: resolved.identity.projectPlacement,
         project: resolved.identity.showProjectName && projectTitle
-            ? { label: projectTitle, yieldsToFavicon: !withFavicon.identity.showProjectName }
+            ? { label: projectTitle, yieldsToFavicon: resolved.identity.projectPlacement === 'trailing' }
             : null,
         projectFaviconSource: input.context.rowContextProjectFaviconServerId
             && input.context.rowContextProjectFaviconMachineId && input.context.rowContextProjectFaviconWorkspacePath

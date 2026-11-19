@@ -4314,6 +4314,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (!result.ok) return { ok: false, errorCode: result.reason, error: result.reason };
       return { ok: true, sessionId: sid, ...(fieldId === 'display.title' ? { title: value, updatedAt }
         : fieldId === 'display.statusReason' ? { reason: value }
+        : fieldId === 'display.statusProgress' ? { progress: value === 'clear' ? null : value }
         : fieldId === 'display.bot' ? { bot: value } : fieldId === 'display.botFace' ? { face: value }
         : fieldId === 'intent.memoryEnabled' ? { enabled: value }
         : fieldId === 'intent.voicePreference' ? { preference: value }

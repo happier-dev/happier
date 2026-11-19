@@ -5,10 +5,11 @@ import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sess
 import { readSessionRuntimeObservation } from '@/sync/domains/session/sessionRuntimeObservation';
 import { resolveSessionAwarenessContentLabel } from '@/sync/domains/session/awareness/sessionAwarenessContentLabels';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
+import type { SessionAwarenessProjectionV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { readSessionAwarenessWorkStatusV1, type SessionAwarenessPresentationFactsV1, type SessionAwarenessPresentationStateV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { readSessionBotV1, readSessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
-import { SessionTurnProgressV1Schema, type SessionTurnProgressV1 } from '@happier-dev/protocol/sessions/state/valueSchemas/turnProgress';
+import type { SessionTurnProgressV1 } from '@happier-dev/protocol/sessions/state/valueSchemas/turnProgress';
 import { isVoiceConversationCustodySessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import * as React from 'react';
 import { Message } from "@happier-dev/session-core/messages";
@@ -65,11 +66,20 @@ export type SessionAwarenessPresentationV1 = Readonly<{
     state: SessionAwarenessPresentationStateV1;
     actionRequiredReason?: ReturnType<typeof readSessionAwarenessWorkStatusV1>['actionRequiredReason'];
     statusText: string;
+    detailText?: string;
     /** The canonical owner's judgement that this state needs no badge (idle online, archived). */
     quiet: boolean;
 }>;
 
 type UiSessionAwareness = SessionAwarenessPresentationFactsV1 & UiSessionManagedWakeFacts;
+
+export function presentSessionGoalLabelV1(title: string): string {
+    return t('session.workState.badge.goal', { title });
+}
+
+export function presentSessionAwarenessNowLineV1(awareness: Pick<SessionAwarenessProjectionV1, 'nowLine' | 'nowLineKind'>): string | undefined {
+    return awareness.nowLine && awareness.nowLineKind === 'goal' ? presentSessionGoalLabelV1(awareness.nowLine) : awareness.nowLine;
+}
 
 export interface SessionStatus {
     actionRequiredReason?: ReturnType<typeof readSessionAwarenessWorkStatusV1>['actionRequiredReason'];
@@ -86,6 +96,7 @@ export interface SessionStatus {
     bucket: ReturnType<typeof readSessionAwarenessWorkStatusV1>['bucket'];
     tone: ReturnType<typeof readSessionAwarenessWorkStatusV1>['tone'];
     statusText: string;
+    detailText?: string;
     shouldShowStatus: boolean;
     statusColor: string;
     statusDotColor: string;
@@ -378,11 +389,14 @@ export function presentSessionAwarenessV1(
         workingLabel?: string;
         /** Observation uncertainty changes the wording without settling reported work. */
         freshness?: UiSessionAwareness['freshness'];
+        turnRetry?: UiSessionAwareness['turnRetry'];
+        staleSinceObservationAtMs?: UiSessionAwareness['staleSinceObservationAtMs'];
     }>,
 ): SessionAwarenessPresentationV1 {
     const status = readUiSessionAwarenessWorkStatus({ awareness });
     const presented = presentSessionAwarenessStateV1(status.state, {
-        ...options, freshness: awareness.freshness,
+        ...options, freshness: awareness.freshness, turnRetry: awareness.turnRetry,
+        staleSinceObservationAtMs: awareness.staleSinceObservationAtMs,
     });
     return status.actionRequiredReason ? { ...presented, actionRequiredReason: status.actionRequiredReason } : presented;
 }
@@ -419,7 +433,7 @@ export function presentSessionAwarenessStateV1(
         };
     }
     if (state === 'unknown') return { state: 'unknown', statusText: '—', quiet: true };
-    if (state === 'stale') return { state: 'stale', statusText: t('status.awaitingUpdates'), quiet: false };
+    if (state === 'stale') return { state: 'stale', statusText: formatStaleSessionStatus(options?.staleSinceObservationAtMs), quiet: false };
     switch (state) {
         case 'waiting_for_startup_lock': return { state, statusText: t('status.waitingForStartupLock'), quiet: false };
         case 'archiving': return { state, statusText: t('status.archiving'), quiet: false };
@@ -433,13 +447,15 @@ export function presentSessionAwarenessStateV1(
         case 'permission_required': return { state: 'permission_required', statusText: t('status.permissionRequired'), quiet: false };
         case 'thinking': return {
             state: 'thinking',
-            statusText: options?.workingLabel ?? t('status.working'),
+            statusText: options?.turnRetry ? t('status.tryingAgain')
+                : options?.workingLabel ?? t('status.working'),
+            ...(options?.turnRetry ? { detailText: t('status.retryingAttempt', { attempt: options.turnRetry.attempt }) } : {}),
             quiet: false,
         };
         case 'ready': return { state: 'ready', statusText: t('status.ready'), quiet: false };
         case 'pending_input': return { state: 'pending_input', statusText: t('status.queuedInput'), quiet: false };
         case 'background_active': return { state, quiet: false,
-            statusText: options?.freshness === 'stale' ? t('status.awaitingUpdates') : t('status.backgroundActive') };
+            statusText: options?.freshness === 'stale' ? formatStaleSessionStatus(options.staleSinceObservationAtMs) : t('status.backgroundActive') };
         case 'waiting':
             // An idle, reachable Session is not news: the canonical presenter has always kept
             // this one quiet rather than labelling it.
@@ -447,11 +463,10 @@ export function presentSessionAwarenessStateV1(
     }
 }
 
-function readSessionTurnRetry(session: Parameters<typeof readSessionOwnerMetadataView>[0]): SessionStatus['turnRetry'] | null {
-    const metadata: unknown = readSessionOwnerMetadataView(session);
-    if (metadata === null || typeof metadata !== 'object') return null;
-    const progress = SessionTurnProgressV1Schema.safeParse(Reflect.get(metadata, 'sessionTurnProgressV1'));
-    return progress.success ? { attempt: progress.data.attempt, reason: progress.data.reason } : null;
+function formatStaleSessionStatus(observedAtMs: number | undefined): string {
+    if (observedAtMs === undefined) return t('status.awaitingUpdates');
+    const time = formatWithCachedDateTimeFormatter(new Date(observedAtMs), undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    return t('status.updatedAtTime', { time });
 }
 
 export function getSessionStatus(session: SessionStatusSource, nowMs: number = Date.now(), options?: GetSessionStatusOptionsInput): SessionStatus {
@@ -475,6 +490,8 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
     const status = readUiSessionAwarenessWorkStatus({ awareness: facts });
     const presented = presentSessionAwarenessStateV1(status.state, {
         freshness: awareness.freshness,
+        turnRetry: awareness.turnRetry,
+        staleSinceObservationAtMs: awareness.staleSinceObservationAtMs,
         lastSeenAtMs: source ? readSessionRuntimeObservation(readSessionListPresentationRuntime(source)).activeAt : session.activeAt,
         disconnectedTextMode: resolvedOptions.disconnectedTextMode,
     });
@@ -484,15 +501,15 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
     const textColor = !textColors ? color
         : status.tone === 'danger' ? textColors.danger
             : status.tone === 'attention' ? textColors.attention : textColors.default;
-    // The host clears this fact when the turn ends, so only a working turn reads it.
-    const turnRetry = presented.state === 'thinking' ? readSessionTurnRetry(source?.baseSession ?? session) : null;
+    const turnRetry = presented.state === 'thinking' ? awareness.turnRetry : null;
     return {
         awareness,
         state: presented.state,
         ...(status.actionRequiredReason ? { actionRequiredReason: status.actionRequiredReason } : {}),
         bucket: status.bucket,
         tone: status.tone,
-        statusText: turnRetry ? t('status.retryingAttempt', { attempt: turnRetry.attempt }) : presented.statusText,
+        statusText: presented.statusText,
+        ...(presented.detailText ? { detailText: presented.detailText } : {}),
         ...(turnRetry ? { turnRetry } : {}),
         ...(awareness.statusReason ? { statusReason: awareness.statusReason } : {}),
         isConnected: status.bucket === 'offline' ? false : connected,

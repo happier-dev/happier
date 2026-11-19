@@ -250,7 +250,7 @@ function buildRetryableLaunchFailureClassification(
     return {
         kind: 'retryable',
         reason,
-        titleKey: phase === 'spawn' ? 'newSession.daemonRpcUnavailableTitle' : 'errors.daemonUnavailableTitle',
+        titleKey: 'errors.daemonUnavailableTitle',
         bodyKey: phase === 'spawn' ? 'newSession.daemonRpcUnavailableBody' : 'errors.daemonUnavailableBody',
         retryButtonKey: 'common.retry',
         cancelButtonKey: 'common.cancel',

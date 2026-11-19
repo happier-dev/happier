@@ -3289,6 +3289,8 @@ encryptedUnavailable: 'Encrypted details unavailable',
   encryptedPreparing: 'Preparing encrypted access',
   encryptedRepairNeeded: 'Encrypted access needs repair',
   awaitingUpdates: 'Awaiting updates',
+  updatedAtTime: ({ time }: { time: string }) => `Updated ${time}`,
+  tryingAgain: 'Trying again',
   waitingForStartupLock: 'Waiting for another session to finish starting on this Machine…',
   queuedInput: 'Queued input',
   unread: 'Unread',
@@ -3308,9 +3310,8 @@ encryptedUnavailable: 'Encrypted details unavailable',
   recentlyActive: 'Recently active',
   externalStatusUnknown: 'External status unknown',
   archiving: 'Archiving…',
-  workingRetained: 'Working, awaiting updates…',
   readyForReview: 'Ready for review',
-  keptInAttention: 'Kept in attention',
+  keptInAttention: 'Kept in Needs you',
   canceled: 'Canceled',
   offline: 'Offline',
   lastSeen: ({ time }: { time: string }) => `Last seen ${time}`,
@@ -8749,7 +8750,7 @@ const enErrors = {
     `Sign-in to ${home} stopped because its address was not confirmed.`,
   failedToForkSession: 'Failed to fork session',
   connectedAccountsUnavailable: 'Your connected accounts aren’t available right now. Check your connection and try again.',
-  daemonUnavailableTitle: 'Daemon unavailable',
+  daemonUnavailableTitle: 'Happier isn’t running on this Machine',
   daemonUnavailableBody:
     'Happier can’t reach the daemon on this machine. It may be offline, still starting, or disconnected from the Home.',
   agentIsolationMemberSetupAskManager: "Ask a Machine manager to set up separate users for you.",
@@ -9077,7 +9078,6 @@ const enNewSession = {
     `The directory ${directory} does not exist. Do you want to create it?`,
   sessionStarted: 'Session Started',
   sessionStartedMessage: 'The session has been started successfully.',
-  sessionSpawningFailed: 'Session spawning failed - no session ID returned.',
   startingSession: 'Starting session...',
   startNewSessionInFolder: 'New session here',
   failedToStart:
@@ -9092,7 +9092,6 @@ const enNewSession = {
     'Session startup timed out. The machine may be slow or the daemon may not be responding.',
   notConnectedToServer:
     'Not connected to server. Check your internet connection.',
-  daemonRpcUnavailableTitle: 'Daemon unavailable',
   daemonRpcUnavailableBody:
     'Happier can’t reach the daemon on this machine. It may be offline, still starting, or disconnected from the server.',
   launchStillPendingTitle: 'Launch still in progress',
@@ -9538,6 +9537,7 @@ const enSessionHandoff = {
 };
 
 const enSession = {
+  clearStatus: 'Clear status',
   toolCallActions: {
     show: 'Show tool calls',
     useDefault: 'Use default',
@@ -10633,13 +10633,13 @@ const enSession = {
     deliveryStatus: {
       blocked: 'Blocked',
       delivering: 'Delivering',
-      queuedInClaude: 'Queued in Claude',
+      queuedInClaude: 'Queued in Claude · sends after the current step',
       notStarted: 'Didn’t start',
       nextTurn: 'Waiting for the next turn',
     },
     queuedReasons: {
       waitingForForegroundTurn: 'Waiting for the current turn',
-      waitingForRuntimeActivity: 'Waiting for runtime activity to finish',
+      waitingForRuntimeActivity: 'Waiting for the current work to finish',
       runtimeActivityUnknown: 'Waiting for runtime activity status',
       waitingForPredecessor: 'Waiting for an earlier message',
       waitingForBlockedPredecessor: 'Behind a blocked message',
@@ -10648,13 +10648,13 @@ const enSession = {
       unsupportedAction: 'Delivery action needs review',
     },
     deliveryBlockedReasons: {
-      terminalComposerDraft: 'Terminal draft is blocking delivery',
+      terminalComposerDraft: 'Held by a draft in the terminal',
       captureStyleUnavailable: 'Terminal capture cannot verify the composer',
       providerUnavailableBeforeAcceptance:
         'Provider is temporarily unavailable',
       ambiguousTerminalDelivery: 'Delivery state is ambiguous',
       terminalHostUnreachable: 'Terminal host is unreachable',
-      runtimeDisposedBeforeDelivery: 'Runtime closed before delivery',
+      runtimeDisposedBeforeDelivery: 'Not sent: the session stopped',
       targetUnavailable:
         'The selected agent conversation is no longer available. Nothing was sent.',
       runtimeConfigBlocked: 'Runtime configuration is blocking delivery',

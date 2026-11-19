@@ -147,6 +147,7 @@ export type SessionAwarenessRuntimeFactsV1 = Readonly<{
   blockedInput: boolean;
   queuedInput: boolean;
   lostSinceMs: number | null;
+  lastObservedAtMs: number | null;
   runtime: SessionAwarenessRuntimeV1;
   freshness: SessionAwarenessFreshnessV1;
 }>;
@@ -335,6 +336,7 @@ export function projectSessionAwarenessRuntimeV1(
     blockedInput,
     queuedInput,
     lostSinceMs,
+    lastObservedAtMs,
     runtime: runtimeState,
     freshness,
   };

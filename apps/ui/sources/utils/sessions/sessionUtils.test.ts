@@ -561,12 +561,13 @@ describe('getSessionStatus', () => {
     });
 
     it('presents the host-published retry of the working turn and keeps Stop available', async () => {
-        const { getSessionStatus, shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
+        const { getSessionStatus, presentSessionAwarenessV1, shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
         const nowMs = Date.now();
         const retrying = getSessionStatus(createBaseSession({ thinking: true, thinkingAt: nowMs, metadata: { path: '/workspace', host: 'dev',
             sessionTurnProgressV1: { turnId: 'turn-1', phase: 'retrying', attempt: 3, reason: 'connection_failed' } } as Session['metadata'] }), nowMs);
-        expect(retrying).toMatchObject({ state: 'thinking', statusText: 'status.retryingAttempt',
+        expect(retrying).toMatchObject({ state: 'thinking', statusText: 'status.tryingAgain', detailText: 'status.retryingAttempt',
             turnRetry: { attempt: 3, reason: 'connection_failed' } });
+        expect(presentSessionAwarenessV1(retrying.awareness).statusText).toBe(retrying.statusText);
         expect(shouldShowAbortButtonForSessionState(retrying.state)).toBe(true);
         // The fact describes the working turn only; an idle Session never shows a stale retry.
         const idle = getSessionStatus(createBaseSession({ thinking: false, metadata: { path: '/workspace', host: 'dev',
@@ -963,6 +964,9 @@ describe('getSessionStatus', () => {
         });
         expect(presentSessionAwarenessV1({ ...status.awareness!, freshness: 'stale' })).toMatchObject({
             state: 'background_active', statusText: 'status.awaitingUpdates',
+        });
+        expect(presentSessionAwarenessV1({ ...status.awareness!, freshness: 'stale', staleSinceObservationAtMs: now - 300_000 })).toMatchObject({
+            state: 'background_active', statusText: 'status.updatedAtTime',
         });
         expect(getSessionStatus({ ...session, activeAt: now, runtimeActivityObservedAt: now }, now)).toMatchObject({
             state: 'background_active', bucket: 'working', statusText: 'status.backgroundActive',

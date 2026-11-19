@@ -21200,6 +21200,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `sourceContext` (json): Source Context
 - `environmentVariables` (json): Environment Variables
 
+## `session.status.clear`
+
+**Clear status** — Clear the session status note and explicit progress.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+
 ## `session.status.get`
 
 **Get session status** — Get summary status and the content-free Connected selection for a session. Use sessionId:"self" to read your own selection for reuse in child starts. Set includeAcceptedWorkspace:true to obtain result.acceptedWorkspace.checkout, the exact accepted checkout address for Project Actions such as projects.inspect. If absent, the accepted checkout identity is unavailable; do not infer it from the Session path. Optionally refresh live agent state or inspect current execution prerequisites.
@@ -21219,6 +21233,21 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `operation` (select): Operation
 - `credentialPurpose` (json): Credential Purpose
 - `credentialTeamSelection` (json): Credential Team Selection
+
+## `session.status.set_progress`
+
+**Set session progress** — Publish completed and total work units for a session, or clear the explicit count with null.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `progress` (json, required): Completed and total units, or null
 
 ## `session.status.set_reason`
 

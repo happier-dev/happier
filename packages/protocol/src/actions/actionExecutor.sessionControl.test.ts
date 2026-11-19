@@ -558,6 +558,26 @@ describe('createActionExecutor (session control)', () => {
       }
     }
   });
+  it('admits progress for the current Session, validates counts and clears status by exact Session id', async () => {
+    const progress = { done: 2, total: 3, label: 'Checks' };
+    const set = ActionIdSchema.parse('session.status.set_progress');
+    const clear = ActionIdSchema.parse('session.status.clear');
+    const writes: unknown[] = [];
+    const executor = createExecutor({ sessionStateFieldSet: async request => {
+      writes.push(request);
+      return { ok: true, sessionId: request.sessionId, version: 1,
+        progress: request.value === 'clear' ? null : request.value };
+    } });
+    const host = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+    expect(await executor.execute(set, { progress }, { ...host, defaultSessionId: 's1' })).toMatchObject({ ok: true });
+    expect(await executor.execute(set, { sessionId: 's1', progress: { done: 4, total: 3 } }, host))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(await executor.execute(clear, { sessionId: 's1' }, host)).toMatchObject({ ok: true });
+    expect(writes).toEqual([
+      expect.objectContaining({ sessionId: 's1', fieldId: 'display.statusProgress', value: progress }),
+      expect.objectContaining({ sessionId: 's1', fieldId: 'display.statusProgress', value: 'clear' }),
+    ]);
+  });
   it('discovers detached prompt responses on autonomous surfaces', async () => {
     const responseAction = 'execution.run.permission.respond';
     const executor = createExecutor();

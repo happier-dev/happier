@@ -15,6 +15,7 @@ export const SESSION_STATE_FIELD_IDS = [
   'intent.acpConfigOption',
   'display.title',
   'display.statusReason',
+  'display.statusProgress',
   'display.bot',
   'display.botFace',
   'runtime.workState',

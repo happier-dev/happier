@@ -1,5 +1,6 @@
 import type { UiSessionManagedWakeFacts } from '../attention/runtimePresentation';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import { readSessionAuthoredDisplayV1 } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { projectSessionAwarenessV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
 import { readSessionRuntimeWorkStatusV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { readSessionTerminalControlServiceabilityStateV1 } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
@@ -16,7 +17,7 @@ import { readSessionOwnerMetadataView } from '../readSessionOwnerMetadataView';
 import { toAwarenessRuntimeInput } from '../attention/runtimePresentation';
 import { readSessionContentAvailability } from '../encryptedContentAvailability';
 import { readSessionUsageLimitRecoveryFromMetadata } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
-import { readSessionListPresentationRuntime, readSessionListPresentationOwnerMetadata, readSessionListPresentationOwnerMetadataField, readSessionListPresentationDisplay, readSessionListPresentationPendingFlags,
+import { readSessionListPresentationRuntime, readSessionListPresentationOwnerMetadata, readSessionListPresentationOwnerMetadataField, readSessionListPresentationDisplay, readSessionListPresentationPendingFlags, readSessionListRenderableOwnerMetadataView,
     readSessionListPresentationPendingObservedAt, type SessionListPresentationSource } from '../listing/sessionListRenderableSessionProjection';
 
 export type UiSessionAwarenessOptions = UiSessionManagedWakeFacts & Readonly<{
@@ -63,9 +64,9 @@ export function createUiSessionAwarenessInput(
     const source = options.presentationSource;
     const hydrated = 'agentState' in session;
     const ownerMetadata = source ? readSessionListPresentationOwnerMetadata(source) : hydrated ? readSessionOwnerMetadataView(session) : null;
-    const ownerWork = source ? readSessionListPresentationOwnerMetadataField(source, 'work') : ownerMetadata?.work;
-    const statusReason = ownerWork && typeof ownerWork === 'object' && 'statusReason' in ownerWork
-        && typeof ownerWork.statusReason === 'string' ? ownerWork.statusReason : undefined;
+    const ownerWork = source && !source.metadataFromRow ? readSessionListPresentationOwnerMetadataField(source, 'work')
+        : source ? readSessionListRenderableOwnerMetadataView(source.row)?.work
+            : hydrated ? ownerMetadata?.work : readSessionListRenderableOwnerMetadataView(session)?.work;
     const presentationMetadata = hydrated ? readSessionListRenderableSourceMetadata(session) : null;
     const hasReadableMetadata = !('metadataUnavailable' in session && session.metadataUnavailable === true);
     const metadata = hasReadableMetadata
@@ -106,10 +107,13 @@ export function createUiSessionAwarenessInput(
             : hydrated ? deriveLatestPendingRequestObservedAtFromSession(session, []) : session.pendingRequestObservedAt),
     });
     const lifecycle = { ...components.lifecycle,
+        latestReadyEventAtMs: source?.lifecycle.latestReadyEventAt ?? session.latestReadyEventAt,
         processTerminalState: metadata?.lifecycleState === 'stopped' ? 'stopped' as const : null };
     return {
         sessionId: session.id,
         origin: session.origin,
+        manager: source?.relations.manager ?? session.manager,
+        managedSessions: source?.relations.managedSessions ?? session.managedSessions,
         nowMs,
         title: options.includeTitle === false ? undefined : readSessionDisplayTitleField({ metadata }).value ?? metadata?.name,
         ...components,
@@ -121,7 +125,10 @@ export function createUiSessionAwarenessInput(
             : hydrated ? readSessionUsageLimitRecoveryFromMetadata(metadata)
             : hasReadableMetadata ? session.metadata?.sessionUsageLimitRecoveryV1 ?? null : null,
         content: readUiSessionContentAvailability(source ? readSessionListPresentationDisplay(source) : session),
-        statusReason,
+        ...readSessionAuthoredDisplayV1(ownerWork),
+        turnRetry: source ? source.metadata?.sessionTurnProgressV1 ?? source.metadataFallback?.sessionTurnProgressV1
+            : hydrated ? session.metadata?.sessionTurnProgressV1 : undefined,
+        viewerUnread: session.viewer?.attention.reasons.includes('unread'),
         work: source ? metadata ? source.metadataFromRow ? source.row.workDisplay
             : readSessionWorkStateV1FromMetadata(metadata) : null
             : hydrated ? metadata ? session.workDisplay !== undefined ? session.workDisplay : readSessionWorkStateV1FromMetadata(metadata) : null : session.workDisplay,

@@ -72,7 +72,11 @@ export function projectSessionOwnerDisplayV1(owner: SessionOwnerMetadataV1): Ses
     } } : {}),
     ...(recovery ? { sessionUsageLimitRecoveryV1: projectSessionUsageLimitRecoveryDisplayV1(recovery) } : {}),
     ...(owner.work?.sessionWorkStateV1 ? { workDisplay: projectSessionWorkDisplayV1(owner.work.sessionWorkStateV1) } : {}),
-    ...(owner.work?.statusReason !== undefined ? { work: { statusReason: owner.work.statusReason } } : {}),
+    ...((owner.work?.statusReason !== undefined || owner.work?.statusProgress !== undefined) ? { work: {
+      ...(owner.work.statusReason !== undefined ? { statusReason: owner.work.statusReason } : {}),
+      ...(owner.work.statusReasonSetAt !== undefined ? { statusReasonSetAt: owner.work.statusReasonSetAt } : {}),
+      ...(owner.work.statusProgress !== undefined ? { statusProgress: owner.work.statusProgress } : {}),
+    } } : {}),
     ...(owner.work?.sessionAgentActivityHeadlineV1 ? { sessionAgentActivityHeadlineV1: SessionAgentActivityHeadlineV1Schema.parse(owner.work.sessionAgentActivityHeadlineV1) } : {}),
     ...(owner.work?.sessionWorkflowActivityHeadlineV1 ? { sessionWorkflowActivityHeadlineV1: SessionWorkflowActivityHeadlineV1Schema.parse(owner.work.sessionWorkflowActivityHeadlineV1) } : {}),
     ...(fork ? { forkV1: { v: 1, parentSessionId: fork.parentSessionId,

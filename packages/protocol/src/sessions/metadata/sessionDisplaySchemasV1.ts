@@ -10,7 +10,7 @@ import { ExternalSessionsAgentIdSchema } from '../external/sourceCatalog.js';
 import { LinkedExternalSessionQualifiedIdentityV1Schema } from '../external/linkedSessionMetadata.js';
 import { SessionUsageLimitRecoveryDisplayV1Schema } from '../state/valueSchemas/usageLimitRecovery.js';
 export { SessionUsageLimitRecoveryDisplayV1Schema, type SessionUsageLimitRecoveryDisplayV1 } from '../state/valueSchemas/usageLimitRecovery.js';
-import { SessionWorkDisplayV1Schema } from '../work/state/sessionWorkStatePrimary.js';
+import { SessionStatusProgressV1Schema, SessionWorkDisplayV1Schema } from '../work/state/sessionWorkStatePrimary.js';
 import { SessionAgentActivityEntryV1Schema } from '../work/agentActivity/agentActivityEntryV1.js';
 import { SessionAgentActivityHeadlineV1Schema } from '../work/agentActivity/agentActivityHeadlineV1.js';
 import { SessionWorkflowActivityHeadlineV1Schema, SessionWorkflowRunHeadlineV1Schema } from '../work/workflow/sessionWorkflowActivityHeadlineV1.js';
@@ -24,6 +24,21 @@ import { ExternalAgentObservationSnapshotV1Schema } from '../external/externalAg
 export const SESSION_OWNER_DISPLAY_ACCOUNT_SCOPED_KIND = 'session_owner_display' as const;
 export const SESSION_SHARED_DISPLAY_PURPOSE_V1 = 'session_shared_display' as const;
 export const SESSION_OWNER_DISPLAY_PURPOSE_V1 = 'session_owner_display' as const;
+
+const sessionAuthoredDisplayShape = () => ({
+  statusReason: z.optional(z.nullable(z.string())),
+  statusReasonSetAt: z.optional(z.number().check(z.int(), z.positive())),
+  statusProgress: z.optional(SessionStatusProgressV1Schema),
+});
+const SessionAuthoredDisplayReadSchema = lazyZodSchema(() => z.object(sessionAuthoredDisplayShape()));
+
+/** Read authored status from either retained owner work metadata or its compact display leaf. */
+export function readSessionAuthoredDisplayV1(work: unknown) {
+  const parsed = SessionAuthoredDisplayReadSchema.safeParse(work);
+  if (!parsed.success) return undefined;
+  const value = parsed.data;
+  return value.statusReason !== undefined || value.statusProgress !== undefined ? value : undefined;
+}
 
 /** Closed recipient-safe display facts. Request ledgers and private metadata never enter this leaf. */
 export const SessionSharedDisplayV1Schema = lazyZodSchema(() => z.strictObject({
@@ -86,7 +101,7 @@ export const SessionOwnerDisplayV1Schema = lazyZodSchema(() => z.strictObject({
   })),
   sessionUsageLimitRecoveryV1: z.optional(SessionUsageLimitRecoveryDisplayV1Schema),
   workDisplay: z.optional(SessionWorkDisplayV1Schema),
-  work: z.optional(z.strictObject({ statusReason: z.optional(z.nullable(z.string())) })),
+  work: z.optional(z.strictObject(sessionAuthoredDisplayShape())),
   sessionAgentActivityHeadlineV1: z.optional(AgentActivityDisplayV1Schema),
   sessionWorkflowActivityHeadlineV1: z.optional(WorkflowActivityDisplayV1Schema),
   forkV1: z.optional(z.strictObject({

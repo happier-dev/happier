@@ -53,9 +53,9 @@ export function resolveSessionListRowContext(input: Readonly<{
     parent?: SessionListRowParentContextFacts | null;
     enabled?: boolean;
     identityDisplay?: SessionListIdentityDisplay;
-    hasProjectFavicon?: boolean;
 }>): Readonly<{ facts: SessionListRowContextFacts; showProject: boolean; showCheckout: boolean;
     identity: Readonly<{ leadingMark: 'agent' | 'project' | 'projectWithAgent' | 'avatar' | 'none';
+        leadingMarkShowsProject: boolean;
         projectPlacement: 'none' | 'context' | 'trailing'; showProjectName: boolean }> }> {
     const { facts, baseline, parent } = input;
     const inAcceptedProject = sameProject(facts.project, input.groupProject);
@@ -92,7 +92,7 @@ export function resolveSessionListRowContext(input: Readonly<{
             leadingMark = 'agent';
             if (projectOutside) {
                 projectPlacement = 'trailing';
-                showProjectName = enabled && input.hasProjectFavicon !== true;
+                showProjectName = enabled;
             }
             break;
         case 'project':
@@ -102,13 +102,9 @@ export function resolveSessionListRowContext(input: Readonly<{
         default:
             leadingMark = projectOutside ? 'projectWithAgent' : 'agent';
     }
-    if (projectOutside && enabled && input.hasProjectFavicon !== true
-        && (leadingMark === 'project' || leadingMark === 'projectWithAgent')) {
-        projectPlacement = 'context';
-        showProjectName = true;
-    }
+    const leadingMarkShowsProject = leadingMark === 'project' || leadingMark === 'projectWithAgent';
     return { facts,
         showProject: enabled && projectOutside,
         showCheckout: enabled && !baselineCheckout && !parentCheckout,
-        identity: { leadingMark, projectPlacement, showProjectName } };
+        identity: { leadingMark, leadingMarkShowsProject, projectPlacement, showProjectName } };
 }

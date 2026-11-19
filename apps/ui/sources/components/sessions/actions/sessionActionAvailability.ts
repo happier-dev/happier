@@ -9,6 +9,7 @@ import {
     SESSION_ACTION_TALK_ID,
     SESSION_ACTION_TOOL_CALLS_TOGGLE_ID,
     SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID,
+    SESSION_ACTION_CLEAR_STATUS_ID,
     SESSION_ACTION_ARCHIVE_ID,
     SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_DELETE_ID,
@@ -125,6 +126,9 @@ export function listVisibleSessionActionIds(params: Readonly<{
     }
     if (surface !== 'selectionActionBar' && target.canWriteOwnerMetadata) {
         ids.push(SESSION_ACTION_TOOL_CALLS_TOGGLE_ID, SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID);
+    }
+    if ((surface === 'rowMenu' || surface === 'nativeContextMenu') && target.canClearStatus) {
+        ids.push(SESSION_ACTION_CLEAR_STATUS_ID);
     }
 
     if (surface === 'sessionHeader' && target.serverId && !target.isArchived) {

@@ -1,6 +1,7 @@
 import { buildExternalSessionAttentionV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { readExternalSessionAttention } from '@/sync/domains/session/external/readExternalSessionAttention';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import { readSessionAuthoredDisplayV1 } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import type { SessionSemanticDisplayV1, SessionOwnerDisplayV1 } from '@happier-dev/protocol/sessions';
 import { readSessionBotV1, readSessionBotFaceV1, areSessionBotFacesEqual, type SessionBotV1, type SessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import type { Metadata } from '@happier-dev/session-core/state';
@@ -34,6 +35,7 @@ export type SessionListRenderableExternalSessionIdentity = Readonly<{
 }>;
 
 export type SessionListRenderableMetadataComparison = Readonly<{
+    work?: SessionListRenderableMetadata['work'];
     sessionUsageLimitRecoveryV1?: SessionListRenderableMetadata['sessionUsageLimitRecoveryV1'];
     lifecycleState?: string;
     projectId?: string | null;
@@ -65,6 +67,7 @@ export type SessionListRenderableMetadataComparison = Readonly<{
 }>;
 
 type SessionListRenderableMetadataComparisonSnapshot = Readonly<{
+    work?: SessionListRenderableMetadata['work'];
     sessionUsageLimitRecoveryV1?: SessionListRenderableMetadata['sessionUsageLimitRecoveryV1'];
     lifecycleState?: string;
     projectId?: string | null;
@@ -233,6 +236,7 @@ function isSessionListRenderableMetadataComparisonSnapshotEqual(
     nextReadStateV1: SessionListRenderableMetadataComparison['readStateV1'],
 ): boolean {
     return previous.lifecycleState === snapshot.lifecycleState
+        && areAuthoredStatusValuesEqual(previous.work, snapshot.work)
         && JSON.stringify(previous.sessionUsageLimitRecoveryV1 ?? null) === JSON.stringify(snapshot.sessionUsageLimitRecoveryV1 ?? null)
         && previous.name === snapshot.name
         && (previous.projectId ?? null) === (snapshot.projectId ?? null)
@@ -314,6 +318,8 @@ export function normalizeSessionListRenderableMetadataComparison(
     }
 
     const next: SessionListRenderableMetadataComparison = {
+        ...(normalizedSnapshot.work ? { work: areAuthoredStatusValuesEqual(previous?.work, normalizedSnapshot.work)
+            ? previous?.work : normalizedSnapshot.work } : {}),
         ...(normalizedSnapshot.sessionUsageLimitRecoveryV1 ? { sessionUsageLimitRecoveryV1: normalizedSnapshot.sessionUsageLimitRecoveryV1 } : {}),
         ...(normalizedSnapshot.lifecycleState === undefined ? {} : { lifecycleState: normalizedSnapshot.lifecycleState }),
         ...(normalizedSnapshot.projectId === undefined ? {} : { projectId: normalizedSnapshot.projectId }),
@@ -353,6 +359,7 @@ export function readSessionListRenderableMetadataComparison(
     if (metadata.bot !== undefined && readSessionBotV1(metadata.bot) === null) return null;
 
     return normalizeSessionListRenderableMetadataComparison({
+        work: readSessionAuthoredDisplayV1(metadata.work),
         sessionUsageLimitRecoveryV1: readSessionUsageLimitRecoveryFromMetadata(metadata),
         lifecycleState: typeof metadata.lifecycleState === 'string' ? metadata.lifecycleState : undefined,
         projectId: typeof metadata.projectId === 'string' || metadata.projectId === null ? metadata.projectId : undefined,
@@ -408,6 +415,7 @@ export function readSessionListRenderableMetadataComparisonFromRenderable(
     if (!metadata) return null;
 
     return normalizeSessionListRenderableMetadataComparison({
+        work: metadata.work,
         sessionUsageLimitRecoveryV1: metadata.sessionUsageLimitRecoveryV1,
         lifecycleState: metadata.lifecycleState,
         projectId: metadata.projectId,
@@ -453,6 +461,7 @@ export function areSessionListRenderableMetadataComparisonsEqual(
     if (!previous || !next) return previous === next;
 
     return previous.lifecycleState === next.lifecycleState
+        && areAuthoredStatusValuesEqual(previous.work, next.work)
         && JSON.stringify(previous.sessionUsageLimitRecoveryV1 ?? null) === JSON.stringify(next.sessionUsageLimitRecoveryV1 ?? null)
         && previous.name === next.name
         && (previous.projectId ?? null) === (next.projectId ?? null)
@@ -482,4 +491,10 @@ export function areSessionListRenderableMetadataComparisonsEqual(
         && (previous.readStateV1?.sessionSeq ?? null) === (next.readStateV1?.sessionSeq ?? null)
         && (previous.readStateV1?.pendingActivityAt ?? null) === (next.readStateV1?.pendingActivityAt ?? null)
         && (previous.readStateV1?.updatedAt ?? null) === (next.readStateV1?.updatedAt ?? null);
+}
+
+function areAuthoredStatusValuesEqual(previous: SessionListRenderableMetadata['work'], next: SessionListRenderableMetadata['work']): boolean {
+    return previous === next || Boolean(previous && next && previous.statusReason === next.statusReason
+        && previous.statusReasonSetAt === next.statusReasonSetAt && previous.statusProgress?.done === next.statusProgress?.done
+        && previous.statusProgress?.total === next.statusProgress?.total && previous.statusProgress?.label === next.statusProgress?.label);
 }

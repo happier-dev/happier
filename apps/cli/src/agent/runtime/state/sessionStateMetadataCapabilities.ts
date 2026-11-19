@@ -13,6 +13,7 @@ export const HOST_SESSION_STATE_METADATA_CAPABILITIES: SessionStateCapabilitiesV
   },
   display: {
     statusReason: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+    statusProgress: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     title: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
   },
   runtime: {

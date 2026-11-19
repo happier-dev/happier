@@ -13,6 +13,8 @@ import { QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema } from '.
 import { SessionModelMutationExpectedV1Schema, SessionModelSetResultV1Schema } from '../../../sessions/control/modelTransitionV1.js';
 import { BotSetInputSchema, BotFaceSetInputSchema, BotFaceStyleSchema, BotFaceBodySchema, BotFacePaletteSchema } from '../../../sessions/identity/sessionBotV1.js';
 import { SessionTitleSetInputSchema, SessionStatusReasonSetInputSchema, SessionStatusReasonSetResultSchema, SessionToolCallsSetInputSchema, SessionMemorySetInputV1Schema, SessionVoicePreferenceSetInputV1Schema, SessionContextUpdateInputV1Schema, SessionInstructionsSetInputV1Schema } from '../../sessionStateFieldActions.js';
+import { SessionStatusClearInputSchema, SessionStatusProgressSetInputSchema, SessionStatusProgressSetResultSchema } from '../../sessionStateFieldActions.js';
+import { SESSION_STATUS_CLEAR_ACTION_ID_V1, SESSION_STATUS_SET_PROGRESS_ACTION_ID_V1 } from '../../actionIds.js';
 import { z } from '../../../zodRuntimePolicy.js';
 import { SessionSpaceMembershipSetInputV1Schema, SessionSpaceMembershipSetResultV1Schema } from '../../sessionSpaceMembership.js';
 import { SetSessionTagAssignmentsRequestSchema, PatchSessionTagAssignmentsRequestSchema, SetSessionTagAssignmentsResponseSchema } from '../../../sessions/organization/mutations.js';
@@ -175,6 +177,33 @@ function createSessionStateActionSpecs() {
     inputSchema: SessionStatusReasonSetInputSchema,
     outputSchema: SessionStatusReasonSetResultSchema,
     cli: { commands: [{ path: ['session', 'set-status-reason'], visibility: 'canonical' }] },
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: SESSION_STATUS_SET_PROGRESS_ACTION_ID_V1, approval: { result: 'none' },
+    title: 'Set session progress',
+    description: 'Publish completed and total work units for a session, or clear the explicit count with null.',
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
+    bindings: { mcpToolName: 'session_status_set_progress' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputHints: { fields: [
+      { path: 'sessionId', title: 'Session id', widget: 'text' },
+      { path: 'progress', title: 'Completed and total units, or null', widget: 'json', required: true },
+    ] },
+    inputSchema: SessionStatusProgressSetInputSchema,
+    outputSchema: SessionStatusProgressSetResultSchema,
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'set-status-progress'], positionals: ['sessionId'], visibility: 'canonical' }] },
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: SESSION_STATUS_CLEAR_ACTION_ID_V1, approval: { result: 'none' },
+    title: 'Clear status',
+    description: 'Clear the session status note and explicit progress.',
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
+    bindings: { mcpToolName: 'session_status_clear' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputHints: { fields: [{ path: 'sessionId', title: 'Session id', widget: 'text' }] },
+    inputSchema: SessionStatusClearInputSchema,
+    outputSchema: SessionStatusProgressSetResultSchema,
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'clear-status'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.title.set', approval: {result: 'none'},

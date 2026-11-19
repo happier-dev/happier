@@ -2,7 +2,9 @@ import { z } from '../zodRuntimePolicy.js';
 import type { SessionBotV1, SessionBotFaceV1 } from '../sessions/identity/sessionBotV1.js';
 import type { ActionExecutorContext } from './executor/types.js';
 import type { AdmittedActionInputById } from './actionSpecs.js';
+import { SESSION_STATUS_CLEAR_ACTION_ID_V1, SESSION_STATUS_SET_PROGRESS_ACTION_ID_V1 } from './actionIds.js';
 import { SessionIdSchema } from '../sessions/idsV1.js';
+import { SessionStatusProgressV1Schema, type SessionStatusProgressV1 } from '../sessions/work/state/sessionWorkStatePrimary.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { SessionContextIntentV1Schema, type SessionContextIntentV1 } from '../sessions/context/sessionContextV1.js';
@@ -22,6 +24,20 @@ export const SessionStatusReasonSetInputSchema = lazyZodSchema(() => z.strictObj
 
 export const SessionStatusReasonSetResultSchema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(true), sessionId: z.string().check(z.minLength(1)), reason: z.nullable(z.string()),
+  version: z.number().check(z.int(), z.nonnegative()),
+}));
+
+export const SessionStatusProgressSetInputSchema = lazyZodSchema(() => z.strictObject({
+  sessionId: z.optional(asProtocolZod(SessionIdSchema)),
+  progress: z.nullable(SessionStatusProgressV1Schema),
+}));
+export const SessionStatusClearInputSchema = lazyZodSchema(() => z.strictObject({
+  sessionId: z.optional(asProtocolZod(SessionIdSchema)),
+}));
+export const SessionStatusProgressSetResultSchema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(true),
+  sessionId: asProtocolZod(SessionIdSchema),
+  progress: z.nullable(SessionStatusProgressV1Schema),
   version: z.number().check(z.int(), z.nonnegative()),
 }));
 
@@ -45,6 +61,8 @@ export const SessionInstructionsSetInputV1Schema = lazyZodSchema(() => (<T exten
 export const SESSION_STATE_FIELD_ACTIONS = {
   'session.title.set': { fieldId: 'display.title', inputKey: 'title' },
   'session.status.set_reason': { fieldId: 'display.statusReason', inputKey: 'reason' },
+  [SESSION_STATUS_SET_PROGRESS_ACTION_ID_V1]: { fieldId: 'display.statusProgress', inputKey: 'progress' },
+  [SESSION_STATUS_CLEAR_ACTION_ID_V1]: { fieldId: 'display.statusProgress' },
   'session.bot.set': { fieldId: 'display.bot', inputKey: 'bot' },
   'session.bot.face.set': { fieldId: 'display.botFace', inputKey: 'face' },
   'session.view.toolCalls.set': { fieldId: 'view.transcriptToolCalls', inputKey: 'showToolCalls' },
@@ -59,6 +77,7 @@ export type SessionStateFieldActionId = keyof typeof SESSION_STATE_FIELD_ACTIONS
 export type SessionStateFieldActionValue =
   | Readonly<{ fieldId: 'display.title'; value: string }>
   | Readonly<{ fieldId: 'display.statusReason'; value: string | null }>
+  | Readonly<{ fieldId: 'display.statusProgress'; value: SessionStatusProgressV1 | null | 'clear' }>
   | Readonly<{ fieldId: 'display.bot'; value: SessionBotV1 | null; expectedValue?: SessionBotV1 | null }>
   | Readonly<{ fieldId: 'display.botFace'; value: SessionBotFaceV1 | null }>
   | Readonly<{ fieldId: 'view.transcriptToolCalls'; value: boolean | null }>
@@ -95,6 +114,12 @@ export function resolveSessionStateFieldActionWrite(
   }
   if (actionId === 'session.status.set_reason') {
     return { fieldId: 'display.statusReason', value: (input as AdmittedActionInputById['session.status.set_reason']).reason };
+  }
+  if (actionId === SESSION_STATUS_SET_PROGRESS_ACTION_ID_V1) {
+    return { fieldId: 'display.statusProgress', value: (input as AdmittedActionInputById[typeof SESSION_STATUS_SET_PROGRESS_ACTION_ID_V1]).progress };
+  }
+  if (actionId === SESSION_STATUS_CLEAR_ACTION_ID_V1) {
+    return { fieldId: 'display.statusProgress', value: 'clear' };
   }
   if (actionId === 'session.voice.preference.set') {
     const request = input as AdmittedActionInputById['session.voice.preference.set'];

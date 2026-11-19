@@ -94,10 +94,15 @@ describe('readSessionStateFieldFromMetadata', () => {
   it('annotates and clears an explanation without rewriting work or runtime facts', () => {
     const metadata = { work: { memoryEnabled: true }, runtimeActivityState: 'running' };
     const updated = writeSessionStateFieldToMetadata(metadata, 'display.statusReason', 'Waiting for build');
-    expect(updated).toEqual({ ...metadata, work: { memoryEnabled: true, statusReason: 'Waiting for build' } });
+    expect(updated).toEqual({ ...metadata, work: { memoryEnabled: true, statusReason: 'Waiting for build', statusReasonSetAt: expect.any(Number) } });
     expect(readSessionStateFieldFromMetadata(updated, 'display.statusReason')).toBe('Waiting for build');
     expect(writeSessionStateFieldToMetadata(updated, 'display.statusReason', 'Waiting for build')).toBe(updated);
     expect(clearSessionStateFieldFromMetadata(updated, 'display.statusReason')).toEqual(metadata);
+    const progress = { done: 2, total: 4, label: 'Build' };
+    const counted = writeSessionStateFieldToMetadata(updated, 'display.statusProgress', progress);
+    expect(readSessionStateFieldFromMetadata(counted, 'display.statusProgress')).toEqual(progress);
+    expect(writeSessionStateFieldToMetadata(counted, 'display.statusProgress', { ...progress })).toBe(counted);
+    expect(writeSessionStateFieldToMetadata(counted, 'display.statusProgress', 'clear')).toEqual(metadata);
   });
   it('reads a bound field through the canonical binding', () => {
     expect(readSessionStateFieldFromMetadata({

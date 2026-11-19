@@ -1,4 +1,5 @@
 import { UsageSessionTimingV1Schema } from '../../usage/usageTimingV1.js';
+import { SessionStatusProgressV1Schema } from '../work/state/sessionWorkStatePrimary.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ApprovalProfileIdV1Schema } from '../../actions/approvalProfiles.js';
 import { BotTemplateDraftRefV1Schema } from '../../bots/templates/botTemplateV1.js';
@@ -1351,6 +1352,8 @@ const SessionOwnerAgentActivityEntryV1Schema = lazyZodSchema(() => z.strictObjec
 const SessionOwnerWorkV1Schema = lazyZodSchema(() => z.strictObject({
   // Authored explanation; lifecycle and item outcome classifications remain runtime-owned.
   statusReason: z.optional(z.string()),
+  statusReasonSetAt: z.optional(TimestampSchema),
+  statusProgress: z.optional(SessionStatusProgressV1Schema),
   bot: z.optional(SessionBotV1Schema),
   createdAsBot: z.optional(z.literal(true)),
   memoryEnabled: z.optional(z.boolean()),

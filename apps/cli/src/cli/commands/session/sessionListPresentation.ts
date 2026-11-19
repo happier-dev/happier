@@ -54,9 +54,16 @@ export const SESSION_LIST_PRESENTATION: ActionCliPresentation = {
         warnIfBotMetadataUnavailable(awareness.botFilterUnavailableCount);
         const plain = context.callerInput.plain === true;
         for (const session of awareness.sessions) {
-          console.log(plain
-            ? session.sessionId
-            : `${session.sessionId}  ${session.title ?? ''}  ${session.operational.primary}  ${session.runtime}  ${session.freshness}`);
+          if (plain) {
+            console.log(session.sessionId);
+            continue;
+          }
+          const progress = session.progress;
+          const count = progress ? `${progress.done}/${progress.total}${progress.label ? ` ${progress.label}` : ''}` : null;
+          console.log([
+            session.sessionId, session.title ?? '', session.operational.primary, session.runtime, session.freshness,
+            ...(session.nowLine ? [session.nowLine] : []), ...(count ? [count] : []),
+          ].join('  '));
         }
       }
       return true;

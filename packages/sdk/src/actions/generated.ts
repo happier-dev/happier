@@ -798,6 +798,8 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "session.sections.update",
   "session.space_membership.set",
   "session.spawn_new",
+  "session.status.clear",
+  "session.status.set_progress",
   "session.status.set_reason",
   "session.stop",
   "session.tags.create",
@@ -3317,7 +3319,9 @@ export type GeneratedActions = Readonly<{
     }> ;
     readonly spawnNew: (input: PublicActionInputById["session.spawn_new"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.spawn_new">>;
     readonly status: Readonly<{
+      readonly clear: (input: PublicActionInputById["session.status.clear"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.status.clear">>;
       readonly get: (input: PublicActionInputById["session.status.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.status.get">>;
+      readonly setProgress: (input: PublicActionInputById["session.status.set_progress"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.status.set_progress">>;
       readonly setReason: (input: PublicActionInputById["session.status.set_reason"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.status.set_reason">>;
     }> ;
     readonly stop: (input: PublicActionInputById["session.stop"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.stop">>;
@@ -6326,7 +6330,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       },
       spawnNew: (input: PublicActionInputById["session.spawn_new"], options?: ActionExecutionOptions) => execute("session.spawn_new", input, options),
       status: {
+        clear: (input: PublicActionInputById["session.status.clear"], options?: ActionExecutionOptions) => execute("session.status.clear", input, options),
         get: (input: PublicActionInputById["session.status.get"], options?: ActionExecutionOptions) => execute("session.status.get", input, options),
+        setProgress: (input: PublicActionInputById["session.status.set_progress"], options?: ActionExecutionOptions) => execute("session.status.set_progress", input, options),
         setReason: (input: PublicActionInputById["session.status.set_reason"], options?: ActionExecutionOptions) => execute("session.status.set_reason", input, options),
       },
       stop: (input: PublicActionInputById["session.stop"], options?: ActionExecutionOptions) => execute("session.stop", input, options),

@@ -4,6 +4,7 @@ import { projectSessionAwarenessV1 } from '@happier-dev/protocol/sessions/awaren
 import { readSessionRuntimeWorkStatusV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { readSessionTerminalControlServiceabilityStateV1 } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import { readSessionAuthoredDisplayV1 } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 import { resolveAwarenessCurrentnessV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
 import { SessionWorkflowActivityHeadlineV1Schema } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
@@ -156,6 +157,9 @@ function buildCliSessionAwarenessInputFromPresentationV1(
     ...(row.managedSessions !== undefined ? { managedSessions: row.managedSessions } : {}),
     ...(row.pendingReviewRuns !== undefined ? { pendingReviewRuns: row.pendingReviewRuns } : {}),
     title: readText(summary?.text) ?? readText(metadata?.name),
+    ...readSessionAuthoredDisplayV1(metadata?.work),
+    turnRetry: metadata?.sessionTurnProgressV1,
+    viewerUnread: row.viewer?.attention.reasons.includes('unread'),
     runtimeIssue: row.lastRuntimeIssue,
     usageLimitRecovery: readSessionUsageLimitRecoveryFromMetadata(metadata),
     lifecycle,

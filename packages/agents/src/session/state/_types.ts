@@ -112,6 +112,8 @@ export type SessionStateFieldWriteValue<F extends SessionStateFieldId> =
         permissionMode: SessionStateFieldValue<F>['permissionMode'];
         updatedAt: number | null;
       }>
+    : F extends 'display.statusProgress'
+      ? SessionStateFieldValue<F> | 'clear'
     : F extends 'display.title'
       ? SessionStateFieldValue<F> | Readonly<{
         title: SessionStateFieldValue<F>;

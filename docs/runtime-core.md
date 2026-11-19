@@ -2730,13 +2730,20 @@ its running work items.
 
 In 0.3 development source, `session.status.set_reason {reason}` edits the current
 Session's explanatory annotation through the registered `display.statusReason`
-field. Its binding writes only `work.statusReason` through the existing metadata
-CAS owner; `null` clears it. Host-stamped Session caller context fixes the source
-Session, and the Action accepts no target selector. Runtime lifecycle, thinking,
-process facts and work-item status-reason codes retain their existing owners.
-Authorized readable awareness carries the explanation separately; locked or
-unavailable content omits it. The UI can consume that projection without deriving
-a second runtime status.
+field. Its binding writes `work.statusReason` and records when the note changes
+through the metadata CAS. Passing `null` clears the note and its timestamp.
+Host-stamped Session caller context fixes the source Session for this Action.
+`session.status.set_progress` writes an authored `{done,total,label?}` count to
+the same owner. `session.status.clear` clears both the note and authored count
+in one metadata update. Both Actions take an exact `sessionId` from a user or
+plugin, or use the host's current Session for an Agent.
+
+Readable awareness chooses the now line from the note, active task, or current
+goal, in that order. Progress comes from the authored count, task list, or
+managed Sessions, in that order. It retains a completed count while the viewer
+has unread Session activity. The note persists through turn end and projects
+its own timestamp when it predates that turn end. Archived rows and rows whose
+content cannot be opened omit these status details.
 
 In 0.3 development source, an acknowledged Session birth can survive a failed
 first native open without a published Agent runtime identity. Inactive recovery

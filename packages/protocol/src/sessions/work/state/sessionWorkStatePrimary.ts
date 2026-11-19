@@ -14,6 +14,18 @@ export const SessionTaskProgressV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type SessionTaskProgressV1 = z.infer<typeof SessionTaskProgressV1Schema>;
 
+export const SessionStatusProgressV1Schema = lazyZodSchema(() => z.strictObject({
+  ...SessionTaskProgressV1Schema.shape,
+  label: z.optional(z.string().check(z.trim(), z.minLength(1))),
+}).check(z.refine(progress => progress.done <= progress.total, { message: 'Done exceeds total' })));
+export type SessionStatusProgressV1 = z.infer<typeof SessionStatusProgressV1Schema>;
+
+export function readCurrentSessionGoalItemV1<T extends Pick<SessionWorkDisplayItemV1, 'kind' | 'status'>>(
+  items: readonly T[],
+): T | null {
+  return items.find(item => item.kind === 'goal' && item.status === 'active') ?? null;
+}
+
 export function isSessionTaskItemV1(item: Pick<SessionWorkDisplayItemV1, 'kind'>): boolean {
   return item.kind === 'task' || item.kind === 'todo';
 }
@@ -36,6 +48,7 @@ export const SessionWorkDisplayV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   primaryItem: z.nullable(SessionWorkDisplayItemV1Schema),
   hasActiveGoal: z.boolean(),
+  currentGoalTitle: z.optional(z.string()),
   taskProgress: z.optional(SessionTaskProgressV1Schema),
 }));
 export type SessionWorkDisplayV1 = z.infer<typeof SessionWorkDisplayV1Schema>;
@@ -52,6 +65,7 @@ export function projectSessionWorkDisplayV1(
   if (!work) return null;
   if (!('items' in work)) return work;
   const primary = readSessionWorkStatePrimaryItemV1(work.items, work.primaryItemId);
+  const currentGoal = readCurrentSessionGoalItemV1(work.items);
   const taskProgress = projectSessionTaskProgressV1(work.items);
   return {
     v: 1,
@@ -62,7 +76,8 @@ export function projectSessionWorkDisplayV1(
       status: primary.status,
       ...(primary.statusReason === undefined ? {} : { statusReason: primary.statusReason }),
     } : null,
-    hasActiveGoal: work.items.some(item => item.kind === 'goal' && item.status === 'active'),
+    hasActiveGoal: currentGoal !== null,
+    ...(currentGoal ? { currentGoalTitle: currentGoal.title } : {}),
     ...(taskProgress ? { taskProgress } : {}),
   };
 }

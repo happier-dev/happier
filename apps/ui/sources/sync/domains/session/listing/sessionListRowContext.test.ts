@@ -61,18 +61,17 @@ describe('Session list row context', () => {
         expect(resolveSessionListRowContext({ facts: { ...keyless, workspaceId: null }, parent: { ...keyless, workspaceId: null } }).showCheckout).toBe(true);
     });
 
-    it('derives every authored mark mode from the same implied Project and shared favicon fact', () => {
+    it('only offers a Project name when the leading mark leaves it implicit', () => {
         const own = resolveSessionListRowContext({ facts, groupProject: project, baseline });
-        expect(own.identity).toEqual({ leadingMark: 'agent', projectPlacement: 'none', showProjectName: false });
-        const outside = (identityDisplay: 'auto' | 'agentLogo' | 'project' | 'projectWithAgent' | 'agentWithTrailingProject' | 'avatar' | 'none', hasProjectFavicon = true) =>
-            resolveSessionListRowContext({ facts, baseline, identityDisplay, hasProjectFavicon }).identity;
-        expect(outside('auto')).toEqual({ leadingMark: 'projectWithAgent', projectPlacement: 'none', showProjectName: false });
-        expect(outside('agentLogo')).toEqual({ leadingMark: 'agent', projectPlacement: 'context', showProjectName: true });
-        expect(outside('project')).toEqual({ leadingMark: 'project', projectPlacement: 'none', showProjectName: false });
-        expect(outside('projectWithAgent')).toEqual({ leadingMark: 'projectWithAgent', projectPlacement: 'none', showProjectName: false });
-        expect(outside('agentWithTrailingProject')).toEqual({ leadingMark: 'agent', projectPlacement: 'trailing', showProjectName: false });
-        expect(outside('avatar')).toEqual({ leadingMark: 'avatar', projectPlacement: 'context', showProjectName: true });
-        expect(outside('none')).toEqual({ leadingMark: 'none', projectPlacement: 'context', showProjectName: true });
-        expect(outside('auto', false)).toEqual({ leadingMark: 'projectWithAgent', projectPlacement: 'context', showProjectName: true });
+        expect(own.identity).toEqual({ leadingMark: 'agent', leadingMarkShowsProject: false, projectPlacement: 'none', showProjectName: false });
+        const outside = (identityDisplay: 'auto' | 'agentLogo' | 'project' | 'projectWithAgent' | 'agentWithTrailingProject' | 'avatar' | 'none') =>
+            resolveSessionListRowContext({ facts, baseline, identityDisplay }).identity;
+        expect(outside('auto')).toEqual({ leadingMark: 'projectWithAgent', leadingMarkShowsProject: true, projectPlacement: 'none', showProjectName: false });
+        expect(outside('agentLogo')).toEqual({ leadingMark: 'agent', leadingMarkShowsProject: false, projectPlacement: 'context', showProjectName: true });
+        expect(outside('project')).toEqual({ leadingMark: 'project', leadingMarkShowsProject: true, projectPlacement: 'none', showProjectName: false });
+        expect(outside('projectWithAgent')).toEqual({ leadingMark: 'projectWithAgent', leadingMarkShowsProject: true, projectPlacement: 'none', showProjectName: false });
+        expect(outside('agentWithTrailingProject')).toEqual({ leadingMark: 'agent', leadingMarkShowsProject: false, projectPlacement: 'trailing', showProjectName: true });
+        expect(outside('avatar')).toEqual({ leadingMark: 'avatar', leadingMarkShowsProject: false, projectPlacement: 'context', showProjectName: true });
+        expect(outside('none')).toEqual({ leadingMark: 'none', leadingMarkShowsProject: false, projectPlacement: 'context', showProjectName: true });
     });
 });

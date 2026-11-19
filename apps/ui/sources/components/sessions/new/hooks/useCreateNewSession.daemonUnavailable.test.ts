@@ -1457,7 +1457,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(modalAlertSpy).toHaveBeenCalled();
     const args = modalAlertSpy.mock.calls[0] ?? [];
     expect(args).toEqual([
-      'newSession.daemonRpcUnavailableTitle',
+      'errors.daemonUnavailableTitle',
       expect.stringContaining('newSession.daemonRpcUnavailableBody'),
       expect.arrayContaining([
         expect.objectContaining({ text: 'common.retry', onPress: expect.any(Function) }),
@@ -1714,7 +1714,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(modalAlertSpy).toHaveBeenCalled();
 
     expect(modalAlertSpy).toHaveBeenCalledWith(
-      'newSession.daemonRpcUnavailableTitle',
+      'errors.daemonUnavailableTitle',
       expect.stringContaining('newSession.daemonRpcUnavailableBody'),
       expect.arrayContaining([
         expect.objectContaining({ text: 'common.retry', onPress: expect.any(Function) }),

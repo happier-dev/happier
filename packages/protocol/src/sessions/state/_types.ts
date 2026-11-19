@@ -11,6 +11,7 @@ import type { SessionModelSelectionIntentV1 } from '../../providers/selection/v1
 import type { RuntimeDescriptorV1 } from '../metadata/runtimeDescriptorV1.js';
 import type { SessionPermissionMode } from '../metadata/sessionPermissionModes.js';
 import type { SessionWorkStateV1 } from '../work/state/sessionWorkStateV1.js';
+import type { SessionStatusProgressV1 } from '../work/state/sessionWorkStatePrimary.js';
 import type { ExternalSessionAttentionV1 } from '../external/linkedSessionMetadata.js';
 import type { ExternalAgentObservationSnapshotV1 } from '../external/externalAgentObservationV1.js';
 import type { ExternalSessionOperationStateV1 } from '../external/operationV1.js';
@@ -76,6 +77,7 @@ export interface SessionStateFieldRegistry {
   'intent.acpConfigOption': { value: AcpConfigOptionIntentV1 };
   'display.title': { value: string };
   'display.statusReason': { value: string | null };
+  'display.statusProgress': { value: SessionStatusProgressV1 | null };
   'display.bot': { value: SessionBotV1 | null };
   'display.botFace': { value: SessionBotFaceV1 | null };
   'runtime.workState': { value: SessionWorkStateV1 };

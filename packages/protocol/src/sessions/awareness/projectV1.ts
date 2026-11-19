@@ -6,6 +6,7 @@ import {
 import {
   normalizeAwarenessTextV1,
   normalizeAwarenessCountV1,
+  normalizeAwarenessTimestampV1,
   type ProjectSessionAwarenessV1Input,
   type SessionLifecycleAwarenessInputV1,
 } from './inputV1.js';
@@ -23,8 +24,10 @@ import {
   type SessionAwarenessRuntimeFactsV1,
 } from './runtime.js';
 import { projectSessionAwarenessWorkHeadlineV1 } from './work.js';
-import { projectSessionWorkDisplayV1 } from '../work/state/sessionWorkStatePrimary.js';
+import { isSessionTaskItemV1, projectSessionWorkDisplayV1, readCurrentSessionGoalItemV1 } from '../work/state/sessionWorkStatePrimary.js';
 import { isSessionUsageLimitIssueCurrentV1 } from '../state/valueSchemas/usageLimitRecovery.js';
+import { readSessionLiveManagedSessionCountV1 } from '../follow/sessionManagerV1.js';
+import { SessionTurnProgressV1Schema } from '../state/valueSchemas/turnProgress.js';
 
 /**
  * The one pure Session-awareness projector (AWR-01).
@@ -80,7 +83,8 @@ export function projectSessionAwarenessV1(
   if (!contentReadable) operational.reasons.push('content_locked');
 
   const title = contentReadable ? normalizeAwarenessTextV1(input.title) : null;
-  const statusReason = contentReadable ? normalizeAwarenessTextV1(input.statusReason) : null;
+  const showStatus = contentReadable && !lifecycle.archivedAtMs;
+  const statusReason = showStatus ? normalizeAwarenessTextV1(input.statusReason) : null;
   const work = contentReadable && input.currentness.work !== 'unavailable'
     ? projectSessionWorkDisplayV1(input.work) : null;
   const currentWork = projectSessionAwarenessWorkHeadlineV1({
@@ -89,6 +93,25 @@ export function projectSessionAwarenessV1(
     contentReadable,
     workEvidenceUnavailable: input.currentness.work === 'unavailable',
   });
+  const primary = work?.primaryItem;
+  const taskTitle = primary?.status === 'active' && isSessionTaskItemV1(primary) ? normalizeAwarenessTextV1(primary.title) : null;
+  const goalTitle = normalizeAwarenessTextV1(work?.currentGoalTitle ?? (primary ? readCurrentSessionGoalItemV1([primary])?.title : null));
+  const nowLine = showStatus ? statusReason ?? taskTitle ?? goalTitle : null;
+  const nowLineKind = nowLine ? statusReason ? 'note' : taskTitle ? 'task' : 'goal' : null;
+  const noteSetAt = statusReason ? normalizeAwarenessTimestampV1(input.statusReasonSetAt) : null;
+  const turnStatus = lifecycle.latestTurnStatus;
+  const turnEndedAt = turnStatus === 'completed' || turnStatus === 'failed' || turnStatus === 'cancelled'
+    ? normalizeAwarenessTimestampV1(lifecycle.latestTurnStatusObservedAtMs)
+      ?? normalizeAwarenessTimestampV1(lifecycle.latestReadyEventAtMs)
+    : normalizeAwarenessTimestampV1(lifecycle.latestReadyEventAtMs);
+  const statusReasonSetAt = noteSetAt !== null && turnEndedAt !== null && noteSetAt < turnEndedAt ? noteSetAt : null;
+  const reports = input.managedSessions;
+  const reportTotal = readSessionLiveManagedSessionCountV1(reports);
+  const count = showStatus ? input.statusProgress ?? work?.taskProgress
+    ?? (reports && reportTotal > 0 ? { done: reports.finished, total: reportTotal } : null) : null;
+  const complete = count !== null && count.done === count.total;
+  const progress = count && (!complete || input.viewerUnread === true)
+    ? { ...count, complete, dim: operational.primary !== 'working' && !runtimeFacts.backgroundActive } : null;
   const workspace = contentReadable ? normalizeAwarenessWorkspaceV1(input.workspace) : undefined;
   const workStatus = contentReadable && !runtimeUnavailable && runtimeFacts.runtime !== 'offline'
     && lifecycle.processTerminalState !== 'stopped' && !lifecycle.archivedAtMs
@@ -96,6 +119,8 @@ export function projectSessionAwarenessV1(
   const lineage = contentReadable ? input.lineage ?? undefined : undefined;
   const runningWorkCount = normalizeAwarenessCountV1(input.managedSessions?.working)
     + (runtimeFacts.freshness === 'live' ? runtimeFacts.reportedActiveCount : 0);
+  const retry = showStatus && operational.primary === 'working' && input.turnRetry != null
+    ? SessionTurnProgressV1Schema.safeParse(input.turnRetry) : null;
 
   return {
     v: SESSION_AWARENESS_PROJECTION_VERSION_V1,
@@ -106,6 +131,13 @@ export function projectSessionAwarenessV1(
     ...(input.pendingReviewRuns !== undefined && input.pendingReviewRuns !== null ? { pendingReviewRuns: normalizeAwarenessCountV1(input.pendingReviewRuns) } : {}),
     ...(title ? { title } : {}),
     ...(statusReason ? { statusReason } : {}),
+    ...(nowLine ? { nowLine } : {}),
+    ...(nowLineKind ? { nowLineKind } : {}),
+    ...(statusReasonSetAt !== null ? { statusReasonSetAt } : {}),
+    ...(runtimeFacts.freshness === 'stale' && runtimeFacts.lastObservedAtMs !== null
+      ? { staleSinceObservationAtMs: runtimeFacts.lastObservedAtMs } : {}),
+    ...(progress ? { progress } : {}),
+    ...(retry?.success ? { turnRetry: { attempt: retry.data.attempt, reason: retry.data.reason } } : {}),
     lifecycle: resolveSessionAwarenessLifecycleV1(lifecycle, lifecycleUnavailable),
     ...(contentReadable && lifecycle.processTerminalState === 'stopped' ? { processTerminalState: 'stopped' as const } : {}),
     runtime: workStatus ? 'waiting' : runtimeFacts.runtime,

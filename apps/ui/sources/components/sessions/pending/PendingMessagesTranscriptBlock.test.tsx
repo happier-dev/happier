@@ -1544,7 +1544,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         }));
 
         expect(screen.findByTestId('pendingMessages.pendingAffordanceLabel:server-p-delivering')?.props.children)
-            .toBe('Queued in Claude');
+            .toBe('Queued in Claude · sends after the current step');
         expect(resolvePreferredServerIdForSessionId).not.toHaveBeenCalled();
 
         modalConfirm.mockResolvedValueOnce(true);

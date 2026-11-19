@@ -91,6 +91,7 @@ export { SESSION_LIST_DOCUMENT_ADMISSION, areSessionListDocumentAdmissionsEqual,
 export { derivePendingRequestFlagsFromAgentState } from '@/sync/domains/session/pending/listPendingSessionRequests';
 
 export interface SessionListRenderableMetadata {
+    work?: import('@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1').SessionOwnerDisplayV1['work'];
     sessionUsageLimitRecoveryV1?: SessionUsageLimitRecoveryV1 | SessionUsageLimitRecoveryDisplayV1 | null;
     /** Process lifecycle fact, retained for the shared status presenter. */
     lifecycleState?: string;

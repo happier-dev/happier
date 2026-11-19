@@ -487,7 +487,7 @@ describe('buildSessionListRowViewModels', () => {
         expect(second[0]).toBe(first[0]);
     });
 
-    it('preserves the other 199 row identities when one work headline changes', () => {
+    it('preserves the other 199 row identities when one work headline or authored status changes', () => {
         const listItems = Array.from({ length: 200 }, (_, index) => ({
             type: 'session', sessionId: `awareness-locality-${index}`, serverId: 'server_a',
             storageKind: 'persisted', groupKey: 'locality', groupKind: 'date',
@@ -512,6 +512,17 @@ describe('buildSessionListRowViewModels', () => {
         expect(second[100]?.sessionStatus?.awareness?.currentWork?.title).toBe('Review migration');
         expect(second[100]).not.toBe(first[100]);
         expect(second.filter((row, index) => row === first[index])).toHaveLength(199);
+
+        const authoredSession: SessionListRenderableSession = { ...updatedSession, metadata: {
+            ...updatedSession.metadata!, work: { statusReason: 'Running tests', statusProgress: { done: 2, total: 3 } },
+        } };
+        const third = buildSessionListRowViewModels({ ...input,
+            rowRenderableByKey: new Map(listItems.map((item, index) => [rowKey(item), index === 100 ? authoredSession : sessions[index]!])),
+        });
+        expect(third[100]?.sessionStatus?.awareness).toMatchObject({
+            nowLine: 'Running tests', progress: { done: 2, total: 3, complete: false },
+        });
+        expect(third.filter((row, index) => row === second[index])).toHaveLength(199);
     });
 
     it('preserves canonical working state and pulse without row-local animation policy', async () => {

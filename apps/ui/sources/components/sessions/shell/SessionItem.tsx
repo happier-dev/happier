@@ -752,7 +752,7 @@ const SessionItemContent = React.memo(
         const { theme } = useUnistyles();
         // A Project-led mark observes the Project's one shared favicon result (P5 U5): the visible Project
         // header owns the demand, so a row never resolves, retries or holds the request (`demand: false`).
-        const rowFaviconSource = rowContext && (rowContext.leadingMark === 'project' || rowContext.leadingMark === 'projectWithAgent')
+        const rowFaviconSource = rowContext?.leadingMarkShowsProject
             ? rowContext.projectFaviconSource : null;
         const rowProjectFavicon = useWorkspaceFavicon({
             enabled: rowFaviconSource !== null,

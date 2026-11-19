@@ -1,4 +1,5 @@
 import type { SessionBotFaceV1, SessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { SESSION_STATUS_CLEAR_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -14,6 +15,12 @@ function addressFor(sessionId: string, scope?: Readonly<{ serverId?: string | nu
 }
 
 export const sessionDisplayActions = {
+    clearStatus(sessionId: string, scope?: Readonly<{ serverId?: string | null }>) {
+        const address = addressFor(sessionId, scope);
+        if (!address) return Promise.resolve({ ok: false as const, errorCode: 'session_not_selected', error: 'Session Home is unavailable or ambiguous' });
+        execute ??= createFrontDoorActionExecute();
+        return execute(SESSION_STATUS_CLEAR_ACTION_ID_V1, { sessionId: address.sessionId }, { surface: 'ui', serverId: address.serverId });
+    },
     setBot(sessionId: string, bot: SessionBotV1 | null, scope?: Readonly<{ serverId?: string | null }>) {
         const address = addressFor(sessionId, scope);
         if (!address) return Promise.resolve({ ok: false as const, errorCode: 'session_not_selected', error: 'Session Home is unavailable or ambiguous' });

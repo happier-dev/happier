@@ -41,6 +41,8 @@ export function isSessionSpawnHomeDefaultsReadEffectV1(rootActionId: string, eff
   return rootActionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && effectActionId === 'home.governance.get';
 }
 export const SESSION_PERMISSION_MODE_SET_ACTION_ID_V1 = 'session.permission_mode.set' as const;
+export const SESSION_STATUS_CLEAR_ACTION_ID_V1 = 'session.status.clear' as const;
+export const SESSION_STATUS_SET_PROGRESS_ACTION_ID_V1 = 'session.status.set_progress' as const;
 export const EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1 = 'sessions.external.candidates.list' as const;
 export const EXTERNAL_SESSION_CANDIDATE_DELETE_ACTION_ID_V1 = 'sessions.external.candidate.delete' as const;
 export const SCM_REMOTE_PUSH_ACTION_ID_V1 = 'scm.remote.push' as const;
@@ -541,6 +543,8 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.space_membership.set',
     'session.title.set',
     'session.status.set_reason',
+    SESSION_STATUS_SET_PROGRESS_ACTION_ID_V1,
+    SESSION_STATUS_CLEAR_ACTION_ID_V1,
     'session.coordinator.enable',
     'session.bot.set',
   'session.bot.face.set',

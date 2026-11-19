@@ -25,7 +25,7 @@ import { sessionRoleBinding, sessionRoleConfigurationBinding } from './role.js';
 import { sessionUsageLimitRecoveryBinding } from './usageLimitRecovery.js';
 import { summaryTextBinding } from './summaryText.js';
 import { sessionBotBinding, sessionBotFaceBinding } from './sessionIdentity.js';
-import { sessionStatusReasonBinding } from './statusReason.js';
+import { sessionStatusProgressBinding, sessionStatusReasonBinding } from './statusReason.js';
 import { sessionMemoryEnabledBinding, sessionContextBinding, sessionVoicePreferenceBinding, sessionApprovalProfileBinding, sessionTemplateDraftRefBinding, sessionTemplateInstanceBinding } from './context.js';
 import { transcriptToolCallsBinding } from './transcriptToolCalls.js';
 import {
@@ -53,6 +53,7 @@ const SESSION_STATE_METADATA_BINDINGS = {
   'display.bot': sessionBotBinding,
   'display.botFace': sessionBotFaceBinding,
   'display.statusReason': sessionStatusReasonBinding,
+  'display.statusProgress': sessionStatusProgressBinding,
   'view.transcriptToolCalls': transcriptToolCallsBinding,
   'runtime.workState': sessionWorkStateBinding,
   'runtime.turnProgress': sessionTurnProgressBinding,
@@ -155,6 +156,8 @@ export function clearSessionStateFieldFromMetadata(
       return sessionBotFaceBinding.write(metadata, { value: null });
     case 'display.statusReason':
       return sessionStatusReasonBinding.write(metadata, { value: null });
+    case 'display.statusProgress':
+      return sessionStatusProgressBinding.write(metadata, { value: null });
     case 'view.transcriptToolCalls':
       return transcriptToolCallsBinding.write(metadata, { value: null });
     case 'runtime.workState':

@@ -6,6 +6,7 @@ export const SESSION_ACTION_MAKE_BOT_ID = 'ui.session.make-bot';
 export const SESSION_ACTION_MAKE_REGULAR_ID = 'ui.session.make-regular';
 export const SESSION_ACTION_TOOL_CALLS_TOGGLE_ID = 'ui.session.tool-calls.toggle';
 export const SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID = 'ui.session.tool-calls.use-default';
+export { SESSION_STATUS_CLEAR_ACTION_ID_V1 as SESSION_ACTION_CLEAR_STATUS_ID } from '@happier-dev/protocol/actions/actionIds';
 export const SESSION_ACTION_RESUME_ID = 'ui.session.resume';
 export const SESSION_ACTION_STOP_ID = 'ui.session.stop';
 export const SESSION_ACTION_ARCHIVE_ID = 'ui.session.archive';

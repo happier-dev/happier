@@ -2,6 +2,7 @@ import type {
     SessionWorkStateItem,
     SessionWorkStateSnapshot,
 } from '@/sync/domains/session/workState/sessionWorkStateTypes';
+import { readCurrentSessionGoalItemV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
 
 /**
  * Pure goal selectors for the goal controller (G6). Extracted from the React hook so goal selection
@@ -63,7 +64,7 @@ export function resolveEditableGoalItem(snapshot: SessionWorkStateSnapshot | nul
  * as a single predicate so the controller and label surfaces agree on what "current" means.
  */
 export function resolveCurrentGoalItem(snapshot: SessionWorkStateSnapshot | null): SessionWorkStateItem | null {
-    return snapshot?.items.find((item) => item.kind === 'goal' && item.status === 'active') ?? null;
+    return snapshot ? readCurrentSessionGoalItemV1(snapshot.items) : null;
 }
 
 /** Whether the explicit goal-chip creation surface should render. */

@@ -3,7 +3,7 @@ import type { SessionUsageLimitRecoveryPresentationV1 } from '../state/valueSche
 import type { SessionManagerV1, SessionManagedSessionsV1 } from '../follow/sessionManagerV1.js';
 import type { SessionRuntimeActivityState } from '../runtime/activity/sessionRuntimeActivity.js';
 import type { SessionWorkStateV1 } from '../work/state/sessionWorkStateV1.js';
-import type { SessionWorkDisplayV1 } from '../work/state/sessionWorkStatePrimary.js';
+import type { SessionStatusProgressV1, SessionWorkDisplayV1 } from '../work/state/sessionWorkStatePrimary.js';
 import type { SessionWorkflowActivityHeadlineV1 } from '../work/workflow/sessionWorkflowActivityHeadlineV1.js';
 import type {
   SessionAwarenessLineageV1,
@@ -104,6 +104,11 @@ export type ProjectSessionAwarenessV1Input = Readonly<{
   title?: string | null;
   /** Authored explanation only; never evidence for lifecycle or operational state. */
   statusReason?: string | null;
+  statusReasonSetAt?: number | null;
+  turnRetry?: unknown;
+  statusProgress?: SessionStatusProgressV1 | null;
+  /** Already decided by the viewer's personal attention owner. */
+  viewerUnread?: boolean;
   runtimeIssue?: SessionRuntimeIssueV1 | null;
   usageLimitRecovery?: SessionUsageLimitRecoveryPresentationV1 | null;
   lifecycle: SessionLifecycleAwarenessInputV1;

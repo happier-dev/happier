@@ -57,6 +57,7 @@ function createSessionStateCapabilitySchemas(strict: boolean) {
       display: z.optional(object({
           title: z.optional(SessionStateFieldCapabilitySchema),
           statusReason: z.optional(SessionStateFieldCapabilitySchema),
+          statusProgress: z.optional(SessionStateFieldCapabilitySchema),
           bot: z.optional(SessionStateFieldCapabilitySchema),
           botFace: z.optional(SessionStateFieldCapabilitySchema),
         })),

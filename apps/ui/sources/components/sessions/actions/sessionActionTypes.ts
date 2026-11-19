@@ -5,6 +5,7 @@ import type { SessionStopRecovery } from '@/sync/ops/sessionStopContract';
 import type { SessionArchiveOperation } from '@/sync/domains/session/listing/sessionArchiveState';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { SessionArchiveActionResultV1 } from '@happier-dev/protocol/sessions/control/contract';
+import type { SESSION_ACTION_CLEAR_STATUS_ID } from './sessionActionIds';
 
 export type SessionActionSurface =
     | 'rowMenu'
@@ -24,6 +25,7 @@ export type SessionActionId =
     | 'ui.session.make-regular'
     | 'ui.session.tool-calls.toggle'
     | 'ui.session.tool-calls.use-default'
+    | typeof SESSION_ACTION_CLEAR_STATUS_ID
     | 'ui.session.resume'
     | 'ui.session.stop'
     | 'ui.session.archive'
@@ -86,6 +88,7 @@ export type SessionActionTarget = Readonly<{
     canRename: boolean;
     /** Owner-private field edits require a readable same-Home owner projection. */
     canWriteOwnerMetadata: boolean;
+    canClearStatus?: boolean;
     /** The Session's own Show tool calls choice from its owner metadata; `null`/absent follows the default. */
     toolCallsOverride?: boolean | null;
     canResume: boolean;

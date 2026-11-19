@@ -8,6 +8,8 @@ import type { SessionPersonalAttentionReasonV1 } from '../personal/attention.js'
 export type SessionAwarenessPresentationFactsV1 = Readonly<{
   runtime: SessionAwarenessProjectionV1['runtime'];
   workStatus?: SessionAwarenessProjectionV1['workStatus'];
+  turnRetry?: SessionAwarenessProjectionV1['turnRetry'];
+  staleSinceObservationAtMs?: SessionAwarenessProjectionV1['staleSinceObservationAtMs'];
   encryption?: SessionAwarenessProjectionV1['encryption'];
   lifecycle?: SessionAwarenessProjectionV1['lifecycle'];
   freshness?: SessionAwarenessProjectionV1['freshness'];

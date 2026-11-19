@@ -181,7 +181,7 @@ export function readSessionListRenderableSharedMetadata(
     if (cached) return cached;
     // `flavor` in a list row is projected from public agentPresentation, never the private owner flavor.
     const agentId = Reflect.get(metadata, 'flavor');
-    const displayMetadata = metadata as Metadata;
+    const { work: _ownerStatus, ...displayMetadata } = metadata as Metadata;
     const sharedMetadata = { ...displayMetadata, v: 1,
         agentPresentation: typeof agentId === 'string' && agentId ? { agentId } : undefined };
     sharedMetadataByDisplayMetadata.set(metadata, sharedMetadata);

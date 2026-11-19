@@ -14,6 +14,7 @@ import type { SessionWorkStateSnapshot } from '@/sync/domains/session/workState/
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { hapticsLight } from '@/components/ui/theme/haptics';
 import { t } from '@/text';
+import { presentSessionGoalLabelV1 } from '@/utils/sessions/sessionUtils';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
 import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
@@ -51,7 +52,7 @@ export function createGoalActionChip(params: Readonly<{
     // `currentObjective` + `editableGoal` props (not the full work-state snapshot), so frequent
     // task/workflow progress updates do not churn the chip's accessible identity.
     const accessibilityLabel = hasGoal
-        ? t('session.workState.badge.goal', { title: objective })
+        ? presentSessionGoalLabelV1(objective)
         : t('session.workState.goal.set');
 
     return {

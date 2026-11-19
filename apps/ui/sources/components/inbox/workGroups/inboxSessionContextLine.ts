@@ -3,6 +3,7 @@ import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { resolveSessionContextLine } from '@/sync/domains/session/presentation/sessionContextPresentation';
 import { readSessionAwarenessPresentationV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import { t } from '@/text';
+import { presentSessionAwarenessNowLineV1 } from '@/utils/sessions/sessionUtils';
 import { sessionFollowSourceRuntimeStateLabel } from '@/components/sessions/follow/sessionFollowSourcePresentation';
 import { presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { readSessionListPresentationRuntime } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
@@ -71,7 +72,7 @@ export function buildInboxSessionReasonLine(
 ): string | undefined {
   let reason: string | null = null;
   if (options.showNeed !== false) {
-    reason = candidate.awareness.statusReason?.trim() || null;
+    reason = presentSessionAwarenessNowLineV1(candidate.awareness) ?? null;
     if (!reason && candidate.personalAttention.reasons.includes('failed')) {
       const issue = candidate.presentationSource ? readSessionListPresentationRuntime(candidate.presentationSource).lastRuntimeIssue : candidate.session.lastRuntimeIssue;
       reason = presentSessionRuntimeIssue(issue).summary;

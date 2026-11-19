@@ -3614,6 +3614,8 @@ export const ja: TranslationStructure = {
     encryptedPreparing: "暗号化アクセスを準備中",
     encryptedRepairNeeded: "暗号化アクセスの修復が必要です",
     awaitingUpdates: "更新を待機中",
+    updatedAtTime: ({ time }: { time: string }) => `更新 ${time}`,
+    tryingAgain: '再試行中',
     waitingForStartupLock: 'このマシンで別のセッションの起動が完了するのを待っています…',
     queuedInput: "入力待ち",
     unread: "未読",
@@ -3625,7 +3627,6 @@ export const ja: TranslationStructure = {
     online: "オンライン",
     working: "作業中...",
     archiving: "アーカイブ中…",
-    workingRetained: "作業中、更新待ち…",
         backgroundActive: 'バックグラウンドで作業中',
         workingExternally: '外部で作業中',
         needsInputExternally: '外部で入力待ち',
@@ -3635,7 +3636,7 @@ export const ja: TranslationStructure = {
         recentlyActive: '最近アクティブ',
         externalStatusUnknown: '外部ステータス不明',
     readyForReview: "レビュー準備完了",
-    keptInAttention: "「確認が必要」に保持中",
+    keptInAttention: "「対応が必要」に残しました",
     canceled: "キャンセル済み",
     offline: "オフライン",
     lastSeen: ({ time }: { time: string }) => `最終アクセス: ${time}`,
@@ -7904,7 +7905,7 @@ localTailscale: {
           `${home} のサインインは、アドレスが確認されなかったため中止されました。`,
       failedToForkSession: "セッションの分岐に失敗しました",
       connectedAccountsUnavailable: '接続済みアカウントは現在利用できません。接続を確認して、もう一度お試しください。',
-      daemonUnavailableTitle: "デーモンを利用できません",
+      daemonUnavailableTitle: "このマシンで Happier が動作していません",
       daemonUnavailableBody:
         "このマシン上のデーモンに接続できません。オフライン、起動中、またはHomeから切断されている可能性があります。",
       agentIsolationMemberSetupAskManager: "マシン管理者に、個別ユーザーの設定を依頼してください。",
@@ -8203,8 +8204,6 @@ localTailscale: {
       `ディレクトリ ${directory} は存在しません。作成しますか？`,
     sessionStarted: "セッションが開始されました",
     sessionStartedMessage: "セッションが正常に開始されました。",
-    sessionSpawningFailed:
-      "セッションの生成に失敗しました - セッションIDが返されませんでした。",
     startingSession: "セッションを開始中...",
     startNewSessionInFolder: "このフォルダで新しいセッション",
     failedToStart:
@@ -8216,7 +8215,6 @@ localTailscale: {
       "セッションの開始がタイムアウトしました。マシンが遅いか、デーモンが応答していない可能性があります。",
     notConnectedToServer:
       "サーバーに接続されていません。インターネット接続を確認してください。",
-    daemonRpcUnavailableTitle: "デーモンを利用できません",
     daemonRpcUnavailableBody:
       "このマシン上のデーモンに接続できません。オフライン、起動中、またはサーバーから切断されている可能性があります。",
     launchStillPendingTitle: "起動処理はまだ進行中です",
@@ -8902,6 +8900,7 @@ localTailscale: {
       },
     },
     toolCalls: "ツール呼び出し",
+    clearStatus: 'ステータスを消去',
     toolCallActions: {
       show: 'ツール呼び出しを表示',
       useDefault: 'デフォルトを使用',
@@ -9419,13 +9418,13 @@ localTailscale: {
         deliveryStatus: {
           blocked: 'ブロック済み',
           delivering: '配信中',
-          queuedInClaude: 'Claude でキュー待ち',
+          queuedInClaude: 'Claude で待機中 · 現在のステップが終わると送信',
           notStarted: '開始されませんでした',
           nextTurn: '次のターンを待機中',
         },
         queuedReasons: {
           waitingForForegroundTurn: '現在のターンの完了を待っています',
-          waitingForRuntimeActivity: 'ランタイムの処理完了を待っています',
+          waitingForRuntimeActivity: '現在の作業が終わるのを待っています',
           runtimeActivityUnknown: 'ランタイムの状態を待っています',
           waitingForPredecessor: '前のメッセージを待っています',
           waitingForBlockedPredecessor: 'ブロックされたメッセージの後ろ',
@@ -9434,12 +9433,12 @@ localTailscale: {
           unsupportedAction: '配信アクションの確認が必要です',
         },
         deliveryBlockedReasons: {
-          terminalComposerDraft: 'ターミナルの下書きが配信をブロックしています',
+          terminalComposerDraft: '端末の下書きにより保留',
           captureStyleUnavailable: 'ターミナルキャプチャでコンポーザーを確認できません',
           providerUnavailableBeforeAcceptance: 'プロバイダーは一時的に利用できません',
           ambiguousTerminalDelivery: '配信状態が不明確です',
           terminalHostUnreachable: 'ターミナルホストに到達できません',
-          runtimeDisposedBeforeDelivery: '配信前にランタイムが閉じました',
+          runtimeDisposedBeforeDelivery: '未送信：セッション停止',
           targetUnavailable: '選択したエージェント会話は利用できなくなりました。何も送信されていません。',
           runtimeConfigBlocked: 'ランタイム設定が配信をブロックしています',
           invalidPromptText: 'メッセージ本文を配信できません',

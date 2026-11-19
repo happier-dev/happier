@@ -106,7 +106,6 @@ export function sessionWorkStatusFactsFromStatus(
                     ? '' : t('status.unknownState')
             // A pending request is named in one short word (lab `clicon:word`): the request it is, not "Action required".
             // A blocked delivery or blocked input keeps the presenter's own word.
-            : status.state === 'permission_required' ? t('workStatus.words.permission')
             : status.state === 'action_required' && (requestReason === 'user_action_required'
                 || status.awareness.operational.reasons.includes('action_required')) ? t('workStatus.words.question')
             : status.statusText,
