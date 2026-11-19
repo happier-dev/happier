@@ -1,5 +1,6 @@
 import { createCliPrivateLabelActionOpener, deriveCliPrivateLabelAccountKey, openCliMachinePoolPrivateView, prepareCliPrivateLabels } from '@/api/privateLabels';
 import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { TEAM_CREDENTIAL_GET_ACTION_ID_V1, isTeamCredentialRetainedLabelActionIdV1 } from '@happier-dev/protocol/teams/credentials/actionIdsV1';
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { openManagedMachineRead } from '@/machines/managed/readManagedMachine';
@@ -462,7 +463,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       }
       const accountId = input.credentials?.token === input.token ? readAccountIdFromToken(input.token) : null;
       const prepared = await prepareApiTokenDeploymentAuthoring({ actionId, value: authored, context,
-        host: { ...(initialDeployApproval ? { initialDeployApproval } : {}),
+        host: { ...(initialDeployApproval ? { initialDeployApproval } : {}), privateLabelPrepare: deps.privateLabelPrepare,
           ...(accountId ? { nativeAccount: { accountId, serverId,
             isCurrent: async () => { await assertCurrent(); return true; } } } : {}) } });
       const body = prepared.body.deployment && serverIdentityId
@@ -1288,9 +1289,12 @@ export function createAccountServerActionDeps(input: Readonly<{
       if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
         return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
       }
+      const labelActionId = actionContext.presentUserApproval?.actionId
+        ?? actionContext.externalActionExecutionAuthorization?.binding.actionId;
       const requestHeaders = resolveRequestHeaders({
         context: actionContext,
-        effectActionId: actionId,
+        effectActionId: actionId === TEAM_CREDENTIAL_GET_ACTION_ID_V1 && labelActionId
+          && isTeamCredentialRetainedLabelActionIdV1(labelActionId) ? labelActionId : actionId,
         method: request.method,
         path: request.path,
         ...(request.body === undefined ? {} : { body: request.body }),

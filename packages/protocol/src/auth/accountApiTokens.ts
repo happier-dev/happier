@@ -13,6 +13,9 @@ const AccountApiTokenInstantV1Schema = lazyZodSchema(() => z.string().check(z.is
 const AccountApiTokenDisplayPrefixV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^hap_v1_[0-9a-f]{8}$/u)));
 /** The client-owned plaintext input bound before an Account label is sealed. */
 export const AccountApiTokenLabelV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
+export function accountApiTokenLabelBindingV1(tokenId: string) {
+  return { entity: 'account_api_token', field: 'label', id: tokenId } as const;
+}
 const ACCOUNT_API_TOKEN_BEARER_V1_PATTERN =
   /^hap_v1_([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})_([A-Za-z0-9_-]{43})$/u;
 export const AccountApiTokenBearerV1Schema = lazyZodSchema(() => z.string().check(z.regex(ACCOUNT_API_TOKEN_BEARER_V1_PATTERN)));
@@ -83,7 +86,7 @@ export const AccountApiTokenDeploymentInputV1Schema = lazyZodSchema(() => z.stri
 export type AccountApiTokenDeploymentInputV1 = z.infer<typeof AccountApiTokenDeploymentInputV1Schema>;
 
 /** The Account is derived from verified credential provenance, never this input. */
-export const AccountApiTokensCreateActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+export const AccountApiTokensCreateHttpInputV1Schema = lazyZodSchema(() => z.strictObject({
   tokenId: ApiTokenUuidV4Schema,
   label: PrivateLabelStoredV1Schema,
   expiresAt: z.optional(z.nullable(AccountApiTokenInstantV1Schema)),
@@ -93,22 +96,34 @@ export const AccountApiTokensCreateActionInputV1Schema = lazyZodSchema(() => z.s
   embedConfig: z.optional(EmbedConfigV1Schema),
   deployment: z.optional(AccountApiTokenDeploymentInputV1Schema),
 }));
+const ApiTokenAuthoredOrPreparedLabelV1Schema = lazyZodSchema(() =>
+  z.union([AccountApiTokenLabelV1Schema, PrivateLabelStoredV1Schema]));
+export const AccountApiTokensCreateActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...AccountApiTokensCreateHttpInputV1Schema.shape,
+  label: ApiTokenAuthoredOrPreparedLabelV1Schema,
+}));
+export type AccountApiTokensCreateHttpInputV1 = z.infer<typeof AccountApiTokensCreateHttpInputV1Schema>;
 export type AccountApiTokensCreateActionInputV1 = z.infer<typeof AccountApiTokensCreateActionInputV1Schema>;
 
-export const AccountApiTokensUpdateActionInputV1Schema = lazyZodSchema(() => z.strictObject({
-  tokenId: AccountApiTokenIdV1Schema,
-  /** Refreshes this token's evidence from the authenticated present person, never input evidence. */
-  authorizeUnattendedTeamAccess: z.optional(z.literal(true)),
-  label: z.optional(PrivateLabelStoredV1Schema),
-  grant: z.optional(ApiTokenGrantV1Schema),
-  embedConfig: z.optional(z.nullable(EmbedConfigV1Schema)),
-  deployment: z.optional(z.nullable(AccountApiTokenDeploymentInputV1Schema)),
-}).check(z.refine((value) => value.label !== undefined || value.grant !== undefined || value.embedConfig !== undefined
-  || value.deployment !== undefined || value.authorizeUnattendedTeamAccess === true, 'An update must contain at least one change.')));
+function accountApiTokenUpdateInputSchema<T extends z.ZodMiniType>(label: T) {
+  return z.strictObject({
+    tokenId: AccountApiTokenIdV1Schema,
+    /** Refreshes this token's evidence from the authenticated present person, never input evidence. */
+    authorizeUnattendedTeamAccess: z.optional(z.literal(true)),
+    label: z.optional(label),
+    grant: z.optional(ApiTokenGrantV1Schema),
+    embedConfig: z.optional(z.nullable(EmbedConfigV1Schema)),
+    deployment: z.optional(z.nullable(AccountApiTokenDeploymentInputV1Schema)),
+  }).check(z.refine((value) => value.label !== undefined || value.grant !== undefined || value.embedConfig !== undefined
+    || value.deployment !== undefined || value.authorizeUnattendedTeamAccess === true, 'An update must contain at least one change.'));
+}
+export const AccountApiTokensUpdateHttpInputV1Schema = lazyZodSchema(() =>
+  accountApiTokenUpdateInputSchema(PrivateLabelStoredV1Schema));
+export type AccountApiTokensUpdateHttpInputV1 = z.infer<typeof AccountApiTokensUpdateHttpInputV1Schema>;
+export const AccountApiTokensUpdateActionInputV1Schema = lazyZodSchema(() =>
+  accountApiTokenUpdateInputSchema(ApiTokenAuthoredOrPreparedLabelV1Schema));
 export type AccountApiTokensUpdateActionInputV1 = z.infer<typeof AccountApiTokensUpdateActionInputV1Schema>;
 
-export const AccountApiTokensCreateHttpInputV1Schema = AccountApiTokensCreateActionInputV1Schema;
-export const AccountApiTokensUpdateHttpInputV1Schema = AccountApiTokensUpdateActionInputV1Schema;
 export const AccountApiTokensUpdateActionOutputV1Schema = lazyZodSchema(() => z.strictObject({ apiToken: AccountApiTokenSummaryV1Schema }));
 export type AccountApiTokensUpdateActionOutputV1 = z.infer<typeof AccountApiTokensUpdateActionOutputV1Schema>;
 

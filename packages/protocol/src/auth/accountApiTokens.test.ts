@@ -46,7 +46,11 @@ describe('API token encryption credentials', () => {
     };
 
     expect(tokens.AccountApiTokensCreateActionInputV1Schema.safeParse(input).success).toBe(true);
-    expect(tokens.AccountApiTokensCreateActionInputV1Schema.safeParse({ ...input, label: 'Staging CI' }).success).toBe(false);
+    const authored = { ...input, label: 'Staging CI' };
+    expect(tokens.AccountApiTokensCreateActionInputV1Schema.safeParse(authored).success).toBe(true);
+    expect(tokens.AccountApiTokensUpdateActionInputV1Schema.safeParse(authored).success).toBe(true);
+    expect(tokens.AccountApiTokensCreateHttpInputV1Schema.safeParse(authored).success).toBe(false);
+    expect(tokens.AccountApiTokensUpdateHttpInputV1Schema.safeParse(authored).success).toBe(false);
     expect(tokens.AccountApiTokenSummaryV1Schema.safeParse(summary).success).toBe(true);
     expect(tokens.AccountApiTokenSummaryV1Schema.safeParse({ ...summary, label: stored }).success).toBe(false);
   });

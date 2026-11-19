@@ -7,10 +7,19 @@ import { isMachineManagedInstallationActionIdV1 } from './specs/machineConnectio
 import { deriveActionActorV1 } from './actionRequestAttributionV1.js';
 import { createActionAutomationInvocationV1 } from './executor/actionSettlement.js';
 import { isActionEffectHookableV1 } from './actionSpecs.js';
-import { prepareTeamGroupUpdateActionInput, type TeamGroupUpdateActionInputV1 } from '../teams/group.js';
-import { isTeamGroupUpdateActionIdV1 } from '../teams/actionIdsV1.js';
-import { prepareTeamCredentialCreateActionInput, type TeamCredentialCreateActionInputV1 } from '../teams/credentials/actionsV1.js';
-import { TEAM_CREDENTIAL_CREATE_ACTION_ID_V1 } from '../teams/credentials/actionIdsV1.js';
+import { prepareTeamGroupCreateActionInput, prepareTeamGroupUpdateActionInput, type TeamGroupCreateActionInputV1, type TeamGroupUpdateActionInputV1 } from '../teams/group.js';
+import { TEAM_GROUP_CREATE_ACTION_ID_V1, TEAM_GROUP_UPDATE_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
+import {
+  prepareTeamCredentialCreateActionInput, prepareTeamCredentialUpdateActionInput, prepareTeamCredentialExternalKeyCreateActionInput,
+  type TeamCredentialCreateActionInputV1, type TeamCredentialExternalKeyCreateActionInputV1,
+} from '../teams/credentials/actionsV1.js';
+import {
+  TeamCredentialResourceSummaryV1Schema, type TeamCredentialUpdateActionInputV1,
+} from '../teams/credentials/resourceV1.js';
+import {
+  TEAM_CREDENTIAL_CREATE_ACTION_ID_V1, TEAM_CREDENTIAL_GET_ACTION_ID_V1, TEAM_CREDENTIAL_UPDATE_ACTION_ID_V1,
+  TEAM_CREDENTIAL_EXTERNAL_KEY_CREATE_ACTION_ID_V1,
+} from '../teams/credentials/actionIdsV1.js';
 import { admitDeploymentHomeInputV1 } from './executor/deploymentHomeAdmission.js';
 import { readSessionStopConfirmationFailure } from './executor/session/stopConfirmation.js';
 import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
@@ -5610,11 +5619,34 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!deps.homeDomainAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
-        const homeInput = isTeamGroupUpdateActionIdV1(actionId)
-          ? await prepareTeamGroupUpdateActionInput(parsed.data as TeamGroupUpdateActionInputV1, deps.privateLabelPrepare, ctx)
-          : actionId === TEAM_CREDENTIAL_CREATE_ACTION_ID_V1
-            ? await prepareTeamCredentialCreateActionInput(parsed.data as TeamCredentialCreateActionInputV1, deps.privateLabelPrepare, ctx)
-            : parsed.data;
+        const homeDomainAction = deps.homeDomainAction;
+        const readCredentialTeam = async (resourceId: string) => {
+          const result = await homeDomainAction({
+            actionId: TEAM_CREDENTIAL_GET_ACTION_ID_V1, input: { resourceId }, context: ctx,
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
+          });
+          const failure = readActionFailureEnvelope(result);
+          if (failure) throw createActionExecuteFailureError(failure);
+          return TeamCredentialResourceSummaryV1Schema.parse(result).teamId;
+        };
+        let homeInput = parsed.data;
+        switch (actionId) {
+          case TEAM_GROUP_CREATE_ACTION_ID_V1:
+            homeInput = await prepareTeamGroupCreateActionInput(parsed.data as TeamGroupCreateActionInputV1, deps.privateLabelPrepare, ctx);
+            break;
+          case TEAM_GROUP_UPDATE_ACTION_ID_V1:
+            homeInput = await prepareTeamGroupUpdateActionInput(parsed.data as TeamGroupUpdateActionInputV1, deps.privateLabelPrepare, ctx);
+            break;
+          case TEAM_CREDENTIAL_CREATE_ACTION_ID_V1:
+            homeInput = await prepareTeamCredentialCreateActionInput(parsed.data as TeamCredentialCreateActionInputV1, deps.privateLabelPrepare, ctx);
+            break;
+          case TEAM_CREDENTIAL_UPDATE_ACTION_ID_V1:
+            homeInput = await prepareTeamCredentialUpdateActionInput(parsed.data as TeamCredentialUpdateActionInputV1, deps.privateLabelPrepare, ctx, readCredentialTeam);
+            break;
+          case TEAM_CREDENTIAL_EXTERNAL_KEY_CREATE_ACTION_ID_V1:
+            homeInput = await prepareTeamCredentialExternalKeyCreateActionInput(parsed.data as TeamCredentialExternalKeyCreateActionInputV1, deps.privateLabelPrepare, ctx, readCredentialTeam);
+            break;
+        }
         const result = await deps.homeDomainAction({
           actionId,
           input: homeInput,

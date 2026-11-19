@@ -1,4 +1,12 @@
 export const TEAM_CREDENTIAL_CREATE_ACTION_ID_V1 = 'teams.credentials.create';
+export const TEAM_CREDENTIAL_GET_ACTION_ID_V1 = 'teams.credentials.get';
+export const TEAM_CREDENTIAL_UPDATE_ACTION_ID_V1 = 'teams.credentials.update';
+export const TEAM_CREDENTIAL_EXTERNAL_KEY_CREATE_ACTION_ID_V1 = 'teams.credentials.externalKeys.create';
+
+export function isTeamCredentialRetainedLabelActionIdV1(actionId: string):
+  actionId is typeof TEAM_CREDENTIAL_UPDATE_ACTION_ID_V1 | typeof TEAM_CREDENTIAL_EXTERNAL_KEY_CREATE_ACTION_ID_V1 {
+  return actionId === TEAM_CREDENTIAL_UPDATE_ACTION_ID_V1 || actionId === TEAM_CREDENTIAL_EXTERNAL_KEY_CREATE_ACTION_ID_V1;
+}
 
 /** Reachable Team credential-resource intents. Additional plan vocabulary is
  * intentionally not registered until its domain producer and result contract
@@ -8,10 +16,10 @@ export const TEAM_CREDENTIAL_HOME_ACTION_IDS_V1 = [
   'teams.credentials.sources.list',
   'teams.credentials.requestPolicySupport.get',
   'teams.credentials.sourceResources.list',
-  'teams.credentials.get',
+  TEAM_CREDENTIAL_GET_ACTION_ID_V1,
   'teams.credentials.entitled.list',
   TEAM_CREDENTIAL_CREATE_ACTION_ID_V1,
-  'teams.credentials.update',
+  TEAM_CREDENTIAL_UPDATE_ACTION_ID_V1,
   'teams.credentials.audience.set',
   'teams.credentials.delete',
   'teams.credentials.test',
@@ -21,7 +29,7 @@ export const TEAM_CREDENTIAL_HOME_ACTION_IDS_V1 = [
   'teams.credentials.limits.upsert',
   'teams.credentials.limits.delete',
   'teams.credentials.usage.query',
-  'teams.credentials.externalKeys.create',
+  TEAM_CREDENTIAL_EXTERNAL_KEY_CREATE_ACTION_ID_V1,
   'teams.credentials.externalKeys.authorize',
   'teams.credentials.externalKeys.list',
   'teams.credentials.externalKeys.revoke',
@@ -43,7 +51,7 @@ export type TeamCredentialActionIdV1 = typeof TEAM_CREDENTIAL_ACTION_IDS_V1[numb
  * every safe credential read. */
 const TEAM_CREDENTIAL_MCP_ACTION_IDS_V1: ReadonlySet<TeamCredentialHomeActionIdV1> = new Set([
   'teams.credentials.list',
-  'teams.credentials.get',
+  TEAM_CREDENTIAL_GET_ACTION_ID_V1,
   'teams.credentials.preparation.get',
   TEAM_CREDENTIAL_CREATE_ACTION_ID_V1,
   'teams.credentials.entitled.list',
@@ -51,17 +59,17 @@ const TEAM_CREDENTIAL_MCP_ACTION_IDS_V1: ReadonlySet<TeamCredentialHomeActionIdV
   'teams.credentials.limits.delete',
   'teams.credentials.externalKeys.revoke',
   'teams.credentials.externalKeys.revokeAll',
-  'teams.credentials.update',
+  TEAM_CREDENTIAL_UPDATE_ACTION_ID_V1,
   'teams.credentials.audience.set',
   'teams.credentials.test',
   'teams.credentials.limits.upsert',
-  'teams.credentials.externalKeys.create',
+  TEAM_CREDENTIAL_EXTERNAL_KEY_CREATE_ACTION_ID_V1,
   'teams.credentials.externalKeys.authorize',
 ]);
 
 const TEAM_CREDENTIAL_DEFERRED_APPROVAL_ACTION_IDS_V1: ReadonlySet<TeamCredentialHomeActionIdV1> = new Set([
   TEAM_CREDENTIAL_CREATE_ACTION_ID_V1,
-  'teams.credentials.update',
+  TEAM_CREDENTIAL_UPDATE_ACTION_ID_V1,
   'teams.credentials.audience.set',
   'teams.credentials.delete',
   'teams.credentials.limits.upsert',
@@ -79,7 +87,7 @@ const TEAM_CREDENTIAL_DIRECT_CONFIRMATION_ACTION_IDS_V1: ReadonlySet<TeamCredent
 
 const TEAM_CREDENTIAL_NATIVE_DISCLOSURE_ACTION_IDS_V1: ReadonlySet<TeamCredentialHomeActionIdV1> = new Set([
   TEAM_CREDENTIAL_CREATE_ACTION_ID_V1,
-  'teams.credentials.update',
+  TEAM_CREDENTIAL_UPDATE_ACTION_ID_V1,
   'teams.credentials.audience.set',
 ]);
 

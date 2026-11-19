@@ -304,6 +304,11 @@ export type SessionOrganizationAppearanceActionId = typeof SESSION_ORGANIZATION_
 export function isSessionOrganizationAppearanceActionId(value: string): value is SessionOrganizationAppearanceActionId {
   return (SESSION_ORGANIZATION_APPEARANCE_ACTION_IDS as readonly string[]).includes(value);
 }
+export const ACCOUNT_API_TOKENS_CREATE_ACTION_ID_V1 = 'account.apiTokens.create' as const;
+export const ACCOUNT_API_TOKENS_UPDATE_ACTION_ID_V1 = 'account.apiTokens.update' as const;
+export function isAccountApiTokenLabelActionIdV1(actionId: string): boolean {
+  return actionId === ACCOUNT_API_TOKENS_CREATE_ACTION_ID_V1 || actionId === ACCOUNT_API_TOKENS_UPDATE_ACTION_ID_V1;
+}
 export const ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1 = 'account.apiTokens.list' as const;
 
 /** Explicit Session controls use the Account App, without a mounted Session view. */
@@ -934,9 +939,9 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'account.email.change.request',
   ],
   account_api_tokens: [
-    'account.apiTokens.create',
+    ACCOUNT_API_TOKENS_CREATE_ACTION_ID_V1,
     ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1,
-    'account.apiTokens.update',
+    ACCOUNT_API_TOKENS_UPDATE_ACTION_ID_V1,
     'account.apiTokens.revoke',
     'account.apiTokens.revokeAll',
   ],

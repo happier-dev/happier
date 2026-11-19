@@ -21,12 +21,13 @@ import { PLUGIN_COLLECTION_SHARING_HTTP_PATHS_V1 as collectionSharingPaths,
 import { readHomeConfigEnv } from '@/app/home/settings/homeSettings';
 import { isScmRunStartRpcPurpose } from '@happier-dev/protocol/actions/actionSpecs';
 import { homeDomainActionHttpWireInputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
-import { isTeamGroupUpdateActionIdV1 } from '@happier-dev/protocol/teams/actionIdsV1';
-import { TEAM_CREDENTIAL_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/teams/credentials/actionIdsV1';
+import { TEAM_GROUP_CREATE_ACTION_ID_V1, isTeamGroupUpdateActionIdV1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { TEAM_CREDENTIAL_CREATE_ACTION_ID_V1, TEAM_CREDENTIAL_GET_ACTION_ID_V1,
+    isTeamCredentialRetainedLabelActionIdV1 } from '@happier-dev/protocol/teams/credentials/actionIdsV1';
 import { MachinePresetActionInputSchemasV1, MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { isMachinePresetFiniteOperationActionIdV1, MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
-import { WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { WORKFLOW_RUN_START_ACTION_ID_V1, isAccountApiTokenLabelActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { isManagedCreationContinuationRootV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, PrivateLabelRecipientCensusRequestV1Schema }
     from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
@@ -2651,7 +2652,8 @@ function isAccountActionHttpOperation(actionId: string,
     const inputSchema = actionId === 'deployments.environments.update' ? DeploymentEnvironmentUpdateStorageInputV1Schema
         : actionId === 'deployments.bindings.set' ? DeploymentBindingsSetStorageInputV1Schema : isDiscussionActionIdV1(actionId)
         ? discussionActionHttpWireInputSchemaV1(actionId) : isHomeDomainActionIdV1(actionId)
-        ? homeDomainActionHttpWireInputSchemaV1(actionId) : spec.inputSchema;
+        ? homeDomainActionHttpWireInputSchemaV1(actionId)
+        : isAccountApiTokenLabelActionIdV1(actionId) ? transport.inputSchema ?? spec.inputSchema : spec.inputSchema;
     const parsed = inputSchema.safeParse(input);
     const versioned = !parsed.success && transport.method.toUpperCase() === 'GET'
         && input && typeof input === 'object' && !Array.isArray(input)
@@ -3328,14 +3330,22 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
             && preset.data.homeId === verified.binding.serverIdentityId
             && isAccountActionHttpOperation('machines.presets.get', proof);
     }
-    if (isTeamGroupUpdateActionIdV1(root) || root === TEAM_CREDENTIAL_CREATE_ACTION_ID_V1) {
+    const retainedCredentialLabel = isTeamCredentialRetainedLabelActionIdV1(root);
+    const accountTokenLabel = isAccountApiTokenLabelActionIdV1(root);
+    const teamLabel = root === TEAM_GROUP_CREATE_ACTION_ID_V1 || isTeamGroupUpdateActionIdV1(root)
+        || root === TEAM_CREDENTIAL_CREATE_ACTION_ID_V1 || retainedCredentialLabel;
+    const labelCensus = proof.method.toUpperCase() === 'POST' && proof.path === PRIVATE_LABEL_RECIPIENT_CENSUS_PATH;
+    if (teamLabel || (accountTokenLabel && (labelCensus || isAccountEncryptionCurrentnessHttpRead(proof)))) {
         if (verified.effectActionId !== root) return false;
         if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
-        if (proof.method.toUpperCase() === 'POST' && proof.path === PRIVATE_LABEL_RECIPIENT_CENSUS_PATH) {
+        if (retainedCredentialLabel && isAccountActionHttpOperation(TEAM_CREDENTIAL_GET_ACTION_ID_V1, proof)) return true;
+        if (labelCensus) {
             const census = PrivateLabelRecipientCensusRequestV1Schema.safeParse(proof.body);
             // The installed host derives the Team from encrypted intent; the
             // census route retains its canonical Team membership admission.
-            return census.success && census.data.owner.kind === 'team'
+            return census.success && (accountTokenLabel
+                ? census.data.owner.kind === 'account' && census.data.owner.accountId === verified.binding.accountId
+                : census.data.owner.kind === 'team')
                 && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, census.data));
         }
         return isAccountActionHttpOperation(root, proof);

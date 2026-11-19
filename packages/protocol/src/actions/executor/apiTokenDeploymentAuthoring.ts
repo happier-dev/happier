@@ -1,15 +1,17 @@
 import {
   AccountApiTokensCreateActionInputV1Schema, AccountApiTokensUpdateActionInputV1Schema,
-  AccountApiTokensCreateHttpInputV1Schema, AccountApiTokensUpdateHttpInputV1Schema,
+  AccountApiTokensCreateHttpInputV1Schema, AccountApiTokensUpdateHttpInputV1Schema, accountApiTokenLabelBindingV1,
 } from '../../auth/accountApiTokens.js';
 import { resolveApiTokenDeploymentGrantV1 } from '../../auth/apiTokenGrant.js';
 import type { WorkflowApprovedOperationNativeAccountV1 } from './workflowRunActions.js';
-import type { ActionExecutorContext } from './types.js';
+import { createActionExecuteFailureError } from '../actionExecutionResult.js';
+import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { projectNativeJsonValueForTransport, StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 
 export type ApiTokenDeploymentAuthoringHost = Readonly<{
   nativeAccount?: WorkflowApprovedOperationNativeAccountV1;
+  privateLabelPrepare?: ActionExecutorDeps['privateLabelPrepare'];
   /** Chosen once by the shared initial-authoring default owner, never a saved-consent recheck. */
   initialDeployApproval?: 'automatic' | 'ask';
 }>;
@@ -49,6 +51,18 @@ export async function prepareApiTokenDeploymentAuthoring(input: AuthoringInput):
       input: z.record(z.string(), StrictJsonValueSchema).parse(projectNativeJsonValueForTransport(authored)) },
       steps: [], context: input.context, ...(input.host?.nativeAccount ? { nativeAccount: input.host.nativeAccount } : {}) });
   }
-  return { body: schema.parse({ ...authored, ...(grant ? { grant } : {}),
+  let label = authored.label;
+  if (typeof label === 'string') {
+    const accountId = input.context.runtimeAccountId ?? input.host?.nativeAccount?.accountId;
+    const prepare = input.host?.privateLabelPrepare;
+    if (!prepare || !accountId) {
+      throw createActionExecuteFailureError({ ok: false, errorCode: 'client_required', error: 'Token label preparation requires the Account client' });
+    }
+    [label] = await prepare({ actionId: input.actionId, owner: { kind: 'account', accountId },
+      labels: [{ binding: accountApiTokenLabelBindingV1(authored.tokenId), value: label }],
+      ...(input.context.signal ? { signal: input.context.signal } : {}),
+    }, input.context);
+  }
+  return { body: schema.parse({ ...authored, ...(label === undefined ? {} : { label }), ...(grant ? { grant } : {}),
     ...(deployment === undefined ? {} : { deployment }) }) };
 }

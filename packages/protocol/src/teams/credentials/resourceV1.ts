@@ -295,32 +295,40 @@ export const TeamCredentialResourceReplacementV1Schema = lazyZodSchema(() => z.s
   })),
 }));
 
-export const TeamCredentialResourceUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
-  resourceId: z.string().check(z.minLength(1)), expectedRevision: z.number().check(z.int(), z.nonnegative()),
-  enabled: z.optional(z.boolean()),
-  displayName: z.optional(PrivateLabelStoredV1Schema),
-  deliveryPolicy: z.optional(TeamCredentialDeliveryPolicyV1Schema),
-  sessionUsePolicy: z.optional(TeamCredentialSessionUsePolicyV1Schema),
-  brokerPlacement: z.optional(z.nullable(TeamCredentialBrokerPlacementV1Schema)),
-  requestPolicy: z.optional(z.nullable(TeamCredentialRequestPolicyV1Schema)),
-  /** Omitted fields retain storage values; custodians need not restate masked manager fields. */
-  replacement: z.optional(z.partial(TeamCredentialResourceReplacementV1Schema)),
-}).check(z.superRefine((value, context) => {
-  if (value.replacement === undefined) return;
-  const legacyKeys = [
-    'enabled',
-    'displayName',
-    'deliveryPolicy',
-    'sessionUsePolicy',
-    'brokerPlacement',
-    'requestPolicy',
-  ] as const;
-  for (const key of legacyKeys) {
-    if (value[key] !== undefined) {
-      context.addIssue({ code: "custom", path: [key], message: 'legacy patch fields cannot be mixed with replacement' });
+function teamCredentialResourceUpdateInputSchema<T extends z.ZodMiniType>(label: T) {
+  return z.strictObject({
+    resourceId: z.string().check(z.minLength(1)), expectedRevision: z.number().check(z.int(), z.nonnegative()),
+    enabled: z.optional(z.boolean()),
+    displayName: z.optional(label),
+    deliveryPolicy: z.optional(TeamCredentialDeliveryPolicyV1Schema),
+    sessionUsePolicy: z.optional(TeamCredentialSessionUsePolicyV1Schema),
+    brokerPlacement: z.optional(z.nullable(TeamCredentialBrokerPlacementV1Schema)),
+    requestPolicy: z.optional(z.nullable(TeamCredentialRequestPolicyV1Schema)),
+    /** Omitted fields retain storage values; custodians need not restate masked manager fields. */
+    replacement: z.optional(z.partial(z.extend(TeamCredentialResourceReplacementV1Schema, { displayName: label }))),
+  }).check(z.superRefine((value, context) => {
+    if (value.replacement === undefined) return;
+    const legacyKeys = [
+      'enabled',
+      'displayName',
+      'deliveryPolicy',
+      'sessionUsePolicy',
+      'brokerPlacement',
+      'requestPolicy',
+    ] as const;
+    for (const key of legacyKeys) {
+      if (value[key] !== undefined) {
+        context.addIssue({ code: "custom", path: [key], message: 'legacy patch fields cannot be mixed with replacement' });
+      }
     }
-  }
-})));
+  }));
+}
+
+export const TeamCredentialResourceUpdateInputV1Schema = lazyZodSchema(() =>
+  teamCredentialResourceUpdateInputSchema(PrivateLabelStoredV1Schema));
+export const TeamCredentialUpdateActionInputV1Schema = lazyZodSchema(() =>
+  teamCredentialResourceUpdateInputSchema(z.union([z.string(), PrivateLabelStoredV1Schema])));
+export type TeamCredentialUpdateActionInputV1 = z.infer<typeof TeamCredentialUpdateActionInputV1Schema>;
 
 export const TeamCredentialResourceReadInputV1Schema = lazyZodSchema(() => z.strictObject({
   teamId: z.string().check(z.minLength(1)),

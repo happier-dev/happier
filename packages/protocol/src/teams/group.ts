@@ -3,12 +3,12 @@ import { z } from '../zodRuntimePolicy.js';
 
 import { AccountDisplayProfileV1Schema } from '../account/accountDisplayProfileV1.js';
 import {
-  PrivateLabelStoredV1Schema,
+  PrivateLabelStoredV1Schema, type PrivateLabelStoredV1,
 } from '../crypto/privateLabelV1.js';
 import { TeamGroupNameProjectionV1Schema, TeamGroupLabelProjectionV1Schema, teamGroupLabelBinding } from './groupLabel.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from '../actions/executor/types.js';
 import { createActionExecuteFailureError } from '../actions/actionExecutionResult.js';
-import { TEAM_GROUP_UPDATE_ACTION_ID_V1 } from './actionIdsV1.js';
+import { TEAM_GROUP_CREATE_ACTION_ID_V1, TEAM_GROUP_UPDATE_ACTION_ID_V1 } from './actionIdsV1.js';
 export { TeamGroupLabelProjectionV1Schema, type TeamGroupLabelProjectionV1, TeamGroupNameProjectionV1Schema, type TeamGroupNameProjectionV1 } from './groupLabel.js';
 import {
   decodeTeamKeysetCursorV1,
@@ -212,6 +212,30 @@ export const TeamGroupCreateInputV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type TeamGroupCreateInputV1 = z.infer<typeof TeamGroupCreateInputV1Schema>;
 
+const AuthoredGroupNameV1Schema = lazyZodSchema(() => z.string().check(
+  z.refine(value => validateTeamGroupNameV1(value).status === 'ok', { message: 'Invalid Group name' }),
+));
+const AuthoredGroupDescriptionV1Schema = lazyZodSchema(() => z.string().check(
+  z.refine(value => validateTeamGroupDescriptionV1(value).status === 'ok', { message: 'Invalid Group description' }),
+));
+
+/** Retained prepared inputs still support exact HTTP replay after an uncertain creation. */
+export const TeamGroupCreateActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...TeamGroupCreateInputV1Schema.shape,
+  name: z.union([AuthoredGroupNameV1Schema, PrivateLabelStoredV1Schema]),
+  description: z.optional(z.nullable(z.union([AuthoredGroupDescriptionV1Schema, PrivateLabelStoredV1Schema]))),
+}));
+export type TeamGroupCreateActionInputV1 = z.infer<typeof TeamGroupCreateActionInputV1Schema>;
+
+export async function prepareTeamGroupCreateActionInput(
+  input: TeamGroupCreateActionInputV1,
+  prepare: ActionExecutorDeps['privateLabelPrepare'],
+  context: ActionExecutorContext,
+): Promise<TeamGroupCreateInputV1> {
+  const labels = await prepareTeamGroupLabelFields(TEAM_GROUP_CREATE_ACTION_ID_V1, input, prepare, context);
+  return TeamGroupCreateInputV1Schema.parse({ ...input, ...labels });
+}
+
 /** `teams.groups.update`. Omitted is unchanged; an explicit null clears. */
 export const TeamGroupUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -227,8 +251,8 @@ export const TeamGroupUpdateActionInputV1Schema = lazyZodSchema(() => z.strictOb
   v: z.literal(1),
   teamId: TeamIdSchema,
   groupId: TeamGroupIdSchema,
-  name: z.optional(z.string().check(z.refine(value => validateTeamGroupNameV1(value).status === 'ok', { message: 'Invalid Group name' }))),
-  description: z.optional(z.nullable(z.string().check(z.refine(value => validateTeamGroupDescriptionV1(value).status === 'ok', { message: 'Invalid Group description' })))),
+  name: z.optional(AuthoredGroupNameV1Schema),
+  description: z.optional(z.nullable(AuthoredGroupDescriptionV1Schema)),
 }).check(z.refine((input) => input.name !== undefined || input.description !== undefined, { message: 'Group metadata patch changes nothing' })));
 export type TeamGroupUpdateActionInputV1 = z.infer<typeof TeamGroupUpdateActionInputV1Schema>;
 
@@ -238,19 +262,34 @@ export async function prepareTeamGroupUpdateActionInput(
   prepare: ActionExecutorDeps['privateLabelPrepare'],
   context: ActionExecutorContext,
 ): Promise<TeamGroupUpdateInputV1> {
-  const wire: TeamGroupUpdateInputV1 = { v: input.v, teamId: input.teamId, groupId: input.groupId };
+  const labels = await prepareTeamGroupLabelFields(TEAM_GROUP_UPDATE_ACTION_ID_V1, input, prepare, context);
+  return TeamGroupUpdateInputV1Schema.parse({ ...input, ...labels });
+}
+
+async function prepareTeamGroupLabelFields(
+  actionId: typeof TEAM_GROUP_CREATE_ACTION_ID_V1 | typeof TEAM_GROUP_UPDATE_ACTION_ID_V1,
+  input: Readonly<{
+    teamId: string;
+    groupId: string;
+    name?: string | PrivateLabelStoredV1;
+    description?: string | PrivateLabelStoredV1 | null;
+  }>,
+  prepare: ActionExecutorDeps['privateLabelPrepare'],
+  context: ActionExecutorContext,
+): Promise<Pick<TeamGroupUpdateInputV1, 'name' | 'description'>> {
+  const wire: Pick<TeamGroupUpdateInputV1, 'name' | 'description'> = {};
   const labels: { field: 'name' | 'description'; value: string }[] = [];
-  if (input.name !== undefined) {
+  if (typeof input.name === 'string') {
     labels.push({ field: 'name', value: normalizeTeamGroupNameV1(input.name) });
   }
-  if (input.description !== undefined) {
+  if (typeof input.description === 'string') {
     const description = normalizeTeamDescriptionV1(input.description);
     if (description === null) wire.description = null;
     else labels.push({ field: 'description', value: description });
   }
   if (labels.length > 0) {
     if (!prepare) throw createActionExecuteFailureError({ ok: false, errorCode: 'client_required', error: 'Group label preparation requires the Account client' });
-    const sealed = await prepare({ actionId: TEAM_GROUP_UPDATE_ACTION_ID_V1, owner: { kind: 'team', teamId: input.teamId },
+    const sealed = await prepare({ actionId, owner: { kind: 'team', teamId: input.teamId },
       labels: labels.map(label => ({ binding: teamGroupLabelBinding(input.groupId, label.field), value: label.value })),
       ...(context.signal ? { signal: context.signal } : {}),
     }, context);

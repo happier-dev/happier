@@ -1315,6 +1315,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   const onPublicLinkIssued = opts?.onPublicLinkIssued
     ?? (accountContext ? createUiArtifactPublicLinkDelivery(accountContext) : undefined);
   const deploymentActionDeps = accountContext ? createUiDeploymentActionDeps(accountContext) : null;
+  const privateLabelPrepare = accountContext ? createPrivateLabelActionPreparer(accountContext) : undefined;
   const prepareApiTokenAuthoringHost = async (deployment: AccountApiTokenDeploymentInputV1 | null | undefined,
     grantDeployApproval: 'automatic' | undefined, context: ActionExecutorContext): Promise<ApiTokenDeploymentAuthoringHost> => {
     if (deployment && accountContext && !areServerProfileIdentifiersEquivalent(deployment.serverId, accountContext.serverId)) {
@@ -1329,7 +1330,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (!initial.ok) throw Object.assign(new Error(initial.errorCode), { code: initial.errorCode });
       initialDeployApproval = initial.mode;
     }
-    return { ...(initialDeployApproval ? { initialDeployApproval } : {}), ...(accountContext ? { nativeAccount: {
+    return { ...(initialDeployApproval ? { initialDeployApproval } : {}), privateLabelPrepare, ...(accountContext ? { nativeAccount: {
       accountId: accountContext.accountId, serverId: accountContext.serverId,
       isCurrent: async () => accountContext.credentialAuthorityKind === 'account' && accountContext.accountLifetime.isCurrent(),
     } } : {}) };
@@ -3832,7 +3833,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       : {}),
     ...(homeDomainAction ? { homeDomainAction } : {}),
     ...(accountContext ? { privateLabelOpen: createPrivateLabelActionOpener(accountContext),
-      privateLabelPrepare: createPrivateLabelActionPreparer(accountContext) } : {}),
+      privateLabelPrepare } : {}),
     ...(accountContext && homeDomainAction ? {
       teamCredentialUsageExport: createUiTeamCredentialUsageExportAction(accountContext, homeDomainAction),
     } : {}),

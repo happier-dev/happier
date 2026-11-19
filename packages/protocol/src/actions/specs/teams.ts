@@ -21,7 +21,7 @@ import {
   TEAM_IDENTITY_ACTION_PATHS_V1,
 } from './teamsIdentity.js';
 import {
-  TeamGroupCreateInputV1Schema,
+  TeamGroupCreateActionInputV1Schema, TeamGroupCreateInputV1Schema,
   TeamGroupMemberAddInputV1Schema,
   TeamGroupMemberMutationResultV1Schema,
   TeamGroupMemberRemoveInputV1Schema,
@@ -78,7 +78,7 @@ import {
 import {
   TEAM_CREDENTIAL_ACTION_IDS_V1,
   TEAM_CREDENTIAL_HOME_ACTION_IDS_V1,
-  TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1,
+  TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1, TEAM_CREDENTIAL_ACTION_WIRE_INPUT_SCHEMAS_V1,
   TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1,
   TEAM_CREDENTIAL_ACTION_PATHS_V1,
   TEAM_CREDENTIAL_ACTION_METHODS_V1,
@@ -236,6 +236,7 @@ function teamCredentialActionRow<TActionId extends TeamCredentialHomeActionIdV1>
       uiConfirmationForInput: (value: unknown) => teamCredentialMutationRequiresUiConfirmation(input.id, value),
     } } : {}),
     inputSchema: TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1[input.id],
+    wireInputSchema: TEAM_CREDENTIAL_ACTION_WIRE_INPUT_SCHEMAS_V1[input.id],
     outputSchema: TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1[input.id],
     method: TEAM_CREDENTIAL_ACTION_METHODS_V1[input.id],
   });
@@ -292,7 +293,7 @@ export type TeamActionSpecs = readonly [
   ActionSpec<'teams.members.groups.list', typeof TeamMemberGroupsListInputV1Schema, typeof TeamGroupsPageV1Schema>,
   ActionSpec<'teams.groups.list', typeof TeamGroupsListInputV1Schema, typeof TeamGroupsPageV1Schema>,
   ActionSpec<'teams.groups.get', typeof TeamGroupRefInputV1Schema, typeof TeamGroupV1Schema>,
-  ActionSpec<'teams.groups.create', typeof TeamGroupCreateInputV1Schema, typeof TeamGroupV1Schema>,
+  ActionSpec<'teams.groups.create', typeof TeamGroupCreateActionInputV1Schema, typeof TeamGroupV1Schema>,
   ActionSpec<'teams.groups.update', typeof TeamGroupUpdateActionInputV1Schema, typeof TeamGroupV1Schema>,
   ActionSpec<'teams.groups.archive', typeof TeamGroupRefInputV1Schema, typeof TeamGroupV1Schema>,
   ActionSpec<'teams.groups.restore', typeof TeamGroupRefInputV1Schema, typeof TeamGroupV1Schema>,
@@ -790,17 +791,18 @@ function createTeamActionSpecs(): TeamActionSpecs {
   homeDomainActionRow({
     id: 'teams.groups.create', approval: {result: 'required'},
     title: 'Create Team Group',
-    description: 'Create a Group in a Team. A repeated request key returns the same Group.',
+    description: 'Create a Group in a Team. The Account client seals authored labels before the Home mutation.',
     safety: 'safe',
     sideEffectClass: 'write',
     cliPath: ['teams', 'groups', 'create'],
     path: '/v1/teams/groups/create',
-    inputSchema: TeamGroupCreateInputV1Schema,
+    inputSchema: TeamGroupCreateActionInputV1Schema,
+    wireInputSchema: TeamGroupCreateInputV1Schema,
     outputSchema: TeamGroupV1Schema,
     inputHints: { fields: [
       TEAM_ID_FIELD,
-      approvalField('name', 'Group name', { required: true, widget: 'json' }),
-      approvalField('description', 'Description', { widget: 'json' }),
+      approvalField('name', 'Group name', { required: true }),
+      approvalField('description', 'Description', { widget: 'textarea' }),
     ] },
   }),
   homeDomainActionRow({

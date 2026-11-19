@@ -2036,7 +2036,13 @@ describe('createDefaultActionExecutor approvals', () => {
     });
     it('routes current-Account API-token Actions through their scoped transport with no caller-selected Account', async () => {
         vi.mocked(Modal.confirm).mockResolvedValue(true);
-        const input = { tokenId: apiTokenSummary.tokenId, label: apiTokenLabel, expiresAt: apiTokenSummary.expiresAt };
+        const { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } = await import('@happier-dev/protocol/automations/automationActionTriggerV1');
+        const { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH } = await import('@happier-dev/protocol/crypto/privateLabelRecipientCensusV1');
+        const { createPlainAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+        homes.answer(homeId, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { body: { v: 1, rows: [] } });
+        homes.answer(homeId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+        homes.answer(homeId, PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, { body: { contentEncryptionMode: 'plain', recipients: [] } });
+        const input = { tokenId: apiTokenSummary.tokenId, label: 'CI deploy', expiresAt: apiTokenSummary.expiresAt };
         homes.answer(homeId, '/v1/auth/api-tokens/create', { body: { token, apiToken: apiTokenSummary } });
         homes.answer(homeId, '/v1/auth/api-tokens/list', { body: { tokens: [apiTokenSummary] } });
         homes.answer(homeId, '/v1/auth/api-tokens/revoke', { body: { revoked: true } });
@@ -2046,7 +2052,10 @@ describe('createDefaultActionExecutor approvals', () => {
         await expect(executor.execute('account.apiTokens.list', {}, ctx)).resolves.toEqual({ ok: true, result: { tokens: [apiTokenSummary] } });
         await expect(executor.execute('account.apiTokens.revoke', { tokenId: apiTokenSummary.tokenId }, ctx)).resolves.toEqual({ ok: true, result: { revoked: true } });
         await expect(executor.execute('account.apiTokens.revokeAll', {}, ctx)).resolves.toEqual({ ok: true, result: { revokedCount: 1 } });
-        expect(homes.requestsFor('/v1/auth/api-tokens/create')[0]?.input).toMatchObject(input);
+        expect(homes.requestsFor(PRIVATE_LABEL_RECIPIENT_CENSUS_PATH)[0]?.input).toEqual({
+            owner: { kind: 'account', accountId: 'account-a' },
+        });
+        expect(homes.requestsFor('/v1/auth/api-tokens/create')[0]?.input).toMatchObject({ ...input, label: apiTokenLabel });
         for (const request of homes.requests.filter(({ path }) => path.startsWith('/v1/auth/api-tokens/'))) {
             expect(request.serverId).toBe(homeId);
             expect(request.input).not.toHaveProperty('accountId');

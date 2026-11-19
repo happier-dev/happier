@@ -1,3 +1,4 @@
+import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import Fastify from 'fastify';
 import {
@@ -208,6 +209,47 @@ describe('signed Account Action transport purpose', () => {
     expect(await verify('POST', '/v1/home/governance/get', {}, 'home.governance.get')).toBe(false);
     expect(await verify('POST', '/v1/account/project-rows/read', { key: { kind: 'project-session-defaults', ...creation.projectContext.projectRef } }, actionId)).toBe(false);
     expect(await verify('POST', '/v1/account/project-rows/mutate', {}, actionId)).toBe(false);
+  });
+
+  it.each(['teams.groups.create', 'teams.credentials.update', 'teams.credentials.externalKeys.create'] as const)(
+    'prepares an authored label under the signed %s purpose', async actionId => {
+      const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+      const keys = tweetnacl.sign.keyPair();
+      const machine = await db.machine.create({ data: {
+        id: crypto.randomUUID(), accountId: account.id,
+        metadata: encodePlainMachineStoredContent({ host: 'controller', platform: 'linux', happyCliVersion: 'test',
+          homeDir: '/home/controller', happyHomeDir: '/home/controller/.happier' }),
+        metadataVersion: 1, dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+        daemonState: null, daemonStateVersion: 0, installationId: crypto.randomUUID(),
+        installationPublicKey: new Uint8Array(keys.publicKey),
+      } });
+      const teamId = 'team';
+      const id = crypto.randomUUID();
+      const group = { v: 1, teamId, groupId: id, name: 'Group', requestKey: 'create-group' };
+      const input = actionId === 'teams.groups.create' ? group
+        : actionId === 'teams.credentials.update' ? { resourceId: id, expectedRevision: 0, displayName: 'Credential' }
+          : { resourceId: id, teamMembershipId: 'member', keyId: id, label: 'External key' };
+      const root = await auth.mintExternalActionExecutionAuthorization({ accountId: account.id,
+        serverIdentityId: await getOrCreateServerIdentityId(), authentication: { kind: 'account', tokenEpoch: account.tokenEpoch },
+        actionId, machineId: machine.id, target: { kind: 'machine', machineId: machine.id }, requestId: crypto.randomUUID(),
+        requestEnvelopeDigest: 'a'.repeat(43),
+      }, { input });
+      const verify = async (method: string, path: string, body?: unknown, effectActionId: string = actionId) =>
+        (await verifyExternalActionDomainExecutionRequest({ authorizationToken: root.token, effectActionId,
+          encodedTarget: encodeExternalActionResolvedTargetV1(root.binding.target), method, path, body, routeInput: body,
+          machineSignature: signExternalActionMachineRequestV1({ authorizationToken: root.token, effectActionId,
+            target: root.binding.target, installationId: machine.installationId!, requestId: root.binding.requestId,
+            method, path, ...(body === undefined ? {} : { body }), privateKey: keys.secretKey }) })) !== null;
+      expect(await verify('GET', '/v1/account/encryption/currentness')).toBe(true);
+      expect(await verify('POST', PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, { owner: { kind: 'team', teamId } })).toBe(true);
+      expect(await verify('POST', PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, { owner: { kind: 'account', accountId: account.id } })).toBe(false);
+      expect(await verify('POST', '/v1/teams/credential-resources/get', { resourceId: id })).toBe(actionId !== 'teams.groups.create');
+      expect(await verify('POST', '/v1/teams/credential-resources/get', { resourceId: id }, 'teams.credentials.get')).toBe(false);
+      if (actionId === 'teams.groups.create') {
+        const path = getActionSpec(actionId).serverTransport!.path;
+        expect(await verify('POST', path, group)).toBe(false);
+        expect(await verify('POST', path, { ...group, name: { content: { t: 'plain', v: group.name }, recipients: [] } })).toBe(true);
+      }
   });
 
   it('confines demanded defaults to the selected row, Source and Team and refuses mutation', async () => {

@@ -1650,10 +1650,13 @@ the captured persisted Account mode; Team resource reads retain the resource's
 privacy arm rather than comparing it with the viewing Account's mode. Plain
 Accounts do not fabricate Account encryption material.
 
-Action callers author these labels as plain text. The shared Action executor seals
-Team Group, Team credential and Pool labels through the captured Account host
-(`privateLabelPrepare`) before the strict Home write, so an agent or CLI caller
-never needs to know the Account mode. A Pool label's owner is its audience: the
+Action callers author these labels as plain text. Team Group, Team credential,
+Team external-key, Account API-token and Pool Actions prepare labels through the
+captured Account host (`privateLabelPrepare`) before the strict Home write.
+The host uses the persisted Account mode. Credential updates and external-key
+creation resolve the label audience from the existing credential resource.
+Account API-token create and update accept text from the existing CLI and UI
+surfaces. A Pool label's owner is its audience: the
 runtime Account for a personal Pool, the Team for a Team Pool; an update that omits
 its audience reads and pins the retained one first. Without that host the Action
 fails `client_required` rather than writing text.
@@ -1713,8 +1716,11 @@ The Home-facing update schema and stored records still contain private-label
 envelopes. E2EE intent and approvals stay in encrypted Account content; no
 plaintext label is sent in the Group HTTP mutation. Description omission leaves
 the stored value unchanged, and null clears it without authoring a label.
-Group creation retains its prepared-envelope input and caller-retained retry
-payload; this update contract does not alter creation idempotency.
+Group creation accepts authored text for both fields and retains its
+prepared-envelope input. Home binds its request key to the exact prepared body.
+A replay with the retained body returns the existing Group. A new E2EE
+invocation seals fresh ciphertext and conflicts if the same request key already
+committed. The Group id can be used to look up the result.
 
 In unreleased 0.3, `teams.credentials.create` also accepts a string `displayName`
 from CLI and agent callers. The same captured Account private-label owner seals
