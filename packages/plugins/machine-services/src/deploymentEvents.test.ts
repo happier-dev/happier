@@ -14,7 +14,7 @@ const config = { v: 1, serverId: 'home', environmentId: 'environment-a', targetL
 // Redacted COR4-164/receipts-1.json (#164): deploy/running revision 2 while
 // continuation-provider-deployments.json is READY. Identifiers and times are fixture-local.
 const receipt = { v: 1, id: 'receipt-a', environmentId: config.environmentId, targetLinkId: config.targetLinkId,
-    projectSourceId: 'source-a', acceptedExecution: { v: 1, controller: { machineId: 'machine-a', installationId: 'installation-a' } },
+    acceptedExecution: { v: 1, controller: { machineId: 'machine-a', installationId: 'installation-a' } },
     revision: 2, operation: 'deploy', state: 'running', requestKey: 'request-a', requestedByAccountId: 'owner',
     actionOperationId: 'operation-a', contentArtifactId: 'artifact-a', contentHeaderVersion: 1, contentBodyVersion: 1,
     requestedAtMs: 1000, startedAtMs: 1001 } as const;
@@ -67,6 +67,7 @@ function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = fa
         if (id === 'deployments.receipts.get') {
             reads.push(String(input.deploymentId));
             return input.deploymentId === current.id ? { ok: true, deployment: current,
+                investigation: { source: { kind: 'repository', projectSourceId: 'source-a', sourceRevision: 1, sha: 'a'.repeat(40) } },
                 ...(current.state === 'failed' && !omitFailureSummary ? { failureSummary: { phase: 'build', code: 'build_failed' } } : {}) }
                 : { ok: false, error: 'deployment_unavailable' };
         }
@@ -125,8 +126,8 @@ it.each(['failed', 'succeeded', 'cancelled', 'outcome_unknown'] as const)(
     },
 );
 
-it('shares one exact receipt read with a configured source before native completion admission settles', async () => {
-    const h = fixture();
+it('shares one exact receipt read without a failure summary before native completion admission settles', async () => {
+    const h = fixture(undefined, 'deployment-failed', false, 'vercel', true);
     h.setReceipt({ settledAtMs: 900 });
     const adapter = createDeploymentReceiptEventSourceAdapter(h.context.services.events.host, () => 1200, h.context);
     const running = runCheckpointedPluginEventObserverV1({ context: h.context, source: adapter, now: () => 1200 });
@@ -165,6 +166,19 @@ it('publishes a failed Event when the receipt has no failure summary', async () 
     const result = await adapter.observe({ context: h.context, definition: h.definition, source });
     expect(result.observations).toHaveLength(1);
     expect(result.observations[0]).toMatchObject({ payload: { state: 'failed', phase: null, failureCode: null } });
+});
+
+it('retains the private Source association when projecting a successful receipt Event', async () => {
+    const h = fixture(undefined, 'deployment-succeeded'); h.settle('succeeded');
+    const running = runCheckpointedPluginEventObserverV1({ context: h.context,
+        source: createDeploymentReceiptEventSourceAdapter(h.context.services.events.host, () => 1200), now: () => 1200 });
+    try {
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(h.admissions).toHaveLength(1);
+        expect(h.admissions[0]).toMatchObject({ subjectContexts: expect.arrayContaining([
+            { role: 'context', subject: { kind: 'app', serverId: config.serverId, projectSourceId: 'source-a' } },
+        ]) });
+    } finally { h.controller.abort(); await running; }
 });
 
 it('replays retained receipts by visible Environment and follows addressed remote receipts', async () => {

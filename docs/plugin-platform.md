@@ -13318,8 +13318,9 @@ target declarations do not select a separate failure-transition Event or payload
 In unreleased 0.3, a receipt Event source can select a whole Home or one
 Environment. Home adoption and reconnect page the visible Environments and read
 retained receipts within each Environment. Setup leaves those reads to the source,
-and later invalidations name exact receipts. Each Event retains the
-receipt's actual Environment and controller context. Targeted observation and
+and later invalidations name exact receipts. Each Event retains the receipt's
+actual Environment and controller context. For repository deployments, the
+Account-opened receipt also supplies the App context. Targeted observation and
 preview-child sources still require their Environment.
 The platform's finite `deployments.receipts.observe` Action dispatches the target's
 declared observe Action; provider-specific notice enrichment stays in the host

@@ -19,7 +19,19 @@ export const DEPLOYMENT_FAILED_EVENT = DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.l
 const changedEvent = DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1.localId;
 export const ROLLBACK_COMPLETED_EVENT = 'rollback-completed';
 type ReceiptRead = Extract<PluginActionResultById['deployments.receipts.get'], { ok: true }>;
-type Receipt = ReceiptRead['deployment'] & Pick<ReceiptRead, 'failureSummary'>;
+type Receipt = ReceiptRead['deployment'] & {
+    details?: { failureSummary: ReceiptRead['failureSummary']; projectSourceId?: string };
+};
+function projectReadReceipt(read: ReceiptRead, header = read.deployment): Receipt {
+    const source = read.investigation?.source;
+    return {
+        ...header,
+        details: {
+            failureSummary: read.failureSummary,
+            projectSourceId: source?.kind === 'repository' ? source.projectSourceId : undefined,
+        },
+    };
+}
 const outcomes = {
     [changedEvent]: { completesActionIds: undefined, state: null, operation: null, schema: changedSchema, key: 'deploymentReceiptChanged',
         title: 'Deployment receipt changed', description: 'The current deployment receipt or its serving Domain changed.' },
@@ -111,12 +123,13 @@ function projectReceiptObservation(input: Readonly<{
     observationReceivedAt: number; domainFingerprint?: string;
 }>): PluginEventObservationV1 {
     const { receipt, event } = input;
+    const projectSourceId = receipt.details?.projectSourceId;
     const observedAt = receipt.settledAtMs ?? receipt.startedAtMs ?? receipt.requestedAtMs;
     const identity = { environmentId: receipt.environmentId, deploymentId: receipt.id, targetLinkId: receipt.targetLinkId,
         receiptRevision: receipt.revision, observedAt };
     const payload = event === DEPLOYMENT_FAILED_EVENT
         ? failedSchema.parse({ ...identity, operation: receipt.operation, state: 'failed',
-            phase: receipt.failureSummary?.phase ?? null, failureCode: receipt.failureSummary?.code ?? null })
+            phase: receipt.details?.failureSummary?.phase ?? null, failureCode: receipt.details?.failureSummary?.code ?? null })
         : outcomes[event].schema.parse({ ...identity, operation: receipt.operation, state: receipt.state });
     return { eventRef: { pluginId, localId: event }, sourceInstanceId: input.sourceInstanceId, sourceContractVersion: 1,
         occurrenceId: computeCanonicalDomainSeparatedDigest('happier.deployment.receipt-event.v1',
@@ -126,7 +139,7 @@ function projectReceiptObservation(input: Readonly<{
         ...(receipt.originRunId ? { originRunId: receipt.originRunId } : {}),
         subjectContexts: [
             { role: 'operand', subject: { kind: 'environment', serverId: input.serverId, environmentId: receipt.environmentId } },
-            ...(receipt.projectSourceId ? [{ role: 'context' as const, subject: { kind: 'app' as const, serverId: input.serverId, projectSourceId: receipt.projectSourceId } }] : []),
+            ...(projectSourceId ? [{ role: 'context' as const, subject: { kind: 'app' as const, serverId: input.serverId, projectSourceId } }] : []),
             ...(receipt.acceptedExecution ? [{ role: 'context' as const, subject: { kind: 'machine' as const, serverId: input.serverId, machineId: receipt.acceptedExecution.controller.machineId } }] : []),
         ], payload };
 }
@@ -264,7 +277,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                                 entry.receipt = null;
                             } else throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in read ? read.error : 'deployment_unavailable', message: 'Deployment receipt is unavailable.' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: read });
                         } else {
-                            entry.receipt = 'items' in read ? read.items[0] ?? null : { ...read.deployment, failureSummary: read.failureSummary };
+                            entry.receipt = 'items' in read ? read.items[0] ?? null : projectReadReceipt(read);
                         }
                     }
                     if (entry.receipt === null) state.observing.delete(pendingId);
@@ -308,7 +321,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                                 serverId: source.serverId, environmentId: source.environmentId, deploymentId: receipt.id,
                             }, { signal: context.signal });
                             if (!('ok' in read) || !read.ok) throw withActionFailureDiagnostic(new PluginError({ code: 'ok' in read ? read.error : 'deployment_unavailable' }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: read });
-                            receipts[index] = { ...read.deployment, failureSummary: read.failureSummary };
+                            receipts[index] = projectReadReceipt(read);
                             pending.get(receipt.id)!.receipt = receipts[index];
                         }
                     }
@@ -322,14 +335,14 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                         || event !== changedEvent && (receipt.settledAtMs === undefined || receipt.settledAtMs < source.observingSince
                             || receipt.state !== outcome.state || outcome.operation !== null && receipt.operation !== outcome.operation)) continue;
                     let observedReceipt = receipt;
-                    if (event === DEPLOYMENT_FAILED_EVENT && receipt.failureSummary === undefined) {
+                    if (receipt.details === undefined) {
                         const result = await context.services.actions.execute('deployments.receipts.get', {
                             serverId: source.serverId, environmentId: receipt.environmentId, deploymentId: receipt.id,
                         }, { signal: context.signal });
                         if (!('ok' in result) || !result.ok) throw withActionFailureDiagnostic(new PluginError({
                             code: 'ok' in result ? result.error : 'deployment_unavailable',
                         }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: result });
-                        observedReceipt = { ...receipt, failureSummary: result.failureSummary };
+                        observedReceipt = projectReadReceipt(result, receipt);
                     }
                     observations.push(projectReceiptObservation({ receipt: observedReceipt, event, serverId: source.serverId,
                         sourceInstanceId: definition.sourceInstanceId, observationReceivedAt: now(),
@@ -385,7 +398,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                     if (!('ok' in read) || !read.ok) throw withActionFailureDiagnostic(new PluginError({
                         code: 'ok' in read ? read.error : 'deployment_unavailable',
                     }), { phase: 'deployment.events.read', causeKind: 'native_failure', error: read });
-                    nativeReceipt = { ...read.deployment, failureSummary: read.failureSummary };
+                    nativeReceipt = projectReadReceipt(read);
                 }
                 if (nativeReceipt.operation !== 'deploy' || nativeReceipt.settledAtMs === undefined) return;
                 for (const candidate of Object.keys(outcomes) as EventId[]) {
