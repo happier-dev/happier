@@ -7,9 +7,29 @@ const {
   QualifiedConnectedAccountIdSchema,
   QualifiedConnectedAccountRefJsonSchema,
   QualifiedConnectedAccountRefSchema,
+  sameQualifiedConnectedAccountRef,
 } = qualifiedConnectedAccountPersistence;
 
 describe('qualified connected-account identity', () => {
+  it('matches personal and Team selections by their exact carrier identity', () => {
+    const personal = { service: { pluginId: 'acme.accounts', localId: 'git' }, accountId: 'work' };
+    const team = { teamId: 'team-a', selection: { source: 'team_resource', resourceId: 'resource-a', deliveryMode: 'brokered' } } as const;
+    const direct = { ...team, selection: { ...team.selection, deliveryMode: 'direct', disclosedMember: personal } } as const;
+
+    expect(sameQualifiedConnectedAccountRef(personal, { ...personal })).toBe(true);
+    expect(sameQualifiedConnectedAccountRef(personal, { ...personal, service: { ...personal.service, localId: 'other' } })).toBe(false);
+    expect(sameQualifiedConnectedAccountRef(team, { ...team, selection: { ...team.selection } })).toBe(true);
+    expect(sameQualifiedConnectedAccountRef(team, personal)).toBe(false);
+    expect(sameQualifiedConnectedAccountRef(personal, team)).toBe(false);
+    expect(sameQualifiedConnectedAccountRef(team, { ...team, teamId: 'team-b' })).toBe(false);
+    expect(sameQualifiedConnectedAccountRef(team, { ...team, selection: { ...team.selection, resourceId: 'resource-b' } })).toBe(false);
+    expect(sameQualifiedConnectedAccountRef(team, direct)).toBe(false);
+    expect(sameQualifiedConnectedAccountRef(direct, { ...direct })).toBe(true);
+    expect(sameQualifiedConnectedAccountRef(direct, {
+      ...direct, selection: { ...direct.selection, disclosedMember: { ...personal, accountId: 'other' } },
+    })).toBe(false);
+  });
+
   it('admits only the reserved built-in host service beside plugin-qualified services', () => {
     const validate = compilePluginJsonSchema(QualifiedConnectedAccountRefJsonSchema);
     for (const [service, accepted] of [

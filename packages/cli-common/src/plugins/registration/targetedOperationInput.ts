@@ -6,7 +6,7 @@ import type { AdmittedTargetedOperationExecutionBinding } from './admittedTarget
 import { pluginSourceCustodyV1Equal, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import type { ConnectedAccountActionFormSelectionV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { pluginUiSelectedActionInputMatchesOperation, pluginUiTargetedContributionOperationKey, reconstructPluginUiSelectedActionInput, PluginUiSelectedActionInputCarrierV1Schema, type PluginUiSelectedActionInputCarrierV1 } from '@happier-dev/protocol/plugins/ui/selectedActionInput';
@@ -48,7 +48,7 @@ export async function resolveAdmittedTargetedOperationInput(params: Readonly<{
     assertCurrent(): void;
     binding: AdmittedTargetedOperationExecutionBinding;
     input: JsonValue;
-    expectedSelectedConnectedAccountRef: QualifiedConnectedAccountRef | null | undefined;
+    expectedSelectedConnectedAccountRef: ConnectedAccountActionFormSelectionV1 | null | undefined;
     /** One outer UI invocation may reconstruct its selected settlement once. */
     selectedActionInputClaimed: { current: boolean };
     signal: AbortSignal;

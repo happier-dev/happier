@@ -10,6 +10,8 @@ import {
 } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginSourceCustodyV1ProtocolSchema, pluginSourceCustodyV1Equal } from '../plugins/runtime/sourceCustody.js';
+import type { ConnectedAccountActionFormSelectionV1 } from './connectedAccountPurposeBindings.js';
+import { areTeamResourceConnectedServiceSelectionsEqual } from './teamResourceConnectedServiceSelectionIdentity.js';
 
 export const HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 = Object.freeze({
   pluginId: 'happier', localId: 'mcp-sign-in',
@@ -85,20 +87,17 @@ export function isQualifiedConnectedAccountLocalSubjectId(subjectId: string): bo
   }
 }
 
-/**
- * The one equality for a qualified connected-account ref.
- *
- * A ref is three fields, and every caller that has ever compared two of them —
- * quota source resolution, and now selected-pull-request review scope
- * production — needs the same answer to "is this the account I authorized as".
- * Comparing them inline is how two callers end up disagreeing about whether
- * the contribution identity takes part, so the comparison lives beside the
- * schema that defines the shape.
- */
+/** Exact identity for personal references and Team credential carriers. */
 export function sameQualifiedConnectedAccountRef(
-  left: QualifiedConnectedAccountRef,
-  right: QualifiedConnectedAccountRef,
+  left: ConnectedAccountActionFormSelectionV1,
+  right: ConnectedAccountActionFormSelectionV1,
 ): boolean {
+  if ('selection' in left) {
+    return 'selection' in right
+      && left.teamId === right.teamId
+      && areTeamResourceConnectedServiceSelectionsEqual(left.selection, right.selection);
+  }
+  if ('selection' in right) return false;
   return left.service.pluginId === right.service.pluginId
     && left.service.localId === right.service.localId
     && left.accountId === right.accountId;
