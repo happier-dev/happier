@@ -16,6 +16,14 @@ export const BITBUCKET_URL_SAFETY = Object.freeze({
   allowedOrigins: Object.freeze(['https://bitbucket.org']),
 });
 
+function createBitbucketUrlSafety() {
+  return {
+    allowedSchemes: [...BITBUCKET_URL_SAFETY.allowedSchemes],
+    allowedBaseUrls: [...BITBUCKET_URL_SAFETY.allowedBaseUrls],
+    allowedOrigins: [...BITBUCKET_URL_SAFETY.allowedOrigins],
+  };
+}
+
 export type ScmHostingProviderDetectionInput = Readonly<{
   remoteName: string | null;
   remoteUrl: string;
@@ -67,7 +75,7 @@ export const bitbucketHostingProviderAdapter: BitbucketScmHostingProviderAdapter
       kind: 'bitbucket' as const,
       displayName: 'Bitbucket',
       baseUrl: 'https://bitbucket.org',
-      urlSafety: BITBUCKET_URL_SAFETY,
+      urlSafety: createBitbucketUrlSafety(),
     }];
   },
   detectRemote(input) {
@@ -85,7 +93,7 @@ export const bitbucketHostingProviderAdapter: BitbucketScmHostingProviderAdapter
       nameWithOwner,
       repositoryWebUrl: `https://bitbucket.org/${nameWithOwner}`,
       remoteName: input.remoteName ?? undefined,
-      urlSafety: BITBUCKET_URL_SAFETY,
+      urlSafety: createBitbucketUrlSafety(),
     };
   },
   buildCompareUrl(input) {
