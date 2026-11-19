@@ -45,6 +45,7 @@ import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPrese
 import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 import { recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
 import { formatMoment } from '@/utils/datetime/formatMoment';
+import { formatUsageCost } from '@/utils/format/usageNumbers';
 
 // Machine RPC, native confirmation and the served Home's HTTP transport are external boundaries.
 vi.mock('@/modal', async () =>
@@ -920,6 +921,40 @@ it('shows attributed API-equivalent account value and a qualified price multiple
   expect(value!.props.accessibilityLabel).toContain('API-equivalent');
   expect(value!.props.accessibilityLabel).not.toContain('$20.00');
   expect(value!.props.accessibilityLabel).not.toContain('saved');
+});
+
+it('refreshes the mounted plan price and ending when the quota reading stays the same', async () => {
+  const now = Date.now();
+  const quotaObservedAtMs = now - HOUR / 2;
+  const meters = [{ meterId: 'weekly', label: 'Weekly', usedPct: 20, resetAtMs: now + DAY, windowDurationMs: 7 * DAY }];
+  const startAtMs = now - DAY;
+  const oldEnd = now + 10 * DAY;
+  const newEnd = now + 17 * DAY;
+  const reading = (renewal: 'on' | 'off', amount: number, observedAtMs: number, endAtMs: number) => quotaRead('work', quotaObservedAtMs, meters, {}, {
+    subscription: { status: 'subscribed', renewal, observedAtMs, staleAfterMs: HOUR,
+      currentPeriodStartAtMs: startAtMs, currentPeriodEndAtMs: endAtMs,
+      monetaryFacts: [{ kind: 'paid', amount, currency: 'USD', period: { startAtMs, endAtMs },
+        source: { kind: 'provider', id: 'provider-invoice', version: '1' }, effectiveAtMs: observedAtMs, asOfMs: observedAtMs }],
+    },
+  });
+  const before = bodyProps([reading('on', 20, now - HOUR / 3, oldEnd)]);
+  const after = bodyProps([reading('off', 35, now - HOUR / 6, newEnd)], undefined, query, { v: 1, results: [before.slice] });
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const widget = (props: ReturnType<typeof bodyProps>) => wrap(<UsagePlanFitWidget {...props} id="usage_plan_fit" testID="fit" />);
+  const screen = await renderScreen(widget(before));
+  const oldMoney = formatUsageCost(20, 'USD');
+  const newMoney = formatUsageCost(35, 'USD');
+  const renewal = t('usage.board.plans.planRenews', { time: formatMoment(oldEnd, now) });
+  const ending = t('usage.board.plans.planEnds', { time: formatMoment(newEnd, now) });
+  const rowLabel = () => screen.findHostByTestId('fit.plan.work')!.props.accessibilityLabel;
+  expect(rowLabel()).toContain(oldMoney);
+  expect(rowLabel()).toContain(renewal);
+
+  await screen.update(widget(after));
+  expect(rowLabel()).toContain(newMoney);
+  expect(rowLabel()).toContain(ending);
+  expect(rowLabel()).not.toContain(oldMoney);
+  expect(rowLabel()).not.toContain(renewal);
 });
 
 it('shows a recorded week from accounting even without connected plan accounts', async () => {

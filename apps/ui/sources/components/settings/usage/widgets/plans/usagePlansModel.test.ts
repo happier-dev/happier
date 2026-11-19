@@ -430,6 +430,35 @@ describe('Plans projection of admitted allowance reads', () => {
       ['ends', 30 * DAY],
     ]);
   });
+
+  it('updates subscription price and ending without moving the quota window or pool membership', () => {
+    const read = quotaRead({ accountId: 'work', groupId: 'pool',
+      meters: [{ meterId: 'week', label: 'Weekly', usedPct: 20, resetAtMs: NOW + DAY, windowDurationMs: 7 * DAY }] });
+    const startAtMs = NOW - DAY;
+    const oldEnd = NOW + 10 * DAY;
+    const newEnd = NOW + 17 * DAY;
+    const project = (renewal: 'on' | 'off', amount: number, observedAtMs: number, endAtMs: number) => {
+      const revised = ConnectedServiceQuotaGetResultV1Schema.parse({ ...read, current: { ...read.current,
+        subscription: { status: 'subscribed', renewal, observedAtMs, staleAfterMs: HOUR,
+          currentPeriodStartAtMs: startAtMs, currentPeriodEndAtMs: endAtMs,
+          monetaryFacts: [{ kind: 'paid', amount, currency: 'USD', period: { startAtMs, endAtMs },
+            source: { kind: 'provider', id: 'provider-invoice', version: '1' }, effectiveAtMs: observedAtMs, asOfMs: observedAtMs }],
+        },
+      } });
+      return projectUsagePlans([revised], NOW);
+    };
+
+    const before = project('on', 20, NOW - 30_000, oldEnd);
+    const after = project('off', 35, NOW - 10_000, newEnd);
+    expect(before.accounts[0]?.prices.paid).toMatchObject({ amount: 20, currency: 'USD' });
+    expect(after.accounts[0]?.prices.paid).toMatchObject({ amount: 35, currency: 'USD' });
+    expect(before.events.map(({ kind, atMs }) => [kind, atMs])).toEqual([['reset', NOW + DAY], ['renews', oldEnd]]);
+    expect(after.events.map(({ kind, atMs }) => [kind, atMs])).toEqual([['reset', NOW + DAY], ['ends', newEnd]]);
+    expect(after.accounts[0]).toMatchObject({ accountId: 'work', groupId: 'pool', observedAtMs: NOW - 60_000,
+      windows: before.accounts[0]!.windows });
+    expect(after.pools).toEqual(before.pools);
+    expect(after.pools).toMatchObject([{ groupId: 'pool', accountKeys: ['happier.agent.claude/claude-subscription:work'] }]);
+  });
 });
 
 describe('Plans detail projections', () => {
