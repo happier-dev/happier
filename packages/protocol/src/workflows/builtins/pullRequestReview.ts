@@ -13,6 +13,7 @@ export const PULL_REQUEST_REVIEW_SOURCE_EVENT_V1 = {
 /** Quick and Standard are editable Review inputs, with no implicit reviewer or round policy. */
 export function createPullRequestReviewWorkflowV1(
   event: WorkflowTriggerEventIdentityV1 = PULL_REQUEST_REVIEW_SOURCE_EVENT_V1,
+  actions: typeof SCM_HOSTING_PULL_REQUEST_ACTIVE_ACTIONS_V1 = SCM_HOSTING_PULL_REQUEST_ACTIVE_ACTIONS_V1,
 ): WorkflowDefinitionV1 {
   const occurrence = (field: string): WorkflowValueReference => ({ kind: 'trigger_event', event, path: ['pullRequest', field] });
   const reviewBranch = (name: 'quick' | 'standard'): WorkflowBlock[] => [
@@ -36,7 +37,7 @@ export function createPullRequestReviewWorkflowV1(
     { name: 'quickReview', valueType: 'json', required: true, description: 'The reviewers, steps and launch choices for internal authors.' },
     { name: 'standardReview', valueType: 'json', required: true, description: 'The reviewers, steps and launch choices used after approval for other authors.' },
   ], blocks: [{ kind: 'if', id: 'pr-lifecycle', name: 'Review an active pull request',
-    when: { kind: 'any', conditions: SCM_HOSTING_PULL_REQUEST_ACTIVE_ACTIONS_V1.map(action => ({
+    when: { kind: 'any', conditions: actions.map(action => ({
       kind: 'compare', operator: 'eq', left: occurrence('action'), right: literal(action),
     })) },
     then: [{ kind: 'if', id: 'author-route', name: 'Choose the review composition',

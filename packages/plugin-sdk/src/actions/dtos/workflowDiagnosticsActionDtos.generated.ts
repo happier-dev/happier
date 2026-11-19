@@ -47,7 +47,7 @@ export type WorkflowDiagnosticsActionInputById = {
         [x: string]: never;
     };
     readonly "workflow.starters.resolve": {
-        key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
+        key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'install-deps-in-worktree' | 'investigate-failing-pr-check' | 'investigate-new-sentry-issue' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-opened-pull-request' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'weekly-dependency-check' | 'work-through-each-file';
         session?: undefined | {
             sessionId: string;
             machineId: string;
@@ -62,7 +62,7 @@ export type WorkflowDiagnosticsActionResultById = {
     };
     readonly "workflow.starters.list": {
         examples: {
-            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
+            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'install-deps-in-worktree' | 'investigate-failing-pr-check' | 'investigate-new-sentry-issue' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-opened-pull-request' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'weekly-dependency-check' | 'work-through-each-file';
             titleKey: string;
             descriptionKey: string;
             definition: Readonly<{
@@ -480,6 +480,22 @@ export type WorkflowDiagnosticsActionResultById = {
                     optional?: true | undefined;
                 };
             }>;
+            eventSeed?: undefined | {
+                eventRef: {
+                    pluginId: string;
+                    localId: string;
+                };
+                setupInput: Record<string, JsonValue>;
+                sourceInstanceId?: string | undefined;
+                monitoringMachineId?: string | undefined;
+                connectedAccount?: undefined | {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            };
             triggerSeed?: undefined | {
                 kind: 'schedule';
                 schedule: {
@@ -534,7 +550,7 @@ export type WorkflowDiagnosticsActionResultById = {
     readonly "workflow.starters.resolve": {
         status: 'ready';
         example: {
-            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
+            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'install-deps-in-worktree' | 'investigate-failing-pr-check' | 'investigate-new-sentry-issue' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-opened-pull-request' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'weekly-dependency-check' | 'work-through-each-file';
             titleKey: string;
             descriptionKey: string;
             definition: Readonly<{
@@ -952,6 +968,22 @@ export type WorkflowDiagnosticsActionResultById = {
                     optional?: true | undefined;
                 };
             }>;
+            eventSeed?: undefined | {
+                eventRef: {
+                    pluginId: string;
+                    localId: string;
+                };
+                setupInput: Record<string, JsonValue>;
+                sourceInstanceId?: string | undefined;
+                monitoringMachineId?: string | undefined;
+                connectedAccount?: undefined | {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            };
             triggerSeed?: undefined | {
                 kind: 'schedule';
                 schedule: {

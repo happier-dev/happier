@@ -9792,6 +9792,14 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Workflow starter Actions include new catalog keys and an optional
+closed `eventSeed` using the existing Event authoring request. This result
+carries a requested Event identity and setup input. The Event editor still
+resolves the source and uses ordinary trigger admission. Earlier starter
+results remain readable. Use matching 0.3 development readers for new keys
+and fields, which earlier strict Development schemas reject. The inspected
+`../0.2` frontier at `73c533b470` has no starter Action contract.
+
 Unreleased 0.3 entity list filters narrow a list view (evaluator `list`) only by
 a selection they can state. A selection the list cannot evaluate (an opaque or
 future key, a retired extension) or one whose condition names no value (for

@@ -5,6 +5,7 @@ import { validateWorkflowDefinition } from '../workflowValidationV1.js';
 import { parseWorkflowDefinitionRefV1 } from '../workflowDefinitionRefV1.js';
 import { WorkflowDefinitionBaseSchema, type WorkflowBlock } from '../workflowV1.js';
 import { AutomationTriggerDefinitionInputSchema } from '../../automations/automationTriggerDefinition.js';
+import { WorkflowStartersListResultV1Schema, WorkflowStartersResolveResultV1Schema } from './starterActionsV1.js';
 
 function listBlocks(blocks: readonly WorkflowBlock[]): WorkflowBlock[] {
   return blocks.flatMap((block) => {
@@ -132,17 +133,35 @@ describe('built-in workflow catalog', () => {
       'notify-when-agent-waits', 'daily-summary-in-session', 'memory-upkeep-in-session', 'install-deps-in-worktree', 'test-after-every-turn',
       'check-for-drift', 'run-a-job-on-a-schedule',
       'backup-verify', 'nightly-backups', 'deployment-move', 'deployment-data-move', 'restore-drill', 'daily-health-digest', 'restart-when-needed',
+      'investigate-failing-pr-check', 'review-opened-pull-request', 'weekly-dependency-check', 'investigate-new-sentry-issue',
     ]);
     for (const example of examples) {
       expect(WorkflowDefinitionBaseSchema.safeParse(example.definition).success, example.key).toBe(true);
       expect(validateWorkflowDefinition(example.definition).issues, example.key).toEqual([]);
       expect(parseWorkflowDefinitionRefV1(example.key)).toBeNull();
-      if (example.key !== 'review-pull-request') {
+      if (example.key !== 'review-pull-request' && example.key !== 'review-opened-pull-request'
+        && example.key !== 'investigate-new-sentry-issue') {
         expect(example.definition.finalOutput, example.key).toBeDefined();
+      }
+      if (example.key !== 'review-pull-request') {
         expect(catalog.resolveBuiltinWorkflowDefinitionV1(example.key)).toBeNull();
       } else {
         expect(catalog.resolveBuiltinWorkflowDefinitionV1(example.key)?.definition).toEqual(example.definition);
       }
+    }
+  });
+
+  it('carries deferred Event setup through the list and resolve Actions without fabricating a configured trigger', () => {
+    const { examples } = WorkflowStartersListResultV1Schema.parse({ examples: catalog.getWorkflowStarterExamplesV1() });
+    for (const [key, pluginId, localId] of [
+      ['investigate-failing-pr-check', 'happier.scm.github', 'automation/pull-request-checks-failed-v1'],
+      ['review-opened-pull-request', 'happier.scm.github', 'automation/pull-request-lifecycle-v1'],
+      ['investigate-new-sentry-issue', 'happier.sentry', 'issue-transition'],
+    ] as const) {
+      const example = examples.find(entry => entry.key === key)!;
+      const resolved = WorkflowStartersResolveResultV1Schema.parse(materializeWorkflowStarterExample(example));
+      expect(resolved).toMatchObject({ status: 'ready', example: { eventSeed: { eventRef: { pluginId, localId }, setupInput: {} } } });
+      expect(resolved).not.toHaveProperty('example.trigger');
     }
   });
 
@@ -222,7 +241,8 @@ describe('workflow starter schedules without a Session', () => {
         kind: 'schedule', enabled: true, schedule,
       });
     });
-  it.each([['nightly-backups', '0 2 * * *'], ['run-a-job-on-a-schedule', '0 3 * * *']] as const)(
+  it.each([['nightly-backups', '0 2 * * *'], ['run-a-job-on-a-schedule', '0 3 * * *'],
+    ['weekly-dependency-check', '0 9 * * 1']] as const)(
     '%s opens with its schedule off, needing no Session', (key, scheduleExpr) => {
       const selection = materializeWorkflowStarterExample(byKey(key), { timezone: 'Europe/Zurich' });
       expect(workflowStarterRequiresSession(byKey(key))).toBe(false);

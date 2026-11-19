@@ -4,9 +4,10 @@ import type { AutomationScheduleTriggerInput, AutomationSessionLifecycleAuthored
 import { agent, input, literal, result } from './definitionParts.js';
 import { setWorkflowDefaultField, setWorkflowStepExecutionField, walkWorkflowBlocks } from '../workflowDefinitionEditV1.js';
 import type { AutomationTriggerDefinitionInput } from '../../automations/automationTriggerDefinition.js';
+import type { PluginUiOpenAutomationEventRequestV1 } from '../../plugins/ui/hostApiRequests.js';
 import { createDeploymentMoveWorkflowV1, createDeploymentDataMoveWorkflowV1 } from './deploymentMoveV1.js';
 import { createBackupVerifyWorkflowV1, createDailyHealthDigestWorkflowV1, createNightlyBackupsWorkflowV1, createRestoreDrillWorkflowV1 } from './backupExamples.js';
-import { REVIEW_PULL_REQUEST_WORKFLOW_V1 } from './pullRequestReview.js';
+import { createPullRequestReviewWorkflowV1, REVIEW_PULL_REQUEST_WORKFLOW_V1 } from './pullRequestReview.js';
 
 export const WORKFLOW_STARTER_EXAMPLE_KEYS_V1 = [
   'ask-once', 'review-pull-request', 'work-through-each-file', 'repair-until-it-passes',
@@ -14,6 +15,7 @@ export const WORKFLOW_STARTER_EXAMPLE_KEYS_V1 = [
   'notify-when-agent-waits', 'daily-summary-in-session', 'memory-upkeep-in-session', 'install-deps-in-worktree', 'test-after-every-turn',
   'check-for-drift', 'run-a-job-on-a-schedule',
   'backup-verify', 'nightly-backups', 'restore-drill', 'daily-health-digest', 'restart-when-needed', 'deployment-move', 'deployment-data-move',
+  'investigate-failing-pr-check', 'review-opened-pull-request', 'weekly-dependency-check', 'investigate-new-sentry-issue',
 ] as const;
 export type WorkflowStarterExampleKeyV1 = (typeof WORKFLOW_STARTER_EXAMPLE_KEYS_V1)[number];
 export type WorkflowStarterExampleV1 = Readonly<{
@@ -23,6 +25,8 @@ export type WorkflowStarterExampleV1 = Readonly<{
   definition: WorkflowDefinitionV1;
   /** Authoring source seed; {@link workflowStarterRequiresSession} says whether it needs a concrete Session first. */
   triggerSeed?: AutomationScheduleTriggerInput | Omit<z.infer<typeof AutomationSessionLifecycleAuthoredTriggerInputSchema>, 'subject'>;
+  /** Unconfigured Event authoring intent. The Event editor supplies the source before it can be saved. */
+  eventSeed?: PluginUiOpenAutomationEventRequestV1;
 }>;
 
 const askOnce: WorkflowDefinitionV1 = {
@@ -189,19 +193,59 @@ const restartWhenNeeded: WorkflowDefinitionV1 = {
 };
 
 function example<const CopyKey extends string>(key: WorkflowStarterExampleKeyV1, copyKey: CopyKey, definition: WorkflowDefinitionV1 | (() => WorkflowDefinitionV1),
-  triggerSeed?: WorkflowStarterExampleV1['triggerSeed']): WorkflowStarterExampleV1 & Readonly<{
+  seed?: WorkflowStarterExampleV1['triggerSeed'] | WorkflowStarterExampleV1['eventSeed']): WorkflowStarterExampleV1 & Readonly<{
   titleKey: `workflows.examples.${CopyKey}.title`;
   descriptionKey: `workflows.examples.${CopyKey}.description`;
 }> {
   return { key, titleKey: `workflows.examples.${copyKey}.title`, descriptionKey: `workflows.examples.${copyKey}.description`,
     get definition() { return typeof definition === 'function' ? definition() : definition; },
-    ...(triggerSeed === undefined ? {} : { triggerSeed }) };
+    ...(seed === undefined ? {} : 'eventRef' in seed ? { eventSeed: seed } : { triggerSeed: seed }) };
 }
 
-/** A template's schedule, off: its required inputs have no values yet, so firing now could only fail. */
-function offUntilInputsAreSet(scheduleExpr: string): AutomationScheduleTriggerInput {
+/** A template's schedule stays off until the author finishes setup. */
+function offUntilConfigured(scheduleExpr: string): AutomationScheduleTriggerInput {
   return { kind: 'schedule', enabled: false, schedule: { kind: 'cron', scheduleExpr, everyMs: null, timezone: null } };
 }
+
+const checksFailed: PluginUiOpenAutomationEventRequestV1 = {
+  eventRef: { pluginId: 'happier.scm.github', localId: 'automation/pull-request-checks-failed-v1' }, setupInput: {},
+};
+const pullRequestLifecycle: PluginUiOpenAutomationEventRequestV1 = {
+  eventRef: { pluginId: 'happier.scm.github', localId: 'automation/pull-request-lifecycle-v1' }, setupInput: {},
+};
+const sentryIssueTransition: PluginUiOpenAutomationEventRequestV1 = {
+  eventRef: { pluginId: 'happier.sentry', localId: 'issue-transition' }, setupInput: {},
+};
+
+const investigateFailingPrCheck: WorkflowDefinitionV1 = {
+  version: 1, defaults: { conversation: { kind: 'fresh' } }, inputs: [],
+  blocks: [agent('investigate', 'Investigate the failed checks', 'scout',
+    'Find the failed checks for the supplied repository, pull request and head commit. Report the likely cause, the supporting logs, and a proposed fix.',
+    [['repository', 'nameWithOwner'], ['checks', 'pullRequestNumber'], ['checks', 'headSha']].map(path => ({
+      kind: 'trigger_event', event: checksFailed.eventRef, path,
+    })), true)],
+  finalOutput: result('investigate'),
+};
+
+const checkDependencies = agent('check', 'Check dependencies', 'scout',
+  'Inspect dependency manifests and lockfiles in the selected project. Report outdated dependencies and known advisories, with sources and recommended updates. Leave the project files untouched.',
+  [], true);
+const weeklyDependencyCheck: WorkflowDefinitionV1 = {
+  version: 1, defaults: {}, inputs: [],
+  blocks: [{ ...checkDependencies, execution: { ...checkDependencies.execution, conversation: { kind: 'fresh' } } }],
+  finalOutput: result('check'),
+};
+
+const investigateNewSentryIssue: WorkflowDefinitionV1 = {
+  version: 1, defaults: { conversation: { kind: 'fresh' } }, inputs: [],
+  blocks: [{
+    ...agent('investigate', 'Investigate the issue', 'scout',
+      'Inspect the supplied Sentry issue. Summarize its impact, likely cause, and a next step with supporting evidence.',
+      [{ kind: 'trigger_event', event: sentryIssueTransition.eventRef, path: ['issueRef'] }], true),
+    onlyWhen: { kind: 'compare', operator: 'eq',
+      left: { kind: 'trigger_event', event: sentryIssueTransition.eventRef, path: ['phase'] }, right: literal('open') },
+  }],
+};
 
 /** Seeds only: these keys never enter the runtime workflow-reference grammar. */
 export const WORKFLOW_STARTER_EXAMPLES_V1 = Object.freeze([
@@ -222,14 +266,19 @@ export const WORKFLOW_STARTER_EXAMPLES_V1 = Object.freeze([
   example('test-after-every-turn', 'testAfterEveryTurn', testAfterEveryTurn,
     { kind: 'sessionLifecycle', enabled: true, events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'], policy: { kind: 'everyMatch' } }),
   example('check-for-drift', 'checkForDrift', checkForDrift),
-  example('run-a-job-on-a-schedule', 'runJobOnSchedule', runJobOnSchedule, offUntilInputsAreSet('0 3 * * *')),
+  example('run-a-job-on-a-schedule', 'runJobOnSchedule', runJobOnSchedule, offUntilConfigured('0 3 * * *')),
   example('backup-verify', 'backupVerify', createBackupVerifyWorkflowV1),
-  example('nightly-backups', 'nightlyBackups', createNightlyBackupsWorkflowV1, offUntilInputsAreSet('0 2 * * *')),
+  example('nightly-backups', 'nightlyBackups', createNightlyBackupsWorkflowV1, offUntilConfigured('0 2 * * *')),
   example('deployment-move', 'deploymentMove', createDeploymentMoveWorkflowV1),
   example('deployment-data-move', 'deploymentDataMove', createDeploymentDataMoveWorkflowV1),
-  example('restore-drill', 'restoreDrill', createRestoreDrillWorkflowV1, offUntilInputsAreSet('0 3 * * 0')),
+  example('restore-drill', 'restoreDrill', createRestoreDrillWorkflowV1, offUntilConfigured('0 3 * * 0')),
   example('daily-health-digest', 'dailyHealthDigest', createDailyHealthDigestWorkflowV1),
-  example('restart-when-needed', 'restartWhenNeeded', restartWhenNeeded, offUntilInputsAreSet('0 3 * * *')),
+  example('restart-when-needed', 'restartWhenNeeded', restartWhenNeeded, offUntilConfigured('0 3 * * *')),
+  example('investigate-failing-pr-check', 'investigateFailingPrCheck', investigateFailingPrCheck, checksFailed),
+  example('review-opened-pull-request', 'reviewOpenedPullRequest',
+    () => createPullRequestReviewWorkflowV1(pullRequestLifecycle.eventRef, ['opened']), pullRequestLifecycle),
+  example('weekly-dependency-check', 'weeklyDependencyCheck', weeklyDependencyCheck, offUntilConfigured('0 9 * * 1')),
+  example('investigate-new-sentry-issue', 'investigateNewSentryIssue', investigateNewSentryIssue, sentryIssueTransition),
 ]);
 
 export function getWorkflowStarterExamplesV1() {
@@ -242,11 +291,15 @@ export type WorkflowStarterExampleSelection = WorkflowStarterExampleV1 & Readonl
   sessionTarget?: WorkflowStarterSessionTarget;
 }>;
 
-/** A seed needs a Session when it follows one or its steps run in one; a schedule over Actions alone needs neither. */
+/** A schedule can run without a selected Session when its steps declare their own conversation. */
 export function workflowStarterRequiresSession(example: WorkflowStarterExampleV1): boolean {
   const seed = example.triggerSeed;
   if (seed === undefined) return false;
-  return seed.kind === 'sessionLifecycle' || [...walkWorkflowBlocks(example.definition.blocks)].some((block) => block.kind === 'step');
+  return seed.kind === 'sessionLifecycle' || walkWorkflowBlocks(example.definition.blocks).some((block) => {
+    if (block.kind !== 'step') return false;
+    const conversation = block.execution?.conversation ?? example.definition.defaults.conversation;
+    return conversation === undefined || conversation.kind === 'origin_session';
+  });
 }
 
 /** Materialize authoring seeds without guessing a Session or a firing origin. */

@@ -6576,8 +6576,10 @@ local preview does not read Account state or admit an occurrence.
 `workflow.starters.list` returns the built-in example catalog, and
 `workflow.starters.resolve` materializes one key with optional explicit Session
 target and timezone. The same Protocol materializer serves the UI. Session-bound
-examples return `requires_session` without a target; ready results are unsaved
-definition/trigger carriers, never a save, attach, schedule or execution effect.
+examples return `requires_session` without a target. Ready results carry an
+unsaved definition and may carry an authored trigger or an `eventSeed` for
+deferred source setup. Resolve prepares the draft without saving, attaching,
+scheduling or running it.
 
 `workflow.events.list { machineId, serverId? }` reads the selected Machine's current
 `automationEligibleEvents` contribution projection: event declarations, observation
