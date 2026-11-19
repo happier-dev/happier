@@ -3,7 +3,7 @@ import { isPidPresent } from '@happier-dev/cli-common/process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, posix } from 'node:path';
 import { Readable, Writable, type Duplex } from 'node:stream';
 import { constants as osConstants } from 'node:os';
 import { clearTimeout, setTimeout } from 'node:timers';
@@ -178,8 +178,8 @@ export type SessionHolderTarget = Readonly<{
      * for anything the launch step did not place there.
      */
     prepareLaunch?(launch: Readonly<{ command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv;
-        requiredFiles?: readonly string[]; signal?: AbortSignal }>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<NodeJS.ProcessEnv> }>
-        | Promise<Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<NodeJS.ProcessEnv> }>>;
+        requiredFiles?: readonly string[]; signal?: AbortSignal }>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<NodeJS.ProcessEnv>; environmentDirectory?: string }>
+        | Promise<Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<NodeJS.ProcessEnv>; environmentDirectory?: string }>>;
 }>;
 
 export type AgentSessionHolderLaunch =
@@ -1127,7 +1127,7 @@ function spawnTargetSessionHolderChild(launch: SessionHolderLaunch & Readonly<{ 
             ? await target.prepareLaunch({ command: launch.command, args: launch.args, ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}),
                 ...(launch.env ? { env: launch.env } : {}), ...(launch.requiredFiles ? { requiredFiles: launch.requiredFiles } : {}),
                 ...(launch.signal ? { signal: launch.signal } : {}) })
-            : { command: launch.command, args: launch.args, ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}), env: {} };
+            : { command: launch.command, args: launch.args, ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}), env: {}, environmentDirectory: undefined };
         const argv = [prepared.command, ...prepared.args];
         const ready = `${launch.socketPath}.ready`;
         const command = ['umask 077', `rm -f ${q(ready)}`, `mkfifo ${q(ready)}`,
@@ -1136,7 +1136,8 @@ function spawnTargetSessionHolderChild(launch: SessionHolderLaunch & Readonly<{ 
             `nohup ${[target.holderPath, 'serve', '--socket', launch.socketPath, '--session-mcp', ...holderTerminalArgs(launch), '--', ...argv].map(q).join(' ')} >${q(ready)} 2>/dev/null </dev/null &`,
             `head -n 1 ${q(ready)}`, `rm -f ${q(ready)}`].join('\n');
         launch.signal?.throwIfAborted();
-        return execWithManagedChannelEnvironment({ path: `${launch.socketPath}.environment`, environment: prepared.env,
+        return execWithManagedChannelEnvironment({ path: posix.join(prepared.environmentDirectory ?? target.socketDirectory, `${posix.basename(launch.socketPath)}.environment`),
+            environment: prepared.env,
             command, ...(launch.signal ? { signal: launch.signal } : {}),
             exec: command => target.exec(command), openChannel: argv => target.openChannel(argv) });
     };

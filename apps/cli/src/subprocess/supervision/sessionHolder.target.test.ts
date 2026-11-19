@@ -95,20 +95,21 @@ describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session hold
         const provider = localTarget(directory, holderExecutable!, { CLEARED_PROVIDER: 'synthetic-target-default' });
         const secret = "selected-'credential\nwith-newline";
         const script = join(directory, 'credential-agent.mjs');
-        const environmentPath = join(directory, 'env.sock.environment');
+        const runtimeHome = join(directory, 'credential-session');
+        const environmentPath = join(runtimeHome, 'env.sock.environment');
         let permissions: number[] | null = null;
         await writeFile(script, `import { existsSync } from 'node:fs'; process.stdout.write(JSON.stringify({ present: process.env.PROVIDER_TOKEN === ${JSON.stringify(secret)}, fileRemoved: !existsSync(${JSON.stringify(environmentPath)}), clearedAbsent: process.env.CLEARED_PROVIDER === undefined, unrelatedAbsent: process.env.HAPPIER_TEST_HOST_ONLY === undefined }) + '\\n'); process.stdin.resume();`);
         const supervised = spawnSupervisedPluginProcess({ command: process.execPath, args: [script], cwd: directory,
             env: { PROVIDER_TOKEN: secret, HAPPIER_TEST_HOST_ONLY: 'synthetic-host-only' },
             sessionHolder: { kind: 'spawn', executablePath: holderExecutable!, socketPath: join(directory, 'env.sock'), role: 'primary',
                 target: { ...provider.target, prepareLaunch: request => prepareTargetAgentLaunch({
-                    executables: { [process.execPath]: process.execPath }, env: {},
+                    runtimeHome, executables: { [process.execPath]: process.execPath }, env: {},
                     workspace: { hostRoot: directory, targetRoot: directory },
                     providerEnvironmentKeys: ['PROVIDER_TOKEN', 'CLEARED_PROVIDER'],
                 }, request),
                     exec: async command => {
                         if (command.includes('mkfifo')) {
-                            permissions = await Promise.all([environmentPath, directory].map(async path => (await stat(path)).mode & 0o777)).catch(() => null);
+                            permissions = await Promise.all([environmentPath, runtimeHome].map(async path => (await stat(path)).mode & 0o777)).catch(() => null);
                         }
                         return provider.target.exec(command);
                     } } },

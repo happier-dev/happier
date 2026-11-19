@@ -7900,8 +7900,9 @@ channels and exits when the holder closes that connection.
     the existing stdin file channel into a 0600 file in a 0700 directory. The target
     shell sources and removes the file before launching; values never enter provider
     command arguments. A refused launch removes the file through the same target
-    authority when it remains reachable. The Session
-    directory is removed by a Session-end step of the placement (it runs before the
+    authority when it remains reachable. Holder and installer environment files live
+    in the Session directory, so its existing cleanup and sweep also remove leftovers.
+    The directory is removed by a Session-end step of the placement (it runs before the
     authority ends) unless an Agent of the Session still holds its `.live` lock (a
     crashed runner's spared Agent keeps its credentials for the adopting respawn);
     leftovers are swept when a later Session is placed, unless an Agent holds the
