@@ -4973,6 +4973,19 @@ ordinary creation fields, with eligibility and envelope tuples enforced by the
 existing Session access owner. The selected Machine's ordinary access-key binding
 is installed before launch; onboarding retains Session ownership checks.
 
+Deferred browser birth also retains an optional installation-sealed requester
+bootstrap on the existing admitted Pending row. Apply the additive
+`SessionPendingMessage.requesterBootstrap` migration before loading the matching
+0.3 server, UI and daemon. The closed onboarding request and private Machine
+list/consume event require those matching development readers; an older daemon
+cannot recover a newly created requester Session from this capsule. Existing
+Pending rows without it retain their ordinary recovery path. Normal Session and
+Pending projections never include the capsule, and consumption or Pending
+termination clears it. This direct development cut adds no new store or
+credential authority. The scoped `../0.2` frontier at
+`73c533b470ac33a7605b50689b6cd93089a3ae6f` has none of the prepared browser birth,
+Pending Machine admission or requester bootstrap owner modules.
+
 Setup and update operands are closed development schemas shared by the UI and
 headless Action hosts. Setup carries recipient connection/input references and
 selected Machine recipes; template bytes cannot carry the author's bindings.

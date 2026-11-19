@@ -5,11 +5,13 @@ import { UsageTimingBoundsV1Schema } from '../../usage/usageTimingV1.js';
 import { SessionIdSchema } from '../idsV1.js';
 import { PendingLocalIdSchema } from '../pending/pendingLocalId.js';
 import { PendingRequestedActionV1Schema } from '../pending/pendingRequestedActionV1.js';
+import { SessionRequesterInstallationSealedBootstrapV1Schema } from '../creation/sessionRequesterBootstrapSchemasV1.js';
 import {
   SessionInputEnqueueResultV1Schema,
   SessionInputRequestEqualityEvidenceV1Schema,
   SESSION_FOLLOW_INPUT_ADMISSION_FIELDS_V1,
   SESSION_NEXT_TURN_NOTE_ADMISSION_FIELDS_V1,
+  SessionInputMachineTargetV1Schema,
 } from './sessionInputAdmission.js';
 import { SessionStoredMessageContentSchema } from './sessionStoredMessageContent.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
@@ -78,8 +80,30 @@ export const SessionPendingTemplateOnboardingInputV1Schema = lazyZodSchema(() =>
   usageTimingV1: SessionPendingEnqueueByMachineFieldsV1.usageTimingV1,
   requestedAction: SessionPendingEnqueueByMachineFieldsV1.requestedAction,
   requestEqualityEvidenceV1: SessionPendingEnqueueByMachineFieldsV1.requestEqualityEvidenceV1,
+  /** Private birth custody; excluded from ordinary Pending and Session projections. */
+  requesterBootstrap: z.optional(SessionRequesterInstallationSealedBootstrapV1Schema),
 }).check(z.superRefine(refineSessionPendingMachineEqualityEvidenceV1)));
 export type SessionPendingTemplateOnboardingInputV1 = z.infer<typeof SessionPendingTemplateOnboardingInputV1Schema>;
+
+export const SESSION_PENDING_REQUESTER_BOOTSTRAP_EVENT_V1 = 'session-pending-requester-bootstrap-v1' as const;
+/** The receipt owns placement; the opaque box opens only at that installation. */
+export const SessionPendingRequesterBootstrapV1Schema = lazyZodSchema(() => z.strictObject({
+  target: SessionInputMachineTargetV1Schema,
+  requestId: PendingLocalIdSchema,
+  requesterBootstrap: SessionRequesterInstallationSealedBootstrapV1Schema,
+}));
+export type SessionPendingRequesterBootstrapV1 = z.infer<typeof SessionPendingRequesterBootstrapV1Schema>;
+export const SessionPendingRequesterBootstrapRequestV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ v: z.literal(1), operation: z.literal('list'), sessionId: z.optional(asProtocolZod(SessionIdSchema)) }),
+  z.strictObject({ v: z.literal(1), operation: z.literal('consume'), sessionId: asProtocolZod(SessionIdSchema), requestId: PendingLocalIdSchema }),
+]));
+export type SessionPendingRequesterBootstrapRequestV1 = z.infer<typeof SessionPendingRequesterBootstrapRequestV1Schema>;
+export const SessionPendingRequesterBootstrapResponseV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ v: z.literal(1), ok: z.literal(true), bootstraps: z.array(SessionPendingRequesterBootstrapV1Schema) }),
+  z.strictObject({ v: z.literal(1), ok: z.literal(true) }),
+  z.strictObject({ v: z.literal(1), ok: z.literal(false) }),
+]));
+export type SessionPendingRequesterBootstrapResponseV1 = z.infer<typeof SessionPendingRequesterBootstrapResponseV1Schema>;
 
 export const SessionPendingTemplateOnboardingRequestV1Schema = lazyZodSchema(() => z.strictObject({
   request: SessionPendingTemplateOnboardingInputV1Schema,

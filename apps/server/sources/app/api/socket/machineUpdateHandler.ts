@@ -22,7 +22,9 @@ import { EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1, type ExternalSessionOperati
 import { ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1, ACTION_OPERATION_SNAPSHOT_PUSH_EVENT_V1 } from '@happier-dev/protocol/actions/operations/v1';
 import { EXTERNAL_SESSION_TRANSCRIPT_INVALIDATION_EVENT_V1, EXTERNAL_SESSION_SOURCE_UNAVAILABLE_OCCURRENCE_EVENT_V1, ExternalSessionTranscriptInvalidationV1Schema, ExternalSessionSourceUnavailableOccurrenceV1Schema } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
 import { MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1, MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1, MachineSessionTerminalCaptureRequestV1Schema, MachineSessionTerminalFinalizeRequestV1Schema, type MachineSessionTerminalCaptureResponseV1, type MachineSessionTerminalFinalizeResponseV1 } from '@happier-dev/protocol/sessions/control/machineSessionTerminalV1';
-import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, SessionPendingEnqueueByMachineRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
+import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, SessionPendingEnqueueByMachineRequestV1Schema,
+    SESSION_PENDING_REQUESTER_BOOTSTRAP_EVENT_V1, SessionPendingRequesterBootstrapRequestV1Schema,
+    type SessionPendingRequesterBootstrapResponseV1 } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2, SessionPendingExecutionRunEnqueueByMachineRequestV2Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
 import { SESSION_SERVER_START_INGRESS_EVENT_V1, type SessionServerStartIngressResponseV1 } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
 import { MachineUpdateMetadataRequestSchema, type MachineUpdateMetadataResponse } from '@happier-dev/protocol/machines/metadataUpdate';
@@ -30,6 +32,7 @@ import { machineStoredContentMatchesAccountMode } from '@happier-dev/protocol/ma
 import { projectActionOperationSnapshotPush } from './actionOperationSnapshotPush';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { enqueuePendingMessageByAuthenticatedMachine, updatePendingRequestedAction } from "@/app/session/pending/pendingMessageService";
+import { accessPendingRequesterBootstrap } from '@/app/session/pending/pendingRequesterBootstrap';
 import { SESSION_PENDING_RESET_START_RELEASE_EVENT_V1, PendingResetStartReleaseRequestV1Schema, type PendingResetStartReleaseResponseV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { readSessionAccessAuthenticationFromSocket } from '@/app/session/access/sessionAccessAuthentication';
 import { emitPendingChanged } from '@/app/session/pending/publishPendingMutation';
@@ -147,6 +150,25 @@ export function machineUpdateHandler(
         }>) => Promise<SessionServerStartIngressResponseV1>;
     }>,
 ) {
+    socket.on(SESSION_PENDING_REQUESTER_BOOTSTRAP_EVENT_V1, async (
+        request: unknown, callback?: (response: SessionPendingRequesterBootstrapResponseV1) => void,
+    ) => {
+        const parsed = SessionPendingRequesterBootstrapRequestV1Schema.safeParse(request);
+        const machineId = readAuthenticatedMachineId(socket);
+        const installationId = readVerifiedMachineSocketInstallationIdFromSocketData(socket.data);
+        if (!parsed.success || !machineId || !installationId || !socket.connected) {
+            callback?.({ v: 1, ok: false });
+            return;
+        }
+        try {
+            callback?.(await accessPendingRequesterBootstrap({ custodianAccountId: userId, machineId,
+                installationId, request: parsed.data }));
+        } catch {
+            // Custody remains on Pending until the installation can acknowledge its local write.
+            log({ module: 'websocket', level: 'warn', event: SESSION_PENDING_REQUESTER_BOOTSTRAP_EVENT_V1 },
+                'Machine Pending requester bootstrap storage unavailable');
+        }
+    });
     // Startup installs both registrar families. Exactly one socket-profile
     // owner may acknowledge this shared publication event.
     if (readAuthenticatedMachineId(socket)) socket.on(DISCUSSION_AGENT_POST_EVENT_V1, async (data: unknown, callback?: (response: unknown) => void) => {

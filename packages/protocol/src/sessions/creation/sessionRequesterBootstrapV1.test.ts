@@ -673,6 +673,29 @@ describe('requester bootstrap installation confidentiality', () => {
       ciphertext: `${ciphertext[0] === 'A' ? 'B' : 'A'}${ciphertext.slice(1)}` } })).toBeNull();
   });
 
+  it('recovers a bound Session from its Pending-only sealed bootstrap without a public launch recipe', () => {
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3));
+    const boundRequest = { ...request, requesterBootstrap: { ...request.requesterBootstrap,
+      sessionId: 'offline-session', sessionCreationDisposition: 'created' as const } };
+    const sealed = bootstrap.sealSessionRequesterBootstrapRpcRequestV1({ request: boundRequest,
+      installationId: 'installation', installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
+    const open = (machineId = 'machine', installationId = 'installation', installationPrivateKey = installation.secretKey) =>
+      bootstrap.openSessionRequesterBootstrapRpcRequestV1({ request: sealed.requesterBootstrap,
+        machineId, installationId, installationPrivateKey });
+    const opened = open()?.requesterBootstrap;
+    expect(opened && 'sessionId' in opened ? {
+      sessionId: opened.sessionId, sessionCreationDisposition: opened.sessionCreationDisposition,
+    } : null).toEqual({ sessionId: 'offline-session', sessionCreationDisposition: 'created' });
+    expect(open('another-machine')).toBeNull();
+    expect(open('machine', 'replacement-installation')).toBeNull();
+    expect(open('machine', 'installation', tweetnacl.sign.keyPair().secretKey)).toBeNull();
+    expect(JSON.stringify(sealed.requesterBootstrap).includes(request.requesterBootstrap.credentials.token)).toBe(false);
+    const unbound = bootstrap.sealSessionRequesterBootstrapRpcRequestV1({ request,
+      installationId: 'installation', installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
+    expect(bootstrap.openSessionRequesterBootstrapRpcRequestV1({ request: unbound.requesterBootstrap,
+      machineId: 'machine', installationId: 'installation', installationPrivateKey: installation.secretKey })).toBeNull();
+  });
+
   it('rejects malformed or small-order installation keys before sealing sensitive material', () => {
     for (const installationPublicKey of [new Uint8Array(31), new Uint8Array(32)]) {
       expect(() => bootstrap.sealSessionRequesterBootstrapRpcRequestV1({ request, installationId: 'installation',

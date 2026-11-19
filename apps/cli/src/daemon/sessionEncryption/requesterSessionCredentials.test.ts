@@ -59,7 +59,7 @@ import { createRequesterSessionControlRuntimeFixture } from '../testkit/requeste
 import type { TrackedSession } from '../types';
 import { createSessionLifecycleRpcActionExecutor } from '@/rpc/handlers/sessionLifecycle';
 import * as sessionLifecycleRpc from '@/rpc/handlers/sessionLifecycle';
-import { sealSessionRequesterHandoffPreflightBootstrapRpcRequestV1, sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { sealSessionRequesterHandoffPreflightBootstrapRpcRequestV1, sealExternalActionRequesterAccountContextV1, sealSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { createForkSessionLifecycleActionHandler } from '@/session/actions/lifecycle/createForkSessionLifecycleActionHandler';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -2315,6 +2315,41 @@ describe('requester Session lifecycle custody', () => {
       if (previousSessionId === undefined) delete process.env[REQUESTER_SESSION_ID_ENV];
       else process.env[REQUESTER_SESSION_ID_ENV] = previousSessionId;
     }
+  });
+
+  it.each(['missing', 'malformed', 'wrong-session', 'wrong-home'] as const)('recovers Pending requester birth only from absent exact custody (%s)', async state => {
+    const host = await home();
+    const sealed = sealSessionRequesterBootstrapRpcRequestV1({ installationId: attribution.installationId,
+      installationPublicKey: host.keyPair.publicKey, randomBytes: tweetnacl.randomBytes,
+      request: { kind: 'requester_session_bootstrap_v1', input: { executionTarget: { serverId: attribution.serverId,
+        machineId: attribution.machineId }, directory: { kind: 'path', path: '/tmp/project' },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+        requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: encodeStoredCredentials(credentials),
+          sessionId: state === 'wrong-session' ? 'another-session' : 'session', sessionCreationDisposition: 'created' } } });
+    const path = requesterSessionCredentialPath({ happyHomeDir: directory!, sessionId: 'session', attribution });
+    if (state === 'malformed') await writePrivateOwnerFile({ path, contents: '{bad' });
+    let consumed = 0;
+    const recovered = await requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: directory!,
+      serverId: attribution.serverId, sessionId: 'session', serverHttpBaseUrl: origin,
+      machineAdmissionBoundary: { ...host.boundary, getObservedServerIdentityId: () => 'srv_original_home' },
+      expectedAttribution: attribution, pendingBootstrap: { descriptor: { target: { homeId: state === 'wrong-home' ? 'srv_foreign_home' : 'srv_original_home',
+        accountId: attribution.accountId, machineId: attribution.machineId, installationId: attribution.installationId,
+        sessionId: 'session' }, requestId: 'pending-birth', requesterBootstrap: sealed.requesterBootstrap },
+        consume: async () => {
+          const retained = CustodySchema.safeParse(JSON.parse(await readFile(path, 'utf8')) as unknown);
+          expect(retained.success).toBe(true);
+          if (!retained.success) return;
+          expect(retained.data.sessionId).toBe('session');
+          expect(retained.data.attribution).toEqual(attribution);
+          expect(retained.data.credentials.token === credentials.token).toBe(true);
+          consumed++;
+        } } });
+    if (state === 'missing') {
+      expect(recovered?.getBoundSessionId()).toBe('session');
+      expect(recovered?.attribution).toEqual(attribution);
+      expect(consumed).toBe(1);
+    } else { expect(recovered === null).toBe(true); expect(consumed).toBe(0); }
+    await recovered?.dispose();
   });
 
   it('recovers only the exact cold handoff Session from existing protected custody with current Home admission', async () => {

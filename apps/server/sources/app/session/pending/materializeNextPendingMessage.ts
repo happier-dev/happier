@@ -18,7 +18,7 @@ import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv"
 import { decideRuntimeIdleAdmission, readSessionRuntimeActivityProjectionForPendingDrain } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionStoredContentKind } from '@happier-dev/protocol/encryption/storagePolicyDecisions';
 import { normalizePendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
-import { pendingDeliveryStatusV1ToPersistedFields } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import { pendingDeliveryStatusToPersistence } from './pendingDeliveryPersistence';
 import { type SessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import { type SessionInputAdmissionReceiptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { didSessionActivityBadgeSignalChange } from "@/app/activity/accountActivityBadge";
@@ -109,7 +109,7 @@ async function blockPendingExecutionRunTargetMismatchInTx(params: {
     deliveryState: null | "delivering";
     noopDeliveryState: PendingMaterializationDeliveryState;
 }): Promise<PendingMaterializationPublications> {
-    const blocked = pendingDeliveryStatusV1ToPersistedFields({
+    const blocked = pendingDeliveryStatusToPersistence({
         status: "blocked",
         reason: "session_input_target_unavailable",
     });
@@ -215,7 +215,7 @@ async function resolvePendingProviderRejoinInTx(params: {
         return { ok: false, error: "forbidden" };
     }
     if (row.providerAction === null) {
-        const blocked = pendingDeliveryStatusV1ToPersistedFields({
+        const blocked = pendingDeliveryStatusToPersistence({
             status: "blocked",
             reason: "delivery_outcome_uncertain",
         });
@@ -690,7 +690,7 @@ async function materializePendingTargetInTx(
                     }
                 }
 
-                const deliveringFields = pendingDeliveryStatusV1ToPersistedFields({ status: "delivering" });
+                const deliveringFields = pendingDeliveryStatusToPersistence({ status: "delivering" });
                 const claimed = await tx.sessionPendingMessage.updateMany({
                     where: {
                         sessionId,

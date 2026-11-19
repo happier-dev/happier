@@ -2,7 +2,7 @@ import { AutonomousExchangeStateV1Schema, applyAutonomousExchangeControlV1,
     readAutonomousExchangeAdmissionV1, type AutonomousExchangeControlRequestV1,
     type AutonomousExchangeStateV1 } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
 import { isAutonomousExchangeRootReceiptForAccount } from '@/app/session/messages/readAutonomousExchangeSourceRoot';
-import { pendingDeliveryStatusV1ToPersistedFields } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import { pendingDeliveryStatusToPersistence } from './pendingDeliveryPersistence';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
 import { applyPendingSessionStateChange } from '@/app/session/pending/applyPendingSessionStateChange';
@@ -110,8 +110,8 @@ export async function controlAutonomousExchange(params: Readonly<{
         if (updated.count !== 1) return { result: { ok: false, error: 'conflict' } as const, publications: [] };
 
         const target = params.request.control === 'stop'
-            ? pendingDeliveryStatusV1ToPersistedFields({ status: 'discarded', reason: 'autonomous_exchange_stopped' })
-            : pendingDeliveryStatusV1ToPersistedFields({ status: 'queued' });
+            ? pendingDeliveryStatusToPersistence({ status: 'discarded', reason: 'autonomous_exchange_stopped' })
+            : pendingDeliveryStatusToPersistence({ status: 'queued' });
         for (const pending of unstarted) {
             await tx.sessionPendingMessage.update({
                 where: { sessionId_localId: { sessionId: pending.sessionId, localId: pending.localId } },

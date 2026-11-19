@@ -7,7 +7,8 @@ import type { RawSessionListRow } from '@/session/transport/http/sessionsHttp';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { reportPendingSessionActivationFailure } from '@/api/session/pendingActivationTransport';
 import type { AdmittedRequesterSessionBootstrap, RequesterSessionCredentialBinding, RequesterSessionRuntimeContext,
-  ResolveRequesterSessionRuntimeContext, ReleaseRequesterSessionRuntimeContext, RequesterSessionRecoveryRefusal } from '../sessionEncryption/requesterSessionCredentials';
+  ResolveRequesterSessionRuntimeContext, ReleaseRequesterSessionRuntimeContext, RequesterSessionRecoveryRefusal,
+  RequesterPendingSessionBootstrapRecovery } from '../sessionEncryption/requesterSessionCredentials';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { activatePendingInactiveSession, type PendingInactiveSessionActivationRejected, type PendingSessionResumePort } from './activatePendingInactiveSession';
 import { logger } from '@/utils/logger';
@@ -26,6 +27,7 @@ export async function activateRequesterPendingSession(params: Readonly<{
   machineId: string;
   binding: Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution'>;
   hint?: PendingSessionActivationInput;
+  pendingBootstrap?: RequesterPendingSessionBootstrapRecovery;
   resolveRequesterSessionRuntimeContext: ResolveRequesterSessionRuntimeContext;
   releaseRequesterSessionRuntimeContext: ReleaseRequesterSessionRuntimeContext;
   resolveCurrentMachineExecutionOriginContext(): Promise<CurrentMachineExecutionOriginContext | null>;
@@ -60,7 +62,7 @@ export async function activateRequesterPendingSession(params: Readonly<{
     async refusal => {
       if (refusal.sessionId !== binding.sessionId) return;
       await settleRequesterPendingSessionPreparationRefusal({ refusal, hint, onActivationRejected: params.onActivationRejected });
-    });
+    }, params.pendingBootstrap);
   if (!context) return;
   try { await activate(context); }
   finally { await params.releaseRequesterSessionRuntimeContext(context); }
@@ -198,7 +200,7 @@ export function createPendingSessionActivationRecovery(params: Readonly<{
   fetchSessionsPage?: typeof fetchSessionsPageDefault;
   visitOwnedSession?: (sessionId: string, session: RawSessionListRow) => Promise<void>;
   visitOwnedSessions?: (sessions: readonly RawSessionListRow[]) => Promise<void>;
-  /** Host composition discovers only already-held protected requester Session refs. */
+  /** Host composition discovers protected refs and admitted installation-sealed Pending birth. */
   recoverRequesterSessions?: (retryAfterEndpointPublication?: Promise<boolean>) => Promise<void>;
 }>): Readonly<{
   activateHint: (input: PendingSessionActivationInput) => Promise<void>;

@@ -5748,6 +5748,19 @@ a failure-triggered credential upgrade, or permission to use the custodian's
 sign-in. Plain Accounts remain token-only and never acquire fabricated E2EE keys.
 This selection alone establishes neither reachable shared launch nor cleanup.
 
+Browser-created Sessions in unreleased 0.3 retain the same installation-sealed
+requester bootstrap on their admitted onboarding Pending record. The server
+stores only the sealed box, excludes it from ordinary Session and Pending
+projections, and exposes it only to the receipt's authenticated Machine
+installation while that Pending activation is active. Reconnect discovery uses
+that existing Session–Machine binding, so the browser can close before the
+daemon starts. The existing requester custody owner opens the box, verifies the
+bound Session and requester admission, and persists its ordinary protected local
+custody before acknowledging consumption. Consumption or Pending termination
+clears the server copy; local custody keeps its existing lifetime. An unreadable
+or conflicting local custody record cannot fall back to the capsule or the
+installed owner's sign-in. Plain requesters carry their token without E2EE keys.
+
 In unreleased 0.3 development, shared-Machine Workflows reuse this ordinary
 requester context. A Machine `use` grant admits Workflows and schedules through
 the same Machine access owner as requester Sessions. The requester's client seals

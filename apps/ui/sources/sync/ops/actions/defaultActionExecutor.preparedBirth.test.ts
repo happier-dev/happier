@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { openSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
-import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { openSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { SessionPendingTemplateOnboardingRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -22,11 +21,21 @@ import { readSessionCapabilitySelectionFromMetadataV1 } from '@happier-dev/proto
 import { readConnectedServiceMaterializationIdentityV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import tweetnacl from 'tweetnacl';
 import { encodeBase64, decodeBase64 } from '@/encryption/base64';
 
 const homes = createHomeGovernanceHarness();
+const birthInstallation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
+function answerBirthMachineRead(serverId: string) {
+    homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async raw => {
+        const response = createMachineReadBatchResponseFixture(raw, id => ({
+            ...createPlainMachineRowFixture({ id, accountId: 'recipient' }),
+            installationPublicKey: encodeBase64(birthInstallation.publicKey, 'base64'),
+        }));
+        return { body: await response.json() };
+    } });
+}
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
@@ -53,6 +62,7 @@ afterEach(() => {
 it.each(['binding', 'selection'] as const)('commits the browser Bot model and its Team binding from a %s', async source => {
     const serverId = await homes.addHome({ name: 'Birth Home', serverUrl: 'https://browser-birth.test',
         serverIdentityId: 'srv_birth', accountId: 'recipient', currentAccount: true, accountEncryptionMode: 'plain' });
+    answerBirthMachineRead(serverId);
     const team = { teamId: 'team', resourceId: 'team-provider', expectedResourceRevision: 0, deliveryMode: 'brokered' };
     const model = { agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-bot-model' };
     const selection = { v: 2, updatedAt: 0, ref: { source: 'team_resource', ...team, ...model } };
@@ -95,10 +105,11 @@ it.each([
     { mode: 'plain', outcome: 'accepted' }, { mode: 'plain', outcome: 'lost_response' },
     { mode: 'plain', outcome: 'rejoined' }, { mode: 'plain', outcome: 'retired' },
     { mode: 'e2ee', outcome: 'accepted' }, { mode: 'e2ee', outcome: 'team' },
-] as const)('commits an asleep browser Bot before content and host onboarding without Machine RPC ($mode/$outcome)', async ({ mode, outcome }) => {
+] as const)('commits prepared browser birth before content and host onboarding without Machine RPC ($mode/$outcome)', async ({ mode, outcome }) => {
     const ordinarySetupBirth = mode === 'plain' && outcome === 'accepted';
     const serverId = await homes.addHome({ name: 'Birth Home', serverUrl: 'https://browser-birth.test',
         serverIdentityId: 'srv_birth', accountId: 'recipient', currentAccount: true, accountEncryptionMode: mode });
+    answerBirthMachineRead(serverId);
     const storedCredentials = await TokenStorage.getCredentialsForServerUrl('https://browser-birth.test', { serverId });
     if (!storedCredentials) throw new Error('Missing credentials');
     const credentials = mode === 'e2ee' ? { token: storedCredentials.token, secret: encodeBase64(new Uint8Array(32).fill(9), 'base64url') } : storedCredentials;
@@ -119,6 +130,7 @@ it.each([
     const events: string[] = [];
     let machineBound = false;
     const onboardingTimings: unknown[] = [];
+    const postedBootstraps: Array<{ sealedBootstrap: unknown; disposition: 'created' | 'rejoined' }> = [];
     const boundary = createSessionMetadataHttpBoundary(() => ({}));
     const readBirthBatch = createSessionReadBatchFetchBoundary(async (url, init) => boundary.handle(url, init));
     homes.answer(serverId, 'POST /v2/sessions/read-batch', { select: async (_raw, http) => {
@@ -180,9 +192,13 @@ it.each([
         expect(machineBound).toBe(true);
         expect(new Headers(http.init?.headers).get('Authorization')).toBe(`Bearer ${credentials.token}`);
         if (outcome === 'team') expect(audiencePrepared).toBe(true);
+        const request = raw && typeof raw === 'object' ? Reflect.get(raw, 'request') : null;
+        const sealedBootstrap = request && typeof request === 'object' ? Reflect.get(request, 'requesterBootstrap') : null;
+        postedBootstraps.push({ sealedBootstrap, disposition: expectedDisposition });
         const body = SessionPendingTemplateOnboardingRequestV1Schema.parse(raw);
         expect(Object.keys(body)).toEqual(['request']);
-        expect(body.request).toMatchObject({ targetMachineId: 'asleep-machine', requestedAction: { v: 1, kind: 'send_now' } });
+        expect({ targetMachineId: body.request.targetMachineId, requestedAction: body.request.requestedAction })
+            .toEqual({ targetMachineId: 'asleep-machine', requestedAction: { v: 1, kind: 'send_now' } });
         onboardingTimings.push(Reflect.get(body.request, 'usageTimingV1'));
         if (mode === 'plain') expect(body.request.content).toMatchObject({ t: 'plain', v: { meta: { happierProvenanceV1: { producer: 'hostOnboarding' } } } });
         else {
@@ -199,25 +215,33 @@ it.each([
         if (outcome === 'lost_response') return { dispatchThenFail: true };
         return { body: { v: 1, result: { status: events.filter(value => value === 'onboarding').length > 1 ? 'alreadyAccepted' : 'accepted', localId: body.request.localId } } };
     } });
-    const executor = createDefaultActionExecutor();
     let expectedDisposition: 'created' | 'rejoined' = 'created';
-    const run = () => invokeHostReviewedChildV1({ parent: { actionId: 'template.instantiate', input: { creation: projectNativeJsonValueForTransport(input) } },
-        context: { surface: 'ui', authority: 'present_user', serverId, runtimeAccountId: 'recipient', actionCaller: { kind: 'host' },
-            externalActionTarget: { kind: 'machine', machineId: 'asleep-machine' } },
-        child: { action: 'session.spawn_new', role: 'create_bot', input: projectNativeJsonValueForTransport(projectSessionSpawnNewActionInputV2(input)) }, admittedReview: { action: 'session.spawn_new', role: 'create_bot', surface: 'ui' },
-        invocationServices: { sessionCreation: { hostOnboarding: { templateName: 'Helper', templateVersion: '1.0.0' },
-            ...(ordinarySetupBirth ? { machineSetupPlanInput: { homeId: 'srv_birth', machineId: 'asleep-machine' } } : {}),
-            beforeLaunch: async birth => { expect(birth).toMatchObject({ sessionId: 'browser-bot', disposition: expectedDisposition, metadataRevision: 0 });
-                events.push('content');
-                if (outcome === 'retired') await homes.switchAccount(serverId, 'other-account'); } } },
-        execute: (child, context, action) => executor.execute(action, child, context) });
-    const result = await run();
-    expect(onboardingTimings, JSON.stringify({ result, events })).toEqual(outcome === 'retired' ? [] : [{ v: 1, minMs: null, maxMs: null }]);
+    // The template owner's internal reviewed child passes this host continuation
+    // directly to prepared birth; public machine dispatch is a separate ingress.
+    const run = async () => {
+        const account = await captureLazyActionAccountContext(serverId);
+        try {
+            const { createUiPreparedSessionBirthV1 } = await import('./preparedSessionBirth');
+            return await createUiPreparedSessionBirthV1(account, {
+                ...input, admittedInput: input, actionCaller: { kind: 'host' },
+                sessionCreationTag: SessionCreationTagV1Schema.parse(`create:v1:${'a'.repeat(43)}`),
+            }, { hostOnboarding: { templateName: 'Helper', templateVersion: '1.0.0' },
+                ...(ordinarySetupBirth ? { machineSetupPlanInput: { homeId: 'srv_birth', machineId: 'asleep-machine' } } : {}),
+                beforeLaunch: async birth => {
+                    expect(birth).toMatchObject({ sessionId: 'browser-bot', disposition: expectedDisposition, metadataRevision: 0 });
+                    events.push('content');
+                    if (outcome === 'retired') await homes.switchAccount(serverId, 'other-account');
+                },
+            });
+        } finally { account.dispose(); }
+    };
     if (outcome === 'retired') {
+        await expect(run()).rejects.toMatchObject({ code: 'action_account_scope_changed' });
         expect(events).toEqual(['birth', 'machine-binding', 'content']);
     } else {
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'success', sessionId: 'browser-bot',
-            initialInput: { status: outcome === 'lost_response' ? 'outcomeUnknown' : 'accepted' } } });
+        const result = await run();
+        expect(result, JSON.stringify(result)).toMatchObject({ type: 'success', sessionId: 'browser-bot',
+            initialInput: { status: outcome === 'lost_response' ? 'outcomeUnknown' : 'accepted' } });
         expect(events).toEqual(['birth', 'machine-binding', 'content', 'onboarding']);
         const account = await captureLazyActionAccountContext(serverId);
         try {
@@ -232,14 +256,39 @@ it.each([
             })).toMatchObject({ sessionId: 'browser-bot', machineId: 'asleep-machine', agentTarget: input.agentTarget });
         } finally { account.dispose(); }
     }
+    expect(onboardingTimings).toEqual(outcome === 'retired' ? [] : [{ v: 1, minMs: null, maxMs: null }]);
     if (outcome === 'rejoined') {
         expectedDisposition = 'rejoined';
         const rejoined = await run();
-        expect(rejoined, JSON.stringify(rejoined)).toMatchObject({ ok: true, result: { type: 'success', disposition: 'rejoined',
-            sessionId: 'browser-bot', initialInput: { status: 'alreadyAccepted' } } });
+        expect(rejoined, JSON.stringify(rejoined)).toMatchObject({ type: 'success', disposition: 'rejoined',
+            sessionId: 'browser-bot', initialInput: { status: 'alreadyAccepted' } });
         expect(events).toEqual(['birth', 'machine-binding', 'content', 'onboarding', 'birth', 'content', 'onboarding']);
     }
-    expect(homes.requests.some(request => request.path.includes('/machines/'))).toBe(false);
+    for (const { sealedBootstrap, disposition } of postedBootstraps) {
+        expect(sealedBootstrap !== undefined && sealedBootstrap !== null,
+            'Browser birth must post sealed requester custody with Pending onboarding').toBe(true);
+        expect(sealedBootstrap && typeof sealedBootstrap === 'object' ? Reflect.get(sealedBootstrap, 'kind') : null)
+            .toBe('installation_sealed_v1');
+        const openedBootstrap = openSessionRequesterBootstrapRpcRequestV1({ request: sealedBootstrap,
+            machineId: 'asleep-machine', installationId: 'test-installation', installationPrivateKey: birthInstallation.secretKey });
+        expect(openedBootstrap !== null, 'Pending onboarding must carry decryptable requester custody for its committed Session').toBe(true);
+        if (!openedBootstrap) throw new Error('Pending requester custody unavailable');
+        expect(openedBootstrap.input).toEqual(input);
+        const requesterContext = openedBootstrap.requesterBootstrap;
+        expect({ v: requesterContext.v, disposition: requesterContext.disposition,
+            sessionId: 'sessionId' in requesterContext ? requesterContext.sessionId : null,
+            sessionCreationDisposition: 'sessionCreationDisposition' in requesterContext ? requesterContext.sessionCreationDisposition : null })
+            .toEqual({ v: 1, disposition: 'ordinary_requester', sessionId: 'browser-bot', sessionCreationDisposition: disposition });
+        const requesterCredentials = openedBootstrap.requesterBootstrap.credentials;
+        // Compare credential bytes as booleans so failed assertions never print sign-in material.
+        expect(requesterCredentials.token === credentials.token).toBe(true);
+        expect('encryption' in requesterCredentials).toBe(false);
+        expect('secret' in requesterCredentials).toBe(mode === 'e2ee');
+        if (mode === 'e2ee' && 'secret' in credentials) {
+            expect(requesterCredentials.secret === encodeBase64(decodeBase64(credentials.secret, 'base64url'), 'base64')).toBe(true);
+        }
+    }
+    expect(homes.requests.some(request => request.path.includes('/rpc'))).toBe(false);
     expect(homes.requests.some(request => request.path.includes('/access-keys/'))).toBe(true);
 });
 

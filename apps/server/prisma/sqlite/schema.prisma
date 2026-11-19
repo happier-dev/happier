@@ -2424,6 +2424,8 @@ model SessionPendingMessage {
     requestedAction  Json
     /// [SessionInputAdmissionReceiptV1]
     inputAdmissionReceipt Json?
+    /// Installation-sealed requester birth custody; never projected into Session or Pending content.
+    requesterBootstrap Json?
     /// [SessionInputRequestEqualityEvidenceV1]
     requestEqualityEvidenceV1 Json?
     /// The immediately preceding local id for one exact response-loss rejoin.

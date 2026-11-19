@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import tsconfigPaths from 'vite-tsconfig-paths';
 
 import baseConfig from './vitest.config';
+import { serverWorkspacePackageSourcesPlugin } from '../server/vitestWorkspacePackageResolution';
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';
 
 const requirePackageDependency = createRequire(new URL('./package.json', import.meta.url));
@@ -57,6 +58,7 @@ export default defineConfig({
     optimizeDeps: base.optimizeDeps,
     plugins: [
         ...(base.plugins ?? []),
+        serverWorkspacePackageSourcesPlugin,
         // This real composed lane intentionally imports the production server
         // grant route and CLI admission verifier. Resolve each app's `@/`
         // imports against its own project, as the existing server integration

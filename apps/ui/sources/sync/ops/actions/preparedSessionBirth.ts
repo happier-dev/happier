@@ -20,6 +20,10 @@ import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domain
 import { createEnvelopeTransport } from '@/sync/api/session/sessionDataKeyEnvelopeTransport';
 import { prepareCurrentSessionDataKeyEnvelopes } from '@/sync/encryption/prepareCurrentSessionDataKeyEnvelopes';
 import { readTransferableSessionDataKey } from '@/sync/encryption/readTransferableSessionDataKey';
+import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
+import { readMachineInstallationPublicKey } from '@/sync/domains/machines/machineInstallationPublicKey';
+import { sealSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { buildRequesterSessionCreationContext } from './requesterSessionSpawnPreparation';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
 
 type SpawnArgs = Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0];
@@ -37,6 +41,14 @@ export async function createUiPreparedSessionBirthV1(
     account.assertCurrent();
     const { accountMode, encryption } = await account.resolveAccountEncryption(args.signal);
     account.assertCurrent();
+    const readTransport = account.readTransport;
+    if (!readTransport) return { type: 'error', code: 'target_unavailable', retryable: true };
+    const machine = (await readMachineRows({ readTransport,
+        machineIds: [input.executionTarget.machineId], signal: args.signal })).get(input.executionTarget.machineId);
+    account.assertCurrent();
+    const installationId = machine?.installationId;
+    const installationPublicKey = readMachineInstallationPublicKey(machine?.installationPublicKey);
+    if (!installationId || !installationPublicKey) return { type: 'error', code: 'target_unavailable', retryable: true };
     const modelSelection = readAuthoredSessionModelSelection(input) ?? undefined;
     const modelBinding = modelSelection?.v === 2 && modelSelection.ref.source === 'team_resource'
         ? sessionModelSelectionV2TeamBindingIntent(modelSelection)
@@ -163,6 +175,11 @@ export async function createUiPreparedSessionBirthV1(
             const body = SessionPendingTemplateOnboardingRequestV1Schema.parse({
                 request: { v: 1, sessionId: birth.sessionId,
                     targetMachineId: input.executionTarget.machineId, localId, content: content.content, usageTimingV1,
+                    requesterBootstrap: sealSessionRequesterBootstrapRpcRequestV1({ request: {
+                        kind: 'requester_session_bootstrap_v1', input: { ...input, teamCredentialBindings },
+                        requesterBootstrap: { ...buildRequesterSessionCreationContext(accountMode, account.credentials),
+                            sessionId: birth.sessionId, sessionCreationDisposition: birth.disposition },
+                    }, installationId, installationPublicKey, randomBytes }).requesterBootstrap,
                     requestedAction, ...(requestEqualityEvidenceV1 ? { requestEqualityEvidenceV1 } : {}) } });
             account.assertCurrent();
             try {

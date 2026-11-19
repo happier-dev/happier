@@ -2465,10 +2465,11 @@ export async function startDaemon(
       whenRuntimeCreatable: whenRequesterRuntimeCreatable,
       onRecoveryRefused: refusal => settleRequesterPendingSessionPreparationRefusal({ refusal,
         onActivationRejected: async event => { await guardSessionRestoration?.onActivationRejected(event); } }),
-      recoverBootstrap: ({ sessionId, attribution: stamp, tracked, signal, onRecoveryRefused }) => resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: configuration.happyHomeDir,
+      recoverBootstrap: ({ sessionId, attribution: stamp, tracked, signal, onRecoveryRefused, pendingBootstrap }) => resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: configuration.happyHomeDir,
         serverId: requesterRuntimeServerId, sessionId, serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(),
         signal,
         onRecoveryRefused,
+        pendingBootstrap,
         machineAdmissionBoundary: requesterMachineAdmissionBoundary(),
         ...(stamp ? { expectedAttribution: stamp } : {}),
         // Retained attribution is not proof that a legacy Session has a

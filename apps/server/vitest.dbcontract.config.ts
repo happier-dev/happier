@@ -30,6 +30,7 @@ export default defineConfig({
             "sources/app/deployments/environmentSecretLaunchAdmission.sqlite.composed.integration.spec.ts",
             "sources/app/teams/credentials/resourceActivity.sqlite.integration.spec.ts",
             "sources/app/session/access/sessionAccessMembershipImpact.sqlite.integration.spec.ts",
+            "sources/app/session/pending/pendingRequesterBootstrap.sqlite.integration.spec.ts",
             "sources/app/auth/providers/accountIdentityChange.sqlite.integration.spec.ts",
             "sources/app/artifacts/artifactGrantedListCost.sqlite.integration.spec.ts",
             resolve(__dirname, '../../packages/tests/suites/db-contract/**/*.dbcontract.spec.{ts,mjs}'),

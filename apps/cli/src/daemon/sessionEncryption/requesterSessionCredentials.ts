@@ -9,7 +9,9 @@ import { readRequesterHomeWithinActionLifetime, recordRequesterCurrentnessRefusa
 import { basename, join } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { isDeepStrictEqual } from 'node:util';
-import type { SessionRequesterBootstrapV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { openSessionRequesterBootstrapRpcRequestV1, type SessionRequesterBootstrapV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import type { SessionPendingRequesterBootstrapV1 } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 import type { ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { configuration } from '@/configuration';
@@ -154,7 +156,26 @@ export type RequesterSessionRecoveryRefusal = Readonly<{
 export type ResolveRequesterSessionRuntimeContext = (
   sessionId: string, attribution?: RequesterWorkAttributionV1, signal?: AbortSignal,
   onPreparationRefused?: (refusal: RequesterSessionRecoveryRefusal) => Promise<void>,
+  pendingBootstrap?: RequesterPendingSessionBootstrapRecovery,
 ) => Promise<RequesterSessionRuntimeContext | null>;
+
+/** The admitted Pending row lends its existing sealed box until protected local custody exists. */
+export type RequesterPendingSessionBootstrapRecovery = Readonly<{
+  descriptor: SessionPendingRequesterBootstrapV1;
+  consume(): Promise<void>;
+}>;
+
+async function consumeRequesterPendingBootstrap(bootstrap: AdmittedRequesterSessionBootstrap,
+  pendingBootstrap?: RequesterPendingSessionBootstrapRecovery): Promise<void> {
+  if (!pendingBootstrap) return;
+  const target = pendingBootstrap.descriptor.target;
+  const attribution = bootstrap.attribution;
+  if (target.sessionId !== bootstrap.getBoundSessionId() || target.homeId !== bootstrap.homeServerIdentityId
+    || target.accountId !== attribution.accountId || target.machineId !== attribution.machineId
+    || target.installationId !== attribution.installationId) return;
+  try { await pendingBootstrap.consume(); }
+  catch { logger.warn('[DAEMON RUN] Pending requester bootstrap consumption unconfirmed; local custody retained', { sessionId: target.sessionId }); }
+}
 
 type RequesterInstallationAttribution = Omit<RequesterWorkAttributionV1, 'accountId'>;
 
@@ -184,10 +205,11 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
   whenRuntimeCreatable?(signal?: AbortSignal): Promise<void>;
   onRecoveryRefused?: (refusal: RequesterSessionRecoveryRefusal) => Promise<void>;
   recoverBootstrap(input: Readonly<{ sessionId: string; attribution?: RequesterWorkAttributionV1; tracked: boolean; signal?: AbortSignal;
-    onRecoveryRefused?: (refusal: RequesterSessionRecoveryRefusal) => Promise<void> }>): Promise<AdmittedRequesterSessionBootstrap | null>;
+    onRecoveryRefused?: (refusal: RequesterSessionRecoveryRefusal) => Promise<void>;
+    pendingBootstrap?: RequesterPendingSessionBootstrapRecovery }>): Promise<AdmittedRequesterSessionBootstrap | null>;
 }>): ResolveRequesterSessionRuntimeContext {
   const trackedSessionsByKey = input.trackedSessions;
-  return async (sessionId, attribution, signal, onPreparationRefused) => {
+  return async (sessionId, attribution, signal, onPreparationRefused, pendingBootstrap) => {
     if (signal?.aborted) return null;
     // Exited runners no longer lend requester authority. Inactive operations
     // still recover their own temporary context through the same custody path.
@@ -211,6 +233,7 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
     const onRecoveryRefused = onPreparationRefused ?? input.onRecoveryRefused;
     const recoverBootstrap = () => input.recoverBootstrap({ sessionId, ...(stamp ? { attribution: stamp } : {}), tracked: tracked !== undefined,
       ...(signal ? { signal } : {}),
+      ...(pendingBootstrap ? { pendingBootstrap } : {}),
       ...(onRecoveryRefused ? { onRecoveryRefused } : {}) });
     const coldBootstrap = !context ? await recoverBootstrap() : null;
     stamp ??= coldBootstrap?.attribution;
@@ -750,6 +773,7 @@ export async function resolveRequesterSessionBootstrapFromCustody(input: Readonl
   expectedAttribution?: RequesterWorkAttributionV1;
   signal?: AbortSignal;
   onRecoveryRefused?: (refusal: RequesterSessionRecoveryRefusal) => Promise<void>;
+  pendingBootstrap?: RequesterPendingSessionBootstrapRecovery;
 }>): Promise<AdmittedRequesterSessionBootstrap | null> {
   const boundary = input.machineAdmissionBoundary;
   const installation = boundary.readInstallation();
@@ -773,7 +797,9 @@ export async function resolveRequesterSessionBootstrapFromCustody(input: Readonl
     // cannot withdraw this Session's authority or trigger a credential fallback.
     try {
       await readPrivateOwnerFile(requesterSessionCredentialPath({ ...input, attribution: expected }));
-      return await resolveRequesterSessionBootstrap({ ...input, attribution: expected });
+      const recovered = await resolveRequesterSessionBootstrap({ ...input, attribution: expected });
+      if (recovered) await consumeRequesterPendingBootstrap(recovered, input.pendingBootstrap);
+      return recovered;
     } catch (error) {
       rethrowRequesterHomeReadFailure(error);
       if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') {
@@ -787,7 +813,47 @@ export async function resolveRequesterSessionBootstrapFromCustody(input: Readonl
     if (existing.status !== 'ready' || !boundary.isHomeCurrent()
       || boundary.readInstallation()?.installationId !== installation.installationId) return null;
     const binding = existing.bindings.find(candidate => candidate.sessionId === input.sessionId);
-    if (binding) return await resolveRequesterSessionBootstrap({ ...input, attribution: binding.attribution });
+    if (binding) {
+      const recovered = await resolveRequesterSessionBootstrap({ ...input, attribution: binding.attribution });
+      if (recovered) await consumeRequesterPendingBootstrap(recovered, input.pendingBootstrap);
+      return recovered;
+    }
+  }
+  if (input.pendingBootstrap) {
+    const { descriptor } = input.pendingBootstrap;
+    const target = descriptor.target;
+    const attribution = { serverId: input.serverId, accountId: target.accountId,
+      machineId: boundary.machineId, installationId: installation.installationId };
+    if (target.sessionId !== input.sessionId || target.machineId !== boundary.machineId
+      || target.installationId !== installation.installationId
+      || target.homeId !== await boundary.getObservedServerIdentityId?.()
+      || expected && !isDeepStrictEqual(expected, attribution)) return null;
+    const opened = openSessionRequesterBootstrapRpcRequestV1({ request: descriptor.requesterBootstrap,
+      machineId: boundary.machineId, installationId: installation.installationId,
+      installationPrivateKey: typeof installation.privateKey === 'string'
+        ? decodeBase64(installation.privateKey, 'base64url') : installation.privateKey });
+    if (!opened || opened.scope === 'workflow_trigger' || !('sessionId' in opened.requesterBootstrap)
+      || opened.requesterBootstrap.sessionId !== input.sessionId) return null;
+    const credentials = decodeStoredCredentials(opened.requesterBootstrap.credentials);
+    if (!credentials) return null;
+    const machineAdmission = await readRequesterSessionMachineAdmissionCurrent({ credentials, sessionId: input.sessionId,
+      attribution, serverHttpBaseUrl: input.serverHttpBaseUrl, boundary, signal: input.signal });
+    if (!machineAdmission) return null;
+    const prepared = await prepareRequesterSessionBootstrap({ credentials, attribution, machineAdmission,
+      homeServerIdentityId: target.homeId, boundary: { serverId: input.serverId,
+        serverHttpBaseUrl: input.serverHttpBaseUrl, happyHomeDir: input.happyHomeDir },
+      preparedSessionId: input.sessionId, boundSessionId: input.sessionId, signal: input.signal,
+      verifyMachineAdmissionCurrent: async signal => { signal?.throwIfAborted(); return machineAdmission !== undefined; } });
+    if (!prepared) return null;
+    try {
+      if (!await prepared.admitted.bindExistingSession(input.sessionId)) {
+        await prepared.cleanupOnFailure();
+        return null;
+      }
+      bindRequesterSessionRuntimeMachineAdmissionCurrentness({ bootstrap: prepared.admitted, boundary });
+      await consumeRequesterPendingBootstrap(prepared.admitted, input.pendingBootstrap);
+      return prepared.admitted;
+    } catch (error) { await prepared.cleanupOnFailure(); throw error; }
   }
   if (!input.legacyOwnerCredentials) return null;
   try {

@@ -729,7 +729,7 @@ export function sealSessionRequesterHandoffWorkspaceCaptureRpcRequestV1(input: R
 export function openSessionRequesterBootstrapRpcRequestV1(input: Readonly<{
   request: unknown; machineId: string; installationId: string; installationPrivateKey: Uint8Array;
 }>): OpenedRequest | null {
-  const request = openInstalledRequest(input);
+  const request = openInstalledRequest(input, true);
   return request?.kind === 'requester_session_bootstrap_v1' ? request : null;
 }
 
@@ -756,25 +756,34 @@ export function openSessionRequesterHandoffWorkspaceCaptureRpcRequestV1(input: R
 
 function openInstalledRequest(input: Readonly<{
   request: unknown; machineId: string; installationId: string; installationPrivateKey: Uint8Array;
-}>): InstalledRequest | null {
+}>, allowSealedSessionBirth = false): InstalledRequest | null {
   try {
     const parsed = z.union([SessionRequesterBootstrapRpcRequestV1Schema, SessionRequesterHandoffBootstrapRpcRequestV1Schema,
       SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema, SessionRequesterHandoffWorkspaceCaptureRpcRequestV1Schema]).safeParse(input.request);
-    if (!parsed.success || !('kind' in parsed.data.requesterBootstrap)
-      || parsed.data.requesterBootstrap.installationId !== input.installationId
-      || (parsed.data.kind === 'requester_session_bootstrap_v1' ? parsed.data.input.executionTarget.machineId
+    const sealedBirth = allowSealedSessionBirth ? SessionRequesterInstallationSealedBootstrapV1Schema.safeParse(input.request) : null;
+    const sealed = sealedBirth?.success ? sealedBirth.data
+      : parsed.success && 'kind' in parsed.data.requesterBootstrap ? parsed.data.requesterBootstrap : null;
+    if (!sealed || sealed.installationId !== input.installationId
+      || parsed.success && (parsed.data.kind === 'requester_session_bootstrap_v1' ? parsed.data.input.executionTarget.machineId
         : parsed.data.input.targetMachineId) !== input.machineId
       || input.installationPrivateKey.length !== ED25519_SECRET_KEY_BYTES) return null;
-    const opened = openBoxBundleWithSecretKey({ bundle: decodeBase64(parsed.data.requesterBootstrap.ciphertext, 'base64url'),
+    const opened = openBoxBundleWithSecretKey({ bundle: decodeBase64(sealed.ciphertext, 'base64url'),
       recipientSecretKey: ed25519.utils.toMontgomerySecret(input.installationPrivateKey.subarray(0, 32)) });
     if (!opened) return null;
     const plaintext = InstallationPlaintextV1Schema.safeParse(JSON.parse(new TextDecoder().decode(opened)));
     if (!plaintext.success || plaintext.data.machineId !== input.machineId
       || plaintext.data.installationId !== input.installationId
-      || plaintext.data.request.kind !== parsed.data.kind
+      || readInstalledRequestMachineId(plaintext.data.request) !== input.machineId) return null;
+    if (!parsed.success) {
+      // Pending retains the existing box only. It must contain an already
+      // committed Session, never an unbound birth or Workflow credential.
+      return sealedBirth?.success && plaintext.data.request.kind === 'requester_session_bootstrap_v1'
+        && plaintext.data.request.scope !== 'workflow_trigger' && 'sessionId' in plaintext.data.request.requesterBootstrap
+        ? plaintext.data.request : null;
+    }
+    if (plaintext.data.request.kind !== parsed.data.kind
       || (plaintext.data.request.kind === 'requester_session_bootstrap_v1' && parsed.data.kind === 'requester_session_bootstrap_v1'
         && plaintext.data.request.scope !== parsed.data.scope)
-      || readInstalledRequestMachineId(plaintext.data.request) !== input.machineId
       || createCanonicalJsonSigningInput(plaintext.data.request.input) !== createCanonicalJsonSigningInput(parsed.data.input)) return null;
     return plaintext.data.request;
   } catch { return null; }

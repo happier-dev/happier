@@ -36,7 +36,8 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { afterTx, inReadSnapshot, inTx, isTransactionConflictExhaustedError, isTransactionAcquisitionUnavailableError, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
-import { PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1, isPendingDeliveryArchivedUncertaintyReasonV1, isPendingDeliveryProviderEffectPossibleV1, isPendingDeliveryStatusTransitionAllowedV1, normalizePendingDeliveryStatusV1, pendingDeliveryStatusV1ToPersistedFields, type PendingDeliveryStatusTransitionTargetV1, type PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import { PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1, isPendingDeliveryArchivedUncertaintyReasonV1, isPendingDeliveryProviderEffectPossibleV1, isPendingDeliveryStatusTransitionAllowedV1, normalizePendingDeliveryStatusV1, type PendingDeliveryStatusTransitionTargetV1, type PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import { pendingDeliveryStatusToPersistence } from './pendingDeliveryPersistence';
 import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionStoredContentKind } from '@happier-dev/protocol/encryption/storagePolicyDecisions';
 import { isConditionalPendingSteerClaim, normalizePendingDeliveryBlockedReason, type PendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
 import { isSessionAgentTransitionDividerLocalId } from '@happier-dev/protocol/sessions/agentTransitionDivider';
@@ -712,7 +713,8 @@ type PendingMessageAdmissionContext =
         authentication: SessionAccessAuthentication;
       }> & (
         | Readonly<{ access: EffectiveSessionAccess; requireOwner?: never }>
-        | Readonly<{ access?: never; requireOwner: true }>
+        | Readonly<{ access?: never; requireOwner: true;
+            requesterBootstrap?: SessionPendingTemplateOnboardingInputV1['requesterBootstrap'] }>
       ))
     | Readonly<{
         kind: "machine";
@@ -1084,6 +1086,11 @@ async function enqueuePendingMessageWithAdmission(
                 }
                 if (admittedTarget) inputAdmissionReceipt = SessionInputAdmissionReceiptV1Schema.parse({ ...inputAdmissionReceipt, admittedTarget });
                 transactionAdmittedTarget = admittedTarget;
+            }
+            const requesterBootstrap = admission.kind === 'account' && admission.requireOwner
+                ? admission.requesterBootstrap : undefined;
+            if (requesterBootstrap && requesterBootstrap.installationId !== transactionAdmittedTarget?.installationId) {
+                return { ok: false, error: 'invalid-params', admissionRejectionCode: 'session_input_target_unavailable' } as const;
             }
 
             let suppressedFollow: Pick<Parameters<typeof retainSuppressedSessionFollowInputInTx>[1], 'delivery' | 'progresses' | 'relations'> | undefined;
@@ -1617,6 +1624,7 @@ async function enqueuePendingMessageWithAdmission(
                     position,
                     authorAccountId: deriveSessionMessageAuthorAccountIdV1({ messageRole, inputAdmissionReceipt }),
                     inputAdmissionReceipt,
+                    ...(requesterBootstrap ? { requesterBootstrap } : {}),
                     ...(requestEqualityEvidenceV1 ? { requestEqualityEvidenceV1 } : {}),
                 },
                 select: {
@@ -1803,7 +1811,8 @@ export async function enqueuePendingTemplateOnboarding(params: Readonly<{
         messageRole: 'user', content: request.content, requestedAction: request.requestedAction,
         usageTimingV1: request.usageTimingV1,
         ...(request.requestEqualityEvidenceV1 ? { requestEqualityEvidenceV1: request.requestEqualityEvidenceV1 } : {}),
-    }, { kind: 'account', requireOwner: true, authentication: params.authentication });
+    }, { kind: 'account', requireOwner: true, authentication: params.authentication,
+        ...(request.requesterBootstrap ? { requesterBootstrap: request.requesterBootstrap } : {}) });
     return await publishPendingInputAdmissionResult({ accountId: params.accountId, sessionId: request.sessionId,
         localId: request.localId }, result);
 }
@@ -2279,7 +2288,7 @@ async function rejectQueuedPendingInputInTx(params: Readonly<{
     // Cancelling that exact retained row introduces no replacement content to
     // compare. Keep its missing tag rather than blocking withdrawal or inventing one.
 
-    const discardedFields = pendingDeliveryStatusV1ToPersistedFields({
+    const discardedFields = pendingDeliveryStatusToPersistence({
         status: "discarded",
         reason: params.code,
     });
@@ -2536,7 +2545,7 @@ export async function settlePendingInputAdmission(params: Readonly<{
                 ...(params.decision.validation ? { validation: params.decision.validation } : {}),
             });
             if (!domainValidation.ok && domainValidation.holdReason) {
-                const blocked = pendingDeliveryStatusV1ToPersistedFields({ status: 'blocked',
+                const blocked = pendingDeliveryStatusToPersistence({ status: 'blocked',
                     reason: domainValidation.holdReason });
                 await tx.sessionPendingMessage.update({
                     where: { sessionId_localId: { sessionId, localId } },
@@ -3368,7 +3377,7 @@ export async function deletePendingMessage(params: {
                 const removed = await tx.sessionPendingMessage.updateMany({ where: {
                     sessionId, localId, targetExecutionRunId, status: existing.status, deliveryState: existing.deliveryState,
                     providerAction: existing.providerAction, deliveryBlockedReason: existing.deliveryBlockedReason, discardedReason: existing.discardedReason,
-                }, data: { status: 'discarded', deliveryState: null, deliveryBlockedReason: null, discardedAt: new Date(), discardedReason: 'cancelled' } });
+                }, data: { ...pendingDeliveryStatusToPersistence({ status: 'discarded', reason: 'cancelled' }), discardedAt: new Date() } });
                 if (removed.count !== 1) return { ok: true, ...(await readCurrentPendingMutationState(tx, sessionId)),
                     ...(params.withdraw === true ? { outcome: 'delivery_unknown' as const } : {}) } as const;
                 await settleUnacceptedSessionInputReplyInTx(tx, sessionId, localId, 'cancelled');
@@ -3648,19 +3657,14 @@ async function markPendingDeliveryRowsBlocked(
     const pendingBlockedCountDelta = allowedRows.filter((row) =>
         readPendingDeliveryStatus(row).status !== "blocked",
     ).length;
-    const persisted = pendingDeliveryStatusV1ToPersistedFields(target);
+    const persisted = pendingDeliveryStatusToPersistence(target);
     const updated = await tx.sessionPendingMessage.updateMany({
         where: {
             sessionId: params.sessionId,
             localId: { in: localIds },
             status: "queued",
         },
-        data: {
-            status: persisted.status,
-            deliveryState: persisted.deliveryState,
-            deliveryBlockedReason: persisted.deliveryBlockedReason,
-            discardedReason: persisted.discardedReason,
-        },
+        data: persisted,
     });
 
     return {
@@ -4253,15 +4257,10 @@ export async function blockPendingDelivery(params: {
                     return { ok: true, ...(await readCurrentPendingMutationState(tx, sessionId)), didUpdate: false };
                 }
 
-                const persisted = pendingDeliveryStatusV1ToPersistedFields(target);
+                const persisted = pendingDeliveryStatusToPersistence(target);
                 await tx.sessionPendingMessage.update({
                     where: { sessionId_localId: { sessionId, localId } },
-                    data: {
-                        status: persisted.status,
-                        deliveryState: persisted.deliveryState,
-                        deliveryBlockedReason: persisted.deliveryBlockedReason,
-                        discardedReason: persisted.discardedReason,
-                    },
+                    data: persisted,
                 });
                 await reconcilePendingActivationAuthorizationForRemovedRequestInTx({ tx, sessionId, requestId: localId });
 
@@ -4380,14 +4379,11 @@ export async function sendPendingDeliveryAsNew(params: {
             if (transcriptCollision) return { ok: false, error: "identity-conflict" } as const;
 
             const position = await reserveNextPendingQueuePosition(tx, sessionId);
-            const persisted = pendingDeliveryStatusV1ToPersistedFields({ status: "discarded", reason: "resent_as_new" });
+            const persisted = pendingDeliveryStatusToPersistence({ status: "discarded", reason: "resent_as_new" });
             await tx.sessionPendingMessage.update({
                 where: { sessionId_localId: { sessionId, localId } },
                 data: {
-                    status: persisted.status,
-                    deliveryState: persisted.deliveryState,
-                    deliveryBlockedReason: persisted.deliveryBlockedReason,
-                    discardedReason: persisted.discardedReason,
+                    ...persisted,
                     discardedAt: new Date(),
                 },
             });
@@ -4554,15 +4550,12 @@ export async function dismissPendingDelivery(params: {
                 return { ok: false, error: "delivery-settlement-conflict" } as const;
             }
 
-            const persisted = pendingDeliveryStatusV1ToPersistedFields({ status: "discarded", reason: "dismissed_uncertain" });
+            const persisted = pendingDeliveryStatusToPersistence({ status: "discarded", reason: "dismissed_uncertain" });
             await tx.sessionPendingMessage.update({
                 where: { sessionId_localId: { sessionId, localId } },
                 data: {
-                    status: persisted.status,
-                    deliveryState: persisted.deliveryState,
-                    deliveryBlockedReason: persisted.deliveryBlockedReason,
+                    ...persisted,
                     discardedAt: now,
-                    discardedReason: persisted.discardedReason,
                 },
             });
             await reconcilePendingActivationAuthorizationForRemovedRequestInTx({ tx, sessionId, requestId: localId });
@@ -4648,15 +4641,12 @@ export async function discardPendingMessage(params: {
                 } as const;
             }
 
-            const persisted = pendingDeliveryStatusV1ToPersistedFields(target);
+            const persisted = pendingDeliveryStatusToPersistence(target);
             await tx.sessionPendingMessage.update({
                 where: { sessionId_localId: { sessionId, localId } },
                 data: {
-                    status: persisted.status,
-                    deliveryState: persisted.deliveryState,
-                    deliveryBlockedReason: persisted.deliveryBlockedReason,
+                    ...persisted,
                     discardedAt: now,
-                    discardedReason: persisted.discardedReason,
                     ...(reason === 'resume_failed' ? { deliveryFailure: { code: 'resume_failed', ...(params.errorDetail ? { errorDetail: params.errorDetail } : {}) } } : {}),
                 },
             });
@@ -4724,16 +4714,13 @@ export async function restorePendingMessage(params: {
             const target = { status: "queued" } as const;
             if (canTransitionPendingDeliveryStatus(existing, target) && readPendingDeliveryStatus(existing).status === "discarded") {
                 const position = await reserveNextPendingQueuePosition(tx, sessionId);
-                const persisted = pendingDeliveryStatusV1ToPersistedFields(target);
+                const persisted = pendingDeliveryStatusToPersistence(target);
 
                 await tx.sessionPendingMessage.update({
                     where: { sessionId_localId: { sessionId, localId } },
                     data: {
-                        status: persisted.status,
-                        deliveryState: persisted.deliveryState,
-                        deliveryBlockedReason: persisted.deliveryBlockedReason,
+                        ...persisted,
                         discardedAt: null,
-                        discardedReason: persisted.discardedReason,
                         deliveryFailure: getActivePrismaRuntime().DbNull,
                         position,
                     },

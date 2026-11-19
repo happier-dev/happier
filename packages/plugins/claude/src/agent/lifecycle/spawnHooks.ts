@@ -42,8 +42,8 @@ function readHookPayload(event: unknown): Readonly<Record<string, unknown>> {
     return readRecord(record?.payload) ?? record ?? {};
 }
 
-function readEnvFromEvent(event: unknown): NodeJS.ProcessEnv {
-    const env = readRecord(readHookPayload(event).env);
+function readEnvFromRuntimeSelection(runtimeSelection: Readonly<Record<string, unknown>>): NodeJS.ProcessEnv {
+    const env = readRecord(runtimeSelection.env);
     if (!env) return process.env;
     const out: NodeJS.ProcessEnv = {};
     for (const [key, value] of Object.entries(env)) {
@@ -86,14 +86,14 @@ export async function resolveClaudeDaemonSpawnPrerequisites(
 }
 
 export function augmentClaudeDaemonSpawnEnv(event: unknown): Record<string, string> {
-    const payload = readHookPayload(event);
-    const env = readEnvFromEvent(event);
-    const descriptor = readRecord(payload.runtimeDescriptorV1);
+    const runtimeSelection = readRecord(readHookPayload(event).runtimeSelection) ?? {};
+    const env = readEnvFromRuntimeSelection(runtimeSelection);
+    const descriptor = readRecord(runtimeSelection.runtimeDescriptorV1);
     const agent = descriptor?.v === 1 && descriptor.agentId === 'claude' ? readRecord(descriptor.agent) : null;
     const savedConfigDir = typeof agent?.configDir === 'string' && agent.configDir.trim() ? agent.configDir.trim() : null;
-    // The host sends only explicit profile/materialized values in payload.env.
+    // The host sends only explicit profile/materialized values in runtimeSelection.env.
     // Its ambient daemon account must not replace the saved native account.
-    const explicitConfigDir = readRecord(payload.env) ? resolveClaudeConfigDirOverride(env) : null;
+    const explicitConfigDir = readRecord(runtimeSelection.env) ? resolveClaudeConfigDirOverride(env) : null;
     const claudeConfigDir = explicitConfigDir ?? savedConfigDir ?? resolveClaudeConfigDirOverride(env);
 
     return {

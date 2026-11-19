@@ -140,6 +140,8 @@ import { createMachineSkillActionExecutor } from '@/prompts/skills/machineInstal
 import { createExternalActionMachineRpcExecution, verifyExternalActionExecutionAuthorizationCurrent } from './externalActionExecutionAuthorization';
 import { externalActionTargetsEqualV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { PendingActivationRequestedEphemeralV1Schema, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SESSION_PENDING_REQUESTER_BOOTSTRAP_EVENT_V1, SessionPendingRequesterBootstrapRequestV1Schema,
+    SessionPendingRequesterBootstrapResponseV1Schema, type SessionPendingRequesterBootstrapV1 } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 import { SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1, SessionMessageReplyMachineMutationV1Schema,
     SessionMessageReplyMutationResultV1Schema, SessionMessageReplyPendingHintV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { recoverSessionMessageRepliesForMachine } from '@/session/services/sessionMessageReply';
@@ -3783,6 +3785,24 @@ export class ApiMachineClient {
             signal?.throwIfAborted();
             await listener(change);
         }
+    }
+
+    async listPendingRequesterSessionBootstraps(sessionId?: string): Promise<readonly SessionPendingRequesterBootstrapV1[]> {
+        if (!this.socket?.connected) throw new Error('Machine socket is unavailable for Pending requester recovery.');
+        const request = SessionPendingRequesterBootstrapRequestV1Schema.parse({ v: 1, operation: 'list', ...(sessionId ? { sessionId } : {}) });
+        const response = await this.socket.timeout(resolveSessionControlSocketAckTimeoutMs())
+            .emitWithAck(SESSION_PENDING_REQUESTER_BOOTSTRAP_EVENT_V1, request);
+        const result = SessionPendingRequesterBootstrapResponseV1Schema.parse(response);
+        if (!result.ok || !('bootstraps' in result)) throw new Error('Pending requester recovery was not authorized.');
+        return result.bootstraps;
+    }
+
+    async consumePendingRequesterSessionBootstrap(input: Readonly<{ sessionId: string; requestId: string }>): Promise<void> {
+        if (!this.socket?.connected) throw new Error('Machine socket is unavailable for Pending requester consumption.');
+        const request = SessionPendingRequesterBootstrapRequestV1Schema.parse({ v: 1, operation: 'consume', ...input });
+        const response = await this.socket.timeout(resolveSessionControlSocketAckTimeoutMs())
+            .emitWithAck(SESSION_PENDING_REQUESTER_BOOTSTRAP_EVENT_V1, request);
+        if (!SessionPendingRequesterBootstrapResponseV1Schema.parse(response).ok) throw new Error('Pending requester consumption was not authorized.');
     }
 
     onPendingSessionActivationHint(

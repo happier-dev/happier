@@ -64,7 +64,7 @@ import {
   type PendingSessionActivationInput,
 } from '@/daemon/sessions/pendingSessionActivationRecovery';
 import type { RequesterSessionRuntimeContext, ResolveRequesterSessionRuntimeContext, RequesterSessionCredentialBindingsResult,
-  RequesterSessionCredentialBinding } from '../sessionEncryption/requesterSessionCredentials';
+  RequesterSessionCredentialBinding, RequesterPendingSessionBootstrapRecovery } from '../sessionEncryption/requesterSessionCredentials';
 import { activateInactiveUsageLimitResume } from '@/daemon/sessions/activateInactiveUsageLimitResume';
 import { publishOrphanedStartupSessionEnds } from '@/daemon/sessions/publishOrphanedStartupSessionEnds';
 import { readOrphanedDeadPlainRunnerMarkers, type OrphanedDeadDaemonSession } from '@/daemon/sessions/reattachFromMarkers';
@@ -1883,15 +1883,24 @@ export async function bootstrapMachineSyncRuntime(
         stopFollowAccountChanges();
         priorFollowLifetimeCleanup?.();
       };
+      const readPendingRequesterBootstraps = async (sessionId?: string) => {
+        try { return await connectedApiMachine.listPendingRequesterSessionBootstraps(sessionId); }
+        catch (error) {
+          logger.warn('[DAEMON RUN] Pending requester bootstrap discovery unavailable; retained custody recovery continues',
+            { ...(sessionId ? { sessionId } : {}), error: serializeAxiosErrorForLog(error) });
+          return [];
+        }
+      };
       const activateRequesterSession = async (
         binding: Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution'>,
         hint?: PendingSessionActivationInput,
         retryAfterEndpointPublication?: Promise<boolean>,
+        pendingBootstrap?: RequesterPendingSessionBootstrapRecovery,
       ): Promise<void> => {
         if (!params.resolveRequesterSessionRuntimeContext || !params.releaseRequesterSessionRuntimeContext
           || !params.resolveCurrentMachineExecutionOriginContext
           || binding.attribution.machineId !== params.machineId) return;
-        await activateRequesterPendingSession({ ...params, binding, hint, retryAfterEndpointPublication,
+        await activateRequesterPendingSession({ ...params, binding, hint, retryAfterEndpointPublication, pendingBootstrap,
           resolveRequesterSessionRuntimeContext: params.resolveRequesterSessionRuntimeContext,
           releaseRequesterSessionRuntimeContext: params.releaseRequesterSessionRuntimeContext,
           resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext });
@@ -1901,10 +1910,14 @@ export async function bootstrapMachineSyncRuntime(
           const origin = await params.resolveCurrentMachineExecutionOriginContext?.();
           if (!params.requesterServerId || origin?.serverIdentityId !== hint.target.homeId
             || origin.machineId !== hint.target.machineId) return;
+          const descriptor = (await readPendingRequesterBootstraps(hint.sessionId))
+            .find(candidate => candidate.requestId === hint.requestId);
           await activateRequesterSession({ sessionId: hint.target.sessionId, attribution: {
             serverId: params.requesterServerId, accountId: hint.target.accountId,
             machineId: hint.target.machineId, installationId: hint.target.installationId,
-          } }, hint, retryAfterEndpointPublication);
+          } }, hint, retryAfterEndpointPublication, descriptor ? { descriptor,
+            consume: () => connectedApiMachine.consumePendingRequesterSessionBootstrap({ sessionId: hint.sessionId,
+              requestId: descriptor.requestId }) } : undefined);
           return;
         }
         const result = await activatePendingInactiveSession({
@@ -1965,16 +1978,30 @@ export async function bootstrapMachineSyncRuntime(
         },
         warn: (message, input, error) => logger.warn(`[DAEMON RUN] ${message}`, { input, error }),
         recoverRequesterSessions: async retryAfterEndpointPublication => {
-          const discovery = await params.readRequesterSessionCredentialBindings?.();
-          if (!discovery) return;
-          if (discovery.status !== 'ready') {
+          const [discovery, descriptors] = await Promise.all([
+            params.readRequesterSessionCredentialBindings?.(), readPendingRequesterBootstraps(),
+          ]);
+          if (discovery && discovery.status !== 'ready') {
             logger.warn('[DAEMON RUN] Requester pending recovery unavailable; protected custody retained', { reason: discovery.reason });
             return;
           }
+          const bindings = new Map<string, Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution'>>(
+            (discovery?.bindings ?? []).map(binding => [binding.sessionId, binding]));
+          const pendingBootstraps = new Map<string, RequesterPendingSessionBootstrapRecovery>();
+          for (const descriptor of descriptors) {
+            const target = descriptor.target;
+            if (!params.requesterServerId) continue;
+            if (!bindings.has(target.sessionId)) bindings.set(target.sessionId, { sessionId: target.sessionId, attribution: {
+              serverId: params.requesterServerId, accountId: target.accountId, machineId: target.machineId,
+              installationId: target.installationId } });
+            pendingBootstraps.set(target.sessionId, { descriptor,
+              consume: () => connectedApiMachine.consumePendingRequesterSessionBootstrap({ sessionId: target.sessionId,
+                requestId: descriptor.requestId }) });
+          }
           // Retained requester references select credential custody, not Follow
           // demand. Read each requester's Account/Home work set once as well.
-          const groups = new Map<string, Array<Extract<RequesterSessionCredentialBindingsResult, { status: 'ready' }>['bindings'][number]>>();
-          for (const binding of discovery.bindings) {
+          const groups = new Map<string, Array<Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution'>>>();
+          for (const binding of bindings.values()) {
             // The owned Account read already covers these retained references.
             if (binding.attribution.serverId === followHome.serverId
               && binding.attribution.accountId === followAccountId) continue;
@@ -1994,7 +2021,7 @@ export async function bootstrapMachineSyncRuntime(
               return;
             }
           })).catch(error => logger.warn('[DAEMON RUN] Requester Follow recovery remains pending', serializeAxiosErrorForLog(error)));
-          const pendingRecovery = Promise.all(discovery.bindings.map(async binding => {
+          const pendingRecovery = Promise.all([...bindings.values()].map(async binding => {
             if (binding.attribution.machineId === params.machineId && params.resolveRequesterSessionRuntimeContext
               && params.releaseRequesterSessionRuntimeContext) {
               const context = await params.resolveRequesterSessionRuntimeContext(binding.sessionId, binding.attribution);
@@ -2007,7 +2034,7 @@ export async function bootstrapMachineSyncRuntime(
               .catch(error => logger.warn('[DAEMON RUN] Requester reply recovery remains in original custody', error));
             await inactiveUsageLimitRecoveryScheduler.reconcilePendingResetStarts(binding.sessionId)
               .catch(error => logger.warn('[DAEMON RUN] Requester Pending reset demand remains held', error));
-            await activateRequesterSession(binding, undefined, retryAfterEndpointPublication).catch(error => logger.warn('[DAEMON RUN] Requester pending recovery item failed; custody retained', {
+            await activateRequesterSession(binding, undefined, retryAfterEndpointPublication, pendingBootstraps.get(binding.sessionId)).catch(error => logger.warn('[DAEMON RUN] Requester pending recovery item failed; custody retained', {
               sessionId: binding.sessionId, error: serializeAxiosErrorForLog(error),
             }));
           }));

@@ -6,6 +6,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { PassThrough } from 'node:stream';
+import { EventEmitter } from 'node:events';
 import { io } from 'socket.io-client';
 import { Server as SocketIoServer, type Socket as SocketIoSocket } from 'socket.io';
 import Fastify from 'fastify';
@@ -16,6 +17,8 @@ import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, ExternalActionDaemonDispatchReque
     ExternalActionRequestEnvelopeV1Schema,
     computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { fetchSessionById } from '../../../../../cli/src/session/transport/http/sessionsHttp';
 import { projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { readSessionSpawnNewActionResultV1, SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
@@ -55,6 +58,7 @@ import { readInstallationIdentityIfExistsSync } from '../../../../../cli/src/dae
 import { isCanonicalAbsolutePathInsideRoot } from '../../../../../cli/src/utils/path/expandHomeDirPath';
 import { createRequesterSessionRuntimeContext } from '../../../../../cli/src/daemon/sessionEncryption/createRequesterSessionRuntimeContext';
 import type { TrackedSession } from '../../../../../cli/src/daemon/types';
+import { mintSessionTrackingKey, trackSession, trackedSessionForSingleSessionProcess, type SessionTrackingKey, type TrackedSessionMap } from '../../../../../cli/src/daemon/sessions/sessionTrackingKey';
 import { createOnHappySessionWebhook } from '../../../../../cli/src/daemon/sessions/onHappySessionWebhook';
 import { createAgentSessionRunnerFactoryBinding } from '../../../../../cli/src/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority } from '../../../../../cli/src/daemon/agentRuntime/sessionBridgeAuthorization';
@@ -64,7 +68,9 @@ import { classifyPrimarySessionRuntimeIssue } from '../../../../../cli/src/agent
 import { awaitTrackedRunnerAgentSessionOpen, recordTrackedRunnerAgentSessionOpenAttestation } from '../../../../../cli/src/daemon/agentRuntime/runnerAgentSessionOpenAttestation';
 import { resolveSessionRunnerEntrypointIdentityFromProcessCommand } from '../../../../../cli/src/daemon/sessionRunnerRuntime/resolveRunnerEntrypointIdentity';
 import { hashProcessCommand, writeSessionMarker } from '../../../../../cli/src/daemon/sessionRegistry';
-import { readProcessIdentityByPid } from '../../../../../cli/src/daemon/processIdentity';
+import { captureProcessBirthWitness, readProcessIdentityByPid } from '../../../../../cli/src/daemon/processIdentity';
+import { startSessionHost, SESSION_HOST_READY_LINE } from '../../../../../cli/src/agent/runtime/lifecycle/sessionHost';
+import { sessionProcessEnvironment } from '../../../../../cli/src/agent/runtime/lifecycle/hostedSessionScope';
 import * as processIdentityBoundary from '../../../../../cli/src/daemon/processIdentity';
 import { readOrCreateDeviceLocalSecretStorage } from '../../../../../cli/src/daemon/deviceLocalSecretStorage';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '../../../../../cli/src/plugins/testkit/admittedRuntime';
@@ -81,7 +87,10 @@ import { HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY } from '../
 import { buildHappyCliSubprocessLaunchSpec, resolveTsxImportHookPath } from '../../../../../cli/src/utils/spawnHappyCLI';
 import { partitionProviderSessionArgs } from '../../../../../cli/src/cli/providerSessionArgPartition';
 import { pluginReloadController } from '../../../../../cli/src/plugins/runtime/reload/singleton';
-import { readRequesterSessionCredentialsForChild, REQUESTER_SESSION_ID_ENV, bindRequesterSessionRuntimeMachineAdmissionCurrentness, type RequesterSessionRuntimeContext } from '../../../../../cli/src/daemon/sessionEncryption/requesterSessionCredentials';
+import { readRequesterSessionCredentialsForChild, REQUESTER_SESSION_ID_ENV, bindRequesterSessionRuntimeMachineAdmissionCurrentness, resolveRequesterSessionBootstrapFromCustody, createRequesterSessionRuntimeContextResolver, listRequesterSessionCredentialBindings, type RequesterSessionRuntimeContext } from '../../../../../cli/src/daemon/sessionEncryption/requesterSessionCredentials';
+import { bootstrapMachineSyncRuntime, retireMachineSyncRuntimeAttempt } from '../../../../../cli/src/daemon/machine/bootstrapMachineSyncRuntime';
+import { createCliRegistryHostV1 } from '../../../../../cli/src/registries/createCliRegistryHost';
+import { createDaemonServerWorkBudget, createDaemonServerWorkScheduler } from '../../../../../cli/src/daemon/serverWork';
 import { AgentRuntimeRunnerBootstrapV1Schema, HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY } from '../../../../../cli/src/agent/runtime/session/process/agentRuntimeRunnerProtocol';
 import { resolveSessionStartupTimeoutMs } from '../../../../../cli/src/daemon/spawn/waitForSessionWebhook';
 import { DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
@@ -118,8 +127,11 @@ import { getOrCreateServerIdentityId, initializeServerIdentityCache } from '../.
 import { createCurrentMachineExecutionOriginContextResolver } from '../../../../../cli/src/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { isOriginalAccountExecutionAction } from '../../../../../server/sources/app/auth/externalActionExecutionAuthorization';
 import { resolveMachineAdmission } from '../../../../../server/sources/app/machines/machineAccess';
+import { setEligibleMachineAccessGrantInTx } from '../../../../../server/sources/testkit/machineAccessGrant.testkit';
+import { inTx } from '../../../../../server/sources/storage/inTx';
 import { accountRoutes } from '../../../../../server/sources/app/api/routes/account/accountRoutes';
 import { changesRoutes } from '../../../../../server/sources/app/api/routes/changes/changesRoutes';
+import { kvRoutes } from '../../../../../server/sources/app/api/routes/kv/kvRoutes';
 import { homeGovernanceRoutes } from '../../../../../server/sources/app/api/routes/home/homeGovernanceRoutes';
 import { registerPluginAvailabilityRoutes } from '../../../../../server/sources/app/plugins/availability/routes';
 import { sessionRoutes } from '../../../../../server/sources/app/api/routes/session/sessionRoutes';
@@ -312,6 +324,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
         registerAccountSecurityRoutes(app);
         accountRoutes(app);
         changesRoutes(app);
+        kvRoutes(app);
         homeGovernanceRoutes(app);
         registerPluginAvailabilityRoutes(app);
         featuresRoutes(app);
@@ -598,6 +611,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
 
     it.for([
         ['selected Claude birth', 'shared'],
+        ['shared-Machine browser birth cold Pending activation', 'shared'],
         ['own-Account selected Claude birth committed observation', 'owner'],
         ['own-Account selected Claude birth late Team reconnect', 'owner'],
         ['full isolated Claude host runtime', 'shared'],
@@ -614,6 +628,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
     ] as const)(
         '%s preserves initial-input admission and native reply wiring', { timeout: DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS }, async ([journey, requesterKind], context) => {
         const ownAccount = requesterKind === 'owner';
+        const coldBrowserBirth = journey === 'shared-Machine browser birth cold Pending activation';
         const lateTeamReconnect = journey === 'own-Account selected Claude birth late Team reconnect';
         const nativeVoiceActions = journey === 'native Voice duplicate and distinct call identities';
         const observeCommitted = journey === 'own-Account selected Claude birth committed observation' || lateTeamReconnect || nativeVoiceActions;
@@ -641,7 +656,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
             || journey === 'own-Account retained in-process Agent first reply'
             || journey === 'own-Account retained in-process Agent optional prompt unavailable'
             || disconnectNativeReplyEvents || disconnectAgentRegistration || withdrawPreparedAccountPlan || botBirth || hiddenVoice;
-        const realMachineTransport = retainedRunner || nativeVoiceActions;
+        const realMachineTransport = retainedRunner || nativeVoiceActions || coldBrowserBirth;
         // Windows startup cancellation invokes its exact OS process adapter.
         // A virtual runner sharing this worker's PID cannot prove that custody.
         if (retainedRunner && process.platform === 'win32') context.skip();
@@ -671,8 +686,9 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                 sessionInputAdmission: { protocolVersions: [1, 2] },
                 externalActionExecutionAuthorization: { protocolVersions: [1] },
             }) } });
-        if (!ownAccount) await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: requester.id,
-            accessLevel: 'view', createdByAccountId: owner.id } });
+        if (!ownAccount) expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: owner.id,
+            machineId: machine.id, principal: { kind: 'account', accountId: requester.id }, level: 'view' })))
+            .toMatchObject({ kind: 'saved' });
         let physicalLaunches = 0;
         let nativeReplyLaunches = 0;
         let daemonReceipts = 0;
@@ -692,13 +708,15 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
         let apiMachine: ApiMachineClient | null = null;
         let runnerClient: ApiSessionClient | null = null;
         let requesterRuntime: RequesterSessionRuntimeContext | null = null;
+        let createColdRequesterRuntime: ((bootstrap: Parameters<typeof createRequesterSessionRuntimeContext>[0]['bootstrap'])
+            => ReturnType<typeof createRequesterSessionRuntimeContext>) | undefined;
         const readRunnerClient = () => runnerClient;
         const selectedServices = { v: 2 as const, bindingsByServiceId: fullHostRuntime ? {} : {
             'happier.agent.claude/claude-subscription': { source: 'team_resource' as const,
                 resourceId: crypto.randomUUID(), deliveryMode: 'brokered' as const },
         } };
-        const trackedSessions = new Map<number, TrackedSession>();
-        const awaiters = new Map<number, (session: TrackedSession) => void>();
+        const trackedSessions: TrackedSessionMap = new Map();
+        const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
         const connectedServiceRegistry = new ConnectedServiceRuntimeRegistry();
         const runtimeId = crypto.randomUUID();
         const runnerStages: Array<{ stage: string; elapsedMs: number }> = [];
@@ -820,11 +838,12 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                         sessionId: committed.session.sessionId, runner, retainedAgent };
                     await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: 31_001 });
                     const child = new ChildProcess();
-                    nativeTracked = { startedBy: 'daemon', pid: runner.pid, happySessionId: authority.sessionId,
+                    nativeTracked = { trackingKey: mintSessionTrackingKey(), startedBy: 'daemon', pid: runner.pid, happySessionId: authority.sessionId,
                         runnerProcessIdentity: runner, processStartTimeMs: runner.processStartTimeMs,
                         processCommandHash: runner.processCommandHash, childProcess: child,
                         agentRuntimeDaemonServiceAuthorityFilePath: authority.path,
                         runnerAgentSourceCustodyV1: retainedAgent.sourceCustody };
+                    trackSession(trackedSessions, nativeTracked);
                     physicalLaunches += 1;
                     if (lateTeamReconnect) {
                         const realFetch = (await vi.importActual<typeof import('undici')>('undici')).fetch;
@@ -849,7 +868,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                         } finally { transport.mockImplementation(realFetch); }
                         Object.defineProperty(child, 'exitCode', { value: 1 });
                     } else {
-                        await writeSessionMarker({ pid: runner.pid, happySessionId: authority.sessionId,
+                        await writeSessionMarker({ trackingKey: nativeTracked.trackingKey, pid: runner.pid, happySessionId: authority.sessionId,
                             startedBy: 'daemon', processStartTimeMs: runner.processStartTimeMs,
                             processCommandHash: runner.processCommandHash, agentRuntimeDaemonServiceAuthorityFilePath: authority.path,
                             runnerAgentSourceCustodyV1: retainedAgent.sourceCustody });
@@ -883,7 +902,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                 return result;
             } });
         const deviceLocalSecretStorage = await readOrCreateDeviceLocalSecretStorage({ path: join(database.baseDir, journey, 'device-local-key.json') });
-        const report = createOnHappySessionWebhook({ pidToTrackedSession: trackedSessions, pidToAwaiter: awaiters, deviceLocalSecretStorage });
+        const report = createOnHappySessionWebhook({ trackedSessionsByKey: trackedSessions, spawnAwaiterByKey: awaiters, deviceLocalSecretStorage });
         const daemonHomeDir = retainedRunner ? join(database.baseDir, 'daemon', journey) : join(database.baseDir, 'daemon');
         if (realMachineTransport) {
             // startDaemon installs this authenticated Machine socket before
@@ -899,7 +918,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
             activeServerDir: join(daemonHomeDir, 'servers', homeId), serverId: homeId, serverHttpBaseUrl: endpoint,
             machineId: machine.id, custodianAccountId: owner.id, credentials: { token: ownerToken, encryption: null },
             connectedServicesMaterializationBaseDir: join(database.baseDir, 'connected-services'), registry: connectedServiceRegistry,
-            trackedSessions, pidToAwaiter: awaiters, getRequester: () => requesterRuntime, resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+            trackedSessions, spawnAwaiterByKey: awaiters, getRequester: () => requesterRuntime, resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             getApiMachineForSessions: () => apiMachine,
             processEnv: { NODE_ENV: 'test', HAPPIER_CLAUDE_PATH: process.execPath,
                 ...(fullHostRuntime ? { HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: fixtureEntrypoint } : {}),
@@ -935,7 +954,7 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
             },
             startup: { resolveSessionSpawnDirectTargetTransport: () => transport,
                 deviceLocalSecretStorage, onHappySessionWebhook: report,
-                createRequesterSessionRuntimeContext: async bootstrap => {
+                createRequesterSessionRuntimeContext: createColdRequesterRuntime = async bootstrap => {
                     expect(bootstrap.serverHttpBaseUrl).toBe(endpoint);
                     bindRequesterSessionRuntimeMachineAdmissionCurrentness({ bootstrap, boundary: {
                         machineId: machine.id, daemonToken: ownerToken,
@@ -945,13 +964,15 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                         readInstallation: readInstallationIdentityIfExistsSync,
                     } });
                     const context = await createRequesterSessionRuntimeContext({ bootstrap,
+                        providerAccountUsageStore: readDaemonRuntime().resolveProviderAccountUsageStore({
+                            serverId: homeId, accountId: bootstrap.attribution.accountId }),
                         activeServerDir: join(daemonHomeDir, 'servers', homeId),
                         connectedServicesMaterializationBaseDir: join(database.baseDir, 'connected-services'),
                         resolveQualifiedConnectedAccountV4Support: () => 'advertised',
                         coordinatorInput: {
                             happyHomeDir: daemonHomeDir, machineId: machine.id,
                             machineIdProvider: () => machine.id, runtimeId, logger, processEnv: { NODE_ENV: 'test' },
-                            pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: connectedServiceRegistry,
+                            trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: connectedServiceRegistry,
                             connectedServiceAuthGroupPreTurnSwitchCoordinator: readDaemonRuntime().connectedServiceAuthGroupPreTurnSwitchCoordinator,
                             connectedServicePredictiveSwitchGuard: readDaemonRuntime().connectedServicePredictiveSwitchGuard,
                             consumeCommittedAuthGroupGeneration: readDaemonRuntime().consumeCommittedAuthGroupGeneration,
@@ -1149,7 +1170,8 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                 }
                 const isolatedHome = options.env?.CLAUDE_CONFIG_DIR;
                 expect(typeof isolatedHome === 'string'
-                    && isCanonicalAbsolutePathInsideRoot(database.baseDir, isolatedHome)).toBe(true);
+                    && isCanonicalAbsolutePathInsideRoot(database.baseDir, isolatedHome),
+                    JSON.stringify({ isolatedHome, fixtureRoot: database.baseDir })).toBe(true);
                 // A harmless real child preserves process-generation and exit custody;
                 // the external Agent executable and its output are simulated here.
                 const child = spawn(process.execPath, ['-e', 'process.stdin.resume()'], { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -1182,12 +1204,19 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                     if (!credentials) throw new Error('Requester child credential was not admitted');
                     const api = await runWithServerHttpBaseUrl(endpoint, () => ApiClient.create(credentials));
                     const base = await startRunner(api, credentials, sessionId, attachPath);
-                    await vi.waitFor(() => expect(awaiters.has(child.pid!)).toBe(true), { timeout: resolveSessionStartupTimeoutMs() });
-                    const identity = await readProcessIdentityByPid(child.pid);
+                    const runnerPid = coldBrowserBirth ? process.pid : child.pid;
+                    await vi.waitFor(() => {
+                        const tracked = trackedSessionForSingleSessionProcess(trackedSessions, runnerPid);
+                        expect(tracked && awaiters.has(tracked.trackingKey)).toBe(true);
+                    }, { timeout: resolveSessionStartupTimeoutMs() });
+                    const identity = await readProcessIdentityByPid(runnerPid);
                     if (!identity) throw new Error('Child process generation unavailable');
-                    await report(sessionId, { ...base.metadata, hostPid: child.pid,
-                        hostProcessStartTimeMs: identity.processStartTimeMs });
+                    const tracked = trackedSessionForSingleSessionProcess(trackedSessions, runnerPid);
+                    if (!tracked) throw new Error('Missing tracked virtual child');
+                    await report(sessionId, { ...base.metadata, hostPid: runnerPid,
+                        hostProcessStartTimeMs: identity.processStartTimeMs }, undefined, undefined, tracked.trackingKey);
                 }).catch(error => {
+                    rejectChildStartup(error);
                     child.stderr?.emit('data', Buffer.from(error instanceof Error ? error.message : String(error)));
                     child.kill();
                 });
@@ -1199,6 +1228,41 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
             // internal Session/runtime service. Other tooling spawns stay real.
             const realSpawn = childProcess.spawn;
             const osSpawn = vi.spyOn(childProcess, 'spawn').mockImplementation((command, argv, options) => {
+                if (coldBrowserBirth && argv.includes('session-host')) {
+                    // Simulate the OS child only. The real host endpoint admits
+                    // the daemon and runs each issued command in its own scope.
+                    const child = new ChildProcess();
+                    const hostProcess = new EventEmitter();
+                    Object.defineProperties(child, {
+                        pid: { value: process.pid },
+                        stderr: { value: new PassThrough() },
+                        stdout: { value: new PassThrough() },
+                    });
+                    child.kill = () => { hostProcess.emit('SIGTERM'); return true; };
+                    void startSessionHost({
+                        readTrustedCaller: () => captureProcessBirthWitness(process.pid),
+                        process: hostProcess,
+                        exit: code => { child.exitCode = code; child.emit('exit', code, null); },
+                        runSessionCommand: async args => {
+                            if (!physicalRunner.launch) throw new Error('Missing cold runner OS boundary');
+                            physicalLaunches += 1;
+                            const runner = physicalRunner.launch(Array.from(args), { ...options,
+                                env: sessionProcessEnvironment() });
+                            await new Promise<void>((resolve, reject) => {
+                                runner.once('exit', code => code === 0 ? resolve() : reject(new Error('Cold runner failed')));
+                                runner.once('error', reject);
+                            });
+                        },
+                    }).then(host => {
+                        onTestFinished(async () => { hostProcess.emit('SIGTERM'); await host.whenEnded; });
+                        child.stdout?.emit('data', Buffer.from(`${SESSION_HOST_READY_LINE} ${process.pid}\n`));
+                    }).catch(error => {
+                        rejectChildStartup(error);
+                        child.stderr?.emit('data', Buffer.from(String(error)));
+                        child.emit('exit', 1, null);
+                    });
+                    return child;
+                }
                 if (options?.env?.[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]) {
                     const controlIndex = argv.indexOf('--happy-starting-mode');
                     if (controlIndex < 1 || !physicalRunner.launch) throw new Error('Unexpected runner OS launch');
@@ -1250,21 +1314,21 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
         if (!publishedMachine) throw new Error('Machine read did not settle');
         // Installed startup supplies this same observed snapshot to the Machine
         // client for its Home binding and operation-protocol negotiation.
-        if (nativeVoiceActions) {
+        if (nativeVoiceActions || coldBrowserBirth) {
             const snapshot = await observeServerFeaturesSnapshot({ serverUrl: endpoint });
             if (snapshot.status !== 'ready') throw new Error('Machine Home features did not settle');
             ownerApi.setServerFeaturesSnapshotProvider(() => snapshot);
         }
         apiMachine = await runWithServerHttpBaseUrl(endpoint, async () => ownerApi.machineSyncClient(publishedMachine));
         onTestFinished(apiMachine.onConnectedServicesProjection(daemonRuntime.reconcileConnectedServicesProjection));
-        if (observeCommitted || retainedRunner) {
+        if (observeCommitted || retainedRunner || coldBrowserBirth) {
             const registration = apiMachine.setRPCHandlers({
                 spawnSession: daemonRuntime.spawnSession, stopSession: daemonRuntime.stopSession,
-                ...(retainedRunner ? { sessionSpawnV1OutcomeRequired: true,
+                ...(retainedRunner || coldBrowserBirth ? { sessionSpawnV1OutcomeRequired: true,
                     isSessionActive: daemonRuntime.isSessionAlreadyRunning } : {}),
                 requestShutdown: () => { throw new Error('Unexpected daemon shutdown request'); },
             }, { externalActionIngressOwner: daemonRuntime.externalActionIngressOwner });
-            if (nativeVoiceActions) {
+            if (nativeVoiceActions || coldBrowserBirth) {
                 const sessionsRole = await activateSessionsRoleForMachineClient(apiMachine, registration);
                 onTestFinished(() => sessionsRole.stop());
             }
@@ -1372,12 +1436,14 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                         ...(typeof error?.code === 'string' ? { code: error.code } : {}) });
                     return new Response(response.body, { status: response.statusCode, headers: { 'Content-Type': 'application/json' } });
                 } });
-            const learnedProfile = await setServerProfileIdentityForUrl(endpoint, homeId);
+            const learnedProfile = coldBrowserBirth ? homes.homes.home : await setServerProfileIdentityForUrl(endpoint, homeId);
             expect(learnedProfile).not.toBeNull();
             if (!learnedProfile) throw new Error('Home identity was not learned');
-            realCredentials = await TokenStorage.setCredentialsForServerUrlWithRollback(endpoint,
-                { serverId: learnedProfile.id }, { token: requesterToken });
-            if (!realCredentials) throw new Error('Could not store the real requester token');
+            if (!coldBrowserBirth) {
+                realCredentials = await TokenStorage.setCredentialsForServerUrlWithRollback(endpoint,
+                    { serverId: learnedProfile.id }, { token: requesterToken });
+                if (!realCredentials) throw new Error('Could not store the real requester token');
+            }
             if (hiddenVoice) {
                 if (!conversationFixture) throw new Error('Missing native Voice fixture');
                 const voice = await createHiddenVoiceStartCanary({ serverUrl: endpoint, serverIdentityId: homeId,
@@ -1440,6 +1506,108 @@ describe('shared Machine spawn through the real UI, Home, daemon and SQLite owne
                     agentTarget: schemaInput.agentTarget, sessionName: schemaInput.title,
                     initialSessionFacts: schemaInput.identity, promptStack: schemaInput.promptStack }),
             }) : schemaInput;
+            if (coldBrowserBirth) {
+                // The browser must be able to commit while the selected daemon
+                // is asleep, then close before that daemon recovers the input.
+                await apiMachine.shutdown();
+                await db.machine.update({ where: { id: machine.id }, data: { active: false } });
+                const account = await captureLazyActionAccountContext(learnedProfile.id);
+                const { createUiPreparedSessionBirthV1 } = await import('./preparedSessionBirth');
+                const birth = await (async () => {
+                    try {
+                        return await createUiPreparedSessionBirthV1(account, {
+                            ...input, admittedInput: input, actionCaller: { kind: 'host' },
+                            sessionCreationTag: SessionCreationTagV1Schema.parse(`create:v1:${'b'.repeat(43)}`),
+                        }, { beforeLaunch: async () => {},
+                            hostOnboarding: { templateName: 'Cold recipient Bot', templateVersion: '1.0.0' } });
+                    } finally { account.dispose(); }
+                })();
+                expect(birth).toMatchObject({ type: 'success', initialInput: { status: 'accepted' } });
+                if (birth.type !== 'success') throw new Error('Browser birth was refused');
+                expect(await db.sessionPendingMessage.count({ where: { sessionId: birth.sessionId } })).toBe(1);
+                const session = await fetchSessionById({ token: requesterToken, sessionId: birth.sessionId, serverUrl: endpoint });
+                expect(session?.pendingActivationAuthorization).toMatchObject({
+                    status: 'waiting', admittedTarget: { homeId, accountId: requester.id,
+                        machineId: machine.id, installationId: installation.installationId, sessionId: birth.sessionId },
+                });
+                // Reconnect through the installed daemon's real Pending owner.
+                // No fixture seeds custody or lends a requester context.
+                const resolveRequesterSessionRuntimeContext = createRequesterSessionRuntimeContextResolver({
+                    trackedSessions, getCreateRuntime: () => createColdRequesterRuntime ?? null,
+                    recoverBootstrap: ({ sessionId, attribution, tracked, signal, onRecoveryRefused, pendingBootstrap }) =>
+                        resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: daemonHomeDir,
+                            serverId: homeId, sessionId, serverHttpBaseUrl: endpoint, signal, onRecoveryRefused,
+                            pendingBootstrap,
+                            expectedAttribution: attribution,
+                            ...(tracked || attribution?.accountId === owner.id
+                                ? { legacyOwnerCredentials: { token: ownerToken, encryption: null } } : {}),
+                            machineAdmissionBoundary: { machineId: machine.id, daemonToken: ownerToken,
+                                isHomeCurrent: () => configuration.activeServerId === homeId,
+                                getObservedServerIdentityId: async () => homeId,
+                                readInstallation: readInstallationIdentityIfExistsSync } }),
+                });
+                const reconnectedMachine = await runWithServerHttpBaseUrl(endpoint,
+                    () => ownerApi.machineSyncClient(publishedMachine));
+                onTestFinished(reconnectedMachine.onConnectedServicesProjection(daemonRuntime.reconcileConnectedServicesProjection));
+                apiMachine = reconnectedMachine;
+                let finishLaunch!: (result: Awaited<ReturnType<typeof daemonRuntime.spawnSessionForInternalResume>>) => void;
+                let failLaunch!: (error: unknown) => void;
+                const launched = new Promise<Awaited<ReturnType<typeof daemonRuntime.spawnSessionForInternalResume>>>((resolve, reject) => {
+                    finishLaunch = resolve; failLaunch = reject;
+                });
+                void launched.catch(() => undefined);
+                const machineRuntime = await runWithServerHttpBaseUrl(endpoint, () => bootstrapMachineSyncRuntime({
+                    cliVersion: 'test', machineId: machine.id, machine: publishedMachine,
+                    credentials: { token: ownerToken, encryption: null }, preferredHost: 'r35-host',
+                    happyHomeDir: daemonHomeDir, happyLibDir: database.baseDir, filesystemAccessPolicy: { kind: 'osUser' },
+                    takeoverRequested: false, isShuttingDown: () => false,
+                    createConnectedApiMachine: () => reconnectedMachine,
+                    attachTransferRuntimeStatePublisher: async () => {}, startAutomationWorkerForMachine: () => null,
+                    startMemoryWorkerForMachine: async () => null, startVoiceInferenceWorkerForMachine: async () => null,
+                    spawnSessionForInternalResume: async (options, pendingActivation) => {
+                        try {
+                            expect(options.requesterSessionBootstrap?.allowNativeAccountCredentials).toBe(false);
+                            const result = await daemonRuntime.spawnSessionForInternalResume(options, pendingActivation);
+                            finishLaunch(result);
+                            return result;
+                        } catch (error) { failLaunch(error); throw error; }
+                    },
+                    spawnSession: daemonRuntime.spawnSession, stopSession: daemonRuntime.stopSession,
+                    isSessionAlreadyRunning: daemonRuntime.isSessionAlreadyRunning,
+                    requesterServerId: homeId, resolveRequesterSessionRuntimeContext,
+                    releaseRequesterSessionRuntimeContext: async context => { await context.dispose(); },
+                    resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
+                        serverUrl: endpoint, resolveCurrentMachineId: () => machine.id }),
+                    readRequesterSessionCredentialBindings: () => listRequesterSessionCredentialBindings({
+                        happyHomeDir: daemonHomeDir, serverId: homeId, machineId: machine.id,
+                        installationId: installation.installationId }),
+                    loadLocalSessionMetadataForHandoff: async () => null, beforeShutdown: async () => {},
+                    requestShutdown: () => { throw new Error('Unexpected cold recovery shutdown'); },
+                    directPeerServerLifecycle: null, directTransferRegistryHost: createCliRegistryHostV1(),
+                    connectedServiceRefreshLoopHandle: null, connectedServiceQuotasLoopHandle: null,
+                    daemonServerWorkScheduler: createDaemonServerWorkScheduler({
+                        budget: createDaemonServerWorkBudget({ maxConcurrentWrites: 1 }) }),
+                }));
+                try {
+                    // Reconnect schedules Pending activation; its callback can
+                    // settle before native preparation and child startup finish.
+                    const launchResult = await Promise.race([launched, childStartupFailure]);
+                    const launchOutcome = launchResult.type === 'error' ? {
+                        type: launchResult.type, errorCode: launchResult.errorCode,
+                        errorDetailKind: launchResult.errorDetail?.kind,
+                        errorDetailCode: launchResult.errorDetail?.kind === 'launch_error' ? launchResult.errorDetail.code : undefined,
+                        runtimeFailureReason: launchResult.runtimeFailureReason,
+                    } : launchResult;
+                    expect(launchOutcome, JSON.stringify(launchOutcome)).toMatchObject({
+                        type: 'success', sessionId: birth.sessionId,
+                    });
+                    expect(physicalLaunches, 'The queued browser birth must start when its daemon reconnects after the UI closes').toBe(1);
+                    expect([...trackedSessions.values()].map(tracked => ({ sessionId: tracked.happySessionId,
+                        accountId: tracked.requesterWorkAttributionV1?.accountId }))).toContainEqual({
+                        sessionId: birth.sessionId, accountId: requester.id });
+                } finally { await retireMachineSyncRuntimeAttempt(machineRuntime); }
+                return;
+            }
             if (nativeVoiceActions) {
                 const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: learnedProfile.id });
                 const voice = await createNativeVoiceActionHarness(async (actionId, payload, callId) => {

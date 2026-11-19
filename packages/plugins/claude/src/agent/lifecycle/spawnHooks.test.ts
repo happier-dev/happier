@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { AgentDaemonSpawnRuntimeSelectionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
     augmentClaudeDaemonSpawnEnv,
@@ -52,12 +53,28 @@ describe('augmentClaudeDaemonSpawnEnv', () => {
         vi.stubEnv('CLAUDE_CONFIG_DIR', '/daemon-default');
         try {
             const runtimeDescriptorV1 = { v: 1, agentId: 'claude', agent: { configDir: '/saved-account' } };
-            expect(augmentClaudeDaemonSpawnEnv({ payload: { runtimeDescriptorV1 } }))
+            expect(augmentClaudeDaemonSpawnEnv({ payload: { runtimeSelection: { runtimeDescriptorV1 } } }))
                 .toMatchObject({ CLAUDE_CONFIG_DIR: '/saved-account' });
-            expect(augmentClaudeDaemonSpawnEnv({ payload: { runtimeDescriptorV1, env: { OTHER: 'value' } } }))
+            expect(augmentClaudeDaemonSpawnEnv({ payload: { runtimeSelection: { runtimeDescriptorV1, env: { OTHER: 'value' } } } }))
                 .toMatchObject({ CLAUDE_CONFIG_DIR: '/saved-account' });
-            expect(augmentClaudeDaemonSpawnEnv({ payload: { runtimeDescriptorV1, env: { CLAUDE_CONFIG_DIR: '/selected-account' } } }))
+            expect(augmentClaudeDaemonSpawnEnv({ payload: { runtimeSelection: { runtimeDescriptorV1, env: { CLAUDE_CONFIG_DIR: '/selected-account' } } } }))
                 .toMatchObject({ CLAUDE_CONFIG_DIR: '/selected-account' });
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
+
+    it('preserves the materialized requester auth home instead of the shared daemon home', () => {
+        vi.stubEnv('CLAUDE_CONFIG_DIR', '/daemon-owner/claude');
+        try {
+            const runtimeSelection = {
+                runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: { configDir: '/saved-account' } },
+                env: { CLAUDE_CONFIG_DIR: '/requester/private/claude' },
+            } satisfies AgentDaemonSpawnRuntimeSelectionV1;
+
+            expect(augmentClaudeDaemonSpawnEnv({
+                payload: { agentId: 'claude', runtimeSelection },
+            })).toEqual({ CLAUDE_CONFIG_DIR: '/requester/private/claude' });
         } finally {
             vi.unstubAllEnvs();
         }
@@ -65,19 +82,19 @@ describe('augmentClaudeDaemonSpawnEnv', () => {
 
     it('does not force CLAUDE_CONFIG_DIR when no override is set', () => {
         expect(augmentClaudeDaemonSpawnEnv({
-            payload: {
+            payload: { runtimeSelection: {
                 env: {},
-            },
+            } },
         })).toEqual({});
     });
 
     it('publishes an explicit CLAUDE_CONFIG_DIR override when set', () => {
         expect(augmentClaudeDaemonSpawnEnv({
-            payload: {
+            payload: { runtimeSelection: {
                 env: {
                     CLAUDE_CONFIG_DIR: '/tmp/claude-config',
                 },
-            },
+            } },
         })).toEqual({
             CLAUDE_CONFIG_DIR: '/tmp/claude-config',
         });
@@ -85,12 +102,12 @@ describe('augmentClaudeDaemonSpawnEnv', () => {
 
     it('prefers CLAUDE_CONFIG_DIR over HAPPIER_CLAUDE_CONFIG_DIR', () => {
         expect(augmentClaudeDaemonSpawnEnv({
-            payload: {
+            payload: { runtimeSelection: {
                 env: {
                     CLAUDE_CONFIG_DIR: ' /tmp/claude-primary ',
                     HAPPIER_CLAUDE_CONFIG_DIR: '/tmp/claude-secondary',
                 },
-            },
+            } },
         })).toEqual({
             CLAUDE_CONFIG_DIR: '/tmp/claude-primary',
         });
@@ -98,21 +115,21 @@ describe('augmentClaudeDaemonSpawnEnv', () => {
 
     it('preserves only Claude\'s exact external sandbox assertion for the session runner', () => {
         expect(augmentClaudeDaemonSpawnEnv({
-            payload: {
+            payload: { runtimeSelection: {
                 env: {
                     IS_SANDBOX: '1',
                 },
-            },
+            } },
         })).toEqual({
             IS_SANDBOX: '1',
         });
 
         expect(augmentClaudeDaemonSpawnEnv({
-            payload: {
+            payload: { runtimeSelection: {
                 env: {
                     IS_SANDBOX: '0',
                 },
-            },
+            } },
         })).toEqual({});
     });
 });
