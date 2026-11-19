@@ -5,6 +5,7 @@ import { requestSessionStop } from './requestSessionStop';
 import { isSessionActiveArchiveError, setSessionArchivedStateById } from './sessionArchivedStateById';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
+import { readSessionStopConfirmationFailure } from '@happier-dev/protocol/actions/executor/session/stopConfirmation';
 
 export { setSessionArchivedStateById } from './sessionArchivedStateById';
 
@@ -75,6 +76,10 @@ export async function setSessionArchivedState(params: Readonly<{
     });
     if (!stopResult.ok) {
       return stopResult;
+    }
+    if ('effectAttempted' in stopResult && stopResult.effectAttempted === false) {
+      const refusal = readSessionStopConfirmationFailure(resolved.sessionId, stopResult);
+      if (refusal) return { ...refusal, code: refusal.errorCode };
     }
 
     result = await archiveSessionOnceInactive({

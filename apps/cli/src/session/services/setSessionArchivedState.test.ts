@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { createSocketTransportAdapter } from '@happier-dev/sync-client';
+import { createSocketTransportAdapter, markRpcRequestDisposition } from '@happier-dev/sync-client';
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -21,10 +21,10 @@ vi.mock('@/api/session/sockets', () => ({
     return { socket, transport: createSocketTransportAdapter(socket) };
   },
 }));
-vi.mock('@/session/transport/rpc/machineRpc', () => ({
-  callMachineRpc: boundary.callMachineRpc,
-  readMachineRpcRequestDisposition: () => null,
-}));
+vi.mock('@/session/transport/rpc/machineRpc', async () => {
+  const { readRpcRequestDisposition } = await import('@happier-dev/sync-client');
+  return { callMachineRpc: boundary.callMachineRpc, readMachineRpcRequestDisposition: readRpcRequestDisposition };
+});
 
 describe('setSessionArchivedState', () => {
   const sessionId = 'c' + 'a'.repeat(24);
@@ -104,6 +104,27 @@ describe('setSessionArchivedState', () => {
       expect(body).toEqual({ originRunId: 'host-run' });
       expect(config?.headers).toMatchObject({ 'X-Test-Original-Archive': 'signed' });
       expect(config?.headers).not.toHaveProperty('Authorization');
+    }
+  });
+
+  it('returns the unsent Stop refusal instead of waiting for an inactive event that has no producer', async () => {
+    vi.useFakeTimers();
+    active = true;
+    vi.spyOn(axios, 'post').mockResolvedValue({ status: 409, data: { error: 'session_active' } });
+    const error = new axios.AxiosError('Request failed with status code 404', undefined, undefined, undefined,
+      { status: 404, data: {}, statusText: 'Not Found', headers: {}, config: { headers: new axios.AxiosHeaders() } });
+    boundary.callMachineRpc.mockRejectedValue(markRpcRequestDisposition(error, 'notSent'));
+    const controller = new AbortController();
+    let settled: unknown;
+    const pending = setSessionArchivedState({ credentials, idOrPrefix: sessionId, archived: true,
+      signal: controller.signal }).then(value => { settled = value; return value; });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toMatchObject({ ok: false, errorCode: 'session_stop_unconfirmed', effectAttempted: false,
+        failureCause: { phase: 'stop.owner_rpc', httpStatus: 404 } });
+    } finally {
+      controller.abort();
+      await pending.catch(() => {});
     }
   });
 

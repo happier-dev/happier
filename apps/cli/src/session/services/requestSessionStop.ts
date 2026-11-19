@@ -54,6 +54,7 @@ type StopSessionAttemptResult = StopSessionResult | Readonly<{
   status: 'incomplete';
   reason: 'transport_ambiguous' | 'marker_fallback_failed' | 'target_daemon_unavailable';
   failureCause?: ActionFailureCauseV1;
+  effectAttempted?: false;
 }>;
 
 /**
@@ -214,10 +215,9 @@ async function stopSessionOnOwningMachine(params: Readonly<{
       || rpcErrorCode === RPC_ERROR_CODES.UPDATE_REQUIRED) {
       return { ok: false, errorCode: rpcErrorCode, error: rpcErrorCode, failureCause };
     }
-    if (Object.values(RPC_ERROR_CODES).some((code) => code === rpcErrorCode)) {
-      return { status: 'incomplete', reason: 'target_daemon_unavailable', failureCause };
-    }
-    return { status: 'incomplete', reason: 'target_daemon_unavailable', failureCause };
+    return { status: 'incomplete', reason: 'target_daemon_unavailable', failureCause,
+      ...(disposition === 'notSent' ? { effectAttempted: false as const } : {}),
+    };
   }
 }
 
