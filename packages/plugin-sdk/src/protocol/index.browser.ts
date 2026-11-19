@@ -149,6 +149,7 @@ export { ProtocolDeploymentPreviewProvenanceV1Schema } from './deployment.js';
 export { ProtocolDeploymentReceiptOperationV1Schema } from './deployment.js';
 export { ProtocolDeploymentSourceIntentV1Schema } from './deployment.js';
 export { ProtocolEnvVarRequirementV1Schema } from './environmentVariables.js';
+export { ProtocolFailureActionPlacementReasonV1Schema } from './failureActionPlacement.js';
 export type { ProtocolJsonValue } from './protocolFacade.js';
 export type { ProtocolJsonValueOptions } from './protocolFacade.js';
 export { ProtocolLaunchProfileCheckoutPreferenceV1Schema } from './launchProfilePreferences.js';

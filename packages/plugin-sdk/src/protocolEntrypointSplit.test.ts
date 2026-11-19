@@ -9,8 +9,10 @@ import type * as UiBrowser from './ui.js';
 import type { ActionConfirmationInputField as ActionField } from './actions/index.js';
 import type { ActionConfirmationInputField as PublicActionField } from './actions/index.public.js';
 import type { PluginActionConfirmationInputFieldV2 } from '@happier-dev/protocol/plugins/actions/v2';
+import { FailureActionPlacementReasonV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/failureActionPresentation';
 import * as nodeProtocol from './protocol/index.js';
 import * as browserProtocol from './protocol/index.browser.js';
+import { FailureActionPlacementReasonV1Schema as uiFailureActionPlacementReason } from './ui.js';
 
 const require = createRequire(import.meta.url);
 
@@ -19,6 +21,12 @@ async function readSource(path: string): Promise<string> {
 }
 
 describe('SDK protocol entrypoint cut', () => {
+    it('exposes the same failure placement reason schema to portable protocols and UI authors', () => {
+        expect(nodeProtocol.ProtocolFailureActionPlacementReasonV1Schema).toBe(FailureActionPlacementReasonV1Schema);
+        expect(browserProtocol.ProtocolFailureActionPlacementReasonV1Schema).toBe(FailureActionPlacementReasonV1Schema);
+        expect(uiFailureActionPlacementReason).toBe(FailureActionPlacementReasonV1Schema);
+    });
+
     it('publishes SCM identity and summary types only through the SCM domain', async () => {
         const owners = new Map<string, string[]>();
         for (const domain of ['protocol', 'scm']) {

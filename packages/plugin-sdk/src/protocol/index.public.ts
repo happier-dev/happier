@@ -164,6 +164,7 @@ export { ProtocolActionApprovalRequestCreatedResultSchema } from './actionApprov
 export { ProtocolAutomationTriggerRevisionV1Schema } from './automationTriggerIdentity.js';
 /** Declared environment requirements contain names and policy, never secret values. */
 export { ProtocolEnvVarRequirementV1Schema } from './environmentVariables.js';
+export { ProtocolFailureActionPlacementReasonV1Schema } from './failureActionPlacement.js';
 /** Project admission and preference values remain owned by the host's existing Actions. */
 export {
     ProtocolWorkspaceAddressV1Schema,

@@ -119,6 +119,7 @@ const FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE = Object.freeze({
     ProtocolServiceHealthNoticeSourceV1Schema: 'feature-protocol',
     ProtocolServiceHealthNoticePageV1Schema: 'feature-protocol',
     ProtocolServiceHealthNoticeMachineV1Schema: 'feature-protocol',
+    ProtocolFailureActionPlacementReasonV1Schema: 'feature-protocol',
     createProtocolStoredReadSchema: 'feature-protocol',
     encodeBase64: 'feature-protocol',
     decodeBase64: 'feature-protocol',
