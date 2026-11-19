@@ -111,6 +111,11 @@ export type HappierPageHeaderProps = Readonly<{
   /** The surrounding navigation's back control, when there is one. */
   renderBack?: HappierPageHeaderBackRender | null;
   /**
+   * Added to the page's text inset on the leading side only: the title, its lines and the controls start this much
+   * further in, on the edge of content that hangs beside a mark column (a workflow's steps on a phone). Absent: 0.
+   */
+  contentInsetPx?: number;
+  /**
    * The page's content column width. The header centres itself in it, and the
    * back control sits in the gutter left of it when the pane leaves room.
    * Absent, the column is the pane.
@@ -208,6 +213,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const showTitle = props.showTitle !== false;
   // Inside a column that already draws part of the edge (a detail's body), the title keeps the text edge.
   const textInsetPx = useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.pageTextInsetPx);
+  const contentInsetPx = props.contentInsetPx ?? 0;
   const renderBack = props.renderBack ?? null;
   const showsBack = showTitle && renderBack !== null;
   const collectionLayout = useHappierCollectionLayout();
@@ -419,7 +425,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const actionsBelowIdentity = splitTitleLine && Boolean(props.actions || props.status)
     && actionsWrapWidthPx !== null && splitWidthPx !== null && splitWidthPx <= actionsWrapWidthPx;
   const columnContentWidthPx = paneWidthPx === null ? splitWidthPx
-    : Math.max(0, Math.min(paneWidthPx, columnMaxWidthPx) - textInsetPx * 2);
+    : Math.max(0, Math.min(paneWidthPx, columnMaxWidthPx) - textInsetPx * 2 - contentInsetPx);
   // A mark sharing the identity's row consumes this part of the column. If it wraps onto its own
   // row, the identity already spans the column and the wrapped actions need no horizontal escape.
   const leadingInsetPx = props.leading && columnContentWidthPx !== null && splitWidthPx !== null
@@ -477,6 +483,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
           width: '100%',
           maxWidth: props.columnMaxWidthPx,
           paddingHorizontal: textInsetPx,
+          ...(contentInsetPx > 0 ? { paddingLeft: textInsetPx + contentInsetPx } : null),
           // When navigation chrome already shows the title, the purpose line takes the title's place
           // right under that chrome instead of leaving the title's room empty above it. A page heading a desktop
           // shell pane, or a detail beside a collection's list, puts its title line (a control's height) on the

@@ -121,7 +121,7 @@ import { Stack } from '@/components/appShell/workspace/destinationRoute';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { formatWorkflowIssueText } from '../editor/workflowIssueText';
-import { WORKFLOW_DOCUMENT_INSET_PX, WORKFLOW_PAGE_TABS_EDGE_PX, WORKFLOW_PAGE_TITLE_EDGE_PX, WorkflowDocumentGridContext } from '../editor/workflowEditorStyles';
+import { WORKFLOW_DOCUMENT_INSET_PX, WORKFLOW_PAGE_TABS_EDGE_PX, WORKFLOW_PAGE_TITLE_EDGE_PX, WORKFLOW_PHONE_NAME_EDGE_PX, WorkflowDocumentGridContext } from '../editor/workflowEditorStyles';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 
 /**
@@ -183,6 +183,10 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s4,
+    },
+    /** The save line leading the wide actions stands apart from them, as the lab's title row does (lab 1116b). */
+    headerStatusLead: {
+        marginRight: theme.space.s16,
     },
     keyHint: {
         ...({ ...Typography.variant('micro', 'regular'), ...Typography.mono(), ...Typography.tabular() }),
@@ -1489,7 +1493,9 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const nameEditable = props.showNameField !== false && documentEditable;
     // The save line (or, without one, what to fix). Run review opens below it, so it never covers it.
     const headerStatus = (saveStatusNode ?? validityNode) === null ? null : (
-        <View ref={props.runNowPlacementRef} collapsable={false}>{saveStatusNode ?? validityNode}</View>
+        <View ref={props.runNowPlacementRef} collapsable={false} style={compactLayout ? undefined : styles.headerStatusLead}>
+            {saveStatusNode ?? validityNode}
+        </View>
     );
     const identity = (
         <WorkflowEditorIdentity
@@ -1503,10 +1509,15 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             } : null}
             header={{
                 testID: `${testIDPrefix}-header`,
-                // Wide, the controls keep the title's row. A phone recomposes (DESIGN.md "Phones recompose", owner
-                // 11-15 H2): the name and its summary keep the full width and the controls the page still draws (a
-                // built-in's Duplicate and session chooser) wrap beneath them, as the run page does.
-                ...(compactLayout ? {} : { actionsLayout: 'inline' as const }),
+                // Wide, the controls hang from the title's line and the summary runs under both at the full width
+                // (lab 1116b/1116c), so the save line changing never re-wraps it (WF-ACCEPT-1119B fix 3). A phone
+                // recomposes (DESIGN.md "Phones recompose", owner 11-15 H2): the name and its summary keep the full
+                // width and the controls the page still draws (a built-in's Duplicate and session chooser) wrap
+                // beneath them, as the run page does.
+                ...(compactLayout ? {} : { actionsLayout: 'hang' as const }),
+                // A phone's Steps view hangs its numbers in a column on the page edge; the page's words start on
+                // the cards' edge after it (lab 1116b phone). Sentence and Flow keep the page edge, as their cards do.
+                ...(compactLayout && props.view === 'steps' ? { contentInsetPx: WORKFLOW_PHONE_NAME_EDGE_PX } : {}),
                 // Wide, the save line leads the actions on the title's row (lab 1116b: "Unsaved changes · Save", then
                 // Edit with an agent), so the header ends with its words and the view bar follows at the lab's
                 // rhythm (WF-ACCEPT-1119 item 3). The row is right-aligned: a changing status moves only its own

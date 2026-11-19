@@ -150,6 +150,8 @@ export type PageHeaderProps = Readonly<{
      * page whose body is full-bleed (a board's canvas), so the header lines up with it.
      */
     columnWidth?: 'column' | 'pane';
+    /** Extra leading inset onto the edge of content hung beside a mark column (`HappierPageHeader` `contentInsetPx`). */
+    contentInsetPx?: number;
     /**
      * Edit the title in place. Enter commits, Escape restores the value held when editing began, and
      * a long title wraps. The page heading stays the title; `title` remains its plain-text form.
@@ -300,6 +302,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
             status={props.status}
             renderBack={renderBack}
             columnMaxWidthPx={props.columnWidth === 'pane' ? undefined : maxWidth}
+            {...(props.contentInsetPx === undefined ? {} : { contentInsetPx: props.contentInsetPx })}
             renderText={renderText}
             wrapPart={props.wrapPart}
             testID={props.testID}

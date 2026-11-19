@@ -1008,6 +1008,8 @@ export const WorkflowDocumentGridContext = React.createContext<WorkflowDocumentG
 const COMPACT_ORDINAL_GAP_PX = HAPPIER_PAGE_METRICS.pageHeaderMarkGapPx;
 const COMPACT_GUTTER_PX = ORDINAL_SIZE + COMPACT_ORDINAL_GAP_PX;
 const COMPACT_LANE_LEFT_PX = -(COMPACT_GUTTER_PX - ORDINAL_SIZE / 2) - SPINE_WIDTH / 2;
+/** The phone document's name edge from its column (its number column and the gap after it): where the page's own words start in the Steps view. */
+export const WORKFLOW_PHONE_NAME_EDGE_PX = COMPACT_GUTTER_PX;
 
 /** The narrow grids' columns: the number on the column's edge, the name at the header's mark-to-title gap after it. */
 const narrowDocumentGrid = StyleSheet.create({
