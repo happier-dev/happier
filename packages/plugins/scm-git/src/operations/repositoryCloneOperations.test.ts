@@ -32,6 +32,7 @@ describe('git repository clone operation', () => {
     it('keeps connected clone credentials in the host transport and out of workspace processes and results', async () => {
         const parent = createWorkspace();
         const secret = 'private-clone-token';
+        const signal = new AbortController().signal;
         const authorizationHeader = `Basic ${Buffer.from(`x-access-token:${secret}`).toString('base64')}`;
         const description = makeCloneTargetDescription('/tmp/authenticated-clone.git');
         let transported: Parameters<NonNullable<BackendRuntimeServices['repositoryTransport']>['run']>[0] | undefined;
@@ -49,9 +50,10 @@ describe('git repository clone operation', () => {
                 return { success: false, exitCode: 128, stdout: secret,
                     stderr: `fatal: Authentication failed ${authorizationHeader}` };
             } },
-        }, () => clone({ context: makeContext(parent),
-            request: { ...makeRequest(parent, '/tmp/authenticated-clone.git'), authentication: 'connected_account' } }));
+        }, () => clone({ ...{ context: makeContext(parent), signal,
+            request: { ...makeRequest(parent, '/tmp/authenticated-clone.git'), authentication: 'connected_account' as const } } }));
         expect(transported?.repositories).toEqual([{ url: 'file:///tmp/authenticated-clone.git', authorizationHeader }]);
+        expect(transported?.command.signal).toBe(signal);
         expect(JSON.stringify(transported?.command)).not.toContain(authorizationHeader);
         expect(response).toMatchObject({ success: false, errorCode: 'REMOTE_AUTH_REQUIRED' });
         expect(JSON.stringify(response)).not.toContain(secret);

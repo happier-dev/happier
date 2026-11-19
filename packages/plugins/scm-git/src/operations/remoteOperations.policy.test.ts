@@ -54,6 +54,21 @@ function runWithPolicyCommandRunner<T>(runner: GitScmCommandRunner, callback: ()
 }
 
 describe('Git remote policy at the real repository boundary', { timeout: 30_000 }, () => {
+    it.each(['push', 'publish'] as const)('forwards admitted cancellation to the %s command', async kind => {
+        await withRepository(async ({ context }) => {
+            const signal = new AbortController().signal;
+            const real = createRealGitScmBackendRuntimeServices();
+            let commandSignal: AbortSignal | undefined;
+            const response = await runWithPolicyCommandRunner(async input => {
+                if (input.args[0] === 'push') commandSignal = input.signal;
+                return real.runCommand(input);
+            }, () => kind === 'push'
+                ? gitRemotePush({ ...{ context, request: { remote: 'origin', branch: 'main' }, signal } })
+                : gitRemotePublish({ ...{ context, request: { remote: 'origin' }, signal } }));
+            expect(response.success).toBe(true);
+            expect(commandSignal).toBe(signal);
+        });
+    });
     it.each(['push', 'publish'] as const)('requires the connected account before target %s and leaves the remote unchanged', async kind => {
         await withRepository(async ({ cwd, writer, context }) => {
             await writeFile(join(cwd, 'account-only'), 'private target commit');

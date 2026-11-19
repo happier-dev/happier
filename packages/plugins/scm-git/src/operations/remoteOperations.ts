@@ -164,7 +164,7 @@ export async function gitRemotePull(input: { context: ScmBackendContext; request
     return response;
 }
 
-export async function gitRemotePush(input: { context: ScmBackendContext; request: ScmRemoteRequest }): Promise<ScmRemoteResponse> {
+export async function gitRemotePush(input: { context: ScmBackendContext; request: ScmRemoteRequest; signal?: AbortSignal }): Promise<ScmRemoteResponse> {
     const { context } = input;
     const normalized = normalizeScmRemoteRequest(input.request);
     if (!normalized.ok) return failure(SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, normalized.error);
@@ -182,7 +182,7 @@ export async function gitRemotePush(input: { context: ScmBackendContext; request
     }
     const command = await runGitPushWithConnectedAccount({ remote: target?.remote,
         command: { bin: 'git', cwd: context.cwd, args: buildGitPushArgs(request), timeoutMs: 30_000,
-            env: buildScmNonInteractiveEnv(), signal: context.signal } });
+            env: buildScmNonInteractiveEnv(), signal: input.signal } });
     const response = await finalizeGitRemoteMutation({ context, kind: 'push', command, target, effect: target ? { kind: 'remote', ...target } : undefined });
     invalidatePrStatusCacheAfterSuccessfulScmMutation({ response, context, headBranch: snapshot.branch.head });
     return response;

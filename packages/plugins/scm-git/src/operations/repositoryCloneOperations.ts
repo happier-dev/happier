@@ -61,6 +61,7 @@ export type GitRepositoryCloneOperation = Readonly<{
     clone(input: Readonly<{
         context: ScmBackendContext;
         request: ScmRepositoryCloneInput;
+        signal?: AbortSignal;
     }>): Promise<ScmRepositoryCloneOutput>;
 }>;
 
@@ -378,7 +379,7 @@ export function createGitRepositoryCloneOperation(
     });
 
     return Object.freeze({
-        async clone({ context, request }) {
+        async clone({ context, request, signal }) {
             try { readRepositoryFileSystem(); } catch {
                 return errorResponse('SCM workspace filesystem is unavailable.', SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE);
             }
@@ -406,7 +407,7 @@ export function createGitRepositoryCloneOperation(
                     cwd: reservedDestination.parentPath,
                     args: ['clone', '--', cloneTarget.target.url, reservedDestination.cloneDestinationPath],
                     timeoutMs: GIT_REPOSITORY_CLONE_TIMEOUT_MS,
-                    env: buildScmNonInteractiveEnv(), signal: context.signal,
+                    env: buildScmNonInteractiveEnv(), signal,
                 };
                 clone = cloneTarget.authorizationHeader && transport
                     ? await transport.run({ repositories: [{ url: cloneTarget.target.url, authorizationHeader: cloneTarget.authorizationHeader }],

@@ -41,6 +41,7 @@ function resolveConfiguredPublishRemote(input: {
 export async function gitRemotePublish(input: {
     context: ScmBackendContext;
     request: ScmRemotePublishRequest;
+    signal?: AbortSignal;
 }): Promise<ScmRemotePublishResponse> {
     const normalizedRemoteRequest = normalizeScmRemoteRequest({ remote: input.request.remote });
     if (!normalizedRemoteRequest.ok) {
@@ -111,7 +112,7 @@ export async function gitRemotePublish(input: {
         args,
         timeoutMs: 30_000,
         env: buildScmNonInteractiveEnv(),
-        signal: input.context.signal,
+        signal: input.signal,
     } });
 
     const response = await finalizeGitRemoteMutation({ context: input.context, kind: 'push', command: push, target: { remote: remote.remote, branch: head }, effect: { kind: 'remote', remote: remote.remote, branch: head } });
