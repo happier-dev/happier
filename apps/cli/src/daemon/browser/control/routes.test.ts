@@ -89,6 +89,58 @@ describe('browser daemon control routes', () => {
     } finally { automation.dispose(); adapter.dispose(); }
   });
 
+  it('lets an approved Agent close a view that holds a confidential entry without exposing its page', async () => {
+    const view = { browserSessionId: 'browser_session_1', viewId: 'view_1' };
+    const owners = createBrowserAutomationOwnerRegistry();
+    let notify!: BrowserSidecarCdpEventSubscriber;
+    const browserMethods: string[] = [];
+    // Chromium's CDP boundary only; the input, automation, control and Action owners are real.
+    const transport = {
+      openPage: async () => ({ targetId: 'target', sessionId: 'cdp_session' }),
+      dispatchPageCommand: async ({ method }: { method: string }) => method === 'Page.getFrameTree'
+        ? { frameTree: { frame: { id: 'frame', loaderId: 'document', url: 'https://example.test/' } } }
+        : {},
+      dispatchBrowserCommand: async ({ method }: { method: string }) => { browserMethods.push(method); return { success: true }; },
+      subscribeCdpEvents: (listener: BrowserSidecarCdpEventSubscriber) => { notify = listener; return () => {}; },
+    };
+    const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: view.browserSessionId,
+      sidecarId: 'sidecar', transport, resolveInputControl: owners.getInputControl });
+    const automation = createBrowserAutomationDaemonService({ owners,
+      adapter: createBrowserAutomationCdpAdapter({ transport: createControlAdapterAutomationTransport({ adapter,
+        contextCapture: { transport, resolvePageHandle: adapter.resolvePageHandle, getNavigationState: adapter.getNavigationState },
+      }) }), subscribeViewLifecycle: adapter.subscribeViewLifecycle });
+    const broker = createBrowserDaemonControlBroker();
+    broker.registerAdapter(adapter);
+    const routes = createBrowserDaemonControlRoutes({ broker, automation: () => automation });
+    const gate = createBrowserDaemonFeatureGate({ env: { NODE_ENV: 'test' }, resolveServerFeaturesSnapshot: () => ({ status: 'ready',
+      features: FeaturesResponseSchema.parse({ features: { browser: { enabled: true,
+        viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true } } } }),
+    }) });
+    await gate.refresh();
+    const execute = createBrowserDaemonRuntimeActionExecutor({ control: routes, featureGate: gate });
+    try {
+      expect(await routes.dispatchCommand({ kind: 'openView', commandId: 'open', ...view, platform: 'web',
+        target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } }, { authority: 'present_user' }))
+        .toMatchObject({ status: 'dispatched' });
+      await owners.getInputControl(view).beginConfidentialityHold();
+      const material = 'C22-CLOSE-PAGE-CREDENTIAL-UNIQUE';
+      notify({ method: 'Target.targetInfoChanged', params: { targetInfo: { targetId: 'target', title: material } } });
+      const agent = { defaultSessionId: view.browserSessionId } as const;
+      // Observation stays withheld from the Agent while the hold lasts.
+      expect(await execute({ actionId: 'browser.view.focus', input: { kind: 'focusView', commandId: 'agent-focus', ...view },
+        context: agent })).toMatchObject({ status: 'failed', error: { code: 'permission_denied' } });
+      browserMethods.length = 0;
+      // Closing reads nothing from the page and is the only end of a delivered entry's hold.
+      const closed = await execute({ actionId: 'browser.view.close', input: { kind: 'closeView', commandId: 'agent-close', ...view },
+        context: agent });
+      expect(closed).toMatchObject({ status: 'dispatched', events: [{ kind: 'viewClosed', viewId: view.viewId }] });
+      expect(JSON.stringify(closed)).not.toContain(material);
+      expect(browserMethods).toEqual(['Target.closeTarget']);
+      // The destroyed page ends the hold; nothing of it stays observable or held.
+      expect(owners.isObservationHeld(view)).toBe(false);
+    } finally { automation.dispose(); adapter.dispose(); }
+  });
+
   it.each([
     ['command_bad', 'command_bad'],
     ['x'.repeat(300), 'x'.repeat(300)],

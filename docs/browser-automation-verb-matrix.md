@@ -290,6 +290,8 @@ engines use the UI automation control service. Human input takes control even wh
 running, and that hold lasts until explicit handback through the existing presence/input controls.
 Focusing a daemon view only activates its target: it does not interrupt agent input or change
 the controller. The command route still refuses non-human focus while observation is confidential.
+Closing the view stays available to an approved Agent during that hold: closing reads nothing from
+the page, and a delivered entry's hold ends only when its page is destroyed.
 Handback cannot free a still-draining mutation. Agents must obtain a fresh successful snapshot after
 takeover or a document change before resuming mutations; stale navigation generations are refused.
 

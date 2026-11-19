@@ -143,7 +143,10 @@ export function createBrowserDaemonControlRoutes(input: Readonly<{
         if (context?.authority === 'account_automation') return browserCommandDispatchFailure({ commandId: command.data.commandId,
           code: 'adapter_unavailable', message: 'Browser input controller is unavailable.' });
       }
-      if (input.automation?.()?.getInputControl(command.data).getObservationFailure(context?.authority === 'present_user' ? 'human' : 'agent')) {
+      // Closing reads nothing from the page and is the only end of a delivered confidential entry's hold,
+      // so an admitted close is never refused for withheld observation.
+      if (command.data.kind !== 'closeView'
+        && input.automation?.()?.getInputControl(command.data).getObservationFailure(context?.authority === 'present_user' ? 'human' : 'agent')) {
         return browserCommandDispatchFailure({ commandId: command.data.commandId,
           code: 'permission_denied', message: 'Browser observation is unavailable.' });
       }
