@@ -145,14 +145,17 @@ function extractModuleSpecifiers(source) {
     return !span.done && span.value[0] <= index;
   };
   const specifiers = new Set();
-  const matches = text.matchAll(
-    /(?:import|export)\s+(?:[^'"`]*?\s+from\s+)?["']([^"'`]+)["']|import\s*\(\s*["']([^"'`]+)["']\s*\)|require\s*\(\s*["']([^"'`]+)["']\s*\)/g,
-  );
+  const keywords = text.matchAll(/\b(?:import|export|require)\b/g);
+  const declaration = /(?:import\s+(?:[^'"`;]*?\s+from\s+)?|export\s+(?:type\s+)?(?:\{[^}]*\}|\*(?:\s+as\s+[^\s'"`;]+)?)\s+from\s+)["']([^"'`]+)["']/y;
+  const call = /(?:import|require)\s*\(\s*["']([^"'`]+)["']\s*\)/y;
 
-  for (const match of matches) {
-    if (isKeywordMasked(match.index ?? -1)) continue;
-    const specifier = match[1] ?? match[2] ?? match[3];
-    if (specifier) specifiers.add(specifier);
+  for (const keyword of keywords) {
+    if (isKeywordMasked(keyword.index)) continue;
+    // Inspect each actual keyword once. A local export must not scan the
+    // remaining file for another statement's `from` clause.
+    declaration.lastIndex = call.lastIndex = keyword.index;
+    const match = declaration.exec(text) ?? call.exec(text);
+    if (match) specifiers.add(match[1]);
   }
 
   return [...specifiers];

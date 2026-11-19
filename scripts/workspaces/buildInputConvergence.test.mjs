@@ -234,8 +234,9 @@ test('captured package builds resolve tooling workspace imports outside the buil
     exports: { './machineLima': './machineLima.mjs' } }));
   await writeFile(join(toolDependencyDir, 'machineLima.mjs'), 'export const profile = "tooling-ready";\n');
   await writeFile(join(toolingDir, 'profiles.mjs'),
-    'import { profile } from "@happier-dev/cli-common/machineLima";\n'
-    + 'import { input } from "@happier-dev/example/input";\nexport const result = profile + ":" + input;\n');
+    '// export the profile for the build adapter\n'
+    + 'export { profile } from "@happier-dev/cli-common/machineLima";\n'
+    + 'export { input } from "@happier-dev/example/input";\n');
   const result = await ensureWorkspacePackagesBuiltForComponent(join(sourceDir, 'apps/ui'), {
     env: { ...process.env }, publicationMode: 'artifact',
     workspaceBuildBoundary: {
@@ -244,7 +245,8 @@ test('captured package builds resolve tooling workspace imports outside the buil
       runPackageBuild: async (capturedPackageDir, { env }) => {
         await writeFile(join(packageDir, 'src/input.mjs'), 'export const input = "live";\n');
         const tooling = join(capturedPackageDir, '../../apps/stack/scripts/utils/managed_lima/profiles.mjs');
-        const { result } = await import(pathToFileURL(tooling).href);
+        const { profile, input } = await import(pathToFileURL(tooling).href);
+        const result = profile + ":" + input;
         await writeFile(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), `export const profile = ${JSON.stringify(result)};\n`);
       },
     },
