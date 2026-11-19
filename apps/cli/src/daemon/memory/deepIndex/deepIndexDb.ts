@@ -1,4 +1,6 @@
 import { openSqliteDatabaseSync, type SqliteDatabaseSync } from '@/utils/sqlite/sqliteSync';
+import { parseSearchQuery } from '@happier-dev/protocol';
+import { registerMemorySearchFunctions } from '../memorySearchSqlite';
 
 export type DeepIndexSearchScope =
   | Readonly<{ type: 'global' }>
@@ -23,6 +25,7 @@ export type DeepIndexStats = Readonly<{
 }>;
 
 export type DeepIndexDbHandle = Readonly<{
+  findExcludedSessionIds: (args: Readonly<{ query: string; scope: DeepIndexSearchScope }>) => string[];
   init: () => void;
   insertChunk: (args: Readonly<{
     sessionId: string;
@@ -156,6 +159,7 @@ function ensureSchema(db: SqliteDatabaseSync): void {
 
 export function openDeepIndexDb(args: Readonly<{ dbPath: string }>): DeepIndexDbHandle {
   const db = openSqliteDatabaseSync(args.dbPath);
+  registerMemorySearchFunctions(db);
   ensureSchema(db);
 
   const insertChunkStmt = db.prepare(`
@@ -253,6 +257,20 @@ export function openDeepIndexDb(args: Readonly<{ dbPath: string }>): DeepIndexDb
   };
 
   return {
+    findExcludedSessionIds: ({ query, scope }) => {
+      const { excludedTerms } = parseSearchQuery(query);
+      if (excludedTerms.length === 0) return [];
+      const conditions = excludedTerms.map(() => '(instr(memory_search_lower(text), ?) > 0)');
+      const params: Array<string | number> = [];
+      for (const term of excludedTerms) params.push(term);
+      if (scope.type === 'session') params.push(scope.sessionId);
+      const rows = db.prepare(`
+        SELECT DISTINCT sessionId FROM message_chunks
+        WHERE (${conditions.join(' OR ')})
+          ${scope.type === 'session' ? 'AND sessionId = ?' : ''}
+      `).all(...params) as Array<{ sessionId: string }>;
+      return rows.map((row) => row.sessionId);
+    },
     init: () => {
       // Schema is ensured at open time.
     },
@@ -357,9 +375,20 @@ export function openDeepIndexDb(args: Readonly<{ dbPath: string }>): DeepIndexDb
       const normalized = normalizeQuery(query);
       if (!normalized) return [];
       const limit = Math.max(1, Math.min(100, Math.floor(maxResults)));
-      const terms = tokenize(normalized);
-      if (terms.length === 0) return [];
-
+      const parsed = parseSearchQuery(query);
+      const terms = tokenize(parsed.terms.join(' '));
+      const { phrases, excludedTerms } = parsed;
+      if (terms.length === 0 && phrases.length === 0 && excludedTerms.length === 0) return [];
+      // Enforce phrases in SQL before ranking/limiting, never on a truncated preview.
+      const phraseConditions = phrases.map(() => '(instr(memory_search_lower(c.text), ?) > 0)');
+      // An excluded term anywhere in the indexed session excludes all of its hits.
+      const exclusionConditions = excludedTerms.map(() => `
+        NOT EXISTS (
+          SELECT 1 FROM message_chunks excluded
+          WHERE excluded.sessionId = c.sessionId
+            AND (instr(memory_search_lower(excluded.text), ?) > 0)
+        )
+      `);
       const placeholders = terms.map(() => '?').join(',');
       const sql = `
         SELECT
@@ -370,23 +399,29 @@ export function openDeepIndexDb(args: Readonly<{ dbPath: string }>): DeepIndexDb
           c.createdAtToMs AS createdAtToMs,
           c.text AS text,
           COUNT(*) AS hitCount
-        FROM chunk_terms t
-          JOIN message_chunks c ON c.chunkId = t.chunkId
-        WHERE t.term IN (${placeholders})
+        FROM message_chunks c
+          ${terms.length > 0 ? 'JOIN chunk_terms t ON c.chunkId = t.chunkId' : ''}
+        WHERE ${terms.length > 0 ? `t.term IN (${placeholders})` : '1 = 1'}
+          ${phraseConditions.map((condition) => `AND ${condition}`).join('\n')}
+          ${exclusionConditions.map((condition) => `AND ${condition}`).join('\n')}
           ${scope.type === 'session' ? 'AND c.sessionId = ?' : ''}
         GROUP BY c.chunkId
+        ${phrases.length > 0 && terms.length > 0 ? 'HAVING COUNT(*) = ?' : ''}
         ORDER BY hitCount DESC, c.createdAtToMs DESC
         LIMIT ?;
       `;
       const stmt = db.prepare(sql);
-      const params: any[] = [...terms];
+      const params: Array<string | number> = [...terms];
+      for (const phrase of phrases) params.push(phrase);
+      for (const term of excludedTerms) params.push(term);
       if (scope.type === 'session') params.push(String(scope.sessionId ?? '').trim());
+      if (phrases.length > 0 && terms.length > 0) params.push(terms.length);
       params.push(limit);
       const rows = stmt.all(...params) as any[];
 
       return rows.map((row) => {
         const hitCount = Number(row.hitCount ?? 0);
-        const score = terms.length > 0 ? hitCount / terms.length : 0;
+        const score = terms.length > 0 ? hitCount / terms.length : 1;
         const rank = hitCount > 0 ? -hitCount : 0;
         return {
           sessionId: String(row.sessionId),

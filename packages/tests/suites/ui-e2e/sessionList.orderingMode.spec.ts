@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { upsertPlainAccountSettingsV2 } from '../../src/testkit/accountSettings';
 import { createTestAuthMtls } from '../../src/testkit/auth';
+import { fetchJson } from '../../src/testkit/http';
 import { registerMachineIdentity } from '../../src/testkit/machineIdentity';
 import { repoRootDir } from '../../src/testkit/paths';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -44,6 +45,15 @@ async function selectOrderingMode(page: Page, mode: 'custom' | 'created' | 'upda
   const option = page.getByTestId(`session-list-ordering-mode-${mode}`);
   await expect(option).toHaveCount(1, { timeout: 60_000 });
   await option.click();
+}
+
+async function openSessionListSearch(page: Page) {
+  const input = page.getByTestId('session-list-search-input').first();
+  if (!(await input.isVisible().catch(() => false))) {
+    await page.getByTestId('session-list-search-trigger').first().click();
+  }
+  await expect(input).toBeVisible();
+  return input;
 }
 
 async function waitForVisibleSessionOrder(page: Page, sessionIds: readonly string[]): Promise<string[]> {
@@ -213,6 +223,178 @@ test.describe('ui e2e: session list ordering mode', () => {
     await ui?.stop().catch(() => {});
     await proxyStop?.().catch(() => {});
     await server?.stop().catch(() => {});
+  });
+
+  test('filters quoted phrases and minus exclusions through the session list field', async ({ page }) => {
+    test.setTimeout(180_000);
+    if (!server || !uiBaseUrl || !token) throw new Error('missing server/ui fixtures');
+    const diagnostics = collectBrowserDiagnostics({ page });
+    try {
+      const titles = [
+        'Continue with umbrella pigs',
+        'Continue with umbrella dancing pigs',
+        'Continue another task with dancing pigs',
+      ];
+      const sessionIds: string[] = [];
+      for (const title of titles) {
+        sessionIds.push(await createPlainSession({
+          baseUrl: server.baseUrl, token, title, rootPath: repoRootDir(),
+          machineId: SEEDED_MACHINE_ID, tagPrefix: 'session-list-search',
+        }));
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 120_000);
+      await waitForInitialAppUi({ page, timeoutMs: 120_000 });
+      for (const sessionId of sessionIds) {
+        await expect(page.getByTestId(`session-list-item-${sessionId}`)).toHaveCount(1, { timeout: 120_000 });
+      }
+      let input = await openSessionListSearch(page);
+      const cases: ReadonlyArray<readonly [string, readonly number[]]> = [
+        ['"continue with"', [0, 1]],
+        ['"continue a with"', []],
+        ['continue -umbrella', [2]],
+        ['continue -"umbrella pigs"', [1, 2]],
+        ['-"umbrella pigs"', [1, 2]],
+        ['', [0, 1, 2]],
+      ];
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(page.getByTestId('navigation-sidebar')).toHaveCount(width === 1440 ? 1 : 0);
+        input = await openSessionListSearch(page);
+        for (const [query, expected] of cases) {
+          const originalInput = await input.elementHandle();
+          await input.fill(query);
+          await expect(input, `search query at width ${width}`).toHaveValue(query);
+          for (const [index, sessionId] of sessionIds.entries()) {
+            await expect(page.getByTestId(`session-list-item-${sessionId}`)).toHaveCount(expected.includes(index) ? 1 : 0);
+          }
+          const focusState = await input.evaluate((element, original) => ({
+            sameElement: element === original,
+            originalConnected: original?.isConnected,
+            documentFocused: document.hasFocus(),
+            activeElement: document.activeElement?.tagName,
+            activeTestId: document.activeElement?.getAttribute('data-testid'),
+          }), originalInput);
+          await expect(input, `width=${width}, query=${query}, focus=${JSON.stringify(focusState)}`).toBeFocused();
+        }
+      }
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, diagnostics());
+    }
+  });
+
+  test('finds an unopened session by its saved opening message without a memory daemon', async ({ page }) => {
+    test.setTimeout(180_000);
+    if (!server || !uiBaseUrl || !token) throw new Error('missing server/ui fixtures');
+    const diagnostics = collectBrowserDiagnostics({ page });
+    try {
+      const ids: string[] = [];
+      for (const [index, text] of [
+        "Drag handles on project headings don't work. When I drag, it shows that it's moving.",
+        'Drag handles on project headings sometimes work. umbrella pigs',
+      ].entries()) {
+        const id = await createPlainSession({
+          baseUrl: server.baseUrl, token, title: `Unopened transcript ${index}`,
+          rootPath: repoRootDir(), machineId: SEEDED_MACHINE_ID, tagPrefix: 'unopened-search',
+        });
+        ids.push(id);
+        const posted = await fetchJson<{ didWrite: boolean }>(`${server.baseUrl}/v2/sessions/${id}/messages`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ localId: `opening-${index}`, messageRole: 'user',
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text } } } }),
+        });
+        expect(posted.status).toBe(200);
+        expect(posted.data.didWrite).toBe(true);
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 120_000);
+      await waitForInitialAppUi({ page, timeoutMs: 120_000 });
+      for (const id of ids) await expect(page.getByTestId(`session-list-item-${id}`)).toHaveCount(1, { timeout: 120_000 });
+      let input = await openSessionListSearch(page);
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(page.getByTestId('navigation-sidebar')).toHaveCount(width === 1440 ? 1 : 0);
+        input = await openSessionListSearch(page);
+        for (const query of ["Drag handles on project headings don't work.", '"Drag handles on project headings don\'t work."', '"project headings" -"umbrella pigs"']) {
+          await input.fill(query);
+          await expect(input, `saved-message query at width ${width}`).toHaveValue(query);
+          await expect(page.getByTestId(`session-list-item-${ids[0]}`)).toHaveCount(1, { timeout: 30_000 });
+          await expect(page.getByTestId(`session-list-item-${ids[1]}`)).toHaveCount(0);
+          await expect(input).toBeFocused();
+        }
+        await input.fill('"project headings" -"When I drag"');
+        await expect(page.getByTestId(`session-list-item-${ids[1]}`)).toHaveCount(1, { timeout: 30_000 });
+        await expect(page.getByTestId(`session-list-item-${ids[0]}`)).toHaveCount(0);
+        await input.fill('');
+        for (const id of ids) await expect(page.getByTestId(`session-list-item-${id}`)).toHaveCount(1);
+      }
+      let failedRead = false;
+      await page.route(`**/v1/sessions/${ids[0]}/messages**`, async (route) => {
+        if (!failedRead) {
+          failedRead = true;
+          await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'temporarily unavailable' }) });
+        } else {
+          await route.continue();
+        }
+      });
+      await input.fill('"project headings" -"not in either transcript"');
+      const retry = page.getByTestId('session-list-search-retry');
+      await expect(retry).toBeVisible();
+      await expect(page.getByTestId(`session-list-item-${ids[0]}`)).toHaveCount(0);
+      await retry.click();
+      await expect(page.getByTestId(`session-list-item-${ids[0]}`)).toHaveCount(1, { timeout: 30_000 });
+      await expect(retry).toHaveCount(0);
+      await input.fill('');
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, diagnostics());
+    }
+  });
+
+  test('searches unopened transcripts beyond the initial session list page', async ({ page }) => {
+    test.setTimeout(180_000);
+    if (!server || !uiBaseUrl || !token) throw new Error('missing server/ui fixtures');
+    const diagnostics = collectBrowserDiagnostics({ page });
+    try {
+      const target = await createPlainSession({
+        baseUrl: server.baseUrl, token, title: 'Historical conversation',
+        rootPath: repoRootDir(), machineId: SEEDED_MACHINE_ID, tagPrefix: 'historical-search',
+      });
+      const posted = await fetchJson<{ didWrite: boolean }>(`${server.baseUrl}/v2/sessions/${target}/messages`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ localId: 'historical-opening', messageRole: 'user',
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'older project heading search' } } } }),
+      });
+      expect(posted.status).toBe(200);
+      let newest = '';
+      for (let index = 0; index < 5; index += 1) {
+        newest = await createPlainSession({
+          baseUrl: server.baseUrl, token, title: `Recent unrelated conversation ${index}`,
+          rootPath: repoRootDir(), machineId: SEEDED_MACHINE_ID, tagPrefix: 'historical-search-filler',
+        });
+      }
+      // HTTP boundary: use genuine server cursors with small pages to exercise older-history discovery.
+      await page.route('**/v2/sessions**', async (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname === '/v2/sessions') url.searchParams.set('limit', '2');
+        await route.continue({ url: url.toString() });
+      });
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 120_000);
+      await waitForInitialAppUi({ page, timeoutMs: 120_000 });
+      await expect(page.getByTestId(`session-list-item-${newest}`)).toHaveCount(1, { timeout: 120_000 });
+      await expect(page.getByTestId(`session-list-item-${target}`)).toHaveCount(0);
+      const input = await openSessionListSearch(page);
+      await input.fill('"older project heading search"');
+      await expect(input).toHaveValue('"older project heading search"');
+      await expect(page.getByTestId(`session-list-item-${target}`)).toHaveCount(1, { timeout: 30_000 });
+      await expect(input).toBeFocused();
+      await input.fill('');
+      await expect(page.getByTestId(`session-list-item-${newest}`)).toHaveCount(1);
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, diagnostics());
+    }
   });
 
   test('groups linked worktrees with their repository and supports directory grouping', async ({ page }) => {

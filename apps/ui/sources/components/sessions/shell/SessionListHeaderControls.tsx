@@ -3,7 +3,7 @@ import { Animated, Easing, Pressable, View, type TextStyle, type ViewStyle } fro
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { TextInput } from '@/components/ui/text/Text';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 
@@ -115,6 +115,22 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center' as const,
         justifyContent: 'center' as const,
     },
+    searchActions: {
+        flexDirection: 'row' as const,
+        alignItems: 'center' as const,
+        justifyContent: 'flex-end' as const,
+        gap: 2,
+        width: 40,
+    },
+    searchFailure: {
+        minHeight: 48,
+        justifyContent: 'center' as const,
+        paddingHorizontal: 15,
+        paddingBottom: 6,
+    },
+    searchFailureText: {
+        color: theme.colors.text.secondary,
+    },
     searchInput: {
         flex: 1,
         minWidth: 0,
@@ -149,6 +165,8 @@ export const SessionListHeaderControls = React.memo(function SessionListHeaderCo
     onSearchQueryChange: (query: string) => void;
     onSearchOpenChange: (open: boolean) => void;
     searchTrailingAccessory?: React.ReactNode;
+    searchFailed?: boolean;
+    onRetrySearch?: () => void;
     viewMenu: React.ReactNode;
 }>) {
     const {
@@ -160,6 +178,8 @@ export const SessionListHeaderControls = React.memo(function SessionListHeaderCo
         selectedTags,
         onSearchOpenChange,
         searchTrailingAccessory,
+        searchFailed,
+        onRetrySearch,
         viewMenu,
     } = props;
     const styles = stylesheet;
@@ -176,7 +196,7 @@ export const SessionListHeaderControls = React.memo(function SessionListHeaderCo
     const searchIsOpen = searchOpen || searchInputValue.trim().length > 0;
     const searchHasQuery = searchInputValue.trim().length > 0;
     const searchTrailingAccessoryHasContent = React.Children.count(searchTrailingAccessory) > 0;
-    const showSearchClearButton = searchIsOpen && !searchTrailingAccessoryHasContent;
+    const showSearchClearButton = searchIsOpen;
     const shouldRenderSearchTrailingSlot = searchIsOpen && (
         searchTrailingAccessory !== undefined || showSearchClearButton
     );
@@ -268,6 +288,7 @@ export const SessionListHeaderControls = React.memo(function SessionListHeaderCo
     }, [onSelectedTagsChange, selectedTagSet, selectedTags]);
 
     return (
+        <View>
         <View style={styles.controls}>
             <AnimatedPressable
                 ref={searchTriggerRef}
@@ -319,11 +340,10 @@ export const SessionListHeaderControls = React.memo(function SessionListHeaderCo
                 {shouldRenderSearchTrailingSlot ? (
                     <View
                         testID="session-list-search-trailing-accessory"
-                        pointerEvents={showSearchClearButton ? 'auto' : 'none'}
-                        accessibilityElementsHidden={showSearchClearButton ? undefined : true}
-                        importantForAccessibility={showSearchClearButton ? undefined : 'no-hide-descendants'}
-                        style={styles.searchTrailingAccessory}
+                        pointerEvents="auto"
+                        style={[styles.searchTrailingAccessory, styles.searchActions]}
                     >
+                        {searchTrailingAccessoryHasContent ? searchTrailingAccessory : null}
                         {showSearchClearButton ? (
                             <Pressable
                                 testID="session-list-search-clear"
@@ -339,7 +359,7 @@ export const SessionListHeaderControls = React.memo(function SessionListHeaderCo
                                     color={theme.colors.text.tertiary}
                                 />
                             </Pressable>
-                        ) : searchTrailingAccessory}
+                        ) : null}
                     </View>
                 ) : null}
             </AnimatedPressable>
@@ -381,6 +401,17 @@ export const SessionListHeaderControls = React.memo(function SessionListHeaderCo
                 />
             ) : null}
             {viewMenu}
+        </View>
+        {searchFailed ? (
+            <Pressable
+                testID="session-list-search-retry"
+                accessibilityRole="button"
+                onPress={onRetrySearch}
+                style={styles.searchFailure}
+            >
+                <Text accessibilityRole="alert" style={styles.searchFailureText}>{t('sessionsList.searchIncomplete')} {t('common.retry')}</Text>
+            </Pressable>
+        ) : null}
         </View>
     );
 });

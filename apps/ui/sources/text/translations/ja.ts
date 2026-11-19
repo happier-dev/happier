@@ -6851,6 +6851,7 @@ localTailscale: {
     conflict: { title: '下書きの競合', description: 'このフィールドは別のデバイスで変更されました。', mine: 'このデバイス', synced: '同期済み', useSynced: '同期版を使用', keepDevice: 'デバイス版を保持', copyMine: '自分の版をコピー', copied: 'コピーしました', copyFailed: 'コピーできませんでした', field: { text: 'テキスト', mentions: 'メンション', attachments: '添付ファイル', recipient: '受信者', agentContinuation: 'エージェント継続', executionRunDelivery: '実行配信' } },
   },
   sessionsList: {
+        searchIncomplete: '一部の保存済みメッセージを検索できませんでした。',
     serverHeader: ({ server }: { server: string }) => `サーバー: ${server}`,
     storagePersistedTab: "Happier",
     storageDirectTab: "ダイレクト",

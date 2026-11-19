@@ -6578,6 +6578,7 @@ export const es: TranslationStructure = {
     conflict: { title: 'Conflicto de borrador', description: 'Este campo cambió en otro dispositivo.', mine: 'En este dispositivo', synced: 'Sincronizado', useSynced: 'Usar sincronizado', keepDevice: 'Conservar dispositivo', copyMine: 'Copiar el mío', copied: 'Copiado', copyFailed: 'No se pudo copiar', field: { text: 'Texto', mentions: 'Menciones', attachments: 'Adjuntos', recipient: 'Destinatario', agentContinuation: 'Continuación del agente', executionRunDelivery: 'Entrega de ejecución' } },
   },
   sessionsList: {
+        searchIncomplete: 'No se pudieron buscar algunos mensajes guardados.',
     serverHeader: ({ server }: { server: string }) => `Servidor: ${server}`,
     storagePersistedTab: "Happier",
     storageDirectTab: "Directas",

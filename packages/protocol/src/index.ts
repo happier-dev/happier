@@ -3023,6 +3023,7 @@ export {
   type DaemonServerWorkStatusV1,
 } from './daemon/serverWorkStatus.js';
 
+export { parseSearchQuery, type ParsedSearchQuery } from './memory/parseSearchQuery.js';
 export {
   MemoryCitationV1Schema,
   MemorySearchErrorCodeSchema,

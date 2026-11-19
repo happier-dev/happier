@@ -6203,6 +6203,7 @@ export const fr: TranslationStructure = {
         conflict: { title: 'Conflit de brouillon', description: 'Ce champ a changé sur un autre appareil.', mine: 'Sur cet appareil', synced: 'Synchronisé', useSynced: 'Utiliser la version synchronisée', keepDevice: 'Garder cette version', copyMine: 'Copier ma version', copied: 'Copié', copyFailed: 'Copie impossible', field: { text: 'Texte', mentions: 'Références', attachments: 'Pièces jointes', recipient: 'Destinataire', agentContinuation: 'Suite de l’agent', executionRunDelivery: 'Livraison de l’exécution' } },
     },
     sessionsList: {
+        searchIncomplete: 'Certains messages enregistrés n’ont pas pu être recherchés.',
         serverHeader: ({ server }: { server: string }) => `Serveur : ${server}`,
         storagePersistedTab: 'Happier',
         storageDirectTab: 'Direct',

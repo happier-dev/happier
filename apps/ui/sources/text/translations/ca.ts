@@ -6217,6 +6217,7 @@ deps: {
         conflict: { title: 'Conflicte d’esborrany', description: 'Aquest camp ha canviat en un altre dispositiu.', mine: 'En aquest dispositiu', synced: 'Sincronitzat', useSynced: 'Utilitza el sincronitzat', keepDevice: 'Conserva el del dispositiu', copyMine: 'Copia el meu', copied: 'Copiat', copyFailed: 'No s’ha pogut copiar', field: { text: 'Contingut de text', mentions: 'Mencions', attachments: 'Adjunts', recipient: 'Destinatari', agentContinuation: 'Continuació de l’agent', executionRunDelivery: 'Lliurament de l’execució' } },
     },
     sessionsList: {
+        searchIncomplete: 'No s’han pogut cercar alguns missatges desats.',
         serverHeader: ({ server }: { server: string }) => `Servidor: ${server}`,
         storagePersistedTab: 'Happier',
         storageDirectTab: 'Directes',

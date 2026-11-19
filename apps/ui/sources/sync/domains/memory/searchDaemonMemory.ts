@@ -1,5 +1,6 @@
 import {
     MemorySearchResultV1Schema,
+    parseSearchQuery,
     RPC_ERROR_CODES,
     RPC_METHODS,
     readRpcErrorCode,
@@ -48,7 +49,17 @@ export async function searchDaemonMemory(args: Readonly<{
             },
             ...(typeof args.timeoutMs === 'number' ? { timeoutMs: args.timeoutMs } : {}),
         });
-        return MemorySearchResultV1Schema.parse(raw);
+        const result = MemorySearchResultV1Schema.parse(raw);
+        const parsed = parseSearchQuery(query);
+        if (result.ok && (parsed.phrases.length > 0 || parsed.excludedTerms.length > 0) && result.querySyntaxVersion !== 1) {
+            return {
+                v: 1,
+                ok: false,
+                errorCode: 'memory_invalid_query',
+                error: 'Quoted phrases and exclusions require an updated daemon.',
+            };
+        }
+        return result;
     } catch (error) {
         const errorCode = readRpcErrorCode(error);
         if (

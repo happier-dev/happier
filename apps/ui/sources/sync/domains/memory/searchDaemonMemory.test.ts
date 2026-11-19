@@ -12,6 +12,31 @@ afterEach(() => {
 });
 
 describe('searchDaemonMemory', () => {
+    it.each(['"continue with"', 'continue -umbrella', '-"umbrella pigs"'])(
+        'rejects unverified legacy daemon results for %s',
+        async (query) => {
+            machineRpcWithServerScopeMock.mockResolvedValueOnce({ v: 1, ok: true, hits: [] });
+            const { searchDaemonMemory } = await import('./searchDaemonMemory');
+            const result = await searchDaemonMemory({
+                serverId: 'server-a', machineId: 'machine-a', query,
+                scope: { type: 'global' }, mode: 'auto',
+            });
+            expect(result).toMatchObject({ ok: false, errorCode: 'memory_invalid_query' });
+        },
+    );
+
+    it('accepts verified syntax and preserves indexed session exclusions', async () => {
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({
+            v: 1, ok: true, hits: [], querySyntaxVersion: 1, excludedSessionIds: ['session-1'],
+        });
+        const { searchDaemonMemory } = await import('./searchDaemonMemory');
+        const result = await searchDaemonMemory({
+            serverId: 'server-a', machineId: 'machine-a', query: '-"umbrella pigs"',
+            scope: { type: 'global' }, mode: 'auto',
+        });
+        expect(result).toMatchObject({ ok: true, querySyntaxVersion: 1, excludedSessionIds: ['session-1'] });
+    });
+
     it('calls daemon.memory.search through the server-scoped machine RPC and parses hits', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             v: 1,

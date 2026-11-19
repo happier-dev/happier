@@ -1,4 +1,4 @@
-import type { MemorySearchQueryV1, MemorySearchResultV1 } from '@happier-dev/protocol';
+import { parseSearchQuery, type MemorySearchQueryV1, type MemorySearchResultV1 } from '@happier-dev/protocol';
 
 import type { OperationalMemoryEmbeddingsSettings } from './resolveOperationalMemoryEmbeddingsSettings';
 import { openSummaryShardIndexDb } from './summaryShardIndexDb';
@@ -34,6 +34,10 @@ export function searchTier1Memory(params: Readonly<{
     return {
       v: 1,
       ok: true,
+      querySyntaxVersion: 1,
+      ...(parseSearchQuery(params.query.query).excludedTerms.length > 0
+        ? { excludedSessionIds: db.findExcludedSessionIds({ query: params.query.query, scope: params.query.scope }) }
+        : {}),
       hits: hits
         .map((hit) => ({
           sessionId: hit.sessionId,
@@ -136,6 +140,10 @@ export async function searchTier2Memory(params: Readonly<{
     return {
       v: 1,
       ok: true,
+      querySyntaxVersion: 1,
+      ...(parseSearchQuery(params.query.query).excludedTerms.length > 0
+        ? { excludedSessionIds: db.findExcludedSessionIds({ query: params.query.query, scope: params.query.scope }) }
+        : {}),
       hits: ranked
         .map((hit) => ({
           sessionId: hit.sessionId,

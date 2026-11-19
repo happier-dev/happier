@@ -6379,6 +6379,7 @@ export const zhHans: TranslationStructure = {
     conflict: { title: '草稿冲突', description: '此字段已在另一台设备上更改。', mine: '此设备', synced: '已同步', useSynced: '使用同步版本', keepDevice: '保留设备版本', copyMine: '复制我的版本', copied: '已复制', copyFailed: '无法复制', field: { text: '文本', mentions: '提及', attachments: '附件', recipient: '接收者', agentContinuation: '代理延续', executionRunDelivery: '运行交付' } },
   },
   sessionsList: {
+        searchIncomplete: '无法搜索部分已保存的消息。',
     serverHeader: ({ server }: { server: string }) => `服务器：${server}`,
     storagePersistedTab: "Happier",
     storageDirectTab: "直连",

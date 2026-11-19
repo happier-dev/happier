@@ -6596,6 +6596,7 @@ export const pl: TranslationStructure = {
     conflict: { title: 'Konflikt wersji roboczej', description: 'To pole zmieniono na innym urządzeniu.', mine: 'Na tym urządzeniu', synced: 'Zsynchronizowane', useSynced: 'Użyj zsynchronizowanej', keepDevice: 'Zachowaj z urządzenia', copyMine: 'Kopiuj moją', copied: 'Skopiowano', copyFailed: 'Nie udało się skopiować', field: { text: 'Tekst', mentions: 'Wzmianki', attachments: 'Załączniki', recipient: 'Odbiorca', agentContinuation: 'Kontynuacja agenta', executionRunDelivery: 'Dostarczenie wykonania' } },
   },
   sessionsList: {
+        searchIncomplete: 'Nie udało się przeszukać niektórych zapisanych wiadomości.',
     serverHeader: ({ server }: { server: string }) => `Serwer: ${server}`,
     storagePersistedTab: "Happier",
     storageDirectTab: "Bezpośrednie",
