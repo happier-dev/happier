@@ -1,5 +1,11 @@
+import { vi } from 'vitest';
 import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+
+import {
+    isQualifiedConnectedAccountProfileActiveV4,
+    sameQualifiedConnectedAccountGroupRef,
+    type QualifiedConnectedAccountGroupRef,
+} from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import type { NormalizedPluginAccountCollectionContractV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 
 import { connectUiPersonActionClient } from './actionClientIntegrationTestkit';
@@ -30,6 +36,13 @@ export async function connectUiTriageActionClient(
                 const { createActivePluginCollectionClient } = await import('@/sync/api/plugins/data/activePluginCollectionClient');
                 return contracts.map(contract => createActivePluginCollectionClient({ contract, accountLifetime: account.accountLifetime }));
             },
+            readConnectedAccountPoolActiveMember(group: QualifiedConnectedAccountGroupRef): string | null {
+                account.assertCurrent();
+                const profile = storage.getState().profile;
+                if (profile.id !== account.accountId) return null;
+                return profile.connectedAccountGroupsV4.find(({ ref }) =>
+                    sameQualifiedConnectedAccountGroupRef(ref, group))?.activeConnectedAccountId ?? null;
+            },
             async waitForConnectedAccountProfile(ref: QualifiedConnectedAccountRef): Promise<void> {
                 await waitForTestEvent(storage.subscribe, () => {
                     account.assertCurrent();
@@ -38,6 +51,25 @@ export async function connectUiTriageActionClient(
                         sameQualifiedConnectedAccountRef(connected.ref, ref)
                         && isQualifiedConnectedAccountProfileActiveV4(connected, Date.now()));
                 }, ready => ready);
+            },
+            async observeMachineTransport() {
+                const [{ apiSocket }, scopedTransport] = await Promise.all([
+                    import('@/sync/api/session/apiSocket'),
+                    import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc'),
+                ]);
+                const active = vi.spyOn(apiSocket, 'machineRPC');
+                const scoped = vi.spyOn(scopedTransport, 'machineRpcWithServerScope');
+                return {
+                    counts: () => ({ active: active.mock.calls.length, scoped: scoped.mock.calls.length }),
+                    reset() {
+                        active.mockClear();
+                        scoped.mockClear();
+                    },
+                    dispose() {
+                        scoped.mockRestore();
+                        active.mockRestore();
+                    },
+                };
             },
             async close() {
                 try { await installed.dispose(); } finally {
