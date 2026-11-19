@@ -428,6 +428,7 @@ const ProjectRightPanelServicesSurface = React.memo((props: Readonly<{
     return (
         <React.Suspense fallback={<PaneLoadingFallback />}>
             <ProjectRightPanelServicesView
+                outputScopeId={props.scopeId}
                 machineId={props.workspaceRef.machineId}
                 workspaceRefId={props.workspaceRef.id}
                 serverId={props.workspaceRef.serverId}

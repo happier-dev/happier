@@ -909,6 +909,7 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
                 <SurfaceStateSizeProvider size="phone">
                     <React.Suspense fallback={<PaneLoadingFallback />}>
                         <SessionServicesSurfaceScreen
+                            outputScopeId={props.scopeId}
                             sessionId={props.sessionId}
                             serverId={props.routeServerId}
                             onOpenServiceInBrowser={openServiceInBrowser}

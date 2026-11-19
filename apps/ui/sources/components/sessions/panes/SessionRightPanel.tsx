@@ -955,6 +955,7 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
                             >
                                 <React.Suspense fallback={<PaneLoadingFallback />}>
                                     <SessionRightPanelServicesView
+                                        outputScopeId={props.scopeId}
                                         sessionId={props.sessionId}
                                         pluginUiProjection={pluginRuntime.pluginUiProjection}
                                         projectionInteractionEnabled={pluginRuntime.phase === 'current'

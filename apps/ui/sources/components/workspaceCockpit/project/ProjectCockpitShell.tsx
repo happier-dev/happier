@@ -315,6 +315,7 @@ const ProjectServicesSurface = React.memo((props: ProjectCockpitShellProps & Rea
         <View testID="project-services-screen" style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
             <React.Suspense fallback={<PaneLoadingFallback />}>
                 <ProjectRightPanelServicesView
+                    outputScopeId={props.scopeId}
                     machineId={props.workspaceRef.machineId}
                     workspaceRefId={props.workspaceRef.id}
                     serverId={props.workspaceRef.serverId}

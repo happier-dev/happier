@@ -45,6 +45,8 @@ installHomeGovernanceBoundaries(home);
 await loadSyncSingletonForTests();
 const { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState } = await import('@/sync/domains/local/services/launch');
 const { ProjectRightPanelServicesView } = await import('./ProjectRightPanelServicesView');
+const { SessionRightPanelServicesView } = await import('@/components/sessions/panes/services/SessionRightPanelServicesView');
+const { SessionServicesSurfaceScreen } = await import('@/components/workspaceCockpit/session/SessionServicesSurfaceScreen');
 const { ServiceRowView } = await import('@/components/sessions/localServices/ServiceRowView');
 const { createFrontDoorRuntimeActionExecutor } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
@@ -572,6 +574,33 @@ describe('ProjectRightPanelServicesView', () => {
         expect(home.requestsFor('/v1/actions/projects.prepare').map(request =>
             ExternalActionRequestEnvelopeV1Schema.parse(ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.input).envelope).input))
             .toEqual([{ workspace: { ...workspace, serverId: serverIdentityId }, phase: 'setup' }]);
+        await screen.unmount();
+    });
+
+    it.each(['project', 'session', 'session-page'] as const)('offers the retained service terminal in its %s output scope', async (surface) => {
+        const workspace = { serverId, machineId: 'machine-a', workspaceId: 'service-workspace', rootPath: '/repo' };
+        const launcherState = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
+            v: 1, machineId: workspace.machineId, updatedAt: 3_000,
+            targets: [LocalServiceLaunchTargetV1Schema.parse({
+                id: 'project-service:web', source: 'managed_service',
+                sourceClass: { kind: 'managed_service', managedServiceId: 'service-web' },
+                machineId: workspace.machineId, workspaceId: workspace.workspaceId, workspace, cwd: workspace.rootPath,
+                title: 'Web', confidence: 'high', state: 'available', serviceState: 'healthy', actions: ['manage'],
+                terminalView: { kind: 'terminal_view', machineId: workspace.machineId, terminalId: 'retained-web',
+                    terminalKey: 'owned-qa-service', cwd: workspace.rootPath, workspace, interactive: true },
+            })],
+        });
+        const props = { serverId, machineId: workspace.machineId, outputScopeId: 'project:service-workspace',
+            inventoryState: buildLocalServiceInventoryState({ rows: [] }), launcherState };
+        const screen = await renderScreen(<ModalProvider>{surface === 'project'
+            ? <ProjectRightPanelServicesView {...props} />
+            : surface === 'session' ? <SessionRightPanelServicesView {...props} />
+                : <SessionServicesSurfaceScreen {...props} />}</ModalProvider>);
+        await flushHookEffects();
+        const prefix = surface === 'session-page' ? 'session-mobile-services' : `${surface}-rightpanel-services`;
+        await pressTestInstanceAsync(screen.findByTestId(`${prefix}-row:project-service:web-overflow`), 'service overflow');
+        expect(screen.findByTestId('stop')).toBeTruthy();
+        expect(screen.findByTestId('show-terminal')).toBeTruthy();
         await screen.unmount();
     });
 

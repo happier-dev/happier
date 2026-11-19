@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import { ProjectCommandOutputHost } from '@/components/inbox/actionOperations/projectCommandOutputHost';
+
 import { LocalServicesSurfaceHost, type LocalServicesSurfaceHostProps } from '@/components/sessions/localServices';
 import { useSessionMachineDisplayTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import type { FrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -15,6 +17,7 @@ import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/ser
 export type SessionServicesSurfaceScreenProps = Readonly<{
     sessionId?: string;
     serverId?: string | null;
+    outputScopeId?: string | null;
     machineId?: string | null;
     inventoryState?: LocalServiceInventoryState;
     launcherState?: LocalServiceLauncherState | null;
@@ -32,18 +35,20 @@ export function SessionServicesSurfaceScreen(props: SessionServicesSurfaceScreen
     const machineId = props.machineId ?? sessionMachineTarget?.machineId ?? null;
 
     return (
-        <LocalServicesSurfaceHost
-            machineId={machineId}
-            serverId={preferredServerId}
-            sessionId={props.sessionId}
-            inventoryState={props.inventoryState}
-            launcherState={props.launcherState}
-            launcherSnapshotClient={props.launcherSnapshotClient}
-            publicPreviewState={props.publicPreviewState}
-            publicPreviewStatusClient={props.publicPreviewStatusClient}
-            runtimeActionExecute={props.runtimeActionExecute}
-            onOpenServiceInBrowser={props.onOpenServiceInBrowser}
-            testID="session-mobile-services"
-        />
+        <ProjectCommandOutputHost scopeId={props.outputScopeId}>
+            <LocalServicesSurfaceHost
+                machineId={machineId}
+                serverId={preferredServerId}
+                sessionId={props.sessionId}
+                inventoryState={props.inventoryState}
+                launcherState={props.launcherState}
+                launcherSnapshotClient={props.launcherSnapshotClient}
+                publicPreviewState={props.publicPreviewState}
+                publicPreviewStatusClient={props.publicPreviewStatusClient}
+                runtimeActionExecute={props.runtimeActionExecute}
+                onOpenServiceInBrowser={props.onOpenServiceInBrowser}
+                testID="session-mobile-services"
+            />
+        </ProjectCommandOutputHost>
     );
 }

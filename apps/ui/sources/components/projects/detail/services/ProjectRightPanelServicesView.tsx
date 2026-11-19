@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import { ProjectCommandOutputHost } from '@/components/inbox/actionOperations/projectCommandOutputHost';
+
 import { LocalServicesSurfaceHost } from '@/components/sessions/localServices';
 import { createProjectServicePlacementRenderer } from './ProjectServicePlacementControls';
 import { isProjectServiceTargetFromSource } from './projectServiceSource';
@@ -20,6 +22,7 @@ import type { LocalServicePublicPreviewState } from '@/sync/domains/local/servic
 import type { LocalServicePublicPreviewStatusClient } from '@/sync/domains/local/services/publicPreview/useLocalServicePublicPreviewState';
 
 export type ProjectRightPanelServicesViewProps = Readonly<{
+    outputScopeId?: string | null;
     machineId?: string | null;
     serverId?: string | null;
     /** The SOURCE checkout's accepted ref: service placement is saved there, never on a worker copy. */
@@ -74,25 +77,27 @@ export function ProjectRightPanelServicesView(props: ProjectRightPanelServicesVi
     const renderServicePlacement = React.useMemo(() => createProjectServicePlacementRenderer(placementSource, declarations),
         [declarations, placementSource]);
     const body = (
-        <LocalServicesSurfaceHost
-            machineId={props.machineId}
-            serverId={props.serverId}
-            workspaceRoot={props.workspaceRoot}
-            workspaceRefId={props.workspaceRefId}
-            scope="workspace"
-            inventoryState={props.inventoryState}
-            launcherState={props.launcherState}
-            launcherSnapshotClient={props.launcherSnapshotClient}
-            publicPreviewState={props.publicPreviewState}
-            publicPreviewStatusClient={props.publicPreviewStatusClient}
-            runtimeActionExecute={props.runtimeActionExecute}
-            onOpenServiceInBrowser={props.onOpenServiceInBrowser}
-            presentation={props.presentation}
-            onAddService={props.onAddService}
-            renderServicePlacement={renderServicePlacement}
-            describeDeclaration={describeDeclaration}
-            testID={props.testID ?? 'project-rightpanel-services'}
-        />
+        <ProjectCommandOutputHost scopeId={props.outputScopeId}>
+            <LocalServicesSurfaceHost
+                machineId={props.machineId}
+                serverId={props.serverId}
+                workspaceRoot={props.workspaceRoot}
+                workspaceRefId={props.workspaceRefId}
+                scope="workspace"
+                inventoryState={props.inventoryState}
+                launcherState={props.launcherState}
+                launcherSnapshotClient={props.launcherSnapshotClient}
+                publicPreviewState={props.publicPreviewState}
+                publicPreviewStatusClient={props.publicPreviewStatusClient}
+                runtimeActionExecute={props.runtimeActionExecute}
+                onOpenServiceInBrowser={props.onOpenServiceInBrowser}
+                presentation={props.presentation}
+                onAddService={props.onAddService}
+                renderServicePlacement={renderServicePlacement}
+                describeDeclaration={describeDeclaration}
+                testID={props.testID ?? 'project-rightpanel-services'}
+            />
+        </ProjectCommandOutputHost>
     );
     return placementSource ? <ProjectServicePlacementObservationProvider source={placementSource} runtimeActionExecute={props.runtimeActionExecute}>{body}</ProjectServicePlacementObservationProvider> : body;
 }
