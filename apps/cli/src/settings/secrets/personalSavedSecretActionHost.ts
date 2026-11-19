@@ -150,6 +150,7 @@ export function updateOwnedSavedSecretResourceForOperation(input: OwnedSavedSecr
 /** Plaintext lives only in the caller process; resources use the incumbent mode/sealing/census owners. */
 export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedSecretOperationParams & Readonly<{
     home: NonNullable<ActionExecutorDeps['homeDomainAction']>;
+    onlyIfUnshared?: true;
     resolveNativeSecretSourceRuntime?(contribution: PluginContributionIdentityV1, signal?: AbortSignal): Promise<Readonly<{
         secretSources?: SavedSecretOperationContextV1['secretSources'];
         dispose(): Promise<void>;
@@ -335,7 +336,8 @@ export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedS
                 }, beforeEffect);
                 SharedSavedSecretDeleteOutputV1Schema.parse(await mutate({ resourceId: args.secretId,
                     expectedRevision: args.expectedUpdatedAt, expectedSettingsVersion: captured.expectedSettingsVersion,
-                    referenceCensus: { ...captured.referenceCensus, opaquePresetReferences: opaque.opaquePresetReferences } }));
+                    referenceCensus: { ...captured.referenceCensus, opaquePresetReferences: opaque.opaquePresetReferences },
+                    ...(params.onlyIfUnshared ? { onlyIfUnshared: true } : {}) }));
             },
         });
         try { return await execute(actionId, input); }

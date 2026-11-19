@@ -1345,6 +1345,16 @@ export async function createSavedSecretResourceInTx(
     tx: Tx,
     input: CreateSavedSecretResourceInput,
 ): Promise<SavedSecretResourceServiceResult<{ resourceId: string; revision: number }>> {
+    const result = await writeSavedSecretResourceInTx(tx, input);
+    if (!result.ok) return result;
+    const { resourceId, revision } = result.value;
+    return { ok: true, value: { resourceId, revision } };
+}
+
+async function writeSavedSecretResourceInTx(
+    tx: Tx,
+    input: CreateSavedSecretResourceInput,
+): Promise<SavedSecretResourceServiceResult<{ resourceId: string; revision: number; created: boolean }>> {
     try {
         formatSharedSavedSecretRefV1(input.resourceId);
     } catch {
@@ -1416,7 +1426,7 @@ export async function createSavedSecretResourceInTx(
                     && isDeepStrictEqual(new Uint8Array(persisted.encryptedDataKey), requested.encryptedDataKey);
             });
         return isExactRetry
-            ? { ok: true, value: { resourceId: input.resourceId, revision: existing.revision } }
+            ? { ok: true, value: { resourceId: input.resourceId, revision: existing.revision, created: false } }
             : { ok: false, error: "resource_changed" };
     }
     // Account.encryptionMode is the authority for new owner writes: an E2EE
@@ -1487,7 +1497,7 @@ export async function createSavedSecretResourceInTx(
     });
     await recheckAudience();
     await markResourceChangedForAccounts(tx, input.resourceId, resource.revision, [input.accountId, ...recipientIds]);
-    return { ok: true, value: { resourceId: resource.id, revision: resource.revision } };
+    return { ok: true, value: { resourceId: resource.id, revision: resource.revision, created: true } };
 }
 
 export type PromoteSavedSecretResourceInput = CreateSavedSecretResourceInput & Readonly<{
@@ -2238,7 +2248,7 @@ export async function validateSavedSecretHistoryTransferProofsInTx(tx: Tx, input
 export async function deleteSavedSecretResourceInTx(
     tx: Tx,
     input: Readonly<{ accountId: string; resourceId: string; expectedRevision: number; authentication?: TeamOperationAuthenticationContext;
-        expectedSettingsVersion: number; referenceCensus: SavedSecretReferenceCensusV1;
+        expectedSettingsVersion: number; referenceCensus: SavedSecretReferenceCensusV1; onlyIfUnshared?: true;
         managedResourceDispositions?: readonly ManagedResourceDispositionV1[] }>,
 ): Promise<SavedSecretResourceDeleteResult> {
     const existing = await tx.savedSecretResource.findUnique({
@@ -2250,6 +2260,9 @@ export async function deleteSavedSecretResourceInTx(
     if (!existing) return { ok: false, error: "resource_not_found" };
     if (existing.ownerAccountId !== input.accountId) return { ok: false, error: await refuseSavedSecretNonOwnerInTx(tx, input) };
     if (existing.revision !== input.expectedRevision) return { ok: false, error: "resource_changed" };
+    if (input.onlyIfUnshared && (existing.accountGrants.length || existing.teamGrants.length || existing.groupGrants.length)) {
+        return { ok: false, error: "resource_in_use" };
+    }
     // Retain the grant identities so terminal validation can still see Team or
     // group audience growth after the resource and its grant rows are deleted.
     // Deletion reads the Account reference census in a Serializable transaction.
@@ -2545,13 +2558,16 @@ async function provePromotedOpaquePresetReferencesInTx(tx: Tx, input: PromoteSav
     return { ok: true, value: null };
 }
 
-async function createSavedSecretPromotionResourcesInTx(tx: Tx, input: PromoteSavedSecretResourceInput): Promise<void> {
+async function createSavedSecretPromotionResourcesInTx(tx: Tx, input: PromoteSavedSecretResourceInput): Promise<readonly string[]> {
+    const created: string[] = [];
     for (const resource of savedSecretPromotionResources(input)) {
-        const result = await createSavedSecretResourceInTx(tx, resource);
+        const result = await writeSavedSecretResourceInTx(tx, resource);
         if (!result.ok) throw new SavedSecretResourceTransactionAbort(result.error);
         if (result.value.revision !== 1) throw new SavedSecretResourceTransactionAbort('resource_changed');
+        if (result.value.created) created.push(result.value.resourceId);
     }
     await rewritePromotedOpaquePresetReferencesInTx(tx, input);
+    return created;
 }
 
 /** A lost-response receipt can inspect existing resources, never create while proving a prior commit. */
@@ -2665,12 +2681,14 @@ async function promoteCatalogOnlySavedSecretResourcesInTx(tx: Tx, input: Promote
     }
     if (!resourcesBound) return { ok: false, error: 'references_invalid' };
     if (!await validatePersonalPromotionSourcesInTx(tx, input)) return { ok: false, error: 'references_invalid' };
-    await createSavedSecretPromotionResourcesInTx(tx, input);
+    const createdResources = await createSavedSecretPromotionResourcesInTx(tx, input);
     await mutateSavedSecretCatalogsInTx(tx, { accountId: input.accountId, authentication: input.authentication, mutations });
     if (remote) rejectSavedSecretCatalogMutation(await mutateRemoteHostCatalogRowInTx(tx, { accountId: input.accountId, authentication: input.authentication, ...remote }));
     if (notification) rejectSavedSecretCatalogMutation(await mutateNotificationChannelCatalogInTx(tx, { accountId: input.accountId, authentication: input.authentication, ...notification }));
     if (credential) {
-        const written = await mutateQualifiedConnectedServiceCredentialInTx(tx, { accountId: input.accountId, ...credential });
+        const createdSavedSecretResourceIds = createdResources.filter(resourceId => credential.savedSecretResourceIds?.includes(resourceId));
+        const written = await mutateQualifiedConnectedServiceCredentialInTx(tx, { accountId: input.accountId, ...credential,
+            createdSavedSecretResourceIds: createdSavedSecretResourceIds.length ? createdSavedSecretResourceIds : undefined });
         // `saved_secret_held`: the credential writer keeps one record per key; the edit rolls back with its new resource.
         if (written.status !== 'written') throw new SavedSecretResourceTransactionAbort(written.status === 'superseded' || written.status === 'saved_secret_held'
             ? 'references_conflict' : 'references_invalid');

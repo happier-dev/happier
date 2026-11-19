@@ -1437,7 +1437,8 @@ const ConnectedAccountServiceController = React.memo(
         setBusy(true);
         try {
             const confirmed = await Modal.confirm(t('connectedServicesSettings.detailRemoveAccount'),
-                [question, t('connectedServicesSettings.detailRemoveProviderSignOut', { provider: title })].join('\n\n'), {
+                [question, t('connectedServicesSettings.detailRemoveSavedSecrets'),
+                    t('connectedServicesSettings.detailRemoveProviderSignOut', { provider: title })].join('\n\n'), {
                     confirmText: t('connectedServicesSettings.detailRemoveAccount'),
                     cancelText: t('common.cancel'), destructive: true,
                 });
@@ -1450,7 +1451,13 @@ const ConnectedAccountServiceController = React.memo(
                 result = await revoke(dispositions);
                 if (!result || !isControllerCurrent()) return false;
             }
-            if (result.status === 'revoked') return true;
+            if (result.status === 'revoked') {
+                if ('savedSecretCleanup' in result && result.savedSecretCleanup === 'incomplete') {
+                    await Modal.alert(t('connectedServicesSettings.detailRemoveAccount'),
+                        t('connectedServicesSettings.detailRemoveSavedSecretCleanupIncomplete'));
+                }
+                return true;
+            }
             setErrorCode(
                 result.status === 'outcomeUnknown'
                     ? 'connected_account_revoke_outcome_unknown'

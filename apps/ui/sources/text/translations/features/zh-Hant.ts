@@ -4715,6 +4715,8 @@ const zhHant: ConnectedServicesSettingsCopy = {
     detailRemovePooledConfirm: '此帳號屬於一個帳號池。仍要移除嗎？',
     detailRemovePooledConfirmNamed: ({ pool }) => `此帳號屬於帳號池「${pool}」。仍要移除嗎？`,
     detailRemoveAccountConfirm: ({ name }) => `移除${name}？`,
+    detailRemoveSavedSecrets: "此連線建立的已儲存密鑰若未在其他地方使用，也會一併刪除。個別儲存或仍在使用的密鑰會保留在「已儲存的密鑰」中。",
+    detailRemoveSavedSecretCleanupIncomplete: "帳號已移除。部分密鑰無法檢查或刪除，你可以在「已儲存的密鑰」中查看。",
     detailRemoveProviderSignOut: ({ provider }) => `這會將其從 Happier 中移除。若要完全撤銷存取權，也請在 ${provider} 登出。`,
     detailUsageSignedOut: '上次已知 · 登出時無法重新整理',
     detailUsageSignedOutAt: ({ time }: { time: string }) => `上次已知時間 ${time} · 登出時無法重新整理`,

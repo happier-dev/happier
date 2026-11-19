@@ -60,6 +60,10 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                     return (await createSavedSecretResourcesWithConnectedAccountCredentialInContext(account, {
                         scope: { serverId: account.serverId, accountId: account.accountId }, secrets, credential })).status;
                 },
+                deleteCreatedAccountSecrets: async input => {
+                    const { deleteRevokedConnectedAccountSecretsInContext } = await import('@/sync/ops/settings/savedSecretDeletion');
+                    return deleteRevokedConnectedAccountSecretsInContext(account, input, signal);
+                },
                 readSetupCatalog: async input => {
                     assertCurrent();
                     if (input.refresh) publishMachineContributionRegistryProjectionRefresh(account.serverId);

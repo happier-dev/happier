@@ -1675,6 +1675,19 @@ Machine peer-mediation RPC contract; no predecessor adapter is introduced.
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+## Connected Account Saved Secret provenance (unreleased 0.3)
+
+A credential can record the IDs of Saved Secrets created in its own promotion
+transaction. Both the stored V4 credential metadata and the qualified Home
+credential read carry the optional IDs. Old rows remain readable and their
+secrets stay in Saved Secrets after removal. The Saved Secret delete input can
+require the absence of Account, Team and Group grants. The revoke Action can
+report incomplete Saved Secret cleanup separately from successful revocation.
+
+Matching Home, Protocol, UI and CLI development readers reload together under
+the 0.3 direct cut. The inspected 0.2 frontier `f3ec856b1a` predates the qualified
+credential path. There is no database migration or provenance backfill.
+
 ## Explicit Saved Secret repair (unreleased 0.3)
 
 `secrets.shared.repair` adds a client-placed Action with closed resource-id and

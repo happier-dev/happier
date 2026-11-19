@@ -879,6 +879,46 @@ describe('connected-service configuration Action owner', () => {
         expect(result).toEqual({ status: 'revoked', account, remoteStatus: 'remoteNotAttempted', metadataCleanup: { status: 'complete' } });
         expect(effects).toEqual(['prepared', 'deleted', 'cleaned']);
     });
+    it.each(['Home', 'Machine'] as const)('deletes only connection-created secrets after %s revocation and keeps a reused one', async placement => {
+        const account = { service, accountId: 'default' };
+        const credentialRevision = 'csr_abcdefghijklmnopqrstuv';
+        const secrets = new Set(['created', 'reused', 'independent']);
+        let removed = false;
+        const host = {
+            assertCurrent() {}, async mutatePurposeBindings() {}, async resolveAgent() { return null; },
+            async resetQuota() { throw new Error('unexpected_reset'); },
+            async readAccountCredential() {
+                return { ref: account, revisionSemantics: 'revisioned' as const, credentialRevision,
+                    authenticationModeId: 'api-key', configurationRevision: null,
+                    content: { t: 'encrypted' as const, c: 'opaque' }, metadata: { scopes: [] },
+                    createdSavedSecretResourceIds: ['created', 'reused'] };
+            },
+            async request({ method, path }: Parameters<ConnectedServiceConfigurationActionHostV1['request']>[0]) {
+                expect(placement).toBe('Home');
+                expect(method).toBe('DELETE');
+                expect(new URL(path, 'http://home.test').searchParams.get('expectedCredentialRevision')).toBe(credentialRevision);
+                removed = true;
+                return { success: true };
+            },
+            async controlCommand(machineId: string, command: unknown) {
+                expect(placement).toBe('Machine');
+                expect(machineId).toBe('machine');
+                expect(command).toMatchObject({ operation: 'revokeAccount', account, expectedCredentialRevision: credentialRevision });
+                removed = true;
+                return { status: 'revoked', account, remoteStatus: 'remoteRevoked' };
+            },
+            async deleteCreatedAccountSecrets({ resourceIds }: { resourceIds: readonly string[] }) {
+                if (removed) for (const resourceId of resourceIds) {
+                    if (resourceId !== 'reused') secrets.delete(resourceId);
+                }
+                return 'complete' as const;
+            },
+        };
+        expect(await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.accounts.revoke', {
+            account, cleanupGroupReferences: false, ...(placement === 'Machine' ? { machineId: 'machine' } : {}),
+        })).toMatchObject({ status: 'revoked' });
+        expect([...secrets]).toEqual(['reused', 'independent']);
+    });
     it('captures legacy metadata before revocation and keeps the definite effect when metadata cleanup fails', async () => {
         const account = { service, accountId: 'default' };
         const effects: string[] = [];

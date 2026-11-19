@@ -1,10 +1,15 @@
 import type { SavedSecretUnreadableReferencesWarningV1 } from '@happier-dev/cli-common/machines/managed';
 import { formatSavedSecretCatalogReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { listAccountSettingsSavedSecretReferences, type AccountSettingsSavedSecretReference } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
-import { SharedSavedSecretDeleteOutputV1Schema, SavedSecretResourceActionErrorV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { SharedSavedSecretDeleteOutputV1Schema, SavedSecretResourceActionErrorV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import type { ManagedResourceDependencyV1, ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 
-import { withProfileAccount } from '@/sync/api/account/apiProfileCatalog';
+import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { readSavedSecretCatalogMetadataInContext } from '@/sync/api/account/apiSavedSecretCatalog';
+import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
+
+import { admitProfileAccount, withProfileAccount, type ProfileAccountContext } from '@/sync/api/account/apiProfileCatalog';
 import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { projectConnectedAccountCredentialReferenceSources } from '@/sync/domains/connectedServices/connectedAccountCredentialReferenceSources';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -51,7 +56,8 @@ export async function deleteSavedSecretResource(params: Readonly<{
     resourceId: string;
     expectedRevision: number;
     /** Owner's current Account Settings version; the reference census reads at it. */
-    expectedSettingsVersion: number;
+    expectedSettingsVersion?: number;
+    revokedConnection?: Readonly<{ context: ProfileAccountContext; account: QualifiedConnectedAccountRef }>;
     confirmedByPresentUser?: true;
     confirmedUnreadableReferences?: boolean;
     executeAdmittedMutation?: SavedSecretAdmittedMutationExecute;
@@ -64,7 +70,7 @@ export async function deleteSavedSecretResource(params: Readonly<{
 }>): Promise<SavedSecretResourceDeleteResult> {
     const resourceRef = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: params.resourceId });
     try {
-        return await withProfileAccount<SavedSecretResourceDeleteResult>(params.scope, undefined, async (context, accountMode) => {
+        const remove = async (context: ProfileAccountContext, accountMode: 'plain' | 'e2ee'): Promise<SavedSecretResourceDeleteResult> => {
             const confirmDeletion = params.confirmDeletion;
             let confirmation: Promise<boolean> | undefined;
             const presentUserActionConfirmation = confirmDeletion ? () => confirmation ??= confirmDeletion() : undefined;
@@ -73,7 +79,9 @@ export async function deleteSavedSecretResource(params: Readonly<{
                 if (!captured.ok) return captured;
                 const { baseline, catalogs: capturedCatalogs, referenceCensus } = captured;
                 // A Connected Account whose key is this record keeps it in use; the profile names it (ids only).
-                const catalogs = { ...capturedCatalogs, connectedAccountCredentials: readConnectedAccountCredentialRecordsForScope(params.scope) };
+                const catalogs = { ...capturedCatalogs, connectedAccountCredentials: readConnectedAccountCredentialRecordsForScope(params.scope)
+                    // The acknowledged revoke may precede the profile push. Home still guards every live credential.
+                    .filter(record => !params.revokedConnection || !sameQualifiedConnectedAccountRef(record.account, params.revokedConnection.account)) };
                 const references = listAccountSettingsSavedSecretReferences(baseline.source.raw, resourceRef, catalogs);
                 if (references.length > 0) return { ok: false, reason: 'in_use', references };
                 context.assertCurrent();
@@ -99,6 +107,7 @@ export async function deleteSavedSecretResource(params: Readonly<{
                     input: { resourceId: params.resourceId, expectedRevision,
                         expectedSettingsVersion: baseline.source.version,
                         referenceCensus: { ...referenceCensus, opaquePresetReferences: opaquePresetReferences.opaquePresetReferences },
+                        ...(params.revokedConnection ? { onlyIfUnshared: true } : {}),
                         ...(params.managedResourceDispositions ? { managedResourceDispositions: params.managedResourceDispositions } : {}),
                     },
                     parse: value => SharedSavedSecretDeleteOutputV1Schema.parse(value),
@@ -134,9 +143,45 @@ export async function deleteSavedSecretResource(params: Readonly<{
                 return { ok: false, reason: 'unavailable' };
             }
             return attempt(entry.revision);
-        });
+        };
+        return await (params.revokedConnection ? admitProfileAccount(params.revokedConnection.context, remove)
+            : withProfileAccount(params.scope, undefined, remove));
     } catch (error) {
         if (isTeamActionApprovalPendingError(error)) throw error;
         return { ok: false, reason: 'failed' };
     }
+}
+
+/** Clean up resources created by the revoked credential's connection flow. */
+export async function deleteRevokedConnectedAccountSecretsInContext(context: ProfileAccountContext,
+    input: Readonly<{ account: QualifiedConnectedAccountRef; resourceIds: readonly string[] }>,
+    signal?: AbortSignal): Promise<'complete' | 'incomplete'> {
+    const scope = context.accountLifetime.scope;
+    const catalog = await readSavedSecretCatalogMetadataInContext(context, signal);
+    if (!catalog.ok) return 'incomplete';
+    const candidates = new Set(input.resourceIds);
+    const executeAdmittedMutation: SavedSecretAdmittedMutationExecute = async mutation => {
+        const outcome = await requestHomeDomain({
+            scope, path: SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.delete'],
+            method: 'POST', effect: 'write', input: mutation.input, schema: SharedSavedSecretDeleteOutputV1Schema,
+            signal, requestAuthority: context,
+        });
+        return outcome.ok ? { kind: 'succeeded', value: mutation.parse(outcome.value) } : { kind: 'failed', failure: outcome.failure };
+    };
+    let outcome: 'complete' | 'incomplete' = 'complete';
+    for (const entry of catalog.resources) {
+        if (entry.relationship !== 'owner') continue;
+        if (!('ref' in entry)) {
+            if (candidates.has(entry.repair.resourceId)) outcome = 'incomplete';
+            continue;
+        }
+        if (entry.revision === null) continue;
+        const ref = parseSavedSecretRefV1(entry.ref);
+        if (ref.kind !== 'shared_resource' || !candidates.has(ref.resourceId)) continue;
+        const result = await deleteSavedSecretResource({ scope, resourceId: ref.resourceId, expectedRevision: entry.revision,
+            revokedConnection: { context, account: input.account }, executeAdmittedMutation });
+        if (!result.ok && result.reason !== 'in_use' && result.reason !== 'managed_resources_review_required'
+            && result.failure?.code !== 'resource_in_use' && result.failure?.code !== 'resource_not_found') outcome = 'incomplete';
+    }
+    return outcome;
 }

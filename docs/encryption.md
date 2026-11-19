@@ -634,7 +634,10 @@ credential whose key is held by Saved Secret records keeps exactly that record
 set. The credential writer refuses any write that swaps or empties it, which
 covers an Action edit, a daemon reconnect and a promotion. V4 answers 409
 `connect_credential_saved_secret_held`, and the new key is written by rotating
-the held record.
+the held record. Removing a Connected Account cleans up its known
+connection-created resources through the normal Saved Secret deletion census.
+The client supplies the Account-mode reference proof. The Home checks live
+references and grants without opening E2EE secret material.
 
 ## Managed-resource birth relationship (0.3 development)
 

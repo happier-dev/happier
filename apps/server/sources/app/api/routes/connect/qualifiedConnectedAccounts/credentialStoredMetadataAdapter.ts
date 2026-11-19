@@ -53,6 +53,7 @@ export type QualifiedConnectedAccountStoredMetadataProjection =
     directExportFailure?: ConnectedAccountDirectExportProjectionV1['directExportFailure'];
     /** Non-empty when the credential's secrets are held by Saved Secret resources. */
     savedSecretResourceIds: readonly string[];
+    createdSavedSecretResourceIds?: readonly string[];
 }>;
 
 function resolveStoredCredentialRevisionSemantics(
@@ -118,6 +119,7 @@ export function resolveQualifiedConnectedAccountStoredMetadata(
             ...(stored.directExportFailure ? { directExportFailure: stored.directExportFailure } : {}),
             contributionContractVersion: stored.contributionContractVersion ?? null,
             savedSecretResourceIds: stored.savedSecretResourceIds ?? [],
+            ...(stored.createdSavedSecretResourceIds ? { createdSavedSecretResourceIds: stored.createdSavedSecretResourceIds } : {}),
         };
     }
     if (isConnectedServiceCredentialMetadataV2(params.metadata)) {

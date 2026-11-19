@@ -932,6 +932,14 @@ of the whole billing period. Read the price basis, dates and coverage before
 using it to judge plan fit. The billing control opens the provider's billing
 page; subscription changes remain with the provider.
 
+## Removing an account
+
+In 0.3 development builds, **Remove account** also deletes unused Saved Secrets
+created by that connection's setup form. Happier keeps secrets you selected from
+Saved Secrets, secrets another binding still uses and shared secrets. Secrets
+from older connections may stay in Saved Secrets. If Happier reports incomplete
+cleanup, check **Saved Secrets** before deleting any remaining key.
+
 ## Security model
 
 For OAuth-based services, Happier clients do not exchange provider codes for tokens directly.

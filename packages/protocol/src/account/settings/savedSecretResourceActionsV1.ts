@@ -479,6 +479,8 @@ export const SharedSavedSecretDeleteInputV1Schema = lazyZodSchema(() => z.strict
   expectedRevision: z.number().check(z.int()),
   expectedSettingsVersion: z.number().check(z.int(), z.nonnegative()),
   referenceCensus: SavedSecretReferenceCensusV1Schema,
+  /** Automatic cleanup preserves current grants and their potentially opaque recipient bindings. */
+  onlyIfUnshared: z.optional(z.literal(true)),
   managedResourceDispositions: z.optional(z.array(ManagedResourceDispositionV1Schema)),
 }));
 

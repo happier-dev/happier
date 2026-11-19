@@ -4842,6 +4842,8 @@ const ru: ConnectedServicesSettingsCopy = {
     detailRemovePooledConfirm: 'Этот аккаунт входит в пул. Всё равно удалить его?',
     detailRemovePooledConfirmNamed: ({ pool }) => `Этот аккаунт входит в пул «${pool}». Всё равно удалить его?`,
     detailRemoveAccountConfirm: ({ name }) => `Удалить ${name}?`,
+    detailRemoveSavedSecrets: "Секреты, созданные этим подключением, тоже будут удалены, если они больше нигде не используются. Секреты, сохранённые отдельно или всё ещё используемые, останутся в разделе «Сохранённые секреты».",
+    detailRemoveSavedSecretCleanupIncomplete: "Аккаунт удалён. Некоторые секреты не удалось проверить или удалить. Их можно посмотреть в разделе «Сохранённые секреты».",
     detailRemoveProviderSignOut: ({ provider }) => `Аккаунт будет удалён из Happier. Чтобы полностью отозвать доступ, также выйдите из ${provider}.`,
     detailUsageSignedOut: 'Последние известные данные · без входа обновить нельзя',
     detailUsageSignedOutAt: ({ time }: { time: string }) => `Последние известные данные на ${time} · без входа обновить нельзя`,

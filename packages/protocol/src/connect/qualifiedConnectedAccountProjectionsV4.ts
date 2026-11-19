@@ -147,10 +147,14 @@ export const QualifiedConnectedAccountPresentationMetadataV4Schema = lazyZodSche
   authenticationProvenance: z.optional(QualifiedConnectedAccountAuthenticationProvenanceV4Schema),
 }));
 
+/** Opaque Saved Secret resource identities in Connected Account custody. */
+export const ConnectedAccountSavedSecretResourceIdsV4Schema = lazyZodSchema(() =>
+  z.array(z.string().check(z.minLength(1), z.maxLength(128))).check(z.minLength(1), z.maxLength(64)));
+
 const QualifiedConnectedAccountProfileV4Shape = {
   ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
   /** Present only when the account's key is held by its Saved Secret record(s): the one credential record to show and edit. */
-  savedSecretResourceIds: z.optional(z.array(z.string().check(z.minLength(1), z.maxLength(128))).check(z.minLength(1), z.maxLength(64))),
+  savedSecretResourceIds: z.optional(ConnectedAccountSavedSecretResourceIdsV4Schema),
   status: z.enum([
     'connected',
     'refreshing',
@@ -224,6 +228,8 @@ export const QualifiedConnectedAccountCredentialSnapshotV4Schema =
     configurationRevision:
       z.nullable(QualifiedConnectedAccountConfigurationRevisionV4Schema),
     content: StoredJsonContentEnvelopeSchema,
+    /** Identity-only provenance from the Home-owned promotion transaction. */
+    createdSavedSecretResourceIds: z.optional(ConnectedAccountSavedSecretResourceIdsV4Schema),
     // Health is server-owned and read-only here. Credential replacement metadata
     // contains descriptive credential facts; health mutations use the fenced health endpoint.
     metadata: QualifiedConnectedAccountCredentialMetadataV4Schema,

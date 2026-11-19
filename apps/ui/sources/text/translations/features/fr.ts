@@ -4834,6 +4834,8 @@ const fr: ConnectedServicesSettingsCopy = {
     detailRemovePooledConfirm: 'Ce compte est dans un groupe. Veux-tu quand même le supprimer ?',
     detailRemovePooledConfirmNamed: ({ pool }) => `Ce compte est dans le groupe « ${pool} ». Veux-tu quand même le supprimer ?`,
     detailRemoveAccountConfirm: ({ name }) => `Supprimer ${name} ?`,
+    detailRemoveSavedSecrets: "Les secrets enregistrés créés par cette connexion sont également supprimés s’ils ne sont utilisés nulle part ailleurs. Les secrets que tu as enregistrés séparément ou qui sont encore utilisés restent dans Secrets enregistrés.",
+    detailRemoveSavedSecretCleanupIncomplete: "Le compte a été supprimé. Certains secrets n’ont pas pu être vérifiés ou supprimés. Tu peux les consulter dans Secrets enregistrés.",
     detailRemoveProviderSignOut: ({ provider }) => `Cela le supprime de Happier. Pour révoquer complètement l’accès, déconnecte-toi aussi de ${provider}.`,
     detailUsageSignedOut: 'Dernière valeur connue · actualisation impossible sans connexion',
     detailUsageSignedOutAt: ({ time }: { time: string }) => `Dernière valeur connue à ${time} · actualisation impossible sans connexion`,

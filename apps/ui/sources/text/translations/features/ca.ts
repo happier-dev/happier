@@ -4816,6 +4816,8 @@ const ca: ConnectedServicesSettingsCopy = {
     detailRemovePooledConfirm: 'Aquest compte és en un conjunt. El vols suprimir igualment?',
     detailRemovePooledConfirmNamed: ({ pool }) => `Aquest compte és al conjunt «${pool}». El vols suprimir igualment?`,
     detailRemoveAccountConfirm: ({ name }) => `Vols suprimir ${name}?`,
+    detailRemoveSavedSecrets: "També se suprimeixen els secrets desats creats per aquesta connexió si no s’utilitzen enlloc més. Els secrets que has desat per separat o que encara s’utilitzen es conserven a Secrets desats.",
+    detailRemoveSavedSecretCleanupIncomplete: "S’ha eliminat el compte. No s’han pogut comprovar o suprimir tots els secrets. Pots revisar-los a Secrets desats.",
     detailRemoveProviderSignOut: ({ provider }) => `Això l’elimina de Happier. Per revocar completament l’accés, tanca també la sessió a ${provider}.`,
     detailUsageSignedOut: 'Últim valor conegut · no es pot actualitzar sense sessió',
     detailUsageSignedOutAt: ({ time }: { time: string }) => `Últim valor conegut a les ${time} · no es pot actualitzar sense sessió`,

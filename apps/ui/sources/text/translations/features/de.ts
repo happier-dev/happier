@@ -4829,6 +4829,8 @@ const de: ConnectedServicesSettingsCopy = {
     detailRemovePooledConfirm: 'Dieses Konto ist in einem Pool. Möchtest du es trotzdem entfernen?',
     detailRemovePooledConfirmNamed: ({ pool }) => `Dieses Konto ist im Pool „${pool}“. Möchtest du es trotzdem entfernen?`,
     detailRemoveAccountConfirm: ({ name }) => `${name} entfernen?`,
+    detailRemoveSavedSecrets: "Dabei werden auch die von dieser Verbindung erstellten Geheimnisse gelöscht, sofern sie nirgends sonst verwendet werden. Separat gespeicherte oder weiterhin verwendete Geheimnisse bleiben unter Gespeicherte Geheimnisse erhalten.",
+    detailRemoveSavedSecretCleanupIncomplete: "Das Konto wurde entfernt. Einige Geheimnisse konnten nicht geprüft oder gelöscht werden. Du kannst sie unter Gespeicherte Geheimnisse überprüfen.",
     detailRemoveProviderSignOut: ({ provider }) => `Dadurch wird es aus Happier entfernt. Um den Zugriff vollständig zu widerrufen, melde dich auch bei ${provider} ab.`,
     detailUsageSignedOut: 'Zuletzt bekannt · ohne Anmeldung keine Aktualisierung',
     detailUsageSignedOutAt: ({ time }: { time: string }) => `Zuletzt bekannt um ${time} · ohne Anmeldung keine Aktualisierung`,

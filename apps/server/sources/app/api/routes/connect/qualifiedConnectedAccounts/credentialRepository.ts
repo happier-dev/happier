@@ -449,6 +449,8 @@ type QualifiedCredentialMutationCommonParams = Readonly<{
     contributionContractVersion?: string;
     /** Saved Secret resources the sealed content references; omission on an update retains the stored set. */
     savedSecretResourceIds?: readonly string[];
+    /** Internal provenance from the promotion transaction only. */
+    createdSavedSecretResourceIds?: readonly string[];
     /** Input-only selected-reference proof; the Saved Secret owner admits it at this write. */
     savedSecretRevisions?: readonly Readonly<{ resourceId: string; expectedRevision: number }>[];
     reconnect?: Readonly<{ allowProviderIdentityChange?: boolean }>;
@@ -1020,8 +1022,10 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
             : null);
     const retainedSavedSecretResourceIds = params.savedSecretResourceIds
         ?? (authenticationModeUnchanged ? currentProjection?.savedSecretResourceIds ?? [] : []);
-    const metadata: QualifiedConnectedServiceCredentialStoredMetadataV4 =
-        effectivePreparedCreate?.metadata ?? {
+    const createdSavedSecretResourceIds = params.createdSavedSecretResourceIds
+        ?? currentProjection?.createdSavedSecretResourceIds?.filter(id => retainedSavedSecretResourceIds.includes(id));
+    const metadata: QualifiedConnectedServiceCredentialStoredMetadataV4 = {
+        ...(effectivePreparedCreate?.metadata ?? {
             v: 4,
             storage: "stored_envelope_v1",
             values: metadataSettlement.metadata,
@@ -1038,7 +1042,9 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
             ...(currentProjection?.health
                 ? { health: currentProjection.health }
                 : {}),
-        };
+        }),
+        ...(createdSavedSecretResourceIds?.length ? { createdSavedSecretResourceIds: [...createdSavedSecretResourceIds] } : {}),
+    };
     const identity = createServiceAccountTokenIdentityFields({
         ref: params.ref,
         authenticationModeId: params.authenticationModeId,
@@ -2382,6 +2388,7 @@ type QualifiedConnectedServiceCredentialSnapshotBase = Readonly<{
     configurationRevision: string | null;
     content: StoredJsonContentEnvelope;
     metadata: QualifiedConnectedAccountCredentialSnapshotV4['metadata'];
+    createdSavedSecretResourceIds?: string[];
     exportProjection?: ConnectedAccountDirectExportProjectionV1;
     health?: ConnectedServiceCredentialHealthV1;
 }>;
@@ -2534,6 +2541,9 @@ async function readQualifiedConnectedServiceCredentialInTx(
         content,
         expiresAt: row.expiresAt?.getTime() ?? null,
         metadata: projection.presentation,
+        ...(!params.legacyReader && projection.createdSavedSecretResourceIds ? {
+            createdSavedSecretResourceIds: [...projection.createdSavedSecretResourceIds],
+        } : {}),
         ...(!params.legacyReader && projection.contributionContractVersion !== null ? {
             exportProjection: { directExportContract: projection.directExportContract,
                 ...(projection.directExportFailure ? { directExportFailure: projection.directExportFailure } : {}),
@@ -2694,6 +2704,7 @@ export async function readQualifiedConnectedServiceCredential(params: Readonly<{
                 configurationRevision: credential.configurationRevision,
                 content: credential.content,
                 metadata: credential.metadata,
+                ...(credential.createdSavedSecretResourceIds ? { createdSavedSecretResourceIds: credential.createdSavedSecretResourceIds } : {}),
                 ...(credential.exportProjection ? { exportProjection: credential.exportProjection } : {}),
                 ...(credential.health ? { health: credential.health } : {}),
             },

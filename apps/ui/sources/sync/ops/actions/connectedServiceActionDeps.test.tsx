@@ -165,7 +165,7 @@ it('routes admitted authentication to the captured Home and refuses retired Acco
     } finally { rpc.mockRestore(); account.dispose(); storage.setState(previous, true); await connection.dispose(); bridge.dispose(); }
 });
 
-it('retains the native revoke receipt with pending cleanup when the issued purpose-row write acknowledgement is unreadable', async () => {
+it('retains the native revoke receipt when the credential read and purpose cleanup acknowledgement are unavailable', async () => {
     const bridge = await loadSyncSingletonForTests();
     const previous = storage.getState();
     const http = createHomeHubArtifactHttpBoundary('native-revoke');
@@ -180,7 +180,9 @@ it('retains the native revoke receipt with pending cleanup when the issued purpo
     let nativeRevoked = false;
     let issuedCleanup: unknown = null;
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://native-revoke.test', accountId: 'native-revoke', request: async (input, init) => {
-        if (new URL(String(input)).pathname !== '/v1/account/entity-rows/connected-accounts/purposes') return http.request(input, init);
+        const path = new URL(String(input)).pathname;
+        if (path === '/v4/connect/qualified/credential') return new Response(null, { status: 503 });
+        if (path !== '/v1/account/entity-rows/connected-accounts/purposes') return http.request(input, init);
         if (init?.method !== 'POST') return Response.json({ status: 'present', revision, content: { t: 'plain', v: { key: 'purposes', value } } });
         const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
         if (mutation.content?.t !== 'plain' || mutation.content.v.key !== 'purposes') throw new Error('Expected purpose cleanup write');
@@ -215,6 +217,7 @@ it('retains the native revoke receipt with pending cleanup when the issued purpo
         expect(outcome).toEqual({ status: 'returned', value: {
             status: 'revoked', account: selected, remoteStatus: 'remoteRevoked',
             metadataCleanup: { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' },
+            savedSecretCleanup: 'incomplete',
         } });
     } finally { rpc.mockRestore(); account.dispose(); storage.setState(previous, true); await connection.dispose(); bridge.dispose(); }
 });

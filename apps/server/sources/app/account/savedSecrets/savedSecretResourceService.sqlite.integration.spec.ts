@@ -34,7 +34,7 @@ import { buildProfilePhysicalKey, PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY } from 
 import { ProfileRecordV1Schema, resolveEffectiveProfileSecretBindingsV1, sealProfileRecordContentV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { deriveSavedSecretImportResourceIdV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import * as resourceService from './savedSecretResourceService';
-import { listQualifiedConnectedAccounts, mutateQualifiedConnectedServiceCredential, readQualifiedConnectedServiceCredential } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
+import { deleteQualifiedConnectedServiceCredential, listQualifiedConnectedAccounts, mutateQualifiedConnectedServiceCredential, readQualifiedConnectedServiceCredential } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
 import { createArtifactTx, updateArtifactTx } from '@/app/artifacts/artifactWriteService';
 import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import { mutateProfileTransferInTx, readProfileTransferControlInTx } from '@/app/account/profiles/profileTransferRows';
@@ -638,6 +638,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         const committed = await readQualifiedConnectedServiceCredential({ accountId: owner.id, ref });
         expect(committed).toMatchObject({ status: 'resolved', credential: {
             credentialRevision: promoted.ok && promoted.value.connectedAccountCredential?.credentialRevision,
+            createdSavedSecretResourceIds: ['anthropic-key-1'],
         } });
         const stored = await db.serviceAccountToken.findFirstOrThrow({ where: { accountId: owner.id }, select: { metadata: true, token: true } });
         expect(stored.metadata).toMatchObject({ savedSecretResourceIds: ['anthropic-key-1'] });
@@ -656,13 +657,32 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             connectedAccountCredentialMutation: credentialFor('other', 'anthropic-key-1') }))).toEqual({ ok: false, error: 'references_invalid' });
         expect(await db.savedSecretResource.findUnique({ where: { id: 'anthropic-key-3' } })).toBeNull();
 
-        // The credential keeps its key resource in use.
-        expect(await inTx(tx => deleteSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId: 'anthropic-key-1', expectedRevision: 1,
-            expectedSettingsVersion: 2, referenceCensus: { accountMode: 'plain' as const, profiles: { referenceGuardRevision: 'absent' as const, rows: [] },
-                catalogs: { mcp: 'absent' as const, acp: 'absent' as const, providerConnections: 'absent' as const, connectedConfigurations: 'absent' as const,
-                    connectedPurposes: 'absent' as const, registrySources: 'absent' as const } } })))
-            .toEqual({ ok: false, error: 'resource_in_use' });
-        expect(await db.savedSecretResource.count({ where: { ownerAccountId: owner.id } })).toBe(1);
+        const deleteCreated = () => inTx(tx => deleteSavedSecretResourceInTx(tx, {
+            accountId: owner.id, resourceId: 'anthropic-key-1', expectedRevision: 1, onlyIfUnshared: true,
+            expectedSettingsVersion: 2, referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] },
+                catalogs: { mcp: 'absent', acp: 'absent', providerConnections: 'absent', connectedConfigurations: 'absent',
+                    connectedPurposes: 'absent', registrySources: 'absent' } },
+        }));
+        expect(await deleteCreated()).toEqual({ ok: false, error: 'resource_in_use' });
+        if (committed.status !== 'resolved' || !committed.credential.credentialRevision) throw new Error('Expected a revisioned credential');
+        expect(await deleteQualifiedConnectedServiceCredential({ accountId: owner.id, ref, cleanupGroupReferences: false,
+            expectedCredentialRevision: committed.credential.credentialRevision })).toEqual({ status: 'deleted' });
+
+        const recipient = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const grant = { resourceId: 'anthropic-key-1', accountId: recipient.id, createdByAccountId: owner.id };
+        await db.savedSecretAccountGrant.create({ data: grant });
+        expect(await deleteCreated()).toEqual({ ok: false, error: 'resource_in_use' });
+        await db.savedSecretAccountGrant.deleteMany({ where: grant });
+        expect(await deleteCreated()).toMatchObject({ ok: true, value: { resourceId: 'anthropic-key-1' } });
+        expect(await db.savedSecretResource.count({ where: { ownerAccountId: owner.id } })).toBe(0);
+
+        const independent = promotion('independent-key', 'exact-retry');
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, independent))).toMatchObject({ ok: true });
+        expect(await inTx(tx => promoteSavedSecretResourceInTx(tx, independent))).toMatchObject({ ok: true });
+        const reused = await readQualifiedConnectedServiceCredential({ accountId: owner.id, ref: { ...ref, accountId: 'exact-retry' } });
+        expect(reused).toMatchObject({ status: 'resolved' });
+        if (reused.status !== 'resolved') throw new Error('Expected the existing-key credential');
+        expect(reused.credential.createdSavedSecretResourceIds).toBeUndefined();
     });
 
     it('admits an exact selected key reference at credential commit and refuses stale or foreign references', async () => {
@@ -682,6 +702,11 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             content: { t: 'plain', v: { v: 1, values: {}, secretRefs: { token: formatSharedSavedSecretRefV1(resourceId) } } },
         });
         expect(await link('owned', 'selected-owned-key', 1)).toMatchObject({ status: 'written' });
+        const linked = await readQualifiedConnectedServiceCredential({ accountId: owner.id,
+            ref: { service: { pluginId: 'happier.fixture', localId: 'cloud' }, accountId: 'owned' } });
+        expect(linked).toMatchObject({ status: 'resolved' });
+        if (linked.status !== 'resolved') throw new Error('Expected the selected-key credential');
+        expect(linked.credential.createdSavedSecretResourceIds).toBeUndefined();
         expect(await link('same-selection-two-fields', 'selected-owned-key', 1, 1)).toMatchObject({ status: 'written' });
         expect(await link('conflicting-selections', 'selected-owned-key', 1, 2)).toEqual({ status: 'saved_secret_reference_invalid' });
         expect(await link('stale', 'selected-owned-key', 2)).toEqual({ status: 'saved_secret_reference_invalid' });

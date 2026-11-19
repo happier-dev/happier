@@ -77,6 +77,9 @@ export type ConnectedServiceConfigurationActionHostV1 = Readonly<{
     secrets: readonly Readonly<{ resourceId: string; displayName: string; kind: 'apiKey'; value: string }>[];
     credential: ReturnType<typeof QualifiedConnectedAccountCredentialMutationV4Schema.parse>;
   }>): Promise<'applied' | 'conflict' | 'unavailable' | 'outcome_unknown' | 'invalid'>;
+  /** Reuse the Saved Secret owner and keep the successful revoke receipt if cleanup cannot settle. */
+  deleteCreatedAccountSecrets?(input: Readonly<{ account: QualifiedConnectedAccountCredentialSnapshotV4['ref'];
+    resourceIds: readonly string[] }>): Promise<'complete' | 'incomplete'>;
   /** Authenticated transport for the invocation's exact Home. */
   request(input: Readonly<{ method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; path: string; body?: unknown;
     expectedEffect?: 'qualified-connected-group-delete' | 'qualified-connected-credential-create' | 'qualified-connected-credential-delete' }>): Promise<unknown>;
@@ -491,16 +494,28 @@ export async function executeConnectedServiceConfigurationActionV1(
       if (machineId && !host.controlCommand) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
       const subject = { kind: 'account' as const, account: command.account };
       const prepared = await prepareMetadataCleanup(host, subject);
+      // Only the captured Home credential can attribute Saved Secret creation.
+      // A Machine's remote revocation result supplies no such authority.
+      const cleanup = host.deleteCreatedAccountSecrets;
+      // Machine emergency revocation resolves its own current revision.
+      const canCaptureForCleanup = cleanup && !(machineId && command.emergencyRevoke);
+      const observed = canCaptureForCleanup || (!machineId && !command.expectedCredentialRevision)
+        ? await host.readAccountCredential?.(command.account).catch(() => 'unavailable' as const)
+        : undefined;
       host.assertCurrent();
+      const incumbent = observed && observed !== 'unavailable' && sameQualifiedConnectedAccountRef(observed.ref, command.account)
+        ? observed : null;
+      const expectedCredentialRevision = command.expectedCredentialRevision ?? incumbent?.credentialRevision ?? undefined;
+      const createdSavedSecretResourceIds = incumbent?.revisionSemantics === 'revisioned'
+        && incumbent.credentialRevision === expectedCredentialRevision ? incumbent.createdSavedSecretResourceIds : undefined;
       let result: ReturnType<typeof ConnectedAccountRevokeResponseV1Schema.parse>;
       if (machineId && host.controlCommand) {
-        result = ConnectedAccountRevokeResponseV1Schema.parse(await host.controlCommand(machineId, { operation: 'revokeAccount', ...command }));
+        result = ConnectedAccountRevokeResponseV1Schema.parse(await host.controlCommand(machineId, {
+          operation: 'revokeAccount', ...command, expectedCredentialRevision,
+        }));
       } else {
-        const incumbent = command.expectedCredentialRevision === undefined ? await host.readAccountCredential?.(command.account) : null;
-        host.assertCurrent();
         const { account: ref, ...fields } = command;
-        const deletion = QualifiedConnectedAccountCredentialDeleteV4Schema.parse({ ...fields,
-          ref, expectedCredentialRevision: command.expectedCredentialRevision ?? incumbent?.credentialRevision });
+        const deletion = QualifiedConnectedAccountCredentialDeleteV4Schema.parse({ ...fields, ref, expectedCredentialRevision });
         const query = new URLSearchParams({ ref: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountRefSchema, deletion.ref),
           expectedCredentialRevision: deletion.expectedCredentialRevision, cleanupGroupReferences: String(deletion.cleanupGroupReferences) });
         if (deletion.emergencyRevoke !== undefined) query.set('emergencyRevoke', String(deletion.emergencyRevoke));
@@ -509,6 +524,7 @@ export async function executeConnectedServiceConfigurationActionV1(
         try {
           QualifiedConnectedAccountSuccessV4Schema.parse(await host.request({ method: 'DELETE',
             path: `/v4/connect/qualified/credential?${query.toString()}`, expectedEffect: 'qualified-connected-credential-delete' }));
+          result = { status: 'revoked', account: command.account, remoteStatus: 'remoteNotAttempted' };
         } catch (error) {
           const review = error && typeof error === 'object' && 'code' in error && error.code === 'managed_resources_review_required'
             && 'resources' in error ? ConnectedAccountRevokeResponseV1Schema.safeParse({ status: 'removalReviewRequired', account: command.account, resources: error.resources }) : null;
@@ -518,7 +534,6 @@ export async function executeConnectedServiceConfigurationActionV1(
           }
           throw error;
         }
-        result = { status: 'revoked', account: command.account, remoteStatus: 'remoteNotAttempted' };
       }
       if ('account' in result && !sameQualifiedConnectedAccountRef(result.account, command.account)) {
         return { ok: false, errorCode: 'qualified_connected_accounts_inconsistent_peer', error: 'qualified_connected_accounts_inconsistent_peer' };
@@ -532,7 +547,12 @@ export async function executeConnectedServiceConfigurationActionV1(
           const { connectedAccountPurposeBindingsV1, ...legacySettingsDelta } = defaults;
           return { purposeBindings: connectedAccountPurposeBindingsV1, legacySettingsDelta };
         });
-        return { ...result, metadataCleanup };
+        const savedSecretCleanup = cleanup && createdSavedSecretResourceIds?.length
+          ? await cleanup({ account: result.account, resourceIds: createdSavedSecretResourceIds }).catch(() => 'incomplete' as const)
+          : cleanup && (!canCaptureForCleanup || !incumbent
+            || (incumbent.revisionSemantics === 'revisioned' && incumbent.credentialRevision !== expectedCredentialRevision))
+            ? 'incomplete' : 'complete';
+        return { ...result, metadataCleanup, ...(savedSecretCleanup === 'incomplete' ? { savedSecretCleanup } : {}) };
       }
       host.assertCurrent();
       return result;

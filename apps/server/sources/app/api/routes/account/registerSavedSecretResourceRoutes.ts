@@ -436,6 +436,7 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
                 expectedRevision: body.expectedRevision,
                 expectedSettingsVersion: body.expectedSettingsVersion,
                 referenceCensus: body.referenceCensus,
+                onlyIfUnshared: body.onlyIfUnshared,
                 managedResourceDispositions: body.managedResourceDispositions,
             }), { /* Secret recipient keys, effective grants and cross-owner reference censuses must stay coherent. */ isolationLevel: "Serializable" });
         } catch (error) {

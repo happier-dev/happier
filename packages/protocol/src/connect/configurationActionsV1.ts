@@ -40,7 +40,10 @@ const Success = z.strictObject({ applied: z.literal(true) });
 const MetadataCleanupSuccess = z.extend(Success, { metadataCleanup: z.optional(ConnectedMetadataCleanupV1Schema) });
 const RevokeActionResponse = lazyZodSchema(() => z.union([
   ConnectedAccountRevokeResponseV1Schema,
-  z.extend(ConnectedAccountRevokedResponseV1Schema, { metadataCleanup: z.optional(ConnectedMetadataCleanupV1Schema) }),
+  z.extend(ConnectedAccountRevokedResponseV1Schema, {
+    metadataCleanup: z.optional(ConnectedMetadataCleanupV1Schema),
+    savedSecretCleanup: z.optional(z.literal('incomplete')),
+  }),
 ]));
 const ConfigurationTarget = lazyZodSchema(() => z.pick(ConnectedAccountServiceConfigurationEntryV1Schema, { service: true, modeId: true }));
 const AccountConfigurationTarget = lazyZodSchema(() => z.strictObject({

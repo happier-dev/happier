@@ -4058,12 +4058,17 @@ describe('ConnectedAccountSetupController real ownership', () => {
         const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1 });
         const bindings = await seedPurposeDefaults({ kind: 'account', account: targetAccount.ref }, actionsSettingsV1);
         installDescription({ ...described, accounts: [targetAccount, otherAccount] });
+        const credentialRead = () => Response.json({
+            ref: targetAccount.ref, revisionSemantics: 'revisioned', credentialRevision, configurationRevision: null,
+            authenticationModeId: 'manual', content: { t: 'plain', v: {} }, metadata: { scopes: [] },
+        });
         // Default destructive confirmation stays real: the pool question is
         // the one designed confirmation, rather than a second generic Ask.
         storage.getState().applySettings({ ...storage.getState().settings, actionsSettingsV1 }, 3);
         handleHttp = async (rawUrl, init) => {
             const url = new URL(String(rawUrl));
             if (url.pathname === '/v4/connect/qualified/groups') return Response.json({ groups: poolGroups });
+            if (url.pathname === '/v4/connect/qualified/credential') return credentialRead();
             if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(features);
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
@@ -4092,6 +4097,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
             [poolCount === 1 ? t('connectedServicesSettings.detailRemovePooledConfirmNamed', { pool: 'Work pool' })
                 : poolCount > 0 ? t('connectedServicesSettings.detailRemovePooledConfirm')
                     : t('connectedServicesSettings.detailRemoveAccountConfirm', { name: 'Work account' }),
+                t('connectedServicesSettings.detailRemoveSavedSecrets'),
                 t('connectedServicesSettings.detailRemoveProviderSignOut', { provider: 'Acme Work' })].join('\n\n'),
             { confirmText: 'connectedServicesSettings.detailRemoveAccount', cancelText: 'common.cancel', destructive: true },
         );
@@ -4157,6 +4163,10 @@ describe('ConnectedAccountSetupController real ownership', () => {
                     expectedNativeOperationRef: resource.nativeOperationRef, expectedRecovery: resource.recovery, responsibility: 'manual' }]);
                 return Response.json({ success: true });
             }
+            if (url.pathname === '/v4/connect/qualified/credential') return Response.json({
+                ref: saved.ref, revisionSemantics: 'revisioned', credentialRevision, configurationRevision: null,
+                authenticationModeId: 'manual', content: { t: 'plain', v: {} }, metadata: { scopes: [] },
+            });
             return previousHttp(rawUrl, init);
         };
         const screen = await focusedScreen(true);

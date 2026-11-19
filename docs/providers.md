@@ -2432,6 +2432,13 @@ also requires signing out at the provider. The descriptor does not declare remot
 revocation support, so this notice accompanies every removal. Successful local
 removal does not show a remote-sign-out alert.
 
+Removing an account also cleans up Saved Secrets created by its connect form.
+The Home records those resource IDs when it commits the secret and credential
+together. After revocation, the shared Action passes them to the Saved Secret
+owner, which retains independently selected keys, keys still in use and keys
+with active grants. An older connection without recorded provenance retains
+its secrets. If cleanup cannot finish, the app directs the user to Saved Secrets.
+
 Pool membership does not disable Remove account. The controller decides from the
 loaded memberships before invoking the Action: one confirmation names the pool
 when there is exactly one, or names the account when there are no pools. Accepting

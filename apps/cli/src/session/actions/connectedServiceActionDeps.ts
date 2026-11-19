@@ -153,6 +153,32 @@ export function createCliConnectedServiceAction(params: Readonly<{
         if (result.status === 'unavailable') await assertReadCurrent();
         return result.status;
       },
+      deleteCreatedAccountSecrets: async ({ resourceIds }) => {
+        const home = params.readHomeDomainAction?.();
+        if (!home) return 'incomplete';
+        const [{ createCliPersonalSavedSecretActionExecute }, { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 }] = await Promise.all([
+          import('@/settings/secrets/personalSavedSecretActionHost'),
+          import('@happier-dev/protocol/account/settings/personalSavedSecretActionsV1'),
+        ]);
+        const execute = createCliPersonalSavedSecretActionExecute({ credentials: params.credentials, home, serverHttpBaseUrl,
+          operationContext: params.operationContext, isCredentialCurrent: params.isCredentialCurrent, onlyIfUnshared: true });
+        const actionContext = { ...context, signal };
+        const { secrets } = PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.list'].parse(
+          await execute({ actionId: 'secrets.list', input: {}, context: actionContext }));
+        const candidates = new Set(resourceIds);
+        let status: 'complete' | 'incomplete' = 'complete';
+        for (const secret of secrets) {
+          if (!candidates.has(secret.secretId)) continue;
+          try {
+            await execute({ actionId: 'secrets.delete', input: { secretId: secret.secretId, expectedUpdatedAt: secret.updatedAt }, context: actionContext });
+          } catch (error) {
+            const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
+            if (code !== 'in_use' && code !== 'resource_in_use' && code !== 'resource_not_found'
+              && code !== 'not_found' && code !== 'managed_resources_review_required') status = 'incomplete';
+          }
+        }
+        return status;
+      },
       readSetupCatalog: async () => {
         await assertReadCurrent();
         const [{ readCurrentContributionRegistry }, { projectConnectedAccountDescriptors }, { listProviderGatewayContributionsV1 },
