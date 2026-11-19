@@ -48,12 +48,23 @@ describe('teams.credential_models.available', () => {
   });
 
   it.each([
-    ['Musee model', true],
-    ['unrelated model', false],
-  ] as const)('resolves spoken spawn model %s from a single field', async (query, matches) => {
+    { query: 'Musee model', versions: [''], matches: [''] },
+    { query: 'unrelated model', versions: [''], matches: [] },
+    { query: 'muse-spark-1.2', versions: ['1.2.3'], matches: [] },
+    { query: 'muse-spark-1.2', versions: ['1.2', '1.2.3'], matches: ['1.2'] },
+    { query: 'muse spark', versions: ['1.2', '1.3'], matches: ['1.2', '1.3'] },
+    { query: 'muse-spark-1.2.3', versions: ['1.2'], matches: [] },
+    { query: '1.2', versions: ['0.1.2'], matches: [] },
+  ])('resolves spoken spawn model "$query" with versions $versions', async ({ query, versions, matches }) => {
     const muse = resource('muse', { pluginId: 'happier.agent.muse', localId: 'muse-account' });
-    const ref = { source: 'team_resource', teamId: 'team-1', resourceId: 'muse', expectedResourceRevision: 1,
-      deliveryMode: 'brokered', agentTargetKey: CODEX, modelId: 'muse-model' };
+    const modelId = (version: string) => version ? `muse-spark-${version}` : 'muse-model';
+    const ref = (version: string) => ({ source: 'team_resource', teamId: 'team-1', resourceId: 'muse', expectedResourceRevision: 1,
+      deliveryMode: 'brokered', agentTargetKey: CODEX, modelId: modelId(version) });
+    const [model] = muse.providerModels;
+    muse.providerModels = versions.map(version => ({ ...model,
+      selection: { ...model.selection, modelId: modelId(version) },
+      descriptor: { id: modelId(version), name: version ? `Muse Spark ${version}` : 'Muse model' },
+    }));
     const result = await createActionExecutor({
       agentsModelsList: async () => ({ items: [{ id: 'native', name: 'Native' }], source: 'dynamic' }),
       resolveSessionSpawnAgentInventorySelection: async () => ({ backendTargetKey: CODEX }),
@@ -67,11 +78,11 @@ describe('teams.credential_models.available', () => {
       draftInput: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         executionTarget: { serverId: 'home', machineId: 'm1' } },
     }, { surface: 'voice', authority: 'present_user', serverId: 'home' });
-    if (matches) {
-      expect(result).toMatchObject({ ok: true, result: { options: [{ value: ref }] } });
+    if (matches.length > 0) {
+      expect(result).toMatchObject({ ok: true, result: { options: matches.map(version => ({ value: ref(version) })) } });
     } else {
       expect(result).toMatchObject({ ok: false, errorCode: 'provider_model_not_found',
-        details: { candidates: expect.arrayContaining([expect.objectContaining({ value: ref })]) } });
+        details: { candidates: expect.arrayContaining(versions.map(version => expect.objectContaining({ value: ref(version) }))) } });
     }
   });
 

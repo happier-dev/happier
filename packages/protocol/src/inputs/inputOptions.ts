@@ -994,6 +994,9 @@ function oneLetterApart(left: string, right: string): boolean {
 export function matchSpokenSpawnModelOptions(options: readonly InputOption[], query: string): readonly InputOption[] {
   const requested = modelWords(query);
   if (requested.length === 0) return [];
+  const numericWord = /^\p{N}/u;
+  const startsWithVersion = numericWord.test(requested[0] ?? '');
+  const endsWithVersion = numericWord.test(requested[requested.length - 1] ?? '');
   const levels: InputOption[][] = [[], [], []];
   for (const option of options) {
     if (option.disabled) continue;
@@ -1003,6 +1006,10 @@ export function matchSpokenSpawnModelOptions(options: readonly InputOption[], qu
     for (const name of names) {
       const words = modelWords(name);
       for (let start = 0; start <= words.length - requested.length; start++) {
+        // Numeric runs inside the request are bounded by its words. At the
+        // edges, require the whole run so a partial version cannot match.
+        if (startsWithVersion && numericWord.test(words[start - 1] ?? '')) continue;
+        if (endsWithVersion && numericWord.test(words[start + requested.length] ?? '')) continue;
         const mismatches = requested.flatMap((word, index) => {
           const candidate = words[start + index];
           return candidate === undefined || word === candidate ? [] : [{ word, candidate }];
