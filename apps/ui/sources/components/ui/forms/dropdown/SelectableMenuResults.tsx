@@ -15,7 +15,8 @@ import { Text } from '@/components/ui/text/Text';
 import type { ScrollItemLayoutHandler, ScrollViewportSource } from '@/components/ui/scroll/useScrollRectIntoView';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { focusFirstEntryWithin } from '@/keyboard/webOverlayFocusContainment';
-import { HAPPIER_MENU_ROW_TEXT, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_MENU_ROW_TEXT, HappierSegmentedChoice, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { projectPluginUiHostPalette } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 
 type RowFrameStyle = React.ComponentProps<typeof View>['style'];
 
@@ -431,6 +432,21 @@ const stylesheet = StyleSheet.create((theme) => ({
         padding: theme.space.s48,
         alignItems: 'center',
     },
+    // A segmented row: the setting's name on the rows' text edge, its 2–4 choices at the row's end.
+    segmentedRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space.s12,
+        minHeight: MENU_ROW_METRICS.minHeightPx,
+        paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
+        paddingVertical: MENU_ROW_METRICS.paddingVerticalPx,
+    },
+    segmentedRowTitle: {
+        flexShrink: 1,
+        color: theme.colors.text.primary,
+        ...HAPPIER_MENU_ROW_TEXT.label,
+    },
     emptyText: {
         color: theme.colors.input.placeholder,
         ...Typography.variant('label', 'regular'),
@@ -743,6 +759,18 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
     const handlePressItem = React.useCallback((item: SelectableMenuItem) => {
         props.onPressItem(item);
     }, [props.onPressItem]);
+    // A segmented row draws the shared segmented control in the app's segmented and focus roles.
+    const segmentColors = React.useMemo(() => {
+        const palette = projectPluginUiHostPalette(theme);
+        return {
+            track: palette.segmentTrack,
+            thumb: palette.segmentThumb,
+            ...(palette.segmentThumbLift === undefined ? {} : { thumbLift: palette.segmentThumbLift }),
+            label: theme.colors.text.secondary,
+            activeLabel: theme.colors.text.primary,
+            focusRing: theme.colors.border.focus,
+        };
+    }, [theme]);
     const isPrimaryWebActivationEvent = React.useCallback((event: WebMouseDownActivationEvent) => {
         const button = event.nativeEvent?.button ?? event.button;
         return typeof button !== 'number' || button === 0;
@@ -771,6 +799,9 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
 
                 const categoryStartIndex = rowStructure.categoryStarts[categoryIndex]!;
                 const checkRole = rowStructure.checkRoles[categoryIndex]!;
+                // A menu row says what it is in menu terms: an independent toggle is a checkable menu item, one of a
+                // single choice a menu radio (SESSION-ROWS-ACCEPT-1119 fix 3). Native keeps checkbox/radio and its state.
+                const menuCheckRole = checkRole === 'radio' ? 'menuitemradio' as const : 'menuitemcheckbox' as const;
                 const reservesLeadingSlot = rowStructure.leadingSlots[categoryIndex] === true;
                 const renderEntry = (listedItem: SelectableMenuItem, itemIndex: number): RenderedMenuEntry => {
                     const sourceIndex = props.itemSource?.indexById.get(String(listedItem.id));
@@ -812,6 +843,43 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
                         }
                         handleOpenSubmenu(item, submenuAnchorRef as React.RefObject<unknown>);
                     };
+                    if (item.segments) {
+                        const segments = item.segments;
+                        return {
+                            swatchGroup: null,
+                            node: (
+                                <SelectableMenuRowFrame
+                                    key={item.id}
+                                    testID={`${optionTestID}:scroll-frame`}
+                                    rowAnchorRef={rowAnchorRef}
+                                    style={undefined}
+                                    onMouseDownCapture={undefined}
+                                    onKeyDown={Platform.OS === 'web' ? props.onKeyDown : undefined}
+                                    onPointerEnter={undefined}
+                                    onLayout={getRowLayoutHandler(String(item.id), itemIndex)}
+                                >
+                                    <View testID={optionTestID} style={styles.segmentedRow}>
+                                        <Text style={styles.segmentedRowTitle} numberOfLines={1}>{item.title}</Text>
+                                        <HappierSegmentedChoice
+                                            size="compact"
+                                            accessibilityLabel={item.accessibilityLabel ?? item.title}
+                                            testID={`${optionTestID}:segments`}
+                                            colors={segmentColors}
+                                            disabled={item.disabled === true}
+                                            segments={segments.options.map((option) => ({
+                                                key: option.id, label: option.label, selected: option.id === segments.selectedId, disabled: false,
+                                            }))}
+                                            onSelect={(index) => {
+                                                const option = segments.options[index];
+                                                // The segment's id is the selection; the chosen one asks for nothing.
+                                                if (option !== undefined && option.id !== segments.selectedId) handlePressItem({ ...item, id: option.id });
+                                            }}
+                                        />
+                                    </View>
+                                </SelectableMenuRowFrame>
+                            ),
+                        };
+                    }
                     if (item.swatch) {
                         const swatch = item.swatch;
                         return {
@@ -917,6 +985,7 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
                             subtitle={item.subtitleNode ?? item.subtitle}
                             accessibilityLabel={item.accessibilityLabel}
                             accessibilityRole={item.checked === undefined ? undefined : checkRole}
+                            webRole={item.checked === undefined ? undefined : menuCheckRole}
                             accessibilityChecked={item.checked}
                             containerStyle={item.rowContainerStyle}
                             titleStyle={item.rowTitleStyle}

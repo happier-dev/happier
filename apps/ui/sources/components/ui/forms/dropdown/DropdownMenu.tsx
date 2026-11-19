@@ -9,7 +9,7 @@ import { FloatingOverlay, type FloatingOverlayArrow } from '@/components/ui/over
 import { t } from '@/text';
 import type { SelectableRowVariant } from '@/components/ui/lists/SelectableRow';
 import { SelectableMenuResults, type SelectableMenuResultsHandle } from '@/components/ui/forms/dropdown/SelectableMenuResults';
-import type { MenuItemSource, SelectableMenuItemSource, SelectableMenuCategoryDecorations, SelectableMenuItem, SelectableMenuSwatch } from '@/components/ui/forms/dropdown/selectableMenuTypes';
+import type { MenuItemSource, SelectableMenuItemSource, SelectableMenuCategoryDecorations, SelectableMenuItem, SelectableMenuSegments, SelectableMenuSwatch } from '@/components/ui/forms/dropdown/selectableMenuTypes';
 import { useSelectableMenu, CREATE_ITEM_ID } from '@/components/ui/forms/dropdown/useSelectableMenu';
 import { openedFromKeyboard } from '@/components/ui/forms/dropdown/dropdownKeyboardOpen';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
@@ -74,6 +74,11 @@ export type DropdownMenuItem = Readonly<{
     submenu?: DropdownMenuSubmenu;
     /** Present the item as a round colour choice instead of a text row (`title` stays its label). */
     swatch?: SelectableMenuSwatch;
+    /**
+     * 2–4 short choices of one setting as one segmented row (Lines 1 · 2 · 3), `title` naming it: choosing a segment
+     * calls `onSelect` with the segment's id and leaves the menu open.
+     */
+    segments?: SelectableMenuSegments;
     /**
      * The item finishes its own work before the menu closes (it loads something first): selecting it
      * leaves this menu and its parents open; the owner closes them when it is ready.
@@ -476,6 +481,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 checked: item.prompt === true ? undefined : item.checked ?? (selectCheckedId === null ? undefined : item.id === selectCheckedId),
                 multiSelect: item.multiSelect,
                 swatch: item.swatch,
+                segments: item.segments,
                 // A pending row with an icon draws its spinner in the icon's place, so the title and subtitle keep
                 // their width and nothing re-wraps while it works; a row without one takes it on the trailing edge.
                 left: item.loading && item.icon
@@ -800,6 +806,8 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 openSubmenuFromKeyboard(item.id);
                 return;
             }
+            // A segmented row is chosen in its own control (its arrows); the row itself names a setting, not a choice.
+            if (item.segments) return;
             commitSelection(item.id);
         }) || (!props.search && handleSubmenuCrossKey(key));
         if (!handled) return;
@@ -852,8 +860,13 @@ export function DropdownMenu(props: DropdownMenuProps) {
             return;
         }
         if (item.hasSubmenu) return;
+        // A segment of a segmented row: the setting changes in place, so the menu stays open to show it.
+        if (item.segments) {
+            props.onSelect(item.id, selection);
+            return;
+        }
         commitSelection(item.id);
-    }, [commitSelection, handleCreate]);
+    }, [commitSelection, handleCreate, props, selection]);
     const handleSubmenuSelect = React.useCallback((itemId: string) => {
         if (activeSubmenuItem?.submenu?.items.some((item) => item.id === itemId && item.keepMenuOpen)) {
             props.onSelect(itemId, selection);

@@ -45,6 +45,18 @@ export type SelectableMenuItem = Readonly<{
     multiSelect?: boolean;
     /** Renders the option as a round colour choice; consecutive swatches of one group share a row. */
     swatch?: SelectableMenuSwatch;
+    /** Renders the row as its title and one segmented control of 2–4 short choices (`SelectableMenuSegments`). */
+    segments?: SelectableMenuSegments;
+}>;
+
+/**
+ * 2–4 short choices of one setting in a menu (Lines 1 · 2 · 3): one row, its title naming the setting, then a segmented
+ * control announced as a radio group. Choosing a segment reports the segment's `id` as the selection and keeps the menu open.
+ */
+export type SelectableMenuSegments = Readonly<{
+    options: ReadonlyArray<Readonly<{ id: string; label: string }>>;
+    /** `null`: nothing chosen yet. */
+    selectedId: string | null;
 }>;
 
 export type SelectableMenuSwatch = Readonly<{
