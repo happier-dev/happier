@@ -3,6 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { WorkflowApprovedOperationV1Schema } from '../actions/approvedOperationV1.js';
 export { WorkflowApprovedOperationV1Schema, type WorkflowApprovedOperationV1 } from '../actions/approvedOperationV1.js';
 import { z } from '../zodRuntimePolicy.js';
+import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
 import { workflowDefinitionDisplayTitleV1 } from './workflowStepLabel.js';
 
@@ -120,6 +121,7 @@ export const WorkflowDefinitionArtifactHeaderV1Schema = lazyZodSchema(() => z.st
   metadata: WorkflowDefinitionMetadataV1Schema,
   /** Static authored step labels, written atomically with the definition for header-only cards. */
   previewSteps: z.optional(z.array(z.string())),
+  previewAgents: z.optional(z.array(asProtocolZod(PluginContributionIdentityV1Schema))),
   excerpt: z.optional(z.string().check(z.maxLength(ARTIFACT_EXCERPT_MAX_CHARS_V1))),
 }));
 export type WorkflowDefinitionArtifactHeaderV1 = z.infer<typeof WorkflowDefinitionArtifactHeaderV1Schema>;

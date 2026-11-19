@@ -2,7 +2,7 @@ import type { ArtifactRevisionV1 } from './artifactActionsV1.js';
 import type { ArtifactBodyV1 } from './artifactBinaryV1.js';
 import { artifactKindRequiresTextBodyV1, getArtifactUseTargetV1, type ArtifactSharingResourceV1 } from './artifactSharingV1.js';
 import { WorkflowDefinitionArtifactBodyV1Schema, WorkflowDefinitionArtifactBodyV1ReadSchema, WorkflowDefinitionArtifactHeaderV1Schema, retargetWorkflowDefinitionArtifactHeaderV1 } from '../workflows/workflowDefinitionV1.js';
-import { workflowDefinitionPreviewStepsV1 } from '../workflows/workflowStepLabel.js';
+import { workflowDefinitionPreviewAgentsV1, workflowDefinitionPreviewStepsV1 } from '../workflows/workflowStepLabel.js';
 import { LaunchProfileArtifactV1Schema, buildLaunchProfileArtifactHeaderV1 } from '../launchProfiles/launchProfileArtifactV1.js';
 import { RoleArtifactV1Schema, buildRoleArtifactHeaderV1 } from '../prompts/roles/roleArtifactV1.js';
 import { WorkBoardV1Schema } from '../boards/workBoardV1.js';
@@ -59,7 +59,8 @@ export function prepareArtifactHeaderForBodyV1(header: Readonly<Record<string, u
       } else {
         const parsed = WorkflowDefinitionArtifactBodyV1Schema.parse(JSON.parse(body));
         WorkflowDefinitionArtifactHeaderV1Schema.parse(header);
-        header = { ...header, previewSteps: workflowDefinitionPreviewStepsV1(parsed.definition.blocks) };
+        header = { ...header, previewSteps: workflowDefinitionPreviewStepsV1(parsed.definition.blocks),
+          previewAgents: workflowDefinitionPreviewAgentsV1(parsed.definition) };
       }
     } catch {
       throw Object.assign(new Error('artifact_content_unavailable'), { code: 'content_unavailable' });
@@ -105,7 +106,8 @@ export function prepareArtifactHeaderForRevisionV1(input: Readonly<{
     const body: unknown = JSON.parse(input.body);
     if (kind === 'workflow-definition.v1') {
       const parsed = WorkflowDefinitionArtifactBodyV1ReadSchema.parse(body);
-      return { ...retargetWorkflowDefinitionArtifactHeaderV1(input), previewSteps: workflowDefinitionPreviewStepsV1(parsed.definition.blocks) };
+      return { ...retargetWorkflowDefinitionArtifactHeaderV1(input), previewSteps: workflowDefinitionPreviewStepsV1(parsed.definition.blocks),
+        previewAgents: workflowDefinitionPreviewAgentsV1(parsed.definition) };
     }
     if (kind === 'launch-profile.v1') {
       return { ...input.header, ...buildLaunchProfileArtifactHeaderV1(createStoredReadSchema(LaunchProfileArtifactV1Schema).parse(body)) };

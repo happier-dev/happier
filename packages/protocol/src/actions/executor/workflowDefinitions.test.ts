@@ -424,6 +424,39 @@ describe('shared workflow definition create', () => {
       expect(writes).toEqual(['triggers', 'artifact']);
     }
   });
+  it('lists distinct authored Agents from the saved preview without opening a Workflow body', async () => {
+    const unused = (): never => { throw new Error('unexpected_artifact_operation'); };
+    let stored: Parameters<WorkflowDefinitionArtifactOperations['create']>[0] | undefined;
+    let listing = false;
+    const claude = definition.defaults.agentTarget;
+    if (claude?.kind !== 'agent') throw new Error('fixture_agent_missing');
+    const codex = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+    const step = definition.blocks[0]!;
+    const authored = WorkflowDefinitionV1Schema.parse({ ...definition, blocks: [
+      step,
+      { ...step, id: 'revise', execution: { agentTarget: codex } },
+      { ...step, id: 'verify', execution: { agentTarget: codex } },
+    ] });
+    const owner = createWorkflowDefinitionActions({ artifactStore: {
+      create: async input => { stored = input; }, update: unused, delete: unused,
+      read: async () => {
+        if (listing) return unused();
+        return stored ? { ...stored, revision: { headerVersion: 1, bodyVersion: 1 }, updatedAt: 1,
+          ownerAccountId: 'account', access: 'owner' } : null;
+      },
+      list: async ({ includeBody }) => {
+        expect(includeBody).toBe(false);
+        if (!stored) throw new Error('test_artifact_not_written');
+        return { items: [{ artifactId: stored.artifactId, headerVersion: 1, bodyVersion: 1, header: stored.header,
+          updatedAt: 1, ownerAccountId: 'account', access: 'owner' }] };
+      },
+    }, encodeListCursor: row => row.artifactId, readWorkflowTriggerSummaries: readEmptyTriggerSummaries });
+    await owner.create({ definitionId, metadata: { title: 'Release' }, definition: authored }, undefined, { surface: 'ui' });
+    listing = true;
+    expect(WorkflowDefinitionListResultV1Schema.parse(await owner.list({})).definitions[0]).toMatchObject({
+      previewAgents: [claude.identity, codex.identity],
+    });
+  });
   it('stamps create and update from the host caller, preserving the actor on a same-id rejoin', async () => {
     let artifact: Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>> = null;
     const store: WorkflowDefinitionArtifactOperations = {

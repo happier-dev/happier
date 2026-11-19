@@ -1,6 +1,8 @@
-import type { WorkflowBlock, WorkflowStep } from './workflowV1.js';
+import type { WorkflowBlock, WorkflowDefinitionV1, WorkflowStep } from './workflowV1.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 import { walkWorkflowBlocks } from './workflowV1.js';
+import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
+import { resolveWorkflowStepSelectionV1 } from './workflowStepSelectionV1.js';
 import type { TriggerTargetV1 } from './triggers/triggerTargetV1.js';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 
@@ -62,6 +64,19 @@ export function workflowDefinitionPreviewStepsV1(blocks: readonly WorkflowBlock[
     if (block.kind === 'step' || block.kind === 'wait' || block.kind === 'action' || block.kind === 'workflow') return [workflowBlockReferenceLabel(block)];
     return [];
   });
+}
+
+/** Bounded by the Workflow's authored leaf steps. Uses literal targets and never opens nested Workflows. */
+export function workflowDefinitionPreviewAgentsV1(definition: Pick<WorkflowDefinitionV1, 'defaults' | 'blocks'>): readonly PluginContributionIdentityV1[] {
+  const agents = new Map<string, PluginContributionIdentityV1>();
+  for (const block of walkWorkflowBlocks(definition.blocks)) {
+    if (block.kind !== 'step') continue;
+    const { agentTarget } = resolveWorkflowStepSelectionV1({
+      defaults: definition.defaults, step: block.execution, purpose: 'authoring',
+    }).selection;
+    if (agentTarget?.kind === 'agent') agents.set(buildQualifiedPluginContributionKey(agentTarget.identity), agentTarget.identity);
+  }
+  return [...agents.values()];
 }
 
 /** Exact ids remain the fallback for reference pickers, where identity matters. */

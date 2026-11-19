@@ -16,7 +16,7 @@ import { WorkflowDefinitionImportRequestV1Schema, WorkflowDefinitionImportResult
   WorkflowDefinitionExportRequestV1Schema } from '../../workflows/actionsV1.js';
 import { parseWorkflowDocumentJsonIngressV1, serializeWorkflowDocumentJsonV1 } from '../../workflows/workflowDocumentV1.js';
 import { applyWorkflowDefinitionEditsV1, countWorkflowStepsV1, type WorkflowDefinitionEditRequestV1 } from '../../workflows/workflowDefinitionEditV1.js';
-import { workflowDefinitionPreviewStepsV1 } from '../../workflows/workflowStepLabel.js';
+import { workflowDefinitionPreviewAgentsV1, workflowDefinitionPreviewStepsV1 } from '../../workflows/workflowStepLabel.js';
 import type { createWorkflowTriggerActions } from './workflowTriggerActions.js';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES, measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '../externalActionLimits.js';
 import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '../../plugins/contributions/strictJsonValue.js';
@@ -95,7 +95,7 @@ function savedBy(caller?: DefinitionCaller): WorkflowDefinitionSavedByV1 | undef
 
 function header(definitionId: string, revision: WorkflowArtifactRevisionV1, metadata: Metadata, definition: WorkflowDefinitionV1) {
   return WorkflowDefinitionArtifactHeaderV1Schema.parse({ kind: 'workflow-definition.v1', definitionId, revision, metadata,
-    previewSteps: workflowDefinitionPreviewStepsV1(definition.blocks) });
+    previewSteps: workflowDefinitionPreviewStepsV1(definition.blocks), previewAgents: workflowDefinitionPreviewAgentsV1(definition) });
 }
 
 function assertRevisionMatches(actual: WorkflowArtifactRevisionV1, expected: WorkflowArtifactRevisionV1) {
