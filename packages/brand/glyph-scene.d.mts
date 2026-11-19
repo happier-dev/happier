@@ -13,10 +13,11 @@ export type PlanetGlyphOptions = Readonly<{
     digits: boolean;
     fade?: Readonly<{ from: number; to: number }>;
     assemble?: Timing;
+    decode?: number;
     fall?: Timing & Readonly<{ from: Pick<GlyphPlanetGeometry, 'cx' | 'cy' | 'R'> }>;
     settle?: Timing;
     gain?: number;
-    ring?: Readonly<{ radius: number; width: number; alpha: number }>;
+    ring?: Readonly<{ progress: number }>;
 }>;
 export type MarkGlyphOptions = Readonly<{ centre: GlyphPoint; size: number; ink: 'sunrise'; retypeS?: number; dissolve?: number; turn?: number; fill?: number }>;
 export type TravellerGlyphOptions = Readonly<{

@@ -1653,6 +1653,13 @@ function cellAvg(d, W, H, x0, y0, cw, ch) {
 /* The one ripple ring (transition style 'ripple' and the Atmos.ripple overlay): a ring of typed digits leaves (ox, oy)
    over 0..1. Digit, space on the 6 × 9 lattice; a crisp leading edge, a soft trailing one. On a picture the cell lifts
    toward the page first; as an overlay only the digits are written. In light the ring keeps a minimum ink. */
+export function rippleRingGeometry(progress, reach, rowHeight, dpr) {
+  return {
+    radius: (1 - Math.pow(1 - progress, 2.2)) * reach,
+    band: Math.max(rowHeight * 2.4, 30 * dpr),
+    fade: Math.pow(1 - progress, 0.9),
+  };
+}
 function drawRippleRing(R, p) {
   const {
     buf,
@@ -1671,9 +1678,7 @@ function drawRippleRing(R, p) {
     colourAt,
   } = R;
   if (p >= 1) return;
-  const r = (1 - Math.pow(1 - p, 2.2)) * Rmax,
-    band = Math.max(L.ch * 2.4, 30 * dpr),
-    fade = Math.pow(1 - p, 0.9);
+  const { radius: r, band, fade } = rippleRingGeometry(p, Rmax, L.ch, dpr);
   const c0 = Math.max(0, Math.floor((ox - r) / L.cw) - 1),
     c1 = Math.min(L.cols - 1, Math.ceil((ox + r) / L.cw) + 1),
     r0 = Math.max(0, Math.floor((oy - r) / L.ch) - 1),

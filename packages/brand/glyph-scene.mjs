@@ -1,5 +1,5 @@
 import { PLANET_PALETTES, PLANET_SAMPLER, shadePlanetDot } from './planet.mjs';
-import { orderedFade } from './atmosphere.mjs';
+import { orderedFade, rippleRingGeometry } from './atmosphere.mjs';
 import { createGlyphFieldSampler } from './glyph-field.mjs';
 export { fieldDotLayer, glyphFieldDurationS, glyphDotRadii, glyphFieldPhase, glyphFieldTrailCell, glyphFieldTrailLifeS, glyphFieldRippleLifeS } from './glyph-field.mjs';
 import { markSdfAt } from './glyph-mark.mjs';
@@ -28,6 +28,17 @@ function cellHash(x, y) {
 function digitOf(x, y, step = 0) {
     const chance = cellHash(x + step * 7, y - step * 13);
     return chance < 0.62 ? 1 + Math.floor(chance / 0.62 * 3) : Math.floor(cellHash(x * 3 + step, y + 11) * 10);
+}
+
+function frontEdge(shape, dx, dy, front, ragged, i, j) {
+    const distance = shape === 'superellipse' ? Math.sqrt(Math.hypot(dx * dx, dy * dy)) : Math.max(dx, dy);
+    return distance - front + (cellHash(i, j) - 0.5) * ragged;
+}
+
+function planetDecode(planet, fx, fy, i, j) {
+    if (planet.decode >= 1) return 1;
+    const edge = frontEdge('superellipse', fx, fy + 0.8, 2.8 * planet.decode, 0.18, i, j);
+    return 1 - fadeBetween(edge, -0.07, 0.05);
 }
 
 function writeSprite(out, x, y, glyph, color, alpha) {
@@ -61,15 +72,16 @@ function planetPresentation(layer, time) {
         halo: geometry.halo,
         gain: layer.gain ?? 1,
         ring: layer.ring,
+        decode: layer.decode ?? 1,
         assembly: layer.assemble ? clamp((time - (layer.assemble.startS ?? 0)) / layer.assemble.durationS) : 1,
     };
 }
 
 function planetBody(out, grid, planet, fade, palette, previous) {
-    const { cx, cy, R, spin, rotate, light, reveal, dim, glow, gain, ring, assembly } = planet;
+    const { cx, cy, R, spin, rotate, light, reveal, dim, glow, gain, assembly } = planet;
     const { dpr } = out;
     const { cols, rows, cell } = grid;
-    const key = [cols, rows, ...cell, cx, cy, R, spin, rotate, ...light, reveal, dim, glow, gain, ring?.radius, ring?.width, ring?.alpha, assembly, palette, fade?.from, fade?.to, dpr, out.height];
+    const key = [cols, rows, ...cell, cx, cy, R, spin, rotate, ...light, reveal, dim, glow, gain, assembly, planet.decode, palette, fade?.from, fade?.to, dpr, out.height];
     if (previous && key.every((value, index) => previous.key[index] === value)) return previous;
     const rgba = previous?.body.rgba.length === cols * rows * 4 ? previous.body.rgba : new Uint8Array(cols * rows * 4);
     rgba.fill(0);
@@ -85,15 +97,16 @@ function planetBody(out, grid, planet, fade, palette, previous) {
             const fx = (x - cx) / R;
             const distance = Math.hypot(fx, fy);
             if (distance > 1 + edge) continue;
+            const decoded = planetDecode(planet, fx, fy, i, j);
+            if (decoded === 0) continue;
             const shade = shadePlanetDot(fx * cosine - fy * sine, fx * sine + fy * cosine, i, j, sample);
             const strength = dim * gain;
-            const flare = ring ? clamp(1 - Math.abs(distance - ring.radius) / ring.width) * ring.alpha : 0;
             const appearance = assembly === 1 ? 1 : fadeBetween(assembly, cellHash(i, j) * 0.8, cellHash(i, j) * 0.8 + 0.2);
             const n = (j * cols + i) * 4;
-            rgba[n] = Math.round(clamp(mix(palette.background[0], mix(shade.rgb[0], palette.rim[0], flare), strength), 0, 255));
-            rgba[n + 1] = Math.round(clamp(mix(palette.background[1], mix(shade.rgb[1], palette.rim[1], flare), strength), 0, 255));
-            rgba[n + 2] = Math.round(clamp(mix(palette.background[2], mix(shade.rgb[2], palette.rim[2], flare), strength), 0, 255));
-            rgba[n + 3] = Math.round(255 * appearance * fadeBetween(assembly, 0, 0.12));
+            rgba[n] = Math.round(clamp(mix(palette.background[0], shade.rgb[0], strength), 0, 255));
+            rgba[n + 1] = Math.round(clamp(mix(palette.background[1], shade.rgb[1], strength), 0, 255));
+            rgba[n + 2] = Math.round(clamp(mix(palette.background[2], shade.rgb[2], strength), 0, 255));
+            rgba[n + 3] = Math.round(255 * decoded * appearance * fadeBetween(assembly, 0, 0.12));
         }
     }
     const former = previous?.body;
@@ -116,6 +129,7 @@ function makeFadeMask(out, fade) {
 function samplePlanet(out, grid, layer, time, theme, palette, previous) {
     const planet = planetPresentation(layer, time);
     const body = planetBody(out, grid, planet, layer.fade, palette, previous);
+    if (planet.ring) samplePlanetRing(out, grid, planet, palette, layer.fade);
     if (!layer.digits) return body;
     const { cx, cy, R, glow, dim, halo, assembly } = planet;
     const { cell, cols, rows } = grid;
@@ -140,11 +154,33 @@ function samplePlanet(out, grid, layer, time, theme, palette, previous) {
             const strike = cellHash(i + 401, j + 7) > 0.8 ? 0.45 : 1;
             const localStep = !inside && cellHash(i + 5, j + 9) < 0.15 ? step : 0;
             const foot = layer.fade ? 1 - fadeBetween(cssY, layer.fade.from, layer.fade.to) : 1;
-            const alpha = opacity * strike * foot * fadeBetween(assembly, 0, 0.12);
+            const alpha = opacity * strike * foot * fadeBetween(assembly, 0, 0.12) * planetDecode(planet, fx, fy, i, j);
             if (alpha >= 0.012) writeSprite(out, x, y, digitOf(i, j, localStep), inside ? overInk : outsideInk, alpha);
         }
     }
     return body;
+}
+
+function samplePlanetRing(out, grid, planet, palette, foot) {
+    const x0 = planet.cx * out.dpr, y0 = planet.cy * out.dpr;
+    const reach = Math.hypot(Math.max(Math.abs(x0), Math.abs(out.width - x0)), Math.max(Math.abs(y0), Math.abs(out.height - y0))) * 0.9;
+    const [cellW, cellH] = grid.cell;
+    const progress = planet.ring.progress;
+    const { radius, band, fade } = rippleRingGeometry(progress, reach, cellH, out.dpr);
+    const rowEnd = Math.min(grid.rows, Math.ceil((foot?.to ?? out.height / out.dpr) * out.dpr / cellH));
+    const step = Math.floor(progress * 4);
+    for (let j = 0; j < rowEnd; j++) {
+        const y = (j + 0.5) * cellH;
+        const footFade = foot ? 1 - fadeBetween(y / out.dpr, foot.from, foot.to) : 1;
+        for (let i = 0; i < grid.cols; i += 2) {
+            const x = (i + 0.5) * cellW;
+            const depth = radius - Math.hypot(x - x0, y - y0);
+            if (depth <= 0 || depth >= band || cellHash(i + 93, j) > 0.78) continue;
+            const profile = Math.sin(Math.PI * Math.pow(1 - depth / band, 0.7));
+            const ink = gradient(palette.body, 0.55 + 0.3 * cellHash(i + 95, j));
+            writeSprite(out, x, y, digitOf(i, j, step), ink, profile * fade * 0.95 * footFade);
+        }
+    }
 }
 
 function sampleMark(out, grid, layer, time, palette) {
@@ -197,9 +233,7 @@ function sampleFront(out, grid, layer, time, palette) {
         for (let i = 0; i < grid.cols; i++) {
             const x = (i + 0.5) * dw / out.dpr;
             if (x < area.x || x >= area.x + area.width) continue;
-            const dx = Math.abs(x - ox), dy = Math.abs(y - oy);
-            const distance = shape === 'superellipse' ? Math.sqrt(Math.hypot(dx * dx, dy * dy)) : Math.max(dx, dy);
-            const edge = distance - front + (cellHash(i, j) - 0.5) * ragged;
+            const edge = frontEdge(shape, Math.abs(x - ox), Math.abs(y - oy), front, ragged, i, j);
             if (mode === 'decode' && cover && edge >= 0) writeSprite(out, x * out.dpr, y * out.dpr, 20, cover, (cover[3] ?? 255) / 255);
             if (Math.abs(edge) >= band) continue;
             const color = ink === 'sunrise' ? gradient(palette.body, clamp(y / (out.height / out.dpr))) : ink;
@@ -257,7 +291,7 @@ export function createGlyphFrameSampler() {
         const cell = (scene.cell ?? glyphPitch).map((pitch) => Math.max(1, Math.round(pitch * dpr)));
         const cols = Math.ceil(width / cell[0]), rows = Math.ceil(height / cell[1]);
         const grid = { cell, cols, rows, origin: [0, 0] };
-        const capacity = layers.reduce((sum, layer) => sum + (layer.kind === 'field' ? 0 : layer.kind === 'traveller' ? layer.particles.length / 8 : cols * rows * (layer.kind === 'front' && layer.cover ? 2 : 1)), 0);
+        const capacity = layers.reduce((sum, layer) => sum + (layer.kind === 'field' ? 0 : layer.kind === 'traveller' ? layer.particles.length / 8 : cols * rows * ((layer.kind === 'front' && layer.cover) || (layer.kind === 'planet' && layer.ring) ? 2 : 1)), 0);
         if (capacity > storage.glyph.length) storage = { at: new Uint16Array(capacity * 2), glyph: new Uint8Array(capacity), rgba: new Uint8Array(capacity * 4) };
         const out = { ...storage, dpr, width, height, count: 0 };
         const palette = PLANET_PALETTES[theme];

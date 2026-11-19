@@ -89,6 +89,7 @@ export interface AtmosphereRippleOptions {
   x?: number; y?: number; radius?: number; colour?: AtmosphereRgb;
 }
 export function atmosphereRipple(progress: number, options: AtmosphereRippleOptions): AtmospherePixels & { rgba: Uint8ClampedArray<ArrayBuffer> };
+export function rippleRingGeometry(progress: number, reach: number, rowHeight: number, dpr: number): { radius: number; band: number; fade: number };
 /** The lab's ordered foot fade, in place on a straight-alpha RGBA store of `w × h` device pixels; `y0`/`y1` are css px. */
 export function orderedFade(rgba: Uint8ClampedArray, w: number, h: number, y0: number, y1: number, dpr: number): void;
 
