@@ -1,4 +1,5 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
@@ -1950,16 +1951,16 @@ export async function authorizeMachineRpcRequest(
         const personLocalRepositoryRead = identity.kind === 'isolated' && (identity.presentPerson || identity.accountAutomation)
           && isScmLocalRepositoryReadRpcMethod(rpcMethod);
         if (!receivingManager && !isHostRequesterUnrestrictedOwner(identity) && !personLocalRepositoryRead) {
+          const refuseExecution = (errorCode: string, error: string): RpcAuthorizationResult => ({
+            ok: false, errorCode, error,
+            failureCause: projectActionFailureCauseV1({ code: errorCode }, 'rpc.admission.requester_execution_isolation',
+              { allowUnknownErrorCode: true }),
+          });
           // Other source control runs on this Machine's own credentials and services (owner ruling 2026-10-31).
           if (getScmRpcSideEffectClass(rpcMethod) !== undefined && context.role !== 'manage') {
-            return { ok: false, errorCode: 'machine_manage_required',
-              error: 'This source-control action needs Manage access to this Machine' };
+            return refuseExecution('machine_manage_required', 'This source-control action needs Manage access to this Machine');
           }
-          return {
-            ok: false,
-            errorCode: 'agent_isolation_unavailable',
-            error: 'Requester execution protection is unavailable',
-          };
+          return refuseExecution('agent_isolation_unavailable', 'Requester execution protection is unavailable');
         }
       }
       if (

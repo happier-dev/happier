@@ -1,5 +1,7 @@
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
+import { ScmComparisonCaptureInputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import type { RpcLocalActionContext } from '../../api/rpc/types';
 import type { StoredCredentials } from '../../persistence';
@@ -8,6 +10,17 @@ import type { RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttri
 import type { prepareRequesterSessionBootstrap, readRequesterMachineAdmissionCurrent, RequesterSessionMachineAdmissionBoundary } from '../sessionEncryption/requesterSessionCredentials';
 import { readRequesterHomeWithinActionLifetime } from '../sessionEncryption/requesterCurrentness';
 import { requiresWorkflowMachineActionAdmission } from '../../session/actions/cliActionDeps/machineTransport';
+
+function isDetachedComparisonCapture(request: unknown, machineId: string): boolean {
+  if (request && typeof request === 'object' && 'kind' in request && request.kind === 'targeted_action_rpc') {
+    const envelope = TargetedActionRpcRequestV1Schema.safeParse(request);
+    if (!envelope.success || envelope.data.target.kind !== 'machine' || envelope.data.target.machineId !== machineId
+      || envelope.data.defaultSessionId || envelope.data.pluginCaller) return false;
+    request = envelope.data.input;
+  }
+  const capture = ScmComparisonCaptureInputSchema.safeParse(request);
+  return capture.success && capture.data.sessionId === undefined;
+}
 
 /** One claimed Workflow retains requester custody through its installed Machine transport. */
 export function createWorkflowRunMachineTransport(input: Readonly<{
@@ -111,9 +124,19 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
           error: 'Workflow requester authority unavailable',
           ...(method === SESSION_RPC_METHODS.EXECUTION_RUN_START
             ? { details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') } : {}) };
+        const caller = options?.localActionContext?.actionCaller;
+        // The claimed host Run already owns this detached read on the custodian's
+        // Machine. SCM still owns repository and native execution placement.
+        const admittedComparison = method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE
+          && caller?.kind === 'workflowRun' && caller.runId === input.runId && caller.authorization.principal.kind === 'host'
+          && !options?.rpcContext?.sessionActionOrigin
+          && prepared.machineAdmission.role === 'manage'
+          && prepared.machineAdmission.actorAccountId === prepared.machineAdmission.custodianAccountId
+          && isDetachedComparisonCapture(request, input.transport.machineId);
         // The Run's captured Home admission is the receiving Machine admission
         // native owners require, as Home's stamp is for the same direct Action.
         return await input.transport.invoke(method, request, { ...options,
+          ...(admittedComparison ? { admissionResult: { ok: true as const } } : {}),
           rpcContext: { requesterSessionBootstrap: prepared.admitted, callerAuthority: 'account_automation',
             machineAdmission: prepared.machineAdmission, verifyMachineAdmissionCurrent: input.isCurrent } });
       },

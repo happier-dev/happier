@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcHandlerManager } from './RpcHandlerManager';
 
 describe('RPC admission refusal causes', () => {
+    it('explains a local SCM refusal before the requester or handler can run', async () => {
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {},
+            authorizeRequest: () => { throw new Error('Local automation without ingress must refuse before authorization'); } });
+        rpc.registerHandler(RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, () => { throw new Error('SCM handler must not run'); });
+        const response = await rpc.invokeLocal(RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE,
+            { cwd: '/owned-repository', source: { kind: 'workingTree' } }, { verifiedPeerAuthority: 'account_automation' });
+        expect(response).toMatchObject({ errorCode: 'agent_isolation_unavailable', effectAttempted: false,
+            failureCause: { phase: 'rpc.admission.local_requester_unavailable', errorClass: 'UnknownThrownValue',
+                errorCode: 'agent_isolation_unavailable', httpStatus: null } });
+    });
+
     it.each([
         ['machine_admission', 'machineAdmission'],
         ['caller_input_authorization', 'callerInputAuthorization'],

@@ -1437,11 +1437,16 @@ export class RpcHandlerManager {
                 // Re-enter the installed receiving owner unless this exact direct
                 // invocation already completed its admission at that owner.
                 // Closed host calls with no requester keep their own authority.
-                if ((!options?.rpcContext && this.scopeKind !== 'session') || !this.authorizeRequest) return {
-                    errorCode: 'agent_isolation_unavailable',
-                    error: 'Requester execution admission is unavailable. Update or restart the controller daemon and retry through authenticated Machine ingress.',
-                    effectAttempted: false,
-                };
+                if ((!options?.rpcContext && this.scopeKind !== 'session') || !this.authorizeRequest) {
+                    const errorCode = 'agent_isolation_unavailable';
+                    return {
+                        errorCode,
+                        error: 'Requester execution admission is unavailable. Update or restart the controller daemon and retry through authenticated Machine ingress.',
+                        failureCause: projectActionFailureCauseV1({ code: errorCode }, 'rpc.admission.local_requester_unavailable',
+                            { allowUnknownErrorCode: true }),
+                        effectAttempted: false,
+                    };
+                }
                 const authorization = options?.admissionResult ?? await this.authorizeRequest({ method: prefixedMethod, params,
                     machineAdmission: options?.rpcContext?.machineAdmission,
                     verifyMachineAdmissionCurrent: options?.rpcContext?.verifyMachineAdmissionCurrent,

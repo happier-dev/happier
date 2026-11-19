@@ -9,6 +9,8 @@ import {
 import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -22,6 +24,8 @@ import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/proje
 import { ListAccountSessionFollowsResponseV1Schema, SESSION_FOLLOW_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/api';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createCliMachineActionTransport } from '@/session/actions/cliActionDeps/machineTransport';
+import { buildWorkflowActionContext } from './workflowActionContext';
 import { createWorkflowRunMachineTransport } from './workflowMachineTransport';
 
 // Socket.IO is the Account currentness observation transport boundary.
@@ -160,6 +164,7 @@ describe('Workflow Run native Machine admission', () => {
       const finiteAdmissions: unknown[] = [];
       const reboots: Readonly<Record<string, unknown>>[] = [];
       let runStarts = 0;
+      let scmAdmissionReads = 0;
       const rpc = new RpcHandlerManager({
         scopePrefix: machineId,
         encryptionMode: 'plain',
@@ -169,9 +174,16 @@ describe('Workflow Run native Machine admission', () => {
             resolveCustodianAccountId: async () => custodianAccountId,
             resolveInstallationId: () => installationId,
             // Home's signed currentness read is the external boundary.
-            verifyMachineAdmission: async () => true,
+            verifyMachineAdmission: async ({ method }) => {
+              if (method === `${machineId}:${RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE}`) scmAdmissionReads++;
+              return true;
+            },
           }),
       });
+      // The existing SCM owner receives the same requester that started the Run.
+      rpc.registerHandler(RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, (_request, context) => ({
+        capturedFor: context?.machineAdmission?.actorAccountId,
+      }));
       registerProjectFiniteRpcHandlers(rpc, {
         serverId: homeId,
         machineId,
@@ -206,11 +218,12 @@ describe('Workflow Run native Machine admission', () => {
         machineId,
         installationId,
       };
+      let currentRun = true;
       const workflowTransport = createWorkflowRunMachineTransport({
         runId,
         credentials,
         requesterWorkAttributionV1,
-        isCurrent: async () => true,
+        isCurrent: async () => currentRun,
         boundary: {
           serverId,
           serverHttpBaseUrl: home,
@@ -284,6 +297,19 @@ describe('Workflow Run native Machine admission', () => {
           },
           localActionContext(attempt),
         );
+      const comparisonInput = { cwd: root, source: { kind: 'workingTree' } };
+      const comparisonRequest = (targetMachineId = machineId) => createTargetedActionRpcRequestV1(comparisonInput,
+        { kind: 'machine', machineId: targetMachineId, project: { machineId: targetMachineId, directory: root } });
+      const compare = (callerRunId: string, targetMachineId = machineId) => workflowTransport.transport.invoke(
+        RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE,
+        comparisonRequest(targetMachineId), {
+          localActionContext: {
+            ...localActionContext(4).localActionContext,
+            actionCaller: { kind: 'workflowRun', runId: callerRunId,
+              authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } } },
+          },
+        },
+      );
 
       // REBOOT-RECIPE: a Restart-when-needed step reboots its own Machine through
       // the installed lifecycle owner, never back over Machine RPC, which drops
@@ -308,6 +334,7 @@ describe('Workflow Run native Machine admission', () => {
           ok: false,
           errorCode: 'project_requester_credentials_unavailable',
         });
+        expect(await compare(runId)).toMatchObject({ errorCode: 'project_requester_credentials_unavailable' });
         expect(finiteAdmissions).toEqual([]);
         expect(runStarts).toBe(0);
       } else if (access === 'owner') {
@@ -332,6 +359,16 @@ describe('Workflow Run native Machine admission', () => {
           errorCode: 'native_launch_boundary',
         });
         expect(runStarts).toBe(1);
+        expect(await compare(crypto.randomUUID())).toMatchObject({ errorCode: 'agent_isolation_unavailable', effectAttempted: false,
+          failureCause: { phase: 'rpc.admission.requester_execution_isolation', errorCode: 'agent_isolation_unavailable' } });
+        const { callMachineAction } = createCliMachineActionTransport({ credentials, serverId, serverIdentityId: homeId,
+          serverHttpBaseUrl: home, machineActionDirectTargetTransport: workflowTransport.transport });
+        expect(await callMachineAction({ machineId, method: RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, request: comparisonRequest(),
+          effectActionId: 'scm.diffSummary.capture', exactMachine: true,
+          context: buildWorkflowActionContext({ runId, authorization: { admittedPermissionCeiling: 'default',
+            principal: { kind: 'host' } } }, requesterWorkAttributionV1) })).toEqual({ capturedFor: accountId });
+        expect(scmAdmissionReads).toBe(1); // Only the unattached caller was checked for a fresh admission.
+        expect(await compare(runId, 'other-machine')).toMatchObject({ effectAttempted: false });
         expect(await rebootStep(3)).toEqual({ kind: 'accepted', bootedAt: 1 });
         expect(reboots).toEqual([expect.objectContaining({
           executionRunWorkflowRunId: runId,
@@ -347,7 +384,10 @@ describe('Workflow Run native Machine admission', () => {
           errorCode: 'native_launch_boundary',
         });
         expect(runStarts).toBe(1);
+        expect(await compare(runId)).toMatchObject({ errorCode: 'machine_manage_required', effectAttempted: false });
       }
+      currentRun = false;
+      expect(await compare(runId)).toMatchObject({ errorCode: 'project_requester_credentials_unavailable' });
       // The Run's Machine access is read once at capture, never per step.
       expect(machineAccessReads).toBe(1);
       expect(unhandledHttp).toEqual([]);
