@@ -8874,7 +8874,7 @@ const machineDetailPageTranslations = { ca: translated({
                 },
                 sandboxes: {
                     title: "Sandboxes",
-                    description: ({ machine }: { machine: string }) => `Els sandboxes que ${machine} pot fer servir. Cadascun és un tipus de sandbox amb un preajust; no es crea res fins que comença la feina.`,
+                    description: ({ machine }: { machine: string }) => `Els tipus de sandbox que ${machine} pot fer servir. No es crea res fins que comença la feina.`,
                     empty: ({ machine }: { machine: string }) => `Encara cap a ${machine}.`,
                     emptyTitle: ({ machine }: { machine: string }) => `Mantén la feina separada de ${machine}`,
                     emptyReason: ({ machine }: { machine: string }) => `Un sandbox dona a les sessions, bots o automatitzacions la seva pròpia màquina dins de ${machine}, sense res teu tret que ho comparteixis.`,

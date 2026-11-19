@@ -8827,7 +8827,7 @@ const machineDetailPageTranslations = { ja: translated({
                 },
                 sandboxes: {
                     title: "サンドボックス",
-                    description: ({ machine }: { machine: string }) => `${machine} が使えるサンドボックスです。それぞれ種類とプリセットの組み合わせで、作業が始まるまで何も作成されません。`,
+                    description: ({ machine }: { machine: string }) => `${machine} が使えるサンドボックスの種類です。作業が始まるまで何も作成されません。`,
                     empty: ({ machine }: { machine: string }) => `${machine} にはまだありません。`,
                     emptyTitle: ({ machine }: { machine: string }) => `作業を ${machine} から切り離す`,
                     emptyReason: ({ machine }: { machine: string }) => `サンドボックスは、セッション、ボット、オートメーションに ${machine} 内の専用マシンを用意します。共有しない限り、あなたのものは何も入りません。`,

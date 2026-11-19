@@ -508,6 +508,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     },
     machinePresets: {
         newPreset: "Nova configuració predefinida",
+        copyName: ({ name }: { name: string }) => `${name} còpia`,
         short: "Predefinicions",
         title: "Valors predefinits de màquina",
         empty: "Desa les opcions que fas servir per crear màquines.",

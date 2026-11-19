@@ -514,6 +514,7 @@ export const managedMachinesEn = {
     },
     machinePresets: {
         newPreset: "New preset",
+        copyName: ({ name }: { name: string }) => `${name} copy`,
         short: "Presets",
         title: "Machine presets",
         empty: "Save the choices you use to create machines.",

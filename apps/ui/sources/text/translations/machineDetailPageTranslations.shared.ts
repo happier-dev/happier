@@ -58,7 +58,7 @@ export const english = {
             },
             sandboxes: {
                 title: "Sandboxes",
-                description: ({ machine }: { machine: string }) => `Sandbox setups ${machine} can use. Each is a sandbox type with a preset; nothing is created until work starts.`,
+                description: ({ machine }: { machine: string }) => `The sandbox types ${machine} can use. Nothing is created until work starts.`,
                 empty: ({ machine }: { machine: string }) => `None yet on ${machine}.`,
                 emptyTitle: ({ machine }: { machine: string }) => `Keep work apart from ${machine}`,
                 emptyReason: ({ machine }: { machine: string }) => `A sandbox gives sessions, bots or automations their own machine inside ${machine}, with nothing of yours unless you share it.`,

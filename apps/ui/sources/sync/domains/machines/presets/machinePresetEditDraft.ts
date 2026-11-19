@@ -70,3 +70,19 @@ export function machinePresetEditDraftUpdatePatch(draft: MachinePresetEditDraft)
         wakeOnAcceptedMessage: content.wakeOnAcceptedMessage ?? null,
         simultaneousLimit: content.simultaneousLimit ?? null };
 }
+
+/** A preset's own choices under a new name, for Duplicate: its setup, image and creation choices, never its id or history. */
+export function machinePresetCopyDraft(preset: Readonly<Pick<ManagedMachinePresetContentV1, 'launch' | 'setup' | 'preparation' | 'projectFiles'>
+    & Pick<ManagedMachinePresetV1, 'controller' | 'controllerPoolId' | 'retention' | 'wakeOnAcceptedMessage' | 'simultaneousLimit'>>,
+    name: string): MachinePresetEditDraft {
+    return { name,
+        ...(preset.setup == null ? {} : { setup: preset.setup }),
+        ...(preset.preparation == null ? {} : { preparation: preset.preparation }),
+        ...(preset.projectFiles == null ? {} : { projectFiles: preset.projectFiles }),
+        ...(preset.launch ? { creation: { launch: preset.launch,
+            ...(preset.controllerPoolId ? { controllerPoolId: preset.controllerPoolId }
+                : preset.controller ? { controller: preset.controller } : {}),
+            ...(preset.retention == null ? {} : { retention: preset.retention }),
+            ...(preset.wakeOnAcceptedMessage == null ? {} : { wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage }),
+            ...(preset.simultaneousLimit == null ? {} : { simultaneousLimit: preset.simultaneousLimit }) } } : {}) };
+}

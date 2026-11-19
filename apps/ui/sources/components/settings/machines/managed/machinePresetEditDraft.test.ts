@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { machinePresetEditContinuationDraft, machinePresetEditDraftContent, machinePresetEditDraftUpdatePatch, type MachinePresetEditDraft } from './machinePresetEditDraft';
+import { machinePresetCopyDraft, machinePresetEditContinuationDraft, machinePresetEditDraftContent, machinePresetEditDraftUpdatePatch, type MachinePresetEditDraft } from './machinePresetEditDraft';
 
 describe('Preset edit intent', () => {
     it('persists a pool target and clears the previous exact controller when saving the full draft', () => {
@@ -81,5 +81,17 @@ describe('Preset edit intent', () => {
         const setup = { scripts: [{ body: '' }] };
         expect(machinePresetEditDraftContent({ ...draft, creation: undefined, setup })).toEqual({ privateContent: { v: 1, name: draft.name, setup } });
         expect(machinePresetEditDraftContent({ ...draft, setup: undefined }).privateContent).not.toHaveProperty('setup');
+    });
+    it('duplicates a preset as a new create of its own choices under the new name, keeping its pool over an exact host', () => {
+        const launch = { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: { cpu: 2 } };
+        const pool = '6be84651-2df7-4125-aac4-0d093217b198';
+        const setup = { scripts: [{ body: 'echo setup', affects: 'none' as const }] };
+        const content = machinePresetEditDraftContent(machinePresetCopyDraft({ launch, setup, preparation: { enabled: true },
+            controllerPoolId: pool, controller: { machineId: 'host', installationId: 'installation' }, simultaneousLimit: { maximum: 2 } },
+            'Frontend preview copy'));
+        expect(content).toEqual({ privateContent: { v: 1, name: 'Frontend preview copy', launch, setup, preparation: { enabled: true } },
+            controllerPoolId: pool, simultaneousLimit: { maximum: 2 } });
+        expect(machinePresetEditDraftContent(machinePresetCopyDraft({ setup }, 'Tools copy')))
+            .toEqual({ privateContent: { v: 1, name: 'Tools copy', setup } });
     });
 });

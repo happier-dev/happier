@@ -508,6 +508,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     },
     machinePresets: {
         newPreset: "Neue Vorlage",
+        copyName: ({ name }: { name: string }) => `${name} Kopie`,
         short: "Vorlagen",
         title: "Rechnervorlagen",
         empty: "Speichere die Auswahl, mit der du Rechner erstellst.",

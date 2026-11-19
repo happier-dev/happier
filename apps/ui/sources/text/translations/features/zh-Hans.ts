@@ -8767,7 +8767,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 },
                 sandboxes: {
                     title: "沙盒",
-                    description: ({ machine }: { machine: string }) => `${machine} 可以使用的沙盒。每个都是一种沙盒类型加一个预设；工作开始前不会创建任何东西。`,
+                    description: ({ machine }: { machine: string }) => `${machine} 可以使用的沙盒类型。工作开始前不会创建任何东西。`,
                     empty: ({ machine }: { machine: string }) => `${machine} 上还没有。`,
                     emptyTitle: ({ machine }: { machine: string }) => `让工作与 ${machine} 隔开`,
                     emptyReason: ({ machine }: { machine: string }) => `沙盒为会话、机器人或自动化在 ${machine} 内提供专属机器，除非你分享，否则不包含你的任何内容。`,

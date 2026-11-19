@@ -8904,7 +8904,7 @@ const machineDetailPageTranslations = { pl: translated({
                 },
                 sandboxes: {
                     title: "Piaskownice",
-                    description: ({ machine }: { machine: string }) => `Piaskownice, których może używać ${machine}. Każda to typ piaskownicy z ustawieniem wstępnym; nic nie powstaje, dopóki praca nie ruszy.`,
+                    description: ({ machine }: { machine: string }) => `Typy piaskownic, których może używać ${machine}. Nic nie powstaje, dopóki praca nie ruszy.`,
                     empty: ({ machine }: { machine: string }) => `Jeszcze żadnej na ${machine}.`,
                     emptyTitle: ({ machine }: { machine: string }) => `Oddziel pracę od ${machine}`,
                     emptyReason: ({ machine }: { machine: string }) => `Sandbox daje sesjom, botom lub automatyzacjom własną maszynę wewnątrz ${machine}, bez niczego twojego, chyba że to udostępnisz.`,

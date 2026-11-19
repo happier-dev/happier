@@ -508,6 +508,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     },
     machinePresets: {
         newPreset: "Nouveau préréglage",
+        copyName: ({ name }: { name: string }) => `${name} copie`,
         short: "Préréglages",
         title: "Préréglages de machine",
         empty: "Enregistre les choix que tu utilises pour créer des machines.",

@@ -8890,7 +8890,7 @@ const machineDetailPageTranslations = { fr: translated({
                 },
                 sandboxes: {
                     title: "Bacs à sable",
-                    description: ({ machine }: { machine: string }) => `Les bacs à sable que ${machine} peut utiliser. Chacun associe un type et un préréglage ; rien n’est créé avant que le travail commence.`,
+                    description: ({ machine }: { machine: string }) => `Les types de bac à sable que ${machine} peut utiliser. Rien n’est créé avant que le travail commence.`,
                     empty: ({ machine }: { machine: string }) => `Aucun pour l’instant sur ${machine}.`,
                     emptyTitle: ({ machine }: { machine: string }) => `Gardez le travail à l’écart de ${machine}`,
                     emptyReason: ({ machine }: { machine: string }) => `Un sandbox donne aux sessions, bots ou automatisations leur propre machine dans ${machine}, sans rien de vous sauf ce que vous partagez.`,

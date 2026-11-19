@@ -2951,6 +2951,107 @@ describe('reachable preset detail', () => {
     );
   });
 
+  it('duplicates an opened list preset through the row command', async () => {
+    const serverId = await seed();
+    await harness.selectHomes([serverId]);
+    const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
+    await setActiveServer({ serverId });
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const serverIds = [scopeId];
+    harness.answer(serverId, '/v1/machines/presets/list', {
+      body: { kind: 'listed', presets: [createPlainManagedMachinePresetFixture(preset)] },
+    });
+    harness.answer(serverId, '/v1/machines/presets/create', {
+      select: (input) => {
+        const { id } = ManagedMachinePresetCreateInputV1Schema.parse(input);
+        return { body: { kind: 'saved', preset: createPlainManagedMachinePresetFixture({ ...preset, id, revision: 1, name: 'Build box copy' }) } };
+      },
+    });
+    const { useMachinePresets, useMachinePresetRowCommands } = await import('./useMachinePresets');
+    const { isOpenedManagedMachinePresetV1 } = await import('@/sync/ops/machines/machinePresetCollectionClient');
+    const hook = await renderHook(() => ({
+      inventory: useMachinePresets(serverIds),
+      commands: useMachinePresetRowCommands(serverIds),
+    }));
+    try {
+      const row = () => hook.getCurrent().inventory.presetsByServerId[scopeId]?.[0];
+      await waitForHomeGovernance(() => expect(row()).toBeDefined());
+      const opened = row();
+      if (!opened || !isOpenedManagedMachinePresetV1(opened)) throw new Error('Expected an opened preset from the list');
+      await act(async () => {
+        const commands = hook.getCurrent().commands;
+        const refused = await commands.duplicate(scopeId, opened, 'Build box copy');
+        expect(refused).toEqual({ kind: 'failed', code: 'provider_unavailable' });
+        expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(0);
+
+        await seedPresetDeclaration(serverId);
+        const accepted = await commands.duplicate(scopeId, opened, 'Build box copy');
+        expect(accepted, JSON.stringify(accepted)).toMatchObject({ kind: 'succeeded', value: { kind: 'saved', preset: { name: 'Build box copy' } } });
+      });
+    } finally {
+      await hook.unmount();
+    }
+  });
+
+  it('offers Create machine, Duplicate and Archive in a row\'s "…" through the preset Actions', async () => {
+    const serverId = await seed();
+    await harness.selectHomes([serverId]);
+    await seedPresetDeclaration(serverId);
+    harness.answer(serverId, '/v1/machines/presets/list', {
+      body: { kind: 'listed', presets: [createPlainManagedMachinePresetFixture(preset)] },
+    });
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
+    await setActiveServer({ serverId });
+    await publishMachineInventoryForTest({ serverId: scopeId, accountId: 'owner' }, []);
+    const { MachinePresetsIndex } = await import('../presets/MachinePresetsIndex');
+    const screen = await renderSettingsView(<MachinePresetsIndex />);
+    const readMenu = () => screen.root.findAll((node) => Array.isArray(node.props.secondaryActions)
+      && typeof node.props.onSecondaryAction === 'function'
+      && node.props.secondaryActions.some((action: { id: string }) => action.id === 'archive'))[0];
+    await waitForHomeGovernance(() => expect(readMenu()).toBeDefined());
+    expect(readMenu()!.props.secondaryActions.map((action: { id: string }) => action.id))
+      .toEqual(['createMachine', 'duplicate', 'archive']);
+
+    await act(async () => readMenu()!.props.onSecondaryAction('createMachine'));
+    expect(route.push).toHaveBeenLastCalledWith(expect.stringMatching(
+      new RegExp(`^/settings/machines/add/[^?]+\\?serverId=${encodeURIComponent(scopeId)}&presetId=preset$`)));
+
+    harness.answer(serverId, '/v1/machines/presets/create', {
+      select: (input) => {
+        const id = ManagedMachinePresetCreateInputV1Schema.parse(input).id;
+        return { body: { kind: 'saved', preset: createPlainManagedMachinePresetFixture({ ...preset, id, revision: 1, name: 'Build box copy' }) } };
+      },
+    });
+    const { Modal } = await import('@/modal');
+    const alert = vi.spyOn(Modal, 'alert');
+    await act(async () => readMenu()!.props.onSecondaryAction('duplicate'));
+    await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/create').length
+      + alert.mock.calls.length).toBeGreaterThan(0));
+    // A refused copy says so; this one must reach the create Action instead.
+    expect(alert.mock.calls).toEqual([]);
+    await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1));
+    const copyInput = harness.requestsFor('/v1/machines/presets/create')[0]!.input;
+    expect(readCreatedPreset(copyInput)).toMatchObject({ homeId: preset.homeId, name: 'Build box copy',
+      owner: preset.owner, controller: preset.controller, launch: preset.launch, simultaneousLimit: preset.simultaneousLimit });
+    expect(ManagedMachinePresetCreateInputV1Schema.parse(copyInput).id).not.toBe(preset.id);
+    // The copy opens on its own page, where it can be renamed.
+    await waitForHomeGovernance(() => expect(route.push).toHaveBeenLastCalledWith(
+      expect.stringMatching(new RegExp(`^/settings/machines/presets/(?!preset\\?)[^?]+\\?serverId=${encodeURIComponent(scopeId)}$`))));
+
+    const { PresetMutationResultV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+    harness.answer(serverId, '/v1/machines/presets/archive', {
+      select: (input) => {
+        expect(input).toMatchObject({ homeId: preset.homeId, id: preset.id, expectedRevision: preset.revision });
+        return { body: PresetMutationResultV1Schema.parse({ kind: 'saved',
+          preset: createPlainManagedMachinePresetFixture({ ...preset, revision: preset.revision + 1, archivedAt: 1 }) }) };
+      },
+    });
+    await act(async () => readMenu()!.props.onSecondaryAction('archive'));
+    await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/archive')).toHaveLength(1));
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+  });
+
   it('opens history and edits the future launch on the captured Home without acquiring compute', async () => {
     const serverId = await seed();
     const scopeId = await seedConfiguration(serverId);

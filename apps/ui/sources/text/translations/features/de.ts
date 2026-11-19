@@ -8885,7 +8885,7 @@ const machineDetailPageTranslations = { de: translated({
                 },
                 sandboxes: {
                     title: "Sandboxes",
-                    description: ({ machine }: { machine: string }) => `Die Sandboxes, die ${machine} nutzen kann. Jede ist ein Sandbox-Typ mit einer Vorlage; erstellt wird erst, wenn Arbeit startet.`,
+                    description: ({ machine }: { machine: string }) => `Die Sandbox-Typen, die ${machine} nutzen kann. Erstellt wird erst, wenn Arbeit startet.`,
                     empty: ({ machine }: { machine: string }) => `Noch keine auf ${machine}.`,
                     emptyTitle: ({ machine }: { machine: string }) => `Halte Arbeit von ${machine} getrennt`,
                     emptyReason: ({ machine }: { machine: string }) => `Eine Sandbox gibt Sitzungen, Bots oder Automationen eine eigene Maschine in ${machine}, ohne etwas von dir, außer du teilst es.`,

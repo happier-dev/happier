@@ -8767,7 +8767,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 },
                 sandboxes: {
                     title: "沙箱",
-                    description: ({ machine }: { machine: string }) => `${machine} 可以使用的沙箱。每個都是一種沙箱類型加上一個預設；工作開始前不會建立任何東西。`,
+                    description: ({ machine }: { machine: string }) => `${machine} 可以使用的沙箱類型。工作開始前不會建立任何東西。`,
                     empty: ({ machine }: { machine: string }) => `${machine} 上還沒有。`,
                     emptyTitle: ({ machine }: { machine: string }) => `讓工作與 ${machine} 隔開`,
                     emptyReason: ({ machine }: { machine: string }) => `沙盒為工作階段、機器人或自動化在 ${machine} 內提供專屬機器，除非你分享，否則不包含你的任何內容。`,

@@ -9,6 +9,8 @@ import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
 import { Item } from '@/components/ui/lists/Item';
+import { Modal } from '@/modal';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
@@ -30,8 +32,9 @@ import {
 } from '../collection/machineCollectionModel';
 import { useMachineCollection } from '../collection/useMachineCollection';
 import { useMachinesSettingsViewModel } from '../machinesSettingsViewModel';
-import type { MachinePresetQueryState } from '../managed/useMachinePresets';
-import type { ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
+import { useMachinePresetRowCommands, type MachinePresetQueryState } from '../managed/useMachinePresets';
+import { buildManagedMachineConfigurationRoute } from '../managed/managedMachineConfigurationRoute';
+import { hasOpenedManagedMachinePresetCreationV1, isOpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1, type OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { readPresetTableMenuStep, usePresetTableAnatomy, type PresetTableItem } from './presetTable';
 import { projectManagedPresetAllocationCounts } from '../managed/hostMachineSandboxes';
 import { projectSandboxPresetHostCounts } from '@/sync/domains/machines/machineIsolationPolicy';
@@ -120,6 +123,34 @@ export function MachinePresetsPage(props: Readonly<{
     },
     [open],
   );
+  // The row "…" (lab scene 7): its image step, Create machine, Duplicate and Archive, through the preset page's own
+  // Actions and routes. Archive and Duplicate are offered on presets this Account owns.
+  const serverIds = React.useMemo(() => [...new Set(sections.map((section) => section.serverId))], [sections]);
+  const commands = useMachinePresetRowCommands(serverIds);
+  const navigate = React.useCallback((href: string, tag: string) => {
+    const result = runGuardedNavigation(() => router.push(href as never));
+    if (result !== true) fireAndForget(result, { tag });
+  }, [router]);
+  const menu = React.useMemo<PresetRowMenu>(() => ({
+    onNextStep,
+    canWrite: (serverId, preset) => commands.canWrite(serverId, preset),
+    createMachine: (serverId, preset) => {
+      if (!hasOpenedManagedMachinePresetCreationV1(preset)) return;
+      navigate(buildManagedMachineConfigurationRoute({ serverId, presetId: preset.id,
+        provisioner: buildQualifiedPluginContributionKey(preset.launch.provider) }), 'MachinePresetsIndex.createMachine');
+    },
+    duplicate: (serverId, preset) => fireAndForget((async () => {
+      const result = await commands.duplicate(serverId, preset, t('machinePresets.copyName', { name: preset.name }));
+      if (result.kind === 'approval_pending') navigate(approvalHref(result.approval.artifactId, serverId), 'MachinePresetsIndex.duplicateApproval');
+      else if (result.kind === 'succeeded' && result.value.kind === 'saved') open(serverId, result.value.preset.id);
+      else await Modal.alert(t('ui.pluginUi.actionFailed'));
+    })(), { tag: 'MachinePresetsIndex.duplicate' }),
+    archive: (serverId, preset) => fireAndForget((async () => {
+      const result = await commands.archive(serverId, preset);
+      if (result.kind === 'approval_pending') navigate(approvalHref(result.approval.artifactId, serverId), 'MachinePresetsIndex.archiveApproval');
+      else if (result.kind !== 'succeeded' || result.value.kind !== 'saved') await Modal.alert(t('machinePresets.archiveFailed'));
+    })(), { tag: 'MachinePresetsIndex.archive' }),
+  }), [commands, navigate, onNextStep, open]);
   const anatomy = usePresetTableAnatomy({
     host: 'presets',
     facts: DELIVERED_FACTS,
@@ -240,7 +271,7 @@ export function MachinePresetsPage(props: Readonly<{
     </>
   );
   return (
-    <PresetRowStepContext.Provider value={onNextStep}>
+    <PresetRowMenuContext.Provider value={menu}>
     <ItemList pageColumn="wide">
       <CoreCollectionScope renderPageScroller={passThroughPageScroller}>
         <PageContentColumn>
@@ -293,7 +324,7 @@ export function MachinePresetsPage(props: Readonly<{
         </PageContentColumn>
       </CoreCollectionScope>
     </ItemList>
-    </PresetRowStepContext.Provider>
+    </PresetRowMenuContext.Provider>
   );
 }
 
@@ -429,15 +460,47 @@ const styles = StyleSheet.create(() => ({
   },
 }));
 
-/** Each row's "…" holds its image step (Rebuild, Retry, Build now), reachable at every width (a phone has no columns). */
-const PresetRowStepContext = React.createContext<((item: PresetTableItem) => void) | null>(null);
+type PresetRowMenu = Readonly<{
+  onNextStep: (item: PresetTableItem) => void;
+  canWrite: (serverId: string, preset: OpenedManagedMachinePresetV1) => boolean;
+  createMachine: (serverId: string, preset: OpenedManagedMachinePresetV1) => void;
+  duplicate: (serverId: string, preset: OpenedManagedMachinePresetV1) => void;
+  archive: (serverId: string, preset: OpenedManagedMachinePresetV1) => void;
+}>;
+type PresetRowMenuId = 'build' | 'rebuild' | 'retry' | 'createMachine' | 'duplicate' | 'archive';
+
+/** Each row's "…" holds its image step (Rebuild, Retry, Build now), reachable at every width, then what the preset makes. */
+const PresetRowMenuContext = React.createContext<PresetRowMenu | null>(null);
+
+function approvalHref(artifactId: string, serverId: string) {
+  return `/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(serverId)}`;
+}
 
 function usePresetRowActions(item: PresetTableItem): CollectionRowActions {
-  const open = React.useContext(PresetRowStepContext);
+  const menu = React.useContext(PresetRowMenuContext);
   const step = readPresetTableMenuStep(item);
-  return React.useMemo(() => open === null || step === null ? {} : {
-    secondaryActions: [{ id: step.id, label: step.label }],
-    secondaryActionAccessibilityLabel: t('common.more'),
-    onSecondaryAction: () => open(item),
-  }, [item, open, step?.id, step?.label]);
+  const preset = item.preset && isOpenedManagedMachinePresetV1(item.preset) ? item.preset : null;
+  const active = preset !== null && preset.archivedAt === undefined;
+  const creates = active && hasOpenedManagedMachinePresetCreationV1(preset);
+  const writable = active && menu !== null && menu.canWrite(item.serverId, preset);
+  return React.useMemo(() => {
+    if (menu === null) return {};
+    const actions: Array<{ id: PresetRowMenuId; label: string }> = [
+      ...(step ? [{ id: step.id, label: step.label }] : []),
+      ...(creates ? [{ id: 'createMachine' as const, label: t('managedMachines.creation.create') }] : []),
+      ...(writable ? [{ id: 'duplicate' as const, label: t('common.duplicate') },
+        { id: 'archive' as const, label: t('managedCleanup.archiveTitle') }] : []),
+    ];
+    if (actions.length === 0) return {};
+    return {
+      secondaryActions: actions,
+      secondaryActionAccessibilityLabel: t('common.more'),
+      onSecondaryAction: (id: string) => {
+        if (id === 'createMachine' && preset) menu.createMachine(item.serverId, preset);
+        else if (id === 'duplicate' && preset) menu.duplicate(item.serverId, preset);
+        else if (id === 'archive' && preset) menu.archive(item.serverId, preset);
+        else if (id === step?.id) menu.onNextStep(item);
+      },
+    };
+  }, [creates, item, menu, preset, step?.id, step?.label, writable]);
 }

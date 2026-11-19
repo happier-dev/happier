@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import type { MachinePresetUpdateDraftInput } from '@/sync/domains/machines/presets/machinePresetEditDraft';
+import { machinePresetCopyDraft, type MachinePresetUpdateDraftInput } from '@/sync/domains/machines/presets/machinePresetEditDraft';
+import { randomUUID } from '@/platform/randomUUID';
 type PresetMutationResultV1 = OpenedMachinePresetActionOutputV1<'machines.presets.update'>;
 import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1, type OpenedMachinePresetActionOutputV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1, type MachinePresetActionInputV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
@@ -396,6 +397,41 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
         projection.current = retainShallow(projection.current, next);
         return { presetsByServerId: projection.current, statesByServerId, refresh };
     }, [statesByServerId, refresh]);
+}
+
+/**
+ * A Presets table row's own writes: Archive and Duplicate run the preset page's Actions (archive, create) for a preset
+ * this Account owns. A Team's preset keeps them on its page, which reads the Team's permission.
+ */
+export function useMachinePresetRowCommands(serverIds: readonly string[]) {
+    const accountScopes = useServerCredentialAccountScopeStates(serverIds);
+    return React.useMemo(() => {
+        const target = (serverId: string) => {
+            const binding = accountScopes.get(resolveServerProfileScopeIdForIdentifier(serverId) || serverId)?.binding;
+            const homeId = getServerProfileById(serverId)?.serverIdentityId;
+            return binding?.isCurrent() && homeId ? { homeId, accountId: binding.accountId,
+                client: createMachinePresetCollectionClient(binding.scope, homeId) } : null;
+        };
+        const owned = (serverId: string, preset: OpenedManagedMachinePresetV1) => {
+            const current = target(serverId);
+            return current && preset.owner.kind === 'account' && preset.owner.accountId === current.accountId ? current : null;
+        };
+        return {
+            canWrite: (serverId: string, preset: OpenedManagedMachinePresetV1) => owned(serverId, preset) !== null,
+            archive: async (serverId: string, preset: OpenedManagedMachinePresetV1) => {
+                const current = owned(serverId, preset);
+                if (!current) return { kind: 'failed', code: 'action_account_scope_changed' } as const;
+                return current.client.execute('machines.presets.archive',
+                    { homeId: current.homeId, id: preset.id, expectedRevision: preset.revision }, { preset });
+            },
+            duplicate: async (serverId: string, preset: OpenedManagedMachinePresetV1, name: string) => {
+                const current = owned(serverId, preset);
+                if (!current) return { kind: 'failed', code: 'action_account_scope_changed' } as const;
+                return current.client.saveDraft({ id: randomUUID(), owner: { kind: 'account', accountId: current.accountId },
+                    draft: machinePresetCopyDraft(preset, name) });
+            },
+        };
+    }, [accountScopes]);
 }
 
 type PresetDetailMutation =

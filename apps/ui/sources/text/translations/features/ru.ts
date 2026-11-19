@@ -8905,7 +8905,7 @@ const machineDetailPageTranslations = { ru: translated({
                 },
                 sandboxes: {
                     title: "Песочницы",
-                    description: ({ machine }: { machine: string }) => `Песочницы, которые может использовать ${machine}. Каждая — это тип песочницы с пресетом; ничего не создаётся, пока не начнётся работа.`,
+                    description: ({ machine }: { machine: string }) => `Типы песочниц, которые может использовать ${machine}. Ничего не создаётся, пока не начнётся работа.`,
                     empty: ({ machine }: { machine: string }) => `На ${machine} пока нет.`,
                     emptyTitle: ({ machine }: { machine: string }) => `Держите работу отдельно от ${machine}`,
                     emptyReason: ({ machine }: { machine: string }) => `Песочница даёт сессиям, ботам или автоматизациям собственную машину внутри ${machine}, без ваших данных, если вы ими не поделитесь.`,
