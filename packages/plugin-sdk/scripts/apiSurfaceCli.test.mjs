@@ -21,6 +21,7 @@ import test from 'node:test';
 import ts from 'typescript';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { createApiSurfaceGenerationPlan } from './apiSurface.mjs';
 import {
   collectCanonicalSourceGraph,
   createApiSurfaceProgressReporter,
@@ -100,6 +101,26 @@ function readCurrentPackageSourceReport() {
   });
   return currentPackageSourceReportPromise;
 }
+
+test('checked-in browser barrels expose the runtime exports from their publication specs', async () => {
+  const runtimeExports = (path, text) => {
+    const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest);
+    return new Set(source.statements.flatMap(statement => {
+      if (!ts.isExportDeclaration(statement) || statement.isTypeOnly ||
+          !statement.exportClause || !ts.isNamedExports(statement.exportClause)) return [];
+      return statement.exportClause.elements.filter(entry => !entry.isTypeOnly).map(entry => entry.name.text);
+    }));
+  };
+  const inventory = await readCurrentApiSurfaceInventory();
+  const { sourceBarrels } = createApiSurfaceGenerationPlan(inventory);
+  const browserBarrels = Object.entries(sourceBarrels).filter(([path]) => path.endsWith('/index.browser.ts'));
+  assert.ok(browserBarrels.length > 0, 'expected realm-split browser barrels');
+  const missingExports = await Promise.all(browserBarrels.map(async ([path, expected]) => {
+    const actual = runtimeExports(path, await readFile(new URL(`../${path}`, import.meta.url), 'utf8'));
+    return [...runtimeExports(path, expected)].filter(name => !actual.has(name)).map(name => `${path}: ${name}`);
+  }));
+  assert.deepEqual(missingExports.flat(), []);
+});
 
 test('SDK signature governance keeps portable internal support types private', async () => {
   const root = await createPackageFixture();
