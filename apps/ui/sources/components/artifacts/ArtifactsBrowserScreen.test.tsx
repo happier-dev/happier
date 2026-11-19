@@ -233,7 +233,7 @@ describe('Artifacts browser folders view', () => {
         await hook.unmount();
     });
 
-    it('shares the declared device view preference with agent Actions and retains it after reopening', async () => {
+    it('shares the Account collection presentation across the Artifacts switch and both Action anchors', async () => {
         const served = await serveActionHomes({
             homes: [{ key: 'owner', serverUrl: 'https://artifact-view-preference.test', accountId: 'owner' }],
             route: () => undefined,
@@ -247,12 +247,16 @@ describe('Artifacts browser folders view', () => {
             const result = await action.execute('settings.set', { anchor, value: { presentation: 'folders' } }, context);
             expect(result.ok ? 'ok' : result.errorCode).toBe('ok');
         });
+        expect(await action.execute('settings.get', { anchor: 'appearance.collectionDisplay' }, context))
+            .toMatchObject({ ok: true, result: { value: { artifact: { presentation: 'folders' } } } });
         const screen = await renderScreen(<RecoveryBrowser artifacts={[artifactFixture('document')]} loadFailed={false} onRetry={() => {}} />);
         expect(screen.findByTestId('artifacts:folders:row:artifact:document')).not.toBeNull();
         await screen.pressByTestIdAsync('artifacts:view:list');
         await vi.waitFor(async () => {
             expect(await action.execute('settings.get', { anchor }, context))
                 .toMatchObject({ ok: true, result: { value: { presentation: 'list' } } });
+            expect(await action.execute('settings.get', { anchor: 'appearance.collectionDisplay' }, context))
+                .toMatchObject({ ok: true, result: { value: { artifact: { presentation: 'list' } } } });
         });
         await screen.unmount();
         const reopened = await renderRows([artifactFixture('document')]);

@@ -70,6 +70,7 @@ import {
 } from './surface/sessionListSurfaceOwnership';
 import { useVisibleSessionListPaneState, type VisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
 import { useSessionListLayoutChoice } from '@/hooks/session/sessionListLayoutIntent';
+import { useSessionCollectionDensity, useSessionCollectionStatusWords } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
 import {
     areSessionListIndexItemsEqual,
     buildSessionListIndexEntityId,
@@ -612,11 +613,11 @@ export function useSessionListViewStateFromPaneState(
         folderViewModeV1: sessionFolderViewModeV1,
         foldersFeatureEnabled: folderActionsEnabled,
     });
-    const sessionListDensity = useSetting('sessionListDensity');
+    const sessionListDensity = useSessionCollectionDensity();
     const uiFontScale = useLocalSetting('uiFontScale');
     const sessionListIdentityDisplay = useSetting('sessionListIdentityDisplay');
     const sessionListRowContextV1 = useSetting('sessionListRowContextV1');
-    const sessionListStatusWords = useSetting('sessionListStatusWords');
+    const sessionListStatusWords = useSessionCollectionStatusWords();
     const sessionListActiveColorMode = useSetting('sessionListActiveColorModeV1');
     const hideInactiveSessions = useSetting('hideInactiveSessions');
     const sessionReplayEnabled = useSetting('sessionReplayEnabled');

@@ -9,6 +9,7 @@ import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/pane
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createAccountSettingsHttpBoundary } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { storage } from '@/sync/domains/state/storageStore';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { PluginPageLaunchInputScope } from '@/components/plugins/pages/pluginPageNavigation';
@@ -59,7 +60,14 @@ vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
-const runtime = installSessionPaneRuntimeTestHarness({ scopeId: 'app' });
+const settingsHttp = createAccountSettingsHttpBoundary({ serverUrl: 'https://session-pane.test', initialAccounts: [] });
+beforeEach(() => {
+    settingsHttp.replaceAccountSettings('account-a', { content: { t: 'plain', v: { sessionListDensity: 'narrow' } }, version: 0 });
+});
+const runtime = installSessionPaneRuntimeTestHarness({
+    scopeId: 'app',
+    request: async (url, init) => settingsHttp.handle(url, init) ?? null,
+});
 let projection: PluginUiProjectionModel;
 
 function placement(localId: string, container: 'appPage' | 'rightSidebarTab',
@@ -187,6 +195,38 @@ describe('ColumnDestinationRows', () => {
 
         expect(style.height).toBe(densityHeight);
         expect(style.minHeight).toBe(densityHeight);
+    });
+
+    it('applies the Account Sessions Lines choice to the sidebar without replacing its legacy key', async () => {
+        surfaceState.windowWidth = 1440;
+        const { act } = await import('react-test-renderer');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { ColumnDestinationRows } = await import('./ColumnDestinationRows');
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, serverId: runtime.serverId, expectedAccountId: 'account-a' };
+        const screen = await render(<ColumnDestinationRows column="sessions" />);
+        try {
+            const height = () => StyleSheet.flatten(rowFor(screen, 'compact-app-destination:plugin:acme.notes:notes')?.props.style)?.height;
+            const compactHeight = height();
+            expect(compactHeight).toBe(resolveSessionListDensityViewState('narrow', { isTablet: false, platform: 'web', windowWidth: 1440 }).rowHeight);
+            await act(async () => {
+                expect(await executor.execute('settings.set', {
+                    anchor: 'appearance.collectionDisplay', value: { kind: 'sessionWork', lines: 3, details: { currentWork: false } },
+                }, context)).toMatchObject({ ok: true });
+            });
+            expect(storage.getState().settings.sessionListDensity).toBe('detailed');
+            expect(await executor.execute('settings.set', {
+                anchor: 'appearance.collectionDisplay', value: { kind: 'sessionWork', details: { progress: false } },
+            }, context)).toMatchObject({ ok: true });
+            expect(await executor.execute('settings.get', {
+                anchor: 'appearance.collectionDisplay',
+            }, context)).toMatchObject({ ok: true, result: { value: { sessionWork: {
+                lines: 3, details: { currentWork: false, progress: false },
+            } } } });
+            expect(height()).toBeGreaterThan(compactHeight!);
+        } finally {
+            await screen.unmount();
+        }
     });
 
     it('keeps the desktop-web row on the session-list density grid', async () => {

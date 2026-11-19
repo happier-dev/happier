@@ -30,7 +30,8 @@ import {
     SESSION_LIST_ROW_SELECTION_RADIUS,
 } from '@/components/sessions/shell/resolveSessionListDensityViewState';
 import { sessionListStyles } from '@/components/sessions/shell/sessionListStyles';
-import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
+import { useLocalSetting } from '@/sync/domains/state/storage';
+import { useSessionCollectionDensity } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { useIsTablet } from '@/utils/platform/responsive';
 
@@ -136,7 +137,7 @@ export const ColumnDestinationRows = React.memo(function ColumnDestinationRows(p
     // These rows are the first entries of the column's list, not a separate control strip, so they
     // take the session row's height from the same owner the session list reads, on every platform.
     // A finger reaches past the row through the shared hit area; the row itself stays at the design.
-    const sessionListDensity = useSetting('sessionListDensity');
+    const sessionListDensity = useSessionCollectionDensity();
     const uiFontScale = useLocalSetting('uiFontScale');
     const isTablet = useIsTablet();
     const { width: windowWidth } = useWindowDimensions();

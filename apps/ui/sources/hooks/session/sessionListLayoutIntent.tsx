@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { useSetting } from '@/sync/store/settingsReadHooks';
+import { useSessionCollectionGroupBy } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
 import {
     resolveSessionListLayoutChoice,
     type SessionListLayoutChoice,
@@ -70,7 +70,7 @@ export function useYieldSessionListLayoutIntent(): () => void {
  * preference cannot disagree between them.
  */
 export function useSessionListLayoutChoice(): SessionListLayoutChoice {
-    const sessionListLayoutV1 = useSetting('sessionListLayoutV1');
+    const sessionListLayoutV1 = useSessionCollectionGroupBy();
     const transientIntent = useSessionListLayoutIntent();
     return resolveSessionListLayoutChoice({
         sessionListLayoutV1,

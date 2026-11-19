@@ -6,6 +6,7 @@ import { SessionSectionsSettingsSection } from '@/components/settings/session/Se
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { SessionListDensityPreview, SessionListLayoutPreview } from '@/components/settings/session/SessionListPreview';
 import React from 'react';
+import { SESSION_COLLECTION_ROW_DETAILS, useSessionCollectionRowDetails, useSessionCollectionRowDetailWriter } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
 import { Platform } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import {
@@ -55,7 +56,8 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
     const panelsSupported = Platform.OS === 'web' || deviceType === 'tablet';
     const [sessionListDensity, setSessionListDensity] = useSettingMutable('sessionListDensity');
     const [sessionListIdentityDisplay] = useSettingMutable('sessionListIdentityDisplay');
-    const [sessionListRowContextV1] = useSettingMutable('sessionListRowContextV1');
+    const collectionRowDetails = useSessionCollectionRowDetails();
+    const setCollectionRowDetail = useSessionCollectionRowDetailWriter();
     const [sessionListStatusWords] = useSettingMutable('sessionListStatusWords');
     const [sessionHeaderIdentityDisplay, setSessionHeaderIdentityDisplay] = useSettingMutable('sessionHeaderIdentityDisplay');
     const [sessionListActiveColorMode, setSessionListActiveColorMode] = useSettingMutable('sessionListActiveColorModeV1');
@@ -328,18 +330,20 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
                     />
                 </SettingAnchor>
                 <SettingAnchor setting={SESSION_SETTINGS.settings.rowContext}>
-                    <Item
-                        testID="settings-session-rowContext-item"
-                        title={t(SESSION_SETTINGS.settings.rowContext.titleKey)}
-                        subtitle={t('settingsSession.sessionList.rowContextSubtitle')}
-                        rightElement={<Switch
-                            testID="settings-session-rowContext-toggle"
-                            value={sessionListRowContextV1 !== false}
-                            onValueChange={(next) => { void applySessionListViewOption(`rowContext:${Boolean(next)}`); }}
-                        />}
-                        showChevron={false}
-                        onPress={() => { void applySessionListViewOption(`rowContext:${sessionListRowContextV1 === false}`); }}
-                    />
+                    <>
+                        {SESSION_COLLECTION_ROW_DETAILS.map(({ id, labelKey }) => (
+                            <Item key={id}
+                                testID={`settings-session:row-detail:${id}`}
+                                title={t(labelKey)}
+                                rightElement={<Switch
+                                    value={collectionRowDetails[id]}
+                                    onValueChange={next => { void setCollectionRowDetail(id, next); }}
+                                />}
+                                showChevron={false}
+                                onPress={() => { void setCollectionRowDetail(id, !collectionRowDetails[id]); }}
+                            />
+                        ))}
+                    </>
                 </SettingAnchor>
                 <SettingAnchor setting={SESSION_SETTINGS.settings.identityDisplay}>
                     <DropdownMenu

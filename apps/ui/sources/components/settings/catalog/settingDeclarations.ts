@@ -1,4 +1,4 @@
-import { COLLECTION_DISPLAY_SETTING_ANCHOR, collectionDisplayStorageBinding } from '@/components/ui/lists/collection/collectionDisplaySettings';
+import { ARTIFACT_VIEW_SETTING_ANCHOR, COLLECTION_DISPLAY_SETTING_ANCHOR, artifactCollectionDisplayStorageBinding, collectionDisplayStorageBinding } from '@/components/ui/lists/collection/collectionDisplaySettings';
 import { collectionColumnsStorageBinding } from '@/components/ui/lists/collection/collectionColumnSettings';
 import { Platform } from 'react-native';
 import type { AccountSettingKey} from '@happier-dev/protocol/account/settings/accountSettings';
@@ -367,8 +367,9 @@ export function builtInSettingsPageSections(anchorPrefix: string): Record<string
 }
 
 function portableStorageBinding(declaration: PortableSettingDeclarationV1): SettingStorageBinding | undefined {
-    if (declaration.anchor === 'appearance.collectionColumns') return collectionColumnsStorageBinding;
     if (declaration.anchor === COLLECTION_DISPLAY_SETTING_ANCHOR) return collectionDisplayStorageBinding;
+    if (declaration.anchor === ARTIFACT_VIEW_SETTING_ANCHOR) return artifactCollectionDisplayStorageBinding;
+    if (declaration.anchor === 'appearance.collectionColumns') return collectionColumnsStorageBinding;
     const binding = declaration.storage;
     if (!binding) return undefined;
     if (declaration.anchor === COLLECTION_RAIL_WIDTH_SETTING_ANCHOR && binding.owner === COLLECTION_RAIL_WIDTH_SETTING_OWNER) {

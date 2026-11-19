@@ -865,6 +865,26 @@ export const SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES = ['most_constrained', 'd
 export const CollectionTableCardPresentationSchema = lazyZodSchema(() => z.enum(['table', 'grid']));
 export type CollectionTableCardPresentation = z.infer<typeof CollectionTableCardPresentationSchema>;
 
+export const CollectionArtifactPresentationSchema = lazyZodSchema(() => z.enum(['grid', 'list', 'folders']));
+export type CollectionArtifactPresentation = z.infer<typeof CollectionArtifactPresentationSchema>;
+export const CollectionWorkflowGroupingSchema = lazyZodSchema(() => z.enum(['source', 'project']));
+export type CollectionWorkflowGrouping = z.infer<typeof CollectionWorkflowGroupingSchema>;
+export const CollectionWorkflowRunGroupingSchema = lazyZodSchema(() => z.enum(['date', 'project', 'workflow']));
+export type CollectionWorkflowRunGrouping = z.infer<typeof CollectionWorkflowRunGroupingSchema>;
+export const CollectionLinesSchema = lazyZodSchema(() => z.union([z.literal(1), z.literal(2), z.literal(3)]));
+export type CollectionLines = z.infer<typeof CollectionLinesSchema>;
+export const SessionCollectionRowDetailsSchema = lazyZodSchema(() => z.strictObject({
+    currentWork: z.optional(z.boolean()),
+    progress: z.optional(z.boolean()),
+    project: z.optional(z.boolean()),
+    machine: z.optional(z.boolean()),
+    branch: z.optional(z.boolean()),
+    pullRequest: z.optional(z.boolean()),
+    changes: z.optional(z.boolean()),
+}));
+export type SessionCollectionRowDetails = Readonly<Required<z.infer<typeof SessionCollectionRowDetailsSchema>>>;
+export const CollectionPluginDetailPreferencesSchema = lazyZodSchema(() => z.record(z.string(), z.boolean()));
+
 const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     analyticsOptOut: accountPreference(z.boolean(), false, 'privacy'),
     crashReportsOptOut: accountPreference(z.boolean(), false, 'privacy'),
@@ -904,7 +924,19 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
     // Presentation host owns column policy; Account storage carries its keyed JSON preferences.
     collectionColumnPreferencesV1: accountPreference(z.record(z.string(), StrictJsonValueSchema), {}, 'collection column presentation', ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES),
     collectionDisplayPreferencesV1: accountPreference(z.looseObject({
-        workflow: z.optional(z.looseObject({ presentation: z.optional(CollectionTableCardPresentationSchema) })),
+        workflow: z.optional(z.looseObject({
+            presentation: z.optional(CollectionTableCardPresentationSchema),
+            groupBy: z.optional(CollectionWorkflowGroupingSchema),
+            lines: z.optional(CollectionLinesSchema),
+            details: z.optional(CollectionPluginDetailPreferencesSchema),
+        })),
+        workflowRun: z.optional(z.looseObject({
+            groupBy: z.optional(CollectionWorkflowRunGroupingSchema),
+            lines: z.optional(CollectionLinesSchema),
+            details: z.optional(CollectionPluginDetailPreferencesSchema),
+        })),
+        sessionWork: z.optional(z.looseObject({ details: z.optional(SessionCollectionRowDetailsSchema) })),
+        artifact: z.optional(z.looseObject({ presentation: z.optional(CollectionArtifactPresentationSchema) })),
     }), {}, 'collection display'),
     collectionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),
     sessionSpacesEnabled: accountPreference(CollectionSpacesEnabledV1Schema, true, 'collection spaces enablement'),

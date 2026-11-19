@@ -2,7 +2,8 @@ import * as React from 'react';
 import { Platform, useWindowDimensions } from 'react-native';
 
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
-import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
+import { useLocalSetting } from '@/sync/domains/state/storage';
+import { useSessionCollectionDensity } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
 import { useIsTablet } from '@/utils/platform/responsive';
 
 import { resolveSessionListDensityViewState } from './resolveSessionListDensityViewState';
@@ -23,7 +24,7 @@ const sessionListSkeletonRowTestID = (index: number) => `session-list-skeleton-r
 export const SessionListSkeletonRows = React.memo(function SessionListSkeletonRows() {
     const isTablet = useIsTablet();
     const { width: windowWidth } = useWindowDimensions();
-    const sessionListDensity = useSetting('sessionListDensity');
+    const sessionListDensity = useSessionCollectionDensity();
     const uiFontScale = useLocalSetting('uiFontScale');
     // Same resolver and inputs as the list's own rows, so loading → loaded does not shift.
     const { rowHeight } = resolveSessionListDensityViewState(sessionListDensity, {

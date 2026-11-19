@@ -3,7 +3,9 @@ import { View } from 'react-native';
 
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { t } from '@/text';
-import type { CollectionTableCardPresentation } from '@happier-dev/protocol/account/settings/accountSettings';
+import { Icon } from '@/components/ui/icons/Icon';
+import { useUnistyles } from 'react-native-unistyles';
+import type { CollectionArtifactPresentation, CollectionTableCardPresentation } from '@happier-dev/protocol/account/settings/accountSettings';
 
 export type CollectionView = 'all' | 'found';
 
@@ -26,6 +28,10 @@ export const CollectionViewSwitch = React.memo(function CollectionViewSwitch(
     presentation: CollectionTableCardPresentation;
     onChange: (view: CollectionTableCardPresentation) => void;
     testIDPrefix: string;
+  }> | Readonly<{
+    artifactPresentation: CollectionArtifactPresentation;
+    onChange: (view: CollectionArtifactPresentation) => void;
+    testIDPrefix: string;
   }>,
 ) {
   if ('presentation' in props) {
@@ -35,14 +41,32 @@ export const CollectionViewSwitch = React.memo(function CollectionViewSwitch(
         { id: 'grid', label: t('settingsAppearance.surfaceFinish.card') },
       ]}
       activeTabId={props.presentation}
-      onSelectTab={props.onChange}
+      onSelectTab={next => next === props.presentation ? undefined : props.onChange(next)}
       testIDPrefix={props.testIDPrefix}
       accessibilityLabel={t('sessionsList.viewOptions')}
       segmentSizing="content"
     />;
   }
+  if ('artifactPresentation' in props) return <ArtifactPresentationSwitch {...props} />;
   return <CollectionDiscoverySwitch {...props} />;
 });
+
+function ArtifactPresentationSwitch(props: Readonly<{
+  artifactPresentation: CollectionArtifactPresentation;
+  onChange: (view: CollectionArtifactPresentation) => void;
+  testIDPrefix: string;
+}>) {
+  const { theme } = useUnistyles();
+  const color = theme.colors.text.secondary;
+  const tabs = React.useMemo(() => [
+    { id: 'grid' as const, label: t('artifacts.browser.view.grid'), icon: <Icon name="squares-four" size={16} color={color} /> },
+    { id: 'list' as const, label: t('artifacts.browser.view.list'), icon: <Icon name="list" size={16} color={color} /> },
+    { id: 'folders' as const, label: t('artifacts.browser.view.folders'), icon: <Icon name="folder" size={16} color={color} /> },
+  ], [color]);
+  return <SegmentedTabBar tabs={tabs} activeTabId={props.artifactPresentation}
+    onSelectTab={next => next === props.artifactPresentation ? undefined : props.onChange(next)}
+    testIDPrefix={props.testIDPrefix} accessibilityLabel={t('artifacts.browser.view.label')} segmentSizing="content" />;
+}
 
 function CollectionDiscoverySwitch(props: Readonly<{
   view: CollectionView;

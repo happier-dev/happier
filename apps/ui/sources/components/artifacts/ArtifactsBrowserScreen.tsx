@@ -26,13 +26,14 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
-import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { CollectionViewSwitch } from '@/components/ui/lists/collection/CollectionViewSwitch';
+import { useArtifactCollectionPresentation } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { useArtifacts, useArtifactsLoaded, useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { useArtifacts, useArtifactsLoaded } from '@/sync/domains/state/storage';
 import { createPersistentUiState, usePersistentUiStateValue } from '@/sync/domains/state/persistentUiState';
 import { useArtifactInventoryRead } from './useArtifactInventoryRead';
 import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
@@ -79,7 +80,7 @@ const LIST_MIN_WIDTH_PX = 320;
 const PAGE_MIN_WIDTH_PX = 560;
 
 /** Cards, a list, or the personal folder tree (EC D49): three presentations of the same library. */
-type BrowserPresentation = 'grid' | 'list' | 'folders';
+type BrowserPresentation = ReturnType<typeof useArtifactCollectionPresentation>[0];
 
 /**
  * The kind this device last chose, device-local beside the collection spaces (never a setting); unset lists what lives
@@ -151,11 +152,7 @@ export function ArtifactsBrowser(props: Readonly<{
     const [query, setQuery] = React.useState('');
     const kind = usePersistentUiStateValue(browserKindChoice, BROWSER_KIND_CHOICE_KEY) ?? 'home';
     const [sort, setSort] = React.useState<ArtifactBrowserSort>('updated_desc');
-    const [view, setView] = useLocalSettingMutable('artifactsBrowserViewV1');
-    // A phone lists by default (dense, scannable); cards lead only where two fit side by side (tablet, desktop).
-    // The person's own choice, once made, is kept.
-    const presentation: BrowserPresentation = view?.presentation ?? (deviceType === 'phone' ? 'list' : 'grid');
-    const setPresentation = React.useCallback((next: BrowserPresentation) => setView({ presentation: next }), [setView]);
+    const [presentation, setPresentation] = useArtifactCollectionPresentation(deviceType === 'phone' ? 'list' : 'grid');
     const filter = React.useMemo(() => ({ query, kind, sort }), [query, kind, sort]);
     const folderTree = React.useRef<ArtifactFolderTreeHandle>(null);
 
@@ -205,7 +202,7 @@ export function ArtifactsBrowser(props: Readonly<{
         : { value: query, onChangeText: setQuery, placeholder: searchPlaceholder, testID: 'artifacts:search' },
     [firstVisitForSearch, query, searchPlaceholder]);
 
-    const viewSwitch = <ArtifactViewSwitch presentation={presentation} onPresentationChange={setPresentation} />;
+    const viewSwitch = <CollectionViewSwitch artifactPresentation={presentation} onChange={setPresentation} testIDPrefix="artifacts:view" />;
     const firstVisit = loaded && total === 0 && !loadFailed;
     // Rows another surface already admitted (Context's Prompt kinds) are a part of the library, not all of it.
     const partial = !loaded && !loadFailed && total > 0;
@@ -501,29 +498,6 @@ function StorageMeter(props: Readonly<{ usedBytes: number; limitBytes: number }>
             </View>
             <Text style={[styles.presentText, full ? styles.meterTextFull : null]}>{t('artifacts.browser.storage.meter', { used, limit })}</Text>
         </View>
-    );
-}
-
-/** Grid | List | Folders: icons only, the same three presentations of the library everywhere it is drawn. */
-function ArtifactViewSwitch(props: Readonly<{
-    presentation: BrowserPresentation;
-    onPresentationChange: (presentation: BrowserPresentation) => void;
-}>) {
-    const { theme } = useUnistyles();
-    const viewTabs = React.useMemo(() => [
-        { id: 'grid' as const, label: t('artifacts.browser.view.grid'), icon: <Icon name="squares-four" size={16} color={theme.colors.text.secondary} /> },
-        { id: 'list' as const, label: t('artifacts.browser.view.list'), icon: <Icon name="list" size={16} color={theme.colors.text.secondary} /> },
-        { id: 'folders' as const, label: t('artifacts.browser.view.folders'), icon: <Icon name="folder" size={16} color={theme.colors.text.secondary} /> },
-    ], [theme.colors.text.secondary]);
-    return (
-        <SegmentedTabBar
-            tabs={viewTabs}
-            activeTabId={props.presentation}
-            onSelectTab={props.onPresentationChange}
-            testIDPrefix="artifacts:view"
-            accessibilityLabel={t('artifacts.browser.view.label')}
-            segmentSizing="content"
-        />
     );
 }
 
