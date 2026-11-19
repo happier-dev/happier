@@ -1,6 +1,6 @@
 export class PauseController {
     #pausedReasons = new Set<string>();
-    #waiters: Array<() => void> = [];
+    #waiters = new Set<() => void>();
 
     isPaused(): boolean {
         return this.#pausedReasons.size > 0;
@@ -15,17 +15,22 @@ export class PauseController {
         const key = String(reason ?? '').trim() || 'default';
         this.#pausedReasons.delete(key);
         if (this.#pausedReasons.size > 0) return;
-        const waiters = this.#waiters;
-        this.#waiters = [];
-        for (const resolve of waiters) {
-            resolve();
+        for (const wake of this.#waiters) {
+            wake();
         }
     }
 
-    async waitUntilResumed(): Promise<void> {
-        if (this.#pausedReasons.size === 0) return;
+    /** Wakes on resume or cancellation. Check the signal before starting work. */
+    async waitUntilResumed(signal?: AbortSignal): Promise<void> {
+        if (!this.isPaused() || signal?.aborted) return;
         await new Promise<void>((resolve) => {
-            this.#waiters.push(resolve);
+            const wake = () => {
+                this.#waiters.delete(wake);
+                signal?.removeEventListener('abort', wake);
+                resolve();
+            };
+            this.#waiters.add(wake);
+            signal?.addEventListener('abort', wake, { once: true });
         });
     }
 }

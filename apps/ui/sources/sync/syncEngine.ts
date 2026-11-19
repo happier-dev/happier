@@ -1420,6 +1420,7 @@ class Sync {
             },
         });
         private pauseController = new PauseController();
+        private bootstrapPauseWaitController: AbortController | null = null;
         private userRequestLeaseOwner = userRequestLeaseOwner;
         private activeEndpointSupervisor: ManagedEndpointSupervisor | null = null;
       private syncTuning: SyncTuning = loadSyncTuning();
@@ -2900,6 +2901,7 @@ class Sync {
     public disposeEmbedSession(options?: Readonly<{ preserveSessionState?: boolean }>): void {
         const scope = this.embedSessionScope;
         if (!scope) return;
+        this.bootstrapPauseWaitController?.abort();
         this.initialChangesCursor.reset();
         this.embedSessionScope = null;
         scope.approvalsSync.stop();
@@ -3589,6 +3591,7 @@ class Sync {
     }
 
     private resetServerScopedRuntimeState = (targetToReset?: SyncServerTarget | null) => {
+        this.bootstrapPauseWaitController?.abort();
         this.bootstrapForegroundReady = null;
         this.appliedPendingQueueOwner = null;
         this.projectAccountRowsRuntime = null;
@@ -8781,8 +8784,12 @@ class Sync {
           const embedScope = this.embedSessionScope;
           const generation = this.serverScopeGeneration;
           const credentials = this.credentials;
-          await this.pauseController.waitUntilResumed();
-          if (!this.credentials || this.credentials !== credentials || this.serverScopeGeneration !== generation) {
+          this.bootstrapPauseWaitController?.abort();
+          const waitController = new AbortController();
+          this.bootstrapPauseWaitController = waitController;
+          await this.pauseController.waitUntilResumed(waitController.signal);
+          if (this.bootstrapPauseWaitController === waitController) this.bootstrapPauseWaitController = null;
+          if (waitController.signal.aborted || !credentials || this.credentials !== credentials || this.serverScopeGeneration !== generation) {
               return;
           }
           if (!embedScope && isEmbedWindowContext()) return;

@@ -2,6 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
@@ -10,7 +11,7 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
 
 const document = Object.assign(new EventTarget(), { visibilityState: 'visible', wasDiscarded: false,
-    getElementById: () => null });
+    documentElement: { style: {} }, getElementById: () => null });
 const browser = new EventTarget();
 function installBrowserEvents() {
     vi.stubGlobal('document', document);
@@ -84,6 +85,74 @@ it('keeps web lifecycle and tab presence idle without timer fires or presence wr
         timers.stop();
         intervals.clear();
         locks.restore();
+        local.restore();
+        vi.unstubAllGlobals();
+    }
+});
+
+it('releases a retired cold Account bootstrap while the web tab stays hidden', async () => {
+    const local = installLocalStorageMock();
+    vi.stubGlobal('sessionStorage', localStorage);
+    installBrowserEvents();
+    const { storage } = await import('./domains/state/storage');
+    const { isAppliedActiveServerRuntimeAvailable } = await import('./runtime/orchestration/appliedActiveServerRuntime');
+    const owner = sync as unknown as { bootstrapSync(): Promise<void> };
+    const bootstrap = vi.spyOn(owner, 'bootstrapSync');
+    const requests: string[] = [];
+    const restore = (accountId: string) => restoreServerAccountForTest({
+        serverUrl: 'https://web-bootstrap.example.test',
+        accountId,
+        credentials: {
+            token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.sig`,
+            secret: Buffer.alloc(32, 7).toString('base64url'),
+            custody: 'historical',
+        },
+        request: async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            requests.push(path);
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v2/cursor') return Response.json({ cursor: 17, changesFloor: 0 });
+            if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+            if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: accountId });
+            return createEmptyAccountBootstrapHttpResponse(path, init);
+        },
+    });
+    const corePaths = ['/v2/cursor', '/v2/account/settings', '/v1/account/profile'];
+    const setVisible = (visible: boolean) => {
+        document.visibilityState = visible ? 'visible' : 'hidden';
+        document.dispatchEvent(new Event('visibilitychange'));
+    };
+    let account: Awaited<ReturnType<typeof restore>> | undefined;
+    try {
+        setVisible(false);
+        account = await restore('retired-bootstrap');
+        expect(isAppliedActiveServerRuntimeAvailable()).toBe(true);
+        expect(storage.getState().profileScope?.accountId).toBe('retired-bootstrap');
+        expect(requests).toContain('/v1/account/encryption/currentness');
+        expect(storage.getState().isDataReady).toBe(false);
+        expect(requests.filter(path => corePaths.includes(path))).toEqual([]);
+
+        const pausedBootstrap = bootstrap.mock.results[0].value;
+        let settled = false;
+        void pausedBootstrap.then(() => { settled = true; });
+        await account.dispose();
+        account = undefined;
+        await vi.waitFor(() => expect(settled).toBe(true));
+        expect(requests.filter(path => corePaths.includes(path))).toEqual([]);
+
+        account = await restore('foreground-bootstrap');
+        expect(storage.getState().isDataReady).toBe(false);
+        setVisible(true);
+        await vi.waitFor(() => expect(storage.getState().isDataReady).toBe(true));
+        expect(requests.filter(path => corePaths.includes(path)).slice(0, 1)).toEqual(['/v2/cursor']);
+        expect(requests).toEqual(expect.arrayContaining(corePaths));
+        expect(storage.getState().profile.id).toBe('foreground-bootstrap');
+    } finally {
+        await account?.dispose();
+        setVisible(true);
+        bootstrap.mockRestore();
         local.restore();
         vi.unstubAllGlobals();
     }
