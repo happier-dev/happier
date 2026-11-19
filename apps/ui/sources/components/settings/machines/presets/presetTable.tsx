@@ -77,10 +77,10 @@ export function readPresetTableImage(item: PresetTableItem): PresetImageState {
 
 /** Column widths at normal text size; the shared table scales them with the reader's text. */
 const COLUMN = Object.freeze({
-  size: 148,
+  size: 136,
   for: 80,
   inUse: 96,
-  image: 164,
+  image: 148,
   lastUsed: 96,
   next: 80,
   runsIn: 132,
@@ -410,8 +410,8 @@ function PresetPhoneLine(
 }
 
 /**
- * The row's "…" item for the image (lab review 5): a healthy or out-of-date image's Rebuild, a failed or cancelled
- * build's Retry, a kept-but-unbuilt image's Build now. Every width reaches it there; a wide row also shows the
+ * The row's "…" item for the image (lab review 5): a healthy or out-of-date image's Rebuild, a failed
+ * build's Retry, a kept-but-unbuilt (or stopped) image's Build now. Every width reaches it there; a wide row also shows the
  * attention step as its own button.
  */
 export function readPresetTableMenuStep(item: PresetTableItem): Readonly<{ id: PresetTableStep; label: string }> | null {
@@ -421,7 +421,6 @@ export function readPresetTableMenuStep(item: PresetTableItem): Readonly<{ id: P
     case 'stale':
       return { id: 'rebuild', label: t('machinePresets.prepareRebuild') };
     case 'failed':
-    case 'cancelled':
       return { id: 'retry', label: t('common.retry') };
     case 'notBuilt':
       return { id: 'build', label: t('machinePresets.prepareBuild') };

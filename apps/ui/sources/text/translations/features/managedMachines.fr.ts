@@ -488,6 +488,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             launchTitle: "Taille, image et emplacement",
             launchDescription: "Défini à la création. Modifie le préréglage pour les nouvelles machines ; cette machine garde sa configuration d’origine.",
             madeFromPreset: ({ preset }: { preset: string }) => `Créée à partir du préréglage ${preset}.`,
+            madeFromPresetOlderImage: ({ preset }: { preset: string }) => `Créée à partir du préréglage ${preset}, avec une image plus ancienne que l’actuelle.`,
             createdOn: ({ provider }: { provider: string }) => `Créée par Happier chez ${provider}.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${kind} ${provider}`,
             runningFor: ({ duration }: { duration: string }) => `En marche depuis ${duration}`,

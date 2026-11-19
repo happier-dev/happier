@@ -488,6 +488,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             launchTitle: "规格、镜像和位置",
             launchDescription: "在创建时设定。编辑预设以用于新机器；这台机器保留创建时的配置。",
             madeFromPreset: ({ preset }: { preset: string }) => `由预设“${preset}”创建。`,
+            madeFromPresetOlderImage: ({ preset }: { preset: string }) => `由预设 ${preset} 创建，镜像比当前的旧。`,
             createdOn: ({ provider }: { provider: string }) => `由 Happier 在 ${provider} 上创建。`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${provider} ${kind}`,
             runningFor: ({ duration }: { duration: string }) => `已运行 ${duration}`,

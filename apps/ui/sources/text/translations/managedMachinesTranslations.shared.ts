@@ -494,6 +494,7 @@ export const managedMachinesEn = {
             launchTitle: "Size, image and place",
             launchDescription: "Set when it was created. Edit the preset for new machines; this machine keeps what it was made with.",
             madeFromPreset: ({ preset }: { preset: string }) => `Made from the ${preset} preset.`,
+            madeFromPresetOlderImage: ({ preset }: { preset: string }) => `Made from the ${preset} preset, with an older image than it keeps now.`,
             createdOn: ({ provider }: { provider: string }) => `Created by Happier on ${provider}.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${provider} ${lowerKind(kind)}`,
             runningFor: ({ duration }: { duration: string }) => `Running ${duration}`,

@@ -488,6 +488,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             launchTitle: "サイズ、イメージ、場所",
             launchDescription: "作成時に設定されました。新しいマシン用にはプリセットを編集してください。このマシンは作成時の設定のままです。",
             madeFromPreset: ({ preset }: { preset: string }) => `プリセット「${preset}」から作成されました。`,
+            madeFromPresetOlderImage: ({ preset }: { preset: string }) => `プリセット ${preset} から作成。現在のイメージより古いイメージです。`,
             createdOn: ({ provider }: { provider: string }) => `Happier が ${provider} で作成しました。`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${provider} ${kind}`,
             runningFor: ({ duration }: { duration: string }) => `${duration}実行中`,

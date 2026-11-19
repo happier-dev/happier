@@ -93,7 +93,7 @@ export function readPresetPreparedSummary(
 
 /** The image's state as one word in the page's own words, with its tone and its one next step. */
 export type PresetImageState = Readonly<{
-  kind: 'none' | 'off' | 'notBuilt' | 'building' | 'ready' | 'stale' | 'failed' | 'cancelled';
+  kind: 'none' | 'off' | 'notBuilt' | 'building' | 'ready' | 'stale' | 'failed';
   word: string;
   /** `quiet`: nothing to do (healthy or not kept); `warning`: it needs the person; `danger`: it failed; `running`: a build is under way. */
   tone: 'quiet' | 'warning' | 'danger' | 'running';
@@ -126,7 +126,8 @@ export function describePresetImage(
     case 'failed':
       return { kind: 'failed', word: t('inbox.actionOperations.status.failed'), tone: 'danger', line: null, next: 'retry' };
     case 'cancelled':
-      return { kind: 'cancelled', word: t('inbox.actionOperations.status.cancelled'), tone: 'quiet', line: null, next: 'retry' };
+      // The person stopped it, so it reads as not built yet, quietly, with Build in the row's "…" (ruling 11-19 10:38Z).
+      return { kind: 'notBuilt', word: t('machinePresets.prepareNotBuilt'), tone: 'quiet', line: null, next: 'build' };
     case 'ready': {
       const line = describePreparedImageBuilt(summary);
       return summary?.stale
@@ -136,4 +137,17 @@ export function describePresetImage(
     default:
       return { kind: 'notBuilt', word: t('machinePresets.prepareNotBuilt'), tone: 'quiet', line: null, next: 'build' };
   }
+}
+
+/**
+ * Whether a Machine made from a preset runs an older image than the one the preset keeps now (owner decision D):
+ * the image revision recorded at the Machine's admission against the preset's own ready summary. A Machine started
+ * cold (no recorded image) or a preset with no ready image says nothing.
+ */
+export function isMachineImageOlderThanPreset(
+  machineImageRevision: number | undefined,
+  summary: ReturnType<typeof readPresetPreparedSummary>,
+): boolean {
+  return machineImageRevision !== undefined && summary?.builtFromRevision != null
+    && machineImageRevision < summary.builtFromRevision;
 }

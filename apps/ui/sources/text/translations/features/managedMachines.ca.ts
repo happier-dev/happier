@@ -488,6 +488,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             launchTitle: "Mida, imatge i ubicació",
             launchDescription: "Es va definir en crear-la. Edita el valor predefinit per a màquines noves; aquesta màquina conserva amb què es va crear.",
             madeFromPreset: ({ preset }: { preset: string }) => `Creada a partir de la configuració predefinida ${preset}.`,
+            madeFromPresetOlderImage: ({ preset }: { preset: string }) => `Creada amb el preajust ${preset}, amb una imatge més antiga que l’actual.`,
             createdOn: ({ provider }: { provider: string }) => `Creada per Happier a ${provider}.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${kind} de ${provider}`,
             runningFor: ({ duration }: { duration: string }) => `En execució fa ${duration}`,

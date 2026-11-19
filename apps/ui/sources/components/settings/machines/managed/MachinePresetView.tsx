@@ -31,7 +31,7 @@ import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPr
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { MachinePresetDetail, managedPresetLimitRow, type MachinePresetDetailModel } from './MachinePresetDetail';
 import { MachinePresetProjectFilesSection } from './MachinePresetProjectFilesSection';
-import { describePreparedImageBuilt, projectPresetPreparationSteps } from './presetPreparationPresentation';
+import { describePreparedImageBuilt, describePresetImage, projectPresetPreparationSteps } from './presetPreparationPresentation';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SetupSteps } from '@/components/ui/setupBlocks/SetupSteps';
 import { resolvePresetSharedSections } from './managedPresetReach';
@@ -82,17 +82,16 @@ function MachinePresetPrepareSection(props: Readonly<{
         || operation !== null && !isActionOperationTerminal(operation.snapshot.state));
     const retry = preparation.interrupted || preparation.reportedStatus === 'failed' || preparation.reportedStatus === 'cancelled'
         || operation?.snapshot.state === 'failed' || operation?.snapshot.state === 'cancelled';
-    // A settled build whose image is reported ready says so (lab scene 5 "Image ready"), not its operation's generic word.
+    // The image's reported state in the one owner's words (the Presets table says the same): "Image ready", "Image out
+    // of date", "Not built yet". A live operation, an interruption or a failed request says its own word first.
+    const image = describePresetImage({ ...props.preset, preparation: props.preparation }, preparation.readySummary);
     const settledReady = preparation.reportedStatus === 'ready' && !active && !retry;
     const status = preparation.error ? t('ui.pluginUi.actionFailed') : preparation.interrupted ? t('voiceAssistant.interrupted')
-        : settledReady ? t('machinePresets.prepareReady')
+        : settledReady ? image.word
         : operation
             ? describeActionOperationStatusLabel(resolveActionOperationStatus(operation.snapshot, operation.observation).label)
             : preparation.awaitingOperation ? t('inbox.actionOperations.status.accepted')
-                : preparation.reportedStatus === 'ready' ? t('machinePresets.prepareReady')
-                    : preparation.reportedStatus === 'failed' ? t('inbox.actionOperations.status.failed')
-                        : preparation.reportedStatus === 'cancelled' ? t('inbox.actionOperations.status.cancelled')
-                            : t('machinePresets.prepareNotBuilt');
+                : image.word;
     const disabled = !props.canManage || props.busy || preparation.pending;
     const built = preparation.reportedStatus === 'ready';
     // The row's operations are quiet section actions that keep to their label's line (lab scene 5 "a quiet Rebuild").

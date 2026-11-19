@@ -95,7 +95,9 @@ import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { projectManagedMachineApproval, shouldReleaseManagedMachinePendingOnApproval } from './managedMachineDetailPresentation';
 import { prepareMachineSetupPresetApplyInput } from './machineSetupApply';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
-import { prepareManagedMachineResizeInputForSnapshot } from '@/sync/ops/machines/machinePresetCollectionClient';
+import { isOpenedManagedMachinePresetV1, prepareManagedMachineResizeInputForSnapshot, readManagedMachinePresetImageRevision } from '@/sync/ops/machines/machinePresetCollectionClient';
+import { isMachineImageOlderThanPreset, readPresetPreparedSummary } from './presetPreparationPresentation';
+import { useMachinePresets } from './useMachinePresets';
 
 type Execute = FrontDoorActionExecute;
 type ManagedSectionActionId = ManagedMachineActionIdV1 | 'machines.managed.bootstrap.respond';
@@ -1124,6 +1126,9 @@ export function useManagedMachineHeaderIdentity(machine: ManagedMachineReadSnaps
     const fullMachine = machine && !isManagedOpaquePresetMachineV1(machine) ? machine : undefined;
     const presentation = useManagedProvisionerPresentation({ serverId, controller: machine?.controller,
         provider: fullMachine?.launch.provider, schemaVersion: fullMachine?.launch.schemaVersion });
+    // Owner decision D: a Machine made from a preset whose image was rebuilt since says so beside "Made from", through
+    // the preset owner's ready summary (no second freshness check).
+    const olderImage = useManagedMachineOlderPresetImage(fullMachine, serverId);
     if (!machine) return null;
     if (!fullMachine) return { name: t('common.machine'), mark: <Icon name="desktop" />, description: null, meta: [],
         presence: managedMachineHeaderPresence(machine, enrolledMachine) };
@@ -1132,9 +1137,26 @@ export function useManagedMachineHeaderIdentity(machine: ManagedMachineReadSnaps
     const meta: PageHeaderMetaFact[] = provider ? [{ key: 'managed-kind', text: presentation.kindTitle
         ? t('managedMachines.detail.kindFact', { provider, kind: presentation.kindTitle }) : provider }] : [];
     return { name: fullMachine.launch.name, mark: presentation.mark,
-        description: presetName ? t('managedMachines.detail.madeFromPreset', { preset: presetName })
+        description: presetName ? (olderImage ? t('managedMachines.detail.madeFromPresetOlderImage', { preset: presetName })
+            : t('managedMachines.detail.madeFromPreset', { preset: presetName }))
             : provider ? t('managedMachines.detail.createdOn', { provider }) : null,
         meta, presence: managedMachineHeaderPresence(machine, enrolledMachine) };
+}
+
+/** Whether this Machine's recorded image revision is older than the image its preset keeps now. */
+function useManagedMachineOlderPresetImage(machine: ManagedMachineReadSnapshotV1 | undefined, serverId: string): boolean {
+    const presetId = machine?.preset?.id ?? null;
+    // Only a Machine that started from a prepared image has a revision to compare: a cold start reads no presets.
+    const imageRevision = machine ? readManagedMachinePresetImageRevision(machine) : undefined;
+    const compares = presetId !== null && imageRevision !== undefined;
+    const serverIds = React.useMemo(() => (compares ? [serverId] : []), [compares, serverId]);
+    const presets = useMachinePresets(serverIds).presetsByServerId[serverId];
+    return React.useMemo(() => {
+        if (!compares) return false;
+        const preset = presets?.find(entry => entry.id === presetId);
+        if (!preset || !isOpenedManagedMachinePresetV1(preset)) return false;
+        return isMachineImageOlderThanPreset(imageRevision, readPresetPreparedSummary(preset));
+    }, [compares, imageRevision, presetId, presets]);
 }
 
 type ManagedKeepProps = Omit<ManagedMachineKeepControlProps, 'presentation' | 'testID' | 'showLabel'>;

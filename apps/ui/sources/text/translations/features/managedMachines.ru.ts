@@ -488,6 +488,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             launchTitle: "Размер, образ и расположение",
             launchDescription: "Задано при создании. Измените пресет для новых машин; эта машина сохраняет то, с чем была создана.",
             madeFromPreset: ({ preset }: { preset: string }) => `Создана из пресета ${preset}.`,
+            madeFromPresetOlderImage: ({ preset }: { preset: string }) => `Создана из пресета ${preset}, с более старым образом, чем текущий.`,
             createdOn: ({ provider }: { provider: string }) => `Создана Happier в ${provider}.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${kind} ${provider}`,
             runningFor: ({ duration }: { duration: string }) => `Работает ${duration}`,

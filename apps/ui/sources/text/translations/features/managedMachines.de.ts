@@ -488,6 +488,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             launchTitle: "Größe, Image und Standort",
             launchDescription: "Beim Erstellen festgelegt. Bearbeite die Vorlage für neue Rechner; dieser Rechner behält, womit er erstellt wurde.",
             madeFromPreset: ({ preset }: { preset: string }) => `Aus der Vorlage ${preset} erstellt.`,
+            madeFromPresetOlderImage: ({ preset }: { preset: string }) => `Aus der Vorlage ${preset} erstellt, mit einem älteren Image als dem aktuellen.`,
             createdOn: ({ provider }: { provider: string }) => `Von Happier bei ${provider} erstellt.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${provider} ${kind}`,
             runningFor: ({ duration }: { duration: string }) => `Läuft seit ${duration}`,
