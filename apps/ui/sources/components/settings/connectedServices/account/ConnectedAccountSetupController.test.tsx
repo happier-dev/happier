@@ -1872,7 +1872,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-device:start')).not.toBeNull());
         expect(screen.findHostByTestId('connected-service-setup:method-continue')).toBeNull();
         expect(authenticationCommands).toEqual([]);
-        expect(screen.findHostByTestId('connected-account-device:start')!.props.disabled).not.toBe(true);
+        await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-device:start')!.props.disabled).not.toBe(true));
         await screen.pressByTestIdAsync('connected-service-setup:method:oauth');
         await vi.waitFor(() => {
             const browserStart = screen.findHostByTestId('connected-account-oauth:start');
@@ -1900,10 +1900,8 @@ describe('ConnectedAccountSetupController real ownership', () => {
                 panel={{ intent: { kind: 'add' }, onConnected, onCancel }} />
         </InjectedAuthProvider>);
         try {
-            await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-device:start')).not.toBeNull());
-            expect(controlCommands).toEqual([]);
             expect(authenticationCommands).toEqual([]);
-            await screen.pressByTestIdAsync('connected-account-device:start');
+            await pressReadyAction(screen, 'connected-account-device:start');
             await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-device:code')).not.toBeNull());
             expect(authenticationCommands).toEqual([{ operation: 'beginConnect', service, modeId: 'device' }]);
         } finally { await screen.unmount(); }
@@ -2820,7 +2818,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
     });
 
     it.each(['device', 'oauth'] as const)('resumes daemon-persisted %s authentication after remount without creating another attempt', async (kind) => {
-        let persistedAttemptLive = true;
+        let persistedAttemptLive = kind === 'oauth';
         installDescription({ ...described, descriptor: { ...described.descriptor,
             authentication: { defaultModeId: kind, modes: [kind === 'device'
                 ? { id: kind, kind: 'oauthDeviceCode', outcomeReconciliation: 'none' }
@@ -2832,6 +2830,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
                 createdAtMs: Date.now(), expiresAtMs: Date.now() + 60_000 }] }
             : description;
         handleAuthentication = command => {
+            if (command.operation === 'beginConnect' && command.modeId === kind) persistedAttemptLive = true;
             if (command.operation === 'cancel') {
                 persistedAttemptLive = false;
                 return { status: 'cancelled', attemptId: command.attemptId };
@@ -2846,21 +2845,37 @@ describe('ConnectedAccountSetupController real ownership', () => {
         await installNativeConfigurationAttemptBoundary();
         const testId = kind === 'device' ? 'connected-account-device:code' : 'connected-account-oauth:open';
         const first = await renderScreen(element());
+        if (kind === 'device') await pressReadyAction(first, 'connected-account-device:start');
         await vi.waitFor(() => expect(first.findHostByTestId(testId)).not.toBeNull());
-        await act(async () => first.tree.unmount());
-        const second = await renderScreen(element());
-        await vi.waitFor(() => expect(second.findHostByTestId(testId)).not.toBeNull());
-        expect(authenticationCommands).toEqual(Array.from({ length: 2 }, () => kind === 'device'
-            ? { operation: 'resumeDevice', attemptId: 'persisted-attempt' }
-            : { operation: 'read', attemptId: 'persisted-attempt' }));
+        await first.unmount();
+        const second = await renderScreen(kind === 'device' ? element({
+            ...selection, selectedTarget: null, state: { kind: 'unselected', candidates: selection.candidates },
+            canExecute: false, resolveExecutionTarget: () => null,
+        }, service, null) : element());
+        try {
+            if (kind === 'device') {
+                expect(second.findHostByTestId(testId)).toBeNull();
+                await second.update(element(selection, service, null));
+            }
+            await vi.waitFor(() => expect(second.findHostByTestId(testId), second.getTextContent()).not.toBeNull());
+            expect(authenticationCommands).toEqual(kind === 'device' ? [
+                { operation: 'beginConnect', service, modeId: 'device' },
+                { operation: 'resumeDevice', attemptId: 'persisted-attempt' },
+            ] : Array.from({ length: 2 }, () => ({ operation: 'read', attemptId: 'persisted-attempt' })));
+            if (kind === 'device') {
+                await second.pressByTestIdAsync('connected-account-setup:cancel');
+                await vi.waitFor(() => expect(authenticationCommands).toContainEqual({
+                    operation: 'cancel', attemptId: 'persisted-attempt',
+                }));
+            }
+        } finally { await second.unmount(); }
         if (kind === 'device') {
-            await second.pressByTestIdAsync('connected-service-setup:method:manual');
-            await vi.waitFor(() => expect(second.findHostByTestId('connected-account-manual:token')).not.toBeNull());
-            await second.pressByTestIdAsync('connected-service-setup:method:device');
-            expect(authenticationCommands.filter(command => command.operation === 'beginConnect' && command.modeId === 'device')).toHaveLength(0);
-            expect(second.findHostByTestId('connected-account-device:start')!.props.disabled).not.toBe(true);
-            await second.pressByTestIdAsync('connected-account-device:start');
-            await vi.waitFor(() => expect(authenticationCommands.filter(command => command.operation === 'beginConnect' && command.modeId === 'device')).toHaveLength(1));
+            const reopened = await renderScreen(element(selection, service, null));
+            try {
+                await pressReadyAction(reopened, 'connected-account-device:start');
+                await vi.waitFor(() => expect(reopened.findHostByTestId(testId)).not.toBeNull());
+                expect(authenticationCommands.filter(command => command.operation === 'beginConnect' && command.modeId === 'device')).toHaveLength(2);
+            } finally { await reopened.unmount(); }
         }
     });
 

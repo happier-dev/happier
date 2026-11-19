@@ -477,6 +477,10 @@ const ConnectedAccountServiceController = React.memo(
         ?? (panelIntent?.kind === 'add' || !controllerProps.panel ? selectedSetupMode?.id ?? null : null);
     const machineRequired = accountDirectMode === null && accountModeIds !== null
         && selectedAuthenticationModeId !== null && !accountModeIds.includes(selectedAuthenticationModeId);
+    // Opening a native device step can restore its Machine's sign-in before the person chooses to start one.
+    const initialDeviceSetup = panelIntent?.kind === 'add' && !hasExplicitAuthenticationIntent
+        && selectedSetupMode?.kind === 'oauthDeviceCode';
+    const restoresInitialDeviceAttempt = initialDeviceSetup && machineRequired;
     const hasPortableAuthenticationModes = accountModeIds !== null && accountModeIds.length > 0;
     const selectedModeIsPortable = selectedAuthenticationModeId !== null && accountModeIds?.includes(selectedAuthenticationModeId) === true;
     const browserRequiresMachine = selectedAuthenticationModeId !== null && accountAuthenticationModes?.status === 'available'
@@ -989,8 +993,8 @@ const ConnectedAccountServiceController = React.memo(
     }, [cancelDiscardedAttempt, completeSetup, isControllerCurrent, readConfiguration, refreshDescription, renameAccount]);
 
     React.useEffect(() => {
-        if (panelIntent?.kind === 'add' && !hasExplicitAuthenticationIntent && !preparesInitialClientConfiguration) return;
-        if (!description || !service || !serverId || machineRequired && !machineId || attempt || busy) return;
+        if (panelIntent?.kind === 'add' && !hasExplicitAuthenticationIntent && !preparesInitialClientConfiguration && !restoresInitialDeviceAttempt) return;
+        if ((!description && !restoresInitialDeviceAttempt) || !service || !serverId || machineRequired && !machineId || attempt || busy) return;
         const scopeKey = JSON.stringify([serverId, machineRequired ? machineId : null, service.pluginId, service.localId]);
         if (discoveredScopeRef.current === scopeKey) return;
         discoveredScopeRef.current = scopeKey;
@@ -1018,7 +1022,9 @@ const ConnectedAccountServiceController = React.memo(
                 return;
             }
             // An explicit method choice wins over an older, still-cancelling attempt.
-            const pending = listed.attempts.find(candidate => activeModeId === null || candidate.modeId === activeModeId);
+            const pending = listed.attempts.find(candidate => restoresInitialDeviceAttempt
+                ? candidate.kind === 'device' && candidate.intent === 'connect'
+                : activeModeId === null || candidate.modeId === activeModeId);
             if (!pending) {
                 completed = true;
                 setNoPendingAttempt(true);
@@ -1028,7 +1034,7 @@ const ConnectedAccountServiceController = React.memo(
             // settings-and-key draft resumed there shows only the key: the settings it saved (and
             // that may have caused the refusal) are out of reach. The add panel releases it and
             // opens the full draft instead.
-            const pendingMode = description.descriptor.authentication.modes.find(mode => mode.id === pending.modeId);
+            const pendingMode = description?.descriptor.authentication.modes.find(mode => mode.id === pending.modeId);
             if (panelIntent?.kind === 'add' && pending.intent === 'connect' && pending.phase === 'awaitingManual'
                 && pendingMode?.kind === 'manual' && pendingMode.configuration !== undefined) {
                 cancelDiscardedAttempt(pending.attemptId);
@@ -1069,7 +1075,7 @@ const ConnectedAccountServiceController = React.memo(
                 discoveredScopeRef.current = null;
             }
         };
-    }, [acceptAttemptResponse, accountLifetime, activeModeId, assertCapturedAccountCurrent, attempt, busy, cancelDiscardedAttempt, description, executeAction, expectedActiveServer, hasExplicitAuthenticationIntent, isControllerCurrent, getLifecycleSignal, machineId, machineRequired, panelIntent?.kind, preparesInitialClientConfiguration, serverId, service]);
+    }, [acceptAttemptResponse, accountLifetime, activeModeId, assertCapturedAccountCurrent, attempt, busy, cancelDiscardedAttempt, description, executeAction, expectedActiveServer, hasExplicitAuthenticationIntent, isControllerCurrent, getLifecycleSignal, machineId, machineRequired, panelIntent?.kind, preparesInitialClientConfiguration, restoresInitialDeviceAttempt, serverId, service]);
 
     const runAuthentication = React.useCallback(async (
         command: Parameters<typeof runConnectedAccountAuthenticationAction>[0]['command'],
@@ -1960,7 +1966,8 @@ const ConnectedAccountServiceController = React.memo(
         // The initial Account-only description is not a native sign-in failure.
         const choosingMethod = panelIntent.kind === 'add' && !hasExplicitAuthenticationIntent
             && ranked.length > 0
-            && !accountDirectMode && !attempt && !configuration;
+            && !accountDirectMode && !attempt && !configuration
+            && !(initialDeviceSetup && errorCode);
         // The selected way to sign in shows its own first step: a code or browser sign-in is one primary
         // named for what it does. That press is the explicit choice (R8-9); nothing starts before it.
         const startableMode = !attempt && !configuration && !accountDirectMode ? activeMode : null;
@@ -1968,7 +1975,9 @@ const ConnectedAccountServiceController = React.memo(
             && (startableMode.kind === 'oauthDeviceCode' || startableMode.kind === 'oauthAuthorizationCode') ? {
             testID: startableMode.kind === 'oauthDeviceCode' ? 'connected-account-device:start' : 'connected-account-oauth:start',
             loading: busy,
-            disabled: busy || (hasExplicitAuthenticationIntent && (!noPendingAttempt || !credentialWriteAllowed)) || (machineRequired && !machineId),
+            disabled: busy || (initialDeviceSetup && accountModeIds === null)
+                || ((hasExplicitAuthenticationIntent || restoresInitialDeviceAttempt) && !noPendingAttempt)
+                || (hasExplicitAuthenticationIntent && !credentialWriteAllowed) || (machineRequired && !machineId),
             onPress: () => {
                 panelStartedRef.current = true;
                 panelRef.current?.onModeChange?.(startableMode.id);
