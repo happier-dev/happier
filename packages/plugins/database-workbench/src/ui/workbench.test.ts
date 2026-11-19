@@ -1,6 +1,8 @@
 import { expect, it } from 'vitest';
 import type { DatabaseOperationResultV1, DatabaseRelationStructureV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
+import { DATABASE_EDITS_APPLY_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import type { WorkbenchClient, WorkbenchLocation } from './models.js';
 import { workbenchTargetKey, createWorkbenchInstance } from './workbench.js';
 
@@ -58,6 +60,7 @@ it('reads only demanded catalogue pages, retains held row identity, and scopes o
         } };
         instance.drafts.stage(instance.draftKey(change), change);
         const apply = instance.apply(relation);
+        expect(apply.action).toBe(databaseActionLocalIdV1(DATABASE_EDITS_APPLY_ACTION_ID_V1));
         await apply.controller.prepare({ signal: new AbortController().signal });
         apply.controller.onSettled({ ok: true, result: { ok: true, operation: 'edits.apply',
             status: 'committed', inserted: '0', updated: '0', deleted: '1' } });

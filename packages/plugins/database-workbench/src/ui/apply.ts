@@ -1,6 +1,7 @@
 import { DATABASE_EDITS_APPLY_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { type DatabaseDescriptorV1, type DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
+import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { createStagedEdits } from './drafts.js';
 import type { WorkbenchApplyOutcome, WorkbenchChange, WorkbenchControlBinding } from './models.js';
@@ -51,5 +52,5 @@ export function createApplyControl(host: ApplyHost, targetKey: string, relation:
             submitted = [];
         },
     };
-    return { action: DATABASE_EDITS_APPLY_ACTION_ID_V1, controller };
+    return { action: databaseActionLocalIdV1(DATABASE_EDITS_APPLY_ACTION_ID_V1), controller };
 }

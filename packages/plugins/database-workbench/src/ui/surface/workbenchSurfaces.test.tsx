@@ -6,6 +6,8 @@ import {
     DATABASE_RELATIONS_LIST_ACTION_ID_V1,
     DATABASE_ROWS_READ_ACTION_ID_V1,
     DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
+    DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
+    DATABASE_STATEMENT_RUN_ACTION_ID_V1,
     DATABASE_STATS_READ_ACTION_ID_V1,
     DATABASE_STRUCTURE_READ_ACTION_ID_V1,
     DATABASE_TARGETS_LIST_ACTION_ID_V1,
@@ -404,6 +406,7 @@ describe('Database workbench surfaces', () => {
   it('settles a mounted Console Run and saves it to History', async () => {
     type Control = Parameters<NonNullable<PluginUiTestkitHostHandlers['actionControl']>>[0];
     let run: Control | undefined;
+    let explain: Control | undefined;
     const sql = 'SELECT 1';
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'console-run', mountNonce: 'console-run' },
@@ -419,6 +422,7 @@ describe('Database workbench surfaces', () => {
         actionControl(control) {
           const { request } = control;
           if (request.kind === 'bind' && request.presentation.title === 'Run') run = control;
+          if (request.kind === 'bind' && request.presentation.title === 'Explain') explain = control;
           if (request.kind !== 'prepared' || request.requestId !== 'run-console') return;
           expect(request.preparation?.input).toMatchObject({ statement: { sql } });
           return { ok: true, result: { ok: true, operation: 'statement.run', results: [] } };
@@ -428,6 +432,8 @@ describe('Database workbench surfaces', () => {
     try {
       await settle(20);
       if (!run) throw new Error('Console did not offer Run');
+      expect(run.request).toMatchObject({ action: databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1) });
+      expect(explain?.request).toMatchObject({ action: databaseActionLocalIdV1(DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1) });
       await act(async () => { run?.publish({ kind: 'prepare', requestId: 'run-console' }); });
       await settle(20);
       await fixture.press(await fixture.getByRole('button', { name: 'History' }));

@@ -9,6 +9,7 @@ import {
     type DatabaseValueV1,
 } from '@happier-dev/plugin-sdk/database';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
+import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { createConsoleState } from './consoleState.js';
 import type { WorkbenchClient, WorkbenchOptions, WorkbenchControlBinding } from './models.js';
@@ -83,7 +84,7 @@ export function createConsole(instance: WorkbenchConsoleHost, targetKey: string)
                 submitted = [];
             },
         };
-        return { action: explainMode ? DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1 : DATABASE_STATEMENT_RUN_ACTION_ID_V1,
+        return { action: databaseActionLocalIdV1(explainMode ? DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1 : DATABASE_STATEMENT_RUN_ACTION_ID_V1),
             controller, get signal() { return cancellation.signal; } };
     }
     const run = binding();
