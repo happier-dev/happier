@@ -31,7 +31,8 @@ const getStorageMock = vi.hoisted(() => vi.fn(() => ({
 vi.mock('@/components/sessions/handoff/openSessionHandoffPicker', () => ({
     openSessionHandoffPicker: (...args: unknown[]) => openSessionHandoffPickerMock(...args),
 }));
-vi.mock('./executeSessionHandoffAction', () => ({
+vi.mock('./executeSessionHandoffAction', async (importOriginal) => ({
+    ...await importOriginal<typeof import('./executeSessionHandoffAction')>(),
     executeSessionHandoffAction: (...args: unknown[]) => executeSessionHandoffActionMock(...args),
 }));
 vi.mock('@/sync/sync', () => ({
@@ -152,6 +153,40 @@ describe('runSessionHandoffPickerFlow', () => {
         }));
         expect(result?.ok).toBe(enrolled);
         expect(runningOn).toBe(enrolled ? 'enrolled' : sourceMachineId);
+        if (enrolled) return;
+        // Nothing moved, so the failure offers Retry: it runs the same selection again from the retained picker.
+        const progressArgs = openObservedProgressMock.mock.calls[0]?.[0] as { onRetry?: () => void };
+        expect(showRequestFailureMock).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: 'controller_unavailable' }));
+        expect(progressArgs.onRetry).toBeTypeOf('function');
+        effects.length = 0;
+        const retryFrontDoor = vi.spyOn(frontDoor, 'createFrontDoorActionExecute').mockReturnValue(managedExecute);
+        try {
+            progressArgs.onRetry!();
+            // The retained acquisition resumes: it reads the same managed machine again, never acquires a second one.
+            await vi.waitFor(() => expect(effects).toEqual(['machines.managed.get', 'action.operations.get', 'machines.managed.get']));
+        } finally {
+            retryFrontDoor.mockRestore();
+        }
+        expect(progressCloseMock).toHaveBeenCalled();
+        expect(runningOn).toBe(sourceMachineId);
+    });
+
+    it('returns the receiving Machine\'s sandbox refusal to the sheet beside its machine row', async () => {
+        const setInlineError = vi.fn();
+        openSessionHandoffPickerMock.mockImplementationOnce(async (params: { onRetained: (close: () => void, setAwaiting: (awaiting: boolean) => void, isOpen: () => boolean, setInlineError: (code: string | null) => void) => void }) => {
+            params.onRetained(vi.fn(), vi.fn(), () => true, setInlineError);
+            return { targetMachineId: 'devbox', workspaceAction: { kind: 'none' } };
+        });
+        const refusal = { ok: false as const, error: 'handoff_target_requires_sandbox_preset', errorCode: 'handoff_target_requires_sandbox_preset' };
+        executeSessionHandoffActionMock.mockResolvedValueOnce(refusal);
+        const { runSessionHandoffPickerFlow } = await import('./runSessionHandoffPickerFlow');
+
+        await expect(runSessionHandoffPickerFlow({
+            execute: vi.fn(), sessionId: 'sess_1', sourceMachineId: 'source', serverId: 'server', placement: 'session_info',
+        })).resolves.toEqual(refusal);
+
+        expect(setInlineError).toHaveBeenLastCalledWith('handoff_target_requires_sandbox_preset');
+        expect(showRequestFailureMock).not.toHaveBeenCalled();
     });
 
     it('keeps a newly selected destination separate from an existing recoverable operation', async () => {

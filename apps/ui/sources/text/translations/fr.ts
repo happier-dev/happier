@@ -1285,6 +1285,9 @@ const sessionHandoffTranslationExtensions = {
       title: 'Échec du transfert de session',
       message: 'Le transfert n’a pas pu être terminé. Tu peux réessayer.',
       targetRequiresSandboxPreset: 'Cette machine exécute les nouvelles sessions dans un environnement isolé. Transfère la session vers un préréglage de cet environnement.',
+      nothingMoved: "Rien n’a été déplacé. Ta session tourne toujours là où elle était.",
+      chooseAnotherMachine: "Choisir une autre machine",
+      chooseSandboxPreset: "Choisir un préréglage d’environnement isolé",
       partialLinked: 'Certains fichiers ont été synchronisés, mais le prochain espace de travail lié demande ton attention. La session n’a pas repris sur la destination. Ouvre les détails pour voir le lien bloqué.',
     },
     cancelled: {
@@ -8078,6 +8081,11 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
   },
 
   sessionHandoff: {
+    sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · actuellement sur ${machine}`,
+    managedTarget: {
+      selected: ({ name }: { name: string }) => `${name} · nouvelle machine`,
+      createsFirst: "Crée d’abord la machine, puis y déplace la session.",
+    },
     transferSessionData: {
       title: "Transférer les données de la session",
       subtitle: "Copie l’historique de cette conversation sur l’autre machine. Désactive si cet historique y est déjà.",
@@ -8085,6 +8093,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       updateRequired: "Mets à jour Happier sur les deux machines pour désactiver ce transfert.",
       sessionMissing: "L’historique de cette session est absent de la machine cible. Active « Transférer les données de la session » et réessaie.",
       workspaceRequiresTransfer: "Active « Transférer les données de la session » pour copier ou synchroniser les fichiers de l’espace de travail.",
+      alwaysOnForNewMachine: "Toujours activé pour une nouvelle machine : elle n’a rien à reprendre.",
     },
     ...sessionHandoffTranslationExtensions.fr,
     awaitingAdmission: 'Vérification de la destination avant de commencer. Tes choix sont enregistrés ici.',

@@ -1248,6 +1248,11 @@ const promptLibraryUxRefinementTranslationExtension = {
 
 const sessionHandoffTranslationExtensions = {
   ja: {
+    sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · 現在は ${machine}`,
+    managedTarget: {
+      selected: ({ name }: { name: string }) => `${name} · 新しいマシン`,
+      createsFirst: "先にマシンを作成してから、セッションを移動します。",
+    },
     transferSessionData: {
       title: "セッションデータを転送",
       subtitle: "このセッションの会話履歴を別のマシンにコピーします。すでにある場合はオフにしてください。",
@@ -1255,6 +1260,7 @@ const sessionHandoffTranslationExtensions = {
       updateRequired: "オフにするには両方のマシンのHappierを更新してください。",
       sessionMissing: "転送先のマシンにこのセッションの会話履歴がありません。「セッションデータを転送」をオンにして再試行してください。",
       workspaceRequiresTransfer: "ワークスペースのファイルをコピーまたは同期するには「セッションデータを転送」をオンにしてください。",
+      alwaysOnForNewMachine: "新しいマシンでは常にオンです。再開元がないためです。",
     },
     awaitingAdmission: '開始前に移行先を確認しています。選択内容はここに保存されています。',
     targetApproval: {
@@ -1299,6 +1305,9 @@ const sessionHandoffTranslationExtensions = {
     },
     failure: {
       targetRequiresSandboxPreset: 'このマシンでは新しいセッションがサンドボックスで実行されます。サンドボックスのプリセットに引き継いでください。',
+      nothingMoved: "何も移動していません。セッションは元の場所で実行を続けています。",
+      chooseAnotherMachine: "別のマシンを選ぶ",
+      chooseSandboxPreset: "サンドボックスのプリセットを選ぶ",
       partialLinked: '一部のファイルは同期されましたが、次のリンク先ワークスペースに対応が必要です。移行先でセッションは再開されていません。詳細を開いて、停止しているリンクを確認してください。',
       title: 'セッションの引き継ぎに失敗しました',
       message: '引き継ぎを完了できませんでした。もう一度転送を試せます。',

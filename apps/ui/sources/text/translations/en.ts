@@ -9463,6 +9463,11 @@ const enSessionHistory = {
 };
 
 const enSessionHandoff = {
+  sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · now on ${machine}`,
+  managedTarget: {
+    selected: ({ name }: { name: string }) => `${name} · new machine`,
+    createsFirst: "Creates the machine first, then moves the session.",
+  },
   transferSessionData: {
     title: "Transfer session data",
     subtitle: "Copies this session's conversation history to the other machine. Turn off if it's already there.",
@@ -9470,6 +9475,7 @@ const enSessionHandoff = {
     updateRequired: "Update Happier on both machines to turn this off.",
     sessionMissing: "This session's conversation history isn't on the target machine. Turn on “Transfer session data” and try again.",
     workspaceRequiresTransfer: "Turn on “Transfer session data” to copy or sync workspace files.",
+    alwaysOnForNewMachine: "Always on for a new machine: it has nothing to resume from.",
   },
   awaitingAdmission:
     'Checking the destination before starting. Your choices are saved here.',
@@ -9521,6 +9527,9 @@ const enSessionHandoff = {
     title: 'Session handoff failed',
     message: 'The handoff could not be completed. You can retry the transfer.',
     targetRequiresSandboxPreset: 'This machine runs new sessions in a sandbox. Hand off to a sandbox preset.',
+    nothingMoved: "Nothing moved. Your session is still running where it was.",
+    chooseAnotherMachine: "Choose another machine",
+    chooseSandboxPreset: "Choose a sandbox preset",
     partialLinked:
       'Some files synchronized, but the next linked workspace needs attention. The session did not resume on the target. Open details to see the blocked link.',
   },

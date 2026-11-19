@@ -21,6 +21,8 @@ export function openObservedSessionHandoffProgressModal(params: Readonly<{
     machineCreation?: SessionHandoffMachineCreationProgress;
     store?: ActionOperationStore;
     onOpenConflicts?: (blockedRelationshipId: string | null) => void;
+    /** Runs the same selection again after a failure before anything moved (a new machine that wasn't created). */
+    onRetry?: () => void;
     onDismiss?: () => void;
 }>): SessionHandoffProgressPresentation {
     let attached = true;
@@ -37,6 +39,7 @@ export function openObservedSessionHandoffProgressModal(params: Readonly<{
             ...(params.workspaceSyncEnabled ? { workspaceSyncEnabled: true } : {}),
             ...(params.machineCreation ? { machineCreation: params.machineCreation } : {}),
             ...(params.onOpenConflicts ? { onOpenConflicts: params.onOpenConflicts } : {}),
+            ...(params.onRetry ? { onRetry: params.onRetry } : {}),
         },
         onRequestClose: () => { detach(); params.onDismiss?.(); },
         closeOnBackdrop: false,

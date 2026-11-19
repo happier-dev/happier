@@ -22,7 +22,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ActionOperationDetailControls } from '@/components/inbox/actionOperations/ActionOperationDetailControls';
 import { resolveWorkspaceSyncErrorTranslationKey } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
-import type { ExecuteSessionHandoffActionResult } from '@/sync/domains/sessionHandoff/executeSessionHandoffAction';
+import { SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED, type ExecuteSessionHandoffActionResult } from '@/sync/domains/sessionHandoff/executeSessionHandoffAction';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { describeManagedCreationProgress } from '@/components/settings/machines/managed/managedCreationProgressPresentation';
 import type { ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
@@ -43,6 +43,8 @@ type Props = CustomModalInjectedProps & Readonly<{
     requestFailure?: Extract<ExecuteSessionHandoffActionResult, { ok: false }>;
     machineCreation?: SessionHandoffMachineCreationProgress;
     onOpenConflicts?: (blockedRelationshipId: string | null) => void;
+    /** Present when the same selection can run again: a new machine that couldn't be created, before anything moved. */
+    onRetry?: () => void;
 }>;
 
 type PrimaryProgressStepId = 'preparing' | 'moving' | 'ready';
@@ -114,6 +116,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     timelineLabelCurrent: {
         color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
+    },
+    timelineDetail: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+    },
+    timelineDetailFailed: {
+        color: theme.colors.text.destructive,
+    },
+    retryFooter: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        gap: theme.space.s10,
     },
     summaryRow: {
         flexDirection: 'row',
@@ -432,7 +447,7 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
     }
 }
 
-export function SessionHandoffProgressModal({ onClose, setChrome, title, message, status, operation, serverId, onResume, requestFailure, onOpenConflicts, machineCreation }: Props) {
+export function SessionHandoffProgressModal({ onClose, setChrome, title, message, status, operation, serverId, onResume, requestFailure, onOpenConflicts, machineCreation, onRetry }: Props) {
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
     const styles = stylesheet;
@@ -440,6 +455,16 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
     const creationPresentation = machineCreation && creationPending
         ? describeManagedCreationProgress(machineCreation.name ?? t('managedMachines.picker.newMachine'), machineCreation.progress)
         : null;
+    // The machine wasn't created, so the handoff never started: nothing moved and the source kept running.
+    const creationFailed = creationPending && Boolean(requestFailure);
+    // The step names the machine; it says something else only when the creation owner has news (an approval, an
+    // observed operation status, the failure).
+    const creationDetail = !machineCreation ? null
+        : !creationPending ? machineCreation.name ?? null
+            : creationFailed ? creationPresentation?.failureMessage ?? null
+                : machineCreation.progress.kind === 'approval' || creationPresentation?.observedStatus
+                    ? creationPresentation?.label ?? null
+                    : machineCreation.name ?? null;
 
     // Keep a monotonic "effective" status so the checkpoint selection never regresses when
     // daemon status updates arrive out of order or omit progress on terminal transitions.
@@ -560,13 +585,13 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
                     ? t('sessionHandoff.cancelled.title')
                     : t('sessionHandoff.progress.title'));
     const operationFailureCode = operationFailed || requestFailure ? requestFailure?.errorCode ?? operation?.error?.errorCode : null;
-    const operationFailureTranslationKey = operationFailureCode === 'handoff_target_requires_sandbox_preset'
+    const operationFailureTranslationKey = operationFailureCode === SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED
         ? 'sessionHandoff.failure.targetRequiresSandboxPreset'
         : resolveWorkspaceSyncErrorTranslationKey(operationFailureCode);
+    // While the machine is created, its step carries what is happening; the status line stays the handoff's own.
     const resolvedMessage =
         message
-        ?? creationPresentation?.failureMessage
-        ?? creationPresentation?.label
+        ?? (creationFailed ? t('sessionHandoff.failure.nothingMoved') : creationPending ? t('sessionHandoff.progress.message') : null)
         ?? (outcomeLabel && !isFailureState
             ? t('sessionHandoff.progress.completedMessage')
             : isAwaitingRecovery
@@ -594,7 +619,7 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
     const primaryProgressLabel = primaryProgressFraction === null ? null : `${Math.round(primaryProgressFraction * 100)}%`;
     const progressAnnouncement = [
         resolvedMessage,
-        creationPending ? t('managedMachines.creation.create') : translatePrimaryProgressStep(primaryProgressStep),
+        creationPending ? [t('managedMachines.creation.create'), creationDetail].filter(Boolean).join(': ') : translatePrimaryProgressStep(primaryProgressStep),
         primaryProgressLabel,
     ].filter((part): part is string => Boolean(part)).join('. ');
     const operationTechnicalPhase = operationProgress?.kind === 'phase'
@@ -629,7 +654,14 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
         testID: 'session-handoff-progress-modal',
         bodyScroll: 'auto' as const,
         dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.default, maxHeightRatio: 0.92 },
-        footer: (
+        phonePresentation: 'sheet' as const,
+        footer: creationFailed && onRetry ? (
+            // Nothing moved, so the next steps are the person's: go back to the sheet, or try the same machine again.
+            <View style={styles.retryFooter}>
+                <RoundButton testID="session-handoff-progress-choose-another" display="inverted" title={t('sessionHandoff.failure.chooseAnotherMachine')} onPress={onClose} />
+                <RoundButton testID="session-handoff-progress-retry" title={t('common.retry')} onPress={onRetry} />
+            </View>
+        ) : (
             <ActionOperationDetailControls
                 operation={operationStopTarget}
                 terminal={operationTerminal}
@@ -637,7 +669,7 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
                 onClose={onClose}
             />
         ),
-    }), [onClose, operation, operationStopTarget, operationTerminal, resolvedTitle]);
+    }), [creationFailed, onClose, onRetry, operation, operationStopTarget, operationTerminal, resolvedTitle, styles.retryFooter]);
 
     useModalCardChrome(setChrome, chrome);
 
@@ -685,12 +717,19 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
                     <View testID="session-handoff-progress-step:create-machine" style={styles.timelineRow}>
                         <View style={styles.timelineMarker}>
                             {!creationPending ? <Icon name="check" size={16} color={theme.colors.accent.blue} />
-                                : requestFailure ? <Icon name="warning" size={16} color={theme.colors.state.danger.foreground} />
+                                : creationFailed ? <Icon name="warning" size={16} color={theme.colors.state.danger.foreground} />
                                     : <ActivitySpinner size={iconMatchedSpinnerSize(16)} color={theme.colors.accent.blue} />}
                         </View>
-                        <Text style={[styles.timelineLabel, creationPending && styles.timelineLabelCurrent]}>
-                            {t('managedMachines.creation.create')}
-                        </Text>
+                        <View style={styles.timelineContent}>
+                            <Text style={[styles.timelineLabel, creationPending && styles.timelineLabelCurrent]}>
+                                {t('managedMachines.creation.create')}
+                            </Text>
+                            {creationDetail ? (
+                                <Text testID="session-handoff-progress-step:create-machine:detail" style={[styles.timelineDetail, creationFailed && styles.timelineDetailFailed]}>
+                                    {creationDetail}
+                                </Text>
+                            ) : null}
+                        </View>
                     </View>
                 ) : null}
                     {PRIMARY_PROGRESS_STEPS.map((step, index) => {

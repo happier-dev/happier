@@ -1,5 +1,6 @@
 import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import * as React from 'react';
 import { View } from 'react-native';
@@ -77,6 +78,8 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMe
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { readServerAccountScopeOwnerLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { readManagedMachineSelectionName, type ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import { SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED } from '@/sync/domains/sessionHandoff/executeSessionHandoffAction';
+import { NoticeLine } from '@/components/ui/lists/NoticeLine';
 const SessionHandoffMachineSelectionContent = React.lazy(async () => ({
     default: (await import('./SessionHandoffMachineSelectionContent')).SessionHandoffMachineSelectionContent,
 }));
@@ -227,6 +230,15 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
 
     const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(null);
     const [managedTarget, setManagedTarget] = React.useState<ManagedMachineSelectionDraft | null>(null);
+    const [machineMenuOpenRequest, requestMachineMenuOpen] = React.useReducer((count: number) => count + 1, 0);
+    // The receiving Machine's refusal belongs to the machine it refused; a new choice clears it.
+    const [refusalCode, setRefusalCode] = React.useState(inlineErrorCode);
+    const [choiceChangedSinceRefusal, setChoiceChangedSinceRefusal] = React.useState(false);
+    if (refusalCode !== inlineErrorCode) {
+        setRefusalCode(inlineErrorCode);
+        setChoiceChangedSinceRefusal(false);
+    }
+    const sandboxPresetRequired = inlineErrorCode === SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED && !choiceChangedSinceRefusal;
     const [targetPath, setTargetPath] = React.useState<string | null>(null);
     const { approvalId, openApproval, requestApproval } = useActionApprovalContinuation({
         scopeKey: JSON.stringify([serverId, scope?.accountId, sessionId]),
@@ -461,6 +473,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
 
     const selectMachine = (machineId: string) => {
         if (awaitingAdmission) return;
+        setChoiceChangedSinceRefusal(true);
         setManagedTarget(null);
         setTransferSessionData(true);
         setSelectedMachineId(normalizeId(machineId) || null);
@@ -502,14 +515,21 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         </View>
     ), [actionSpec.title, awaitingAdmission, blockedReasonKey, canStart, handleCancel, handleStart, styles.blockedReason, styles.footer]);
 
+    // Which session, and where it runs now (lab scene 4); the Action's own description stays for agents.
+    const sessionName = sessionRecord ? getSessionName(sessionRecord, serverId) : sessionRenderable ? getSessionName(sessionRenderable, serverId) : null;
+    const sourceMachineName = sourceMachine ? getMachineSentenceName(sourceMachine) : currentSessionMetadata?.host ?? null;
+    const subtitle = sessionName && sourceMachineName
+        ? t('sessionHandoff.sheetSubtitle', { session: sessionName, machine: sourceMachineName })
+        : actionSpec.description;
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
         title: actionSpec.title,
-        subtitle: actionSpec.description,
+        subtitle,
         testID: 'session-handoff-modal',
         dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, maxHeightRatio: 0.92 },
+        phonePresentation: 'sheet' as const,
         footer,
-    }), [actionSpec.description, actionSpec.title, footer]);
+    }), [actionSpec.title, footer, subtitle]);
 
     useModalCardChrome(setChrome, chrome);
 
@@ -527,6 +547,15 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                     ) : null}
                     <WorkspaceActivationDestinationFields
                         disabled={awaitingAdmission}
+                        machineNotice={sandboxPresetRequired ? (
+                            <SurfaceStateCard
+                                testID="session-handoff-sandbox-preset-required"
+                                kind="warning"
+                                size="line"
+                                title={t('sessionHandoff.failure.targetRequiresSandboxPreset')}
+                                action={{ testID: 'session-handoff-sandbox-preset-required:choose', label: t('sessionHandoff.failure.chooseSandboxPreset'), onPress: requestMachineMenuOpen }}
+                            />
+                        ) : null}
                         machine={{
                             machines: machines as any, selectedMachine: selectedMachine as any, serverId: serverId ?? undefined,
                             recentMachines: recentMachines as any, favoriteMachines: favoriteMachines as any,
@@ -535,9 +564,13 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                             autoDetectCliGlyphs: false, disableOfflineMachines: true,
                             testIdPrefix: 'session-handoff-machine',
                             dropdownTestID: 'session-handoff-machine-dropdown-trigger',
+                            dropdownOpenRequest: machineMenuOpenRequest,
                             onSelect: machine => selectMachine(machine.id),
                             onToggleFavorite: toggleFavorite,
-                            dropdownSubtitle: managedTarget ? readManagedMachineSelectionName(managedTarget) ?? t('managedMachines.picker.newMachine')
+                            dropdownSubtitle: managedTarget ? (() => {
+                                const name = readManagedMachineSelectionName(managedTarget);
+                                return name ? t('sessionHandoff.managedTarget.selected', { name }) : t('managedMachines.picker.newMachine');
+                            })()
                                 : selectedMachine ? getMachineSentenceName(selectedMachine) : undefined,
                             renderDropdownContent: serverId ? ({ maxHeight, requestClose }) => <React.Suspense fallback={null}><SessionHandoffMachineSelectionContent
                                 serverId={serverId}
@@ -549,6 +582,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                                 onSelectMachine={selectMachine}
                                 onSelectManagedMachine={(draft) => {
                                     if (awaitingAdmission || !binding?.isCurrent()) return;
+                                    setChoiceChangedSinceRefusal(true);
                                     setSelectedMachineId(null);
                                     setManagedTarget(draft);
                                     setTransferSessionData(true);
@@ -576,6 +610,18 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                             })
                             : null}
                     />
+                    {managedTarget ? <ItemGroup>
+                        <Item
+                            testID="session-handoff-transfer-session-data-new-machine"
+                            title={t('sessionHandoff.transferSessionData.title')}
+                            subtitle={t('sessionHandoff.transferSessionData.alwaysOnForNewMachine')}
+                            subtitleLines={0}
+                            // A fact, not an unavailable choice: an info row at full ink whose locked switch only draws.
+                            mode="info"
+                            rightElement={<Switch value disabled accessibilityLabel={t('sessionHandoff.transferSessionData.title')}
+                                accessibilityHint={t('sessionHandoff.transferSessionData.alwaysOnForNewMachine')} />}
+                        />
+                    </ItemGroup> : null}
                     {!isSameMachine && !managedTarget ? <ItemGroup>
                         <Item
                             title={t('sessionHandoff.transferSessionData.title')}
@@ -593,7 +639,6 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                     </ItemGroup> : null}
                     {!managedTargetWithoutWorkspace ? <ItemGroup
                         title={t('settingsSession.handoff.groupTitle')}
-                        description={t('settingsSession.handoff.groupFooter')}
                     >
                         <WorkspaceActivationModeField
                             open={openWorkspaceSyncModeMenu}
@@ -690,6 +735,15 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                             </ItemGroup>
                         </ExpandableItem> : null}
                     </ItemGroup> : null}
+                    {managedTarget ? (
+                        <NoticeLine
+                            testID="session-handoff-managed-creates-first"
+                            iconName="info"
+                            iconColor={theme.colors.text.secondary}
+                            title={t('sessionHandoff.managedTarget.createsFirst')}
+                            wrap
+                        />
+                    ) : null}
                     {isExternalSession ? (
                         <ItemGroup
                             title={t('settingsSession.handoff.directTargetMode.groupTitle')}

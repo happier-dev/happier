@@ -61,6 +61,9 @@ export function SessionHandoffMachineSelectionContent(props: Props) {
         onSelectManagedMachine={props.onSelectManagedMachine}
         onToggleFavorite={props.onToggleFavorite}
         disableOfflineMachines
+        // Each row says what a new Session does there, so a Machine that would refuse a bare
+        // handoff (it runs new Sessions in a sandbox) reads that way before anything is chosen.
+        isolationWorkKind="sessions"
         showCliGlyphs={false}
         autoDetectCliGlyphs={false}
         testIdPrefix="session-handoff-machine"

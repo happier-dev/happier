@@ -37,7 +37,24 @@ describe('SessionHandoffProgressModal', () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
         const screen = await renderScreen(<SessionHandoffProgressModal onClose={vi.fn()} setChrome={vi.fn()}
             requestFailure={{ ok: false, error: 'target refuses handoff', errorCode: 'handoff_target_requires_sandbox_preset' }} />);
-        expect(screen.findAll(node => node.props?.children === 'This machine runs new sessions in a sandbox. Hand off to a sandbox preset.').length).toBeGreaterThan(0);
+        // The test text boundary returns translation keys, as every other copy check here asserts.
+        expect(screen.getTextContent()).toContain('sessionHandoff.failure.targetRequiresSandboxPreset');
+    });
+
+    it('says nothing moved when the new machine was not created, and offers another machine or Retry', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const setChrome = vi.fn();
+        const onClose = vi.fn();
+        const onRetry = vi.fn();
+        const screen = await renderScreen(<SessionHandoffProgressModal onClose={onClose} setChrome={setChrome} onRetry={onRetry}
+            machineCreation={{ name: 'Boat · Node 22', progress: { kind: 'failed', code: 'controller_unavailable' } }}
+            requestFailure={{ ok: false, error: 'controller_unavailable', errorCode: 'controller_unavailable' }} />);
+        expect(screen.getTextContent()).toContain('sessionHandoff.failure.nothingMoved');
+        const footer = await renderScreen(setChrome.mock.calls.at(-1)?.[0].footer);
+        await footer.pressByTestIdAsync('session-handoff-progress-retry');
+        expect(onRetry).toHaveBeenCalledTimes(1);
+        await footer.pressByTestIdAsync('session-handoff-progress-choose-another');
+        expect(onClose).toHaveBeenCalledTimes(1);
     });
 
     it('offers the blocked link from validated request-local failure without redispatching on return', async () => {

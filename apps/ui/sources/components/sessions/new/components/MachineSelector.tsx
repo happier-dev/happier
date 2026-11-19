@@ -31,6 +31,11 @@ export interface MachineSelectorProps {
     managedPlacementPreset?: Extract<ManagedSessionPlacementV1, { kind: 'preset' }> | null;
     managedPlacementSourceLabel?: string | null;
     onDropdownOpenChange?: (open: boolean) => void;
+    /**
+     * Opens the dropdown when this value changes (a "choose another" link elsewhere on the sheet). The selector
+     * keeps owning its open state, so ordinary opening, choosing and closing stay local to it.
+     */
+    dropdownOpenRequest?: number;
     recentMachines?: ReadonlyArray<Machine>;
     favoriteMachines?: ReadonlyArray<Machine>;
     onSelect: (machine: Machine) => void;
@@ -97,6 +102,11 @@ export interface MachineSelectorProps {
 
 export function MachineSelector(props: MachineSelectorProps) {
     const [open, setOpen] = React.useState(false);
+    const [seenOpenRequest, setSeenOpenRequest] = React.useState(props.dropdownOpenRequest);
+    if (props.dropdownOpenRequest !== seenOpenRequest) {
+        setSeenOpenRequest(props.dropdownOpenRequest);
+        setOpen(true);
+    }
     const onOpenChange = React.useCallback((next: boolean) => {
         setOpen(next);
         props.onDropdownOpenChange?.(next);

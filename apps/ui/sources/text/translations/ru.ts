@@ -1242,6 +1242,11 @@ const promptLibraryUxRefinementTranslationExtension = {
 
 const sessionHandoffTranslationExtensions = {
   ru: {
+    sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · сейчас на ${machine}`,
+    managedTarget: {
+      selected: ({ name }: { name: string }) => `${name} · новая машина`,
+      createsFirst: "Сначала создаёт машину, затем переносит сессию.",
+    },
     transferSessionData: {
       title: "Перенести данные сессии",
       subtitle: "Копирует историю разговора этой сессии на другой компьютер. Отключите, если она уже там.",
@@ -1249,6 +1254,7 @@ const sessionHandoffTranslationExtensions = {
       updateRequired: "Обновите Happier на обоих компьютерах, чтобы отключить эту опцию.",
       sessionMissing: "На целевом компьютере нет истории этой сессии. Включите «Перенести данные сессии» и повторите попытку.",
       workspaceRequiresTransfer: "Включите «Перенести данные сессии», чтобы копировать или синхронизировать файлы рабочего пространства.",
+      alwaysOnForNewMachine: "Для новой машины всегда включено: ей не с чего продолжить.",
     },
     awaitingAdmission: 'Проверяем место назначения перед запуском. Ваш выбор сохранён здесь.',
     targetApproval: {
@@ -1293,6 +1299,9 @@ const sessionHandoffTranslationExtensions = {
     },
     failure: {
       targetRequiresSandboxPreset: 'Эта машина запускает новые сессии в песочнице. Передайте сессию в песочницу, выбрав предустановку.',
+      nothingMoved: "Ничего не перенесено. Сессия по-прежнему работает там же.",
+      chooseAnotherMachine: "Выбрать другую машину",
+      chooseSandboxPreset: "Выбрать предустановку песочницы",
       partialLinked: 'Часть файлов синхронизирована, но следующему связанному рабочему пространству требуется внимание. Сессия не возобновилась в месте назначения. Откройте подробности, чтобы увидеть заблокированную связь.',
       title: 'Не удалось передать сессию',
       message: 'Не удалось завершить передачу. Вы можете повторить попытку.',

@@ -1246,6 +1246,11 @@ const promptLibraryUxRefinementTranslationExtension = {
 
 const sessionHandoffTranslationExtensions = {
   'zh-Hans': {
+    sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · 当前在 ${machine}`,
+    managedTarget: {
+      selected: ({ name }: { name: string }) => `${name} · 新机器`,
+      createsFirst: "先创建机器，再移动会话。",
+    },
     transferSessionData: {
       title: "传输会话数据",
       subtitle: "将此会话的对话历史复制到另一台机器。如果那里已有记录，请关闭此选项。",
@@ -1253,6 +1258,7 @@ const sessionHandoffTranslationExtensions = {
       updateRequired: "请更新两台机器上的 Happier 以关闭此选项。",
       sessionMissing: "目标机器上没有此会话的对话历史。请开启“传输会话数据”后重试。",
       workspaceRequiresTransfer: "请开启“传输会话数据”以复制或同步工作区文件。",
+      alwaysOnForNewMachine: "新机器始终开启：它没有可恢复的内容。",
     },
     awaitingAdmission: '正在开始前检查目标位置。你的选择已保存在这里。',
     targetApproval: {
@@ -1299,6 +1305,9 @@ const sessionHandoffTranslationExtensions = {
       title: '会话移交失败',
       message: '无法完成移交。你可以重试这次传输。',
       targetRequiresSandboxPreset: '此机器在沙盒中运行新会话。请将会话移交到沙盒预设。',
+      nothingMoved: "没有移动任何内容。你的会话仍在原处运行。",
+      chooseAnotherMachine: "选择其他机器",
+      chooseSandboxPreset: "选择沙盒预设",
       partialLinked: '部分文件已同步，但下一处关联工作区需要处理。会话未在目标位置恢复。请打开详情查看受阻的关联。',
     },
     cancelled: {

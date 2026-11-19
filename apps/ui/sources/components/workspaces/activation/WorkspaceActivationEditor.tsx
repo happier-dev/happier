@@ -30,10 +30,13 @@ export function WorkspaceActivationDestinationFields(props: Readonly<{
     fixedFolderLabel?: string | null;
     disabled?: boolean;
     blockedReason?: string | null;
+    /** A line about the chosen machine (why the destination refused it), right under the machine row. */
+    machineNotice?: React.ReactNode;
 }>) {
     return (
         <View pointerEvents={props.disabled ? 'none' : 'auto'} importantForAccessibility={props.disabled ? 'no-hide-descendants' : 'auto'}>
             <MachineSelector {...props.machine} />
+            {props.machineNotice}
             {/* What the destination still needs is the group's own note, on its text edge (the submit control
                 carries the same reason as its hint). */}
             <ItemGroup title={props.pathTitle} description={props.blockedReason ?? undefined} clipContent>

@@ -1276,6 +1276,11 @@ const promptLibraryUxRefinementTranslationExtension = {
 
 const sessionHandoffTranslationExtensions = {
   pt: {
+    sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · agora em ${machine}`,
+    managedTarget: {
+      selected: ({ name }: { name: string }) => `${name} · máquina nova`,
+      createsFirst: "Primeiro cria a máquina, depois move a sessão.",
+    },
     transferSessionData: {
       title: "Transferir dados da sessão",
       subtitle: "Copia o histórico de conversa desta sessão para a outra máquina. Desative se já estiver lá.",
@@ -1283,6 +1288,7 @@ const sessionHandoffTranslationExtensions = {
       updateRequired: "Atualize o Happier nas duas máquinas para desativar esta opção.",
       sessionMissing: "O histórico desta sessão não está na máquina de destino. Ative “Transferir dados da sessão” e tente novamente.",
       workspaceRequiresTransfer: "Ative “Transferir dados da sessão” para copiar ou sincronizar arquivos do espaço de trabalho.",
+      alwaysOnForNewMachine: "Sempre ativado para uma máquina nova: ela não tem de onde retomar.",
     },
     awaitingAdmission: 'Verificando o destino antes de começar. Suas escolhas estão salvas aqui.',
     targetApproval: {
@@ -1327,6 +1333,9 @@ const sessionHandoffTranslationExtensions = {
     },
     failure: {
       targetRequiresSandboxPreset: 'Esta máquina executa novas sessões em um ambiente isolado. Transfira a sessão para uma configuração predefinida desse ambiente.',
+      nothingMoved: "Nada foi movido. Sua sessão continua em execução onde estava.",
+      chooseAnotherMachine: "Escolher outra máquina",
+      chooseSandboxPreset: "Escolher uma configuração de ambiente isolado",
       partialLinked: 'Alguns arquivos foram sincronizados, mas o próximo workspace vinculado precisa de atenção. A sessão não foi retomada no destino. Abra os detalhes para ver o vínculo bloqueado.',
       title: 'Falha ao transferir a sessao',
       message: 'Nao foi possivel concluir a transferencia. Voce pode tentar novamente.',

@@ -1240,6 +1240,11 @@ const promptLibraryUxRefinementTranslationExtension = {
 
 const sessionHandoffTranslationExtensions = {
   it: {
+    sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · ora su ${machine}`,
+    managedTarget: {
+      selected: ({ name }: { name: string }) => `${name} · macchina nuova`,
+      createsFirst: "Crea prima la macchina, poi sposta la sessione.",
+    },
     transferSessionData: {
       title: "Trasferisci i dati della sessione",
       subtitle: "Copia la cronologia della conversazione di questa sessione sull’altro computer. Disattiva se è già presente.",
@@ -1247,6 +1252,7 @@ const sessionHandoffTranslationExtensions = {
       updateRequired: "Aggiorna Happier su entrambi i computer per disattivare questa opzione.",
       sessionMissing: "La cronologia di questa sessione non è sul computer di destinazione. Attiva «Trasferisci i dati della sessione» e riprova.",
       workspaceRequiresTransfer: "Attiva «Trasferisci i dati della sessione» per copiare o sincronizzare i file dell’area di lavoro.",
+      alwaysOnForNewMachine: "Sempre attivo per una macchina nuova: non ha nulla da cui riprendere.",
     },
     awaitingAdmission: 'Verifica della destinazione prima dell’avvio. Le tue scelte sono salvate qui.',
     targetApproval: {
@@ -1293,6 +1299,9 @@ const sessionHandoffTranslationExtensions = {
       title: 'Trasferimento della sessione non riuscito',
       message: 'Non e stato possibile completare il trasferimento. Puoi riprovare.',
       targetRequiresSandboxPreset: 'Questa macchina esegue le nuove sessioni in una sandbox. Trasferisci la sessione a una configurazione predefinita della sandbox.',
+      nothingMoved: "Non è stato spostato nulla. La sessione è ancora in esecuzione dov’era.",
+      chooseAnotherMachine: "Scegli un’altra macchina",
+      chooseSandboxPreset: "Scegli una configurazione della sandbox",
       partialLinked: 'Alcuni file sono stati sincronizzati, ma la prossima area di lavoro collegata richiede attenzione. La sessione non è stata ripresa nella destinazione. Apri i dettagli per vedere il collegamento bloccato.',
     },
     cancelled: {

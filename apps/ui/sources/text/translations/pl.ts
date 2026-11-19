@@ -1241,6 +1241,11 @@ const promptLibraryUxRefinementTranslationExtension = {
 
 const sessionHandoffTranslationExtensions = {
   pl: {
+    sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · teraz na ${machine}`,
+    managedTarget: {
+      selected: ({ name }: { name: string }) => `${name} · nowa maszyna`,
+      createsFirst: "Najpierw tworzy maszynę, potem przenosi sesję.",
+    },
     transferSessionData: {
       title: "Przenieś dane sesji",
       subtitle: "Kopiuje historię rozmowy tej sesji na drugi komputer. Wyłącz, jeśli już tam jest.",
@@ -1248,6 +1253,7 @@ const sessionHandoffTranslationExtensions = {
       updateRequired: "Zaktualizuj Happier na obu komputerach, aby wyłączyć tę opcję.",
       sessionMissing: "Na komputerze docelowym nie ma historii tej sesji. Włącz „Przenieś dane sesji” i spróbuj ponownie.",
       workspaceRequiresTransfer: "Włącz „Przenieś dane sesji”, aby kopiować lub synchronizować pliki obszaru roboczego.",
+      alwaysOnForNewMachine: "Zawsze włączone dla nowej maszyny: nie ma z czego wznowić.",
     },
     awaitingAdmission: 'Sprawdzanie miejsca docelowego przed rozpoczęciem. Twoje wybory są tutaj zapisane.',
     targetApproval: {
@@ -1293,6 +1299,9 @@ const sessionHandoffTranslationExtensions = {
     failure: {
       title: 'Przekazanie sesji nie powiodło się',
       targetRequiresSandboxPreset: 'Ta maszyna uruchamia nowe sesje w piaskownicy. Przekaż sesję do ustawienia wstępnego piaskownicy.',
+      nothingMoved: "Nic nie zostało przeniesione. Sesja nadal działa tam, gdzie była.",
+      chooseAnotherMachine: "Wybierz inną maszynę",
+      chooseSandboxPreset: "Wybierz ustawienie wstępne piaskownicy",
       partialLinked: 'Niektóre pliki zsynchronizowano, ale kolejny połączony obszar roboczy wymaga uwagi. Sesja nie została wznowiona w miejscu docelowym. Otwórz szczegóły, aby sprawdzić zablokowane połączenie.',
       message: 'Nie udało się ukończyć przekazania. Możesz spróbować ponownie.',
     },

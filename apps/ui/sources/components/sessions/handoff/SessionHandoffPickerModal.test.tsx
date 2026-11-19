@@ -1762,4 +1762,16 @@ describe('SessionHandoffPickerModal', () => {
         expect(findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start-blocked-reason')).toBeNull();
         screen.unmount();
     });
+
+    // Last: opening the machine list loads the managed offers' modules, which later lazy-load checks must not see.
+    it('keeps the receiving Machine\'s sandbox refusal beside the machine row until another machine is chosen', async () => {
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        const screen = await renderScreen(<SessionHandoffPickerModal onClose={vi.fn()} setChrome={vi.fn()} onResolve={vi.fn()} sessionId="sess_1" serverId={homeA.id} inlineErrorCode="handoff_target_requires_sandbox_preset" />);
+        expect(screen.findByTestId('session-handoff-sandbox-preset-required')).not.toBeNull();
+        // Its one next step opens the same machine list, where the sandbox presets are.
+        await screen.pressByTestIdAsync('session-handoff-sandbox-preset-required:choose');
+        await vi.waitFor(() => expect(screen.findByTestId('new-session-machine-list')).not.toBeNull());
+        await act(async () => { invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', allMachinesState[1]); });
+        expect(screen.findByTestId('session-handoff-sandbox-preset-required')).toBeNull();
+    });
 });

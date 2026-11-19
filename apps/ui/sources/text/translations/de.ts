@@ -8188,6 +8188,11 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
     },
 
     sessionHandoff: {
+        sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · jetzt auf ${machine}`,
+        managedTarget: {
+          selected: ({ name }: { name: string }) => `${name} · neuer Computer`,
+          createsFirst: "Erstellt zuerst den Computer und verschiebt dann die Session.",
+        },
         transferSessionData: {
           title: "Sitzungsdaten übertragen",
           subtitle: "Kopiert den Gesprächsverlauf dieser Sitzung auf den anderen Rechner. Ausschalten, wenn er dort bereits vorhanden ist.",
@@ -8195,6 +8200,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
           updateRequired: "Aktualisiere Happier auf beiden Rechnern, um dies auszuschalten.",
           sessionMissing: "Der Gesprächsverlauf dieser Sitzung ist auf dem Zielrechner nicht vorhanden. Aktiviere „Sitzungsdaten übertragen“ und versuche es erneut.",
           workspaceRequiresTransfer: "Aktiviere „Sitzungsdaten übertragen“, um Workspace-Dateien zu kopieren oder zu synchronisieren.",
+          alwaysOnForNewMachine: "Für einen neuen Computer immer an: Er hat nichts, wo er weitermachen könnte.",
         },
         awaitingAdmission: 'Das Ziel wird vor dem Start geprüft. Deine Auswahl bleibt hier gespeichert.',
         targetApproval: {
@@ -8241,6 +8247,9 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             title: 'Übergabe der Session fehlgeschlagen',
             message: 'Die Übergabe konnte nicht abgeschlossen werden. Du kannst die Übertragung wiederholen.',
             targetRequiresSandboxPreset: 'Dieser Computer führt neue Sessions in einer Sandbox aus. Wähle für die Übergabe eine Sandbox-Vorlage.',
+            nothingMoved: "Nichts wurde verschoben. Deine Session läuft weiter, wo sie war.",
+            chooseAnotherMachine: "Anderen Computer wählen",
+            chooseSandboxPreset: "Sandbox-Vorlage wählen",
             partialLinked: 'Einige Dateien wurden synchronisiert, aber der nächste verknüpfte Workspace benötigt Aufmerksamkeit. Die Session wurde am Ziel nicht fortgesetzt. In den Details steht, welcher Link blockiert ist.',
         },
         cancelled: {

@@ -3,6 +3,9 @@ import { SessionHandoffActionResultV1Schema, type SessionHandoffActionResultV1 }
 import { WorkspaceSyncPrepareBetweenResultV1Schema, type HandoffWorkspaceActionV1, type WorkspaceSyncPrepareBetweenResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
+/** The receiving Machine's typed refusal of a bare handoff that its isolation policy would sandbox (CLI `sessionHandoff/handlers.ts`). */
+export const SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED = 'handoff_target_requires_sandbox_preset';
+
 type ExecuteAction = (actionId: 'session.handoff', input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
 
 type ExecuteSessionHandoffActionArgs = Readonly<{

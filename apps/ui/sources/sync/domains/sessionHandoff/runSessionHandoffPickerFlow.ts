@@ -24,6 +24,7 @@ import {
 
 import {
     executeSessionHandoffAction,
+    SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED,
     type ExecuteSessionHandoffActionResult,
 } from './executeSessionHandoffAction';
 import type { SessionHandoffUiAvailability } from './resolveSessionHandoffUiAvailability';
@@ -87,6 +88,11 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
         workspaceSyncEnabled,
         ...(creationProgress ? { machineCreation: { name: machineName, progress: creationProgress } } : {}),
         onDismiss: () => { progressDismissed = true; if (result?.ok) closePicker(); },
+        // Creation failed before the handoff began: the same selection retries with its retained acquisition.
+        ...(selection.managedTarget ? { onRetry: () => {
+            currentProgress()?.close();
+            void runSelection(selection);
+        } } : {}),
         ...(selection.workspaceSyncReviewResource ? { onOpenConflicts: (blockedRelationshipId: string | null) => {
             const verifiedBlockedId = blockedRelationshipId && selection.workspaceSyncReviewRelationshipIds?.includes(blockedRelationshipId)
                 ? blockedRelationshipId : null;
@@ -205,6 +211,13 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
         setAwaitingAdmission(false);
         if (!result.ok && selection.stateTransfer === 'existing' && result.errorCode === 'existing_session_state_unavailable') {
             if (isPickerOpen()) setInlineError(result.errorCode);
+            return result;
+        }
+        // The receiving Machine refused before any effect: the choice is changed on the sheet, beside the
+        // machine row, so the person picks a sandbox preset there instead of reading it on a failure card.
+        if (!result.ok && result.errorCode === SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED && isPickerOpen()) {
+            currentProgress()?.close();
+            setInlineError(result.errorCode);
             return result;
         }
         if (result.ok && 'kind' in result && result.kind === 'approval_required') {

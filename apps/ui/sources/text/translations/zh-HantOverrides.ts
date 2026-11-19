@@ -1244,6 +1244,11 @@ const promptLibraryUxRefinementTranslationExtension = {
 
 const sessionHandoffTranslationExtensions = {
   'zh-Hant': {
+    sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · 目前在 ${machine}`,
+    managedTarget: {
+      selected: ({ name }: { name: string }) => `${name} · 新機器`,
+      createsFirst: "先建立機器，再移動工作階段。",
+    },
     transferSessionData: {
       title: "傳輸工作階段資料",
       subtitle: "將此工作階段的對話記錄複製到另一台機器。如果那裡已有記錄，請關閉此選項。",
@@ -1251,6 +1256,7 @@ const sessionHandoffTranslationExtensions = {
       updateRequired: "請更新兩台機器上的 Happier 以關閉此選項。",
       sessionMissing: "目標機器上沒有此工作階段的對話記錄。請開啟「傳輸工作階段資料」後重試。",
       workspaceRequiresTransfer: "請開啟「傳輸工作階段資料」以複製或同步工作區檔案。",
+      alwaysOnForNewMachine: "新機器一律開啟：它沒有可以接續的內容。",
     },
     targetApproval: {
       title: '目的地會發生什麼',
@@ -1295,6 +1301,9 @@ const sessionHandoffTranslationExtensions = {
       title: '工作階段移交失敗',
       message: '無法完成移交。你可以重新嘗試這次傳輸。',
       targetRequiresSandboxPreset: '這部機器會在沙盒中執行新的工作階段。請將工作階段移交至沙盒預設。',
+      nothingMoved: "沒有移動任何內容。你的工作階段仍在原處執行。",
+      chooseAnotherMachine: "選擇其他機器",
+      chooseSandboxPreset: "選擇沙盒預設",
     },
     cancelled: {
       title: '工作階段移交已取消',

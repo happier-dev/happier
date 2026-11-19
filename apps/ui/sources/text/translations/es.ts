@@ -1241,6 +1241,11 @@ const promptLibraryUxRefinementTranslationExtension = {
 
 const sessionHandoffTranslationExtensions = {
   es: {
+    sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · ahora en ${machine}`,
+    managedTarget: {
+      selected: ({ name }: { name: string }) => `${name} · máquina nueva`,
+      createsFirst: "Primero crea la máquina y luego mueve la sesión.",
+    },
     transferSessionData: {
       title: "Transferir datos de la sesión",
       subtitle: "Copia el historial de conversación de esta sesión a la otra máquina. Desactívalo si ya está allí.",
@@ -1248,6 +1253,7 @@ const sessionHandoffTranslationExtensions = {
       updateRequired: "Actualiza Happier en ambas máquinas para desactivar esta opción.",
       sessionMissing: "El historial de esta sesión no está en la máquina de destino. Activa «Transferir datos de la sesión» e inténtalo de nuevo.",
       workspaceRequiresTransfer: "Activa «Transferir datos de la sesión» para copiar o sincronizar archivos del espacio de trabajo.",
+      alwaysOnForNewMachine: "Siempre activado para una máquina nueva: no tiene nada desde donde reanudar.",
     },
     awaitingAdmission: 'Comprobando el destino antes de empezar. Tus opciones están guardadas aquí.',
     targetApproval: {
@@ -1294,6 +1300,9 @@ const sessionHandoffTranslationExtensions = {
       title: 'No se pudo transferir la sesion',
       message: 'No se pudo completar la transferencia. Puedes volver a intentarlo.',
       targetRequiresSandboxPreset: 'Esta máquina ejecuta las sesiones nuevas en un entorno aislado. Transfiere la sesión a una configuración predefinida de ese entorno.',
+      nothingMoved: "No se movió nada. Tu sesión sigue ejecutándose donde estaba.",
+      chooseAnotherMachine: "Elegir otra máquina",
+      chooseSandboxPreset: "Elegir una configuración de entorno aislado",
       partialLinked: 'Se sincronizaron algunos archivos, pero el siguiente espacio de trabajo vinculado necesita atención. La sesión no se reanudó en el destino. Abre los detalles para ver el vínculo bloqueado.',
     },
     cancelled: {

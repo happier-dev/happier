@@ -1241,6 +1241,11 @@ const promptLibraryUxRefinementTranslationExtension = {
 
 const sessionHandoffTranslationExtensions = {
   ca: {
+    sheetSubtitle: ({ session, machine }: { session: string; machine: string }) => `${session} · ara a ${machine}`,
+    managedTarget: {
+      selected: ({ name }: { name: string }) => `${name} · màquina nova`,
+      createsFirst: "Primer crea la màquina i després hi mou la sessió.",
+    },
     transferSessionData: {
       title: "Transfereix les dades de la sessió",
       subtitle: "Copia l’historial de conversa d’aquesta sessió a l’altra màquina. Desactiva-ho si ja hi és.",
@@ -1248,6 +1253,7 @@ const sessionHandoffTranslationExtensions = {
       updateRequired: "Actualitza Happier a totes dues màquines per desactivar aquesta opció.",
       sessionMissing: "L’historial d’aquesta sessió no és a la màquina de destinació. Activa «Transfereix les dades de la sessió» i torna-ho a provar.",
       workspaceRequiresTransfer: "Activa «Transfereix les dades de la sessió» per copiar o sincronitzar fitxers de l’espai de treball.",
+      alwaysOnForNewMachine: "Sempre activat per a una màquina nova: no té res des d’on reprendre.",
     },
     awaitingAdmission: 'S’està comprovant la destinació abans de començar. Les teves opcions estan desades aquí.',
     targetApproval: {
@@ -1292,6 +1298,9 @@ const sessionHandoffTranslationExtensions = {
     },
     failure: {
       targetRequiresSandboxPreset: 'Aquesta màquina executa les sessions noves en un entorn aïllat. Transfereix la sessió a una configuració predefinida d’aquest entorn.',
+      nothingMoved: "No s’ha mogut res. La sessió continua en execució on era.",
+      chooseAnotherMachine: "Tria una altra màquina",
+      chooseSandboxPreset: "Tria una configuració d’entorn aïllat",
       partialLinked: 'S’han sincronitzat alguns fitxers, però el següent espai de treball enllaçat necessita atenció. La sessió no s’ha reprès a la destinació. Obre els detalls per veure l’enllaç bloquejat.',
       title: 'No s ha pogut transferir la sessio',
       message: 'No s ha pogut completar la transferencia. Pots tornar-ho a provar.',
