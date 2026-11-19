@@ -34,6 +34,20 @@ export function buildMachineActorPermissionFactsSelect(actorAccountId: string) {
     return { ...MACHINE_PERMISSION_FACTS_SELECT, ...machineGrantRelationsSelect(actorAccountId) } as const;
 }
 
+/** Bulk permission facts and controller closure shared by roles and access-source effects. */
+export async function readMachineRoleGraphForMachinesInTx(tx: Tx, machineIds: readonly string[], accountIds: readonly string[]): Promise<Map<string, MachinePermissionFacts>> {
+    const byId = new Map<string, MachinePermissionFacts>();
+    const actorAccountId = accountIds.length === 1 ? accountIds[0] : undefined;
+    const select = actorAccountId === undefined ? MACHINE_PERMISSION_FACTS_SELECT : buildMachineActorPermissionFactsSelect(actorAccountId);
+    // Nine relation-projection bindings, including managedResource;
+    // singleton reads add three actor predicates.
+    for (const ids of portableQueryChunks({ values: [...new Set(machineIds)], bindingsPerValue: 1, fixedBindings: actorAccountId === undefined ? 9 : 12 })) {
+        const rows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: withMachineContentSelect(select) }).then(decodeMachineStoredContent);
+        for (const row of rows) byId.set(row.id, { ...row, ...projectResourceGrantRows(row.grants) });
+    }
+    return readMachineRoleGraphInTx(tx, [...byId.values()], accountIds);
+}
+
 export type Contribution = Readonly<{
     principal: PrincipalRefV1;
     level: 'view' | 'admin';

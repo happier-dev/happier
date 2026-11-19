@@ -9,6 +9,7 @@ import tweetnacl from 'tweetnacl';
 import { symbols, type DestinationStream } from 'pino';
 import { logger } from '@/utils/logging/log';
 import { inTx } from '@/storage/inTx';
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
 import { blockPendingDelivery, enqueuePendingMessage, materializeNextPendingMessage, resolveAcceptedPendingDelivery, updatePendingRequestedAction, markPendingActivationFailed } from '@/app/session/pending/pendingMessageService';
 import { sessionPendingRoutes } from '@/app/api/routes/session/pendingRoutes';
@@ -427,6 +428,9 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
 
     it('sets and removes exact grants, discovers recipients, conceals unrelated reads and stamps leave identity', async () => {
         const { owner, recipient, other, machine } = await fixture();
+        const team = await db.team.create({ data: { name: 'Overlapping Machine source' } });
+        await db.teamMembership.createMany({ data: [owner.id, recipient.id].map(accountId => ({ teamId: team.id, accountId, role: 'member' })) });
+        await db.machineGrant.create({ data: { principalKind: 'team', machineId: machine.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id } });
         await withAuthenticatedTestApp(machinesRoutes, async (app) => {
             const base = `/v1/machines/${machine.id}`;
             const principal = { kind: 'account', accountId: recipient.id };
@@ -441,7 +445,22 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
             }
             const recipientAccess = await app.inject({ method: 'GET', url: `${base}/access`, headers: headers(recipient.id) });
             expect(recipientAccess.statusCode, recipientAccess.body).toBe(200);
-            expect(recipientAccess.json()).toMatchObject({ canManage: false, grants: [], ownDirectGrant: true });
+            expect(recipientAccess.json()).toMatchObject({ canManage: false, grants: [], ownDirectGrant: true, ownAccessSources: [
+                { principal }, { principal: { kind: 'team', teamId: team.id } },
+            ] });
+            const recipientChangeBefore = await db.accountChange.findUniqueOrThrow({ where: { accountId_kind_entityId: {
+                accountId: recipient.id, kind: 'machineRecipientAccess', entityId: machine.id,
+            } } });
+            const removedTeam = await app.inject({ method: 'DELETE', url: `${base}/access`, headers: headers(owner.id),
+                payload: { principal: { kind: 'team', teamId: team.id } } });
+            expect(removedTeam.statusCode, removedTeam.body).toBe(200);
+            expect(removedTeam.json()).toMatchObject({ kind: 'removed' });
+            const directOnlyAccess = await app.inject({ method: 'GET', url: `${base}/access`, headers: headers(recipient.id) });
+            expect(directOnlyAccess.statusCode, directOnlyAccess.body).toBe(200);
+            expect(directOnlyAccess.json()).toMatchObject({ access: { role: 'use' }, ownDirectGrant: true, ownAccessSources: [{ principal }] });
+            expect((await db.accountChange.findUniqueOrThrow({ where: { accountId_kind_entityId: {
+                accountId: recipient.id, kind: 'machineRecipientAccess', entityId: machine.id,
+            } } })).cursor).toBeGreaterThan(recipientChangeBefore.cursor);
             const list = await app.inject({ method: 'GET', url: '/v1/machines', headers: headers(recipient.id) });
             expect(list.statusCode, list.body).toBe(200);
             expect(list.json()).toContainEqual(expect.objectContaining({ id: machine.id, access: { custodian: { accountId: owner.id, displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } }));
@@ -491,8 +510,9 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
             const removed = await app.inject({ method: 'DELETE', url: `/v1/machines/${machine.id}/access`,
                 headers: headers(owner.id), payload: { principal } });
             expect(removed.json()).toMatchObject({ kind: 'removed' });
+            // The requester owns this Session, so its withdrawn Machine binding has a typed owner-visible refusal.
             expect(await enqueuePendingMessage({ ...input, localId: randomUUID() })).toMatchObject({
-                ok: false, error: 'session-not-found', admissionRejectionCode: 'session_input_target_unavailable',
+                ok: false, error: 'forbidden', admissionRejectionCode: 'session_input_machine_binding_unavailable',
             });
             expect(await blockPendingDelivery({ actorUserId: requester.id, sessionId: session.id, localId,
                 reason: 'session_input_target_unavailable' })).toMatchObject({ ok: true, pendingBlockedCount: 1 });
@@ -690,8 +710,9 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
             expect(independentKey).not.toBeNull();
             expect(independentKey).not.toEqual(secret);
             expect(independentKey).not.toEqual(ownerKey);
-            expect(decryptWithDataKey(privacyKit.decodeBase64(retained.metadata), independentKey!)).toEqual(editedMetadata);
-            expect(decryptWithDataKey(privacyKit.decodeBase64(retained.daemonState!), independentKey!)).toEqual(editedState);
+            const retainedContent = decodeMachineStoredContent(retained);
+            expect(decryptWithDataKey(privacyKit.decodeBase64(retainedContent.metadata), independentKey!)).toEqual(editedMetadata);
+            expect(decryptWithDataKey(privacyKit.decodeBase64(retainedContent.daemonState!), independentKey!)).toEqual(editedState);
             expect(retained).toMatchObject({ metadataVersion: 6, daemonStateVersion: 8 });
             const ready = await app.inject({ method: 'GET', url: base, headers: headers(recipient.id) });
             expect(ready.json().machine.access.accessState).toBe('ready');

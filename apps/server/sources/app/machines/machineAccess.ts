@@ -40,7 +40,7 @@ import { captureMachineAccessImpactsInTx, applyMachineAccessImpactsInTx } from '
 import { isMachineOperationSupportedForRequester, type MachineOperationRequesterContext } from './machineOperationSupport';
 import { isMachineRecipientWorkPending, projectMachineRecipientWork, readMachineAudienceAccountIdsInTx, readMachineAudienceAccountIdsForMachinesInTx, readMachineRecipientWorkInTx } from './machineRecipientWork';
 import { classifyMachineAvailabilityState, readMachineOnlineAvailabilityDiagnostic } from './machineStateGuards';
-import { MACHINE_PERMISSION_FACTS_SELECT, buildMachineActorPermissionFactsSelect, machineGrantRelationsSelect, contributions, readMachineRoleGraphInTx, projectMachineRoles, projectMachineTeamRoles, expandMachineIdsWithManagedGuestsInTx } from './machineRole';
+import { MACHINE_PERMISSION_FACTS_SELECT, machineGrantRelationsSelect, contributions, readMachineRoleGraphInTx, projectMachineRoles, readMachineRoleGraphForMachinesInTx, projectMachineTeamRoles, expandMachineIdsWithManagedGuestsInTx } from './machineRole';
 import { projectTeamGroupNameForRecipient } from '@/app/teams/groups/privateLabels';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
@@ -143,18 +143,10 @@ export async function resolveEffectiveMachineAccessForMachinesInTx(tx: Tx, input
     const result = new Map<string, Map<string, MachineAccessRoleV1 | null>>();
     const machineIds = [...new Set(input.machineIds)];
     if (machineIds.length === 0) return result;
-    const byId = new Map<string, Parameters<typeof readMachineRoleGraphInTx>[1][number]>();
-    const actorAccountId = input.accountIds.length === 1 ? input.accountIds[0] : undefined;
-    const select = actorAccountId === undefined ? MACHINE_PERMISSION_FACTS_SELECT : buildMachineActorPermissionFactsSelect(actorAccountId);
-    // Nine relation-projection bindings, including managedResource;
-    // singleton reads add three actor predicates.
-    for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1, fixedBindings: actorAccountId === undefined ? 9 : 12 })) {
-        const rows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: withMachineContentSelect(select) }).then(decodeMachineStoredContent);
-        for (const row of rows) byId.set(row.id, { ...row, ...projectResourceGrantRows(row.grants) });
-    }
-    const roles = await machineRolesInTx(tx, [...byId.values()], input.accountIds);
+    const graph = await readMachineRoleGraphForMachinesInTx(tx, machineIds, input.accountIds);
+    const roles = projectMachineRoles(graph, input.accountIds);
     for (const machineId of machineIds) {
-        const row = byId.get(machineId);
+        const row = graph.get(machineId);
         result.set(machineId, new Map(input.accountIds.map(accountId => {
             const role = roles.get(machineId)?.get(accountId) ?? null;
             const required = input.rpcMethod && row ? resolveMachineRpcRequiredRole({ method: input.rpcMethod,
@@ -733,8 +725,8 @@ async function managerAccessInTx(tx: Tx, input: MachineActor, options: Readonly<
 async function mutationImpactInTx(tx: Tx, machineId: string, accountIds: readonly string[]) {
     return captureMachineAccessImpactsInTx(tx, { machineIds: [machineId], accountIds });
 }
-async function publishMutationInTx(tx: Tx, impacts: Awaited<ReturnType<typeof mutationImpactInTx>>, changedAccountId?: string) {
-    await applyMachineAccessImpactsInTx(tx, { impacts: impacts.values(), grantRosterChanged: true, ...(changedAccountId ? { directGrantChangedAccountId: changedAccountId } : {}) });
+async function publishMutationInTx(tx: Tx, impacts: Awaited<ReturnType<typeof mutationImpactInTx>>) {
+    await applyMachineAccessImpactsInTx(tx, { impacts: impacts.values(), grantRosterChanged: true });
 }
 /** Stabilize Machine content after Account admission and before reading its CAS basis. */
 export async function lockMachinePublicationInTx(tx: Tx, machineId: string): Promise<void> {
@@ -815,7 +807,7 @@ export async function setMachineAccessGrantInTx(tx: Tx, input: MachineActor & Re
     const impacts = await mutationImpactInTx(tx, row.id, [...new Set([row.accountId, ...targetAccountIds])]);
     const changed = previous?.accessLevel !== input.level;
     if (changed) await upsert();
-    if (changed) await publishMutationInTx(tx, impacts, principal.kind === 'account' ? principal.accountId : undefined);
+    if (changed) await publishMutationInTx(tx, impacts);
     const current = await readFactsInTx(tx, row.id);
     const source = current && contributions(current).find(candidate => isDeepStrictEqual(candidate.principal, principal));
     const recipients = source?.accountIds.filter(id => id !== row.accountId) ?? [];
@@ -849,7 +841,7 @@ export async function removeMachineAccessGrantInTx(tx: Tx, input: MachineActor &
     const deleted = principal.kind === 'account' ? await tx.machineGrant.deleteMany({ where: { principalKind: 'account', machineId: row.id, accountId: principal.accountId } })
         : principal.kind === 'team' ? await tx.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: row.id, teamId: principal.teamId } })
             : await tx.machineGrant.deleteMany({ where: { principalKind: 'group', machineId: row.id, teamGroupId: principal.groupId } });
-    if (deleted.count) await publishMutationInTx(tx, impacts, principal.kind === 'account' ? principal.accountId : undefined);
+    if (deleted.count) await publishMutationInTx(tx, impacts);
     const role = await resolveEffectiveMachineRoleInTx(tx, { machineId: row.id, actorAccountId: principal.kind === 'account' ? principal.accountId : input.actorAccountId });
     if (self && role) return { kind: 'inherited_access_remains', role };
     return { kind: self ? 'left' : 'removed', effectiveAccess: role ?? 'none' };

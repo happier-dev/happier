@@ -7,7 +7,7 @@ import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from "
 
 import { eventRouter } from "@/app/events/connectionEventRouter";
 import type { ClientConnection } from "@/app/events/eventPayloadTypes";
-import { removeMachineAccessGrantInTx, resolveEffectiveMachineRoleInTx } from "@/app/machines/machineAccess";
+import { listMachineAccessGrantsInTx, removeMachineAccessGrantInTx, resolveEffectiveMachineRoleInTx } from "@/app/machines/machineAccess";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -69,6 +69,9 @@ describe("Machine effective access membership effects (SQLite integration)", () 
             contribution: { kind: "native" }, desired: "absent", historyAccess: "all_existing",
         }));
         expect(f.disconnected).not.toHaveBeenCalled();
+        expect(await inTx(tx => listMachineAccessGrantsInTx(tx, { actorAccountId: f.member.id, machineId: f.machine.id })))
+            .toMatchObject({ access: { role: "use" }, ownAccessSources: [{ principal: { kind: "team", teamId: f.team.id } }] });
+        expect(await db.accountChange.count({ where: { accountId: f.member.id, entityId: f.machine.id, kind: "machineRecipientAccess" } })).toBe(1);
         await inTx(tx => setTeamMembershipStatusInTx(tx, {
             teamId: f.team.id, membershipId: f.membership.id, accountId: f.member.id, status: "suspended",
         }));
@@ -139,6 +142,33 @@ describe("Machine effective access membership effects (SQLite integration)", () 
         expect(f.disconnected).not.toHaveBeenCalled();
         expect(await db.machineGrant.count({ where: { principalKind: 'group', machineId: f.machine.id } })).toBe(0);
         expect(await db.accountChange.count({ where: { accountId: f.owner.id, entityId: f.machine.id, kind: "machineRecipientAccess" } })).toBe(1);
+    });
+
+    it("refreshes a Use recipient's own sources when Team access is removed while Direct access survives, without refreshing unrelated or unchanged recipients", async () => {
+        const f = await fixture();
+        await db.machineGrant.deleteMany({ where: { machineId: f.machine.id, principalKind: 'group' } });
+        const unrelated = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+        await db.machineGrant.createMany({ data: [f.member.id, unrelated.id].map(accountId => ({
+            principalKind: 'account', machineId: f.machine.id, accountId, accessLevel: "view", createdByAccountId: f.owner.id,
+        })) });
+        expect(await inTx(tx => listMachineAccessGrantsInTx(tx, { actorAccountId: f.member.id, machineId: f.machine.id })))
+            .toMatchObject({ access: { role: "use" }, ownDirectGrant: true, ownAccessSources: [
+                { principal: { kind: "account", accountId: f.member.id } },
+                { principal: { kind: "team", teamId: f.team.id } },
+            ] });
+        const removeTeamGrant = () => inTx(tx => removeMachineAccessGrantInTx(tx, {
+            actorAccountId: f.owner.id, machineId: f.machine.id, principal: { kind: "team", teamId: f.team.id },
+        }));
+        await removeTeamGrant();
+        expect(await inTx(tx => listMachineAccessGrantsInTx(tx, { actorAccountId: f.member.id, machineId: f.machine.id })))
+            .toMatchObject({ access: { role: "use" }, ownDirectGrant: true, ownAccessSources: [
+                { principal: { kind: "account", accountId: f.member.id } },
+            ] });
+        expect(f.disconnected).not.toHaveBeenCalled();
+        const changes = await db.accountChange.findMany({ where: { entityId: f.machine.id, kind: "machineRecipientAccess" }, orderBy: { accountId: 'asc' } });
+        expect(changes.map(change => change.accountId)).toEqual([f.owner.id, f.member.id].sort());
+        await removeTeamGrant();
+        expect(await db.accountChange.findMany({ where: { entityId: f.machine.id, kind: "machineRecipientAccess" }, orderBy: { accountId: 'asc' } })).toEqual(changes);
     });
 
     it("applies the same exact requester loss after direct Leave without deleting the requester's history", async () => {

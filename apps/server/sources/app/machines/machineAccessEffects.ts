@@ -1,4 +1,6 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1 } from '@happier-dev/protocol/changes';
 
 import { acquireAccountChangePublicationLocksInTx, markAccountsChanged } from "@/app/changes/markAccountChanged";
@@ -6,7 +8,7 @@ import { eventRouter } from "@/app/events/connectionEventRouter";
 import { afterTx, type Tx } from "@/storage/inTx";
 import { log } from "@/utils/logging/log";
 import { dispatchMachineAccessLossCustody } from "./machineAccessCustody";
-import { expandMachineIdsWithManagedGuestsInTx } from './machineRole';
+import { contributions, expandMachineIdsWithManagedGuestsInTx, projectMachineRoles, readMachineRoleGraphForMachinesInTx } from './machineRole';
 import { readMachineAudienceAccountIdsForMachinesInTx } from './machineRecipientWork';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import {
@@ -26,12 +28,27 @@ export async function readMachineAccessGrantsForAccountErasureInTx(tx: Tx, accou
         ...authored.map(grant => grant.machineId)])];
 }
 
+interface MachineAccessProjection {
+    readonly role: MachineAccessRoleV1 | null;
+    readonly sources: ReadonlySet<PrincipalRefV1>;
+}
+
+async function readMachineAccessProjectionsInTx(tx: Tx, machineIds: readonly string[], accountIds: readonly string[]): Promise<Map<string, Map<string, MachineAccessProjection>>> {
+    const graph = await readMachineRoleGraphForMachinesInTx(tx, machineIds, accountIds);
+    const sources = new Map([...graph].map(([id, row]) => [id, contributions(row)]));
+    const roles = projectMachineRoles(graph, accountIds, sources);
+    return new Map(machineIds.map(machineId => [machineId, new Map(accountIds.map(accountId => [accountId, {
+        role: roles.get(machineId)?.get(accountId) ?? null,
+        sources: new Set((sources.get(machineId) ?? []).filter(source => source.accountIds.includes(accountId)).map(source => source.principal)),
+    }]))]));
+}
+
 /** Transaction-local structural before-state, never persisted or supplied by a caller over transport. */
 export interface MachineAccessImpact {
     readonly [captured]: Readonly<{
         tx: Tx;
         accountId: string;
-        machines: ReadonlyMap<string, MachineAccessRoleV1 | null>;
+        machines: ReadonlyMap<string, MachineAccessProjection>;
     }>;
 }
 
@@ -66,10 +83,10 @@ export async function captureMachineAccessImpactsInTx(
     await acquireAccountChangePublicationLocksInTx(tx, accountIds, { includeSingleAccount: true });
     const machineIds = await expandMachineIdsWithManagedGuestsInTx(tx, input.machineIds);
     const access = accountIds.length === 0 || machineIds.length === 0
-        ? new Map<string, Map<string, MachineAccessRoleV1 | null>>()
-        : await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds, accountIds });
+        ? new Map<string, Map<string, MachineAccessProjection>>()
+        : await readMachineAccessProjectionsInTx(tx, machineIds, accountIds);
     return new Map(accountIds.map(accountId => [accountId, {
-        [captured]: { tx, accountId, machines: new Map(machineIds.map(machineId => [machineId, access.get(machineId)?.get(accountId) ?? null])) },
+        [captured]: { tx, accountId, machines: new Map(machineIds.map(machineId => [machineId, access.get(machineId)!.get(accountId)!])) },
     }]));
 }
 
@@ -83,24 +100,23 @@ export async function applyMachineAccessImpactsInTx(
     tx: Tx,
     input: Readonly<{
         impacts: Iterable<MachineAccessImpact>;
-        directGrantChangedAccountId?: string;
         grantRosterChanged?: boolean;
     }>,
 ): Promise<Readonly<{ changedAccountIds: readonly string[]; revokedAccountIds: readonly string[] }>> {
-    const beforeByMachine = new Map<string, Map<string, MachineAccessRoleV1 | null>>();
+    const beforeByMachine = new Map<string, Map<string, MachineAccessProjection>>();
     for (const wrapper of input.impacts) {
         const impact = wrapper[captured];
         if (impact.tx !== tx) throw new Error("Machine access impact must be applied in its capture transaction");
-        for (const [machineId, beforeRole] of impact.machines) {
-            const before = beforeByMachine.get(machineId) ?? new Map<string, MachineAccessRoleV1 | null>();
-            before.set(impact.accountId, beforeRole);
+        for (const [machineId, beforeAccess] of impact.machines) {
+            const before = beforeByMachine.get(machineId) ?? new Map<string, MachineAccessProjection>();
+            before.set(impact.accountId, beforeAccess);
             beforeByMachine.set(machineId, before);
         }
     }
     if (beforeByMachine.size === 0) return { changedAccountIds: [], revokedAccountIds: [] };
 
     const accountIds = [...new Set([...beforeByMachine.values()].flatMap(before => [...before.keys()]))];
-    const after = await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds: [...beforeByMachine.keys()], accountIds });
+    const after = await readMachineAccessProjectionsInTx(tx, [...beforeByMachine.keys()], accountIds);
     const managers = await readMachineManageRecipientsInTx(tx, [...beforeByMachine.keys()]);
     const changedAccountIds = new Set<string>();
     const revokedAccountIds = new Set<string>();
@@ -109,9 +125,11 @@ export async function applyMachineAccessImpactsInTx(
         const changed = new Set<string>();
         const revoked = new Set<string>();
         const manageLost = new Set<string>();
-        for (const [accountId, beforeRole] of before) {
-            const afterRole = after.get(machineId)?.get(accountId) ?? null;
-            if (beforeRole === afterRole && (beforeRole === null || accountId !== input.directGrantChangedAccountId)) continue;
+        for (const [accountId, beforeAccess] of before) {
+            const afterAccess = after.get(machineId)!.get(accountId)!;
+            const beforeRole = beforeAccess.role;
+            const afterRole = afterAccess.role;
+            if (beforeRole === afterRole && isDeepStrictEqual(beforeAccess.sources, afterAccess.sources)) continue;
             changed.add(accountId);
             changedAccountIds.add(accountId);
             if (beforeRole !== null && afterRole === null) {
