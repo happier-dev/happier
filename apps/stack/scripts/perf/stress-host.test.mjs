@@ -1,3 +1,7 @@
+import { execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { chmod, copyFile } from 'node:fs/promises';
+import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createLinuxFootprintReader, createStressHostObserver } from './stress-host.mjs';
@@ -76,4 +80,41 @@ test('Linux footprint uses the running process and leaves an absent role unavail
   assert.ok(rows.runner.rssBytes > 0);
   assert.ok(rows.runner.cpuMs > 0);
   assert.equal(rows.holder, null);
+});
+
+test('one shared runner and its three holders are measured across Session counts', { skip: process.platform !== 'linux', timeout: 10_000 }, async t => {
+  const fixture = await createTempFixture(t);
+  const executable = fixture.path('happier-session-holder');
+  const sleepExecutable = execFileSync('sh', ['-c', 'command -v sleep'], { encoding: 'utf8' }).trim();
+  await copyFile(sleepExecutable, executable);
+  await chmod(executable, 0o700);
+  const holders = [];
+  t.after(async () => {
+    for (const { child } of holders) child.kill();
+    await Promise.all(holders.map(({ exited }) => exited));
+  });
+  const observer = await createStressHostObserver({
+    context: { composeProjectName: 'happier-stress-perf-test', containers: [{ id: 'owned-api', service: 'api', image: 'sha256:image' }] },
+    inspect: async () => [{ Id: 'owned-api', Image: 'sha256:image', Config: { Labels: { 'com.docker.compose.project': 'happier-stress-perf-test' } }, State: { Running: true } }],
+    sqlStatements: async () => 0,
+    wait: async () => new Promise(resolve => setTimeout(resolve, 10)),
+  });
+  t.after(() => observer.stop());
+  const { phases, completedTurns } = await observer.captureFootprint({
+    fixture: { sessions: 3 }, signal: t.signal,
+    startSession: async () => {
+      const child = spawn(executable, ['60'], { stdio: 'ignore' });
+      holders.push({ child, exited: once(child, 'exit') });
+      await once(child, 'spawn');
+      return { runnerPid: process.pid };
+    },
+    runTurn: async () => {},
+    readServerHeap: async () => null,
+  });
+  assert.equal(completedTurns.active3, 3);
+  assert.ok(phases.idle1.runner.rssBytes > 0);
+  assert.ok(phases.idle3.runner?.rssBytes > 0, 'shared runner is counted once for all three Sessions');
+  assert.ok(phases.idle3.holder?.rssBytes > phases.idle1.holder.rssBytes, 'all three native holder processes are counted');
+  assert.ok(Number.isFinite(phases.marginal1To3.runner?.rssBytes));
+  assert.ok(Number.isFinite(phases.marginal1To3.holder?.rssBytes));
 });

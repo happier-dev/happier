@@ -74,18 +74,15 @@ export async function createLinuxFootprintReader() {
   };
 }
 
-async function localHolderPid(runnerPid) {
+async function localHolderPids(runnerPid) {
   const root = '/proc/' + runnerPid + '/task';
   const tids = await readdir(root).catch(() => []);
   const children = new Set((await Promise.all(tids.map(tid => readProc(root + '/' + tid + '/children'))))
     .flatMap(text => text.trim().split(/\s+/)).map(Number).filter(pid => Number.isSafeInteger(pid) && pid > 1));
-  // A fresh local Linux launch spawns the native holder directly. An absent
-  // or ambiguous child (including target-held Agents) means unavailable.
-  const holders = (await Promise.all([...children].map(async pid => {
+  return (await Promise.all([...children].map(async pid => {
     const executable = await readlink('/proc/' + pid + '/exe').catch(() => '');
     return /^happier-session-holder(?:\.[\w-]+)?$/.test(basename(executable)) ? pid : null;
   }))).filter(Boolean);
-  return holders.length === 1 ? holders[0] : null;
 }
 
 const settledMs = 15_000;
@@ -95,7 +92,7 @@ const phaseNames = ['idle0', 'idle1', 'idle3', 'active3', 'marginal1To3'];
 const unavailableRoles = () => Object.fromEntries(baseRoles.map(role => [role, null]));
 
 /** Adapter to the existing stress target. This observer never starts or stops services. */
-export async function createStressHostObserver({ context, inspect, sqlStatements }) {
+export async function createStressHostObserver({ context, inspect, sqlStatements, wait = sleep }) {
   if (!/^happier-stress-[a-zA-Z0-9-]+$/.test(context.composeProjectName) || !context.containers.length) {
     throw new Error('Stress observation requires an owned compose topology');
   }
@@ -161,7 +158,7 @@ export async function createStressHostObserver({ context, inspect, sqlStatements
       process.arch, process.versions.node, settledMs, idleWindowMs]) : null, phases, completedTurns: {} };
     if (!measure) return footprint;
 
-    const pause = (ms) => sleep(ms, undefined, { signal });
+    const pause = (ms) => wait(ms, undefined, { signal });
     const sessions = [];
     const readRoles = async () => {
       const loaded = await readOwnedContainers();
@@ -171,8 +168,18 @@ export async function createStressHostObserver({ context, inspect, sqlStatements
         const cgroup = Number.isSafeInteger(pid) && pid > 1 ? await readProc('/proc/' + pid + '/cgroup') : '';
         return [context.containers[index].service, cgroup.includes(Id) ? pid : null];
       }));
+      const sessionCountsByRunner = new Map();
+      for (const { runnerPid } of sessions) {
+        sessionCountsByRunner.set(runnerPid, (sessionCountsByRunner.get(runnerPid) ?? 0) + 1);
+      }
+      // A Linux host can run several Sessions. Read it once and require one
+      // local holder per Session on that host before attributing holder costs.
+      const holdersByRunner = await Promise.all([...sessionCountsByRunner].map(async ([runnerPid, count]) => {
+        const pids = await localHolderPids(runnerPid);
+        return pids.length === count ? pids : [null];
+      }));
       const roles = { api: [], worker: [], daemon: [context.daemonPid],
-        runner: sessions.map(session => session.runnerPid), holder: await Promise.all(sessions.map(session => localHolderPid(session.runnerPid))) };
+        runner: [...sessionCountsByRunner.keys()], holder: holdersByRunner.flat() };
       for (const [role, pid] of entries) roles[role].push(pid);
       return roles;
     };
