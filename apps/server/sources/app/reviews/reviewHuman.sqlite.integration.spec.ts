@@ -3,9 +3,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { encodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
-import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerApiRoutes } from '@/app/api/api';
@@ -22,8 +23,32 @@ import { writeReviewRoundState } from './reviewRecordService';
 
 describe('Review requested-person HTTP flow', () => {
     let harness: LightSqliteHarness;
-    beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'review-human-', initEncrypt: true }); }, 180_000);
+    beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'review-human-', initAuth: true, initEncrypt: true }); }, 180_000);
     afterAll(async () => { await harness?.close(); });
+
+    it('allows the person’s terminal and refuses an agent-origin call after the person submits', async () => {
+        const person = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const review = await db.artifact.create({ data: { id: randomUUID(), accountId: person.id,
+            header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array(),
+            reviewMetadata: { create: { subjectKind: 'comparison', sourceKind: 'direct', state: 'completed',
+                currentRoundOrdinal: 2, startedAt: new Date(1), finishedAt: new Date(2) } } } });
+        const personToken = await createAccountTokenForTests(person.id, { kind: 'account', authority: 'present_user' });
+        const terminalToken = await createAccountTokenForTests(person.id, { kind: 'terminal', authority: 'account_automation' });
+        await withAuthenticatedTestApp(registerHttpRoutes, async app => {
+            const post = (token: string, tail: string, payload: unknown, extra: Record<string, string> = {}) => app.inject({ method: 'POST',
+                url: `/v1/reviews/${review.id}/${tail}`, headers: { authorization: `Bearer ${token}`, ...extra }, payload });
+            expect((await post(personToken, 'reviewers', { roundOrdinal: 2,
+                reviewers: [{ principal: { kind: 'account', accountId: person.id }, required: true }] })).statusCode).toBe(200);
+            expect((await post(personToken, 'verdicts', { roundOrdinal: 2, verdict: 'approve' })).statusCode).toBe(200);
+            expect((await post(terminalToken, 'verdicts', { roundOrdinal: 2, verdict: 'approve' })).statusCode).toBe(200);
+            const denied = await post(terminalToken, 'verdicts', { roundOrdinal: 2, verdict: 'request_changes', expectedRevision: 1 },
+                { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' });
+            expect(denied.statusCode).toBe(403);
+            expect(denied.json()).toMatchObject({ error: 'present_user_required' });
+            expect(await db.reviewVerdict.findFirstOrThrow({ where: { reviewId: review.id } }))
+                .toMatchObject({ accountId: person.id, verdict: 'approve', revision: 1 });
+        }, { authentication: 'real' });
+    });
 
     it('requires Edit to request, permits only the requested person to submit, and grants no access', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -53,9 +78,17 @@ describe('Review requested-person HTTP flow', () => {
             expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${reviewId}`, headers: headers(person.id) })).statusCode).toBe(200);
             const post = (accountId: string, tail: string, payload: unknown, extra: Record<string, string> = {}) => app.inject({
                 method: 'POST', url: `/v1/reviews/${reviewId}/${tail}`, headers: { ...headers(accountId), ...extra }, payload });
+            const changes = () => db.accountChange.findMany({ where: { kind: 'artifact', entityId: reviewId }, orderBy: { accountId: 'asc' } });
+            const beforeRequest = await changes();
             // These Accounts have no friendship with the editor. A request does not create a new share.
             const requested = await post(editor.id, 'reviewers', reviewers);
             expect(requested.statusCode).toBe(200);
+            const requestedChanges = await changes();
+            expect(requestedChanges).not.toEqual(beforeRequest);
+            expect(requestedChanges.map(row => row.accountId).sort()).toEqual([owner.id, person.id, editor.id].sort());
+            const identicalRequest = await post(editor.id, 'reviewers', { ...reviewers, reviewers: [...reviewers.reviewers].reverse() });
+            expect(identicalRequest.json().requests).toEqual(requested.json().requests);
+            expect(await changes()).toEqual(requestedChanges);
             expect(requested.json().requests).toEqual(expect.arrayContaining([expect.objectContaining({
                 principal: { kind: 'account', accountId: outsider.id }, needsAccess: true,
             }), expect.objectContaining({
@@ -75,16 +108,17 @@ describe('Review requested-person HTTP flow', () => {
             expect((await app.inject({ method: 'GET', url: `/v1/reviews/${reviewId}/human`, headers: headers(outsider.id) })).statusCode).toBe(404);
             expect((await post(owner.id, 'verdicts', { roundOrdinal: 1, verdict: 'approve' })).json())
                 .toMatchObject({ error: 'review_reviewer_not_requested' });
-            expect((await post(person.id, 'verdicts', { roundOrdinal: 1, verdict: 'approve' }, { 'x-test-auth-token-kind': 'terminal' })).json())
-                .toMatchObject({ error: 'present_user_required' });
             expect((await post(person.id, 'verdicts', { roundOrdinal: 1, verdict: 'approve', accountId: outsider.id })).statusCode).toBe(400);
             const submitted = await post(person.id, 'verdicts', { roundOrdinal: 1, verdict: 'approve' });
             expect(submitted.statusCode).toBe(200);
             expect(submitted.json()).toMatchObject({ verdicts: [{ accountId: person.id, roundOrdinal: 1, verdict: 'approve', revision: 1 }],
                 needsYou: { needsYou: false, canSubmitVerdict: true } });
             expect((await listFor(person.id)).json().items[0].needsYou).toMatchObject({ needsYou: false, requestedVerdict: false });
+            const submittedChanges = await changes();
+            expect(submittedChanges).not.toEqual(requestedChanges);
             const replay = await post(person.id, 'verdicts', { roundOrdinal: 1, verdict: 'approve' });
             expect(replay.json().verdicts[0].revision).toBe(1);
+            expect(await changes()).toEqual(submittedChanges);
             expect((await post(person.id, 'verdicts', { roundOrdinal: 1, verdict: 'approve', expectedRevision: 1,
                 content: { t: 'encrypted', c: 'ciphertext-for-a-plain-review' } })).json())
                 .toMatchObject({ error: 'review_verdict_encryption_mode_mismatch' });
@@ -107,6 +141,19 @@ describe('Review requested-person HTTP flow', () => {
             const withProse = await executeHuman(REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict,
                 { reviewId, roundOrdinal: 1, verdict: 'approve', body: prose.body });
             expect(withProse.verdicts[0]).toMatchObject({ revision: 2, body: prose.body });
+            const proseChanges = await changes();
+            expect((await executeHuman(REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict,
+                { reviewId, roundOrdinal: 1, verdict: 'approve' })).verdicts).toEqual(withProse.verdicts);
+            expect(await changes()).toEqual(proseChanges);
+            const changedWithoutProse = await executeHuman(REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict,
+                { reviewId, roundOrdinal: 1, verdict: 'request_changes' });
+            expect(changedWithoutProse.verdicts).toEqual([expect.objectContaining({ verdict: 'request_changes', revision: 3 })]);
+            expect(changedWithoutProse.verdicts[0]).not.toHaveProperty('body');
+            expect(await db.reviewVerdict.findFirstOrThrow({ where: { reviewId } })).toMatchObject({ verdict: 'request_changes', revision: 3, content: null });
+            const changedVerdictChanges = await changes();
+            expect((await executeHuman(REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict,
+                { reviewId, roundOrdinal: 1, verdict: 'request_changes' })).verdicts).toEqual(changedWithoutProse.verdicts);
+            expect(await changes()).toEqual(changedVerdictChanges);
             expect((await post(person.id, 'verdicts', { roundOrdinal: 1, verdict: 'request_changes', expectedRevision: 1,
                 content: { t: 'plain', v: prose } })).json()).toMatchObject({ error: 'review_verdict_revision_mismatch' });
             await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { projectSourceId: null, workflowId: null,
@@ -119,7 +166,7 @@ describe('Review requested-person HTTP flow', () => {
                 select: { principal: true, required: true, eligibleAccounts: { select: { accountId: true } } } }))
                 .toEqual([{ principal: { kind: 'account', accountId: person.id }, required: true,
                     eligibleAccounts: [{ accountId: person.id }] }]);
-            expect(renewed.json().verdicts).toEqual([expect.objectContaining({ roundOrdinal: 1, revision: 2 })]);
+            expect(renewed.json().verdicts).toEqual([expect.objectContaining({ roundOrdinal: 1, revision: 3 })]);
             expect((await post(person.id, 'verdicts', { roundOrdinal: 1, verdict: 'approve' })).json())
                 .toMatchObject({ error: 'review_round_not_admitted' });
             expect((await post(person.id, 'verdicts', { roundOrdinal: 2, verdict: 'approve' })).statusCode).toBe(200);

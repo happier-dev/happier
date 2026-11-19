@@ -142,7 +142,7 @@ describe('Review comment audience through authenticated HTTP', () => {
         const headers = { authorization: `Bearer ${await createAccountTokenForTests(recipient.id, { kind: 'account', authority: 'present_user' })}` };
         await withAuthenticatedTestApp(registerReviewCommentRoutes, async app => {
             const result = await executeReviewCommentTransportV1({ actionId: 'reviews.comments.create',
-                input: { reviewId, body: 'Recipient private finding', anchor: { kind: 'file', filePath: 'private.ts' },
+                input: { reviewId, roundOrdinal: 1, body: 'Recipient private finding', anchor: { kind: 'line', filePath: 'private.ts', line: 1 },
                     snapshot: { kind: 'none', capturedAt: 1 }, authorIntent: 'open', clientMutationId: randomUUID() },
                 context: { accountId: recipient.id, mode, material: null, resource }, actor: { kind: 'user', userId: recipient.id }, randomBytes,
                 request: async request => {

@@ -13,9 +13,11 @@ import type { ReviewAccessCapability } from './reviewAccess';
 import { readAdmittedReviewCountsInTx } from './reviewListService';
 import type { Tx } from '@/storage/inTx';
 import type { ReviewReviewersSetInputV1, ReviewVerdictSubmitInputV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
-import { admitReviewRequestedReviewersInTx } from './reviewReviewerAdmission';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { resolveArtifactAudiencesInTx } from '@/app/artifacts/artifactAccessService';
+import { admitReviewRequestedReviewersInTx, reviewReviewerPrincipalKey } from './reviewReviewerAdmission';
+import { publishReviewChangeInTx } from './comments/store';
+import { prismaRuntime } from '@/storage/prisma';
 
 type HumanRows = Readonly<{
     requests: readonly ReviewRequestedReviewerV1[];
@@ -140,9 +142,20 @@ export async function setAdmittedReviewersInTx(tx: Tx, input: Readonly<{
     if (input.access.level === 'view') throw Object.assign(new Error('review_access_forbidden'), { code: 'review_access_forbidden' });
     const current = await tx.reviewMetadata.findUnique({ where: { artifactId: input.access.reviewId }, select: { currentRoundOrdinal: true } });
     if (!current || current.currentRoundOrdinal !== input.request.roundOrdinal) throw Object.assign(new Error('review_round_not_admitted'), { code: 'review_round_not_admitted' });
-    await tx.reviewRequestedReviewer.deleteMany({ where: { reviewId: input.access.reviewId, roundOrdinal: input.request.roundOrdinal } });
-    await admitReviewRequestedReviewersInTx(tx, { reviewId: input.access.reviewId,
-        roundOrdinal: input.request.roundOrdinal, reviewers: input.request.reviewers });
+    const requested = new Map(input.request.reviewers.map(reviewer => [reviewReviewerPrincipalKey(reviewer.principal), reviewer]));
+    if (requested.size !== input.request.reviewers.length) throw Object.assign(new Error('review_request_duplicate'), { code: 'review_request_duplicate' });
+    const previous = await tx.reviewRequestedReviewer.findMany({ where: {
+        reviewId: input.access.reviewId, roundOrdinal: input.request.roundOrdinal,
+    }, select: { id: true, principalKey: true, required: true } });
+    const previousByKey = new Map(previous.map(row => [row.principalKey, row]));
+    const removed = previous.filter(row => !requested.has(row.principalKey));
+    const added = input.request.reviewers.filter(reviewer => !previousByKey.has(reviewReviewerPrincipalKey(reviewer.principal)));
+    const changed = previous.filter(row => requested.has(row.principalKey) && requested.get(row.principalKey)!.required !== row.required);
+    if (removed.length) await tx.reviewRequestedReviewer.deleteMany({ where: { id: { in: removed.map(row => row.id) } } });
+    for (const row of changed) await tx.reviewRequestedReviewer.update({ where: { id: row.id }, data: { required: requested.get(row.principalKey)!.required } });
+    if (added.length) await admitReviewRequestedReviewersInTx(tx, { reviewId: input.access.reviewId,
+        roundOrdinal: input.request.roundOrdinal, reviewers: added });
+    if (removed.length || added.length || changed.length) await publishReviewChangeInTx(tx, { reviewId: input.access.reviewId });
     return readAdmittedReviewHumanStateInTx(tx, { actorAccountId: input.actorAccountId, access: input.access });
 }
 
@@ -155,9 +168,8 @@ export async function submitAdmittedReviewVerdictInTx(tx: Tx, input: Readonly<{
     const metadata = await tx.reviewMetadata.findUnique({ where: { artifactId: input.request.reviewId }, select: { currentRoundOrdinal: true } });
     if (!metadata || metadata.currentRoundOrdinal !== input.request.roundOrdinal) throw Object.assign(new Error('review_round_not_admitted'), { code: 'review_round_not_admitted' });
     const requestRow = await tx.reviewRequestedReviewer.findFirst({ where: { reviewId: input.request.reviewId, roundOrdinal: input.request.roundOrdinal, eligibleAccounts: { some: { accountId: input.actorAccountId } } }, select: { id: true } });
-    const requested = requestRow ? await tx.reviewRequestedReviewerAccount.findUnique({ where: { requestId_accountId: { requestId: requestRow.id, accountId: input.actorAccountId } } }) : null;
-    if (!requested) throw Object.assign(new Error('review_reviewer_not_requested'), { code: 'review_reviewer_not_requested' });
-    const previous = await tx.reviewVerdict.findUnique({ where: { reviewId_roundOrdinal_accountId: { reviewId: input.request.reviewId, roundOrdinal: input.request.roundOrdinal, accountId: input.actorAccountId } }, select: { revision: true } });
+    if (!requestRow) throw Object.assign(new Error('review_reviewer_not_requested'), { code: 'review_reviewer_not_requested' });
+    const previous = await tx.reviewVerdict.findUnique({ where: { reviewId_roundOrdinal_accountId: { reviewId: input.request.reviewId, roundOrdinal: input.request.roundOrdinal, accountId: input.actorAccountId } }, select: { revision: true, verdict: true } });
     const revision = previous?.revision ?? 0;
     if (input.request.expectedRevision !== undefined && input.request.expectedRevision !== revision) throw Object.assign(new Error('review_verdict_revision_mismatch'), { code: 'review_verdict_revision_mismatch' });
     const content = input.request.content;
@@ -169,11 +181,14 @@ export async function submitAdmittedReviewVerdictInTx(tx: Tx, input: Readonly<{
             throw Object.assign(new Error('review_verdict_content_mismatch'), { code: 'review_verdict_content_mismatch' });
         }
     }
-    if (previous && input.request.expectedRevision === undefined && content === undefined) {
+    // An identical prose-free retry preserves the existing prose and its revision binding.
+    // A different verdict without prose replaces it; old ciphertext cannot bind to the new revision.
+    if (previous?.verdict === input.request.verdict && content === undefined) {
         return readAdmittedReviewHumanStateInTx(tx, { actorAccountId: input.actorAccountId, access: input.access });
     }
     await tx.reviewVerdict.upsert({ where: { reviewId_roundOrdinal_accountId: { reviewId: input.request.reviewId, roundOrdinal: input.request.roundOrdinal, accountId: input.actorAccountId } },
         create: { reviewId: input.request.reviewId, roundOrdinal: input.request.roundOrdinal, accountId: input.actorAccountId, verdict: input.request.verdict, content: content ?? undefined, revision: revision + 1 },
-        update: { verdict: input.request.verdict, content: content ?? undefined, revision: revision + 1 } });
+        update: { verdict: input.request.verdict, content: content ?? prismaRuntime.DbNull, revision: revision + 1 } });
+    await publishReviewChangeInTx(tx, { reviewId: input.request.reviewId });
     return readAdmittedReviewHumanStateInTx(tx, { actorAccountId: input.actorAccountId, access: input.access });
 }
