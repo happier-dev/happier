@@ -431,8 +431,8 @@ describe('desktop app-window lifecycle', () => {
         try {
             expect(getExistingSessionDraftProjection(scope, target.sessionId)?.text).toBe('Unsent before moving the tab');
         } finally { releaseDraft(); }
-        host.events.get('desktopAppWindow://lifecycle')?.({ kind: 'ready', windowId: 'window' });
         expect(await operation).toMatchObject({ status: 'opened', windowId: 'window' });
+        host.events.get('desktopAppWindow://lifecycle')?.({ kind: 'ready', windowId: 'window' });
         await edit;
         expect(writable).toBe(true);
         expect(workspace.read().tabs.tab.presentation).toEqual({ windowId: 'window' });
@@ -465,13 +465,14 @@ describe('desktop app-window lifecycle', () => {
             if (command === 'desktop_app_window_placement') return { frame: null, workArea: null, previousFrame: null };
             if (command === 'desktop_app_window_open') { created(); return { windowId: 'broken', windowLabel: 'destination_broken', ready: false, reused: false }; }
         });
-        const owner = mountWorkspace();
-        const result = openDesktopAppWindow({ windowId: 'broken', target: { kind: 'workspaceTab', tabId: 'tab', serverId: 'home', accountId: 'account' } })
-            .then(() => null, (error: unknown) => error);
+        const reportFailure = vi.fn();
+        const owner = mountWorkspace(reportFailure);
+        const result = openDesktopAppWindow({ windowId: 'broken', target: { kind: 'workspaceTab', tabId: 'tab', serverId: 'home', accountId: 'account' } });
         await creation;
+        await expect(result).resolves.toMatchObject({ status: 'opened', windowId: 'broken' });
         host.events.get('desktopAppWindow://lifecycle')?.({ kind: 'failed', windowId: 'broken', error: 'presentation_unavailable' });
-        await vi.waitFor(() => expect(host.invoke).toHaveBeenCalledWith('desktop_app_window_close', { windowId: 'broken' }));
-        expect(await result).toMatchObject({ message: 'presentation_unavailable' });
+        await vi.waitFor(() => expect(reportFailure).toHaveBeenCalledWith(expect.objectContaining({ message: 'presentation_unavailable' })));
+        expect(host.invoke).toHaveBeenCalledWith('desktop_app_window_close', { windowId: 'broken' });
         expect(owner.read().tabs.tab.presentation).toBeUndefined();
         expect(getDesktopAppWindowTransfers()).toEqual([]);
         owner.dispose();

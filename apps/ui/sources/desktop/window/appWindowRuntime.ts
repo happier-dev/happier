@@ -47,7 +47,7 @@ type WorkspaceOwner = Readonly<{
     onRestoreError?: (error: unknown, retry?: () => void) => void;
 }>;
 type LifecycleEvent = Readonly<{ kind: 'ready' | 'focused' | 'return' | 'destroyed' | 'failed'; windowId: string; focused?: boolean; error?: string }>;
-type OpenResult = Readonly<{ windowId: string; windowLabel: string; ready: boolean; reused: boolean }>;
+type OpenResult = Readonly<{ windowId: string; ready: boolean; reused: boolean; frame?: WindowRect | null }>;
 
 let workspace: WorkspaceOwner | null = null;
 let lifecycle: Promise<() => void> | null = null;
@@ -712,6 +712,35 @@ async function openWindow(input: DesktopWindowsOpenInput,
     const operation = beginOperation(record);
     let released = false;
     let paneReleased = false;
+    let awaitingRenderer = false;
+    const finish = () => {
+        finishOperation(operation);
+        if (tab) transfer(tab.id, false);
+    };
+    const commitPlacement = () => {
+        if (tab && !existingTarget) owner.dispatch({ type: 'setPresentation', tabId: tab.id, presentation: { windowId } });
+        publishRecords();
+    };
+    const rollback = async (error: unknown): Promise<never> => {
+        if (paneReleased && paneAddress) owner.panes?.setPresentation(paneAddress,
+            previous?.selectedAddress.kind === 'paneTab' ? previous.windowId : null);
+        if (previous) {
+            records.set(windowId, previous);
+            await invokeDesktopHost('desktop_app_window_update', { record: previous });
+            if (released) {
+                const { requestDesktopAppWindowResume } = await import('@/sync/ops/actions/desktopAppWindowActionDispatch');
+                await requestDesktopAppWindowResume(`destination_${windowId}`);
+            }
+        } else {
+            await invokeDesktopHost('desktop_app_window_close', { windowId });
+            records.delete(windowId);
+        }
+        if (session && tab && !tab.presentation) {
+            const { resumeSessionDraftWindowPresentation } = await import('@/sync/ops/sessionDrafts/sessionDraftWindowTransfer');
+            const release = await resumeSessionDraftWindowPresentation(session); release();
+        }
+        throw error;
+    };
     try {
         if (previous && (commitPaneSelection || previous.homeId !== record.homeId || previous.accountId !== record.accountId
             || JSON.stringify(previous.selectedAddress) !== JSON.stringify(record.selectedAddress))) {
@@ -755,32 +784,22 @@ async function openWindow(input: DesktopWindowsOpenInput,
             workArea: placement.workArea, previousFrame: placement.previousFrame, ...owner.placementMetrics }) : undefined);
         records.set(windowId, record);
         const opened = await invokeDesktopHost<OpenResult>('desktop_app_window_open', { record, ...(frame ? { frame } : {}) });
-        if (!opened.ready) await operation.ready;
-        if (tab && !existingTarget) owner.dispatch({ type: 'setPresentation', tabId: tab.id, presentation: { windowId } });
-        publishRecords();
-        return { status: opened.reused ? 'focused' : 'opened', windowId, ...(frame ? { rect: frame } : {}) };
-    } catch (error) {
-        if (paneReleased && paneAddress) owner.panes?.setPresentation(paneAddress,
-            previous?.selectedAddress.kind === 'paneTab' ? previous.windowId : null);
-        if (previous) {
-            records.set(windowId, previous);
-            await invokeDesktopHost('desktop_app_window_update', { record: previous });
-            if (released) {
-                const { requestDesktopAppWindowResume } = await import('@/sync/ops/actions/desktopAppWindowActionDispatch');
-                await requestDesktopAppWindowResume(`destination_${windowId}`);
-            }
+        if (opened.ready) {
+            commitPlacement();
         } else {
-            await invokeDesktopHost('desktop_app_window_close', { windowId });
-            records.delete(windowId);
+            // Native creation settles the Action. Keep the source transfer held
+            // until the renderer takes ownership or its existing rollback runs.
+            awaitingRenderer = true;
+            fireAndForget(operation.ready.then(commitPlacement).catch(rollback).finally(finish),
+                { tag: 'appWindow.presentation', onError: owner.onRestoreError });
         }
-        if (session && tab && !tab.presentation) {
-            const { resumeSessionDraftWindowPresentation } = await import('@/sync/ops/sessionDrafts/sessionDraftWindowTransfer');
-            const release = await resumeSessionDraftWindowPresentation(session); release();
-        }
-        throw error;
+        const rect = opened.frame ?? frame;
+        return { status: opened.reused && opened.ready ? 'focused' : 'opened', windowId: opened.windowId,
+            ...(rect ? { rect } : {}) };
+    } catch (error) {
+        return await rollback(error);
     } finally {
-        finishOperation(operation);
-        if (tab) transfer(tab.id, false);
+        if (!awaitingRenderer) finish();
     }
 }
 

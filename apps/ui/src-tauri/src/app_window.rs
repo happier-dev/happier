@@ -203,6 +203,7 @@ pub struct AppWindowOpenResult {
     window_label: String,
     ready: bool,
     reused: bool,
+    frame: Option<WindowFrame>,
 }
 
 fn readiness_after_record_update(
@@ -380,6 +381,7 @@ pub fn desktop_app_window_open(
             window_label: label,
             ready,
             reused: true,
+            frame: crate::window_sizing::window_frame(&window).ok(),
         });
     }
     // Boot context comes from the opaque native label and its local record.
@@ -466,6 +468,7 @@ pub fn desktop_app_window_open(
         window_label: label,
         ready: false,
         reused: false,
+        frame: crate::window_sizing::window_frame(&window).ok(),
     })
 }
 

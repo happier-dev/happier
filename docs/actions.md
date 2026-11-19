@@ -7012,8 +7012,10 @@ workspace tab, destination href or pane tab. Its closed `target` includes
 `windowId` retargets an existing window. Source tabs move through their existing
 guards; opening the same qualified target reuses its window. Session window
 presentation is documented under `session.open` above. The Action keeps the
-existing safe/reversible approval default and introduces no separate focus,
-return, close or window-list Action.
+existing safe/reversible approval default. The Action returns the window ID and
+available rectangle when the native open or reuse succeeds. The renderer
+reports readiness separately, and a source tab's transfer finishes only once
+the destination can present it.
 
 In 0.3 development source, the same input accepts `chrome: 'full'` with a
 qualified Session, destination or `{kind: 'home', accountId, serverId}` target.

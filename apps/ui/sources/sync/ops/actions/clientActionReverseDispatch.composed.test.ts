@@ -131,7 +131,7 @@ afterEach(async () => {
 });
 
 describe('admitted app Actions and daemon-to-app continuations', () => {
-  it('delivers background Agent desktop Actions to the mounted desktop instead of the focused browser', async () => {
+  it('delivers background Agent desktop Actions and acknowledges a native window whose renderer never readies', async () => {
     const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
     const { selectRpcTarget } = await import('../../../../../server/sources/app/api/socket/rpc/rpcTargetSelection');
     const { registerDesktopAppWindowWorkspace } = await import('@/desktop/window/appWindowRuntime');
@@ -162,6 +162,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const { createDesktopSecureStorageBoundary } = await import('@/dev/testkit/mocks/desktopSecureStorage');
     const secureStorage = createDesktopSecureStorageBoundary();
     const displays = { displays: [], automaticResolvesTo: null };
+    const frame = { x: 32, y: 48, width: 960, height: 720 };
     const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
       switch (command) {
         case 'plugin:event|listen': return Number(args?.handler);
@@ -178,7 +179,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
         case 'desktop_app_window_open': {
           const record = args?.record;
           if (!record || typeof record !== 'object' || !('windowId' in record)) throw new Error('Window record missing');
-          return { windowId: record.windowId, ready: true, reused: false };
+          return { windowId: record.windowId, windowLabel: `destination_${record.windowId}`, frame, ready: false, reused: false };
         }
         default: throw new Error(`Unexpected native command: ${command}`);
       }
@@ -231,15 +232,20 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       const notch = await caller.execute('desktop.notch.set', { state: 'open' }, context);
       const displayList = await caller.execute('desktop.displays.list', {}, context);
       const overlay = await caller.execute('session.open', { sessionId, presentation: 'overlay' }, context);
-      const window = await caller.execute('desktop.windows.open', { chrome: 'full',
-        target: { kind: 'session', ...scope, sessionId } }, context);
       expect.soft(notch).toEqual({ ok: true, result: { applied: true } });
       expect.soft(displayList).toEqual({ ok: true, result: displays });
       expect.soft(overlay).toMatchObject({ ok: true, result: { ok: true } });
-      expect.soft(window).toMatchObject({ ok: true, result: { status: 'opened', windowId: expect.any(String) } });
       expect(pinned).toEqual([{ ...scope, sessionId }]);
       expect(browserDelivery).not.toHaveBeenCalled();
       expect(invoke).toHaveBeenCalledWith('desktop_activity_overlay_request_presentation', { requestedState: 'open' });
+      let receipt: unknown;
+      void caller.execute('desktop.windows.open', { chrome: 'full',
+        target: { kind: 'session', ...scope, sessionId } }, context).then(value => { receipt = value; });
+      await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('desktop_app_window_open',
+        expect.objectContaining({ record: expect.objectContaining({ chrome: 'full' }) })));
+      await vi.waitFor(() => expect(receipt).toMatchObject({
+        ok: true, result: { status: 'opened', windowId: expect.any(String), rect: frame },
+      }));
     } finally {
       await runtime.unmount();
       await act(async () => { releaseWorkspace(); });
