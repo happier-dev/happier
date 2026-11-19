@@ -700,7 +700,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
     await act(async () => { screen.findByType('DropdownMenu' as React.ElementType).props.onOpenChange(true); });
     storageState.current.sessions = {
-      [session.id]: { ...session, metadata: { ...session.metadata, claudeSessionId: 'current-vendor-session' } },
+      [session.id]: { ...session, metadata: { ...session.metadata, name: 'Current header session', claudeSessionId: 'current-vendor-session' } },
     };
     const dropdown = screen.findByType('DropdownMenu' as React.ElementType);
     expect(dropdown.props.items).toEqual(expect.arrayContaining([
@@ -712,6 +712,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       await findFireAndForgetByTag('SessionHeaderActionMenu.execute.copyInformation');
     });
     expect(clipboardMock).toHaveBeenCalledWith([
+      'Session name: Current header session',
       'Happier session ID: header-copy',
       'agentInput.agent.claude session ID: current-vendor-session',
       'Happier logs: /tmp/session.log',

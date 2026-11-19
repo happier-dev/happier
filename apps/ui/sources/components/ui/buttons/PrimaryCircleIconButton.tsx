@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Pressable, StyleProp, View, ViewStyle, type PressableProps } from 'react-native';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Icon } from '@/components/ui/icons/Icon';
 
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
@@ -55,6 +56,11 @@ export const PrimaryCircleIconButton = React.memo(
       ? (primary?.background ?? theme.colors.surface.inset ?? theme.colors.surface.base)
       : (primary?.disabled ?? theme.colors.border.default);
     const tintColor = primary?.tint ?? theme.colors.text.primary;
+    const child = props.children;
+    // App icons render SVGs or views. A text wrapper adds a baseline offset to SVGs on web.
+    const content = React.isValidElement(child) && child.type === Icon
+      ? child
+      : normalizeNodeForView(child);
 
     return (
       <View style={[styles.root, props.style]}>
@@ -95,7 +101,7 @@ export const PrimaryCircleIconButton = React.memo(
           {props.loading ? (
             <ActivitySpinner size="small" color={tintColor} />
           ) : (
-            normalizeNodeForView(props.children)
+            content
           )}
         </Pressable>
       </View>
