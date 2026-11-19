@@ -90,6 +90,12 @@ export type HappierPageSearchToggle = Readonly<{
 
 const HappierPageChromeContext = createContext<HappierPageChromeInternal | null>(null);
 
+/**
+ * @internal A Collection that is the page has drawn the page's name as its large title (a phone's top-level page).
+ * A page header inside it keeps only its purpose line, so the name never stands twice (TRIAGE-UI-ACCEPT-1119 F1).
+ */
+export const HappierPageLargeTitleDrawnContext = createContext(false);
+
 /** @internal The surface bridge re-provides this across the host's details pane (`components/surfaceBridge.tsx`). */
 export const HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL = HappierPageChromeContext;
 

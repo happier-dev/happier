@@ -1,8 +1,8 @@
-import { useEffect, useMemo, type ReactElement, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, type ReactElement, type ReactNode } from 'react';
 
 import { HappierPageHeader, HappierPageHeadingBindingContext } from '../presentation/layout/PageHeader.js';
 import type { HappierPageCountPart } from '../presentation/layout/PageCountLine.js';
-import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
+import { HappierPageLargeTitleDrawnContext, useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 import { normalizeHappierPageOperations } from '../presentation/layout/pageOperations.js';
 import { usePluginHostApi } from '../hostApi/context.js';
 import { Icon, type IconName } from './Icon.js';
@@ -87,7 +87,10 @@ export function PageHeader(props: PageHeaderProps): ReactElement {
   // An entity header (a leading identity or status mark) keeps its mark, title, facts and actions together in
   // the body, as a core entity page does (`alwaysShowTitle`, actions in the page): the mark never stands without
   // its title, and the navigation chrome keeps the destination's own name.
-  const entity = props.leading != null;
+  // Under a Collection that already drew the page's name as its large title, the header keeps only its purpose
+  // line: its name would stand twice, and its mark never stands without the name (a phone's first run, F1).
+  const nameDrawn = useContext(HappierPageLargeTitleDrawnContext) && headingRef === undefined;
+  const entity = props.leading != null && !nameDrawn;
   // A Collection detail retains its own semantic heading and controls in the detail body. Every other header
   // takes the host's controls (its route controls, its pane's Hide); an entity keeps them, with its own
   // actions, in its row rather than letting the host hoist them into navigation chrome.
@@ -99,7 +102,7 @@ export function PageHeader(props: PageHeaderProps): ReactElement {
   const title = resolveAuthorText(translate, props.title, props.titleKey) ?? props.title;
   // A collection detail keeps its heading in the body; any other page names itself in the chrome that
   // hides its title, exactly as a core page header does, so a phone never loses the page's identity.
-  const publishTitle = headingRef === undefined && !entity ? chrome?.publishTitle : undefined;
+  const publishTitle = headingRef === undefined && !entity && !nameDrawn ? chrome?.publishTitle : undefined;
   useEffect(() => {
     if (publishTitle === undefined) return;
     publishTitle(title);
@@ -123,10 +126,10 @@ export function PageHeader(props: PageHeaderProps): ReactElement {
     {hoisted ? actions : null}
     <HappierPageHeader
       title={title}
-      largeTitle={chrome?.largeTitle === true && headingRef === undefined}
-      showTitle={headingRef !== undefined || entity || chrome?.showsTitle !== true}
+      largeTitle={chrome?.largeTitle === true && headingRef === undefined && !nameDrawn}
+      showTitle={headingRef !== undefined || entity || (!nameDrawn && chrome?.showsTitle !== true)}
       description={description}
-      leading={props.leading ? <PageHeaderMarkSlot>{props.leading}</PageHeaderMarkSlot> : undefined}
+      leading={props.leading && !nameDrawn ? <PageHeaderMarkSlot>{props.leading}</PageHeaderMarkSlot> : undefined}
       details={props.details}
       detailsPlacement={props.detailsPlacement}
       compactPresentation={props.compactPresentation}

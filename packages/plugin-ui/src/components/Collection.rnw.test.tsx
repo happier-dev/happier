@@ -7016,6 +7016,29 @@ describe("the search in the caller's header row", () => {
     }
   });
 
+  it("keeps a page header under a phone's large title to its purpose line, never the name twice", () => {
+    // TRIAGE-UI-ACCEPT-1119 F1: a first run's header (the page's mark, name and purpose) sits under the Collection's
+    // large title on a phone. The name is already the large title, so the header keeps only its purpose there.
+    const header: CollectionProps<Entry>['header'] = () => (
+      <PageHeader title="PRs & Issues" description="What needs you." leading={<View testID="page-mark" />} />
+    );
+    for (const pageChrome of [{ showsTitle: true, largeTitle: true }, { showsTitle: false, largeTitle: true }]) {
+      const phone = mount({ search, title: 'PRs & Issues', header, pageChrome });
+      phone.measure(390);
+      expect([...phone.container.querySelectorAll('[role="heading"]')]
+        .filter((node) => node.textContent === 'PRs & Issues')).toHaveLength(1);
+      expect(phone.container.textContent).toContain('What needs you.');
+      expect(phone.query('page-mark')).toBeNull();
+      phone.unmount();
+    }
+    // Without a large title (a desktop pane) the header keeps its mark and name.
+    const desk = mount({ search, title: 'PRs & Issues', header, pageChrome: { showsTitle: false } });
+    desk.measure(1440);
+    expect(desk.query('page-mark')).toBeTruthy();
+    expect(desk.container.textContent).toContain('PRs & Issues');
+    desk.unmount();
+  });
+
   it("leads a phone's collection page with its large title when the host's navigation leaves the name to the page", () => {
     const header: CollectionProps<Entry>['header'] = (slots) => (
       <View testID="toolbar">

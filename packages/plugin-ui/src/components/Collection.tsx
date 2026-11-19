@@ -32,7 +32,7 @@ import { HAPPIER_PAGE_METRICS, isHappierPageRowNarrow, readHappierVisibleLayoutW
 import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle, resolveHappierTextStepStyle } from '../presentation/layout/pageText.js';
 import { HAPPIER_ROW_TITLE_META_GAP_PX, resolveHappierRowTitleMetaPlacement } from '../presentation/layout/pageRowMetrics.js';
 import { happierPageSheetFrameStyle, type HappierPageSheetColors, useHappierPageSection } from '../presentation/layout/PageSection.js';
-import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
+import { HappierPageLargeTitleDrawnContext, useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 import { HappierPageHeader } from '../presentation/layout/PageHeader.js';
 import {
   CollectionTitleLineLendContext, CollectionTitleLineLent, CollectionToolbarCompactContext, CollectionToolbarOverflowContext,
@@ -3408,6 +3408,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   );
 
   return (
+    <HappierPageLargeTitleDrawnContext.Provider value={largeTitle !== null}>
     <CollectionVirtualizerContext.Provider value={props.virtualizer}>
     <ListMultiSelectionProvider store={multipleStore}>
     <HappierCollectionLayoutContext.Provider value={layoutState}>
@@ -3588,6 +3589,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     </HappierCollectionLayoutContext.Provider>
     </ListMultiSelectionProvider>
     </CollectionVirtualizerContext.Provider>
+    </HappierPageLargeTitleDrawnContext.Provider>
   );
 }
 
