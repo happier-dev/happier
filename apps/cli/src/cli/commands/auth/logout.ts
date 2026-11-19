@@ -12,6 +12,7 @@ import { configuration } from '@/configuration';
 import { isDaemonStopIncompleteError, stopDaemon } from '@/daemon/controlClient';
 import { stopAllDaemonsBestEffort } from '@/daemon/multiDaemon';
 import { clearActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createSkillStore } from '@/prompts/skills/store/skillStore';
 import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 import { clearServerScopedAuthState } from './clearServerScopedAuthState';
 
@@ -54,6 +55,7 @@ export async function handleAuthLogout(args: string[]): Promise<void> {
       if (logoutAll) {
         await stopAllDaemonsBestEffort();
         if (existsSync(happyDir)) {
+          await createSkillStore({ happyHomeDir: happyDir }).retire();
           rmSync(happyDir, { recursive: true, force: true });
         }
       } else {

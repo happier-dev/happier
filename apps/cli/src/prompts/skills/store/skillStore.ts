@@ -252,6 +252,10 @@ export function createSkillStore(input: Readonly<{ happyHomeDir: string; platfor
                 return result();
             });
         },
+        /** Full local-data removal follows confirmed shutdown, rather than cache collection. */
+        retire(): Promise<void> {
+            return serialize(() => removeOwnedTree(root));
+        },
         releaseSkillSessionDirs(sessionId: string): Promise<void> {
             return serialize(() => removeOwnedTree(ownerDirectory(segment.parse(sessionId))));
         },
