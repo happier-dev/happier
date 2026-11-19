@@ -14,6 +14,11 @@ not supported.
 - For development Runs, a selected compatible Provider connection, Claude Connected
   Account, or delivered `AI_GATEWAY_API_KEY`
 
+The native investigation can edit the workspace. Create a [background role](/agents/roles)
+with **Review** intent and **Hands-off** off, then select it from the review's
+**Role** control in **Who**. The built-in Reviewer requires Hands-off enforcement,
+which this native integration cannot provide.
+
 ## Install DeepSec
 
 In unreleased 0.3 development source, the Machine setup install action uses

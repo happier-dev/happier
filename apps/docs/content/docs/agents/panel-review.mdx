@@ -22,6 +22,11 @@ model and reasoning options; panel mode consumes the repository's native panel
 configuration. The selected backend needs working model access on that Machine.
 Real provider authentication remains release validation.
 
+Native panel configurations can permit workspace edits. Select a
+[background role](/agents/roles) with **Review** intent and **Hands-off** off
+from the review's **Role** control in **Who**. The built-in Reviewer requires
+Hands-off enforcement, which this integration cannot guarantee for native panels.
+
 This integration cannot pass captured working-tree or session snapshots, or an
 explicit selected-file list, to the native reviewer. Those subjects are refused
 before the native process starts; choose another reviewer for them. Committed
