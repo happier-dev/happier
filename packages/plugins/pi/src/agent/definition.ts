@@ -53,7 +53,7 @@ export const AGENT_DEFINITION = Object.freeze({
       inFlightSteerSupported: true,
       terminalPromptInjectionSupported: false,
     },
-    tools: { delivery: 'native_extension', support: 'experimental',
+    tools: { delivery: 'native_extension', support: 'experimental', noTools: false,
       mcpToolControl: { off: 'hidden', approval: 'host' } },
   },
   sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },

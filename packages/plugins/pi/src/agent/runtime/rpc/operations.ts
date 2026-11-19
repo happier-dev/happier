@@ -67,7 +67,7 @@ import {
   resolvePiRequestAuthCompatibility,
 } from './requestAuthCompatibility.js';
 import type { PiPermissionMode, PiRpcStateData } from './types.js';
-import { resolvePiEffectiveLaunchPermissionPolicy } from './permissions.js';
+import { readPiNoToolsRefusal, resolvePiEffectiveLaunchPermissionPolicy } from './permissions.js';
 import { createPiSessionModelsSource } from '../modelsSource.js';
 import { createPiSessionStatsUsageProjector } from './usage.js';
 import { AGENT_DEFINITION } from '../../definition.js';
@@ -1416,6 +1416,13 @@ function createPiConversationRuntime(params: Readonly<{
     async updateConfiguration(update, options) {
       if (options?.signal?.aborted) {
         return { status: 'unavailable', diagnostic: diagnostic('pi_configuration_aborted', 'Pi configuration update was aborted') };
+      }
+      const toolFilterRefusal = readPiNoToolsRefusal(update);
+      if (toolFilterRefusal) {
+        return {
+          status: 'unsupported',
+          diagnostic: diagnostic(toolFilterRefusal.code, toolFilterRefusal.message),
+        };
       }
       // Native tool restrictions are launch-only. Refuse the whole snapshot
       // before model/thinking effects so the host cannot retain unapplied intent.

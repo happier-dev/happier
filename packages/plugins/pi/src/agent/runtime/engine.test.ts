@@ -339,6 +339,36 @@ describe('Pi Agent runtime', () => {
     });
   });
 
+  it('refuses an exclusive empty tool allowlist before starting a Pi run', async () => {
+    const boundary = hostBoundaries();
+    const open = createPiAgentRuntime().sessions.executionRunContextV1!.open;
+    const outcome = open({
+      kind: 'create', runId: 'pi-no-tools', cwd: '/workspace',
+      profile: { pluginId: 'happier.agent.pi', localId: 'default' },
+      input: { text: 'Summarize the source.' },
+      configuration: {
+        mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: 'read-only', updatedAtMs: 1 }, options: {},
+        allowedTools: [], unlistedTools: 'deny',
+      },
+    }, { ...boundary.context, executionRun: { id: 'pi-no-tools', services: {} } } as unknown as AgentExecutionRunRuntimeContextV1)
+      .then(async (run) => {
+        try {
+          await vi.waitFor(() => expect(boundary.spawn).toHaveBeenCalled());
+          return boundary.spawn.mock.calls[0]?.[0].launch.args;
+        } finally {
+          await run.dispose();
+        }
+      });
+
+    await expect(outcome).rejects.toMatchObject({
+      code: 'unsupported',
+      retryable: false,
+      message: expect.stringContaining('cannot enforce'),
+    });
+    expect(boundary.spawn).not.toHaveBeenCalled();
+  });
+
   it('keeps an admitted finite run alive across Connected Account resync until explicit disposal', async () => {
     const boundary = hostBoundaries();
     const open = createPiAgentRuntime().sessions.executionRunContextV1!.open;

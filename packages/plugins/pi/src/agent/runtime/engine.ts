@@ -25,6 +25,7 @@ import {
   preparePiHappierToolsExtension,
   type PreparedPiHappierToolsExtension,
 } from '../tools/assets.js';
+import { readPiNoToolsRefusal } from './rpc/permissions.js';
 import { readStrictCanonicalPiAgentRuntimeDescriptorV1 } from '../../protocol/runtimeDescriptorV1.js';
 
 export {
@@ -77,6 +78,11 @@ function initialConfigurationFailure(result: Readonly<{
   });
 }
 
+function assertPiToolPolicySupported(configuration: AgentSessionOpenRequest['configuration']): void {
+  const refusal = readPiNoToolsRefusal(configuration);
+  if (refusal) throw new PluginError(refusal);
+}
+
 async function openPiSession(
   request: AgentSessionOpenRequest,
   context: AgentSessionRuntimeContext,
@@ -84,6 +90,7 @@ async function openPiSession(
   if (request.kind === 'fork') {
     throw new Error('Pi does not support native session fork');
   }
+  assertPiToolPolicySupported(request.configuration);
   if (request.startupInstructions && !context.session.services.happierTools) {
     throw new PluginError({
       code: 'agent_session_startup_instructions_unsupported',
@@ -240,6 +247,7 @@ async function openPiExecutionRun(
   if (request.kind === 'fork') {
     throw new Error('Pi does not support native execution-run fork');
   }
+  assertPiToolPolicySupported(request.configuration);
   return await createExecutionRunHostBackendFromConversationRuntime({
     request,
     async openConversation() {

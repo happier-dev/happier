@@ -4250,6 +4250,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "approval": "host",
         "off": "hidden"
       },
+      "noTools": false,
       "support": "experimental"
     }
   },

@@ -1,8 +1,21 @@
+import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import { parsePermissionIntentAlias } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { PiPermissionMode } from './types.js';
 
 const READ_ONLY_TOOLS = ['read', 'grep', 'find', 'ls'] as const;
+
+const NO_TOOLS_REFUSAL = {
+  code: 'unsupported',
+  message: 'Native Pi cannot enforce the selected tool filter or policy.',
+} as const;
+
+// The native launch currently permits extensions to activate tools.
+export function readPiNoToolsRefusal(configuration?: AgentSessionOpenRequest['configuration']) {
+  return configuration?.unlistedTools === 'deny' && configuration.allowedTools?.length === 0
+    ? NO_TOOLS_REFUSAL
+    : null;
+}
 
 type PiPermissionIntent = 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan';
 
