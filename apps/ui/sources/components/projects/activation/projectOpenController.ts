@@ -236,7 +236,13 @@ export function createProjectOpenController(options: ProjectOpenControllerOption
                             surface: 'ui', authority: 'present_user', serverId: input.serverId,
                             expectedAccountId: lifetime.scope.accountId, signal: abort.signal,
                         });
-                        result = executed.ok ? OpenProjectResultV1Schema.parse(executed.result) : executed;
+                        if (executed.ok) result = OpenProjectResultV1Schema.parse(executed.result);
+                        else if (executed.errorCode === 'outcome_unknown') {
+                            const details = executed.details;
+                            const operationId = details && typeof details === 'object' && 'operationId' in details
+                                && typeof details.operationId === 'string' ? details.operationId.trim() : '';
+                            result = { kind: 'outcomeUnknown', ...(operationId ? { operationId } : {}) };
+                        } else result = executed;
                     }
                 } catch {
                     result = issued ? { kind: 'outcomeUnknown' } : failure('project_open_draft_unavailable');
