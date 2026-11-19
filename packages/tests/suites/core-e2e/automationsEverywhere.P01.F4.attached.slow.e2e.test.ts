@@ -212,7 +212,8 @@ describe('Automations everywhere: selected attached summaries', () => {
     if (!beforeConsent.ok) throw new Error(beforeConsent.errorCode);
     expect(WorkflowTriggerListResultV1Schema.parse(beforeConsent.result).attached?.map(row => row.triggerId).sort())
       .toEqual(directTriggers.map(row => row.triggerId).sort());
-    const invoked = await reader.execute('machines.command.run', {
+    // The real UI Account host owns the live Action index and the consent card.
+    const invoked = await reader.executeAsPerson('machines.command.run', {
       command: process.platform === 'win32' ? 'echo checked' : 'printf checked',
     }, { defaultSessionId: actorSession.sessionId, presentUserConfirmation: { actionId: 'machines.command.run' },
       externalActionTarget: { kind: 'machine', machineId: actorMachine.target.machineId,
