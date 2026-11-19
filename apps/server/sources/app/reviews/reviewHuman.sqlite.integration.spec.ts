@@ -4,11 +4,17 @@ import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { encodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
+import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { createFakeSocket } from '@/app/api/testkit/socketHarness';
+import { evaluateAccountStoredContentSocketCompatibility, writeAccountStoredContentCompatibilityForSocket } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+import { eventRouter } from '@/app/events/eventRouter';
+import type { ClientConnection } from '@/app/events/eventPayloadTypes';
 import { registerApiRoutes } from '@/app/api/api';
 import { resolveApiRateLimitPluginOptions } from '@/app/api/utils/apiRateLimitPolicy';
 import { homeDomainActionPathForMethod } from '@/app/api/routes/actions/homeDomainActionRoute';
@@ -26,7 +32,7 @@ describe('Review requested-person HTTP flow', () => {
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'review-human-', initAuth: true, initEncrypt: true }); }, 180_000);
     afterAll(async () => { await harness?.close(); });
 
-    it('allows the person’s terminal and refuses an agent-origin call after the person submits', async () => {
+    it('publishes changed verdicts to the person, skips exact replays, and refuses agent-origin verdicts', async () => {
         const person = await db.account.create({ data: { encryptionMode: 'plain' } });
         const review = await db.artifact.create({ data: { id: randomUUID(), accountId: person.id,
             header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array(),
@@ -35,18 +41,44 @@ describe('Review requested-person HTTP flow', () => {
         const personToken = await createAccountTokenForTests(person.id, { kind: 'account', authority: 'present_user' });
         const terminalToken = await createAccountTokenForTests(person.id, { kind: 'terminal', authority: 'account_automation' });
         await withAuthenticatedTestApp(registerHttpRoutes, async app => {
+            // Only the network boundary is fake: HTTP auth, transactions and the event router stay real.
+            const socket = Object.assign(createFakeSocket({ id: randomUUID() }), { data: {} });
+            writeAccountStoredContentCompatibilityForSocket(socket,
+                evaluateAccountStoredContentSocketCompatibility(buildAccountStoredContentCompatibilitySocketAuthV1(
+                    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION)));
+            const connection: ClientConnection = { connectionType: 'user-scoped', userId: person.id,
+                socket: socket as unknown as ClientConnection['socket'] };
+            const publications = () => socket.emit.mock.calls.filter(([event]) => event === 'update')
+                .map(([, payload]) => UpdateContainerSchema.parse(payload).body);
+            const reviewChange = { t: 'account-change', changeKinds: ['artifact'], entityIds: [review.id],
+                artifactKinds: [encodeArtifactKindV1({ kind: 'other', kindHint: 'review.v1' })] };
             const post = (token: string, tail: string, payload: unknown, extra: Record<string, string> = {}) => app.inject({ method: 'POST',
                 url: `/v1/reviews/${review.id}/${tail}`, headers: { authorization: `Bearer ${token}`, ...extra }, payload });
-            expect((await post(personToken, 'reviewers', { roundOrdinal: 2,
-                reviewers: [{ principal: { kind: 'account', accountId: person.id }, required: true }] })).statusCode).toBe(200);
-            expect((await post(personToken, 'verdicts', { roundOrdinal: 2, verdict: 'approve' })).statusCode).toBe(200);
-            expect((await post(terminalToken, 'verdicts', { roundOrdinal: 2, verdict: 'approve' })).statusCode).toBe(200);
-            const denied = await post(terminalToken, 'verdicts', { roundOrdinal: 2, verdict: 'request_changes', expectedRevision: 1 },
-                { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' });
-            expect(denied.statusCode).toBe(403);
-            expect(denied.json()).toMatchObject({ error: 'present_user_required' });
-            expect(await db.reviewVerdict.findFirstOrThrow({ where: { reviewId: review.id } }))
-                .toMatchObject({ accountId: person.id, verdict: 'approve', revision: 1 });
+            eventRouter.addConnection(person.id, connection);
+            try {
+                expect((await post(personToken, 'reviewers', { roundOrdinal: 2,
+                    reviewers: [{ principal: { kind: 'account', accountId: person.id }, required: true }] })).statusCode).toBe(200);
+                expect(publications()).toEqual([reviewChange]);
+                expect((await post(personToken, 'verdicts', { roundOrdinal: 2, verdict: 'approve' })).statusCode).toBe(200);
+                expect(publications()).toEqual([reviewChange, reviewChange]);
+                const approved = await db.reviewVerdict.findFirstOrThrow({ where: { reviewId: review.id } });
+                expect((await post(terminalToken, 'verdicts', { roundOrdinal: 2, verdict: 'approve' })).statusCode).toBe(200);
+                expect(publications()).toEqual([reviewChange, reviewChange]);
+                expect(await db.reviewVerdict.findFirstOrThrow({ where: { reviewId: review.id } })).toEqual(approved);
+                expect((await post(personToken, 'verdicts', { roundOrdinal: 2, verdict: 'request_changes' })).statusCode).toBe(200);
+                expect(publications()).toEqual([reviewChange, reviewChange, reviewChange]);
+                const changed = await db.reviewVerdict.findFirstOrThrow({ where: { reviewId: review.id } });
+                expect(changed).toMatchObject({ accountId: person.id, verdict: 'request_changes', revision: 2 });
+                expect((await post(personToken, 'verdicts', { roundOrdinal: 2, verdict: 'request_changes' })).statusCode).toBe(200);
+                expect(publications()).toEqual([reviewChange, reviewChange, reviewChange]);
+                expect(await db.reviewVerdict.findFirstOrThrow({ where: { reviewId: review.id } })).toEqual(changed);
+                const denied = await post(terminalToken, 'verdicts', { roundOrdinal: 2, verdict: 'approve', expectedRevision: 2 },
+                    { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' });
+                expect(denied.statusCode).toBe(403);
+                expect(denied.json()).toMatchObject({ error: 'present_user_required' });
+                expect(publications()).toEqual([reviewChange, reviewChange, reviewChange]);
+                expect(await db.reviewVerdict.findFirstOrThrow({ where: { reviewId: review.id } })).toEqual(changed);
+            } finally { eventRouter.removeConnection(person.id, connection); }
         }, { authentication: 'real' });
     });
 
