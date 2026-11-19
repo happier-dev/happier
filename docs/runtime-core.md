@@ -4370,6 +4370,14 @@ installed Machine under the existing `action.invoke` policy, and the daemon
 passes that admission to the plugin as the requester Account and chosen Machine.
 Plugin input can select a domain resource within that admission.
 
+An Account runtime that holds its own stored credentials and has no local
+Machine admission socket relays plugin Session Send through Home's existing
+Action ingress to the Session's Machine. The relay preserves the plugin caller,
+automation authority and idempotency key. The destination daemon admits the
+input through its Machine socket. A refusal before dispatch is a rejected input.
+A lost acknowledgement leaves the outcome unknown and a retry retains the same
+input id.
+
 Runner admission refusals retain `target_unavailable` and carry the refusing
 owner's code-only reason in `details: { code: 'target_unavailable', diagnostic:
 { reason } }`. The Session Account executor distinguishes absent authority path

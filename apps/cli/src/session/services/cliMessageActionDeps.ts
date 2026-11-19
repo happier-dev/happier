@@ -1,6 +1,7 @@
 import type { CliActionDepsParams } from '../actions/cliActionDeps/types';
 import type { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isScmDiffSummaryRunAction } from '@happier-dev/protocol/actions/actionSpecs';
 import { isScmRefineInputPurposeV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { randomUUID } from 'node:crypto';
@@ -8,6 +9,7 @@ import { readAgentStartCallerWorkDepthV1, AgentStartSessionCallerV1Schema } from
 import { isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { SessionBridgeLifecycleHookEventIdV1, ActionExecutorDeps, ActionExecutorContext, ComposerAttachmentInputV1, SessionMessageSendResultV1 } from '@happier-dev/protocol';
 import { derivePluginSessionInputLocalIdV1, deriveWorkflowSessionInputLocalIdV2, buildTrustedHostSessionInputAdmissionV1, SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, RawIngressStructuredInputV1Schema, hasRawSessionAttachmentSelectionV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { readSessionInputForgeEvidenceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
@@ -102,6 +104,7 @@ export function createCliMessageActionDeps(
       messageMeta,
       requestedAction,
       actionCaller,
+      authoredInput,
       idempotencyKey,
       localId,
       source,
@@ -133,7 +136,8 @@ export function createCliMessageActionDeps(
           code: 'session_input_invalid' as const,
         };
       }
-      if (!params.credentials) {
+      const credentials = params.credentials;
+      if (!credentials) {
         return pluginCaller
           ? { status: 'rejected' as const, code: 'session_input_unauthorized' as const }
           : { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -270,6 +274,64 @@ export function createCliMessageActionDeps(
         ? await resolveTransportForSession(sessionInputSource.sourceSessionId, signal) : null;
       if (sourceReplyTransport && !sourceReplyTransport.ok) {
         return { ok: false, errorCode: 'session_reply_source_unavailable', error: 'session_reply_source_unavailable' };
+      }
+
+      const canRouteOriginalAccountInput = hasStoredSessionCredentialProvenance(credentials)
+        && !externalActionRequest && !context?.rpcSessionAuthorization && !sessionInputSource;
+      const dispatchOriginalInput = async (input: Readonly<Record<string, unknown>>): Promise<ActionExecuteResult> => {
+        if (signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled', effectAttempted: false };
+        const transport = await resolveTransportForSession(sessionId, signal, undefined, context?.expectedSessionAddress);
+        if (!transport.ok) return { ok: false, errorCode: transport.code, error: transport.code, effectAttempted: false };
+        const { resolveSessionInputTargetMachineId, resolveProtectedSessionInputActionTarget } = await import('@/session/services/sessionInputAdmissionIdentity');
+        const machineId = resolveSessionInputTargetMachineId({ rawSession: transport.rawSession,
+          decryptedMetadata: tryDecryptSessionOwnerMetadataView({ credentials, rawSession: transport.rawSession,
+            accountEncryptionMode: transport.accountEncryptionCurrentness.mode }) });
+        const selectedTarget = context?.externalActionTarget;
+        if (!machineId || selectedTarget && (selectedTarget.kind === 'machine'
+          ? selectedTarget.machineId !== machineId : selectedTarget.sessionId !== transport.sessionId)) {
+          return { ok: true, result: { status: 'rejected', code: 'session_input_target_unavailable' } };
+        }
+        const { projectExternalActionRequesterInvocationV1 } = await import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1');
+        const accountId = readAccountIdFromToken(credentials.token);
+        const homeId = context?.serverId ?? params.serverId ?? configuration.activeServerId;
+        const serverIdentityId = context?.serverIdentityId ?? params.serverIdentityId;
+        const invocation = accountId ? projectExternalActionRequesterInvocationV1({
+          actionId: 'session.message.send',
+          context: { ...context, surface: callerSurface ?? context?.surface ?? 'cli', actionCaller: actionCaller ?? { kind: 'host' } },
+          account: { accountId, serverId: homeId, serverIdentityId },
+          target: { kind: 'machine', machineId },
+        }) : null;
+        if (!invocation) return { ok: true, result: { status: 'rejected', code: 'session_input_unauthorized' } };
+        return await dispatchOriginalAccountAction({
+          actionId: 'session.message.send',
+          input: { ...input, sessionId: transport.sessionId },
+          requestId: pluginCaller ? randomUUID() : context?.actionRequestId ?? randomUUID(),
+          target: resolveProtectedSessionInputActionTarget({ sessionId: transport.sessionId, machineId,
+            active: transport.rawSession.active !== false, privateInvocation: invocation }),
+          invocation, credentials, authority: invocation.authority,
+          serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+          serverIdentityId,
+          ...(params.isCredentialCurrent ? { isCurrent: params.isCredentialCurrent } : {}),
+          ...(signal ? { signal } : {}),
+        });
+      };
+
+      if (pluginLocalId && authoredInput && !params.machineAdmissionTransport && canRouteOriginalAccountInput) {
+        // The selected daemon prepares attachments and admits the original
+        // input. The relay keeps the plugin's idempotency key and authority.
+        const execution = await dispatchOriginalInput(authoredInput);
+        if (execution.ok) return execution.result;
+        if (execution.effectAttempted === false) {
+          const rejection = SessionInputAdmissionRejectionCodeV1Schema.safeParse(execution.errorCode);
+          return { status: 'rejected' as const, code: rejection.success ? rejection.data
+            : execution.errorCode === 'cancelled' ? 'session_input_cancelled' as const
+            : execution.errorCode === 'credential_scope_denied' || execution.errorCode === 'not_authenticated'
+              ? 'session_input_unauthorized' as const : 'session_input_target_unavailable' as const };
+        }
+        if (isActionOutcomeUnknownErrorCodeV1(execution.errorCode)) {
+          return { status: 'outcomeUnknown' as const, localId: pluginLocalId, code: execution.errorCode };
+        }
+        return execution;
       }
 
       const authoredMessageText = String(message ?? '');
@@ -765,53 +827,17 @@ export function createCliMessageActionDeps(
       });
       if (!result.ok && result.code === 'machine_admission_transport_unavailable'
         && (!actionCaller || actionCaller.kind === 'host')
-        && hasStoredSessionCredentialProvenance(params.credentials)
-        && !context?.externalActionCredential && !context?.externalActionExecutionAuthorization
-        && !context?.rpcSessionAuthorization && !sessionInputSource) {
-        // No input was issued: the standalone CLI has no authenticated Machine
-        // socket. Its host children (including deferred approval outcomes whose
-        // modality is MCP) use the same original-Account ingress as a top-level
-        // protected Send, preserving input identity and caller authority.
-        const [{ resolveSessionTransportContext }, { resolveSessionInputTargetMachineId, resolveProtectedSessionInputActionTarget }] = await Promise.all([import("@/session/services/resolveSessionTransportContext"), import("@/session/services/sessionInputAdmissionIdentity")]);
-        const transport = await resolveSessionTransportContext({ reason: 'session-action', credentials: params.credentials, idOrPrefix: sessionId,
-          ...(sendServerFeaturesSnapshot ? { serverFeaturesSnapshot: sendServerFeaturesSnapshot } : {}),
-          ...(signal ? { signal } : {}) });
-        if (!transport.ok) return { ok: false, errorCode: transport.code, error: transport.code };
-        const machineId = resolveSessionInputTargetMachineId({ rawSession: transport.rawSession,
-          decryptedMetadata: tryDecryptSessionOwnerMetadataView({ credentials: params.credentials, rawSession: transport.rawSession,
-            accountEncryptionMode: transport.accountEncryptionCurrentness.mode }) });
-        const selectedTarget = context?.externalActionTarget;
-        if (!machineId || selectedTarget && (selectedTarget.kind === 'machine'
-          ? selectedTarget.machineId !== machineId : selectedTarget.sessionId !== transport.sessionId)) {
-          return { status: 'rejected' as const, code: 'session_input_target_unavailable' as const };
-        }
-        const { projectExternalActionRequesterInvocationV1 } = await import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1');
-        const accountId = readAccountIdFromToken(params.credentials.token);
-        const homeId = context?.serverId ?? params.serverId ?? configuration.activeServerId;
-        const invocation = accountId ? projectExternalActionRequesterInvocationV1({
-          actionId: 'session.message.send',
-          context: { ...context, surface: callerSurface ?? context?.surface ?? 'cli', actionCaller: actionCaller ?? { kind: 'host' } },
-          account: { accountId, serverId: homeId, serverIdentityId: context?.serverIdentityId ?? params.serverIdentityId },
-          target: { kind: 'machine', machineId },
-        }) : null;
-        if (!invocation) return { status: 'rejected' as const, code: 'session_input_unauthorized' as const };
-        const execution = await dispatchOriginalAccountAction({ actionId: 'session.message.send',
-          input: { sessionId: transport.sessionId, message: admittedMessageText, requestedAction,
-            ...(recipient ? { recipient } : {}), ...(executionRunLocalId ? { localId: executionRunLocalId } : localId ? { localId } : {}),
-            ...(messageMeta || admittedAttachmentMeta ? { messageMeta: { ...(messageMeta ?? {}), ...(admittedAttachmentMeta ?? {}) } } : {}), ...(displayText ? { displayText } : {}),
-            ...(permissionModeOverride ? { permissionModeOverride } : {}),
-            ...(modelOverride !== undefined ? { modelOverride } : {}), ...(providerConnectionId !== undefined ? { providerConnectionId } : {}),
-            ...(reply === undefined ? { wait: normalizedWait, timeoutSeconds: normalizedTimeoutSeconds }
-              : { reply, ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }) }) },
-          requestId: context?.actionRequestId ?? randomUUID(),
-          target: resolveProtectedSessionInputActionTarget({ sessionId: transport.sessionId, machineId,
-            active: transport.rawSession.active !== false, privateInvocation: invocation }),
-          invocation,
-          credentials: params.credentials, authority: context?.authority,
-          serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
-          serverIdentityId: context?.serverIdentityId ?? params.serverIdentityId,
-          ...(params.isCredentialCurrent ? { isCurrent: params.isCredentialCurrent } : {}),
-          ...(signal ? { signal } : {}) });
+        && canRouteOriginalAccountInput) {
+        // Standalone host children use the same ingress as a top-level
+        // protected Send when no authenticated Machine socket is available.
+        const execution = await dispatchOriginalInput({ message: admittedMessageText, requestedAction,
+          ...(recipient ? { recipient } : {}), ...(executionRunLocalId ? { localId: executionRunLocalId } : localId ? { localId } : {}),
+          ...(messageMeta || admittedAttachmentMeta ? { messageMeta: { ...(messageMeta ?? {}), ...(admittedAttachmentMeta ?? {}) } } : {}),
+          ...(displayText ? { displayText } : {}),
+          ...(permissionModeOverride ? { permissionModeOverride } : {}),
+          ...(modelOverride !== undefined ? { modelOverride } : {}), ...(providerConnectionId !== undefined ? { providerConnectionId } : {}),
+          ...(reply === undefined ? { wait: normalizedWait, timeoutSeconds: normalizedTimeoutSeconds }
+            : { reply, ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }) }) });
         return execution.ok ? execution.result : execution;
       }
       const admissionResult = projectSessionMessageSendActionResult(result);
