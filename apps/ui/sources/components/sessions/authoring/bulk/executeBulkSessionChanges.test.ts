@@ -42,8 +42,11 @@ describe('bulk Send', () => {
                 return { ok: true, result: { kind: 'fanout', results: [{ target: b,
                     result: { ok: true, result: { status: 'accepted', localId: 'sent-b' } } }] } };
             } });
-        expect(calls).toHaveLength(2);
-        expect(calls[1]).toMatchObject({ id: 'session.message.send', input: {
+        expect(calls).toHaveLength(3);
+        expect(calls[1]).toMatchObject({ id: 'session.permission_mode.set', input: {
+            sessionId: { selector: 'sessions', addresses: [b] }, permissionMode: 'yolo',
+        } });
+        expect(calls[2]).toMatchObject({ id: 'session.message.send', input: {
             sessionId: { selector: 'sessions', addresses: [b] }, message: 'hello', permissionModeOverride: 'yolo',
         } });
         expect(result.map(row => [row.target.sessionId, row.state, row.code])).toEqual([
@@ -65,6 +68,25 @@ describe('bulk Send', () => {
         expect(results.map(row => [row.state, row.code])).toEqual([
             ['approval_pending', 'approval_request_created'], ['waking', 'managed_wake_unconfirmed'],
         ]);
+    });
+
+    it('reports an unchanged account route and still delivers a staged draft', async () => {
+        const selection = { connectedServices: null };
+        const executeConfirmed: Parameters<typeof executeBulkSessionChanges>[0]['executeConfirmed'] = async (id) => ({
+            ok: true, result: id === 'session.connected_services_auth.set'
+                ? { ok: true, action: 'unchanged', normalizedBindings: { v: 2, bindingsByServiceId: {} } }
+                : { status: 'accepted', localId: 'sent-a' },
+        });
+
+        const settingsOnly = await executeBulkSessionChanges({
+            plan: planExistingSessionChanges(selection, [targets[0]!]), executeConfirmed,
+        });
+        expect(settingsOnly).toEqual([expect.objectContaining({ target: a, state: 'skipped', code: 'no_change' })]);
+
+        const withDraft = await executeBulkSessionChanges({
+            plan: planExistingSessionChanges(selection, [targets[0]!], 'hello'), executeConfirmed,
+        });
+        expect(withDraft).toEqual([expect.objectContaining({ target: a, state: 'sent' })]);
     });
 
     it('keeps the agent switch on a target whose message follows it', async () => {

@@ -44,6 +44,9 @@ function projectRow(target: ActionSessionAddressV1, actionId: ActionId, result: 
     const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
     if (approval.success) return { target, actionId, result, state: 'approval_pending', code: 'approval_request_created' };
     const value = readRecord(result.result);
+    if (actionId === 'session.connected_services_auth.set' && value.ok === true && value.action === 'unchanged') {
+        return { target, actionId, result, state: 'skipped', code: 'no_change' };
+    }
     if (actionId === 'session.agent.transition' && value.type !== 'accepted') return {
         target, actionId, result, state: 'failed', code: typeof value.code === 'string' ? value.code : String(value.type),
         ...(typeof value.reason === 'string' ? { reason: value.reason } : {}),
@@ -100,7 +103,8 @@ export async function executeBulkSessionChanges(input: Readonly<{
             const row: BulkSessionChangeRow = { ...projected, ...switches.get(key) };
             rows.set(key, row);
             previous.push({ ...target, actionId: stage.actionId,
-                ok: row.state === 'sent' || row.state === 'applied' || row.state === 'switched',
+                ok: row.state === 'sent' || row.state === 'applied' || row.state === 'switched'
+                    || (row.state === 'skipped' && row.code === 'no_change'),
                 ...(result.ok ? { result: result.result } : {}) });
             input.onResult?.(row);
         };
