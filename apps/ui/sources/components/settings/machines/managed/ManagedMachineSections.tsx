@@ -75,7 +75,7 @@ import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { describeManagedLifecycleState, resolveManagedDestructiveAction, resolveManagedNativeEndState } from './managedLifecyclePresentation';
 import { answerManagedCreationEstablish } from './managedCreationPrompt';
 import { useMachineRecovery } from '@/hooks/machine/useMachineRecovery';
-import { buildManagedInstallationRetryInput, managedCreationState, currentManagedCreationOperation, describeManagedCreation, isManagedCreationCanceledBeforeMade, isManagedMachineResourceAbsent, managedCreationSetup, managedReceiptPowerIntents, readManagedInstallationPrompt, isManagedGuestPayloadStale, type ManagedCreationContext } from './managedCreationPresentation';
+import { buildManagedInstallationRetryInput, canPresentManagedMachineControl, managedCreationState, currentManagedCreationOperation, describeManagedCreation, isManagedCreationCanceledBeforeMade, isManagedMachineResourceAbsent, managedCreationSetup, managedReceiptPowerIntents, readManagedInstallationPrompt, isManagedGuestPayloadStale, type ManagedCreationContext } from './managedCreationPresentation';
 import { useManagedMachineActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { publishActionOperationObservation, reconcileActionOperationsOnce } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
@@ -310,8 +310,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     }, [props.binding, parentControllerAvailable, parentReadKey, parentReadRevision]);
     const policy = proposedPolicy ?? machine;
     const supportedIntents = policyParent?.capabilities.supportedIntents ?? machine.reviewedFacts?.retentionCapabilities.supportedIntents ?? [];
-    const canManage = props.binding?.accountId === machine.custodianAccountId
-        || (requiredController?.access?.role === 'manage' && requiredController.access.accessState === 'ready');
+    const canManage = canPresentManagedMachineControl(props.binding?.accountId, machine, requiredController);
     const creatorScoped = isManagedMachineEnrollmentRequester(machine, props.binding?.accountId);
     const canMutate = props.current && props.binding?.isCurrent() === true && machine.archivedAt === undefined
         && canManage && pending === null && !moveLoading && !approval.approvalPending;

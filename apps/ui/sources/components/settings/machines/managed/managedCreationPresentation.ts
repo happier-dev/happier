@@ -13,6 +13,15 @@ import { isManagedMachineBootstrapIncomplete, isManagedMachineRetentionWaitOpera
 import { isManagedMachineResourceAbsent } from './managedMachineResource';
 export { isManagedMachineResourceAbsent } from './managedMachineResource';
 
+export function canPresentManagedMachineControl(
+    accountId: string | undefined,
+    machine: Pick<ManagedMachineReadSnapshotV1, 'custodianAccountId'>,
+    controller: Readonly<{ access?: Readonly<{ role: string; accessState: string }> }> | null,
+): boolean {
+    return accountId === machine.custodianAccountId
+        || (controller?.access?.role === 'manage' && controller.access.accessState === 'ready');
+}
+
 /**
  * The short cause the page says for a failed install, in the app's words; null when only the installer's own
  * message exists. That raw message (it can name commands and environment variables) stays behind Details.

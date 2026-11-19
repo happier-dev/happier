@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionRequestEnvelopeV2Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachinePublicFullV1Schema, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
-import { createMachineProvisionerOptionsFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { createMachineProvisionerOptionsFixture, createManagedControllerMachineFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import type { ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -74,6 +76,65 @@ describe('managed configurator uses the exact Home Action front door', () => {
         expect(progress).toContain('acquiring');
         expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(1);
         expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
+    });
+
+    it('starts the stopped attached workspace once and clears pending on settle', async () => {
+        const homeId = 'srv_start_workspace';
+        const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://start-workspace.test',
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+        const controller = { machineId: 'host', installationId: 'installation' };
+        const workspace = { v: 2, kind: 'managed', serverId: homeId, workspaceId: 'project-checkout',
+            managedId: 'attached', controller, rootPath: '/home/guest/project' } as const;
+        const provider = { pluginId: 'happier.machine.coder', localId: 'coder' };
+        const machine = ManagedMachinePublicFullV1Schema.parse({
+            id: workspace.managedId, homeId, custodianAccountId: 'owner', controller, allocation: 'bound',
+            creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 3,
+            launch: { provider, schemaVersion: 1,
+                name: 'API', choices: { existingWorkspaceId: 'native-id' } },
+            resource: { contributionRef: provider, schemaVersion: 1, value: { workspaceId: 'native-id' } },
+            workspaceAttachment: { os: 'linux', arch: 'x64', home: '/home/guest' },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { availability: 'present', observedAt: 1, power: 'stopped' },
+        });
+        harness.answer(serverId, '/v1/machines/managed/actions/get', { body: machine });
+        const held = createDeferred<void>();
+        let reachedController = false;
+        const accepted = await answerExternalActionAccountForHome(harness, serverId, { ...controller,
+            actionId: 'machines.managed.power.set', tokenEpoch: 0, requesterInvocation: 'optional', execute: async input => {
+                reachedController = true;
+                expect(input).toEqual({ homeId, managedId: machine.id, intent: 'start', when: 'now', expectedRevision: 3 });
+                await held.promise;
+                return { kind: 'accepted', managedId: machine.id, intentRevision: 4 };
+            } });
+        harness.answer(serverId, '/v1/machines', { body: [accepted.machine] });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
+            [createManagedControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId })]);
+        const { useManagedWorkspaceStart } = await import('./useManagedWorkspaceStart');
+        const hook = await renderHook(({ installationId }) => useManagedWorkspaceStart({ serverId,
+            machineId: controller.machineId, rootPath: workspace.rootPath,
+            workspace: { ...workspace, controller: { ...controller, installationId } },
+        }), { initialProps: { installationId: 'replaced-installation' } });
+        try {
+            await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/managed/actions/get')).toHaveLength(1));
+            expect(hook.getCurrent()).toBeNull();
+            expect(harness.requestsFor('/v1/actions/machines.managed.power.set')).toHaveLength(0);
+            await hook.rerender({ installationId: controller.installationId });
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({ pending: false }));
+            const current = hook.getCurrent()!;
+            await act(async () => { current.start(); current.start(); });
+            await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/machines.managed.power.set')).toHaveLength(1));
+            expect(reachedController).toBe(true);
+            expect(hook.getCurrent()?.pending).toBe(true);
+            await act(async () => held.resolve());
+            await waitForHomeGovernance(() => expect(hook.getCurrent()?.pending).toBe(false));
+            await hook.rerender({ installationId: 'replaced-installation' });
+            expect(hook.getCurrent()).toBeNull();
+            await act(async () => current.start());
+            expect(harness.requestsFor('/v1/actions/machines.managed.power.set')).toHaveLength(1);
+        } finally {
+            held.resolve();
+            await hook.unmount();
+        }
     });
 
     it('shares the selected availability answer across concurrent readers and launch-option edits', async () => {
