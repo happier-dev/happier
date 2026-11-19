@@ -70,8 +70,9 @@ export const ReviewNativeNewRoundInputV1Schema = lazyZodSchema(() => z.strictObj
   fresh: z.optional(z.boolean()),
 }));
 
-/** Explicit native routing preserves the existing workflow Run-id replay contract. */
+/** Person-only records and explicit native routing share the existing Workflow replay Action. */
 export const ReviewNewRoundInputV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ reviewId: z.string().check(z.minLength(1)) }),
   z.strictObject({ runId: z.string().check(z.minLength(1)) }),
   z.strictObject({ runId: z.string().check(z.minLength(1)), sessionId: z.string().check(z.minLength(1)),
     ...ReviewNativeNewRoundInputV1Schema.shape }),
@@ -87,6 +88,7 @@ export const ReviewNativeNewRoundResultV1Schema = lazyZodSchema(() => z.looseObj
 }));
 
 export const ReviewNewRoundResultV1Schema = lazyZodSchema(() => z.union([
+  ReviewPreparedRoundV1Schema,
   WorkflowRunStartResultV1Schema,
   ReviewNativeNewRoundResultV1Schema,
 ]));

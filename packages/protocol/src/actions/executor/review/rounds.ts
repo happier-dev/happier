@@ -1,6 +1,6 @@
 import { ReviewPrepareRoundInputV1Schema, ReviewNewRoundInputV1Schema } from '../../../reviews/reviewRoundActionsV1.js';
-import { prepareReviewRoundV1 } from '../../../reviews/prepareReviewRoundV1.js';
-import { ScmComparisonCaptureOutputSchema } from '../../../scm/diffSummary.js';
+import { prepareReviewRoundV1, prepareReviewHumanRoundV1 } from '../../../reviews/prepareReviewRoundV1.js';
+import { ScmComparisonCaptureOutputSchema, type ScmComparisonCaptureInput } from '../../../scm/diffSummary.js';
 import { WorkflowRunGetResultV1Schema } from '../../../workflows/actionsV1.js';
 import { prepareWorkflowRunStartV1 } from '../../../workflows/workflowStartPreparationV1.js';
 import { REVIEW_PREPARE_ROUND_ACTION_ID_V1, REVIEW_NEW_ROUND_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
@@ -40,6 +40,15 @@ type RoundActionInvocation = Readonly<{
   executeHostChild: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }>;
 
+async function captureReviewComparisonV1(inv: RoundActionInvocation, request: ScmComparisonCaptureInput,
+  context = inv.ctx) {
+  const response = await inv.executeHostChild('scm.diffSummary.capture', request, context);
+  if (!response.ok) throw new Error(response.error, { cause: response });
+  const captured = ScmComparisonCaptureOutputSchema.parse(response.result);
+  if (!captured.success) throw new Error(captured.error, { cause: { ok: false, errorCode: captured.errorCode, error: captured.error } });
+  return captured.comparison;
+}
+
 export async function dispatchReviewRoundAction(inv: RoundActionInvocation): Promise<ActionExecuteResult | null> {
   if (inv.actionId === REVIEW_PREPARE_ROUND_ACTION_ID_V1) {
     const input = ReviewPrepareRoundInputV1Schema.parse(inv.data);
@@ -52,17 +61,22 @@ export async function dispatchReviewRoundAction(inv: RoundActionInvocation): Pro
           resolveSessionIdFromInput(input.reviewInput, inv.ctx), inv.actionId, inv.executeHostChild)
         : undefined,
       startedAt: Date.now(), signal: inv.ctx.signal,
-      captureComparison: async request => {
-        const capture = await inv.executeHostChild('scm.diffSummary.capture', request, inv.ctx);
-        if (!capture.ok) throw new Error(capture.error, { cause: capture });
-        const captured = ScmComparisonCaptureOutputSchema.parse(capture.result);
-        if (!captured.success) throw new Error(captured.error, { cause: { ok: false, errorCode: captured.errorCode, error: captured.error } });
-        return captured.comparison;
-      },
+      captureComparison: request => captureReviewComparisonV1(inv, request),
     }) };
   }
   if (inv.actionId === REVIEW_NEW_ROUND_ACTION_ID_V1) {
     const input = ReviewNewRoundInputV1Schema.parse(inv.data);
+    if ('reviewId' in input) {
+      const records = inv.deps.reviewRecords?.(inv.ctx);
+      if (!records) return { ok: false, errorCode: 'review_record_unavailable', error: 'review_record_unavailable' };
+      const review = await records.read(input.reviewId, inv.ctx.signal);
+      if (!review) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      return { ok: true, result: await prepareReviewHumanRoundV1(review, {
+        reviewRecords: records, startedAt: Date.now(), signal: inv.ctx.signal,
+        captureComparison: (request, target) => captureReviewComparisonV1(inv, request,
+          { ...inv.ctx, externalActionTarget: target }),
+      }) };
+    }
     if ('sessionId' in input || 'target' in input) {
       const detached = 'target' in input;
       const sessionId = detached ? null : resolveSessionIdFromInput(input, inv.ctx);

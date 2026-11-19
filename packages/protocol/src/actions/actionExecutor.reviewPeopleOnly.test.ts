@@ -5,8 +5,52 @@ import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.te
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
 import { ReviewHumanActionStateV1Schema, ReviewReviewersSetInputV1Schema } from '../reviews/reviewHumanV1.js';
 import { readReviewStartActionResultV1 } from './specs/executionRunCompletion.js';
+import { createActionExecutor } from './actionExecutor.js';
+import { ReviewNewRoundResultV1Schema } from '../reviews/reviewRoundActionsV1.js';
+import { getActionSpec } from './actionSpecs.js';
 
 describe('person-only Review admission', () => {
+  it.each([{ comparison: false, unfinished: false }, { comparison: true, unfinished: false },
+    { comparison: false, unfinished: true }])('repeats the same person-only Review without a synthetic Run (comparison: $comparison, unfinished: $unfinished)', async ({ comparison, unfinished }) => {
+    const records = createInMemoryReviewRecordPortV1();
+    const oldComparison = 'a'.repeat(64);
+    const newComparison = 'b'.repeat(64);
+    const source = { kind: 'workingTree' as const, area: 'pending' as const };
+    const first = await records.start({ reviewId: 'people-review', title: 'Review', subjectKind: comparison ? 'comparison' : 'repository',
+      sourceKind: 'direct', reviewerIds: [], startedAt: 1,
+      ...(comparison ? { comparisonId: oldComparison, comparisonCapture: { target: { kind: 'machine' as const, machineId: 'source-machine' },
+        input: { cwd: '/source/repo', source, comparisonId: oldComparison } } } : {}) });
+    if (!unfinished) await records.settle({ ...first, outcome: 'completed', finishedAt: 2, runs: [] });
+    let captureUnavailable = false;
+    const executor = createActionExecutor({ reviewRecords: () => records,
+      scmActionExecute: async request => {
+        expect(request.context.externalActionTarget).toEqual({ kind: 'machine', machineId: 'source-machine' });
+        expect(request.input).toMatchObject({ cwd: '/source/repo', source });
+        expect(request.input).not.toHaveProperty('comparisonId');
+        if (captureUnavailable) return { success: false, errorCode: 'DIFF_UNAVAILABLE', error: 'Source unavailable' };
+        return { success: true, comparison: { id: newComparison, source, repository: { rootPath: '/source/repo' },
+          endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } }, metadata: { source, sourceKey: newComparison } };
+      },
+      workflowAction: async () => { throw new Error('People-only rounds have no Workflow'); },
+      executionRunStart: async () => { throw new Error('People-only rounds have no native Run'); },
+    });
+    const input = { reviewId: first.reviewId };
+    const spec = getActionSpec('review.new_round');
+    expect(spec.executionPlacementForInput?.(input)).toBe('account');
+    const result = await executor.execute('review.new_round', input, { surface: 'ui' });
+    expect(result).toMatchObject({ ok: true, result: { reviewRound: { reviewId: first.reviewId, roundOrdinal: 2 } } });
+    if (!result.ok) throw new Error(result.error);
+    expect(ReviewNewRoundResultV1Schema.parse(result.result)).toMatchObject({ reviewRound: { reviewId: first.reviewId, roundOrdinal: 2 } });
+    expect((await records.read(first.reviewId))?.rounds).toEqual([
+      expect.objectContaining({ ordinal: 1, state: unfinished ? 'running' : 'completed', runs: [], ...(comparison ? { comparisonId: oldComparison } : {}) }),
+      expect.objectContaining({ ordinal: 2, state: 'completed', runs: [], reviewerIds: [], ...(comparison ? { comparisonId: newComparison } : {}) }),
+    ]);
+    if (comparison) {
+      captureUnavailable = true;
+      expect(await executor.execute('review.new_round', input, { surface: 'ui' })).toMatchObject({ ok: false });
+      expect((await records.read(first.reviewId))?.rounds).toHaveLength(2);
+    }
+  });
   it.each([false, true])('requests people without creating executable work (stages: %s)', async staged => {
     const records = createInMemoryReviewRecordPortV1();
     const person = { kind: 'person' as const, principal: { kind: 'account' as const, accountId: 'reviewer' }, required: true };

@@ -1,7 +1,7 @@
 import { ScmComparisonSourceSchema, type ScmComparison, type ScmComparisonSource } from '../scm/comparison.js';
 import type { ScmComparisonCaptureInput } from '../scm/diffSummary.js';
 import { RpcError } from '../rpc/errors.js';
-import type { ReviewRecordPortV1, ReviewRoundComparisonCaptureV1, ReviewSourceKindV1 } from './reviewArtifactV1.js';
+import type { ReviewArtifactV1, ReviewRecordPortV1, ReviewRoundComparisonCaptureV1, ReviewSourceKindV1 } from './reviewArtifactV1.js';
 import type { ReviewPrepareRoundInputV1, ReviewPreparedRoundV1 } from './reviewRoundActionsV1.js';
 import { reviewReviewerIdsForStartV1, reviewWorkingTreeAreaV1, type ReviewStartInput } from './reviewStart.js';
 
@@ -10,6 +10,32 @@ export function resolveReviewComparisonSourceV1(input: ReviewStartInput): ScmCom
   if (input.source !== undefined) return ScmComparisonSourceSchema.parse(input.source);
   if (input.scope === 'repository' || input.comparisonId || input.scmPullRequestReviewScope) return undefined;
   return { kind: 'workingTree', area: reviewWorkingTreeAreaV1(input.changeType) };
+}
+
+/** A person-only Review repeats its record and evidence without inventing execution. */
+export async function prepareReviewHumanRoundV1(review: ReviewArtifactV1, deps: Readonly<{
+  reviewRecords: Pick<ReviewRecordPortV1, 'start' | 'settle'>;
+  captureComparison: (input: ScmComparisonCaptureInput, target: ReviewRoundComparisonCaptureV1['target']) => Promise<ScmComparison>;
+  startedAt: number;
+  signal?: AbortSignal;
+}>): Promise<ReviewPreparedRoundV1> {
+  const previous = review.rounds.at(-1);
+  if (!previous || previous.reviewerIds.length > 0 || previous.runs.length > 0
+    || previous.comparisonId && !previous.comparisonCapture) throw new RpcError('invalid_parameters', 'invalid_parameters');
+  const retained = previous.comparisonCapture;
+  let comparison: ScmComparison | undefined;
+  if (retained) {
+    const { comparisonId: _priorId, ...input } = retained.input;
+    comparison = await deps.captureComparison(input, retained.target);
+  }
+  const reviewRound = await deps.reviewRecords.start({ reviewId: review.reviewId, title: review.title,
+    subjectKind: comparison ? 'comparison' : 'repository', sourceKind: 'direct', reviewerIds: [],
+    ...(comparison && retained ? { comparisonId: comparison.id, comparisonCapture: { ...retained,
+      input: { ...retained.input, source: comparison.source, comparisonId: comparison.id } } } : {}),
+    startedAt: deps.startedAt, newRound: true, signal: deps.signal });
+  await deps.reviewRecords.settle({ ...reviewRound, outcome: 'completed', finishedAt: deps.startedAt,
+    runs: [], signal: deps.signal });
+  return { reviewRound, ...(comparison ? { comparisonId: comparison.id, comparison } : {}) };
 }
 
 /** One round/comparison preparation owner for workflow replay and native continuation. */

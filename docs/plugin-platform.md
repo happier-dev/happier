@@ -14017,3 +14017,9 @@ Session, model and engine selections start fresh, and people are asked again.
 The host starts one accepted Workflow through `review.new_round({runId})`.
 Missing retained roster facts leave the projection absent; clients do not infer
 continuity from Workflow status or native Run headers.
+
+A person-only Review has no Run. Its next round uses
+`review.new_round({reviewId})` at Account placement, retains the same Review,
+and captures the recorded comparison source on its recorded Machine before
+advancing the round. It creates no Workflow or native Run. The server's Review
+round writer owns renewed human requests and historical verdicts.
