@@ -172,6 +172,7 @@ export function useExecutionRunLaunchContext(sessionId: string | null, serverId:
         // `execution.run.start` names a rowless Run with an explicit null Session; the fan-out Actions (a detached
         // review carries `target: { kind: 'detached' }`) take no Session key at all.
         return executor.execute(actionId, { ...input, ...(sessionId !== null || actionId === 'execution.run.start' ? { sessionId } : {}),
+            ...(sessionId === null && actionId === 'review.start' ? { target: { kind: 'detached' } } : {}),
             ...(sessionId === null && workspace ? { cwd: workspace.cwd } : {}) },
             { ...(sessionId ? { defaultSessionId: sessionId } : {}),
                 ...(machineId ? { executionRunTargetMachineId: machineId } : {}),

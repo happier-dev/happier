@@ -2,6 +2,7 @@ import type { ReviewEngineInventory, ReviewEngineProfileSelection } from '@happi
 import { ReviewWalkthroughResponseSchema, type ReviewFindingIdentity } from '@happier-dev/protocol/reviews/reviewNarration';
 import type { ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { readReviewWorkflowStartActionResultV1 } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
 
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
@@ -146,6 +147,9 @@ export async function startReviewOfComparison(params: Readonly<{
         reviewers: params.launchInput?.reviewers ?? walkthroughInput.reviewers,
     });
     if (!result.ok) return failure(result, 'review_start_failed');
+    // Workflow admission identifies the accepted Review; executable leaf outcomes arrive later.
+    if (readReviewWorkflowStartActionResultV1(result)) return { ok: true,
+        comparisonId: captured.comparisonId, reviewRunIds: [], notStartedEngineIds: [], narrationError: null };
     const output = (result.result ?? {}) as {
         results?: readonly { key?: unknown; ok?: boolean; result?: { runId?: unknown } }[];
         narration?: { state?: unknown; error?: unknown } | null;

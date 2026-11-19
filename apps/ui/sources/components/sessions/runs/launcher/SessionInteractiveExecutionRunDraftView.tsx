@@ -61,7 +61,9 @@ import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraft
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
-import { readReviewLauncherEngineIds, readReviewLauncherReviewers, selectReviewLauncherEngines, selectReviewLauncherRetryReviewers, reviewLauncherEngineConfiguration, updateReviewLauncherEngineConfiguration } from './reviewLauncherSelection';
+import { artifactViewRoute } from '@/components/artifacts/artifactViewRoute';
+import { readReviewStartActionResultV1 } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
+import { readReviewLauncherEngineIds, readReviewLauncherReviewers, readReviewLauncherSteps, selectReviewLauncherEngines, selectReviewLauncherRetryReviewers, reviewLauncherEngineConfiguration, updateReviewLauncherEngineConfiguration } from './reviewLauncherSelection';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { ExecutionRunLauncherOptions } from './ExecutionRunLauncherOptions';
 import {
@@ -279,6 +281,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     /** What the tab calls this start ("Second opinion"); the heading says the same, never a second name. */
     heading?: string | null;
 }>) => {
+    const router = useRouter();
     const intent = props.intent ?? null;
     const optionsIntent: ExecutionRunIntent = intent ?? 'delegate';
     const styles = stylesheet;
@@ -558,6 +561,16 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                         ...(boundedIntent === 'review' ? { reviewInput: retry?.reviewInput ?? drafted } : {}) }) ?? Promise.resolve());
                 throw new ParticipantComposerSubmissionHeld();
             }
+            const reviewStart = boundedIntent === 'review' ? readReviewStartActionResultV1(result, {
+                reviewers: readReviewLauncherReviewers(input), steps: [...readReviewLauncherSteps(input)],
+            }) : null;
+            if (reviewStart && reviewStart.kind !== 'outcome_unknown' && reviewStart.reviewRound
+                && (reviewStart.kind === 'workflow' || reviewStart.runs.length > 0)) {
+                launcherDraft.clearAcceptedSelection(selectionCapture, submission.onOutboundHandoff());
+                setPhase('idle');
+                router.push(artifactViewRoute(reviewStart.reviewRound.reviewId) as never);
+                return;
+            }
             // Several reviewers start as one group (`display.groupId`); its pane shows them all, so
             // any member that started opens it, and the start is accepted. Members that didn't
             // start are said out loud, not dropped; only a start where none did is refused.
@@ -595,7 +608,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         } finally {
             submitInFlightRef.current = false;
         }
-    }, [accountLifetime, childChoice.begin, childChoice.offer, comparisonReview.submit, comparisonReview.launchInput, launcher, startAction, identity.correlationId, options.actionId, options.actionSpec, options.backendChoices, options.fields, props.comparisonReview, props.credentialSelectionOnly, props.selectionIsCurrent, props.onLaunchSelection, props.onRunStarted, props.sessionId, secretOverlayState.overlay, secretOverlayState.readiness.ok, teamCredential.available]);
+    }, [accountLifetime, childChoice.begin, childChoice.offer, comparisonReview.submit, comparisonReview.launchInput, launcher, startAction, identity.correlationId, options.actionId, options.actionSpec, options.backendChoices, options.fields, props.comparisonReview, props.credentialSelectionOnly, props.selectionIsCurrent, props.onLaunchSelection, props.onRunStarted, props.sessionId, router, secretOverlayState.overlay, secretOverlayState.readiness.ok, teamCredential.available]);
 
     submitBoundedStartRef.current = submitBoundedStart;
 
@@ -821,7 +834,6 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     // The role this start runs (lab `convo-S1/S2`): the one chosen here, else the role the run-start
     // owner gives its intent (a review is the Reviewer's). Only a chosen role travels as `roleId`; the
     // target Session's admission resolves it and stamps its engine.
-    const router = useRouter();
     const { items: roles, status: rolesStatus } = useRoleRailCatalog();
     const engineConfiguration = intent === 'review' ? reviewLauncherEngineConfiguration(actionInput) : actionInput;
     const chosenRoleId = typeof engineConfiguration.roleId === 'string' ? engineConfiguration.roleId : null;

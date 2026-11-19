@@ -33,7 +33,14 @@ import { createPlainSessionCurrentProjectionRecordFixture, createSessionAccessFi
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
-import { createArtifactListHttpResponse } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { artifactViewRoute } from '@/components/artifacts/artifactViewRoute';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema, ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
+import { REVIEW_ARTIFACT_KIND_V1, ReviewRoundBindingV1Schema } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
@@ -94,6 +101,12 @@ import { BUNDLED_ACCOUNT_PROVIDER_DECLARATIONS, BUNDLED_CANONICAL_AGENTS_CORE, B
 // the whole real store, so install its canonical platform factories without that store override.
 const windowState = vi.hoisted(() => ({ width: 1024 }));
 const formBoundary = vi.hoisted(() => ({ commits: 0 }));
+const reviewRouterPush = vi.hoisted(() => vi.fn());
+const capturedWorkingComparisonId = 'a'.repeat(64);
+const capturedBranchComparisonId = 'b'.repeat(64);
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+    router: { push: reviewRouterPush },
+}).module);
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     const React = await import('react');
@@ -197,6 +210,9 @@ let startRelayFailure: Readonly<{ error: string; errorCode: string }> | null = n
 let listedRuns: Run[];
 let listResult: Promise<unknown> | null;
 let emittedStarts: Array<Record<string, unknown>>;
+let emittedWorkflowStarts: Array<ReturnType<typeof WorkflowRunStartRequestV1Schema.parse>>;
+let refuseWorkflowStart = false;
+let artifactStore: ReturnType<typeof createArtifactStoreBoundary>;
 let detachedInputs: Array<{ input: Record<string, unknown>; machineId: string }>;
 let outbound: ServedHomeRequest[];
 let pluginProjection = false;
@@ -401,10 +417,13 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         reviewProfileIds = {};
         backends = { claude: { available: true, intents: ['delegate', 'review', 'plan'] }, codex: { available: true, intents: ['delegate', 'review', 'plan'] } };
         startResults = [];
+        reviewRouterPush.mockClear();
         startRelayFailure = null;
         listedRuns = [];
         listResult = null;
         emittedStarts = [];
+        emittedWorkflowStarts = [];
+        refuseWorkflowStart = false;
         detachedInputs = [];
         outbound = [];
         modal.alert.mockClear();
@@ -418,6 +437,24 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         clearDaemonMergedProjectionCacheForTests();
         transport.call.mockReset();
         transport.call.mockImplementation(async (request) => {
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return ScmStatusSnapshotResponseSchema.parse({
+                success: true, snapshot: { projectKey: `${serverId}:machine_1:/repo`, fetchedAt: 1,
+                    repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' }, capabilities: EMPTY_SCM_CAPABILITIES,
+                    branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+                    stashCount: 0, hasConflicts: false, entries: [], totals: { includedFiles: 0, pendingFiles: 0,
+                        untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 } },
+            });
+            if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) {
+                const input = ScmComparisonCaptureInputSchema.parse(request.payload);
+                const comparison = {
+                    id: input.comparisonId ?? capturedWorkingComparisonId, source: input.source ?? (input.comparisonId === capturedBranchComparisonId
+                        ? { kind: 'branch' as const, base: 'main', head: 'HEAD' }
+                        : { kind: 'workingTree' as const, area: 'both' as const }),
+                    repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] },
+                };
+                return ScmComparisonCaptureOutputSchema.parse({ success: true, comparison,
+                    metadata: { source: comparison.source, sourceKey: comparison.id } });
+            }
             const runProtocol = { ...EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE.capabilities[0]!.protocol,
                 features: { ...EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE.capabilities[0]!.protocol.features,
                     detachedScope: detachedScopeSupported, runScopedAgentBindings: protocolSupported, secretReferenceOverlay: protocolSupported } };
@@ -503,6 +540,18 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                 return { ok: true };
             },
         });
+        artifactStore = createArtifactStoreBoundary({ ownerAccountId: () => 'account_1', encryptionMode: 'plain' });
+        const workflowStart = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId,
+            accountId: 'account_1', machineId: 'machine_1', actionId: 'workflow.run.start', tokenEpoch: 0,
+            failure: readActionFailureEnvelope,
+            execute: (raw) => {
+                const input = WorkflowRunStartRequestV1Schema.parse(raw);
+                emittedWorkflowStarts.push(input);
+                if (refuseWorkflowStart) return { ok: false, errorCode: 'machine_unavailable', error: 'machine_unavailable' };
+                return { admission: 'created', run: createWorkflowRunSummaryFixture({ id: input.runId,
+                    machineId: 'machine_1', ownerAccountId: 'account_1', origin: { kind: 'direct' } }) };
+            },
+        });
         home = await serveActionHomes({
             homes: [{ key: 'home', serverUrl, serverIdentityId,
                 accountId: 'account_1', currentAccount: true }],
@@ -525,6 +574,15 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     headers: request.headers, signal: request.signal,
                     ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
                 if (detachedSendResponse) return detachedSendResponse;
+                const workflowResponse = await workflowStart.handle(request.url, { method: request.method,
+                    headers: request.headers, signal: request.signal,
+                    ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
+                if (workflowResponse) return workflowResponse;
+                const artifactUrl = new URL(request.url);
+                const artifactResponse = artifactStore.handle(artifactUrl.pathname + artifactUrl.search, { method: request.method,
+                    headers: request.headers, signal: request.signal,
+                    ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
+                if (artifactResponse) return artifactResponse;
                 if (request.path === '/v1/actions/review.engines.list') return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({
                     v: 1, actionId: 'review.engines.list', requestId: record(request.body).requestId,
                     execution: { ok: true, result: { items: Object.keys(backends).map((engineId) => ReviewEngineListItemSchema.parse({
@@ -534,7 +592,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     })) } },
                 }));
                 if (request.path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({
-                    features: { execution: { runs: { enabled: true } }, teams: { enabled: true, credentialResources: { enabled: true } }, encryption: { plaintextStorage: { enabled: true }, accountOptOut: { enabled: true } } },
+                    features: { workflows: { enabled: true }, execution: { runs: { enabled: true } }, teams: { enabled: true, credentialResources: { enabled: true } }, encryption: { plaintextStorage: { enabled: true }, accountOptOut: { enabled: true } } },
                     capabilities: { session: { pendingInput: { protocolVersion: 3 } }, accountStoredContentCompatibility: { v: 1, currentProtocolVersion: 3, minimumProtocolVersion: 3, declarationTransport: 'http-header-and-socket-auth-v1' } },
                 }));
                 if (request.path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: 'machine_1', accountId: 'account_1' })]);
@@ -583,7 +641,6 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     return Response.json({ didWrite: true, recipient, requestedAction: body.requestedAction,
                         pending: { ...body, recipient, status: 'queued', position: 1, createdAt: 1, updatedAt: 1 }, pendingVersion: 1, pendingCount: 1 });
                 }
-                if (request.path === '/v1/artifacts') return createArtifactListHttpResponse(new URL(request.url), []);
                 return undefined;
             }).handle,
         });
@@ -1275,68 +1332,6 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(emittedStarts[1]).toMatchObject({ intent, instructions: 'Inspect this', childSelection: 'agentDefault' });
         expect(screen.findByTestId('execution-run-child-choice')).toBeNull();
     });
-    it('resolves only the refused reviewer with the exact model and never replays the one that started', async () => {
-        startResults.push(started('run_claude'), childChoiceRefusal(), started('run_codex'));
-        const opened = vi.fn();
-        await mount({ intent: 'review', onRunStarted: opened });
-        await reviewers();
-        await send();
-        expect(screen.findByTestId('execution-run-child-choice')).not.toBeNull();
-        expect(opened).not.toHaveBeenCalled();
-        expect(input().props.value).toBe('Inspect this');
-        await screen.pressByTestIdAsync('execution-run-child-choice.model');
-        const shown = modal.show.mock.calls.at(-1)?.[0] as { props: { onSelect: (ref: unknown) => void } };
-        const ref = { agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'gpt-6.1-luna' };
-        await act(async () => shown.props.onSelect(ref));
-        await waitFor(() => expect(opened).toHaveBeenCalledWith('run_codex', undefined, { title: 'Inspect this' }));
-        expect(emittedStarts).toHaveLength(3);
-        expect(startedTargetKey(emittedStarts[2]!)).toBe(startedTargetKey(emittedStarts[1]!));
-        expect(startedTargetKey(emittedStarts[2]!)).not.toBe(startedTargetKey(emittedStarts[0]!));
-        expect(emittedStarts[2]).toMatchObject({ modelSelection: ref });
-    });
-    it('asks each refused reviewer its own question in turn and gives every Agent only its own model', async () => {
-        startResults.push(childChoiceRefusal('agent:claude'), childChoiceRefusal('agent:codex'), started('run_claude'), started('run_codex'));
-        const opened = vi.fn();
-        await mount({ intent: 'review', onRunStarted: opened });
-        await reviewers();
-        await send();
-        expect(emittedStarts).toHaveLength(2);
-        const chooseModel = async (agentTargetKey: string) => {
-            await screen.pressByTestIdAsync('execution-run-child-choice.model');
-            const shown = modal.show.mock.calls.at(-1)?.[0] as { props: { onSelect: (ref: unknown) => void } };
-            const ref = { agentTargetKey, providerConnectionId: null, modelId: 'gpt-6.1-luna' };
-            await act(async () => shown.props.onSelect(ref));
-            return ref;
-        };
-        const claudeRef = await chooseModel('agent:claude');
-        await waitFor(() => expect(emittedStarts).toHaveLength(3));
-        // The second reviewer is not reduced to a generic alert: its own question follows.
-        expect(emittedStarts[2]).toMatchObject({ modelSelection: claudeRef });
-        expect(startedTargetKey(emittedStarts[2]!)).toBe(startedTargetKey(emittedStarts[0]!));
-        await waitFor(() => expect(screen.findByTestId('execution-run-child-choice')).not.toBeNull());
-        expect(opened).not.toHaveBeenCalled();
-        expect(modal.alert).not.toHaveBeenCalled();
-        const codexRef = await chooseModel('agent:codex');
-        await waitFor(() => expect(opened).toHaveBeenCalledTimes(1));
-        expect(emittedStarts).toHaveLength(4);
-        expect(emittedStarts[3]).toMatchObject({ modelSelection: codexRef });
-        expect(startedTargetKey(emittedStarts[3]!)).toBe(startedTargetKey(emittedStarts[1]!));
-        expect(modal.alert).not.toHaveBeenCalled();
-    });
-    it('does not treat an unknown-outcome reviewer as permission to start it again', async () => {
-        startResults.push(uncertain(), childChoiceRefusal(), started('run_codex'));
-        const opened = vi.fn();
-        await mount({ intent: 'review', onRunStarted: opened });
-        await reviewers();
-        await send();
-        expect(screen.findByTestId('execution-run-child-choice')).not.toBeNull();
-        await screen.pressByTestIdAsync('execution-run-child-choice.model');
-        const shown = modal.show.mock.calls.at(-1)?.[0] as { props: { onSelect: (ref: unknown) => void } };
-        await act(async () => shown.props.onSelect({ agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'gpt-6.1-luna' }));
-        await waitFor(() => expect(opened).toHaveBeenCalledWith('run_codex', undefined, { title: 'Inspect this' }));
-        expect(emittedStarts).toHaveLength(3);
-        expect(startedTargetKey(emittedStarts[2]!)).toBe(startedTargetKey(emittedStarts[1]!));
-    });
     describe('choosing a model for this Run from the route chip', () => {
         async function mountTeamParent(browserShape = false) {
             teamModelsEnabled = true;
@@ -1673,20 +1668,52 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await send();
         expect(emittedStarts[0]).toMatchObject({ notifyParentOnCompletion: true });
     });
-    it('starts all selected reviewers through real review.start and accepts the typed instructions', async () => {
+    it('keeps a single native reviewer refusal and opens its Review after choosing the Agent default', async () => {
+        startResults.push(childChoiceRefusal('agent:claude'), started('review-retried'));
+        await mount({ intent: 'review', initialActionInput: { scope: 'repository' } });
+        await reviewers(['claude']);
+        await send();
+        expect(screen.findByTestId('execution-run-child-choice')).not.toBeNull();
+        expect(reviewRouterPush).not.toHaveBeenCalled();
+        expect(input().props.value).toBe('Inspect this');
+        await screen.pressByTestIdAsync('execution-run-child-choice.default');
+        await waitFor(() => expect(emittedStarts).toHaveLength(2));
+        expect(emittedStarts[1]).toMatchObject({ childSelection: 'agentDefault' });
+        await waitFor(() => expect(reviewRouterPush).toHaveBeenCalledTimes(1));
+        expect(input().props.value).toBe('');
+    });
+    it.each([
+        { detached: false, comparison: false, walkthrough: false },
+        { detached: true, comparison: false, walkthrough: false },
+        { detached: false, comparison: true, walkthrough: false },
+        { detached: true, comparison: true, walkthrough: true },
+    ])('admits all selected reviewers as one Workflow and opens the accepted Review ($detached, $comparison, $walkthrough)', async ({ detached, comparison, walkthrough }) => {
         const opened = vi.fn();
-        startResults.push(started('run_claude'), started('run_codex'));
-        await mount({ intent: 'review', onRunStarted: opened });
+        await mount({ intent: 'review', onRunStarted: opened,
+            ...(detached ? { sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' } } : {}),
+            initialActionInput: comparison ? { cwd: '/repo', source: { kind: 'branch', base: 'main', head: 'HEAD' } } : { scope: 'repository' },
+            ...(comparison ? { comparisonReview: { cwd: '/repo', comparison: { kind: 'branch', base: 'main', head: 'HEAD' },
+                comparisonId: capturedBranchComparisonId, scopeLabel: 'main → HEAD', defaultWalkthrough: walkthrough } } : {}),
+        });
         expect(composer().isSendDisabled).toBe(true);
         expect(await reviewers()).toHaveLength(2);
         expect(reviewerKeys()).toHaveLength(2);
         await send();
-        expect(emittedStarts).toHaveLength(2);
-        expect(emittedStarts.map((value) => value.intent)).toEqual(['review', 'review']);
-        for (const start of emittedStarts) expect(start).toMatchObject({ instructions: 'Inspect this', notifyParentOnCompletion: true, retentionPolicy: 'resumable' });
-        expect(record(emittedStarts[0]?.display).groupId).toBe(record(emittedStarts[1]?.display).groupId);
+        expect(emittedWorkflowStarts, JSON.stringify({ visible: screen.getTextContent(),
+            http: home.requests.map(request => ({ method: request.method, path: request.path,
+                ...(/workflow|artifact/.test(request.path) ? { body: request.body } : {}) })),
+            rpc: transport.call.mock.calls.map(([request]) => request) })).toHaveLength(1);
+        const accepted = emittedWorkflowStarts[0]!;
+        expect(accepted.inputs?.reviewInput).toMatchObject({ instructions: 'Inspect this', reviewers: [
+            { kind: 'engine', engineId: 'claude' }, { kind: 'engine', engineId: 'codex' },
+        ] });
+        expect(emittedStarts).toEqual([]);
+        if (comparison) expect(accepted.inputs?.reviewInput).toMatchObject({ comparisonId: capturedBranchComparisonId,
+            ...(walkthrough ? { outputs: ['walkthrough'] } : {}) });
         expect(input().props.value).toBe('');
-        await waitFor(() => expect(opened).toHaveBeenCalledWith('run_claude', undefined, { title: 'Inspect this' }));
+        expect(opened).not.toHaveBeenCalled();
+        await waitFor(() => expect(reviewRouterPush).toHaveBeenCalledWith(artifactViewRoute(
+            ReviewRoundBindingV1Schema.parse(accepted.inputs?.reviewRound).reviewId)));
     });
     it('removes one chosen reviewer from its shared Who row', async () => {
         await mount({ intent: 'review' });
@@ -1695,10 +1722,13 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await selectEngine(first);
         await send();
         expect(emittedStarts).toHaveLength(1);
+        const reviews = artifactStore.list().filter(artifact => artifact.kindHint === REVIEW_ARTIFACT_KIND_V1);
+        expect(reviews).toHaveLength(1);
+        expect(reviewRouterPush).toHaveBeenCalledWith(artifactViewRoute(reviews[0]!.id));
     });
     it('configures a captured comparison and narration in the shared Run draft before admission', async () => {
         await mount({ intent: 'review', comparisonReview: { cwd: '/repo',
-            comparison: { kind: 'branch', base: 'main', head: 'HEAD' }, comparisonId: 'captured-branch',
+            comparison: { kind: 'branch', base: 'main', head: 'HEAD' }, comparisonId: capturedBranchComparisonId,
             scopeLabel: 'main → HEAD', defaultWalkthrough: true } });
         expect(screen.findByTestId('start-review-changes')).not.toBeNull();
         const walkthrough = await renderChipContent('execution-run-start-walkthrough');
@@ -1709,17 +1739,18 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(after.findByTestId('start-review-walkthrough')?.props.accessibilityState?.checked).toBe(false);
         expect(emittedStarts).toHaveLength(0);
     });
-    it('opens a partially started review and names the reviewer that failed', async () => {
-        startResults.push(started('run_claude'), { ok: false, error: 'review_engine_unavailable', errorCode: 'review_engine_unavailable' });
+    it('retains the Review draft when its composed Workflow admission is refused', async () => {
+        refuseWorkflowStart = true;
         const opened = vi.fn();
-        await mount({ intent: 'review', onRunStarted: opened });
+        await mount({ intent: 'review', onRunStarted: opened, initialActionInput: { scope: 'repository' } });
         await reviewers();
         await send();
-        await waitFor(() => expect(emittedStarts).toHaveLength(2));
-        await waitFor(() => expect(opened).toHaveBeenCalledWith('run_claude', undefined,
-            { title: 'Inspect this', reviewersNotStarted: [t('agentInput.agent.codex')] }));
+        expect(emittedWorkflowStarts).toHaveLength(1);
+        expect(emittedStarts).toEqual([]);
+        expect(reviewRouterPush).not.toHaveBeenCalled();
+        expect(opened).not.toHaveBeenCalled();
         expect(modal.alert).not.toHaveBeenCalled();
-        expect(input().props.value).toBe('');
+        expect(input().props.value).toBe('Inspect this');
     });
     it('rejects a retained comparison resource with a malformed originating pane', async () => {
         const { createExecutionRunDetailsSurfaceRenderers } = await import('./executionRunDetailsSurfaceRenderers');
@@ -1734,7 +1765,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             descriptor: { surfaceId: 'comparison-origin', resourceKey: tab.key, scope, region: 'details', status: 'available' },
             callbacks: {} })).toBe(false);
     });
-    it.each([false, true])('links accepted comparison reviewers back to the originating pane (walkthrough %s)', async walkthrough => {
+    it.each([false, true])('opens the accepted Review from the comparison originating pane (walkthrough %s)', async walkthrough => {
         const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
         const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
         const { createSessionScmReviewDetailsTab } = await import('@/components/sessions/panes/details/sessionDetailsTabBuilders');
@@ -1743,7 +1774,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         const scopeId = 'session:comparison-origin';
         const comparison = { kind: 'branch' as const, base: 'main', head: 'HEAD' };
         const originTab = createSessionScmReviewDetailsTab({ comparison, view: 'files', explain: true, evidenceSessionId: 'session_1' });
-        const context = { cwd: '/repo', comparison, comparisonId: 'captured-branch', scopeLabel: 'main → HEAD',
+        const context = { cwd: '/repo', comparison, comparisonId: capturedBranchComparisonId, scopeLabel: 'main → HEAD',
             defaultWalkthrough: walkthrough, origin: { scopeId, tab: originTab } };
         const draft = createComparisonReviewExecutionRunDraftDetailsTab(context);
         let pane!: ReturnType<typeof useAppPaneScope>;
@@ -1758,8 +1789,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             pane.openDetailsTab(originTab, { intent: 'pinned' });
             pane.openDetailsTab(draft, { intent: 'preview', start: true });
         });
-        startResults.push(started('comparison-claude'), started('comparison-codex'));
-        await reviewers();
+        if (!walkthrough) startResults.push(started('comparison-claude'));
+        await reviewers(walkthrough ? ['claude', 'codex'] : ['claude']);
         if (walkthrough) {
             const narrators = await renderChipContent('execution-run-start-walkthrough');
             await waitFor(() => expect(narrators.findByTestId('start-review-narrator:codex')).not.toBeNull());
@@ -1767,23 +1798,19 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             await settle();
         }
         await send();
-        await waitFor(() => expect(pane.scopeState?.details.tabState[originTab.key]).toMatchObject({
-            reviewRunIds: ['comparison-claude', 'comparison-codex'],
-        }));
+        const reviews = artifactStore.list().filter(artifact => artifact.kindHint === REVIEW_ARTIFACT_KIND_V1);
+        expect(reviews).toHaveLength(1);
+        await waitFor(() => expect(reviewRouterPush).toHaveBeenCalledWith(artifactViewRoute(reviews[0]!.id)));
         if (walkthrough) {
-            expect(pane.scopeState?.details.tabs.find(tab => tab.key === originTab.key)?.resource).toMatchObject({
-                comparison: { ...comparison, comparisonId: 'captured-branch' }, view: 'walkthrough', explain: true, evidenceSessionId: 'session_1',
+            expect(emittedWorkflowStarts).toHaveLength(1);
+            expect(emittedStarts).toEqual([]);
+            expect(emittedWorkflowStarts[0]?.inputs?.reviewInput).toMatchObject({
+                comparisonId: capturedBranchComparisonId, changeType: 'all', outputs: ['walkthrough'], narrator: { engineId: 'codex' },
             });
-            expect(pane.scopeState?.details.activeTabKey).toBe(originTab.key);
+        } else {
+            expect(emittedStarts).toHaveLength(1);
+            expect(emittedStarts[0]?.intentInput).toMatchObject({ comparisonId: capturedBranchComparisonId, changeType: 'all' });
         }
-        expect(emittedStarts.every(start => record(start.intentInput).comparisonId === 'captured-branch'
-            && record(start.intentInput).changeType === 'all')).toBe(true);
-        if (walkthrough) expect(transport.call.mock.calls).toEqual(expect.arrayContaining([[expect.objectContaining({
-            method: SESSION_RPC_METHODS.EXECUTION_RUN_ACTION,
-            payload: expect.objectContaining({ actionId: 'review.walkthrough', input: expect.objectContaining({
-                comparisonId: 'captured-branch', reviewRunIds: ['comparison-claude', 'comparison-codex'], narrator: { engineId: 'codex' },
-            }) }),
-        })]]));
     });
     it('keeps the typed draft when the real plan Action refuses every start', async () => {
         startResults.push({ ok: false, error: 'backend_unavailable' });
@@ -1867,7 +1894,10 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await waitFor(() => expect(roleLabel()).toBe('Reviewer'));
         await reviewers();
         await send();
-        expect(emittedStarts[0]).not.toHaveProperty('roleId');
+        expect(emittedWorkflowStarts).toHaveLength(1);
+        const accepted = ReviewStartInputSchema.parse(emittedWorkflowStarts[0]?.inputs?.reviewInput);
+        expect(accepted).not.toHaveProperty('roleId');
+        for (const reviewer of accepted.reviewers) expect(reviewer).not.toHaveProperty('roleId');
     });
     it('names the review for what it is on the tab and in its heading, and says where it looks instead of which machine', async () => {
         await mount({ intent: 'review', roleId: 'second_opinion', heading: 'Second opinion' });
@@ -1919,7 +1949,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await reviewers();
         expect(selectedAgentIds()).toHaveLength(2);
         await send();
-        expect(emittedStarts[0]).toMatchObject({ intent: 'review', roleId: 'second_opinion' });
+        expect(emittedWorkflowStarts).toHaveLength(1);
+        expect(emittedWorkflowStarts[0]?.inputs?.reviewInput).toMatchObject({ roleId: 'second_opinion' });
     });
     it('carries a chosen conversation role after the exact daemon confirms binding support', async () => {
         await mount();
@@ -1948,7 +1979,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         publishProfile(profile);
         getStorage().setState((state) => ({ sessions: { session_1: { ...state.sessions.session_1!, metadata: { ...state.sessions.session_1!.metadata!, profileId: 'work' } } } }));
         await mount({ intent: 'review', onRunStarted: vi.fn(), comparisonReview: { cwd: '/repo',
-            comparison: { kind: 'workingTree' }, comparisonId: 'captured-1', scopeLabel: 'Pending changes', defaultWalkthrough: false } });
+            comparison: { kind: 'workingTree' }, comparisonId: capturedWorkingComparisonId, scopeLabel: 'Pending changes', defaultWalkthrough: false } });
         await reviewers(['claude']);
         await settle();
         await screen.pressByTestIdAsync('execution-run-secret-overlay-edit');
@@ -1964,7 +1995,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         const onStarted = vi.fn();
         startRelayFailure = { error: 'RPC target disconnected after request submission', errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN };
         await mount({ intent: 'review', onRunStarted: onStarted, comparisonReview: { cwd: '/repo',
-            comparison: { kind: 'workingTree' }, comparisonId: 'captured-1', scopeLabel: 'Pending changes', defaultWalkthrough: false } });
+            comparison: { kind: 'workingTree' }, comparisonId: capturedWorkingComparisonId, scopeLabel: 'Pending changes', defaultWalkthrough: false } });
         await reviewers(['claude']);
         await settle();
         await send('Keep this review request');
@@ -1989,7 +2020,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await mount({ intent: 'review', onRunStarted: onStarted,
             ...(detached ? { sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' } } : {}),
             comparisonReview: { cwd: '/repo',
-            comparison: { kind: 'workingTree' }, comparisonId: 'captured-1', scopeLabel: 'Pending changes', defaultWalkthrough: findingsOnly } });
+            comparison: { kind: 'workingTree' }, comparisonId: capturedWorkingComparisonId, scopeLabel: 'Pending changes', defaultWalkthrough: findingsOnly } });
         await reviewers(['claude']);
         if (findingsOnly) {
             const walkthrough = await renderChipContent('execution-run-start-walkthrough');
@@ -2008,7 +2039,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         getStorage().setState((state) => ({ sessions: { session_1: { ...state.sessions.session_1!, active: false,
             metadata: { ...state.sessions.session_1!.metadata!, claudeSessionId: 'native-session-1' } } } }));
         await mount({ intent: 'review', onRunStarted: vi.fn(), comparisonReview: { cwd: '/repo',
-            comparison: { kind: 'workingTree' }, comparisonId: 'captured-1', scopeLabel: 'Pending changes', defaultWalkthrough: false } });
+            comparison: { kind: 'workingTree' }, comparisonId: capturedWorkingComparisonId, scopeLabel: 'Pending changes', defaultWalkthrough: false } });
         await reviewers(['claude']);
         await settle();
         await send();
@@ -2020,7 +2051,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(resume).toBeLessThan(review);
         expect(transport.call.mock.calls[resume]?.[0]).toMatchObject({ machineId: 'machine_1', serverId,
             payload: { sessionId: 'session_1', spawnNonce: expect.stringMatching(/^execution-run-host-/) } });
-        expect(emittedStarts[0]).toMatchObject({ intent: 'review', intentInput: { comparisonId: 'captured-1' } });
+        expect(emittedStarts[0]).toMatchObject({ intent: 'review', intentInput: { comparisonId: capturedWorkingComparisonId } });
     });
     it('preflights a selected Saved Secret and creates no Run when the daemon lacks support', async () => {
         protocolSupported = false;
