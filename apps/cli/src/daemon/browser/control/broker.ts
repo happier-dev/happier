@@ -60,7 +60,8 @@ export function createBrowserDaemonControlBroker(): BrowserDaemonControlBroker {
   let hasRegisteredAdapter = false;
 
   const listViews = (browserSessionId: string, scope?: BrowserCommandScope) =>
-    [...adapters].flatMap(adapter => adapter.listViews?.(browserSessionId, scope) ?? []);
+    [...adapters].flatMap(adapter => [...(adapter.listViews?.(browserSessionId, scope) ?? []),
+      ...(adapter.listTerminalViews?.(browserSessionId, scope) ?? [])]);
   const notify = (browserSessionId?: string) => {
     for (const listener of viewListeners) {
       if (!browserSessionId || listener.browserSessionId === browserSessionId) listener.check(Boolean(browserSessionId));

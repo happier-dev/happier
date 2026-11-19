@@ -79,6 +79,8 @@ export type BrowserStreamedSurfaceRuntime = Readonly<{
     connecting?: boolean;
     /** The discovery owner's typed prerequisite/failure, distinct from a stream failure. */
     unavailableReason?: Extract<BrowserDaemonControlDispatchClientResult, { ok: false }>['reason'];
+    /** The lifecycle owner's terminal cause survives retirement of the capture stream. */
+    diagnosticCode?: string;
     /** Try to open the stream again after it failed. */
     onRetry?: () => void;
     /**
@@ -443,7 +445,7 @@ export function BrowserStreamedTarget(props: Readonly<{
                     iconName="eye-slash"
                     title={props.agentless ? t('browserPresence.stream.unavailableTitleAgentless') : t('browserPresence.stream.unavailableTitle', { agent: props.agentName })}
                     reason={props.agentless ? t('browserPresence.stream.unavailableBodyAgentless') : t('browserPresence.stream.unavailableBody', { agent: props.agentName })}
-                    diagnosticCode={playerState?.diagnostic?.reasonCode}
+                    diagnosticCode={props.runtime?.diagnosticCode ?? playerState?.diagnostic?.reasonCode}
                     action={onRetry ? { label: t('browserPresence.stream.tryAgain'), onPress: onRetry } : undefined}
                 />
             </View>

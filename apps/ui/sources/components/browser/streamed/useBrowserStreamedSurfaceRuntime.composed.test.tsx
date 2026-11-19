@@ -10,6 +10,7 @@ import { act } from 'react-test-renderer';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, invokeTestInstanceHandler, renderHook, renderScreen, waitForTestEvent } from '@/dev/testkit';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
@@ -51,6 +52,8 @@ import { createBrowserSidecarLaunchOwnerControlAdapterFactory } from '../../../.
 import { createBrowserProfileStore } from '../../../../../cli/src/daemon/browser/profiles/store';
 import { createBrowserStoragePartitionOwner } from '../../../../../cli/src/daemon/browser/storage/partitions';
 import { createBrowserDaemonControlBroker } from '../../../../../cli/src/daemon/browser/control/broker';
+import { createBrowserDaemonViewDiscovery } from '../../../../../cli/src/daemon/browser/control/viewDiscovery';
+import { BrowserSidecarCdpTransportError } from '../../../../../cli/src/daemon/browser/sidecar/cdpTransport';
 import { RuntimeActionIdV1Schema } from '@happier-dev/protocol/actions/actionIds';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { createBrowserDaemonRuntimeActionExecutor } from '../../../../../cli/src/daemon/browser/actions/runtimeActionExecutor';
@@ -1071,14 +1074,23 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         expect(boundary.listeners.size).toBe(0);
     });
 
-    it.each(['target-destroyed', 'capture-terminal-first', 'capture-unavailable', 'discovery-failed'] as const)('returns workspace selection only for a removed popup after native capture termination (%s)', async closePath => {
+    it.each(['target-destroyed', 'capture-terminal-first', 'capture-unavailable', 'adapter-unavailable', 'adapter-unavailable-late', 'adapter-unavailable-empty', 'discovery-failed'] as const)('returns workspace selection only for a removed popup after native capture termination (%s)', async closePath => {
         const removed = closePath === 'target-destroyed' || closePath === 'capture-terminal-first';
+        const unavailable = closePath.startsWith('adapter-unavailable');
         const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
         let rejectFrameAck: ((error: Error) => void) | undefined;
+        let closeTransport!: (error: BrowserSidecarCdpTransportError) => void;
+        const closed = new Promise<BrowserSidecarCdpTransportError>(resolve => { closeTransport = resolve; });
+        let publishWatch: ((result: unknown) => void) | undefined;
+        if (unavailable) boundary.watchViews = async ({ signal }) => new Promise(resolve => {
+            publishWatch = resolve;
+            signal?.addEventListener('abort', () => resolve({ error: 'aborted' }), { once: true });
+        });
         const created = await createBrowserSidecarCdpControlAdapterFactory({
             browserSessionId: view.browserSessionId, sidecarId: 'popup-sidecar',
             pipe: { readable: new PassThrough(), writable: new PassThrough() },
             connectTransport: async () => ({ transport: {
+                closed,
                 openPage: async () => ({ targetId: 'popup-target', sessionId: 'popup-cdp' }),
                 dispatchPageCommand: async command => {
                     if (closePath !== 'target-destroyed' && command.method === 'Page.screencastFrameAck') {
@@ -1091,6 +1103,9 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             } }),
         })({ machineId: 'machine_1' });
         if (!created.ok || !created.contextCapture) throw new Error('Missing popup CDP owner');
+        const lifecycleBroker = createBrowserDaemonControlBroker();
+        lifecycleBroker.registerAdapter(created.adapter);
+        const lifecycleDiscovery = createBrowserDaemonViewDiscovery({ broker: lifecycleBroker });
         const producer = createBrowserCdpScreencastProducer({ contextCapture: created.contextCapture });
         const registry = createMachineLiveStreamCaptureRegistry();
         const registration = registerBrowserLiveCapture({ registry, contextCapture: created.contextCapture, producer, automation: () => null });
@@ -1180,10 +1195,25 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                     .toMatchObject({ ok: true });
             });
             const discoveryReadsBeforeClose = discoveryReadCount();
-            boundary.views = closePath === 'capture-unavailable' ? [parent, { ...popupView, captureSource: undefined }] : [parent];
+            boundary.views = unavailable ? []
+                : closePath === 'capture-unavailable' ? [parent, { ...popupView, captureSource: undefined }] : [parent];
             if (closePath === 'discovery-failed') boundary.discoveryError = 'request_failed';
             await act(async () => {
-                if (closePath !== 'target-destroyed') {
+                if (unavailable) {
+                    if (closePath === 'adapter-unavailable-late') {
+                        for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: 'popup-cdp',
+                            params: { sessionId: 1, data: 'AQID', metadata: { deviceWidth: 400, deviceHeight: 200 } } });
+                        if (!rejectFrameAck) throw new Error('Missing native frame acknowledgement');
+                        rejectFrameAck(new Error('Target closed'));
+                        await Promise.resolve(); await Promise.resolve();
+                    }
+                    closeTransport(new BrowserSidecarCdpTransportError('cdp_transport_closed', 'Pipe closed'));
+                    await Promise.resolve(); await Promise.resolve();
+                    if (!publishWatch) throw new Error('Missing active discovery watch');
+                    // A late observer reads the producer's terminal decision after capture teardown.
+                    boundary.views = closePath === 'adapter-unavailable-empty' ? [] : lifecycleDiscovery.listViews(view.browserSessionId);
+                    publishWatch({ protocolVersion: 1, views: boundary.views });
+                } else if (closePath !== 'target-destroyed') {
                     for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: 'popup-cdp',
                         params: { sessionId: 1, data: 'AQID', metadata: { deviceWidth: 400, deviceHeight: 200 } } });
                     if (!rejectFrameAck) throw new Error('Missing native frame acknowledgement');
@@ -1193,6 +1223,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                 // Chromium reports window.close() through Target.targetDestroyed. Do not inject
                 // viewClosed into the UI: real capture/relay teardown determines what survives.
                 if (removed) for (const listener of [...listeners]) listener({ method: 'Target.targetDestroyed', params: { targetId: 'popup-target' } });
+                if (removed) boundary.views = [parent, ...lifecycleDiscovery.listViews(view.browserSessionId)];
             });
             await flushHookEffects({ cycles: 6, turns: 6 });
             expect(produced).toContainEqual(expect.objectContaining({ message: { kind: 'receipt', receipt: expect.objectContaining({
@@ -1206,6 +1237,15 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             expect(closeMetadata).toHaveLength(closePath === 'target-destroyed' ? 1 : 0);
             if (removed) expect(details.tabsByKey[tab.key]).toBeUndefined();
             else expect(details.tabsByKey[tab.key]).toBeDefined();
+            if (unavailable) {
+                expect(screen.findByType(BrowserShell).props.state.viewsById.popup).toMatchObject({
+                    loadingState: 'failed', adapterRefreshStatus: 'error', lastError: 'cdp_transport_closed',
+                });
+                // The engine's terminal cause must reach the person after capture teardown;
+                // retaining it only in Browser state leaves the viewer's recovery unexplained.
+                expect(screen.findByType(SurfaceStateCard).props.diagnosticCode).toBe('cdp_transport_closed');
+                expect(boundary.listeners.size).toBe(0);
+            }
             expect(details.groupsById[details.focusedGroupId!].activeTabKey).toBe(removed ? parentTab.key : tab.key);
             expect(details.tabsByKey[parentTab.key]).toBeDefined();
             if (closePath !== 'target-destroyed') {
@@ -1216,6 +1256,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         } finally {
             boundary.relaySend = null;
             await screen.unmount(); opener.dispose(); await relay.dispose(); registration.dispose(); await producer.dispose(); await created.dispose?.();
+            boundary.watchViews = null;
         }
     });
 

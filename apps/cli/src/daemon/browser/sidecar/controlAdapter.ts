@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { BrowserDaemonViewV1 } from '@happier-dev/protocol/browser/control/v1';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { BrowserEventV1Schema, BrowserNavigationStateChangedEventV1Schema, BrowserTitleChangedEventV1Schema } from '@happier-dev/protocol/browser/events/v1';
@@ -292,6 +293,9 @@ export function createBrowserSidecarCdpControlAdapter(
     input: BrowserSidecarCdpControlAdapterInput,
 ): BrowserSidecarCdpControlAdapter {
     const boundViews = new Map<string, BoundView>();
+    // One final projection per logical view, retained for this Session adapter's lifetime.
+    // Rebinding replaces it; it contains no CDP handles, navigation history or capture source.
+    const terminalViews = new Map<string, BrowserDaemonViewV1>();
     const lifecycleListeners = new Set<BrowserSidecarViewLifecycleSubscriber>();
     const eventListeners = new Set<(event: BrowserEventV1) => void>();
     // Only outstanding attach commands, never a second view-binding registry.
@@ -320,6 +324,9 @@ export function createBrowserSidecarCdpControlAdapter(
             ...(unavailableReason ? { kind: 'adapterUnavailable', adapterKind: 'chromiumSidecar', reasonCode: unavailableReason }
                 : { kind: 'viewClosed' }) };
         boundViews.delete(browserViewKey(view));
+        terminalViews.set(browserViewKey(view), { browserSessionId: view.browserSessionId, viewId: view.viewId,
+            sourceId: browserViewKey(view), target: view.target, platform: view.platform,
+            adapterKind: 'chromiumSidecar', events: [event] });
         // Deliver closure while capture's metadata subscription still exists.
         publishEvent(event);
         emitLifecycle({ type: 'unbound', browserSessionId: view.browserSessionId, viewId: view.viewId,
@@ -456,6 +463,7 @@ export function createBrowserSidecarCdpControlAdapter(
             if (held) await input.resolveInputControl?.(view)?.beginConfidentialityHold();
             if (disposed || boundViews.get(browserViewKey(opener)) !== opener || !attachingTargets.has(targetId)) return;
             boundViews.set(browserViewKey(view), view);
+            terminalViews.delete(browserViewKey(view));
             emitLifecycle({ type: 'bound', browserSessionId: view.browserSessionId, viewId });
             publishEvent(openedViewEvent(view));
             publishState(view);
@@ -685,6 +693,7 @@ export function createBrowserSidecarCdpControlAdapter(
                 return lateFailure;
             }
             const previous = boundViews.get(browserViewKey(command));
+            terminalViews.delete(browserViewKey(command));
             boundViews.set(browserViewKey(command), {
                 browserSessionId: command.browserSessionId,
                 viewId: command.viewId,
@@ -754,6 +763,9 @@ export function createBrowserSidecarCdpControlAdapter(
             };
         },
         subscribeBrowserEvents(listener) { eventListeners.add(listener); return () => { eventListeners.delete(listener); }; },
+        listTerminalViews(browserSessionId) {
+            return browserSessionId === input.browserSessionId ? [...terminalViews.values()] : [];
+        },
         listViews(browserSessionId) {
             if (disposed || browserSessionId !== input.browserSessionId) return [];
             return [...boundViews.values()].map(view => ({ browserSessionId: view.browserSessionId, viewId: view.viewId,

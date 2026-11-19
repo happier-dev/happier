@@ -81,6 +81,8 @@ export type BrowserDaemonControlAdapter = Readonly<{
   adapterKind: BrowserDaemonControlAdapterKind;
   ownsView(input: BrowserDaemonControlViewIdentity): boolean;
   listViews?(browserSessionId: string, scope?: BrowserCommandScope): readonly BrowserDaemonViewV1[];
+  /** Terminal discovery facts, separate from executable/capturable view inventory. */
+  listTerminalViews?(browserSessionId: string, scope?: BrowserCommandScope): readonly BrowserDaemonViewV1[];
   /** Profile custody also governs controller effects executed outside native dispatch. */
   getCommandAccessFailure?(command: BrowserCommandAccessTarget, scope?: BrowserCommandScope): Extract<BrowserCommandDispatchResultV1, { status: 'failed' }> | undefined;
   subscribeViewLifecycle?(listener: (event: BrowserDaemonControlViewIdentity) => void): () => void;

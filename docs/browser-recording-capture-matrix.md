@@ -277,6 +277,17 @@ obligations, not claims established by this source description.
 
 ## Browser producer lifetime
 
+Managed Chromium discovery retains the control adapter's last terminal event per
+logical view for that Session adapter's lifetime, replacing it when the view is
+rebound. These projections carry the existing `viewClosed` or `adapterUnavailable`
+event without capture readiness or CDP handles. Active-view inventory remains
+separate, so late discovery cannot re-admit retired capture. The streamed UI
+consumes that event; an absent row alone does not close a workspace tab. Older
+daemons without terminal projections still deliver live lifecycle events; a
+missed terminal event leaves the tab available for recovery instead of inventing
+a close. This uses the existing version 1 view/event shapes, with no new wire
+field, event kind, persisted state, timer or retention budget.
+
 Desktop recording capability uses the actual reverse-capture handler registration for the view's
 machine as well as the native capture shape. The surface refreshes that capability when handler
 readiness changes, preserving navigation state.

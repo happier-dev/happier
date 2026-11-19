@@ -29,6 +29,16 @@ export function reconcileBrowserDiscovery(
     for (const candidate of views) {
         const retained = previousBySource.get(candidate.sourceId);
         if (candidate === retained) continue;
+        // Lifecycle facts remain deliverable after the capture source has retired.
+        const terminal = candidate.events.filter(event => event.kind === 'viewClosed' || event.kind === 'adapterUnavailable');
+        if (terminal.length) {
+            const delivered = new Set(retained?.events);
+            for (const event of retainKeyedRows(retained?.events, terminal, event => event.eventId)) {
+                if (!delivered.has(event) && event.browserSessionId === candidate.browserSessionId
+                    && 'viewId' in event && event.viewId === candidate.viewId) events.push(event);
+            }
+            continue;
+        }
         const target = resolveBrowserDaemonStreamTarget(candidate);
         if (!target) continue;
         // A view without a capture source has not yet been admitted to this streamed surface.

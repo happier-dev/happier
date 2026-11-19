@@ -113,14 +113,6 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     const discoveredView = discovery.status === 'ready' && discovery.scope === discoveryScope
         && discovery.view?.browserSessionId === browserSessionId && discovery.view.viewId === viewId
         ? discovery.view : null;
-    const reconcileClosedView = useEventCallback((views: readonly BrowserDaemonViewV1[]) => {
-        // A seed may precede native creation. Only removal of a previously discovered native view
-        // proves closure; a missing capture source alone does not.
-        if (discoveredView && !views.some(candidate => candidate.viewId === discoveredView.viewId)) {
-            onBrowserEventRef.current?.({ kind: 'viewClosed', eventId: `browser-discovery-closed:${discoveredView.sourceId}`,
-                occurredAt: Date.now(), browserSessionId: discoveredView.browserSessionId, viewId: discoveredView.viewId });
-        }
-    });
     const reconcileDiscoveredViews = useEventCallback((views: readonly BrowserDaemonViewV1[], sourceMachineId?: string) => {
         const previous = discoveryBaseline.current?.scope === discoveryScope ? discoveryBaseline.current.views : undefined;
         const reconciled = reconcileBrowserDiscovery(previous, views);
@@ -157,7 +149,6 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
             let views: readonly BrowserDaemonViewV1[] = [];
             if (result.ok) {
                 views = result.views.filter(candidate => candidate.browserSessionId === browserSessionId);
-                reconcileClosedView(views);
                 reconcileDiscoveredViews(views, result.machineId);
             } else setDiscovery({ status: 'failed', reason: result.reason });
             // The broker is observable before Chromium is installed. Approval replay can
@@ -170,12 +161,11 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                 // its existing user retry path; an unavailable watch never polls.
                 if (!changed.ok) return;
                 views = changed.views.filter(candidate => candidate.browserSessionId === browserSessionId);
-                reconcileClosedView(views);
                 reconcileDiscoveredViews(views, changed.machineId);
             }
         })();
         return () => abort.abort();
-    }, [attempt, browserSessionId, discoveryAccountId, input.enabled, input.refreshKey, requestedMachineId, sessionRpcSessionId, reconcileClosedView, reconcileDiscoveredViews, serverId, viewId]);
+    }, [attempt, browserSessionId, discoveryAccountId, input.enabled, input.refreshKey, requestedMachineId, sessionRpcSessionId, reconcileDiscoveredViews, serverId, viewId]);
 
     const captureSource = discoveredView?.captureSource ?? null;
     const sourceId = captureSource ? discoveredView?.sourceId ?? null : null;
@@ -357,6 +347,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
             machineName,
             connecting,
             ...(unavailableReason ? { unavailableReason } : {}),
+            ...(view.loadingState === 'failed' && view.lastError ? { diagnosticCode: view.lastError } : {}),
             playerState,
             onRetry: retry,
             input: sendControl && sourceId && streamId

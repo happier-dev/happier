@@ -123,7 +123,12 @@ describe('daemon browser view discovery', () => {
       registry.unregister(browserViewKey(view));
       expect(routes.listViews('session')[0]?.captureSource).toBeUndefined();
       await routes.dispatchCommand({ kind: 'closeView', commandId: 'close', ...view }, { authority: 'present_user' });
-      expect(discover()).toEqual([]);
+      expect(discover()).toMatchObject([{ ...view, events: [expect.objectContaining({ kind: 'viewClosed' })] }]);
+      expect(discover()[0]?.captureSource).toBeUndefined();
+      await routes.dispatchCommand({ kind: 'openView', commandId: 'reopen', ...view, target, platform: 'web' });
+      expect(discover()).toHaveLength(1);
+      expect(discover()[0]?.events.map(event => event.kind)).toEqual(['viewOpened', 'navigationStateChanged']);
+      expect(discover()[0]?.captureSource).toBeDefined();
     } finally { releaseFocus(); registration.dispose(); await producer.dispose(); automation.dispose(); adapter.dispose(); }
   });
 });

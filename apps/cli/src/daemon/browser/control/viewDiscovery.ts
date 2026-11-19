@@ -5,6 +5,8 @@ import type { MachineLiveStreamCaptureRegistry } from '../../peer/mediation/stre
 /** Both one-shot and parked discovery use the capture owner's current readiness. */
 export function projectBrowserDaemonViews(views: readonly BrowserDaemonViewV1[], captureRegistry?: Pick<MachineLiveStreamCaptureRegistry, 'resolve'>) {
   return views.map(view => {
+    // Terminal events are the lifecycle owner's decision, never a capture candidate.
+    if (view.events.some(event => event.kind === 'viewClosed' || event.kind === 'adapterUnavailable')) return view;
     const source = captureRegistry?.resolve({ sourceId: view.sourceId, streamFamily: 'browser.streamed' });
     return { ...view, ...(source?.ok ? { captureSource: source.source.capabilities,
       sourceOccurrenceId: source.source.sourceOccurrenceId } : {}) };

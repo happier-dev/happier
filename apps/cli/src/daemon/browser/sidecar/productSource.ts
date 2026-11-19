@@ -424,6 +424,8 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                 adapterKind: 'chromiumSidecar',
                 subscribeViewLifecycle: listener => { viewListeners.add(listener); return () => { viewListeners.delete(listener); }; },
                 getCommandAccessFailure,
+                listTerminalViews: (browserSessionId, scope) => canAccessSessionProfile(browserSessionId, scope)
+                    ? sessions.get(browserSessionId)?.result?.adapter.listTerminalViews?.(browserSessionId, scope) ?? [] : [],
                 listViews: (browserSessionId, scope) => {
                     if (!canAccessSessionProfile(browserSessionId, scope)) return [];
                     const session = sessions.get(browserSessionId);

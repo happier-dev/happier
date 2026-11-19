@@ -118,7 +118,13 @@ describe('browser sidecar CDP control adapter factory', () => {
             ]));
         });
         expect(result.adapter.listViews?.('browser_session_factory')).toEqual([]);
-        expect(await changedViews).toEqual([]);
+        const terminalViews = await changedViews;
+        expect(terminalViews).toMatchObject([
+            { viewId: 'view_factory', events: [expect.objectContaining({ kind: 'adapterUnavailable', reasonCode: 'cdp_transport_closed' })] },
+            { viewId: 'view_sibling', events: [expect.objectContaining({ kind: 'adapterUnavailable', reasonCode: 'cdp_transport_closed' })] },
+        ]);
+        expect(discovery.listViews('browser_session_factory')).toEqual(terminalViews);
+        expect(terminalViews.every(view => view.captureSource === undefined)).toBe(true);
         expect(unboundViews.sort()).toEqual(['view_factory', 'view_sibling']);
         expect(result.contextCapture?.resolvePageHandle(openViewCommand())).toBeNull();
         expect(await result.adapter.dispatchCommand({ ...openViewCommand(), kind: 'stop', commandId: 'stop_after_exit' }))
