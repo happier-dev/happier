@@ -56,8 +56,18 @@ const referenceKey = (reference: StoreListingReference) =>
   JSON.stringify(reference);
 
 /** What a listing is (App, MCP server…): the bar or pane header above it says this, while the listing names the item. */
+function storeListingKind(reference: StoreListingReference | null) {
+  return reference?.type === 'pluginTheme' ? 'theme' : reference?.type === 'builtInPet' ? 'pet' : reference?.type === 'software' ? 'software' : reference?.type === 'registryItem' ? reference.kind : null;
+}
+
+/**
+ * A theme listing reads as a narrow drawer beside a grid that keeps its columns (Themes plan-6 C2); other listings take
+ * the app's details width. A width the person dragged still wins (the pane host decides that).
+ */
+const THEME_LISTING_PANE_WIDTH_PX = 420;
+
 function storeListingKindWord(reference: StoreListingReference | null): string {
-  const kind = reference?.type === 'pluginTheme' ? 'theme' : reference?.type === 'builtInPet' ? 'pet' : reference?.type === 'software' ? 'software' : reference?.type === 'registryItem' ? reference.kind : null;
+  const kind = storeListingKind(reference);
   return kind === null ? t('capabilities.store.listingLabel') : kind === 'theme' ? t('settingsAppearance.theme')
     : kind === 'pet' ? t('settingsPets.store.kicker') : t(`capabilities.store.kindWord.${kind}`);
 }
@@ -205,6 +215,7 @@ export function StoreListingPaneHost(
       mainColumn={mainColumn}
       onCloseDetails={closeStore}
       details={details}
+      detailsPreferredWidthPx={storeListingKind(storeOpenItem) === 'theme' ? THEME_LISTING_PANE_WIDTH_PX : undefined}
       main={<StoreListingPaneOpenContext.Provider value={details !== null}>{props.children}</StoreListingPaneOpenContext.Provider>}
     />
   );
