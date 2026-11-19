@@ -388,7 +388,7 @@ describe('SessionCompanionContent (mounted)', () => {
             { kind: 'workflow', runCount: 1, destination: 'workTab' },
         ];
         mutableModel.facts = [
-            { kind: 'subagents', live: 1, total: 1, destination: 'workTab' },
+            { kind: 'runningWork', count: 1, destination: 'workTab' },
             { kind: 'changes', count: 3, destination: 'git' },
         ];
         const openApprovals = vi.fn();

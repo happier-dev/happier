@@ -60,7 +60,7 @@ function model(overrides: Partial<SessionSummaryCardModel> = {}): SessionSummary
         progress: { step: 4, total: 5 },
         plan: PLAN,
         facts: [
-            { kind: 'subagents', live: 2, total: 3, destination: 'workTab' },
+            { kind: 'runningWork', count: 2, destination: 'workTab' },
             { kind: 'changes', count: 14, destination: 'git' },
             { kind: 'context', percent: 62, stale: false, destination: 'usage' },
         ],

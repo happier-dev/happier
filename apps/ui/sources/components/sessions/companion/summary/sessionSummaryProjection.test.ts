@@ -276,11 +276,12 @@ describe('the live hero (lab CA)', () => {
         expect(projectSessionSummaryCard(input()).needsYou).toBeNull();
     });
 
-    it('recomposes subagents, changes and context into three facts and keeps the rest as detail rows', () => {
+    it('uses awareness for running work, alongside changes and context', () => {
         const model = projectSessionSummaryCard(input({
             openApprovalCount: 1,
             awareness: awareness({
                 currentWork: { title: 'Reviewing access', activeWorkflowRunCount: 1 },
+                runningWorkCount: 4,
                 workspace: { projectName: 'happier' },
             }),
             activity: { live: 2, total: 3, headline: null },
@@ -289,7 +290,7 @@ describe('the live hero (lab CA)', () => {
         }));
 
         expect(model.facts).toEqual([
-            { kind: 'subagents', live: 2, total: 3, destination: 'workTab' },
+            { kind: 'runningWork', count: 4, destination: 'workTab' },
             { kind: 'changes', count: 14, destination: 'git' },
             { kind: 'context', percent: 62, stale: false, destination: 'usage' },
         ]);

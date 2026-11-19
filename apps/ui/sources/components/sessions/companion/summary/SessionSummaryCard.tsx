@@ -192,16 +192,16 @@ function SummaryPromptSource(props: Readonly<{
 }
 
 const FACT_ICONS = {
-    subagents: 'robot',
+    runningWork: 'robot',
     changes: 'git-branch',
 } as const satisfies Record<Exclude<SessionSummaryFact['kind'], 'context'>, IconName>;
 
 function factPresentation(fact: SessionSummaryFact): Readonly<{ value: string; label: string; opens: string }> {
     switch (fact.kind) {
-        case 'subagents':
+        case 'runningWork':
             return {
-                value: t('sessionCompanion.facts.subagentsValue', { live: fact.live, total: fact.total }),
-                label: t('sessionCompanion.facts.subagents'),
+                value: String(fact.count),
+                label: t('workStatus.buckets.working'),
                 opens: t('sessionCompanion.facts.opensAgents'),
             };
         case 'changes':

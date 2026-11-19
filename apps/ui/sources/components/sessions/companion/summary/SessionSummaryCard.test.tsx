@@ -228,7 +228,7 @@ describe('SessionSummaryCard (the Companion hero)', () => {
                         { kind: 'recap', text: 'Wrapped up the resize test', source: 'synopsis', destination: 'workTab' },
                     ],
                     facts: [
-                        { kind: 'subagents', live: 2, total: 3, destination: 'workTab' },
+                        { kind: 'runningWork', count: 2, destination: 'workTab' },
                         { kind: 'changes', count: 14, destination: 'git' },
                         { kind: 'context', percent: 62, stale: false, destination: 'usage' },
                     ],
@@ -239,7 +239,7 @@ describe('SessionSummaryCard (the Companion hero)', () => {
             />,
         );
 
-        screen.findByTestId('session-companion-summary-fact-subagents')?.props.onPress();
+        screen.findByTestId('session-companion-summary-fact-runningWork')?.props.onPress();
         screen.findByTestId('session-companion-summary-fact-changes')?.props.onPress();
         screen.findByTestId('session-companion-summary-row-approvals')?.props.onPress();
         expect(openWorkTab).toHaveBeenCalledTimes(1);

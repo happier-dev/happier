@@ -118,7 +118,7 @@ export type SessionSummaryNeedsYou = Readonly<{
 
 /** The three glanceable facts (lab CA); each opens its existing owner. */
 export type SessionSummaryFact =
-    | Readonly<{ kind: 'subagents'; live: number; total: number; destination: 'workTab' }>
+    | Readonly<{ kind: 'runningWork'; count: number; destination: 'workTab' }>
     | Readonly<{ kind: 'changes'; count: number; destination: 'git' }>
     | Readonly<{ kind: 'context'; percent: number; stale: boolean; destination: 'usage' }>;
 
@@ -257,7 +257,7 @@ export function projectSessionSummaryCard(input: SessionSummaryInput): SessionSu
         ...(input.awareness.nowLine ? { nowLine: presentSessionAwarenessNowLineV1(input.awareness) } : {}),
         ...(input.awareness.statusReasonSetAt ? { statusReasonSetAt: input.awareness.statusReasonSetAt } : {}),
         plan,
-        facts: resolveFacts(rows),
+        facts: resolveFacts(rows, input.awareness.runningWorkCount ?? 0),
         scope: 'exact',
         title: input.awareness.title ?? null,
         agentLabel: input.agentLabel,
@@ -285,13 +285,13 @@ function resolveNeedsYou(
     return oldest ? Object.freeze({ request: oldest.request, moreCount: pending.length - 1 }) : null;
 }
 
-/** The fact cells are the compact form of the activity, workspace and usage rows. */
-function resolveFacts(rows: readonly SessionSummaryRow[]): readonly SessionSummaryFact[] {
+/** Shows the awareness running total alongside the compact workspace and usage facts. */
+function resolveFacts(rows: readonly SessionSummaryRow[], runningWorkCount: number): readonly SessionSummaryFact[] {
     const facts: SessionSummaryFact[] = [];
+    if (runningWorkCount > 0) {
+        facts.push(Object.freeze({ kind: 'runningWork', count: runningWorkCount, destination: 'workTab' }));
+    }
     for (const row of rows) {
-        if (row.kind === 'activity' && row.totalCount > 0) {
-            facts.push(Object.freeze({ kind: 'subagents', live: row.liveCount, total: row.totalCount, destination: 'workTab' }));
-        }
         if (row.kind === 'workspace' && row.changedFiles !== null && row.changedFiles > 0) {
             facts.push(Object.freeze({ kind: 'changes', count: row.changedFiles, destination: 'git' }));
         }
