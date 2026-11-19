@@ -66,6 +66,7 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 import { DaemonTerminalListResponseV1Schema } from '@happier-dev/protocol/daemon/terminal';
 import { discoverLocalServiceRunTargets } from '@/daemon/local/services/launch/runTargets';
 import { createAgentIsolationOperationContext } from '@/daemon/agentIsolation/agentIsolationSessionContext';
@@ -1538,6 +1539,42 @@ describe('registerMachineTerminalRpcHandlers', () => {
       expect(h.provider.spawned).toHaveLength(3);
       expect(h.sessionManager.list()).toHaveLength(1);
       expect(h.sessionManager.getCustody(restarted.terminalId)).toMatchObject({ kind: 'session', sessionId: 'session-one', requesterAccountId: 'owner' });
+    } finally { registration.dispose(); await h.dispose(); }
+  });
+
+  it('preserves Home unavailability for an admitted Session attach and keeps owner scope', async () => {
+    const h = await finiteHarness({ observeInteractiveStop: true });
+    const sessionId = 'own-session';
+    let modeAvailable = false;
+    const originalGet = h.get.getMockImplementation()!;
+    h.get.mockImplementation(async (url, options) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption' && !modeAvailable) {
+        return { status: 503, data: { error: 'service_unavailable' } };
+      }
+      if (path.startsWith('/v2/sessions/')) {
+        return { status: 200, data: { session: { ...createSessionNotificationContextFixture(sessionId),
+          encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'machine', path: h.root }) } } };
+      }
+      return originalGet(url, options);
+    });
+    const handlers = new Map<string, RpcHandler>();
+    const registration = registerMachineTerminalRpcHandlers({
+      rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+      deps: { serverId: 'home', env: {}, workingDirectory: h.root, sessionManager: h.sessionManager,
+        accountReadRuntime: async () => h.runtime, resolveLaunch: () => ({ file: '/opt/happier/bin/happier', args: ['attach', sessionId] }) },
+    });
+    try {
+      const ensure = handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!;
+      const input = { terminalKey: 'attach', launch: { kind: 'session_attach', sessionId } };
+      await expect(ensure({ ...input, launch: { ...input.launch, sessionId: 'another-session' } }, h.ingress))
+        .resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+      await expect(ensure(input, h.ingress)).resolves.toMatchObject({ ok: false,
+        errorCode: 'project_requester_home_unavailable', details: { retryable: true } });
+      expect(h.provider.spawned).toHaveLength(0);
+      modeAvailable = true;
+      await expect(ensure(input, h.ingress)).resolves.toMatchObject({ ok: true, reused: false });
+      expect(h.provider.spawned).toHaveLength(1);
     } finally { registration.dispose(); await h.dispose(); }
   });
 

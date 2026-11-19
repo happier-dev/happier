@@ -8824,6 +8824,11 @@ Jump group. Borrowed terminal views are read-only at the client's transport
 owner, and closing them or an Agent attachment never stops that process.
 Closing an owned shell stops its PTY before removing the view; hiding retains it.
 
+Session attach checks the exact owner Session on the requester's Home. A
+retryable Home failure while reading its workspace returns
+`project_requester_home_unavailable`. Opening a PTY still requires a successful
+workspace read under the same Account and Machine custody.
+
 Declining an open records `openCancelled: true` on that same device-local member.
 Desktop/phone leaf replacement and renderer readiness retain its not-open state;
 only an explicit Open or Restart clears the decline and runs normal admission

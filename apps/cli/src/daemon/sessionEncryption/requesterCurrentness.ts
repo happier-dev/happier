@@ -43,18 +43,24 @@ export async function captureRequesterCurrentnessRefusal<T>(read: () => Promise<
 
 /** Keep named Home refusals typed; unavailable evidence retains the existing
  * runner failure/respawn policy's retryable disposition and safe code. */
-export function rethrowRequesterHomeReadFailure(error: unknown): void {
+export function projectRequesterHomeReadFailure(error: unknown): unknown {
   const failure = parseActionExecuteFailure(error);
-  if (failure?.errorCode === 'credential_scope_denied' || failure?.errorCode === 'invalid_token') throw error;
-  if (isPluginError(error) && error.code === 'project_requester_home_unavailable') throw error;
+  if (failure?.errorCode === 'credential_scope_denied' || failure?.errorCode === 'invalid_token') return error;
+  if (isPluginError(error) && error.code === 'project_requester_home_unavailable') return error;
   const unavailableActionRead = error !== null && typeof error === 'object'
     && 'ok' in error && error.ok === false
     && 'errorCode' in error && error.errorCode === 'server_unreachable';
   if (unavailableActionRead || classifyServerEndpointError(error).retryable) {
-    throw new PluginError({ code: 'project_requester_home_unavailable',
+    return new PluginError({ code: 'project_requester_home_unavailable',
       retryable: true,
       message: 'Requester Home is temporarily unavailable. Retry when it is available.' });
   }
+  return undefined;
+}
+
+export function rethrowRequesterHomeReadFailure(error: unknown): void {
+  const failure = projectRequesterHomeReadFailure(error);
+  if (failure !== undefined) throw failure;
 }
 /** Only preparation reads may re-enter here, never an admitted Action effect.
  * The accepted Action owns the lifetime; the shared backoff supplies pacing,

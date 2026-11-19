@@ -8,6 +8,8 @@ import axios from '@/api/client/credentialAxios';
 import { configuration } from '@/configuration';
 import type { StoredCredentials } from '@/persistence';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
+import { createHttpStatusError } from '@/api/client/httpStatusError';
+import { rethrowRequesterHomeReadFailure } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -123,6 +125,9 @@ export async function readOwnSessionMachineWorkspace(input: Readonly<{
     headers: { Authorization: `Bearer ${input.credentials.token}` }, signal: input.signal,
     timeout: configuration.sessionControlHttpTimeoutMs, validateStatus: () => true,
   }) });
+  if (mode.kind === 'http_error' && !input.signal?.aborted) {
+    rethrowRequesterHomeReadFailure(createHttpStatusError(mode.status, 'Account encryption mode read failed'));
+  }
   if (mode.kind !== 'resolved') return null;
   const metadata = tryDecryptSessionOwnerMetadataView({ credentials: input.credentials, accountEncryptionMode: mode.mode, rawSession: session });
   if (!metadata) return null;

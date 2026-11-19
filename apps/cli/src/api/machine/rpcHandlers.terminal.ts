@@ -15,6 +15,7 @@ import { requireAgentIsolationMaterialNativeIdentity, type AgentLaunchOperationM
 import { hostname } from 'node:os';
 import { logger } from '@/ui/logger';
 import { readOwnSessionMachineWorkspace } from '@/session/machineControlLocality';
+import { projectRequesterHomeReadFailure } from '@/daemon/sessionEncryption/requesterCurrentness';
 
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '../rpc/types';
 import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
@@ -295,7 +296,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   };
 
   const resolveOwnSessionCustody = async (sessionId: string, cwdInput: string | undefined, context: RpcHandlerContext)
-    : Promise<Readonly<{ ok: true; cwd: string; custody: TerminalPtyCustody }> | ReturnType<typeof err>> => {
+    : Promise<Readonly<{ ok: true; cwd: string; custody: TerminalPtyCustody }> | DaemonTerminalError> => {
     const admission = context.machineAdmission;
     if (!admission || context.signal.aborted) return err('terminal_forbidden');
     const runtime = await params.deps?.accountReadRuntime?.(context);
@@ -321,7 +322,14 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       return { ok: true, cwd: root.cwd, custody: { kind: 'session', serverId: runtime.serverId,
         requesterAccountId: admission.actorAccountId, machineId: admission.machineId, installationId: admission.installationId,
         sessionId, rootPath: root.cwd, ...(workspace.requiresManagedTarget ? { requiresManagedTarget: true as const } : {}) } };
-    } catch { return err('terminal_forbidden'); }
+    } catch (error) {
+      if (context.signal.aborted) return err('terminal_forbidden');
+      const failure = projectRequesterHomeReadFailure(error);
+      if (isPluginError(failure) && failure.code === 'project_requester_home_unavailable' && failure.retryable === true) {
+        return { ok: false, ...normalizeActionExecutorThrownError(failure) };
+      }
+      return err('terminal_forbidden');
+    }
   };
 
   const resolveTerminalCustody = async (input: Readonly<{ workspace?: WorkspaceAddressV1; cwd?: string; sessionId?: string; launch?: import('@happier-dev/protocol').DaemonTerminalLaunchIntent }>, context?: RpcHandlerContext,
