@@ -46,6 +46,26 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
+  it('retains saved Workflow lineage in durable native Review admission', async () => {
+    const records = createInMemoryReviewRecordPortV1();
+    let binding: unknown;
+    const executor = createActionExecutor({
+      reviewRecords: () => records,
+      executionRunCheckProtocolV2: async () => ({ ok: true }),
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      executionRunStart: async (_sessionId, input) => {
+        binding = (input.intentInput as Readonly<Record<string, unknown>>).reviewRound;
+        return { runId: 'native-review-run', callId: 'call', sidechainId: 'call' };
+      },
+    } as ActionExecutorDeps);
+    const actionCaller = { kind: 'workflowRun' as const, runId: 'hunt-run-attempt-2', workflowId: 'saved-hunt',
+      authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'read-only' as const } };
+    await executor.execute('review.start', { sessionId: 's1', scope: 'repository', instructions: 'Find repository issues.',
+      reviewers: [{ kind: 'engine', engineId: 'codex' }],
+    }, { surface: 'ui', actionCaller });
+    const round = ReviewRoundBindingV1Schema.parse(binding);
+    expect(records.readMetadata(round.reviewId)).toMatchObject({ workflowId: 'saved-hunt', sourceKind: 'workflow' });
+  });
   it.each([false, true])('records the selected pull request subject through admission (composed: %s)', async composed => {
     const records = createInMemoryReviewRecordPortV1();
     let binding: unknown;

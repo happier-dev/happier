@@ -508,6 +508,8 @@ export type ActionAutomationRunCaller = Readonly<{
 export type ActionWorkflowRunCaller = Readonly<{
   kind: 'workflowRun';
   runId: string;
+  /** Saved definition identity frozen by Run admission; absent for unsaved sources. */
+  workflowId?: string;
   authorization: WorkflowAcceptedAuthorizationV1;
   /** Exact person retained in the accepted origin; never a Session or an authority grant. */
   authenticatedStarterV1?: NonNullable<import('../../workflows/workflowDefinitionV1.js').WorkflowAcceptedOriginV1['authenticatedStarterV1']>;

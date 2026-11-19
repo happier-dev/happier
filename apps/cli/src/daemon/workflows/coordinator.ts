@@ -1,4 +1,5 @@
 import { classifyWorkflowHoldV1, classifyWorkflowReviewEntryV1, projectWorkflowLoopItemDisplayLabelV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { WorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { readWorkflowActionFieldTextEncodingV1 } from '@happier-dev/protocol/workflows/workflowActionTextV1';
 import { readWorkflowActionOutputSchemaV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { freezeWorkflowLoopLimitsV1, projectWorkflowFiniteActionInputV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
@@ -199,6 +200,7 @@ export type WorkflowStepExecutionResult = (
 
 export type WorkflowStepExecutor = (params: Readonly<{
   runId: string;
+  source?: WorkflowAcceptedSnapshotV1['source'];
   step: WorkflowStep;
   /** Role projected by the same source-qualified materialized leaf as execution selection. */
   role?: WorkflowMaterializedLeafV1['role'];
@@ -250,6 +252,7 @@ export type WorkflowStepExecutor = (params: Readonly<{
 
 export type WorkflowStepPreparer = (params: Readonly<{
   runId: string;
+  source?: WorkflowAcceptedSnapshotV1['source'];
   step: WorkflowStep;
   role?: WorkflowMaterializedLeafV1['role'];
   /** The step's visible ordinal (`workflowBlockOrdinalV1`), exactly as its heading and map node show it. */
@@ -299,6 +302,7 @@ export type WorkflowActionExecutor = Readonly<{
   observeApproval?: (params: Readonly<{ artifactId: string; actionRequestId: string; actionId?: string;
     authorization?: WorkflowAcceptedAuthorizationV1; signal: AbortSignal }>) => Promise<ActionExecuteResult>;
   buildContext: (params: Readonly<{ runId: string; invocationRecordId?: string; authorization: WorkflowAcceptedAuthorizationV1;
+    source?: WorkflowAcceptedSnapshotV1['source'];
     workDepth: number; originSessionId?: string; workspace: WorkflowWorkspaceDescriptorV1;
     origin?: WorkflowAcceptedOriginV1;
     approvalProfileId?: string | null;
@@ -909,6 +913,7 @@ export function createWorkflowCoordinator(deps: WorkflowCoordinatorDependencies)
   refreshReviewHolds: () => Promise<void>;
   run: (params: Readonly<{
     runId: string;
+    source?: WorkflowAcceptedSnapshotV1['source'];
     definition: WorkflowDefinitionV1;
     authoredDefinition: WorkflowDefinitionV1;
     inputs: Readonly<Record<string, WorkflowJsonValue>>;
@@ -939,7 +944,7 @@ export function createWorkflowCoordinator(deps: WorkflowCoordinatorDependencies)
   return {
     liveWorkProducer,
     refreshReviewHolds: async () => { await activeHolds?.refresh(); },
-    run: async ({ runId, definition, authoredDefinition, inputs, triggerEventValues, executionTarget, materializedLeaves, frozenChildren, workDepth, authorization, originSessionId, origin, automationCause, signal }) => {
+    run: async ({ runId, source, definition, authoredDefinition, inputs, triggerEventValues, executionTarget, materializedLeaves, frozenChildren, workDepth, authorization, originSessionId, origin, automationCause, signal }) => {
       const root: Frame = {
         scopeRunId: runId,
         conversationOwnerKey: deps.rootInvocationRecordId ?? workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 }),
@@ -962,7 +967,7 @@ export function createWorkflowCoordinator(deps: WorkflowCoordinatorDependencies)
       holds.confirm = () => trackedStore.confirmReviewHolds({ runId, recordIds: [...holds.waiters.keys()] });
       try {
         const context = withAbortSignal({
-          runId, definition, authoredDefinition, inputs, executionTarget, materializedLeaves, frozenChildren,
+          runId, source, definition, authoredDefinition, inputs, executionTarget, materializedLeaves, frozenChildren,
           workDepth, sourceKey: '$root', authorization, originSessionId, origin, automationCause, rootOwnerKey: root.conversationOwnerKey,
           deps: { ...deps, store: trackedStore,
             ...(deps.sessionContext ? { sessionContext: {
@@ -1054,6 +1059,7 @@ export function createWorkflowCoordinator(deps: WorkflowCoordinatorDependencies)
 
 type ExecutionContext = Readonly<{
   runId: string;
+  source?: WorkflowAcceptedSnapshotV1['source'];
   definition: WorkflowDefinitionV1;
   authoredDefinition: WorkflowDefinitionV1;
   inputs: Readonly<Record<string, WorkflowJsonValue>>;
@@ -1959,6 +1965,7 @@ async function executeActionBlock(
     const actionRequestId = `${context.runId}/${row.logicalInvocationRecordId ?? row.recordId}/${row.attempt}`;
     const invocationRecordId = row.recordId;
     const actionContext: ActionExecutorContext = { ...await context.holds.track(() => context.deps.action!.buildContext({ runId: context.runId, invocationRecordId, authorization: context.authorization,
+      source: context.source,
       workDepth: context.workDepth, workspace: actionWorkspace, ...(context.originSessionId ? { originSessionId: context.originSessionId } : {}),
       ...(context.origin ? { origin: context.origin } : {}),
       ...(selected.selection.approvalProfileId === undefined ? {} : { approvalProfileId: selected.selection.approvalProfileId }),
@@ -2094,6 +2101,7 @@ async function executeActionBlock(
       settlement.kind === 'failed' ? settlement.message : undefined);
     const completionContext = frozen.actionContract.completion ? await context.deps.action.buildContext({
       runId: context.runId, invocationRecordId: row.recordId, authorization: context.authorization,
+      source: context.source,
       workDepth: context.workDepth, workspace, ...(context.origin ? { origin: context.origin } : {}),
       ...(context.signal ? { signal: context.signal } : {}),
     }) : undefined;
@@ -2477,6 +2485,7 @@ async function executeStepBlock(
       if (!rejoining) assertWorkflowAbortSignal(context);
       preparedStep = await context.deps.prepareStep?.({
         runId: context.runId,
+        source: context.source,
         step: effectiveStep,
         ...(selectedLeaf.role ? { role: selectedLeaf.role } : {}),
         ...(stepOrdinal === null ? {} : { stepOrdinal }),
@@ -2555,6 +2564,7 @@ async function executeStepBlock(
     }
     execution = await context.deps.executeStep({
       runId: context.runId,
+      source: context.source,
       step: effectiveStep,
       ...(selectedLeaf.role ? { role: selectedLeaf.role } : {}),
       ...(stepOrdinal === null ? {} : { stepOrdinal }),

@@ -295,6 +295,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           const reviewRound = await records.start({ reviewId: globalThis.crypto.randomUUID(), title: 'Code review',
             subjectKind,
             sourceKind: ctx.actionCaller?.kind === 'workflowRun' ? 'workflow' : 'direct',
+            ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),
             ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
             ...(comparisonCapture ? { comparisonCapture } : {}),
             reviewerIds: reviewReviewerIdsForStartV1(reviewInput), startedAt: Date.now(), signal: ctx.signal });
@@ -470,6 +471,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const reviewRound = reviewInput.reviewRound ?? await reviewRecords!.start({ reviewId, title: 'Code review',
           subjectKind,
           sourceKind: ctx.actionCaller?.kind === 'workflowRun' ? 'workflow' : 'direct',
+          ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),
           ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
           ...(comparisonCapture ? { comparisonCapture } : {}),
           reviewerIds: reviewReviewerIdsForStartV1(reviewInput), startedAt: Date.now(), signal: ctx.signal });

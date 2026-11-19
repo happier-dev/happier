@@ -2273,6 +2273,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
           frozenChildren: accepted.frozenChildren,
           workDepth: accepted.workDepth,
           authorization: accepted.authorization,
+          source: accepted.source,
           ...(accepted.origin ? { origin: accepted.origin } : {}),
           ...(initial.run.origin.kind === 'automation' && initial.run.origin.cause
             ? { automationCause: initial.run.origin.cause } : {}),

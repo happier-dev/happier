@@ -6,6 +6,20 @@ import { WorkflowAcceptedAuthorizationV1Schema } from '@happier-dev/protocol/wor
 import { buildWorkflowActionContext } from './workflowActionContext';
 
 describe('retained Workflow authority at local Action execution', () => {
+  it.each([
+    { source: { kind: 'saved' as const, definitionId: 'saved-hunt', revision: { headerVersion: 2, bodyVersion: 2 }, savedBy: null }, workflowId: 'saved-hunt' },
+    { source: { kind: 'automation' as const, automationId: 'schedule', definitionId: 'saved-hunt', revision: { headerVersion: 2, bodyVersion: 2 }, savedBy: null }, workflowId: 'saved-hunt' },
+    { source: { kind: 'inline' as const }, workflowId: undefined },
+    { source: { kind: 'inline' as const, sourceArtifactId: 'grant-lineage-only' }, workflowId: undefined },
+    { source: { kind: 'automation' as const, automationId: 'inline-schedule' }, workflowId: undefined },
+    { source: { kind: 'catalog' as const, ref: 'builtin:repository-review', version: 1 }, workflowId: undefined },
+  ])('retains the accepted saved source without inventing identity for $source.kind', ({ source, workflowId }) => {
+    const execution = { runId: 'run-attempt-2', source,
+      authorization: WorkflowAcceptedAuthorizationV1Schema.parse({ admittedPermissionCeiling: 'read-only', principal: { kind: 'host' } }) };
+    expect(buildWorkflowActionContext(execution).actionCaller).toMatchObject({ kind: 'workflowRun', runId: 'run-attempt-2',
+      ...(workflowId ? { workflowId } : {}) });
+    if (!workflowId) expect(buildWorkflowActionContext(execution).actionCaller).not.toHaveProperty('workflowId');
+  });
   it('keeps the original restricted PAT grant effective after accepted-context serialization', async () => {
     const grant = ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1,
       actions: { families: [], ids: ['machines.setup.plan'] } });

@@ -1,4 +1,4 @@
-import type { ActionExecutorContext, WorkflowAcceptedAuthorizationV1, WorkflowAcceptedOriginV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, WorkflowAcceptedAuthorizationV1, WorkflowAcceptedOriginV1, WorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveWorkflowInvocationStructureV1 } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
@@ -10,6 +10,7 @@ import type { WorkflowActionAdmission } from './workflowActionAdmission';
 /** Host-private context from an accepted Workflow execution, never Action input. */
 export function buildWorkflowActionContext(execution: Readonly<{
   runId: string;
+  source?: WorkflowAcceptedSnapshotV1['source'];
   invocationRecordId?: string;
   workDepth?: number;
   authorization: WorkflowAcceptedAuthorizationV1;
@@ -53,6 +54,8 @@ export function buildWorkflowActionContext(execution: Readonly<{
     actionCaller: {
       kind: 'workflowRun' as const,
       runId: execution.runId,
+      ...(execution.source && 'definitionId' in execution.source && execution.source.definitionId
+        ? { workflowId: execution.source.definitionId } : {}),
       authorization: execution.authorization,
       ...(starter && !execution.origin?.actionRequestAttributionV1 ? { authenticatedStarterV1: starter } : {}),
     },
@@ -94,7 +97,7 @@ export async function readWorkflowActionPolicyContext(input: Readonly<{
     && leaf.sourceKey === structure.sourceKey && leaf.blockId === blockId && leaf.actionId === execution.actionId);
   if (!frozen) return null;
   const selected = resolveWorkflowAcceptedStepSelectionV1(frozen, structure.frame.item?.value, structure.inputs);
-  const executionContext = { runId: admission.run.id, invocationRecordId: invocation.index.id,
+  const executionContext = { runId: admission.run.id, source: accepted.source, invocationRecordId: invocation.index.id,
     workDepth: accepted.workDepth, authorization: accepted.authorization,
     workspace: accepted.workspaceTarget.project,
     ...(accepted.origin?.originSessionId ? { originSessionId: accepted.origin.originSessionId } : {}),
@@ -117,6 +120,7 @@ export function createWorkflowActionContextResolver(
   requesterWorkAttributionV1?: RequesterWorkAttributionV1,
 ): (execution: Readonly<{
   runId: string;
+  source?: WorkflowAcceptedSnapshotV1['source'];
   invocationRecordId?: string;
   authorization: WorkflowAcceptedAuthorizationV1;
   workspace: Readonly<{ machineId: string; directory: string }>;
