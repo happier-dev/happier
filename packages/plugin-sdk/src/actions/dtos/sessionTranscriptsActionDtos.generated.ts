@@ -90,7 +90,7 @@ export type SessionTranscriptsActionInputById = {
 export type SessionTranscriptsActionResultById = {
     readonly "session.input.result.get": {
         ok: false;
-        code: 'cancelled' | 'encryption_material_unavailable' | 'invalid_local_id' | 'model_not_granted' | 'permission_mode_not_granted' | 'result_read_failed' | 'session_id_ambiguous' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_lookup_timeout' | 'session_not_found' | 'unsupported';
+        code: 'cancelled' | 'encryption_material_unavailable' | 'invalid_local_id' | 'model_not_granted' | 'permission_mode_not_granted' | 'result_read_failed' | 'session_id_ambiguous' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_machine_binding_unavailable' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'session_lookup_timeout' | 'session_not_found' | 'unsupported';
         candidates?: string[] | undefined;
         failureCause?: ActionFailureCauseV1 | undefined;
     } | {
