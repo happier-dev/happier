@@ -11,10 +11,10 @@ import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 const NONE: readonly McpPluginItemMetadataV1[] = [];
 
 /**
- * The MCP servers active plugins declare (T8), from the same `mcp.servers.list` Action every caller uses:
- * read once per open of the page. Plugin rows are read-only here; they leave with their plugin.
+ * Read declarations through the shared MCP Actions. Detail asks for one server;
+ * the collection asks for the metadata list.
  */
-export function usePluginMcpServerItems(): readonly McpPluginItemMetadataV1[] {
+export function usePluginMcpServerItems(serverId?: string): readonly McpPluginItemMetadataV1[] {
   const activeScope = useAccountSettingsScope();
   const homeId = activeScope?.serverId;
   const accountId = activeScope?.accountId;
@@ -23,13 +23,25 @@ export function usePluginMcpServerItems(): readonly McpPluginItemMetadataV1[] {
     [homeId, accountId],
   );
   const { execute, ready } = useMountedActionExecution(scope);
-  const [items, setItems] =
-    React.useState<readonly McpPluginItemMetadataV1[]>(NONE);
+  const key = scope ? JSON.stringify([scope.serverId, scope.accountId, serverId]) : null;
+  const [result, setResult] = React.useState<Readonly<{
+    key: string;
+    items: readonly McpPluginItemMetadataV1[];
+  }> | null>(null);
 
   React.useEffect(() => {
-    if (!scope || !ready) return;
+    if (key === null || !ready) return;
     let cancelled = false;
     void (async () => {
+      if (serverId !== undefined) {
+        const receipt = await execute('mcp.servers.read', { serverId }).catch(() => null);
+        if (cancelled || !receipt?.ok) return;
+        const parsed = MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1['mcp.servers.read'].safeParse(receipt.result);
+        if (parsed.success && parsed.data.status === 'plugin') {
+          setResult({ key, items: [parsed.data.server] });
+        }
+        return;
+      }
       const receipt = await execute('mcp.servers.list', {}).catch(() => null);
       if (cancelled || !receipt?.ok) return;
       const parsed = MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1[
@@ -44,14 +56,12 @@ export function usePluginMcpServerItems(): readonly McpPluginItemMetadataV1[] {
         const plugin = McpPluginItemMetadataV1Schema.safeParse(server);
         return plugin.success ? [plugin.data] : [];
       });
-      setItems((current) =>
-        next.length === 0 && current.length === 0 ? current : next,
-      );
+      setResult({ key, items: next.length === 0 ? NONE : next });
     })();
     return () => {
       cancelled = true;
     };
-  }, [execute, ready, scope]);
+  }, [execute, key, ready, serverId]);
 
-  return items;
+  return result && result.key === key ? result.items : NONE;
 }

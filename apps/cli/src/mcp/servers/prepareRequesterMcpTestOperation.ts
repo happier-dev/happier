@@ -96,7 +96,7 @@ export async function prepareRequesterMcpTestOperation(input: Readonly<{
     }
     throw error;
   }
-  const issueRequestAuth: IssueMcpTestRequestAuth = async (request, capturedContext, ingress) => {
+  const issueRequestAuth: IssueMcpTestRequestAuth = async (request, capturedContext, ingress, admittedPluginRemote) => {
     await assertCurrent();
     if (capturedContext !== operationContext || ingress !== input.ingress) throw refusal('requester_mcp_admission');
     if (!input.requestAuth) throw Object.assign(new Error('mcp_request_auth_unavailable'), { code: 'mcp_request_auth_unavailable' });
@@ -105,7 +105,7 @@ export async function prepareRequesterMcpTestOperation(input: Readonly<{
     const issuer = createDaemonMcpRequestAuthForTest({ ...input.requestAuth, credentials: material.credentials,
       operationContext, establishedOwner: runtime.established, activatePurposeBindings: runtime.purposes.activatePurposeBindings,
       isCurrent: () => live && !input.ingress.signal.aborted && operationContext.readSnapshot() !== null });
-    const attachment = await issuer(request, operationContext, input.ingress).catch((error: unknown) => {
+    const attachment = await issuer(request, operationContext, input.ingress, admittedPluginRemote).catch((error: unknown) => {
       try { logger.warnLocalFile('[MCP] Requester Test OAuth preparation failed', {
         phase: 'requester_mcp_oauth', code: readMcpRequestAuthFailureCode(error),
       }); } catch { /* Preserve the primary issuer failure. */ }

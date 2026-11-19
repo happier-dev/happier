@@ -4,12 +4,12 @@ import { z } from '../../zodRuntimePolicy.js';
 import { PluginDeclaredExecutableRefSchema } from './agentAcpTransport.js';
 import { PluginAvailabilityDescriptorV2Schema, PluginJsonSchemaV2Schema, PluginJsonValueV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
-import { McpRemoteUrlV1Schema } from '../../mcp/remoteUrlV1.js';
+import { McpRemoteOAuthAuthV1Schema, McpRemoteUrlV1Schema } from '../../mcp/remoteUrlV1.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 export const PluginMcpServerTransportV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('stdio'), executable: PluginDeclaredExecutableRefSchema, args: z.optional(z.array(z.string())) }),
-  z.strictObject({ kind: z.literal('http'), url: McpRemoteUrlV1Schema }),
+  z.strictObject({ kind: z.literal('http'), url: McpRemoteUrlV1Schema, auth: z.optional(McpRemoteOAuthAuthV1Schema) }),
 ]));
 export type PluginMcpServerTransportV1 = z.infer<typeof PluginMcpServerTransportV1Schema>;
 

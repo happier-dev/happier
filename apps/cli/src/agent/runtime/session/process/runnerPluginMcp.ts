@@ -37,6 +37,7 @@ export function createRunnerPluginMcpPort(input: Readonly<{
         if (projected.kind !== 'mcp.plugin.prepared') throw new Error('plugin_mcp_projection_unavailable');
         lifetime.throwIfAborted();
         return {
+          preparationId,
           items: projected.items,
           async discoverNativeServers() {
             lifetime.throwIfAborted();

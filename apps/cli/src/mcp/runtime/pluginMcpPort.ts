@@ -6,6 +6,7 @@ import type { ResolvedSessionMcpServer } from '../runtimeTypes';
 /** One daemon-owned registry lease and its Session attachments. Selection and
  * native tool policy remain with the runner's existing resolution owners. */
 export type PluginMcpPreparation = Readonly<{
+  preparationId: string;
   items: readonly McpPluginItemV1[];
   discoverNativeServers(): Promise<readonly DetectedMcpServerV1[]>;
   materialize(servers: readonly ResolvedSessionMcpServer[]): Promise<readonly ResolvedSessionMcpServer[]>;

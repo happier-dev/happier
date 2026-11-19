@@ -27,6 +27,8 @@ import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog'
 import { readPluginSkills } from '@/prompts/skills/library/readPluginSkills';
 import { PluginSkillLibraryContentV1Schema } from '@happier-dev/protocol/prompts/library/skills/skillReadV1';
 import { pluginSkillIdV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
+import { mcpProjectionFamily } from '@/plugins/projection/registry/mcp';
+import { workflowsProjectionFamily } from '@/plugins/projection/registry/workflows';
 import { buildPluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { skillsProjectionFamily } from '@/plugins/projection/registry/skills';
 import { machineRecipesProjectionFamily } from '@/plugins/projection/registry/machineRecipes';
@@ -1732,6 +1734,49 @@ async function describeProjection(
                 pluginFinalPolicyCurrentRuntimesById: lease.runtimeRegistry?.pluginFinalPolicyCurrentRuntimesById,
                 introspectionRuntimeSnapshot: projectActivationIntrospectionRuntimeSnapshot(selectedLease, generation),
             }) };
+        } finally { await lease.release(); }
+    }
+    if (request.selection === 'mcpServer') {
+        const lease = await acquireProjectionContributionRegistryLease(opts, true);
+        try {
+            const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
+            signal?.throwIfAborted();
+            const { pluginId, localId } = request.mcpServer;
+            const registry = lease.registry;
+            const server = registry.mcpServers?.find(entry => entry.pluginId === pluginId && entry.definition.id === localId);
+            const family = buildPluginProjectionFamilyV2({
+                registry: { ...registry, mcpServers: server ? [server] : [], mcpDiscoverySources: [] }, generation,
+            }, mcpProjectionFamily);
+            const plugin = server && registry.pluginDeclarations?.find(entry => entry.pluginId === pluginId);
+            return { protocolVersion: 1, projection: {
+                v: 2, generation, familiesById: { mcp: family },
+                installedPackagesById: plugin ? { [pluginId]: {
+                    id: pluginId,
+                    displayName: typeof plugin.manifest.displayName === 'string'
+                        ? plugin.manifest.displayName : plugin.manifest.displayName.fallback,
+                    version: plugin.manifest.version, enabled: true,
+                    source: { kind: plugin.sourceSpec.kind, locator: plugin.sourceSpec.locator },
+                } } : {},
+                agentsById: {}, actionsById: {},
+                resourcesById: {}, settingsById: {}, diagnostics: [],
+            } };
+        } finally { await lease.release(); }
+    }
+    if (request.selection === 'workflowSource') {
+        const lease = await acquireProjectionContributionRegistryLease(opts, true);
+        try {
+            const generation = await (opts?.resolveGeneration ?? defaultResolveGeneration)();
+            signal?.throwIfAborted();
+            const { pluginId, localId } = request.workflowSource;
+            const registry = lease.registry;
+            const workflow = registry.workflows?.find(entry => entry.identity.pluginId === pluginId && entry.identity.localId === localId);
+            const family = buildPluginProjectionFamilyV2({
+                registry: { ...registry, workflows: workflow ? [workflow] : [] }, generation,
+            }, workflowsProjectionFamily);
+            return { protocolVersion: 1, projection: {
+                v: 2, generation, familiesById: { workflows: family },
+                installedPackagesById: {}, agentsById: {}, actionsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+            } };
         } finally { await lease.release(); }
     }
     if (request.selection === 'machineRecipes') {

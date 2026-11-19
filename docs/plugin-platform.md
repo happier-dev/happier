@@ -7768,6 +7768,12 @@ Omission preserves public/no-auth behavior. Invalid or credential-bearing auth,
 or auth on stdio/SSE imports, is refused rather than discarded. Export never
 includes tokens, issuer registrations or a previous grant.
 
+In 0.3 development, a plugin can declare `auth: { kind: 'oauth' }` on a
+static HTTP MCP transport. The declaration supplies the resource URL. The
+plugin server's Sign in action opens the existing Connected Services flow
+for its qualified server ID. The grant stays in Connected Services and
+the daemon uses it for the admitted server when a Session connects.
+
 The shared MCP Action owner requests operation-specific peer admission when
 describing this service: credential writes for sign-in and credential deletion
 for removal. UI and CLI adapters transport that same command rather than

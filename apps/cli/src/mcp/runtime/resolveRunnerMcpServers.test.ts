@@ -108,7 +108,7 @@ describe('resolveRunnerMcpServers catalog admission', () => {
     const captured = snapshot([server('selected')]);
     const profile = await resolveRunnerMcpServers({ session: { ...session(),
       enqueueSessionEventCommitted: async event => { notices.push(event); return { persisted: true, delivered: true }; },
-      getPluginMcpPort: () => ({ prepare: async () => ({ items: [],
+      getPluginMcpPort: () => ({ prepare: async () => ({ preparationId: '8888511a-7215-4f28-a706-ce09732d4194', items: [],
         discoverNativeServers: async () => { throw new (await import('@happier-dev/plugin-sdk')).PluginError({ code: 'requester_native_discovery_unavailable', message: 'Native discovery unavailable' }); },
         materialize: async servers => servers, dispose: async () => {},
       }) }),
@@ -304,7 +304,7 @@ describe('resolveRunnerMcpServers catalog admission', () => {
     // Daemon IPC is the external boundary; currentness and resolver stay real.
     const owner = { ...session(), getPluginMcpPort: () => ({ prepare: async () => {
       preparations += 1;
-      return { items: [], discoverNativeServers: async () => [], materialize: async (servers: readonly import('../runtimeTypes').ResolvedSessionMcpServer[]) => servers,
+      return { preparationId: '8888511a-7215-4f28-a706-ce09732d4194', items: [], discoverNativeServers: async () => [], materialize: async (servers: readonly import('../runtimeTypes').ResolvedSessionMcpServer[]) => servers,
         dispose: async () => undefined };
     } }) };
     const captured = runWithServerHttpBaseUrl(owner.getServerBinding().serverUrl, () => snapshot());

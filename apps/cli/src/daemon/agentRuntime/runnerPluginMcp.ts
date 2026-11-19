@@ -1,3 +1,4 @@
+import type { McpPluginItemMetadataV1, McpPluginItemV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import type { TrackedSession } from '@/daemon/types';
@@ -35,6 +36,7 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
     lease: PluginRuntimeRegistryLease;
     lifetime: AbortController;
     attachments: Disposable[];
+    items: { value: readonly McpPluginItemV1[] };
     pending: { value: Promise<unknown> | null };
     dispose(): Promise<void>;
   }>>();
@@ -50,6 +52,13 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
     return tracked;
   };
   return {
+    readPreparedOAuthRemote(preparationId: string, tracked: TrackedSession, serverId: string) {
+      const preparation = preparations.get(preparationId);
+      if (!preparation || preparation.tracked !== tracked || preparation.lifetime.signal.aborted) return undefined;
+      const remote = preparation.items.value.find(item => item.itemId === serverId)?.config.remote;
+      if (remote?.auth?.kind !== 'oauth') return undefined;
+      return { url: remote.url, auth: remote.auth } satisfies McpPluginItemMetadataV1['remote'];
+    },
     async dispatch(operation: RunnerPluginMcpOperation, context: Context): Promise<RunnerPluginMcpResult> {
       if (operation.kind === 'mcp.plugin.close') {
         const preparation = preparations.get(operation.preparationId);
@@ -82,7 +91,8 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
           })().catch(error => { disposePromise = null; throw error; });
           return disposePromise;
         };
-        const preparation = { sessionId: context.sessionId, tracked, directory: operation.directory, allowNativeAccountState, lease, lifetime, attachments, pending, dispose };
+        const items: { value: readonly McpPluginItemV1[] } = { value: [] };
+        const preparation = { sessionId: context.sessionId, tracked, directory: operation.directory, allowNativeAccountState, lease, lifetime, attachments, items, pending, dispose };
         preparations.set(operation.preparationId, preparation);
         try {
           await active(context);
@@ -100,7 +110,9 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
           const projected = await projecting.finally(() => { pending.value = null; });
           await active(context);
           lifetime.signal.throwIfAborted();
-          return RunnerPluginMcpResultSchema.parse({ kind: 'mcp.plugin.prepared', ...projected });
+          const result = RunnerPluginMcpResultSchema.parse({ kind: 'mcp.plugin.prepared', ...projected });
+          items.value = projected.items;
+          return result;
         } catch (error) { await dispose(); throw error; }
       }
       const preparation = preparations.get(operation.preparationId);

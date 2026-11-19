@@ -28,7 +28,7 @@ import { detectProviderMcpServers } from '../providerDetection/detectProviderMcp
 import type { ResolvedSessionMcpServer } from '../runtimeTypes';
 import { applyAttachedPluginMcpTransport } from './applyAttachedPluginMcpTransport';
 import { projectResolvedMcpServers } from './projectResolvedMcpServers';
-import type { McpPluginItemV1, McpServersSettingsV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import { isMcpPluginItemIdV1, type McpPluginItemV1, type McpServersSettingsV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import type { ReachContextV1 } from '@happier-dev/protocol/reach/resolveReachV1';
 import type { DetectedMcpServerV1 } from '@happier-dev/protocol';
 import { projectMcpToolLaunchPolicies } from './projectMcpToolLaunchPolicy';
@@ -710,10 +710,12 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
       if (run && (!occurrence || !run.isCurrent() || run.signal.aborted)) throw new Error('mcp_request_auth_not_active');
       try {
         const capability = await requestAuthPort.open({
-        serverId: server.id,
-        resource: canonicalMcpOAuthResourceUrlV1(remote.url),
-        materializationId,
-        ...(run && occurrence ? { executionRun: { runId: run.runId, occurrenceId: occurrence.occurrenceId } } : {}),
+          serverId: server.id,
+          resource: canonicalMcpOAuthResourceUrlV1(remote.url),
+          materializationId,
+          ...(daemonPluginPreparation && isMcpPluginItemIdV1(server.id)
+            ? { pluginPreparationId: daemonPluginPreparation.preparationId } : {}),
+          ...(run && occurrence ? { executionRun: { runId: run.runId, occurrenceId: occurrence.occurrenceId } } : {}),
         });
         materializationIds.add(materializationId);
         requestAuthByServerId[server.id] = capability;

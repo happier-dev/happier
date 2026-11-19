@@ -2,7 +2,7 @@ import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
-import { McpRemoteUrlV1Schema } from '../remoteUrlV1.js';
+import { McpRemoteOAuthAuthV1Schema, McpRemoteUrlV1Schema } from '../remoteUrlV1.js';
 import { ReachPlaceV1Schema } from '../../reach/reachPlaceV1.js';
 import { ReachRuleV1Schema } from '../../reach/reachRuleV1.js';
 import { reachRuleKeyV1 } from '../../reach/reachRulesChangeV1.js';
@@ -101,7 +101,7 @@ export const McpServerCatalogEntryV1Schema = lazyZodSchema(() => z.strictObject(
         url: McpRemoteUrlV1Schema,
         urlTemplate: zMini.optional(ValueRefV1Schema._zod.def.options[2]),
         headers: z.record(McpHeaderKeyV1Schema, ValueRefV1Schema),
-        auth: z.optional(z.strictObject({ kind: z.literal('oauth') })),
+        auth: z.optional(McpRemoteOAuthAuthV1Schema),
       })),
     env: z.record(McpEnvVarKeyV1Schema, ValueRefV1Schema),
     configOverrides: z.optional(z.array(McpServerConfigOverrideV1Schema)),
@@ -153,18 +153,22 @@ export type McpPluginItemV1 = Readonly<{ itemId: string; name: string; title?: s
 export const McpPluginItemMetadataV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.refine(isMcpPluginItemIdV1)), name: z.string().check(z.minLength(1)), title: z.optional(z.string()),
   description: z.optional(z.string()), transport: McpServerCatalogEntryTransportV1Schema,
+  remote: z.optional(z.strictObject({ url: McpRemoteUrlV1Schema, auth: McpRemoteOAuthAuthV1Schema })),
   source: z.strictObject({ kind: z.literal('plugin'), pluginId: z.string().check(z.minLength(1)), pluginName: z.string().check(z.minLength(1)) }),
 }));
 export type McpPluginItemMetadataV1 = z.infer<typeof McpPluginItemMetadataV1Schema>;
 /** Declaration-only projection shared by client lists and runtime admission. */
 export function projectMcpPluginItemMetadataV1(input: Readonly<{ pluginId: string; pluginName: string; server: PluginMcpServerContributionV1 }>): McpPluginItemMetadataV1 {
   const { server } = input;
+  const remote = server.kind === 'static' && server.transport.kind === 'http' && server.transport.auth
+    ? { url: server.transport.url, auth: server.transport.auth } : undefined;
   const localName = server.id.replaceAll('/', '_');
   const name = RESERVED_SERVER_NAMES.has(localName) ? `plugin_${localName}` : localName;
   return McpPluginItemMetadataV1Schema.parse({ id: mcpPluginItemIdV1({ pluginId: input.pluginId, localId: server.id }),
     name, title: typeof server.title === 'string' ? server.title : server.title.fallback,
     ...(server.description ? { description: typeof server.description === 'string' ? server.description : server.description.fallback } : {}),
     transport: server.kind === 'static' && server.transport.kind === 'stdio' ? 'stdio' : 'http',
+    ...(remote ? { remote } : {}),
     source: { kind: 'plugin', pluginId: input.pluginId, pluginName: input.pluginName } });
 }
 

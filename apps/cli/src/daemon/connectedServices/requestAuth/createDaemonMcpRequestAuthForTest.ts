@@ -13,6 +13,7 @@ export type IssueMcpTestRequestAuth = (
   input: Parameters<McpRequestAuthPort['open']>[0],
   operationContext: SavedSecretOperationContextV1 | null,
   ingress?: RpcHandlerContext,
+  admittedPluginRemote?: McpRequestAuthIssuanceContext['admittedPluginRemote'],
 ) => Promise<McpTestRequestAuthAttachment>;
 
 /** Finite Machine Test borrows the daemon's incumbent issuer and descriptor retirement. */
@@ -27,7 +28,7 @@ export function createDaemonMcpRequestAuthForTest(params: Readonly<{
   getHttpPort(): number;
   isCurrent(): boolean;
 }>): IssueMcpTestRequestAuth {
-  return async (input, operationContext, ingress) => {
+  return async (input, operationContext, ingress, admittedPluginRemote) => {
     const signal = ingress?.signal ?? new AbortController().signal;
     const scopeKey = params.operationContext
       ? runWithServerHttpBaseUrl(params.operationContext.serverHttpBaseUrl, () => resolveAccountSettingsScopeKey(params.credentials))
@@ -63,7 +64,7 @@ export function createDaemonMcpRequestAuthForTest(params: Readonly<{
       establishedOwner: params.establishedOwner,
       activatePurposeBindings: params.activatePurposeBindings,
       registry: params.registry, httpPort: params.getHttpPort(),
-      readAccountSettingsSnapshot: readSnapshot, isCurrent, assertCurrent,
+      readAccountSettingsSnapshot: readSnapshot, isCurrent, assertCurrent, admittedPluginRemote,
       ...(operationContext ? { operationContext } : { catalogCredentials: params.credentials }),
       registerLifetimeCleanup: cleanup => { retire = cleanup; return () => undefined; },
     }, signal);

@@ -5,6 +5,8 @@ import { McpServerCatalogSnapshotV1Schema } from '@happier-dev/protocol/mcp/serv
 import type { DaemonMcpServersDetectResponse } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { parseMcpPluginItemIdV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import { readMcpPluginItemMetadataFromProjectionV1 } from '@happier-dev/protocol/mcp/servers/pluginItemsV1';
 import { randomUUID } from '@/platform/randomUUID';
 import { readMcpServerCatalogInContext, mutateMcpServerCatalogInContext, classifyMcpServerCatalogReadFailure } from '@/sync/api/account/apiMcpServerCatalog';
@@ -45,10 +47,24 @@ export function createUiMcpServerActionExecuteV1(account: LazyActionAccountConte
                     ...(request.actionId === 'mcp.servers.signIn.start' ? { intent: 'retry' as const } : {}),
                 });
             };
-            const readPluginItems = async () => {
+            const readPluginItems = async (selection?: Readonly<{ serverId: string; machineId?: string }>) => {
                 assertCurrent();
-                const machineId = await resolveAdministrationMachine();
+                const machineId = selection?.machineId ?? await resolveAdministrationMachine();
                 if (!machineId) return null;
+                if (selection) {
+                    const mcpServer = parseMcpPluginItemIdV1(selection.serverId);
+                    if (!mcpServer) return [];
+                    const response = await machineRpcWithServerScope({
+                        machineId, serverId: account.serverId, accountId: account.accountId,
+                        authorization: context.rpcSessionAuthorization, signal: cancellation.signal,
+                        method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+                        payload: { machineId, selection: 'mcpServer', mcpServer },
+                    });
+                    assertCurrent();
+                    const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(response);
+                    if (!projection.success || !projection.data.projection.familiesById.mcp) return null;
+                    return readMcpPluginItemMetadataFromProjectionV1(projection.data.projection, selection.serverId);
+                }
                 const { loadDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
                 // Only the MCP family (with the always-loaded packages) feeds the item metadata; the full
                 // catalogue would hydrate every section of the Machine's projection for one list.
@@ -71,7 +87,7 @@ export function createUiMcpServerActionExecuteV1(account: LazyActionAccountConte
                     if (!response.ok) throw Object.assign(new Error('Config link unavailable'), { code: 'registry_unavailable' });
                     const text = await response.text(); assertCurrent(); return text;
                 },
-                readPluginItems,
+                readPluginItems: (_context, selection) => readPluginItems(selection),
                 connectedServiceAction,
                 resolveAdministrationMachine,
                 describeConnectedService: (machineId, command) => machineRpcWithServerScope({ machineId, serverId: account.serverId,

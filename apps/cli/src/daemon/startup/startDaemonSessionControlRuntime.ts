@@ -12936,6 +12936,9 @@ export async function startDaemonSessionControlRuntime(
                 };
                 const opened = await issueMcpRequestAuthCapability(operation, {
                   parentSessionId: sessionId,
+                  admittedPluginRemote: operation.pluginPreparationId
+                    ? runnerPluginMcp.readPreparedOAuthRemote(operation.pluginPreparationId, tracked, operation.serverId)
+                    : undefined,
                   materializationBaseDir: requester ? requester.connectedServicesMaterializationBaseDir : params.connectedServicesMaterializationBaseDir,
                   readAccountSettingsSnapshot: () => requester ? requester.readAccountSettingsSnapshot() : getActiveAccountSettingsSnapshot(),
                   ...(requester ? { operationContext: requester.bootstrap.savedSecretOperationContext }

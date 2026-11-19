@@ -7,6 +7,7 @@ import { PageLeaveActions } from '@/components/ui/layout/PageLeaveActions';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { t } from '@/text';
 
+import { McpSignInSection } from '../signIn/McpSignInSection';
 import { usePluginMcpServerItems } from '../collection/usePluginMcpServerItems';
 import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import type { McpSavedSecretAvailability } from '../status/mcpServerStatus';
@@ -26,8 +27,7 @@ const NO_SECRETS: McpSavedSecretAvailability = { resolveReference: ref => resolv
  */
 export const McpPluginServerDetailPage = React.memo(
   function McpPluginServerDetailPage(props: Readonly<{ itemId: string }>) {
-    const items = usePluginMcpServerItems();
-    const item = items.find((candidate) => candidate.id === props.itemId);
+    const [item] = usePluginMcpServerItems(props.itemId);
     if (!item) {
       return (
         <ItemList>
@@ -46,6 +46,7 @@ export const McpPluginServerDetailPage = React.memo(
       ...(item.title ? { title: item.title } : {}),
       ...(item.description ? { description: item.description } : {}),
       transport: item.transport,
+      ...(item.remote ? { remote: { ...item.remote, headers: {} } } : {}),
       env: {},
       createdAt: 0,
       updatedAt: 0,
@@ -94,6 +95,9 @@ const McpPluginServerDetail = React.memo(function McpPluginServerDetail(
         }}
       />
       <McpServerBanner detail={detail} name={name} toolCount={toolCount} />
+      {detail.signIn.view ? (
+        <McpSignInSection key={server.id} name={name} signIn={{ ...detail.signIn, view: detail.signIn.view }} />
+      ) : null}
       <McpServerWhereAndTools detail={detail} />
       <McpServerMachinesAndDetails detail={detail} server={server} />
       <PageLeaveActions

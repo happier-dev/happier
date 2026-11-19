@@ -1,5 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isMcpPluginItemIdV1, type McpPluginItemMetadataV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import { canonicalMcpOAuthResourceUrlV1 } from '@happier-dev/protocol/mcp/oauth/mcpOAuthResourceV1';
 import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { SessionExecutionRunBrokerAuthorityRequestV1Schema, SessionExecutionRunBrokerAuthorityResponseV1Schema, type SessionExecutionRunBrokerAuthorityRequestV1 } from '@happier-dev/protocol/daemon/executionRuns';
@@ -28,6 +29,8 @@ export type McpRequestAuthIssuanceContext = Readonly<{
   operationContext?: SavedSecretOperationContextV1;
   /** Ordinary daemon Account admission uses the active catalog's existing owner. */
   catalogCredentials?: StoredCredentials;
+  /** From this Session's retained preparation or the finite Machine Test admission. */
+  admittedPluginRemote?: McpPluginItemMetadataV1['remote'];
   establishedOwner: Pick<QualifiedConnectedAccountEstablishedRuntimeOwner, 'readMaterialSnapshot'>;
   activatePurposeBindings: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
   registry: ConnectedAccountRequestAuthSubjectRegistry;
@@ -71,14 +74,17 @@ export async function issueMcpRequestAuthCapability(
     }
   };
   const resource = canonicalMcpOAuthResourceUrlV1(input.resource);
+  const isPlugin = isMcpPluginItemIdV1(input.serverId);
   const account = { service: HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1, accountId: input.serverId };
   const assertAdmitted = async (requestSignal: AbortSignal): Promise<void> => {
     if (!context.isCurrent() || requestSignal.aborted) throw new Error('mcp_request_auth_not_active');
     await context.assertCurrent(requestSignal);
-    const server = readMcpServersSettingsFromAccountSettings(context.readAccountSettingsSnapshot()).servers.find(row => row.id === input.serverId);
-    const remote = server?.remote;
-    if (!server || server.transport === 'stdio' || !remote || remote.auth?.kind !== 'oauth') throw new Error('mcp_request_auth_not_active');
-    if (canonicalMcpOAuthResourceUrlV1(remote.url) !== resource) throw new Error('mcp_resource_mismatch');
+    if (!isPlugin) {
+      const server = readMcpServersSettingsFromAccountSettings(context.readAccountSettingsSnapshot()).servers.find(row => row.id === input.serverId);
+      const remote = server?.remote;
+      if (!server || server.transport === 'stdio' || !remote || remote.auth?.kind !== 'oauth') throw new Error('mcp_request_auth_not_active');
+      if (canonicalMcpOAuthResourceUrlV1(remote.url) !== resource) throw new Error('mcp_resource_mismatch');
+    }
     const grant = await context.establishedOwner.readMaterialSnapshot({ account, signal: requestSignal });
     const storedResource = grant.configuration?.values.resource;
     if (typeof storedResource !== 'string' || canonicalMcpOAuthResourceUrlV1(storedResource) !== resource) throw new Error('mcp_resource_mismatch');
@@ -108,7 +114,10 @@ export async function issueMcpRequestAuthCapability(
       // Demand the requester's catalog through its incumbent owner. Its nested
       // readers prove this checkpoint's same requester, not separate authority.
       const operationContext = context.operationContext;
-      if (operationContext) await observe('catalog_admission', () =>
+      if (isPlugin) {
+        if (!context.admittedPluginRemote) throw new Error('mcp_request_auth_not_active');
+        if (canonicalMcpOAuthResourceUrlV1(context.admittedPluginRemote.url) !== resource) throw new Error('mcp_resource_mismatch');
+      } else if (operationContext) await observe('catalog_admission', () =>
         createCliMcpServerStoreForOperation({ operationContext, signal }).readCatalogForOperation());
       else if (context.catalogCredentials && catalogScope) {
         const credentials = context.catalogCredentials;

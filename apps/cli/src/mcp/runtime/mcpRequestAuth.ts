@@ -17,6 +17,7 @@ export const McpRequestAuthOpenV1Schema = z.strictObject({
   serverId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
   resource: z.string().check(z.url()),
   materializationId: MaterializationId,
+  pluginPreparationId: z.optional(z.uuid()),
   executionRun: z.optional(z.strictObject({ runId: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)), occurrenceId: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)) })),
 });
 export const McpRequestAuthCloseV1Schema = z.strictObject({

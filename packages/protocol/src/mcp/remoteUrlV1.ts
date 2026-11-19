@@ -36,6 +36,8 @@ function isMcpCredentialKey(key: string): boolean {
     || normalized.endsWith('credentials');
 }
 
+export const McpRemoteOAuthAuthV1Schema = lazyZodSchema(() => z.strictObject({ kind: z.literal('oauth') }));
+
 export const McpRemoteUrlV1Schema = lazyZodSchema(() => z.string().check(z.url(), z.superRefine((value, ctx) => {
   let url: URL;
   try {

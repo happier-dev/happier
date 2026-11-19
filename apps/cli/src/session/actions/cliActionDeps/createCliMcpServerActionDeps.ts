@@ -2,6 +2,9 @@ import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/pro
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createMcpServerActionExecuteV1, projectMcpServerActionFailureV1,
   MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { readMcpPluginItemMetadataFromProjectionV1 } from '@happier-dev/protocol/mcp/servers/pluginItemsV1';
+import { parseMcpPluginItemIdV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -120,9 +123,27 @@ export function createCliMcpServerActionExecuteV1(params: Readonly<{
             authorization: context.rpcSessionAuthorization, effectActionId: request.actionId, exactMachine: true });
         },
         readCatalog,
-        readPluginItems: async () => { 
-        const { readPluginMcpServerMetadata } = await import("@/mcp/runtime/pluginMcpServerItems");
-        const items = await readPluginMcpServerMetadata(); await assertCurrent(); return items; },
+        readPluginItems: async (_context, selection) => {
+          if (selection?.machineId) {
+            const { machineId, serverId } = selection;
+            const mcpServer = parseMcpPluginItemIdV1(serverId);
+            if (!mcpServer) return [];
+            const response = await params.callMachineAction({
+              machineId, serverId: params.serverId, signal: context.signal, context,
+              authority: context.authority, authorization: context.rpcSessionAuthorization,
+              method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+              request: { machineId, selection: 'mcpServer', mcpServer }, effectActionId: request.actionId, exactMachine: true,
+            });
+            await assertCurrent();
+            const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(response);
+            if (!projection.success || !projection.data.projection.familiesById.mcp) return null;
+            return readMcpPluginItemMetadataFromProjectionV1(projection.data.projection, serverId);
+          }
+          const { readPluginMcpServerMetadata } = await import("@/mcp/runtime/pluginMcpServerItems");
+          const items = await readPluginMcpServerMetadata(selection?.serverId);
+          await assertCurrent();
+          return items;
+        },
         readToolAgentFacts: async () => {
           await assertCurrent();
           const [{ listCurrentAccountMachines }, { readCatalogEntriesSnapshot }] = await Promise.all([import("@/api/machine/resolveCurrentAccountMachineTarget"), import("@/agent/catalog/registry")]);

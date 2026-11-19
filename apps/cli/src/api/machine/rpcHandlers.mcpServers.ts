@@ -206,6 +206,7 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
 
         let accountSettingsContext: AccountSettingsContext;
         let resolution: ReturnType<typeof resolveServerForTestRequest>;
+        let mcpPluginItems: readonly McpPluginItemV1[] | undefined;
         let operationContext: SavedSecretOperationContextV1 | null = requesterOperation?.operationContext ?? null;
         try {
           // Draft OAuth still demands the admitted Account catalog before
@@ -224,7 +225,6 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
           }
           await assertCurrent();
           const accountMcpSettings = parsed.data.t === 'byId' ? readMcpServersSettingsFromAccountSettings(accountSettingsContext) : undefined;
-          let mcpPluginItems: readonly McpPluginItemV1[] | undefined;
           if (parsed.data.t === 'byId' && isMcpPluginItemIdV1(parsed.data.serverId)) {
             if (requesterOperation && !requesterOperation.acquirePluginRegistry) return refuseMcpExecutionSource('requester_authority_unavailable');
             pluginLease = requesterOperation
@@ -314,8 +314,11 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
           const issueRequestAuth = requesterOperation?.issueRequestAuth ?? params.deps?.issueRequestAuth;
           if (selected && selected.transport !== 'stdio' && remote?.auth?.kind === 'oauth'
             && issueRequestAuth) {
+            const declaredRemote = mcpPluginItems?.find(item => item.itemId === selected.id)?.config.remote;
+            const admittedPluginRemote = declaredRemote?.auth?.kind === 'oauth'
+              ? { url: declaredRemote.url, auth: declaredRemote.auth } : undefined;
             requestAuth = await issueRequestAuth({ serverId: selected.id,
-              resource: canonicalMcpOAuthResourceUrlV1(remote.url), materializationId: randomUUID() }, operationContext, context);
+              resource: canonicalMcpOAuthResourceUrlV1(remote.url), materializationId: randomUUID() }, operationContext, context, admittedPluginRemote);
           }
           await assertCurrent();
           const materialized = await materializeMcpServerConfigRecord({

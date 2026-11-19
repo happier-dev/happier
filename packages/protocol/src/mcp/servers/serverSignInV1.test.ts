@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { createMcpServerActionExecuteV1, projectMcpServerActionFailureV1, MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from './serverActionsV1.js';
 import { RpcError, RPC_ERROR_CODES } from '../../rpc/errors.js';
 import { loadMcpServerCatalogV1, commitMcpServerCatalogMutationV1 } from './serverCatalogV1.js';
+import { PluginMcpServerContributionV1Schema } from '../../plugins/contributions/mcp.js';
+import { projectMcpPluginItemMetadataV1 } from './settingsV1.js';
 import type { McpServerCatalogV1 } from './serverRowsV1.js';
 import { executeConnectedServiceConfigurationActionV1, prepareConnectedServiceRevokeInputV1, type ConnectedServiceConfigurationActionHostV1 } from '../../connect/executeConfigurationActionV1.js';
 import { ConnectedAccountDaemonControlResponseSchema } from '../../connect/connectedAccountDaemonRpcV1.js';
@@ -12,17 +14,21 @@ const mode = { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https:
   pkce: 'required', outcomeReconciliation: 'none' } as const;
 const custody = { occurrenceId: 'host-occurrence', sourceCustody: { kind: 'host' } } as const;
 
-function harness(options: { unmarked?: boolean; online?: boolean; revokeFails?: boolean; conflict?: boolean; reconnect?: boolean;
+function harness(options: { plugin?: unknown; unmarked?: boolean; online?: boolean; revokeFails?: boolean; conflict?: boolean; reconnect?: boolean;
   waitForRevoke?: Promise<void>; onRevoke?: () => void; revokeOutcomeUnknown?: boolean;
   clientMetadata?: boolean; beginConnectFailure?: Error; describeFailure?: Error; inconsistentConfigurationPeer?: boolean;
   waitingSignal?: AbortSignal; onRead?: () => void;
   httpsRefusal?: 'mcp_oauth_resource_requires_https' | 'mcp_oauth_endpoints_require_https' } = {}) {
   let catalog: McpServerCatalogV1 = { v: 1, bindings: [], servers: [{ id: 'server', name: 'linear', transport: 'http',
     remote: { url: options.httpsRefusal === 'mcp_oauth_resource_requires_https' ? 'http://resource.example.test/mcp' : 'https://resource.example.test/mcp', headers: {}, ...(options.unmarked ? {} : { auth: { kind: 'oauth' as const } }) }, env: {}, createdAt: 1, updatedAt: 1 }] };
+  const pluginItems = options.plugin ? [projectMcpPluginItemMetadataV1({
+    pluginId: 'acme.tools', pluginName: 'Acme', server: PluginMcpServerContributionV1Schema.parse(options.plugin),
+  })] : [];
   let revision = 9;
   let values: Record<string, unknown> = options.reconnect ? { issuer: 'https://issuer.example.test',
     registrations: { 'https://issuer.example.test': { clientId: 'cached-client' } }, stepUpScopes: ['tasks:write'] } : {};
   const commands: unknown[] = [];
+  const reads = { catalog: 0, machine: 0, pluginItems: [] as unknown[] };
   // RPC/persisted rows are system boundaries. Connected Services normalization,
   // configuration CAS interpretation, revoke and MCP orchestration remain real.
   const host: ConnectedServiceConfigurationActionHostV1 = {
@@ -77,8 +83,9 @@ function harness(options: { unmarked?: boolean; online?: boolean; revokeFails?: 
     },
   };
   const ports = {
+    readPluginItems: async (_context: unknown, selection: unknown) => { reads.pluginItems.push(selection); return pluginItems; },
     readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
-      readRow: async () => ({ status: 'present', revision, content: { t: 'plain', v: catalog } }) }),
+      readRow: async () => { reads.catalog += 1; return { status: 'present', revision, content: { t: 'plain', v: catalog } }; } }),
     mutate: (change: Parameters<typeof commitMcpServerCatalogMutationV1>[0]['change'], expectedRevision: number | 'absent') =>
       commitMcpServerCatalogMutationV1({ catalog, revision, change, scope: null, writeCatalog: async candidate => {
         if (options.conflict || expectedRevision !== revision) return { status: 'conflict', revision };
@@ -86,7 +93,7 @@ function harness(options: { unmarked?: boolean; online?: boolean; revokeFails?: 
         return { status: 'updated', revision: ++revision, cursor: revision };
       } }),
     machine: async () => { throw new Error('Unexpected MCP test'); },
-    resolveAdministrationMachine: async () => options.online === false ? null : 'machine',
+    resolveAdministrationMachine: async () => { reads.machine += 1; return options.online === false ? null : 'machine'; },
     describeConnectedService: async (machineId: string,
       command: Extract<import('../../connect/connectedAccountDaemonRpcV1.js').ConnectedAccountDaemonControlCommand, { operation: 'describeService' }>) =>
       ConnectedAccountDaemonControlResponseSchema.parse(await host.controlCommand!(machineId, command)),
@@ -95,10 +102,30 @@ function harness(options: { unmarked?: boolean; online?: boolean; revokeFails?: 
         prepareInput: async (request: { input: unknown }) => prepareConnectedServiceRevokeInputV1(host, request.input),
       }),
   };
-  return { execute: createMcpServerActionExecuteV1(ports), commands, read: () => ({ catalog, values }) };
+  return { execute: createMcpServerActionExecuteV1(ports), commands, reads, read: () => ({ catalog, values }) };
 }
 
 describe('MCP sign-in through canonical Connected Services', () => {
+  it('signs in a declared OAuth server without creating a user catalog duplicate', async () => {
+    const owner = harness({ plugin: {
+      id: 'docs', title: 'Docs', kind: 'static',
+      transport: { kind: 'http', url: 'https://resource.example.test/mcp', auth: { kind: 'oauth' } },
+    } });
+    const serverId = 'plugin:acme.tools/docs';
+    expect(await owner.execute({ actionId: 'mcp.servers.read', input: { serverId }, context }))
+      .toMatchObject({ ok: true, result: { status: 'plugin', server: { id: serverId, remote: {
+        url: 'https://resource.example.test/mcp', auth: { kind: 'oauth' },
+      } } } });
+    expect(owner.reads).toEqual({ catalog: 1, machine: 0, pluginItems: [{ serverId }] });
+    expect(await owner.execute({ actionId: 'mcp.servers.signIn.start', input: { serverId }, context }))
+      .toMatchObject({ ok: true, result: { attemptId: 'attempt' } });
+    expect(owner.reads).toEqual({ catalog: 1, machine: 1, pluginItems: [{ serverId }, { serverId, machineId: 'machine' }] });
+    expect(owner.read()).toMatchObject({
+      catalog: { servers: [{ id: 'server' }] },
+      values: { serverId, resource: 'https://resource.example.test/mcp' },
+    });
+  });
+
   it.each([
     { stage: 'begin_connect', options: { beginConnectFailure: Object.assign(new Error('private transport diagnostic'), { code: 'ECONNREFUSED' }) }, code: 'mcp_sign_in_begin_connect_failed' },
     { stage: 'begin_connect', options: { beginConnectFailure: new RpcError('private transport diagnostic', RPC_ERROR_CODES.OUTCOME_UNKNOWN) }, code: RPC_ERROR_CODES.OUTCOME_UNKNOWN },

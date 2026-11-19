@@ -11,6 +11,34 @@ import { createDaemonRunnerPluginMcp } from './runnerPluginMcp';
 import { createRunnerPluginMcpPort } from '@/agent/runtime/session/process/runnerPluginMcp';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
+it('lends the declared OAuth resource only to its live Session preparation', async () => {
+  const serverId = 'plugin:acme.tools/docs';
+  const remote = { url: 'https://docs.example.test/mcp', headers: {}, auth: { kind: 'oauth' as const } };
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: 'session-1' };
+  const other: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(456), pid: 456, startedBy: 'daemon', happySessionId: 'session-2' };
+  // The active plugin's projection is the input boundary of the real preparation owner.
+  const registry = { projectMcpServerItems: async () => [{
+    itemId: serverId, name: 'docs', rules: [], config: { id: serverId, name: 'docs', transport: 'http',
+      remote, env: {}, createdAt: 0, updatedAt: 0 },
+  }] } as unknown as ResolvedExecutablePluginRuntimeRegistry;
+  const controller = new AbortController();
+  const owner = createDaemonRunnerPluginMcp({ acquireRegistry: async () => ({ registry, source: 'active', durableRevision: 1, release: async () => {} }),
+    trackedSessions: new Map([[tracked.trackingKey, tracked], [other.trackingKey, other]]),
+    spawnResourceCleanupByKey: new Map(), signal: controller.signal, readAllowNativeAccountState: async () => true });
+  const context = { sessionId: tracked.happySessionId!, agentId: 'claude', trackedSession: tracked, isCurrent: async () => true };
+  const runner = createRunnerPluginMcpPort({ sessionId: context.sessionId, signal: controller.signal,
+    dispatch: async operation => ({ ok: true, result: await owner.dispatch(operation, context) }) });
+  try {
+    const preparation = await runner.port.prepare({ catalog: { v: 1, servers: [], bindings: [] }, directory: tmpdir() });
+    expect(preparation.items).toMatchObject([{ itemId: serverId, config: { remote } }]);
+    expect(owner.readPreparedOAuthRemote(preparation.preparationId, other, serverId)).toBeUndefined();
+    expect(owner.readPreparedOAuthRemote(preparation.preparationId, tracked, 'plugin:acme.tools/other')).toBeUndefined();
+    expect(owner.readPreparedOAuthRemote(preparation.preparationId, tracked, serverId)).toEqual({ url: remote.url, auth: remote.auth });
+    await preparation.dispose();
+    expect(owner.readPreparedOAuthRemote(preparation.preparationId, tracked, serverId)).toBeUndefined();
+  } finally { await runner.dispose(); await owner.dispose(); controller.abort(); }
+});
+
 it.each(['claude', 'opencode'] as const)('never discovers daemon-home %s servers for a requester; owner discovery stays intact', async agentId => {
   const home = await mkdtemp(join(tmpdir(), 'member-mcp-discovery-'));
   await mkdir(join(home, '.config/opencode'), { recursive: true });

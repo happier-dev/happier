@@ -47,7 +47,7 @@ export type McpServerActionPortsV1 = Readonly<{
   registryActionExecute?: ActionExecutorDeps['registryActionExecute'];
   personalSavedSecretActionExecute?: ActionExecutorDeps['personalSavedSecretActionExecute'];
   readImportLink?(url: string, context: ActionExecutorContext): Promise<string>;
-  readPluginItems?(context: ActionExecutorContext): Promise<readonly McpPluginItemMetadataV1[] | null>;
+  readPluginItems?(context: ActionExecutorContext, selection?: Readonly<{ serverId: string; machineId?: string }>): Promise<readonly McpPluginItemMetadataV1[] | null>;
   readCatalog(context: ActionExecutorContext): Promise<McpServerCatalogSnapshotV1>;
   mutate(change: McpServerCatalogMutationV1, expectedRevision: number | 'absent', context: ActionExecutorContext): Promise<McpServerCatalogMutationResponseV1>;
   ruleWriteContext?: () => ReachRulesWriteContextV1;
@@ -196,7 +196,8 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
         const snapshot = await ports.readCatalog(context);
         if (snapshot.status === 'loading' || snapshot.status === 'unavailable') { result = snapshot; break; }
         const server = snapshot.catalog.servers.find(entry => entry.id === serverId);
-        const plugin = !server && (await ports.readPluginItems?.(context))?.find(item => item.id === serverId);
+        const plugin = !server && isMcpPluginItemIdV1(serverId)
+          && (await ports.readPluginItems?.(context, { serverId }))?.find(item => item.id === serverId);
         if (plugin) { result = { status: 'plugin', server: plugin, bindings: snapshot.catalog.bindings.filter(rule => rule.serverId === serverId),
           settings: snapshot.catalog.pluginServers?.[serverId], revision: snapshot.revision }; break; }
         const webappUrl = server ? await ports.resolveWebappUrl?.(context) : undefined;
@@ -440,19 +441,29 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
         const registrationValues = client === null ? { registrations: {} } : {};
         let stage: McpSignInFailureStageV1 = 'catalog_read';
         try {
-          const snapshot = await ports.readCatalog(context);
-          if (snapshot.status !== 'ready' || snapshot.authority !== 'active') {
+          const isPlugin = isMcpPluginItemIdV1(serverId);
+          const snapshot = isPlugin ? null : await ports.readCatalog(context);
+          if (snapshot && (snapshot.status !== 'ready' || snapshot.authority !== 'active')) {
             return { ok: false, errorCode: 'mcp_catalog_unavailable', error: 'mcp_catalog_unavailable' };
           }
-          const server = snapshot.catalog.servers.find(entry => entry.id === serverId);
-          if (!server) return { ok: false, errorCode: 'mcp_server_not_found', error: 'mcp_server_not_found' };
-          if (!server.remote || server.transport === 'stdio') {
+          const server = snapshot?.catalog.servers.find(entry => entry.id === serverId);
+          if (snapshot && !server) return { ok: false, errorCode: 'mcp_server_not_found', error: 'mcp_server_not_found' };
+          if (server && (!server.remote || server.transport === 'stdio')) {
             return { ok: false, errorCode: 'mcp_sign_in_not_supported', error: 'mcp_sign_in_not_supported' };
           }
           stage = 'machine_selection';
           const machineId = await ports.resolveAdministrationMachine?.(context);
           if (!machineId) return { ok: false, errorCode: 'no_machine_online', error: 'no_machine_online' };
-          if (server.remote.auth?.kind !== 'oauth') {
+          let resourceUrl = server?.remote?.url;
+          if (isPlugin) {
+            stage = 'catalog_read';
+            const items = await ports.readPluginItems?.(context, { serverId, machineId });
+            if (!items) return { ok: false, errorCode: 'mcp_catalog_unavailable', error: 'mcp_catalog_unavailable' };
+            const item = items.find(candidate => candidate.id === serverId);
+            if (!item) return { ok: false, errorCode: 'mcp_server_not_found', error: 'mcp_server_not_found' };
+            if (!item.remote) return { ok: false, errorCode: 'mcp_sign_in_not_supported', error: 'mcp_sign_in_not_supported' };
+            resourceUrl = item.remote.url;
+          } else if (snapshot && server?.remote && !server.remote.auth) {
             const receipt = await ports.mutate({ kind: 'server-update', entry: { ...server,
               remote: { ...server.remote, auth: { kind: 'oauth' } },
             } }, snapshot.revision, context);
@@ -460,6 +471,8 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
               code: 'code' in receipt ? receipt.code : 'mcp_catalog_conflict',
             });
           }
+          if (!resourceUrl) return { ok: false, errorCode: 'mcp_sign_in_not_supported', error: 'mcp_sign_in_not_supported' };
+          const resource = canonicalMcpOAuthResourceUrlV1(resourceUrl);
           stage = 'service_description';
           const service = await describe(machineId, 'credential_write');
           const account = service.accounts.find(profile => profile.ref.accountId === serverId
@@ -472,7 +485,7 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
             stage = 'configuration_replace';
             const replacement = await connected('connectedServices.configuration.replace', { machineId, target,
               expectedRevision: previous.configuration.revision, values: { ...previous.configuration.values, ...registrationValues,
-                serverId, resource: canonicalMcpOAuthResourceUrlV1(server.remote.url), stepUp: stepUp === true, grantedScopes: account.scopes }, secretValues });
+                serverId, resource, stepUp: stepUp === true, grantedScopes: account.scopes }, secretValues });
             stage = 'begin_reconnect';
             attempt = await connected('connectedServices.authentication.beginReconnect', { machineId, account: account.ref,
               expectedConfigurationRevision: replacement.revision });
@@ -486,7 +499,7 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
               stage = 'configuration_replace';
               const replacement = await connected('connectedServices.configuration.replace', { target,
                 expectedRevision: previous.configuration.revision, values: { ...previous.configuration.values, ...registrationValues,
-                  serverId, resource: canonicalMcpOAuthResourceUrlV1(server.remote.url), stepUp: stepUp === true }, secretValues });
+                  serverId, resource, stepUp: stepUp === true }, secretValues });
               stage = 'continue_connect';
               attempt = await connected('connectedServices.authentication.continueConnect', { attemptId: attempt.attemptId,
                 expectedConfigurationRevision: replacement.revision });
