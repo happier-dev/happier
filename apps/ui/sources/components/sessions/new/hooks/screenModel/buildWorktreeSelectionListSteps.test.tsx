@@ -257,6 +257,20 @@ describe('buildWorktreeSelectionListSteps', () => {
         });
     });
 
+    // WF-ACCEPT-1119 item 8: "No worktree" is a choice of where the work runs, not an Action, and its folder
+    // reads relative to the Machine's home like every other path in the picker.
+    it('lists No worktree as an unheaded choice whose folder reads from home', async () => {
+        const { buildWorktreeSelectionListSteps } = await import('./buildWorktreeSelectionListSteps');
+        const build = (currentDirPath: string) => buildWorktreeSelectionListSteps({
+            snapshot: makeSnapshot(), currentDirPath, rowIconColor: TEST_ROW_ICON_COLOR, machineId: 'machine-1',
+            machinePath: '/home/alice/repo', machineHomeDir: '/home/alice', onSelectCurrentDir: vi.fn(), onSelectExistingWorktree: vi.fn(),
+        });
+        const home = requireStaticSection(build('/home/alice'), 'worktree:quick-actions');
+        expect(home.title).toBeUndefined();
+        expect(requireOption(home, 'current_path').subtitle).toBe('~');
+        expect(requireOption(requireStaticSection(build('/home/alice/repo'), 'worktree:quick-actions'), 'current_path').subtitle).toBe('~/repo');
+    });
+
     it('exposes a root step with quick-actions, an existing-worktrees section, and a create-worktree drilldown', async () => {
         const { buildWorktreeSelectionListSteps } = await import('./buildWorktreeSelectionListSteps');
         const onSelectCurrentDir = vi.fn();

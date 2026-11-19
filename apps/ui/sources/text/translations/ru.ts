@@ -7582,7 +7582,6 @@ export const ru: TranslationStructure = {
           noWorktreeSubtitle: "Использовать уже выбранную папку без привязки checkout workspace.",
           noWorktreeSectionTitle: "Текущая папка",
 	          existingWorktreesSectionTitle: "Связанные checkouts",
-	          actionsSectionTitle: "Действия",
 		      newWorktree: "Новый worktree",
 		      newWorktreeSubtitle: "Создайте и используйте новый Git worktree для этой сессии.",
 		      pendingWorktreeSubtitle: ({ branch, path }: { branch: string; path: string }) => `Из ${branch} · ${path}`,

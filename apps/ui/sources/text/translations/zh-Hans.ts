@@ -7547,7 +7547,6 @@ export const zhHans: TranslationStructure = {
       noWorktreeSubtitle: "使用已选择的文件夹，而不链接任何 workspace checkout。",
       noWorktreeSectionTitle: "当前文件夹",
       existingWorktreesSectionTitle: "已链接 checkouts",
-      actionsSectionTitle: "操作",
       newWorktree: "新建 worktree",
       newWorktreeSubtitle: "为此会话创建并使用一个新的 Git worktree。",
       pendingWorktreeSubtitle: ({ branch, path }: { branch: string; path: string }) => `来自 ${branch} · ${path}`,

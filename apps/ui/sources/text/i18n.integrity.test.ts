@@ -391,7 +391,6 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'memorySearchSettings.embeddings.provider.title',
         'memorySearchSettings.indexMode.triggerTitle',
         'memorySearchSettings.machine.title',
-        'newSession.checkout.actionsSectionTitle',
         'newSession.ghCliBanner.title',
         'newSession.sessionType.simple',
         'newSession.sessionType.worktree',

@@ -9011,7 +9011,6 @@ const enNewSession = {
       'Start in the selected folder without creating or using a Git worktree.',
     noWorktreeSectionTitle: 'No worktree',
     existingWorktreesSectionTitle: 'Existing worktrees',
-    actionsSectionTitle: 'Actions',
     newWorktree: 'New worktree',
     newWorktreeSubtitle: 'Create and use a new Git worktree for this session.',
     pendingWorktreeSubtitle: ({

@@ -8144,7 +8144,6 @@ localTailscale: {
         "すでに選択したフォルダーを使い、ワークスペースのチェックアウトはリンクしません。",
         noWorktreeSectionTitle: "現在のフォルダー",
         existingWorktreesSectionTitle: "リンク済みチェックアウト",
-        actionsSectionTitle: "アクション",
         newWorktree: "新しいワークツリー",
         newWorktreeSubtitle: "このセッション用に新しい Git ワークツリーを作成して使用します。",
         pendingWorktreeSubtitle: ({ branch, path }: { branch: string; path: string }) => `${branch} から · ${path}`,

@@ -686,7 +686,7 @@ export function buildWorktreeSelectionListSteps(params: WorktreeSelectionListBui
         {
             id: 'current_path',
             label: t('newSession.checkout.noWorktree'),
-            subtitle: params.currentDirPath || undefined,
+            subtitle: params.currentDirPath ? formatPathRelativeToHome(params.currentDirPath, params.machineHomeDir ?? undefined) : undefined,
             icon: <Icon name="folder" size={WORKTREE_ROW_ICON_SIZE} color={params.rowIconColor} />,
             onSelect: params.onSelectCurrentDir,
         },
@@ -755,10 +755,10 @@ export function buildWorktreeSelectionListSteps(params: WorktreeSelectionListBui
         });
     }
 
+    // Where the work runs: no worktree, or a new one. These are choices, so they carry no "Actions" heading.
     sections.push({
         kind: 'static',
         id: 'worktree:quick-actions',
-        title: t('newSession.checkout.actionsSectionTitle'),
         options: quickActions,
     });
 

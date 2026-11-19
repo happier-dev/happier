@@ -6562,7 +6562,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             noWorktreeSubtitle: '使用你目前已選取的資料夾，而不連結任何 workspace checkout。',
             noWorktreeSectionTitle: '目前資料夾',
             existingWorktreesSectionTitle: '已連結 checkouts',
-            actionsSectionTitle: '動作',
             newWorktree: '新的 worktree',
             newWorktreeSubtitle: '為此工作階段建立並使用新的 Git worktree。',
             pendingWorktreeSubtitle: ({ branch, path }: { branch: string; path: string }) => `來自 ${branch} · ${path}`,
