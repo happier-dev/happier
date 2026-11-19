@@ -104,9 +104,11 @@ export async function resolveRunnerAgentSessionDescriptorForLease(
     const enablement = pluginId ? lease.registry.contributes.pluginEnablementById?.[pluginId] : undefined;
     if (pluginId && (unavailable || enablement?.enabled === false)) {
       const code = unavailable?.code ?? enablement?.unavailableCode ?? 'plugin_disabled';
-      throw createPluginEnablementUnavailableError(unavailable ?? enablement!, code === 'plugin_disabled'
+      const message = code === 'plugin_disabled'
         ? 'This Agent plugin is disabled. Re-enable it in Plugins to resume this Session.'
-        : 'Account plugin execution is unavailable.');
+        : code === 'plugin_limited_to_other_projects'
+          ? 'This plugin is limited to other projects.' : 'Account plugin execution is unavailable.';
+      throw createPluginEnablementUnavailableError(unavailable ?? enablement!, message);
     }
     if (isConfigured) return null;
     throw new Error(

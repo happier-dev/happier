@@ -7056,8 +7056,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
             );
         },
         addRuntimeDisposable: activatedRegistry.addRuntimeDisposable,
-        projectMcpServerItems(catalog) {
-            return projectPluginMcpServerItems({ catalog, activePlugins: authoritativeContributes.mcpServers ?? [],
+        projectMcpServerItems(catalog, projectRefusals) {
+            const declarations = authoritativeContributes.mcpServers ?? [];
+            return projectPluginMcpServerItems({ catalog,
+                activePlugins: projectRefusals?.size ? declarations.filter(entry => !entry.pluginId || !projectRefusals.has(entry.pluginId)) : declarations,
                 resolveExecutable: async (ref, pluginId) => {
                     const executable = await executableResolver(ref, pluginId);
                     if (executable.release) activatedRegistry.addRuntimeDisposable(pluginId, { dispose: executable.release });

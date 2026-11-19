@@ -76,6 +76,8 @@ export interface TrackedSession {
    * spawn released its lease). In memory only; never marker-persisted.
    */
   readSpawnPluginRuntimeRegistry?: () => import('@/plugins/runtime/reload/controller').PluginRuntimeRegistryLease['registry'] | null;
+  /** Availability already decided for this Session's accepted Project at launch. */
+  pluginProjectRefusals?: ReadonlyMap<string, import('@happier-dev/protocol/plugins/availability/v1').PluginProjectAdmissionRefusalV1>;
   /** Original startup operation while the native Agent has not opened; never marker-persisted. */
   projectSetupOperation?: import('@/workspaces/projectSetup/projectSetupExecution').ProjectSetupOperationContext;
   /** Generation-bound pre-exit chain observations; ephemeral evidence, never marker-persisted. */

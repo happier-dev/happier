@@ -2,6 +2,7 @@ import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import type {
     PackageAssetArchiveDescriptorV1,
     PluginAccountAvailabilityIntentReadResponseV1,
+    PluginAccountPluginIntentV1,
     PluginAccountDeclarationBodyV1,
     PluginMachineMaterializationSnapshotV1,
     PluginMachineMaterializationV1,
@@ -430,7 +431,9 @@ export type PluginAccountAvailabilityReader = Readonly<{
     readUiProjectionInputs: () => PluginAccountUiProjectionInputs | null;
     /** Account custody projects into the existing executable registration owner. */
     readAccountUiProjection: () => PluginUiProjectionModel | null;
-    /** Desired Account intent, independent of release/activation. Null is not loaded or incomplete. */
+    /** Current intent. Null is known absence and undefined means the projection cannot answer. */
+    readCurrentAccountIntent: (pluginId: string) => PluginAccountPluginIntentV1 | null | undefined;
+    /** Desired Account enablement. Null is not loaded or incomplete. */
     readCurrentAccountEnablement: (pluginId: string) => boolean | null;
     readCurrentAccountExecution: (pluginId: string) => PluginAccountExecutionAdmission;
     /** The same Account-selected Event declaration consumed by trigger admission. */
@@ -2296,15 +2299,20 @@ function createBoundReader(input: Readonly<{
     readDeclarationBody: (digest: string) => PluginPortableReleaseManifestV1 | undefined;
     ensureDeclarationBodies: (pluginId: string, digests: readonly string[]) => Promise<void>;
 }>): PluginAccountAvailabilityReader {
+    const readCurrentAccountIntent = (pluginId: string): PluginAccountPluginIntentV1 | null | undefined => {
+        const state = input.readState();
+        if (!state || !readProjectionForScope(state, input.scope) || state.retiredPluginIds?.includes(pluginId)) return undefined;
+        const reads = state.intentReadsByPluginId.get(pluginId) ?? [];
+        if (reads.length > 1 || (reads.length === 0 && state.intentCensusIncomplete)) return undefined;
+        return reads[0]?.response.intent ?? null;
+    };
     return Object.freeze({
         getObservationSnapshot: input.readObservationSnapshot,
         readUiProjectionInputs: input.readUiProjectionInputs,
+        readCurrentAccountIntent,
         readCurrentAccountEnablement: (pluginId: string) => {
-            const state = input.readState();
-            if (!readProjectionForScope(state, input.scope) || state?.retiredPluginIds?.includes(pluginId)) return null;
-            const reads = state!.intentReadsByPluginId.get(pluginId) ?? [];
-            if (reads.length > 1 || (reads.length === 0 && state!.intentCensusIncomplete)) return null;
-            return reads[0]?.response.intent?.enabled ?? true;
+            const intent = readCurrentAccountIntent(pluginId);
+            return intent === undefined ? null : intent?.enabled ?? true;
         },
         readCurrentAccountExecution: (pluginId: string) => input.readInitialFailure(pluginId)
             ?? readAccountExecutionSelection(input.readState(), input.scope, pluginId),

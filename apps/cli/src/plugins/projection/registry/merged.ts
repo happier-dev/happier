@@ -16,7 +16,9 @@ export async function resolveMergedContributionRegistry(
     : params?.providerContributionKeys ? { providerContributionKeys: params.providerContributionKeys } : undefined;
   const { getResolvedContributionRegistry, readCurrentBundledPluginEnablement } = await import('./builtIn/snapshot');
   const pluginEnablementById = await readCurrentBundledPluginEnablement({ happyHomeDir: params?.happyHomeDir,
-    accountStorageDependencies: params?.accountStorageDependencies });
+    accountStorageDependencies: params?.accountStorageDependencies,
+    installedPluginIds: params?.agentIdentity ? [params.agentIdentity.pluginId] : params?.pluginIds ?? 'current',
+  });
   const builtIn = selection
     ? createResolvedContributionRegistry(resolveSelectedBuiltInContributions({ ...selection, pluginEnablementById }))
     : params?.pluginIds !== undefined

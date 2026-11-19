@@ -7521,6 +7521,7 @@ export const zhHans: TranslationStructure = {
       "受你的配置和此机器上已安装的智能体限制。",
     aiBackendSelectWhichAiRuns: "选择运行此会话的智能体。",
     aiBackendNotCompatibleWithSelectedProfile: "与所选配置不兼容。",
+    pluginLimitedToOtherProjects: '仅限其他项目',
     aiBackendCliNotDetectedOnMachine: ({ cli }: { cli: string }) =>
       `此机器未检测到 ${cli} CLI。`,
     selectMachineTitle: "选择机器",

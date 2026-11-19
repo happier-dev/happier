@@ -8030,6 +8030,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     aiBackendSelectWhichAiRuns: "Scegli quale agente esegue questa sessione.",
     aiBackendNotCompatibleWithSelectedProfile:
       "Non compatibile con il profilo selezionato.",
+    pluginLimitedToOtherProjects: 'Limitato ad altri progetti',
     aiBackendCliNotDetectedOnMachine: ({ cli }: { cli: string }) =>
       `CLI di ${cli} non rilevata su questa macchina.`,
     selectMachineTitle: "Seleziona macchina",

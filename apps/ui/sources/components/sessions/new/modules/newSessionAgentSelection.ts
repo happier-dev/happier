@@ -57,6 +57,7 @@ export function resolveAgentLaunchBlockedReasonForNewSession(params: Readonly<{
 }
 
 export type NewSessionProfileAvailabilityReason =
+    | import('@happier-dev/protocol/plugins/availability/v1').PluginProjectAdmissionRefusalV1
     | 'no-supported-cli'
     | 'cli-not-detected:any'
     | `cli-not-detected:${AgentId}`

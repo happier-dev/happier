@@ -806,9 +806,11 @@ export type ResolvedActivationTarget = Readonly<{
 
 export type ResolvedPluginEnablement = Readonly<{
     accountEnabled?: boolean;
+    projectScope?: import('@happier-dev/protocol/plugins/availability/v1').PluginProjectScopeV1;
     machineEnabled: boolean;
     enabled: boolean;
-    unavailableCode?: 'plugin_account_execution_unavailable' | 'plugin_account_census_failed';
+    unavailableCode?: 'plugin_account_execution_unavailable' | 'plugin_account_census_failed'
+        | import('@happier-dev/protocol/plugins/availability/v1').PluginProjectAdmissionRefusalV1;
     unavailableCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionFailureCauseV1;
     unavailableRequestId?: string;
     /**

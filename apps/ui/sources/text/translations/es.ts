@@ -7806,6 +7806,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     aiBackendSelectWhichAiRuns: "Elige qué agente ejecuta esta sesión.",
     aiBackendNotCompatibleWithSelectedProfile:
       "No es compatible con el perfil seleccionado.",
+    pluginLimitedToOtherProjects: 'Limitado a otros proyectos',
     aiBackendCliNotDetectedOnMachine: ({ cli }: { cli: string }) =>
       `No se detectó el CLI de ${cli} en esta máquina.`,
     selectMachineTitle: "Seleccionar máquina",

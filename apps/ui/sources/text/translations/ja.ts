@@ -8115,6 +8115,7 @@ localTailscale: {
     aiBackendSelectWhichAiRuns: "このセッションを実行するエージェントを選択します。",
     aiBackendNotCompatibleWithSelectedProfile:
       "選択したプロファイルと互換性がありません。",
+    pluginLimitedToOtherProjects: '他のプロジェクトに限定されています',
     aiBackendCliNotDetectedOnMachine: ({ cli }: { cli: string }) =>
       `このマシンで${cli} CLIが検出されませんでした。`,
     selectMachineTitle: "マシンを選択",

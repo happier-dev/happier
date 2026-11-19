@@ -1,4 +1,5 @@
 import type { McpPluginItemMetadataV1, McpPluginItemV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import { parseMcpPluginItemIdV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import type { TrackedSession } from '@/daemon/types';
@@ -103,7 +104,7 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
           if (!unregister || !lease.registry.projectMcpServerItems) throw unavailable();
           const projectItems = lease.registry.projectMcpServerItems;
           const projecting = (async () => {
-            const items = await projectItems({ v: 1, servers: [], ...operation.catalog });
+            const items = await projectItems({ v: 1, servers: [], ...operation.catalog }, tracked.pluginProjectRefusals);
             return { items };
           })();
           pending.value = projecting;
@@ -141,9 +142,14 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
           return RunnerPluginMcpResultSchema.parse({ kind: 'mcp.plugin.discovered', detectedServers: detected.servers });
         }
         if (!preparation.lease.registry.materializePluginMcpServers) throw unavailable();
+        const projectRefusals = tracked.pluginProjectRefusals;
+        const admitted = projectRefusals?.size ? operation.servers.filter(server => {
+          const ref = parseMcpPluginItemIdV1(server.id);
+          return !ref || !projectRefusals.has(ref.pluginId);
+        }) : operation.servers;
         const materializing = preparation.lease.registry.materializePluginMcpServers({
           scope: { kind: 'session', sessionId: context.sessionId }, directory: preparation.directory, signal,
-          servers: operation.servers.map(server => ({ ...server, scope: { sessionId: context.sessionId, directory: preparation.directory } })),
+          servers: admitted.map(server => ({ ...server, scope: { sessionId: context.sessionId, directory: preparation.directory } })),
           addDisposable: attachment => preparation.attachments.push(attachment),
         });
         preparation.pending.value = materializing;

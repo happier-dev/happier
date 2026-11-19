@@ -11,6 +11,10 @@ export const PluginProjectScopeV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type PluginProjectScopeV1 = z.infer<typeof PluginProjectScopeV1Schema>;
 
+export function normalizePluginProjectScopeV1(scope: PluginProjectScopeV1): PluginProjectScopeV1 {
+  return { kind: scope.kind, projectKeys: [...new Set(scope.projectKeys)].sort() };
+}
+
 export type PluginProjectAdmissionRefusalV1 = 'plugin_limited_to_other_projects';
 
 export function resolvePluginProjectScopeRefusalV1(

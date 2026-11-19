@@ -380,6 +380,13 @@ the distribution for packaging, without making those contributions available.
 Enabling both scopes restores the contributions. Disablement retains plugin data
 and credentials, and already admitted work finishes at its natural boundary.
 
+Account enablement also supports limiting a plugin to selected Projects. An
+Account intent without a Project selection applies to all Projects. A Session
+gets a restricted plugin only when its folder resolves to an accepted Project
+on that plugin's list at launch. New Session explains a restriction where
+the plugin is offered. Automatic Project assignment still happens at its
+existing boundary, and the Session keeps the decision made at launch.
+
 A failed Account enablement census withdraws new admission with
 `plugin_account_census_failed`, preserving the code-only failure cause, phase,
 HTTP status and available Request ID in the catalog diagnostic and file log.

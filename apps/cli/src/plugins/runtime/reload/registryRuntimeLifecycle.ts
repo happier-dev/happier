@@ -176,6 +176,7 @@ async function resolveCandidateContributes(
   const builtIn = getResolvedContributionRegistry({ pluginEnablementById: await readCurrentBundledPluginEnablement({
     happyHomeDir, machineEnabledById: resolveBundledPluginMachineEnablement({ state: candidate.runtimeCatalog,
       bundledPluginEnabledById: candidate.installationState.bundledPluginEnabledById }), accountStorageDependencies,
+    installedPluginIds: Object.entries(candidate.installationState.plugins).flatMap(([id, installation]) => installation.enabled ? [id] : []),
   }) });
   if (startupMode === 'pluginRecovery') return builtIn;
   const materializationIdsByPluginId = Object.freeze(Object.fromEntries(

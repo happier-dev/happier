@@ -7553,6 +7553,7 @@ export const ru: TranslationStructure = {
       "Выберите агента, который запустит эту сессию.",
     aiBackendNotCompatibleWithSelectedProfile:
       "Несовместимо с выбранным профилем.",
+    pluginLimitedToOtherProjects: 'Доступно только в других проектах',
     aiBackendCliNotDetectedOnMachine: ({ cli }: { cli: string }) =>
       `${cli} CLI не обнаружен на этой машине.`,
     selectMachineTitle: "Выбрать машину",

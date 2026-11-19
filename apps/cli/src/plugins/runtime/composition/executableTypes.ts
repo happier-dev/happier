@@ -465,7 +465,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
             }> | null>;
         }>,
     ): PluginMcpSessionResolver | null;
-    projectMcpServerItems?(catalog: McpServerCatalogV1): Promise<readonly McpPluginItemV1[]>;
+    projectMcpServerItems?(catalog: McpServerCatalogV1, projectRefusals?: ReadonlyMap<string, import('@happier-dev/protocol/plugins/availability/v1').PluginProjectAdmissionRefusalV1>): Promise<readonly McpPluginItemV1[]>;
     materializePluginMcpServers?(input: Readonly<{
         scope: PluginExecutionScopeV1; directory: string; servers: readonly ResolvedSessionMcpServer[]; signal?: AbortSignal;
         currentSession?: HostCurrentSessionUiServices;

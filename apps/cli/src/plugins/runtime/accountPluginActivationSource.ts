@@ -149,8 +149,16 @@ function assertIntentPage(input: Readonly<{ isCurrent?: () => boolean }>,
 export async function readCurrentAccountPluginEnablements(input: AccountReadBinding & Readonly<{
     pluginIds: readonly string[];
 }>): Promise<ReadonlyMap<string, boolean>> {
+    const intents = await readCurrentAccountPluginEnablementIntents(input);
+    return new Map(input.pluginIds.map(pluginId => [pluginId, intents.get(pluginId)?.enabled ?? true]));
+}
+
+/** Exact admitted intent facts for Machine and Session contribution availability. */
+export async function readCurrentAccountPluginEnablementIntents(input: AccountReadBinding & Readonly<{
+    pluginIds: readonly string[];
+}>) {
     const reads = await readNamedAccountPluginIntentReads(input);
-    return new Map(input.pluginIds.map(pluginId => [pluginId, reads.get(pluginId)!.intent?.enabled ?? true]));
+    return new Map([...reads].map(([pluginId, read]) => [pluginId, read.intent]));
 }
 
 /** One strict Account read for provenance consumers; it owns no cache or occurrence. */

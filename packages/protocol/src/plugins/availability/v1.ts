@@ -10,7 +10,7 @@ import { SERVER_IDENTITY_ID_PATTERN } from '../../features/payload/capabilities/
 import { PluginCollectionContractRefV1Schema, pluginCollectionContractKeyV1 as collectionContractKey, type PluginCollectionContractRefV1 } from '../data/collectionContractRefV1.js';
 import { PluginAccountPluginIntentV1Schema, type PluginAccountPluginIntentV1 } from './accountIntentV1.js';
 export { PluginAccountPluginIntentV1Schema, type PluginAccountPluginIntentV1 } from './accountIntentV1.js';
-export { resolvePluginProjectScopeRefusalV1, resolveSessionPluginProjectAdmissionV1, type PluginProjectAdmissionRefusalV1, type PluginProjectScopeV1 } from './accountIntentV1.js';
+export { normalizePluginProjectScopeV1, resolvePluginProjectScopeRefusalV1, resolveSessionPluginProjectAdmissionV1, type PluginProjectAdmissionRefusalV1, type PluginProjectScopeV1 } from './accountIntentV1.js';
 import { PluginPortableReleaseManifestV1Schema, type PluginPortableReleaseManifestV1 } from './compatibilityProjectionV1.js';
 import { PluginManifestV2LoadSchema } from '../manifest/load.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';

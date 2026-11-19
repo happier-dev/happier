@@ -46,7 +46,7 @@ describe("Availability intent reads on SQLite", () => {
         const pluginId = "com.acme.project-reach";
         const enable = { pluginId, desiredVersion: null, enabled: true,
             offlineUiHosting: "disabled", writableCollections: [] };
-        const projectScope = { kind: "only", projectKeys: ["project-a", "project-b"] };
+        const projectScope = { kind: "only" as const, projectKeys: ["project-a", "project-b"] };
         const selected = await operations.setIntent({ accountId, input: { ...enable, expectedRevision: null, projectScope } });
         expect(selected.intent).toMatchObject({ projectScope });
         const inPlace = await operations.setIntent({ accountId, input: { ...enable, expectedRevision: selected.intent.revision } });

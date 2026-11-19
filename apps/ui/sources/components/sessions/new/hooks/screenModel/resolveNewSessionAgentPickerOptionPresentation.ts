@@ -22,6 +22,8 @@ export type NewSessionAgentPickerOptionPresentation = Readonly<{
 function resolveBackendUnavailableSubtitle(
     reason: NewSessionProfileAvailabilityReason | null | undefined,
 ): string | undefined {
+    if (reason === 'plugin_limited_to_other_projects') return t('newSession.pluginLimitedToOtherProjects');
+
     if (reason?.startsWith('cli-not-detected:')) {
         const agentId = reason.split(':')[1];
         const cli = agentId && isBundledAgentId(agentId)

@@ -88,6 +88,9 @@ import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
 import type { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 import { createSpawnPluginRuntimeLease } from '../spawn/spawnPluginRuntimeLease';
+import { resolveSessionPluginProjectAdmissionV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import { resolveSessionProjectKey } from '@/workspaces/resolveSessionProjectKey';
+import { PromptStackPreparationError } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
 import { prepareDaemonProviderLaunch } from '../spawn/prepareDaemonProviderLaunch';
 import {
     prepareDaemonConnectedServices,
@@ -578,7 +581,28 @@ export async function executeSpawnSessionRequest(
                 'provider_settings_invalid',
             ));
         }
-        const pluginRuntimeLease = createSpawnPluginRuntimeLease(launchResourceScope);
+        const pluginRuntimeLease = createSpawnPluginRuntimeLease(launchResourceScope, async registry => {
+            const operationContext = requesterRuntime?.bootstrap.savedSecretOperationContext;
+            const scopesByPluginId = requesterRuntime
+                ? [...await (await import('@/plugins/runtime/accountPluginActivationSource')).readCurrentAccountPluginEnablementIntents({
+                    credentials: params.credentials, serverUrl: operationContext?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+                    pluginIds: (registry.contributes.pluginDeclarations ?? []).map(plugin => plugin.pluginId), signal: params.signal,
+                })].flatMap(([pluginId, intent]) => intent?.projectScope ? [[pluginId, intent.projectScope] as const] : [])
+                : Object.entries(registry.contributes.pluginEnablementById ?? {}).flatMap(([pluginId, fact]) =>
+                    fact.enabled && fact.projectScope ? [[pluginId, fact.projectScope] as const] : []);
+            return await resolveSessionPluginProjectAdmissionV1({ scopesByPluginId, async readAcceptedProjectKey() {
+                const machineId = options.machineId ?? params.machineId;
+                if (!machineId || prepared.directoryKind === 'managed') return null;
+                try {
+                    const project = await resolveSessionProjectKey({ credentials: params.credentials, operationContext,
+                        machineId, metadata: { path: directory }, directory, signal: params.signal });
+                    return project.kind === 'resolved' ? project.projectKey : null;
+                } catch (error) {
+                    if (error instanceof PromptStackPreparationError) return null;
+                    throw error;
+                }
+            } });
+        });
         let launchRetirementOutcome:
             Promise<string | null> | null = null;
         const retireLaunchResources =
@@ -1682,6 +1706,7 @@ export async function executeSpawnSessionRequest(
                 // One registry lease per spawn: its post-report reconciliation reads this one.
                 readSpawnPluginRuntimeRegistry: () => pluginRuntimeLease.currentRegistry,
                 onTrackedSessionRegistered: (trackedSession) => {
+                    if (pluginRuntimeLease.projectRefusals) trackedSession.pluginProjectRefusals = pluginRuntimeLease.projectRefusals;
                     sessionTargetRunner = trackedSession;
                     void observeSessionTargetRunnerExit(trackedSession).then(settleSessionTargetRunnerExit);
                     childLaunchSubmitted = true;

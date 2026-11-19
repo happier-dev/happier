@@ -1859,6 +1859,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         machineProbesEnabled: hostDemanded,
         selectedMachineId,
         selectedMachine,
+        projectDirectory: directoryKind === 'managed' ? null : selectedPath,
         capabilityServerId,
         externalSessionsFeatureEnabled,
         settings: availabilitySettings,

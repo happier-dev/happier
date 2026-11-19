@@ -8981,6 +8981,7 @@ const enNewSession = {
   aiBackendSelectWhichAiRuns: 'Choose which agent runs this session.',
   aiBackendNotCompatibleWithSelectedProfile:
     'Not compatible with the selected profile.',
+  pluginLimitedToOtherProjects: "Limited to other projects",
   aiBackendCliNotDetectedOnMachine: ({ cli }: { cli: string }) =>
     `${cli} CLI not detected on this machine.`,
   selectMachineTitle: 'Select machine',

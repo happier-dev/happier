@@ -1,3 +1,4 @@
+import { normalizePluginProjectScopeV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import {
     PluginAvailabilityActionHttpPathsV1,
     PluginAvailabilityIntentSetActionInputV1Schema,
@@ -88,10 +89,13 @@ function responseMatchesRequest(input: Readonly<{
     request: PluginAvailabilityIntentSetActionInputV1;
 }>): boolean {
     const { intent } = input.response;
+    const requestedProjects = input.request.projectScope;
     return intent.pluginId === input.request.pluginId
         && intent.desiredVersion === input.request.desiredVersion
         && intent.enabled === input.request.enabled
         && intent.offlineUiHosting === input.request.offlineUiHosting
+        && (requestedProjects === undefined || JSON.stringify(intent.projectScope) === JSON.stringify(
+            requestedProjects === null ? undefined : normalizePluginProjectScopeV1(requestedProjects)))
         && JSON.stringify(intent.writableCollections) === JSON.stringify(input.request.writableCollections);
 }
 

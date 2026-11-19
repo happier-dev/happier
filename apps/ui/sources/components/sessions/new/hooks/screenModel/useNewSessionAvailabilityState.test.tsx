@@ -135,6 +135,59 @@ describe('machine launch readiness', () => {
             await hook.unmount();
         }
     });
+    it('explains Account Project restrictions until the chosen folder is an accepted Project', async () => {
+        const { getResolvedBackendCatalogEntries } = await import('@/agents/backendCatalog/getResolvedBackendCatalogEntries');
+        const { createProjectAccountRowsFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+        const { clearPluginAccountAvailabilityProjection, readPluginAccountAvailability, replacePluginAccountAvailabilityProjection } =
+            await import('@/sync/domains/plugins/availability/projection');
+        const { PluginAccountAvailabilityIntentReadResponseV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+        const home = await network.addHome('https://project-reach.example.test', 'project-reach-owner', { serverIdentityId: 'srv_project_reach' });
+        const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+        const resolution = await resolveServerCredentialAccountScope(home.id);
+        if (resolution.kind !== 'bound') throw new Error('Expected an admitted Home credential');
+        const scope = resolution.scope;
+        const pluginId = 'example.project-reach';
+        const machine = createMachineFixture({ id: 'project-reach-machine', active: true, activeAt: Date.now() });
+        const entry = getResolvedBackendCatalogEntries({ enabledAgentIds: ['codex'] })[0]!;
+        const restricted = { ...entry, agentCatalogEntry: { ...entry.agentCatalogEntry!, identity: { pluginId, localId: 'agent' } } };
+        const previousScope = storage.getState().profileScope;
+        storage.setState({ profileScope: scope });
+        const feedProjects = (rootPath: string) => storage.getState().applyProjectAccountRowsForScope(scope,
+            createProjectAccountRowsFixture(scope, { workspaceRefs: [{
+                id: 'known-checkout', projectKey: 'chosen-project', serverId: scope.serverId, machineId: machine.id,
+                rootPath, label: null, createdAtMs: 1,
+            }] }));
+        storage.getState().activateProjectAccountRowsScope(scope);
+        feedProjects('/other');
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, snapshots: [], materializations: [],
+            intentReads: [{ pluginId, response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+                availabilityCursor: 1, hostingCapability: { enabled: false }, release: null, uiArtifacts: [], packageAssets: [],
+                intent: { pluginId, enabled: true, desiredVersion: null, writableCollections: [], revision: '1',
+                    offlineUiHosting: 'disabled', projectScope: { kind: 'only', projectKeys: ['chosen-project'] } },
+            }) }] } });
+        const hook = await renderHook(() => useNewSessionAvailabilityState({
+            machineAgents: { ...machineAgents, status: 'loading' },
+            selectedMachineId: machine.id, selectedMachine: machine, projectDirectory: '/checkout', capabilityServerId: home.id,
+            machineProbesEnabled: false, externalSessionsFeatureEnabled: false, settings: settingsDefaults,
+            resumeSessionId: null, backendNewSessionOptionStateByTargetKey: {}, resolvedBackendEntries: [restricted],
+            selectedBackendEntry: restricted, setBackendTarget: vi.fn(), machines: [machine], allProfiles: [],
+        }));
+        try {
+            expect(readPluginAccountAvailability(scope).readCurrentAccountIntent(pluginId)?.projectScope)
+                .toEqual({ kind: 'only', projectKeys: ['chosen-project'] });
+            await vi.waitFor(() => expect(hook.getCurrent().getBackendEntryUnavailabilityReason(restricted))
+                .toBe('plugin_limited_to_other_projects'));
+            expect(hook.getCurrent().isBackendEntrySelectable(entry)).toBe(true);
+            await act(async () => { feedProjects('/checkout'); });
+            expect(hook.getCurrent().isBackendEntrySelectable(restricted)).toBe(true);
+            expect(network.requests).toEqual([]);
+        } finally {
+            await hook.unmount();
+            clearPluginAccountAvailabilityProjection();
+            storage.setState({ profileScope: previousScope });
+        }
+    });
+
     it('keeps pending capability detection in the single unknown readiness state', async () => {
         const home = await network.addHome('https://pending-readiness.example.test', 'pending-readiness-owner');
         const machine = createMachineFixture({ id: 'pending-readiness', active: true, activeAt: Date.now() });

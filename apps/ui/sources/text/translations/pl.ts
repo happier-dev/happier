@@ -7654,6 +7654,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       "Ograniczone przez twój profil i agentów zainstalowanych na tej maszynie.",
     aiBackendSelectWhichAiRuns: "Wybierz agenta, który uruchomi tę sesję.",
     aiBackendNotCompatibleWithSelectedProfile: "Niezgodne z wybranym profilem.",
+    pluginLimitedToOtherProjects: 'Ograniczona do innych projektów',
     aiBackendCliNotDetectedOnMachine: ({ cli }: { cli: string }) =>
       `Nie wykryto CLI ${cli} na tej maszynie.`,
     selectMachineTitle: "Wybierz maszynę",

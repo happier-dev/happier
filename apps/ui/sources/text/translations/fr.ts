@@ -7635,6 +7635,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     aiBackendSelectWhichAiRuns: "Choisis quel agent exécute cette session.",
     aiBackendNotCompatibleWithSelectedProfile:
       "Incompatible avec le profil sélectionné.",
+    pluginLimitedToOtherProjects: 'Limité à d’autres projets',
     aiBackendCliNotDetectedOnMachine: ({ cli }: { cli: string }) =>
       `CLI non détecté pour ${cli} CLI non détecté sur cette machine.`,
     selectMachineTitle: "Choisir une machine",

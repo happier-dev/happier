@@ -20,7 +20,6 @@ import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOp
 import { canAgentResume } from '@/agents/runtime/resumeCapabilities';
 import {
     isAgentSelectableForNewSession,
-    isBackendEntrySelectableForNewSession,
     resolveBackendEntryUnavailabilityReasonForNewSession,
     resolveProfileAvailabilityForNewSession,
 } from '@/components/sessions/new/modules/newSessionAgentSelection';
@@ -44,12 +43,19 @@ import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/b
 import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { resolveNewSessionBehaviorAgentId } from '@/components/sessions/new/modules/newSessionBehaviorAgent';
 import { useMachineManagedPresence } from '@/components/machines/useMachineManagedPresence';
+import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
+import { useProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { resolveSessionProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
+import { resolvePluginProjectScopeRefusalV1 } from '@happier-dev/protocol/plugins/availability/v1';
 
 type ProfileAvailability = Readonly<{ available: boolean; reason?: string }>;
 
 export function useNewSessionAvailabilityState(params: Readonly<{
     selectedMachineId: string | null;
     selectedMachine: Machine | null;
+    projectDirectory?: string | null;
     /** The selection owner and launch admission consume the same credential-qualified inventory. */
     machineAgents: ReturnType<typeof useMachineAgents>;
     /** Embedded composers read cached availability until the person reaches for them. */
@@ -185,21 +191,28 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         });
     }, [machineAgentsById, machineAgents.status]);
 
-    const isBackendEntrySelectable = React.useCallback((entry: ResolvedBackendCatalogEntry): boolean => {
-        return isBackendEntrySelectableForNewSession({
-            entry,
-            machineAgentsById,
-            machineAgentsStatus: machineAgents.status,
-        });
-    }, [machineAgentsById, machineAgents.status]);
-
+    const hasPluginAgents = params.resolvedBackendEntries.some(entry => entry.agentCatalogEntry?.identity);
+    const accountAvailability = usePluginAccountAvailabilityReader(scope, undefined, { enabled: scope !== null && hasPluginAgents });
+    const hasProjectLimitedAgent = scope !== null && params.resolvedBackendEntries.some(entry => {
+        const pluginId = entry.agentCatalogEntry?.identity?.pluginId;
+        return pluginId && accountAvailability?.readCurrentAccountIntent(pluginId)?.projectScope;
+    });
+    const acceptedProjectKey = useProjectAccountRows(rows => {
+        if (!params.projectDirectory || !params.selectedMachineId || rows?.coverage !== 'complete'
+            || !areServerAccountScopesEqual(rows.scope, scope)) return null;
+        const metadata = { machineId: params.selectedMachineId, path: params.projectDirectory };
+        const project = rows.sessionProjectKeyResolver?.(metadata, rows.scope.serverId)
+            ?? resolveSessionProjectKeyV1(metadata, rows.scope.serverId, rows.workspaceRefs, workspaceRefResolutionContextV1());
+        return project?.kind === 'resolved' ? project.projectKey.projectKey : null;
+    }, hasProjectLimitedAgent && !!params.projectDirectory);
     const getBackendEntryUnavailabilityReason = React.useCallback((entry: ResolvedBackendCatalogEntry) => {
-        return resolveBackendEntryUnavailabilityReasonForNewSession({
-            entry,
-            machineAgentsById,
-            machineAgentsStatus: machineAgents.status,
-        });
-    }, [machineAgentsById, machineAgents.status]);
+        const pluginId = entry.agentCatalogEntry?.identity?.pluginId;
+        const projectScope = pluginId ? accountAvailability?.readCurrentAccountIntent(pluginId)?.projectScope : undefined;
+        return resolvePluginProjectScopeRefusalV1(projectScope, acceptedProjectKey)
+            ?? resolveBackendEntryUnavailabilityReasonForNewSession({ entry, machineAgentsById, machineAgentsStatus: machineAgents.status });
+    }, [acceptedProjectKey, accountAvailability, machineAgentsById, machineAgents.status]);
+    const isBackendEntrySelectable = React.useCallback((entry: ResolvedBackendCatalogEntry) =>
+        getBackendEntryUnavailabilityReason(entry) === null, [getBackendEntryUnavailabilityReason]);
 
     const readPresenceMachines = React.useCallback(() => [params.selectedMachine], [params.selectedMachine]);
     const readReachability = React.useCallback((nowMs: number) => (
