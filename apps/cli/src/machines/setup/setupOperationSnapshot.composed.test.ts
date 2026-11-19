@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/cli-common/machineSetup';
 import type { ActionOperationOwnerUpdate } from '@/daemon/actionOperations/actionOperationTypes';
 import { ActionOperationDomainRefV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { runMachineSetupEffectInternal } from './effectInternal';
 import { MachineEffectInternalRecordSchema } from './effectInternalProtocol';
 import { createSetupOperationSnapshot } from './setupOperationSnapshot';
@@ -21,6 +22,22 @@ describe('native setup progress operation snapshot', () => {
     expect(reference).toMatchObject({ kind: 'machineSetup', machineId: 'devbox', preset: {
       id: 'acme-dev', revision: 7, name: 'Acme dev box',
     } });
+  });
+
+  it('names an untitled reviewed step by what it changes, never by its raw step id', () => {
+    const updates: ActionOperationOwnerUpdate[] = [];
+    const plan: MachineSetupEffectPlanV1 = { v: 1, basis: { kind: 'setup', machineId: 'machine-a', desiredRevision: 1 },
+      steps: [
+        { id: 'package-apt', kind: 'package', manager: 'apt', state: 'present', packages: [{ name: 'ripgrep' }, { name: 'fd-find' }] },
+        { id: 'package-dnf', kind: 'package', manager: 'dnf', state: 'absent', packages: [{ name: 'htop' }] },
+        { id: 'caddy-unit', kind: 'serviceUnit', unit: 'caddy.service', running: true },
+      ], nativeFacts: [], planDigest: 'a'.repeat(64) };
+    createSetupOperationSnapshot({ kind: 'machineSetup', serverId: 'home-a', machineId: 'machine-a' }, [plan],
+      update => updates.push(update));
+    const reference = ActionOperationDomainRefV1Schema.parse(updates[0]?.domainRef);
+    const labels = reference.kind === 'machineSetup' ? reference.steps?.map(step => step.label) : undefined;
+    expect(labels?.map(label => typeof label === 'string' ? label : label.fallback))
+      .toEqual(['Install ripgrep, fd-find', 'Remove htop', 'Start caddy.service']);
   });
 
   it.each(['unavailable', 'throw', 'satisfied', 'drifted'] as const)(
