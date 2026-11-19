@@ -193,16 +193,19 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
                 cwd: statusResponse?.snapshot?.repo.rootPath ?? addressedRoot, ...operation,
             };
             const addressedRequest = disjointRoots
-                ? createTargetedActionRpcRequestV1(request, { kind: 'machine', machineId: 'machine',
+                ? createTargetedActionRpcRequestV1({ ...request, outcomeVersion: 1 }, { kind: 'machine', machineId: 'machine',
                     project: { machineId: 'machine', directory: addressedRoot } })
                 : request;
             if (disjointRoots && method === RPC_METHODS.SCM_COMMIT_CREATE) {
                 const targetLock = join(root, '.git/index.lock');
-                const previousHead = git('rev-parse', 'HEAD');
+                const previousHead = git('rev-parse', 'HEAD').toString().trim();
                 await writeFile(targetLock, 'terminal Git owns this lock\n');
                 const refused = await handlers.get(method)!(addressedRequest);
-                expect(refused).toMatchObject({ success: false, errorCode: 'INDEX_LOCKED' });
-                expect(git('rev-parse', 'HEAD')).toEqual(previousHead);
+                expect(refused, JSON.stringify(refused)).toMatchObject({
+                    success: false, errorCode: 'INDEX_LOCKED',
+                    publication: { state: 'not_published', expectedHeadOid: previousHead },
+                });
+                expect(git('rev-parse', 'HEAD').toString().trim()).toBe(previousHead);
                 await expect(readFile(targetLock, 'utf8')).resolves.toBe('terminal Git owns this lock\n');
                 await rm(targetLock);
             }
@@ -227,7 +230,7 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('dir
                     expect(response.publication).toMatchObject({ state: 'published', indexReconciliation: 'reconciled' });
                     expect(git('show', 'HEAD:notes.txt').toString()).toBe('changed\n');
                     expect(git('log', '-1', '--format=%B').toString().trim()).toBe('panel change\n\nplaced hook');
-                    expect(git('status', '--porcelain').toString()).toBe('');
+                    expect(git('-c', 'core.fsmonitor=false', 'status', '--porcelain').toString()).toBe('');
                 }
                 await expect(readFile(join(addressedRoot, 'notes.txt'), 'utf8')).resolves.toBe('controller-only\n');
                 await expect(readFile(controllerIndex)).resolves.toEqual(controllerIndexBefore);
