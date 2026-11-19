@@ -108,8 +108,10 @@ export function AuthRouteStepFrame(props: RouteStepProps & Readonly<{
     children: React.ReactNode;
 }>) {
     const signedIn = useOptionalAuth()?.isAuthenticated === true;
+    // Credential publication can precede navigation. Keep the live outgoing step until that commit.
+    const [enteredSignedOut] = React.useState(!signedIn);
 
-    if (!signedIn) {
+    if (enteredSignedOut || !signedIn) {
         return (
             <UnauthenticatedRouteStep
                 testID={props.testID}

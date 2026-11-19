@@ -7,6 +7,8 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
 import { onboardingHistoryState } from '@/sync/domains/state/onboardingUiState';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 
 import { StagePane } from './StagePane';
 import { UnauthenticatedSplitShell } from './UnauthenticatedSplitShell';
@@ -93,6 +95,24 @@ describe('UnauthenticatedSplitShell', () => {
         deviceState.safeAreaInsets = { top: 0, bottom: 0, left: 0, right: 0 };
     });
     afterEach(() => { standardCleanup(); storage.setState(initialStorageState, true); });
+
+    it('keeps the signed-out recovery body mounted when credentials publish before the landing', async () => {
+        setLayoutFixture('split');
+        const content = (token?: string) => (
+            <InjectedAuthProvider credentials={token ? { token } : null}>
+                <AuthRouteStepFrame testID="restore-manual" title="Restore your Home">
+                    <RecoveryDraft />
+                </AuthRouteStepFrame>
+            </InjectedAuthProvider>
+        );
+        const screen = await renderScreen(content());
+        await act(async () => { screen.findByTestId('recovery-draft')!.props.onChangeText('in-progress recovery draft'); });
+        await screen.update(content('authenticated'));
+
+        expect(screen.findByTestId('unauth-shell-workflow-pane')).toBeTruthy();
+        expect(screen.findByTestId('recovery-draft')!.props.value).toBe('in-progress recovery draft');
+        await screen.unmount();
+    });
 
     it('keeps an in-progress recovery draft when resizing between phone and desktop', async () => {
         setLayoutFixture('mobile-workflow');

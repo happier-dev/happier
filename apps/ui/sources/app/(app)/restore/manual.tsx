@@ -3,9 +3,10 @@ import { Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { t } from '@/text';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { SecretKeyLoginForm } from '@/components/account/restore/SecretKeyLoginForm';
-import { admitInternalRouteHref, normalizeInternalReturnPath } from '@/utils/path/routeUtils';
+import { normalizeInternalReturnPath } from '@/utils/path/routeUtils';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { Text } from '@/components/ui/text/Text';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -60,6 +61,10 @@ export default function Restore() {
     const completedReturnTo = isApiTokenCreateResumeReturnPath(returnTo) && createResume && exactTarget
         ? buildApiTokenCreateResumePath(returnTo, createResume.draft, createResume.target)
         : returnTo;
+    const landAfterRestore = () => resolvePostAuthLanding({
+        replace: completedReturnTo ? router.replace : router.dismissTo,
+        returnTo: completedReturnTo,
+    });
 
     return (
         <AuthRouteStepFrame
@@ -80,10 +85,7 @@ export default function Restore() {
                                 scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()),
                                 refreshAuth: auth.refreshFromActiveServer,
                             });
-                            if (switched !== 'blocked') {
-                                if (completedReturnTo) router.replace(admitInternalRouteHref(completedReturnTo));
-                                else router.dismissTo('/');
-                            }
+                            if (switched !== 'blocked') landAfterRestore();
                         }}
                     />
                 ) : (
@@ -91,7 +93,7 @@ export default function Restore() {
                         {t('settingsAccount.nativePassword.serverUnavailable')}
                     </Text>
                 ) : (
-                    <SecretKeyLoginForm returnTo={completedReturnTo ?? '/'} onSuccess={completedReturnTo ? () => router.replace(admitInternalRouteHref(completedReturnTo)) : undefined} />
+                    <SecretKeyLoginForm returnTo={completedReturnTo ?? '/'} onSuccess={landAfterRestore} />
                 )}
             </>
         </AuthRouteStepFrame>
