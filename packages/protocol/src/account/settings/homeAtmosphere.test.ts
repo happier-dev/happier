@@ -24,3 +24,11 @@ describe('Home atmosphere Fade contract', () => {
         expect(accountSettingsParse({ homeAtmosphere: { ...value, looks: { sky: { ...value.looks.sky, fade: 0.55 } } } }).homeAtmosphere).toEqual(value);
     });
 });
+
+describe('stored Home moments', () => {
+    it('drops the retired Welcome moment from stored accounts while retaining the other moment switches', () => {
+        const homeAtmosphere = { ...DEFAULT_HOME_ATMOSPHERE, moments: { welcome: false, loading: false, qr: true } };
+        expect(accountSettingsParse({ homeAtmosphere }).homeAtmosphere.moments).toEqual({ loading: false, qr: true });
+        expect(HomeAtmosphereSchema.safeParse(homeAtmosphere).success).toBe(false);
+    });
+});

@@ -635,7 +635,6 @@ describe('AuthContext.login', () => {
         const { clearPersistence } = await import('@/sync/domains/state/persistence');
         await clearPersistence();
         onboardingHistoryState.set('brandHeroSeenAt', seenAt);
-        onboardingHistoryState.set('homeWelcomeSeenAt', seenAt);
         onboardingAuthHistoryState.set('completed', true);
         const { home } = await prepareHomes('home');
         await focusHome(home);
@@ -650,7 +649,6 @@ describe('AuthContext.login', () => {
             });
 
             expect(onboardingHistoryState.read('brandHeroSeenAt')).toBe(seenAt);
-            expect(onboardingHistoryState.read('homeWelcomeSeenAt')).toBe(seenAt);
             expect(onboardingAuthHistoryState.read('completed')).toBe(true);
             expect(getCurrentAuth()).toMatchObject({ isAuthenticated: false, credentials: null });
         } finally {

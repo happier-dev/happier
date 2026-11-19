@@ -35,8 +35,21 @@ export function useStoredPersonalizeProgress(): StoredPersonalizeProgress {
     return usePersistentUiStateValue(personalizeProgressState, 'progress') ?? EMPTY_PROGRESS;
 }
 
-export function useOnboardingHistoryTimestamp(key: 'brandHeroSeenAt' | 'homeWelcomeSeenAt'): number | null {
+export function useOnboardingHistoryTimestamp(key: 'brandHeroSeenAt'): number | null {
     return usePersistentUiStateValue(onboardingHistoryState, key) ?? null;
+}
+
+export function readOpeningSeenAt(): number | null {
+    return onboardingHistoryState.read('openingSeenAt') ?? null;
+}
+
+export function recordOpeningSeen(at: number): void {
+    try {
+        onboardingHistoryState.set('openingSeenAt', at);
+    } catch (error) {
+        if (!(error instanceof UiStatePersistenceError)) throw error;
+        console.warn('[ui-state] Could not remember the opening.');
+    }
 }
 
 export function useHasCompletedAuthOnce(): boolean {

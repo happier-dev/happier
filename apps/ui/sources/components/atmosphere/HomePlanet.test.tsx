@@ -3,7 +3,6 @@ import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { countStoreNotifications, renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
-import { onboardingHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { HomePlanet } from './HomePlanet';
 import { PlanetCanvas } from './PlanetCanvas';
@@ -11,7 +10,6 @@ import { AtmosphereRipple } from './AtmosphereRipple';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { AtmosphereDissolve } from './AtmosphereDissolve';
-import { useHomeWelcome, type HomeWelcome } from './moments/useHomeWelcome';
 
 const host = vi.hoisted(() => ({ appState: 'active', visibility: 'visible',
   appListeners: new Set<() => void>(), documentListeners: new Set<() => void>() }));
@@ -113,7 +111,6 @@ describe('Welcome digits subscription locality', () => {
     });
     previous = storage.getState();
     nativePictures.count = 0;
-    onboardingHistoryState.set('homeWelcomeSeenAt', null);
     storage.setState((state) => ({
       ...state,
       localSettings: { ...localSettingsDefaults },
@@ -184,7 +181,6 @@ describe('Welcome digits subscription locality', () => {
       interval(() => { ticks += 1; callback(...args); }, delay));
     let homeRenders = 0;
     let unrelatedRenders = 0;
-    let welcome: HomeWelcome;
     function Content() {
       unrelatedRenders += 1;
       return null;
@@ -198,12 +194,6 @@ describe('Welcome digits subscription locality', () => {
       }>,
     ) {
       homeRenders += 1;
-      welcome = useHomeWelcome({
-        eligible: props.eligible ?? true,
-        loadingShown: false,
-        reducedMotion: props.reducedMotion ?? false,
-        writing: props.writing ?? false,
-      });
       return (
         <>
           <Content />
@@ -215,21 +205,18 @@ describe('Welcome digits subscription locality', () => {
             theme="dark"
             phone={false}
             hero={null}
-            hidden={welcome.playing || props.hidden === true}
+            hidden={props.hidden === true}
             leave="fade"
             reducedMotion={props.reducedMotion ?? false}
             focused={props.eligible ?? true}
             writing={props.writing ?? false}
-            retype={welcome.retype}
+            retype
             answerFinishes
           />
         </>
       );
     }
     const screen = await renderScreen(<Home />);
-    await act(async () => {
-      welcome!.onLanded();
-    });
     const initialHomeRenders = homeRenders;
     const initialContentRenders = unrelatedRenders;
     const canvasProps = screen.findByType(PlanetCanvas).props;
@@ -293,7 +280,6 @@ describe('Welcome digits subscription locality', () => {
       vi.advanceTimersByTime(2000);
     });
     expect(ticks).toBe(atBlur + 1);
-    expect(welcome!.playing).toBe(false);
     await screen.unmount();
     expect(vi.getTimerCount()).toBe(0);
   });

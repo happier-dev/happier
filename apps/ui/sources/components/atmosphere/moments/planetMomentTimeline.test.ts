@@ -12,11 +12,10 @@ import {
   loadingPlanetPhase,
   loadingPlanetSource,
   loadingPlanetTravel,
-  welcomePlanetPhase,
   type LoadingPlanetPhase,
 } from './planetMomentTimeline';
 
-const { L4, W4 } = PLANET_MOMENT_TIMINGS;
+const { L4 } = PLANET_MOMENT_TIMINGS;
 const FRAME = 1 / 60;
 const pane = { width: 1150, height: 900 };
 
@@ -164,18 +163,5 @@ describe('Loading planet timeline', () => {
     expect(frames.find(({ phase }) => phase.kind === 'landed')!.t).toBeLessThan(
       ready + 0.14 + 2 * FRAME,
     );
-  });
-});
-
-describe('Welcome planet timeline', () => {
-  it('assembles once over 1.9 s, cross-fading into the rest at the end', () => {
-    expect(welcomePlanetPhase(0, false).kind).toBe('assembly');
-    const late = welcomePlanetPhase(W4.T - 0.05, false);
-    expect(late.kind === 'assembly' && late.restOpacity > 0.5).toBe(true);
-    expect(welcomePlanetPhase(W4.T, false)).toEqual({ kind: 'landed' });
-  });
-
-  it('shows the rest at once under reduced motion', () => {
-    expect(welcomePlanetPhase(0, true)).toEqual({ kind: 'landed' });
   });
 });

@@ -49,7 +49,11 @@ const ProjectAtmosphereObjectSchema = lazyDefinition(() => z.strictObject({
 export const ProjectAtmosphereSchema = defineStoredReadProjection(ProjectAtmosphereObjectSchema,
     () => z.pipe(z.transform(readAtmospherePlaces), createStoredReadSchema(z.strictObject(ProjectAtmosphereObjectSchema.shape))));
 const HomeAtmosphereObjectSchema = lazyDefinition(() => z.strictObject({
-    ...ProjectAtmosphereObjectSchema.shape, moments: z.record(z.string(), z.boolean()),
+    ...ProjectAtmosphereObjectSchema.shape,
+    moments: z.partial(z.strictObject({
+        loading: z.boolean(), send: z.boolean(), qr: z.boolean(), pairing: z.boolean(), themeSwitch: z.boolean(),
+        sessionFinished: z.boolean(), idleResettle: z.boolean(), releaseCaption: z.boolean(), yourHome: z.boolean(),
+    })),
 }));
 export const HomeAtmosphereSchema = defineStoredReadProjection(HomeAtmosphereObjectSchema,
     () => z.pipe(z.transform(readAtmospherePlaces), createStoredReadSchema(z.strictObject(HomeAtmosphereObjectSchema.shape))));
@@ -78,7 +82,7 @@ export function recordAtmospherePictureSelection<T extends AtmospherePresentatio
 export const DEFAULT_HOME_ATMOSPHERE: HomeAtmosphere = {
     source: 'planet', planet: { placement: 'corner', style: 'balanced', digits: true },
     picture: { ref: { kind: 'builtin', id: 'white-rocks-open-sea' }, layout: 'horizon' }, looks: {}, showOn: defaultAtmosphereShowOn('horizon'),
-    moments: { welcome: true, loading: true, send: true, qr: true, pairing: true, themeSwitch: true,
+    moments: { loading: true, send: true, qr: true, pairing: true, themeSwitch: true,
         sessionFinished: true, idleResettle: true, releaseCaption: true, yourHome: true },
 };
 

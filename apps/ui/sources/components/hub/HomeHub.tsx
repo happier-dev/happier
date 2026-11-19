@@ -80,8 +80,6 @@ import { HomePlanet, homePlanetFootFade, useHomePlanetOptions } from '@/componen
 import { HomeBotMoons } from './HomeBotMoons';
 import { homePlanetDrawnHeight, homePlanetGeometry, type HomePane } from '@/components/atmosphere/homePlanetPlacement';
 import { useHomeLoadingMoment } from '@/components/atmosphere/moments/homeLoadingMoment';
-import { WelcomePlanet } from '@/components/atmosphere/moments/WelcomePlanet';
-import { useHomeWelcome } from '@/components/atmosphere/moments/useHomeWelcome';
 import { useActiveHomeUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { AtmosphereTopChips } from '@/components/atmosphere/AtmosphereCreditChip';
@@ -509,8 +507,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const planetSource = atmosphere.source === 'planet';
     const [planetDrawn, setPlanetDrawn] = React.useState(planetSource);
     if (planetSource && !planetDrawn) setPlanetDrawn(true);
-    // The planet moments (plan R-11): Loading while Home's model is still coming on a cold start, and
-    // Welcome once on the first arrival. Both land exactly on the planet Home itself draws.
+    // Loading hands off to the same planet Home draws on a cold start.
     const homeTheme = theme.dark ? 'dark' as const : 'light' as const;
     const placement = atmosphere.planet.placement;
     const [hubPane, setHubPane] = React.useState<HomePane>({ width: 0, height: 0 });
@@ -537,11 +534,6 @@ const HomeHubContent = React.memo(function HomeHubContent() {
         waiting: homeLoading && isAtmosphereMomentOn(atmosphere.moments, 'loading'), start: 'mount', abort: homeUnavailable, paused: false,
         reducedMotion: atmosphere.reducedMotion, theme: homeTheme, pane: hubPane,
         home: homeReport, cover: <ItemList testID="home-hub.loading-cover">{null}</ItemList>,
-    });
-    const welcome = useHomeWelcome({
-        eligible: heroActive && planetSource && focused && planetOptions !== null && !loadingMoment.playing && !sending
-            && isAtmosphereMomentOn(atmosphere.moments, 'welcome'),
-        loadingShown: loadingMoment.shown, reducedMotion: atmosphere.reducedMotion, writing: heroFrame.isWriting,
     });
     // Home's menus and its Add surface float inside this column, never over the sidebar or the title bar.
     // Parked Home's glass sleeps through the backing of the tabs shown in its place.
@@ -690,9 +682,9 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                     {planetDrawn ? (
                         <HomePlanet pane={heroFrame.pane} placement={placement} style={atmosphere.planet.style} digits={atmosphere.planet.digits}
                             theme={homeTheme} phone={phone} hero={heroFrame.hero}
-                            hidden={dissolving || (!planetSource && pictureShown) || loadingMoment.hold.held || welcome.playing}
-                            arrive={loadingMoment.hold.arrive === 'instant' || welcome.arrive === 'instant' ? 'instant' : 'fade'}
-                            retype={welcome.retype} writing={heroFrame.isWriting} onDrawn={onHomePlanetDrawn}
+                            hidden={dissolving || (!planetSource && pictureShown) || loadingMoment.hold.held}
+                            arrive={loadingMoment.hold.arrive === 'instant' ? 'instant' : 'fade'}
+                            retype writing={heroFrame.isWriting} onDrawn={onHomePlanetDrawn}
                             onHidden={dissolving ? atmosphereStageStore.finishSendDissolve : undefined}
                             leave={dissolving ? 'climb' : 'fade'} reducedMotion={atmosphere.reducedMotion}
                             answerFinishes={planetSource && isAtmosphereMomentOn(atmosphere.moments, 'sessionFinished')} focused={focused} />
@@ -701,13 +693,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                         // Home's Bots as moons round the planet (plan U3): above the planet, under the hero.
                         <HomeBotMoons planet={planetOptions} width={heroFrame.pane.width}
                             height={homePlanetDrawnHeight(heroFrame.pane.height, planetFade)} placement={placement} phone={phone}
-                            keepOut={heroFrame.keepOut} shown={focused && !dissolving && !loadingMoment.hold.held && !welcome.playing} viewport={visibleWindow} />
-                    ) : null}
-                    {welcome.playing && planetOptions ? (
-                        // Welcome lands on Home's planet where it stands: under Home's content, scrolling with it.
-                        <WelcomePlanet pane={{ width: heroFrame.pane.width, height: homePlanetDrawnHeight(heroFrame.pane.height, planetFade) }} options={planetOptions} fade={planetFade}
-                            visible={focused && !sending && isAtmosphereMomentOn(atmosphere.moments, 'welcome')}
-                            writing={heroFrame.isWriting} reducedMotion={atmosphere.reducedMotion} onLanded={welcome.onLanded} />
+                            keepOut={heroFrame.keepOut} shown={focused && !dissolving && !loadingMoment.hold.held} viewport={visibleWindow} />
                     ) : null}
                     <HomeIdleResettle picture={atmosphere.source === 'picture' ? atmosphere.builtinPicture?.id ?? null : null}
                         focused={focused} writing={heroFrame.isWriting} sending={sending} />

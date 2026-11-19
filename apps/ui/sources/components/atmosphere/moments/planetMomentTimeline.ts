@@ -8,17 +8,13 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import type { HomePane } from '../homePlanetPlacement';
 
 /**
- * When the Welcome and Loading planet moments draw what (plan R-11). The frame maths are the brand
+ * When the Loading planet moment draw what (plan R-11). The frame maths are the brand
  * choreography's (`planetMomentFrame`); this module only decides, for a moment's clock, which of them
  * is on screen, where the planet stands while it travels, and when the moment has landed.
  */
 const { L4 } = PLANET_MOMENT_TIMINGS;
 /** The cross-fade that ends Loading under reduced motion, or centred when Home shows no planet. */
 const CROSSFADE_S = motionTokens.atmosphere.reducedCrossFadeMs / 1000;
-/** The rest after Welcome: about 15 % of the field digits re-type, each every 2 s (lab `rate: 0.5`). */
-export const WELCOME_RETYPE_RATE = 0.5;
-/** R-11's resting digits advance once every two seconds, without a frame loop. */
-export const WELCOME_RETYPE_STEP_S = 2;
 
 /** Where Loading's cloud gathers: the lab's centre of the pane, a sixth of its short side across. */
 export type PlanetMomentOrigin = Readonly<{
@@ -141,34 +137,4 @@ export function loadingPlanetTravel(
     cy: mix(source.cy, target.cy),
     R: mix(source.R, target.R),
   };
-}
-
-export type WelcomePlanetPhase =
-  | Readonly<{
-      kind: 'assembly';
-      frame: PlanetAssemblyProgress;
-      restOpacity: number;
-    }>
-  | Readonly<{ kind: 'landed' }>;
-
-/** Welcome at `t` seconds: the 1.9 s assembly onto Home's planet; under reduced motion, the rest at once. */
-export function welcomePlanetPhase(
-  t: number,
-  reducedMotion: boolean,
-): WelcomePlanetPhase {
-  if (reducedMotion) return { kind: 'landed' };
-  const frame = planetMomentFrame('welcome', t);
-  if (frame.rest || !frame.assembly) return { kind: 'landed' };
-  return {
-    kind: 'assembly',
-    frame: frame.frame,
-    restOpacity: frame.restAlpha ?? 0,
-  };
-}
-
-/** The rest's typewriter time after Welcome, stepped at the resting digit cadence. */
-export function welcomeRetypeTime(restSeconds: number): number {
-  return (
-    Math.floor(restSeconds / WELCOME_RETYPE_STEP_S) * WELCOME_RETYPE_STEP_S
-  );
 }

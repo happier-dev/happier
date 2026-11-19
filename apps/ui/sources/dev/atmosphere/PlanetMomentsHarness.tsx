@@ -3,10 +3,9 @@ import { createRoot } from 'react-dom/client';
 import { HomePlanet, homePlanetFootFade, useHomePlanetOptions, type HomePlanetLook } from '@/components/atmosphere/HomePlanet';
 import type { HomePlanetPlacement } from '@/components/atmosphere/homePlanetPlacement';
 import { useHomeLoadingMoment } from '@/components/atmosphere/moments/homeLoadingMoment';
-import { WelcomePlanet } from '@/components/atmosphere/moments/WelcomePlanet';
 
 /**
- * U8 harness: the product's Loading and Welcome moments on a Home pane in a real browser, driven by the
+ * U8 harness: the product's Loading moment on a Home pane in a real browser, driven by the
  * page clock so a still can be taken at any moment time, beside the lab's own stills. A plain page and a
  * mocked hero stand in for Home's content; the moment, hand-off and Home planet are the product's.
  */
@@ -74,26 +73,9 @@ function LoadingHome(props: Case) {
     );
 }
 
-function WelcomeHome(props: Case) {
-    const pane = React.useMemo(() => ({ width: props.width, height: props.height }), [props.height, props.width]);
-    const look: HomePlanetLook = { pane, placement: props.placement, style: 'balanced', digits: true, theme: props.theme, phone: false, hero: hero(props.placement, props.height) };
-    const options = useHomePlanetOptions(look);
-    const [landed, setLanded] = React.useState(false);
-    const onLanded = React.useCallback(() => setLanded(true), []);
-    return (
-        <div data-theme={props.theme} style={{ position: 'relative', width: props.width, height: props.height, overflow: 'hidden', background: PAGE[props.theme] }}>
-            <HomePlanet {...look} hidden={!landed} arrive="instant" leave="fade" reducedMotion={false} />
-            {!landed && options ? <WelcomePlanet pane={pane} options={options} visible writing={false}
-                reducedMotion={props.reducedMotion ?? false} onLanded={onLanded} /> : null}
-            <HomeContent theme={props.theme} width={props.width} height={props.height} />
-        </div>
-    );
-}
-
 let generation = 0;
 const harness = {
     loading(input: Case) { root.render(<LoadingHome key={++generation} {...input} />); },
-    welcome(input: Case) { root.render(<WelcomeHome key={++generation} {...input} />); },
     clear() { root.render(null); },
     /** Canvas pixels by test id, for the hand-off identity check. */
     pixels(testID: string) {

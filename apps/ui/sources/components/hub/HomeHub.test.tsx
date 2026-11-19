@@ -17,7 +17,6 @@ import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/p
 import { HomeHub } from './HomeHub';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { storage } from '@/sync/domains/state/storage';
-import { onboardingHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -38,7 +37,6 @@ import { Text } from '@/components/ui/text/Text';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { decryptArtifactWithBody } from '@/sync/engine/artifacts/syncArtifacts';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
-import { WelcomePlanet } from '@/components/atmosphere/moments/WelcomePlanet';
 import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas';
 import { HomeCompletedBots } from './HomeCompletedBots';
 import { HomeBotFaces } from './HomeBotFaces';
@@ -276,7 +274,6 @@ async function renderHome(request = artifact.request, initial: 'stored' | 'missi
         storage.setState({ isDataReady: true, profileScope: scope, settingsScope: scope });
     }
     if (settings.measureAtmosphere) {
-        onboardingHistoryState.set('homeWelcomeSeenAt', null);
         storage.setState(state => ({ ...state,
         settings: { ...state.settings, homeAtmosphere: { ...state.settings.homeAtmosphere,
             source: 'planet', moments: { ...state.settings.homeAtmosphere.moments, welcome: true, loading: false },
@@ -453,9 +450,8 @@ describe('HomeHub', () => {
         }
     });
 
-    it('parks planet paints, moments and timers with retained Home and returns without replaying Welcome', async () => {
+    it('parks planet paints, moments and timers with retained Home and resumes their paints', async () => {
         const before = storage.getState();
-        const previousWelcomeSeenAt = onboardingHistoryState.read('homeWelcomeSeenAt') ?? null;
         settings.presented = true;
         settings.measureAtmosphere = true;
         vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame', 'Date', 'performance'] });
@@ -477,12 +473,6 @@ describe('HomeHub', () => {
                     } });
                 }
             });
-            // A first arrival exercises the real Welcome state owner; landing it enters digit rest.
-            const welcome = screen.findByType(WelcomePlanet);
-            await act(async () => welcome.props.onLanded());
-            expect(screen.findAllByType(WelcomePlanet)).toHaveLength(0);
-            const seen = onboardingHistoryState.read('homeWelcomeSeenAt');
-            expect(seen).not.toBeNull();
             const restingPaints = atmospherePaints.count;
             await act(async () => { vi.advanceTimersByTime(2000); });
             expect(atmospherePaints.count).toBeGreaterThan(restingPaints);
@@ -500,8 +490,6 @@ describe('HomeHub', () => {
             expect(atmosphereStageStore.get().panes).toHaveLength(0);
             settings.presented = true;
             await screen.rerender();
-            expect(screen.findAllByType(WelcomePlanet)).toHaveLength(0);
-            expect(onboardingHistoryState.read('homeWelcomeSeenAt')).toBe(seen);
             const resumedPaints = atmospherePaints.count;
             await act(async () => { vi.advanceTimersByTime(2000); });
             expect(atmospherePaints.count).toBeGreaterThan(resumedPaints);
@@ -510,7 +498,6 @@ describe('HomeHub', () => {
             storage.setState(state => ({ ...state,
                 settings: { ...state.settings, homeAtmosphere: before.settings.homeAtmosphere },
             }));
-            onboardingHistoryState.set('homeWelcomeSeenAt', previousWelcomeSeenAt);
             timers.stop();
             vi.restoreAllMocks();
             vi.useRealTimers();

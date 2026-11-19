@@ -632,7 +632,7 @@ describe('Home Atmosphere editor through declared Settings Actions', () => {
             const staleHomeUpdate = editor.getCurrent().updateHome;
             const currentHome = { ...account.persistedSettings.homeAtmosphere, source: 'picture' as const,
                 picture: { ref: { kind: 'user' as const, localId }, layout: 'horizon' as const },
-                showOn: ['home', 'new-session', 'projects', 'sessions'], moments: { ...account.persistedSettings.homeAtmosphere.moments, welcome: false },
+                showOn: ['home', 'new-session', 'projects', 'sessions'], moments: { ...account.persistedSettings.homeAtmosphere.moments, qr: false },
                 looks: { 'acme.gallery/aurora': { look: 'fine' as const, strength: 1 }, [localId]: { look: 'engraving' as const } },
             };
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings, homeAtmosphere: currentHome })); });

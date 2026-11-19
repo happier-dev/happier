@@ -40,7 +40,6 @@ export function AtmosphereAppearanceRows() {
 
 /** The moments the Home atmosphere declares (its default map), each with its title and description. */
 const MOMENT_COPY = {
-  welcome: ['momentWelcome', 'momentWelcomeNote'],
   loading: ['momentLoading', 'momentLoadingNote'],
   send: ['momentSend', 'momentSendNote'],
   qr: ['momentQr', 'momentQrNote'],

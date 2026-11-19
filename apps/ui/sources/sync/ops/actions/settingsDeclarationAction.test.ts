@@ -460,7 +460,7 @@ describe('Home atmosphere settings declarations', () => {
     });
     it('discovers and edits every Home control while rebasing nested edits over sibling changes', async () => {
         const owner = createOwner(undefined, false, true, settingsDefaults, undefined, settings => ({
-            ...settings, homeAtmosphere: { ...settings.homeAtmosphere, moments: { ...settings.homeAtmosphere.moments, welcome: false } },
+            ...settings, homeAtmosphere: { ...settings.homeAtmosphere, moments: { ...settings.homeAtmosphere.moments, qr: false } },
         }), undefined, undefined, undefined, {});
         const choices = [
             ['atmosphereSource', 'picture'], ['atmospherePlanetPlacement', 'rise'], ['atmospherePlanetStyle', 'rich'],
@@ -475,7 +475,7 @@ describe('Home atmosphere settings declarations', () => {
         for (const [id, value] of choices) {
             expect(await owner.action({ actionId: 'settings.set', input: { anchor: `appearance.${id}`, value } }))
                 .toEqual({ anchor: `appearance.${id}`, value });
-            if (id === 'atmospherePlanetStyle') expect(owner.account().homeAtmosphere.moments.welcome).toBe(false);
+            if (id === 'atmospherePlanetStyle') expect(owner.account().homeAtmosphere.moments.qr).toBe(false);
         }
         expect(owner.account().homeAtmosphere).toMatchObject({ source: 'picture',
             planet: { placement: 'rise', style: 'rich', digits: false },
