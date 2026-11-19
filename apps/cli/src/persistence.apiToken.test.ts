@@ -89,12 +89,13 @@ describe('readStoredCredentials API Token selection', () => {
       await mkdir(dirname(otherProfilePath), { recursive: true });
       const otherProfileCredential = JSON.stringify({ token: `hdr.${payload}.sig` });
       await writeFile(otherProfilePath, otherProfileCredential);
-      const { readStoredCredentials, readStoredCredentialsForServerId } = await import('./persistence');
-      // Doctor's inactive-profile inspection is read-only, not an invocation using that bearer.
-      await expect(readStoredCredentialsForServerId('other-profile')).resolves.toMatchObject({ token: `hdr.${payload}.sig` });
+      const { readStoredCredentialCustodyForServerId, readStoredCredentials, readStoredCredentialsForServerId } = await import('./persistence');
+      await expect(readStoredCredentialCustodyForServerId('other-profile')).resolves.toMatchObject({ token: `hdr.${payload}.sig` });
+      await expect(readStoredCredentialsForServerId('other-profile')).rejects.toMatchObject({ code: 'cli_relogin_required' });
       await expect(readFile(otherProfilePath, 'utf8')).resolves.toBe(otherProfileCredential);
       await expect(readStoredCredentials()).rejects.toMatchObject({ code: 'cli_relogin_required' });
       await expect(readStoredCredentials()).rejects.toMatchObject({ code: 'cli_relogin_required' });
+      await expect(readStoredCredentialsForServerId(configuration.activeServerId)).rejects.toMatchObject({ code: 'cli_relogin_required' });
       await expect(readFile(configuration.privateKeyFile, 'utf8')).resolves.toBe(activeCredential);
     });
   });
@@ -160,13 +161,14 @@ describe('readStoredCredentials API Token selection', () => {
       await mkdir(dirname(selectedPath), { recursive: true });
       await writeFile(selectedPath, JSON.stringify({ token: 'selected-fixture-bearer' }));
       const originalConfiguration = configuration;
-      const { readStoredCredentials } = await import('./persistence');
+      const { readStoredCredentials, readStoredCredentialsForServerId } = await import('./persistence');
       await expect(readStoredCredentials({ serverId: configuration.activeServerId })).resolves.toMatchObject({ token: 'current-fixture-bearer' });
       await expect(readStoredCredentials({ serverId: '../outside-home' })).resolves.toBeNull();
       await expect(readStoredCredentials({ serverId: 'selected-home' })).resolves.toMatchObject({ token: 'selected-fixture-bearer' });
       await expect(readStoredCredentials({ serverId: 'missing-home' })).resolves.toBeNull();
       envScope.patch({ HAPPIER_TOKEN: SYNTHETIC_API_TOKEN });
       await expect(readStoredCredentials({ serverId: 'selected-home' })).resolves.toMatchObject({ token: SYNTHETIC_API_TOKEN, credentialProvenance: 'api_token' });
+      await expect(readStoredCredentialsForServerId('selected-home')).resolves.toMatchObject({ token: 'selected-fixture-bearer', credentialProvenance: 'stored_session' });
       envScope.patch({ HAPPIER_TOKEN: undefined });
       const payload = Buffer.from(JSON.stringify({ sub: 'account-a', provenance: {
         v: 1, kind: 'account', authority: 'present_user',

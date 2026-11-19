@@ -3,7 +3,7 @@ import { cmd, fail, gray, neutral, ok, warn } from '@happier-dev/cli-common/outp
 
 import { fetchAccountEncryptionCurrentnessFromServer } from '@/api/client/accountEncryptionCurrentness';
 import { configuration } from '@/configuration';
-import { readAccountE2eeCustody, readStoredCredentialsForServerId, writeAccountE2eeCustodyForServerId } from '@/persistence';
+import { readAccountE2eeCustody, readStoredCredentialCustodyForServerId, writeAccountE2eeCustodyForServerId } from '@/persistence';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 
@@ -16,7 +16,7 @@ export async function handleAuthKeepEncryptionKeys(argv: string[] = [], signal?:
   signal?.throwIfAborted();
   await applyServerSelectionFromArgs(argv);
   const serverId = configuration.activeServerId;
-  const credentials = await readStoredCredentialsForServerId(serverId);
+  const credentials = await readStoredCredentialCustodyForServerId(serverId);
   if (!credentials) {
     console.log(fail('Not authenticated'));
     console.log(gray(`  Run ${cmd('happier auth login')} to sign in.`));

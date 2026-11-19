@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { configuration, reloadConfiguration } from '@/configuration';
-import { readStoredCredentialsForServerId, writeCredentialsLegacy } from '@/persistence';
+import { readStoredCredentialCustodyForServerId, writeCredentialsLegacy } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
@@ -51,10 +51,10 @@ describe('happier auth keep-encryption-keys', () => {
     await withHome('plain', async () => {
       answers.next = ['n'];
       await handleAuthCommand(['keep-encryption-keys']);
-      expect(await readStoredCredentialsForServerId(configuration.activeServerId)).not.toHaveProperty('accountE2eeCustody');
+      expect(await readStoredCredentialCustodyForServerId(configuration.activeServerId)).not.toHaveProperty('accountE2eeCustody');
       answers.next = ['y'];
       await handleAuthCommand(['keep-encryption-keys']);
-      expect(await readStoredCredentialsForServerId(configuration.activeServerId))
+      expect(await readStoredCredentialCustodyForServerId(configuration.activeServerId))
         .toMatchObject({ token: bearer, encryption: { type: 'legacy', secret }, accountE2eeCustody: 'historical' });
       expect(answers.asked).toBe(2);
     });
@@ -64,7 +64,7 @@ describe('happier auth keep-encryption-keys', () => {
     await withHome('e2ee', async () => {
       await handleAuthCommand(['keep-encryption-keys']);
       expect(answers.asked).toBe(0);
-      expect(await readStoredCredentialsForServerId(configuration.activeServerId)).not.toHaveProperty('accountE2eeCustody');
+      expect(await readStoredCredentialCustodyForServerId(configuration.activeServerId)).not.toHaveProperty('accountE2eeCustody');
     });
   });
 });

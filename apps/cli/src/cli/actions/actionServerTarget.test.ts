@@ -73,7 +73,35 @@ it.each(['explicit', 'ambient'] as const)('qualifies a URL-only Home from authen
   });
 });
 
-const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
+const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL',
+  'HAPPIER_TOKEN', 'HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE']);
+
+it('requires re-login for an obsolete credential even when the same saved Home is selected explicitly', async () => {
+  await withTempDir('happier-action-relogin-', async homeDir => {
+    envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
+      HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined,
+      HAPPIER_TOKEN: undefined, HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE: undefined });
+    reloadConfiguration();
+    const { addServerProfile, getServerProfile } = await import('@/server/serverProfiles');
+    const { resolveActionCliCredentialTarget } = await import('./actionServerTarget');
+    const serverUrl = 'https://relogin-home.example.test';
+    const profile = await addServerProfile({ name: 'relogin', serverUrl, webappUrl: serverUrl, use: true });
+    reloadConfiguration();
+    const payload = Buffer.from(JSON.stringify({ sub: 'account-a', provenance: {
+      v: 1, kind: 'account', authority: 'present_user',
+    } })).toString('base64url');
+    await writeCredentialsTokenOnlyForServerId(profile.id, { token: `hdr.${payload}.sig` });
+    const fetchBoundary = vi.fn<typeof fetch>(async () => Response.json({}));
+    vi.stubGlobal('fetch', fetchBoundary);
+    const deps = { readCredentialsFn: readStoredCredentials,
+      readCredentialsForServerIdFn: readStoredCredentialsForServerId, getServerProfileFn: getServerProfile };
+    await expect(resolveActionCliCredentialTarget({ requestedServerId: null, deps }))
+      .rejects.toMatchObject({ code: 'cli_relogin_required' });
+    await expect(resolveActionCliCredentialTarget({ requestedServerId: profile.id, deps }))
+      .rejects.toMatchObject({ code: 'cli_relogin_required' });
+    expect(fetchBoundary).not.toHaveBeenCalled();
+  });
+});
 
 it.each(['public', 'missing-identity', 'descriptor-mismatch', 'profile-mismatch'] as const)(
   'refuses an invocation-only Home identity from %s features', async scenario => {

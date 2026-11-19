@@ -17,7 +17,7 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import { configuration, reloadConfiguration } from '@/configuration';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import {
-  readStoredCredentialsForServerId,
+  readStoredCredentialCustodyForServerId,
   removeStoredCredentialsForServerId,
   writeCredentialsTokenOnlyForServerId,
 } from '@/persistence';
@@ -126,10 +126,10 @@ export async function createLocalPersonalHome(
         throw error;
       });
       if (profile?.homeConnectionDescriptor?.homeServerIdentityId === serverIdentityId) {
-        const credentials = await readStoredCredentialsForServerId(profile.id);
+        const credentials = await readStoredCredentialCustodyForServerId(profile.id);
         if (credentials) return credentials;
       }
-      return await readStoredCredentialsForServerId(serverIdentityId);
+      return await readStoredCredentialCustodyForServerId(serverIdentityId);
     };
     const result = await runPersonalHomeBootstrapFromSystemTasks({
       deps: {
@@ -167,7 +167,7 @@ export async function createLocalPersonalHome(
         },
         persistCredentials: async ({ serverIdentityId, credentials }) => {
           await writeCredentialsTokenOnlyForServerId(serverIdentityId, credentials);
-          const readback = await readStoredCredentialsForServerId(serverIdentityId);
+          const readback = await readStoredCredentialCustodyForServerId(serverIdentityId);
           return readback?.token === credentials.token && readback?.encryption === null;
         },
         verifyAuthenticatedAccess: async ({ endpoint, token }) => {
@@ -208,12 +208,12 @@ export async function createLocalPersonalHome(
             use: false,
           });
           if (adopted.profile.id !== serverIdentityId) {
-            const provisionalCredentials = await readStoredCredentialsForServerId(serverIdentityId);
-            const credentials = provisionalCredentials ?? await readStoredCredentialsForServerId(adopted.profile.id);
+            const provisionalCredentials = await readStoredCredentialCustodyForServerId(serverIdentityId);
+            const credentials = provisionalCredentials ?? await readStoredCredentialCustodyForServerId(adopted.profile.id);
             if (!credentials?.token || credentials.encryption !== null) throw new Error('Verified Personal Home credentials are unavailable.');
             if (provisionalCredentials) {
               await writeCredentialsTokenOnlyForServerId(adopted.profile.id, { token: credentials.token });
-              const copied = await readStoredCredentialsForServerId(adopted.profile.id);
+              const copied = await readStoredCredentialCustodyForServerId(adopted.profile.id);
               if (copied?.token !== credentials.token || copied.encryption !== null) {
                 throw new Error('Personal Home profile credential move could not be verified.');
               }

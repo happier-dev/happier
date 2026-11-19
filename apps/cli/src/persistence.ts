@@ -836,7 +836,7 @@ export async function readAccountE2eeCustodyForToken(token: string): Promise<Acc
   }
   const serverIds = await readdir(configuration.serversDir).catch(() => [] as string[]);
   for (const serverId of new Set([configuration.activeServerId, ...serverIds, 'cloud'])) {
-    const stored = await readStoredCredentialsForServerId(serverId).catch(() => null);
+    const stored = await readStoredCredentialCustodyForServerId(serverId).catch(() => null);
     if (stored?.token === token) return readAccountE2eeCustody(stored);
   }
   return 'absent';
@@ -848,7 +848,7 @@ export async function writeAccountE2eeCustodyForServerId(
   expectedToken: string,
   custody: 'active' | 'historical',
 ): Promise<boolean> {
-  const stored = await readStoredCredentialsForServerId(serverIdRaw);
+  const stored = await readStoredCredentialCustodyForServerId(serverIdRaw);
   if (!stored?.encryption || stored.token !== expectedToken) return false;
   const { accountE2eeCustody: _previous, ...material } = stored;
   await writeStoredCredentialsForServerId(serverIdRaw, custody === 'historical' ? { ...material, accountE2eeCustody: 'historical' } : material);
@@ -944,17 +944,22 @@ export async function readStoredCredentials(
   const primaryPath = options.serverId === undefined
     ? configuration.privateKeyFile
     : join(configuration.serversDir, serverId, 'access.key');
-  const legacyPath = configuration.legacyPrivateKeyFile;
-  const canUseLegacy =
-    serverId === 'cloud' &&
-    existsSync(legacyPath) &&
-    !existsSync(primaryPath);
-
-  const path = existsSync(primaryPath) ? primaryPath : canUseLegacy ? legacyPath : null;
-  return path ? await readStoredCredentialsFile(path, { refuseAccountBearer: true }) : null;
+  return await readStoredProfileCredentialFile(serverId, primaryPath, 'invocation');
 }
 
-async function readStoredCredentialsFile(path: string, options?: Readonly<{ refuseAccountBearer: boolean }>): Promise<StoredCredentials | null> {
+type StoredCredentialReadPurpose = 'invocation' | 'custody';
+
+async function readStoredProfileCredentialFile(
+  serverId: string,
+  primaryPath: string,
+  purpose: StoredCredentialReadPurpose,
+): Promise<StoredCredentials | null> {
+  const legacyPath = configuration.legacyPrivateKeyFile;
+  const path = existsSync(primaryPath) ? primaryPath : serverId === 'cloud' && existsSync(legacyPath) ? legacyPath : null;
+  return path ? await readStoredCredentialsFile(path, purpose) : null;
+}
+
+async function readStoredCredentialsFile(path: string, purpose: StoredCredentialReadPurpose): Promise<StoredCredentials | null> {
   try {
     const keyBase64 = (await readFile(path, 'utf8'));
     const credentials = credentialsSchema.parse(JSON.parse(keyBase64));
@@ -962,11 +967,11 @@ async function readStoredCredentialsFile(path: string, options?: Readonly<{ refu
     // This unsigned marker only refuses an obsolete bearer. The Home still
     // verifies every credential; this read never grants authority. A read never
     // rewrites the key file: the next deliberate login replaces it.
-    const payload = decodeJwtPayload(credentials.token);
-    const provenance = payload && typeof payload.sub === 'string' && payload.sub.trim()
-      ? readAuthTokenProvenance(payload, { allowLegacyHome: true }) : null;
-    if (options?.refuseAccountBearer && provenance?.provenance.kind === 'account') {
-      throw new CliReloginRequiredError();
+    if (purpose === 'invocation') {
+      const payload = decodeJwtPayload(credentials.token);
+      const provenance = payload && typeof payload.sub === 'string' && payload.sub.trim()
+        ? readAuthTokenProvenance(payload, { allowLegacyHome: true }) : null;
+      if (provenance?.provenance.kind === 'account') throw new CliReloginRequiredError();
     }
     return decodeStoredCredentials(credentials);
   } catch (error) {
@@ -984,12 +989,17 @@ async function readStoredCredentialsFile(path: string, options?: Readonly<{ refu
   }
 }
 
-/**
- * Read the actual stored credential for one configured profile without making
- * that profile active. Doctor uses this for inactive profiles so historical
- * account metadata is never presented as proof that a bearer still exists.
- */
-export async function readStoredCredentialsForServerId(serverIdRaw: string): Promise<StoredCredentials | null> {
+/** Use the exact profile's credential for execution, excluding the invocation's ambient API token. */
+export function readStoredCredentialsForServerId(serverId: string): Promise<StoredCredentials | null> {
+  return readStoredProfileCredentials(serverId, 'invocation');
+}
+
+/** Inspect exact stored material for local custody, migration, or enrollment readback. */
+export function readStoredCredentialCustodyForServerId(serverId: string): Promise<StoredCredentials | null> {
+  return readStoredProfileCredentials(serverId, 'custody');
+}
+
+async function readStoredProfileCredentials(serverIdRaw: string, purpose: StoredCredentialReadPurpose): Promise<StoredCredentials | null> {
   const serverId = String(serverIdRaw ?? '').trim();
   if (!isServerIdFilesystemSafe(serverId)) return null;
   // A saved-Home selector cannot escape the child's authoritative custody or
@@ -998,11 +1008,7 @@ export async function readStoredCredentialsForServerId(serverIdRaw: string): Pro
     return await readStoredCredentials({ serverId });
   }
   const primaryPath = join(configuration.serversDir, serverId, 'access.key');
-  if (existsSync(primaryPath)) return await readStoredCredentialsFile(primaryPath);
-  if (serverId === 'cloud' && existsSync(configuration.legacyPrivateKeyFile)) {
-    return await readStoredCredentialsFile(configuration.legacyPrivateKeyFile);
-  }
-  return null;
+  return await readStoredProfileCredentialFile(serverId, primaryPath, purpose);
 }
 
 export async function writeCredentialsLegacy(credentials: { secret: Uint8Array, token: string }): Promise<void> {

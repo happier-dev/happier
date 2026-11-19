@@ -156,6 +156,12 @@ function readyFeatures(state: RuntimeState) {
   };
 }
 
+// Settle the release boundary's partial mock and the startup graph during
+// collection, before starting the first case's bootstrap clock.
+const { writePersonalHomeServerArtifactCapability: writeInitialArtifactCapability } =
+  await import('@happier-dev/cli-common/firstPartyRuntime');
+const { createLocalPersonalHome: createInitialPersonalHome } = await import('./createLocalPersonalHome');
+
 describe('createLocalPersonalHome production adapter', () => {
   const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL'] as const;
   let envScope = createEnvKeyScope(envKeys);
@@ -189,20 +195,15 @@ describe('createLocalPersonalHome production adapter', () => {
         source: 'https://release.example.test/server.tar.gz',
         cleanup,
       });
-      // Settle the release boundary's partial mock before loading consumers;
-      // parallel first imports can enter its real graph during importOriginal.
-      const { writePersonalHomeServerArtifactCapability } = await import('@happier-dev/cli-common/firstPartyRuntime');
       const [
         { adoptServerProfileHomeConnectionDescriptor },
-        { createLocalPersonalHome },
-        { readStoredCredentialsForServerId },
+        { readStoredCredentialCustodyForServerId, readStoredCredentialsForServerId },
       ] = await Promise.all([
         import('@/server/serverProfiles'),
-        import('./createLocalPersonalHome'),
         import('@/persistence'),
       ]);
       (await import('@/configuration')).reloadConfiguration();
-      await writePersonalHomeServerArtifactCapability(payloadRoot);
+      await writeInitialArtifactCapability(payloadRoot);
 
       const preexisting = await adoptServerProfileHomeConnectionDescriptor({
         descriptor,
@@ -216,6 +217,10 @@ describe('createLocalPersonalHome production adapter', () => {
       const mutations: string[] = [];
       const start = installRunner({ homeDir, state, mutations });
       boundaries.fetchFeatures.mockImplementation(async () => readyFeatures(state));
+      const payload = Buffer.from(JSON.stringify({ sub: 'personal-home-account', provenance: {
+        v: 1, kind: 'account', authority: 'present_user',
+      } })).toString('base64url');
+      const legacyAccountToken = `hdr.${payload}.sig`;
       let authRequests = 0;
       vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
         const url = String(input);
@@ -223,13 +228,13 @@ describe('createLocalPersonalHome production adapter', () => {
         if (url.endsWith('/v1/auth')) {
           authRequests += 1;
           return authRequests === 1
-            ? new Response(JSON.stringify({ token: 'home-token' }), { status: 200 })
+            ? new Response(JSON.stringify({ token: legacyAccountToken }), { status: 200 })
             : new Response(JSON.stringify({ error: 'signup-disabled' }), { status: 403 });
         }
         throw new Error(`Unexpected network request: ${url}`);
       }));
 
-      const result = await createLocalPersonalHome({ channel: 'dev', mode: 'user' });
+      const result = await createInitialPersonalHome({ channel: 'dev', mode: 'user' });
 
       expect(result).toEqual({
         profileId: preexisting.profile.id,
@@ -240,11 +245,14 @@ describe('createLocalPersonalHome production adapter', () => {
       });
       expect(mutations).toEqual(['install:true', 'install:false']);
       expect(start).toHaveBeenCalled();
-      await expect(readStoredCredentialsForServerId(preexisting.profile.id)).resolves.toMatchObject({ token: 'home-token', encryption: null });
-      await expect(readStoredCredentialsForServerId(serverIdentityId)).resolves.toBeNull();
+      await expect(readStoredCredentialCustodyForServerId(preexisting.profile.id))
+        .resolves.toMatchObject({ token: legacyAccountToken, encryption: null });
+      await expect(readStoredCredentialCustodyForServerId(serverIdentityId)).resolves.toBeNull();
+      await expect(readStoredCredentialsForServerId(preexisting.profile.id))
+        .rejects.toMatchObject({ code: 'cli_relogin_required' });
       await expect(readdir(join(homeDir, 'personal-home-bootstrap'))).resolves.toEqual([]);
 
-      const repeated = await createLocalPersonalHome({ channel: 'dev', mode: 'user' });
+      const repeated = await createInitialPersonalHome({ channel: 'dev', mode: 'user' });
       expect(repeated).toEqual({
         profileId: preexisting.profile.id,
         homeServerIdentityId: serverIdentityId,
@@ -253,8 +261,9 @@ describe('createLocalPersonalHome production adapter', () => {
         descriptor,
       });
       expect(authRequests).toBe(3);
-      await expect(readStoredCredentialsForServerId(preexisting.profile.id)).resolves.toMatchObject({ token: 'home-token', encryption: null });
-      await expect(readStoredCredentialsForServerId(serverIdentityId)).resolves.toBeNull();
+      await expect(readStoredCredentialCustodyForServerId(preexisting.profile.id))
+        .resolves.toMatchObject({ token: legacyAccountToken, encryption: null });
+      await expect(readStoredCredentialCustodyForServerId(serverIdentityId)).resolves.toBeNull();
       expect(cleanup).toHaveBeenCalledTimes(2);
     });
   }, 90_000);
@@ -280,6 +289,7 @@ describe('createLocalPersonalHome production adapter', () => {
       const { listServerProfiles } = await import('@/server/serverProfiles');
       const { readStoredCredentialsForServerId } = await import('@/persistence');
       const { createLocalPersonalHome } = await import('./createLocalPersonalHome');
+      const previousProfiles = await listServerProfiles();
       await expect(createLocalPersonalHome({ channel: 'stable', mode: 'user' })).rejects.toMatchObject({
         code: 'personal_home_artifact_update_required',
       });
@@ -287,7 +297,7 @@ describe('createLocalPersonalHome production adapter', () => {
       expect(start).not.toHaveBeenCalled();
       expect(boundaries.fetchFeatures).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
-      expect((await listServerProfiles()).map((profile) => profile.id)).toEqual(['cloud']);
+      expect(await listServerProfiles()).toEqual(previousProfiles);
       await expect(readStoredCredentialsForServerId(serverIdentityId)).resolves.toBeNull();
       await expect(readdir(join(homeDir, 'personal-home-bootstrap'))).rejects.toMatchObject({ code: 'ENOENT' });
       expect(cleanup).toHaveBeenCalledOnce();
@@ -360,11 +370,12 @@ describe('createLocalPersonalHome production adapter', () => {
         throw new Error(`Unexpected network request: ${url}`);
       }));
 
+      const previousProfiles = await listServerProfiles();
       await expect(createLocalPersonalHome({ channel: 'dev', mode: 'user' })).rejects.toThrow('account-creation-failed');
 
       expect(start).toHaveBeenCalled();
       expect(mutations).toEqual(['install:true']);
-      expect((await listServerProfiles()).map((profile) => profile.id)).toEqual(['cloud']);
+      expect(await listServerProfiles()).toEqual(previousProfiles);
       await expect(readStoredCredentialsForServerId(serverIdentityId)).resolves.toBeNull();
       // Pending seed custody intentionally remains retryable; it is not profile or credential authority.
       expect((await readdir(join(homeDir, 'personal-home-bootstrap'))).length).toBeGreaterThan(0);

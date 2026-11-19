@@ -1298,7 +1298,7 @@ describe('production CLI Account Service approval continuation', () => {
 
     await expect(result).resolves.toMatchObject({ kind: 'home_entered' });
     const persistence = await import('@/persistence');
-    expect(await persistence.readStoredCredentialsForServerId(adopted.profile.id)).toMatchObject({
+    expect(await persistence.readStoredCredentialCustodyForServerId(adopted.profile.id)).toMatchObject({
       token: refreshedToken, encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
       ...(custody ? { accountE2eeCustody: custody } : {}),
     });

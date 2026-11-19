@@ -40,7 +40,7 @@ import {
   useServerProfile,
 } from '@/server/serverProfiles';
 import {
-  readStoredCredentialsForServerId,
+  readStoredCredentialCustodyForServerId,
   writeStoredCredentialsForServerId,
 } from '@/persistence';
 import { runWithServerProfileSelection } from '@/server/serverSelection';
@@ -738,7 +738,7 @@ export async function runCliAccountServiceSetupEntry(
             throw Object.assign(new Error('Home encryption mode unavailable'), { stage: 'material' });
           }
 
-          const committed = await readStoredCredentialsForServerId(inputValue.profileId);
+          const committed = await readStoredCredentialCustodyForServerId(inputValue.profileId);
           if (!committed || committed.token !== inputValue.credential.token) {
             throw new Error('Committed Home credential is unavailable');
           }
@@ -860,7 +860,7 @@ export async function runCliAccountServiceSetupEntry(
             commitHomeCredential: async ({ transport, home, credential }) => {
               const profileId = profileIds.get(home.homeServerIdentityId);
               if (!profileId) throw new Error('Home profile was not adopted');
-              const existing = await readStoredCredentialsForServerId(profileId);
+              const existing = await readStoredCredentialCustodyForServerId(profileId);
               const existingMaterialMatchesAccount = existing?.encryption
                 ? resolveAccountSettingsCachePath({ token: existing.token })
                   === resolveAccountSettingsCachePath({ token: credential.token })

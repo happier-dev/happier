@@ -22,7 +22,7 @@ describe('same-Account historical credential refresh', () => {
       const { configuration } = await import('@/configuration');
       await mkdir(dirname(configuration.privateKeyFile), { recursive: true });
       await writeFile(configuration.privateKeyFile, JSON.stringify(vector));
-      expect(await persistence.readStoredCredentialsForServerId(configuration.activeServerId)).toMatchObject({ token: vector.token, encryption });
+      expect(await persistence.readStoredCredentialCustodyForServerId(configuration.activeServerId)).toMatchObject({ token: vector.token, encryption });
     });
   });
 
@@ -37,9 +37,9 @@ describe('same-Account historical credential refresh', () => {
       const next = token('alice', 'new');
       if (explicit) await persistence.writeCredentialsTokenOnlyForServerId(configuration.activeServerId, { token: next });
       else await persistence.writeCredentialsTokenOnly({ token: next });
-      expect(await persistence.readStoredCredentialsForServerId(configuration.activeServerId)).toMatchObject({ token: next, encryption: { type: 'legacy', secret } });
+      expect(await persistence.readStoredCredentialCustodyForServerId(configuration.activeServerId)).toMatchObject({ token: next, encryption: { type: 'legacy', secret } });
       await persistence.writeStoredCredentialsForServerId(configuration.activeServerId, { token: next, encryption: null });
-      expect(await persistence.readStoredCredentialsForServerId(configuration.activeServerId)).toMatchObject({ encryption: null });
+      expect(await persistence.readStoredCredentialCustodyForServerId(configuration.activeServerId)).toMatchObject({ encryption: null });
     });
   });
 
@@ -54,7 +54,7 @@ describe('same-Account historical credential refresh', () => {
       await writeFile(configuration.privateKeyFile, JSON.stringify({ secret: Buffer.from(secret).toString('base64') }));
       await persistence.updateSettings(settings => ({ ...settings, lastTokenSubByServerId: { [configuration.activeServerId]: 'alice' } }));
       await persistence.writeCredentialsTokenOnly({ token: token('alice', 'new') });
-      expect(await persistence.readStoredCredentialsForServerId(configuration.activeServerId)).toMatchObject({ encryption: { type: 'legacy', secret } });
+      expect(await persistence.readStoredCredentialCustodyForServerId(configuration.activeServerId)).toMatchObject({ encryption: { type: 'legacy', secret } });
     });
   });
 
@@ -68,7 +68,7 @@ describe('same-Account historical credential refresh', () => {
       await writeFile(configuration.privateKeyFile, JSON.stringify({ secret: Buffer.from(new Uint8Array(32).fill(8)).toString('base64') }));
       await persistence.updateSettings(settings => ({ ...settings, lastTokenSubByServerId: { [configuration.activeServerId]: 'bob' } }));
       await persistence.writeCredentialsTokenOnly({ token: token('bob', 'new') }, { previousAccountId: 'alice' });
-      expect(await persistence.readStoredCredentialsForServerId(configuration.activeServerId)).toMatchObject({ encryption: null });
+      expect(await persistence.readStoredCredentialCustodyForServerId(configuration.activeServerId)).toMatchObject({ encryption: null });
     });
   });
 
@@ -81,7 +81,7 @@ describe('same-Account historical credential refresh', () => {
       const previous = { token: token('alice', 'old'), secret: new Uint8Array(32).fill(8) };
       await persistence.writeCredentialsLegacy(previous);
       await expect(persistence.writeCredentialsTokenOnly({ token: 'unknown' })).rejects.toMatchObject({ code: 'HISTORICAL_ENCRYPTION_IDENTITY_UNAVAILABLE' });
-      expect(await persistence.readStoredCredentialsForServerId(configuration.activeServerId)).toMatchObject({ token: previous.token, encryption: { type: 'legacy', secret: previous.secret } });
+      expect(await persistence.readStoredCredentialCustodyForServerId(configuration.activeServerId)).toMatchObject({ token: previous.token, encryption: { type: 'legacy', secret: previous.secret } });
     });
   });
 
@@ -93,7 +93,7 @@ describe('same-Account historical credential refresh', () => {
       const { configuration } = await import('@/configuration');
       await persistence.writeCredentialsLegacy({ token: token('alice', 'old'), secret: new Uint8Array(32).fill(8) });
       await persistence.writeCredentialsTokenOnly({ token: token('bob', 'new') });
-      expect(await persistence.readStoredCredentialsForServerId(configuration.activeServerId)).toMatchObject({ encryption: null });
+      expect(await persistence.readStoredCredentialCustodyForServerId(configuration.activeServerId)).toMatchObject({ encryption: null });
     });
   });
 });

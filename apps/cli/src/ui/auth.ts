@@ -8,7 +8,7 @@ import { delay, delayUnrefAbortable } from "@/utils/time";
 import { returnNullOnCliReloginRequired } from '@/auth/returnNullOnCliReloginRequired';
 import {
     readStoredCredentials,
-    readStoredCredentialsForServerId,
+    readStoredCredentialCustodyForServerId,
     readSettings,
     updateSettings,
     type StoredCredentials,
@@ -733,7 +733,7 @@ async function waitForAuthentication(
                             return null;
                         }
                         await writeCredentialsTokenOnly({ token });
-                        const persisted = await readStoredCredentialsForServerId(configuration.activeServerId);
+                        const persisted = await readStoredCredentialCustodyForServerId(configuration.activeServerId);
                         if (!persisted || persisted.token !== token) throw new Error('Stored credential changed during terminal enrollment');
                         return persisted;
                     }

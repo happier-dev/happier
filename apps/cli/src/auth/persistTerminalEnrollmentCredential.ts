@@ -12,7 +12,7 @@ import { writeAppliedMachineRoles } from '@/daemon/roles/machineRolesRuntime';
 import {
   prepareCredentialsTokenOnlyForServerId,
   readSettings,
-  readStoredCredentialsForServerId,
+  readStoredCredentialCustodyForServerId,
   writeCredentialsDataKey,
   writeCredentialsTokenOnly,
   type StoredCredentials,
@@ -36,7 +36,7 @@ export async function persistTerminalEnrollmentCredential(params: Readonly<{
   } else {
     await writeCredentialsTokenOnly({ token: params.token }, { previousAccountId: params.previousAccountId });
   }
-  const credentials = await readStoredCredentialsForServerId(configuration.activeServerId);
+  const credentials = await readStoredCredentialCustodyForServerId(configuration.activeServerId);
   if (!credentials || credentials.token !== params.token) throw new Error('Stored credential changed during terminal enrollment');
   return { ...prepared, credentials };
 }

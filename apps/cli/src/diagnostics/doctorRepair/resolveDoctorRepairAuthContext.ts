@@ -1,7 +1,7 @@
 import { configuration } from '@/configuration';
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveServerProfileApiUrl } from '@/configuration/serverSelection';
-import { readSettings, readStoredCredentials, readStoredCredentialsForServerId } from '@/persistence';
+import { readSettings, readStoredCredentialCustodyForServerId, readStoredCredentials, readStoredCredentialsForServerId } from '@/persistence';
 import { validateStoredAuthTokenAgainstServer } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
 import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
 
@@ -85,7 +85,7 @@ export async function resolveDoctorRepairAuthContext(params: Readonly<{
   const inactiveCredentialStateByServerId = new Map(
     await Promise.all(profiles.filter((profile) => profile.id !== effectiveActiveServerId).map(async (profile) => [
       profile.id,
-      await readStoredCredentialsForServerId(profile.id) ? 'stored-unverified' : 'missing',
+      await readStoredCredentialCustodyForServerId(profile.id) ? 'stored-unverified' : 'missing',
     ] as const)),
   );
 
