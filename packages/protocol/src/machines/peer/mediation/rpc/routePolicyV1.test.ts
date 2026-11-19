@@ -259,19 +259,19 @@ describe('MachineRpcRoutePolicyV1', () => {
       expect(resolve(method)).toBeNull();
     }
   });
-  it('spends the exact Agent inventory root on both inventory observation phases', async () => {
+  it.each(['machines.agents.list', 'review.engines.list'])('spends the exact %s inventory root on both inventory observation phases', async actionId => {
     const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
     const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'inventory-root', binding: {
       accountId: 'requester', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
       serverIdentityId: 'home', machineId: 'guest', installationId: 'guest-installation',
-      actionId: 'machines.agents.list', requestId: 'inventory', requestEnvelopeDigest: 'a'.repeat(43),
+      actionId, requestId: 'inventory', requestEnvelopeDigest: 'a'.repeat(43),
       target: { kind: 'machine', machineId: 'guest' },
     } }).binding;
     const selected = { machineId: 'guest', installationId: 'guest-installation' };
     for (const method of [RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
       RPC_METHODS.CAPABILITIES_DETECT]) {
-      expect(resolve(method, binding, selected)).toBe('machines.agents.list');
-      expect(resolve(method, { ...binding, accountId: 'owner' }, selected)).toBe('machines.agents.list');
+      expect(resolve(method, binding, selected)).toBe(actionId);
+      expect(resolve(method, { ...binding, accountId: 'owner' }, selected)).toBe(actionId);
       // A native detection call has its own Action identity. The inventory
       // composite above retains its exact root; unrelated roots cannot match it.
       const nativeEffect = method === RPC_METHODS.CAPABILITIES_DETECT ? MACHINE_CAPABILITIES_DETECT_ACTION_ID : null;

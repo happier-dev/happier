@@ -14,10 +14,83 @@ import type { MachineActionDirectTargetTransport } from '../createCliActionDeps'
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '@happier-dev/protocol/daemon/agentSignIn';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
+import { readAgentTargetReadinessV1 } from '@happier-dev/protocol/actions/executor/agents/agentBackendReadiness';
+import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
+import { buildReviewEngineInventory } from '../inventory/buildReviewEngineInventoryItems';
+import { createCliActionInventoryDeps } from './createCliActionInventoryDeps';
+import { createCliMachineInventoryActionDeps } from './machineInventory';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('Machine capability observation during unsigned approval replay', () => {
+  it.each([
+    { signed: false, includeDisabled: true },
+    { signed: false, includeDisabled: undefined },
+    { signed: true, includeDisabled: true },
+    { signed: true, includeDisabled: undefined },
+  ])('preserves unavailable Review engines through Machine readiness (signed=$signed, includeDisabled=$includeDisabled)', async ({ signed, includeDisabled }) => {
+    const agents = ['coderabbit', 'deepsec'].map(id => projectManifestAgentContribution({
+      pluginId: `happier.review.${id}`, provenance: 'first_party', source: { kind: 'bundled' },
+      definition: PluginAgentContributionV2Schema.parse({ id, title: id, primary: 'executionRuns', runtime: { kind: 'custom' },
+        capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } } }),
+    }));
+    const target = { kind: 'machine' as const, machineId: 'machine' };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-admission', binding: {
+      accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 },
+      accountEncryptionMode: 'plain', serverIdentityId: 'home', actionId: 'review.engines.list', requestId: 'review-inventory',
+      machineId: 'machine', installationId: 'installation', target, requestEnvelopeDigest: 'a'.repeat(43),
+    } });
+    const context = { surface: signed ? 'ui' : 'cli', authority: 'present_user',
+      ...(signed ? { actionRequestId: 'review-inventory',
+        machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+          installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+        externalActionExecutionAuthorization: authorization, externalActionTarget: target } : {}),
+    } satisfies RpcActionExecutorContext;
+    const methods: string[] = [];
+    // Installed Machine RPC is the boundary. Keep the Action, transport,
+    // Machine projection and Review readiness producers real beneath it.
+    const invoke: MachineActionDirectTargetTransport['invoke'] = async method => {
+      methods.push(method);
+      if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
+        protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: Object.fromEntries(agents.map(agent =>
+          [agent.id, { id: agent.identity?.localId ?? agent.id, title: agent.id, capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } } }])) },
+      };
+      if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: Object.fromEntries(agents.map(agent =>
+        [`cli.${agent.id}`, { ok: true, checkedAt: 1, data: { installed: false, version: null, latestVersion: null,
+          update: { supported: false, command: null }, signIn: { status: 'signedOut', loginSupport: 'login_terminal' },
+          platform: { supported: true }, install: { available: true, mode: 'manual', sizeBytes: null, guideUrl: null }, dependencies: [] } }])) };
+      throw new Error(`Unexpected native inventory method: ${method}`);
+    };
+    vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(async input => {
+      if (input.externalAction) throw new RpcError('A receiving Action proof cannot be spent as a fresh native RPC.', 'permission_denied');
+      return invoke(input.method, input.request);
+    });
+    const params = { credentials: { token: 'fixture', encryption: null, credentialProvenance: 'stored_session' as const },
+      externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: new Uint8Array(64),
+      machineActionDirectTargetTransport: { machineId: 'machine', invoke } };
+    const transport = createCliMachineActionTransport(params);
+    const inventoryDeps = createCliActionInventoryDeps({ ...params, token: 'fixture', sessionId: '', mode: 'plain', ctx: null });
+    const catalog = { status: 'ready', revision: 1, record: { v: 1, definitions: [] } } satisfies AcpCatalogSnapshotV1;
+    const machineDeps = createCliMachineInventoryActionDeps(params, { inventoryDeps, callMachineAction: transport.callMachineAction });
+    const executor = createActionExecutor({ reviewEnginesList: async ({ machineId, includeDisabled }, actionContext) =>
+      buildReviewEngineInventory({ acpCatalogSnapshot: catalog, includeDisabled,
+        registrySnapshot: { agentDefinitionsById: new Map(agents.map(agent => [agent.id, agent])), executionRunProfiles: [] },
+        readReadiness: targets => readAgentTargetReadinessV1({ machinesAgentsList: (args, ctx) => machineDeps.machinesAgentsList(args, ctx, catalog) },
+          machineId ?? 'machine', targets.map(parseBackendTargetKeyV2), actionContext ?? {}),
+      }),
+    });
+    const result = await executor.execute('review.engines.list', {
+      ...(signed ? { sessionId: null, machineId: 'machine' } : { sessionId: 'source-session' }),
+      ...(includeDisabled !== undefined ? { includeDisabled } : {}),
+    }, context);
+    expect(result).toMatchObject({ ok: true, result: { items: agents.map(agent => ({ engineId: agent.id,
+      available: false, enabled: false, readiness: 'notInstalled', unavailableCode: 'notInstalled' })) } });
+    expect(methods).toEqual([RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, RPC_METHODS.CAPABILITIES_DETECT]);
+  });
   it('preserves a confirmed original-account refusal through thrown Action normalization', async () => {
     // Legacy token provenance can select the bridge, but the receiving admission
     // owner refuses it before any HTTP request or effect.
@@ -54,6 +127,8 @@ describe('Machine capability observation during unsigned approval replay', () =>
   it.each([
     ['machines.agents.list', RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, true],
     ['machines.agents.list', RPC_METHODS.CAPABILITIES_DETECT, true],
+    ['review.engines.list', RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, true],
+    ['review.engines.list', RPC_METHODS.CAPABILITIES_DETECT, true],
     ['agents.models.list', RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, true],
     ['agents.config_options.list', RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, false],
     ['machines.agents.signIn.status', AGENT_SIGN_IN_STATUS_RPC_METHOD, true],

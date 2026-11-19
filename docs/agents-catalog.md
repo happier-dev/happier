@@ -2534,6 +2534,9 @@ existing custodian-only policy. The public `machines.agents.signIn.status` and
 `machines.agents.list` Actions bind to that status RPC and capability detection,
 respectively, so Action target admission consumes the same Machine policy.
 Status and inventory read phases spend that admitted Action's signed root.
+Machine-targeted `review.engines.list` uses the same roster and capability-detection
+read phases under its own exact Machine and installation admission, so Review
+inventory retains the Machine's executable prerequisites.
 The daemon projects the response before transport
 encryption. Use receives `signedIn`, `signedOut` (needs sign-in), or `unknown`,
 plus `signInScope` identifying `machineOwner`, `member`, or `sharedAgent` execution;

@@ -15,7 +15,7 @@ import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '../../../../actions/projec
 import { PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '../../../../actions/projectDefinitionActionIdsV1.js';
 import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../local/services/actionIdsV1.js';
-import { ACTION_INVOKE_ACTION_ID_V1, isExecutionRunStartActionIdV1, isWorkspaceSyncRelationshipWriteActionId, readMachineAgentSignInOperationV1, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, type WorkflowActionIdV1 } from '../../../../actions/actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1, isExecutionRunStartActionIdV1, isMachineAgentInventoryReadActionIdV1, isWorkspaceSyncRelationshipWriteActionId, readMachineAgentSignInOperationV1, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, type WorkflowActionIdV1 } from '../../../../actions/actionIds.js';
 import { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD } from '../../../../daemon/agentSignInMethods.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../rpc/methods.js';
 import { isApprovalDecisionReviewerBindingV1 } from '../../../../actions/externalActionBindingAuthority.js';
@@ -1197,7 +1197,7 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
       && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
       ? binding.actionId : null;
   }
-  if (binding?.actionId === 'machines.agents.list'
+  if (binding && isMachineAgentInventoryReadActionIdV1(binding.actionId)
     && (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
       || method === RPC_METHODS.CAPABILITIES_DETECT)) {
     // Both read phases spend the signed inventory root on its exact installation.
