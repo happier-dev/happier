@@ -1,6 +1,7 @@
 import { t } from '@/text';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 type ProjectOpenRefusalPresentation = Readonly<{ title: string; description?: string; details: readonly string[] }>;
 
@@ -31,6 +32,7 @@ export function projectOpenRefusalPresentation(code: string, gitRef: string | nu
     if (code.startsWith('requester_') || code === 'session_requester_unavailable' || code === 'machine_admission_unavailable')
         return shown(t('projects.open.accessUnconfirmed'), t('projects.open.accessUnconfirmedHint'));
     if (code === 'invalid_input') return shown(t('projects.open.requestUnreadable'), t('projects.open.requestUnreadableHint'));
+    if (code === RPC_ERROR_CODES.UPDATE_REQUIRED) return shown(t('errors.machineActionUnsupported'));
     if (code.includes('unreachable') || code.includes('offline'))
         return shown(t('workspaceSync.start.blocked.targetMachineOffline'), t('projects.open.machineOfflineHint'));
     if (gitRef && code.includes('ref')) return shown(t('projects.open.refMissing', { ref: gitRef }), t('projects.open.refMissingHint'));

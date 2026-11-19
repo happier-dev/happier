@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { t } from '@/text';
 import { projectOpenRefusalPresentation } from './projectOpenRefusalPresentation';
 
@@ -24,6 +25,11 @@ describe('Project Open refusal presentation', () => {
     it('offers target recovery without claiming the machine is offline or incapable', () => {
         expect(projectOpenRefusalPresentation('target_mismatch', null)).toMatchObject({
             title: t('projects.open.targetMismatch'), description: t('projects.open.targetMismatchHint'),
+        });
+    });
+    it('guides the user to update a Machine that lacks Project Open', () => {
+        expect(projectOpenRefusalPresentation(RPC_ERROR_CODES.UPDATE_REQUIRED, null)).toMatchObject({
+            title: t('errors.machineActionUnsupported'), details: [RPC_ERROR_CODES.UPDATE_REQUIRED],
         });
     });
     it('retains distinct Source and transport refusals', () => {

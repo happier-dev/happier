@@ -3683,7 +3683,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         });
         return await completeUiProjectOpenResult(accountContext, response, context.signal);
       } catch (error) {
-        if (readRpcRequestDisposition(error) === 'notSent') return { kind: 'refused', code: 'machine_unreachable' };
+        if (readRpcRequestDisposition(error) === 'notSent') {
+          const { readProjectOpenUnsentRefusalV1 } = await import('@happier-dev/protocol/projects/openProjectV1');
+          return readProjectOpenUnsentRefusalV1(error);
+        }
         throw error;
       }
     },
