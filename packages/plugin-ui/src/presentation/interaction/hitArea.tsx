@@ -88,8 +88,9 @@ function sameHitInsets(a: HappierHitInsets | undefined, b: HappierHitInsets | un
  * Nothing between the pressable and the space its hit area reaches into may clip: not the pressable
  * itself, not a box that paints a few controls together (a compact stepper, a tile frame). A clipping
  * edge cuts the reach off on the web and on native alike (a view outside its clipping parent is never
- * hit-tested). Rounded paint that needs clipping goes on a noninteractive inner or backing view; a real
- * clipping edge (a scroll viewport, a card) bounds the reach through `hitReach` instead.
+ * hit-tested). Rounded paint that needs clipping goes on a noninteractive inner or backing view. Use
+ * `hitReach` to bound a control against a known edge, or `ScrollArea`'s `clipContentOverflow` to bound
+ * web descendants at the scroll content edge.
  *
  * `HappierPressable` uses this; a control built on a raw platform pressable (a ref-forwarding chip,
  * the native switch) uses it directly rather than keeping a second target policy.

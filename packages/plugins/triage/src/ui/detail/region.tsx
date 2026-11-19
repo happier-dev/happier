@@ -1286,7 +1286,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     {/* The Collection's detail body owns the edge (given `detailHeader`); the footer below spans the detail. */}
     <Stack gap="medium" style={DETAIL_FILL_STYLE_V1}>
       {headerInStory ? null : (
-      <ScrollArea style={sourceChangesOpen ? DETAIL_HEADER_SCROLL_OPEN_STYLE_V1 : DETAIL_HEADER_SCROLL_STYLE_V1}>
+      <ScrollArea clipContentOverflow style={sourceChangesOpen ? DETAIL_HEADER_SCROLL_OPEN_STYLE_V1 : DETAIL_HEADER_SCROLL_STYLE_V1}>
       <Stack gap="small">{headerContents}</Stack>
       </ScrollArea>
       )}

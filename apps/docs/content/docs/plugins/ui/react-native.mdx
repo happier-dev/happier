@@ -2076,6 +2076,11 @@ tab. Inside that renderer, host-mode Tabs still own each panel's retention and
 active interval. For a persistent outer `ScrollArea`, `scrollEnabled={false}` lets
 a bounded child panel own scrolling without remounting the renderer.
 
+In **0.3 development source**, use `ScrollArea clipContentOverflow` for a
+self-contained scroll region such as a detail header. On web it clips
+descendant overflow, including touch hit frames, at the laid-out content edge.
+Content that exceeds the viewport still scrolls.
+
 For a PRs & Issues source, declare the panels on the source descriptor and render
 only the requested panel. The [source detail and fix-link recipe](/plugins/ui#source-detail-panels-and-fix-pull-requests)
 uses the public Triage feature protocol.

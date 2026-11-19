@@ -70,6 +70,8 @@ export type HappierScreenProps = Readonly<{
 export type HappierScrollAreaProps = Readonly<{
   children?: ReactNode;
   horizontal?: boolean;
+  /** Clip web descendants at the laid-out content edge so their overflow cannot add scroll range. */
+  clipContentOverflow?: boolean;
   scrollEnabled?: boolean;
   keyboardShouldPersistTaps?: HappierKeyboardShouldPersistTaps;
   onScroll?: (event: HappierScrollEvent) => void;
@@ -195,10 +197,13 @@ function scrollAreaHoldsControl(scrollView: ScrollView | null): boolean {
 
 const HappierScrollAreaNestedContext = createContext(false);
 const useNoPaneHeaderReporter = (): ((distancePx: number) => void) | null => null;
+// React Native's ViewStyle omits this CSS value. RNW passes it through to the browser.
+const webScrollContentClip = { overflow: 'clip' } as unknown as ViewStyle;
 
 export function HappierScrollArea({
   children,
   accessibilityLabel,
+  clipContentOverflow,
   testID,
   style,
   contentContainerStyle,
@@ -300,7 +305,11 @@ export function HappierScrollArea({
         testID={testID}
         accessibilityLabel={accessibilityLabel}
         style={style}
-        contentContainerStyle={[insetStyle, contentContainerStyle]}
+        contentContainerStyle={[
+          insetStyle,
+          contentContainerStyle,
+          Platform.OS === 'web' && clipContentOverflow ? webScrollContentClip : undefined,
+        ]}
         keyboardShouldPersistTaps={keyboardShouldPersistTaps}
         {...(dismissMode === undefined ? {} : { keyboardDismissMode: dismissMode })}
       >

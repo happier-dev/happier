@@ -96,6 +96,8 @@ export type ScreenProps = Readonly<{
 export type ScrollAreaProps = Readonly<{
   children?: ReactNode;
   horizontal?: boolean;
+  /** Keep overflow such as touch hit frames from extending the web scroll range beyond laid-out content. */
+  clipContentOverflow?: boolean;
   /** Keep the viewport mounted while a bounded child owns scrolling. */
   scrollEnabled?: boolean;
   keyboardShouldPersistTaps?: HappierKeyboardShouldPersistTaps;

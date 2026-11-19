@@ -9588,6 +9588,10 @@ use this policy; menu rows and tabs stay on their drawn rows inside their clippi
 surfaces. `useHappierNativeMinimumInteractiveTargetSize` remains exported for
 plugins that read the platform floor, but no shared control draws at it.
 
+On web, `ScrollArea clipContentOverflow` bounds descendant hit frames at the
+laid-out content edge. The viewport still scrolls when that content exceeds it.
+The option also clips other overflow at the same edge and has no native effect.
+
 In 0.3 development source, `useHappierTouchPrimaryPointer(platform)` owns the
 reactive primary-pointer fact. Its shared media listeners attach with the first
 subscriber and detach with the last; pointer changes update mounted hit areas,
