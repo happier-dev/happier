@@ -13,6 +13,7 @@ import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SchemaFieldControl } from '@/components/settings/schemaFields/SchemaFieldControl';
 import { ConnectedServiceSetupFlowActions } from '../setup/ConnectedServiceSetupFlowBody';
 import { ConnectedAccountAdvancedFields } from './ConnectedAccountAdvancedFields';
@@ -231,7 +232,7 @@ export function useConnectedAccountConfigurationFields(
     const advancedFields = fields.filter((field) => field.presentation?.advanced === true);
     // The guide travels with the field it explains: in the open, or inside Advanced when that field is folded.
     const renderFieldRow = (field: PluginConfigurationSettingFieldV2) => props.guide && field.id === props.guideFieldId
-        ? <React.Fragment key={field.id}><ConnectedAccountGuide guide={props.guide} />{renderFieldControl(field)}</React.Fragment>
+        ? <React.Fragment key={field.id}><SectionContentRow showDivider={false}><ConnectedAccountGuide guide={props.guide} /></SectionContentRow>{renderFieldControl(field)}</React.Fragment>
         : renderFieldControl(field);
     const renderFieldControl = (field: PluginConfigurationSettingFieldV2) => {
         const control = resolveConnectedAccountConfigurationControl(field);

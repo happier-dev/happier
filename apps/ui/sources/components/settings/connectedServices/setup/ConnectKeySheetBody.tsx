@@ -136,7 +136,7 @@ export function ConnectKeySheetBody(
           keyboardShouldPersistTaps="handled"
           testID="connect-key-sheet:new"
         >
-          {props.guide ? <ConnectedAccountGuide guide={props.guide} /> : null}
+          {props.guide ? <View style={styles.guide}><ConnectedAccountGuide guide={props.guide} /></View> : null}
           <SavedSecretCreateEditor
             scope={props.scope}
             presentation="sheet"
@@ -202,6 +202,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s16,
     flexShrink: 1,
     minHeight: 0,
+  },
+  // The guide owns no outer space; the create form's first field sits one step under it.
+  guide: {
+    paddingBottom: theme.space.s12,
   },
   scroll: {
     flexGrow: 0,

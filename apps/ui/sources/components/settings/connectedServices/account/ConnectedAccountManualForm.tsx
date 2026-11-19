@@ -21,6 +21,7 @@ import { useSavedSecretCatalogEntries } from '@/components/secrets/useSavedSecre
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { buildActionRowAccessibilityLabel } from '@/components/ui/lists/actionRowAccessibility';
 import { Item } from '@/components/ui/lists/Item';
+import { usePageListInsets } from '@/components/ui/lists/listPresentation';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { t } from '@/text';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
@@ -220,6 +221,9 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
         onSave: submit,
         tag: 'ConnectedAccountManualForm',
     });
+    // In the Connect sheet the column is too narrow for a label beside a field: each field sits under its label
+    // and description at full width (UI refinements 11-19). A page keeps label left, field right (owner 2026-11-11).
+    const inSheet = usePageListInsets() === 'contained';
     const registerInvalidFieldTarget = useConnectedAccountInvalidFieldFocus({
         invalidFieldIds,
         announcement: t('common.error'),
@@ -299,7 +303,7 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
                     mode="info"
                     showChevron={false}
                     // Label and helper on the left, the field on the right; a narrow row stacks it (owner 2026-11-11).
-                    accessoryLayout={multiline ? 'stacked' : 'adaptive'}
+                    accessoryLayout={multiline || inSheet ? 'stacked' : 'adaptive'}
                     rightElement={guidedKey ? (
                         <View style={styles.field}>
                             {fieldControl(field)}
@@ -371,7 +375,7 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
                     subtitleLines={0}
                     mode="info"
                     showChevron={false}
-                    accessoryLayout="adaptive"
+                    accessoryLayout={inSheet ? 'stacked' : 'adaptive'}
                     showDivider={false}
                     rightElement={<FieldTextInput testID="connected-account-manual:name"
                         value={displayName} onChangeText={setDisplayName} accessibilityLabel={t('connectedServicesSettings.keyName')}
@@ -390,7 +394,8 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
                 </ConnectedAccountAdvancedFields>
             ) : null}
             {guided?.billingNote ? <Text style={[styles.note, styles.billing]}>{guided.billingNote}</Text> : null}
-            {props.renderFailure ? <SectionContentRow showDivider={false}>{props.renderFailure(() => void submit())}</SectionContentRow> : null}
+            {/* The failure line is a row of its own (its glyph on the labels' edge), directly above the footer it refused. */}
+            {props.renderFailure ? props.renderFailure(() => void submit()) : null}
             {/* The sign-in forms' one footer (browser and code forms too): the trust line, then Connect at the
                 field's right edge and size, with Cancel beside it in a setup panel. */}
             <SectionContentRow showDivider={false}>

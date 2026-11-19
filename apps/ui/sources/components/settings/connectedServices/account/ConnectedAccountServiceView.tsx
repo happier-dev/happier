@@ -1746,6 +1746,11 @@ const ConnectedAccountServiceController = React.memo(
         diagnostic: attempt && 'code' in attempt && attempt.code === errorCode && 'diagnostic' in attempt
             ? attempt.diagnostic : undefined,
     } : null;
+    // The key form is on screen: a failure then stands with it, above its footer, instead of below the sheet.
+    const manualFormShown = !setupCompleted && activeMode?.kind === 'manual' && (attempt?.status === 'awaitingManual' || Boolean(accountDirectMode)
+        || combinesManualConfiguration && (configuration !== null || combinedDraftSubmitted)
+        || panelIntent?.kind === 'add' && !attempt);
+    const recoverSetupError = () => { if (accountDirectMode) setErrorCode(null); else void retryDescription(); };
     /** One failure line with its one next step, through the shared state owner; no step when the form beside it is the fix. */
     const renderSetupError = (retry: (() => void) | null) => errorCode ? (
         <SurfaceStateCard
@@ -1772,9 +1777,7 @@ const ConnectedAccountServiceController = React.memo(
     const renderFlow = (embedded: boolean) => (
         <>
             {setupStep && activeMode ? <ConnectedAccountSetupStepCue step={setupStep} signInLabel={resolveConnectedAccountModeTitle(activeMode, localizeServiceText)} /> : null}
-            {!setupCompleted && (attempt?.status === 'awaitingManual' || accountDirectMode
-                || combinesManualConfiguration && (configuration !== null || combinedDraftSubmitted)
-                || panelIntent?.kind === 'add' && !attempt) && activeMode?.kind === 'manual' ? (
+            {manualFormShown && activeMode?.kind === 'manual' ? (
                 <ConnectedAccountManualForm
                     embedded={embedded}
                     key={`manual:${activeMode.id}`}
@@ -1796,9 +1799,11 @@ const ConnectedAccountServiceController = React.memo(
                     submitting={busy || retryingDescription || manualDraftQueued && !attempt && !configuration && !errorCode}
                     navigation={navigation}
                     onCancel={panelCancel}
-                    // The failure sits with the draft it refused; its Retry submits the values on screen.
-                    renderFailure={holdsCombinedDraft && errorCode ? resubmit => renderSetupError(
-                        resolveConnectedServiceSettingsErrorRecovery(setupError) === 'retry' ? resubmit : null) : undefined}
+                    // The failure sits once with the draft it refused, above its footer (owner 11-19); a submitted combined
+                    // draft's Retry submits the values on screen, any other failure keeps its own recovery.
+                    renderFailure={errorCode ? resubmit => renderSetupError(holdsCombinedDraft
+                        ? resolveConnectedServiceSettingsErrorRecovery(setupError) === 'retry' ? resubmit : null
+                        : recoverSetupError) : undefined}
                     onSubmit={async ({ fields, selectedSecrets, displayName, configuration: configurationDraft }) => {
                         if (accountDirectMode) return saveAccountCredential({ fields, ...(selectedSecrets ? { selectedSecrets } : {}), ...(displayName ? { displayName } : {}) });
                         if (!attempt || configuration || restartsFailedAttempt) {
@@ -1935,9 +1940,9 @@ const ConnectedAccountServiceController = React.memo(
                 </ConnectedAccountFormSection>
             )) : null}
 
-            {errorCode && !holdsCombinedDraft ? (
+            {errorCode && !holdsCombinedDraft && !manualFormShown ? (
                 <ConnectedAccountFormSection embedded={embedded}>
-                    {renderSetupError(() => { if (accountDirectMode) setErrorCode(null); else void retryDescription(); })}
+                    {renderSetupError(recoverSetupError)}
                 </ConnectedAccountFormSection>
             ) : null}
 

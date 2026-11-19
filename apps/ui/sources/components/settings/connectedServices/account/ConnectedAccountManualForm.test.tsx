@@ -208,6 +208,20 @@ describe('ConnectedAccountManualForm', () => {
         expect(at('connected-account-configuration:accountId')).toBeLessThan(at('connected-account-manual:name'));
     });
 
+    it.each([
+        ['the Connect sheet', 'contained', 'stacked'],
+        ['a page', 'standard', 'adaptive'],
+    ] as const)('in %s (%s insets), lays the key and name rows out %s', async (_where, pageInsets, layout) => {
+        const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+        const screen = await renderScreen(<ListPresentationProvider value="page" pageInsets={pageInsets}>
+            <ConnectedAccountManualForm embedded title="API token" submitting={false} fields={[fields[1]]}
+                guided={{ consoleUrl: 'https://provider.example/keys', steps: ['Open API tokens'] }} onSubmit={vi.fn()} />
+        </ListPresentationProvider>);
+        const rowLayout = (title: string) => screen.tree.findAllByType(Item).find((row) => row.props.title === title)?.props.accessoryLayout;
+        expect(rowLayout('API token')).toBe(layout);
+        expect(rowLayout('connectedServicesSettings.keyName')).toBe(layout);
+    });
+
     it('registers a dirty manual secret draft with the shared shell-navigation guard', async () => {
         const tree = (await renderScreen(
             <ConnectedAccountManualForm

@@ -601,6 +601,11 @@ describe('ConnectedAccountSetupController real ownership', () => {
             expect(authenticationCommands).toContainEqual({ operation: 'beginConnect', service, modeId: 'manual' });
             expect(JSON.stringify(screen.tree.toJSON())).toContain(expectedMessage);
             expect(JSON.stringify(screen.tree.toJSON())).not.toContain('private authentication transport diagnostics');
+            // The refusal shows once, with the draft it refused, directly above the footer's Connect (owner 11-19).
+            const rendered = JSON.stringify(screen.tree.toJSON());
+            expect(rendered.split('"connected-account:error"')).toHaveLength(2);
+            const submitAt = rendered.indexOf('"connected-account-manual:submit"');
+            if (submitAt >= 0) expect(rendered.indexOf('"connected-account:error"')).toBeLessThan(submitAt);
             expect(onConnected).not.toHaveBeenCalled();
         } finally { await screen.unmount(); }
     });

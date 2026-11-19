@@ -11,6 +11,7 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 export type ConnectedServiceSetupMethod = Readonly<{
     id: string;
@@ -138,8 +139,9 @@ export function ConnectedServiceBrowserHandoff(props: Readonly<{
 }
 
 /**
- * A sign-in flow's footer in a setup panel: where what you enter is kept, last thing before you commit,
- * then secondary Cancel (local: the panel steps back at once) beside the step's one primary action.
+ * A sign-in flow's footer in a setup panel: one row with where what you enter is kept on the leading edge and
+ * secondary Cancel (local: the panel steps back at once) beside the step's one primary on the trailing edge.
+ * A phone is too narrow for both, so the note takes its own line above the actions (UI refinements 11-19).
  */
 export function ConnectedServiceSetupFlowActions(props: Readonly<{
     /** What the primary will do, in one sentence, before it (a browser or code sign-in, D5). */
@@ -148,35 +150,38 @@ export function ConnectedServiceSetupFlowActions(props: Readonly<{
     primary?: ConnectedServiceSetupFlowAction;
 }>) {
     const { theme } = useUnistyles();
+    const phone = useDeviceType() === 'phone';
     return (
         <View style={flowActionStyles.footer}>
             {props.description ? <Text style={flowActionStyles.description}>{props.description}</Text> : null}
-            <View style={flowActionStyles.trust}>
-                <Icon name="lock" size={14} color={theme.colors.text.secondary} />
-                <Text style={flowActionStyles.trustText}>{t('connectedServicesSettings.setupTrust')}</Text>
-            </View>
-            <View style={flowActionStyles.row}>
-            {props.onCancel ? (
-                <RoundButton
-                    testID="connected-account-setup:cancel"
-                    size="small"
-                    display="inverted"
-                    title={t('common.cancel')}
-                    onPress={props.onCancel}
-                />
-            ) : null}
-            {props.primary ? (
-                <RoundButton
-                    testID={props.primary.testID}
-                    size="small"
-                    leading={props.primary.opensOutside
-                        ? <Icon name="arrow-up-right" size={14} color={theme.colors.button.primary.tint} /> : undefined}
-                    title={props.primary.label}
-                    disabled={props.primary.disabled}
-                    loading={props.primary.loading}
-                    onPress={props.primary.onPress}
-                />
-            ) : null}
+            <View style={phone ? flowActionStyles.barPhone : flowActionStyles.bar}>
+                <View style={phone ? flowActionStyles.trust : [flowActionStyles.trust, flowActionStyles.trustLead]}>
+                    <Icon name="lock" size={14} color={theme.colors.text.secondary} />
+                    <Text style={flowActionStyles.trustText}>{t('connectedServicesSettings.setupTrust')}</Text>
+                </View>
+                <View style={flowActionStyles.row}>
+                    {props.onCancel ? (
+                        <RoundButton
+                            testID="connected-account-setup:cancel"
+                            size="small"
+                            display="inverted"
+                            title={t('common.cancel')}
+                            onPress={props.onCancel}
+                        />
+                    ) : null}
+                    {props.primary ? (
+                        <RoundButton
+                            testID={props.primary.testID}
+                            size="small"
+                            leading={props.primary.opensOutside
+                                ? <Icon name="arrow-up-right" size={14} color={theme.colors.button.primary.tint} /> : undefined}
+                            title={props.primary.label}
+                            disabled={props.primary.disabled}
+                            loading={props.primary.loading}
+                            onPress={props.primary.onPress}
+                        />
+                    ) : null}
+                </View>
             </View>
         </View>
     );
@@ -186,10 +191,22 @@ const flowActionStyles = StyleSheet.create((theme) => ({
     footer: {
         gap: theme.space.s16,
     },
+    bar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s16,
+    },
+    barPhone: {
+        gap: theme.space.s12,
+    },
     trust: {
         flexDirection: 'row',
         alignItems: 'flex-start',
         gap: theme.space.s6,
+    },
+    trustLead: {
+        flex: 1,
+        minWidth: 0,
     },
     description: {
         ...Typography.variant('body'),
@@ -205,6 +222,6 @@ const flowActionStyles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         justifyContent: 'flex-end',
         alignItems: 'center',
-        gap: 8,
+        gap: theme.space.s8,
     },
 }));

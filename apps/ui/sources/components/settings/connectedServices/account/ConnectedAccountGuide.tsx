@@ -110,8 +110,9 @@ export function ConnectedAccountGuide(props: Readonly<{ guide: ConnectedAccountG
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
-    // With the next row's own inset, the bottom space matches the gap from the band above and between field rows.
-    guide: { gap: theme.space.s16, paddingBottom: theme.space.s12 },
+    // The guide owns no outer space: the row or body it stands in places it, so the steps sit one field step
+    // above the first field, the same step as between field rows (UI refinements 11-19).
+    guide: { gap: theme.space.s16 },
     steps: { gap: theme.space.s4 },
     step: { flexDirection: 'row', gap: theme.space.s8 },
     // Steps read at the sheet's body size, like the rows under them (owner 2026-11-11).
