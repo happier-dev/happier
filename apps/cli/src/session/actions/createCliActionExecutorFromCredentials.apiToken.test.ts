@@ -23,6 +23,7 @@ import { ReviewHumanActionStateV1Schema, ReviewReviewersSetInputV1Schema } from 
 import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { REVIEW_HUMAN_ACTION_IDS_V1, REVIEW_NEW_ROUND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { DiscussionSecondOpinionPreviewV1Schema } from '@happier-dev/protocol/discussions/secondOpinion';
 import { DiscussionInviteInputV1Schema } from '@happier-dev/protocol/discussions/actions';
@@ -875,6 +876,43 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     expect((await records.read(requested!.reviewId))?.rounds).toEqual([
       expect.objectContaining({ state: 'completed', runs: [], reviewerIds: [], comparisonId }),
     ]);
+  });
+
+  it('prepares an accepted Review prompt through the public Action transport without a Session', async () => {
+    const actual = await vi.importActual<typeof import('@/api/machine/resolveCurrentAccountMachineTarget')>(
+      '@/api/machine/resolveCurrentAccountMachineTarget',
+    );
+    resolveCurrentAccountMachineTarget.mockImplementation(actual.resolveCurrentAccountMachineTarget);
+    const comment = ReviewCommentV1Schema.parse({ v: 1, id: 'accepted', accountId: 'account', reviewId: 'review',
+      workspace: { machineId: 'source-machine', path: '/repo' }, runId: 'review-run', findingId: 'finding',
+      findingIdentity: 'a'.repeat(64), body: 'Current accepted explanation', bodyVersion: 1,
+      edits: [], flags: {}, dispositions: {}, threadId: 'accepted', transitions: [],
+      anchor: { kind: 'file', filePath: 'reader.ts' }, snapshot: { kind: 'none', capturedAt: 1 },
+      author: { kind: 'workflow', runId: 'workflow' }, state: 'open', reviewTriageStatus: 'accept',
+      serverRevision: 7, createdAt: 1, updatedAt: 2,
+    });
+    const receiver = createActionExecutor({
+      reviewCommentAction: async () => ({ items: [comment], cursor: null }),
+      sessionSendMessage: async () => { throw new Error('Preparing a prompt must not send'); },
+    });
+    installPatActionTransportMock(async (url, init) => {
+      expect(url.pathname).toBe('/v1/actions/review.apply');
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+      expect(envelope.target).toEqual({ kind: 'machine', machineId: 'receiving-machine' });
+      expect(envelope.input).toEqual({ reviewId: 'review', destination: 'prompt' });
+      const execution = await receiver.execute('review.apply', envelope.input, {
+        surface: 'cli', serverId: 'home', externalActionTarget: envelope.target,
+      });
+      return { statusCode: 200, body: { v: 1, actionId: 'review.apply', execution } };
+    });
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: { token: SYNTHETIC_API_TOKEN, encryption: null, credentialProvenance: 'api_token' },
+      machineId: 'receiving-machine', serverId: 'home', serverApiUrl: patActionEndpoint!,
+    });
+    await expect(executor.execute('review.apply', { reviewId: 'review', destination: 'prompt' },
+      { surface: 'cli', defaultSessionId: exactSessionId })).resolves.toMatchObject({ ok: true,
+      result: { status: 'prepared', commentIds: ['accepted'], prompt: expect.stringContaining(comment.body) },
+    });
   });
 
   it('repeats a person-only Review through the public Action transport using its original Machine capture', async () => {

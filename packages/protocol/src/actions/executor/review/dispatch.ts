@@ -137,7 +137,7 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
         if (actionId === 'review.apply') {
           const apply = parsed.data as AdmittedActionInputById[typeof actionId];
           // SessionTarget preparation owns selector resolution; leaves accept only its exact address.
-          if (typeof apply.sessionId !== 'string') return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if ('sessionId' in apply && typeof apply.sessionId !== 'string') return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const comments: ReviewCommentV1[] = [];
           const scopes = 'reviewId' in apply ? [{ reviewId: apply.reviewId }]
             : [...new Set(apply.reviews.map(review => review.runId))].map(runId => ({ sessionId: apply.sessionId, runId }));
@@ -184,12 +184,16 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
             return { ok: false, errorCode: 'review_comment_encryption_material_unavailable', error: 'review_comment_encryption_material_unavailable' };
           }
           ctx.signal?.throwIfAborted();
+          const prompt = `${REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1}\n\n${renderReviewFindingsForVerifyV1(findings)}`;
+          if ('destination' in apply) return { ok: true, result: { status: 'prepared', prompt,
+            commentIds: findings.flatMap(finding => finding.comment ? [finding.comment.id] : []),
+          } };
           // Plugin delivery retains the existing host invocation identity; the message owner
           // still owns admission, local-id derivation and idempotency. Never mint a second id.
           const idempotencyKey = ctx.actionCaller?.kind === 'plugin' ? normalizeId(ctx.actionRequestId) : null;
           return await executeHostChild('session.message.send', { sessionId: apply.sessionId,
             ...(idempotencyKey ? { idempotencyKey } : {}),
-            message: `${REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1}\n\n${renderReviewFindingsForVerifyV1(findings)}` }, ctx);
+            message: prompt }, ctx);
         }
         if (reviewCommentActionId === null) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         if (reviewCommentActionId === 'reviews.comments.list') {

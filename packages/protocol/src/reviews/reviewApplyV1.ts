@@ -16,9 +16,14 @@ export const ReviewFindingsApplyInputV1Schema = lazyZodSchema(() => z.union([z.s
 }), z.strictObject({
   sessionId: SessionTargetV1Schema,
   reviewId: z.string().check(z.minLength(1)),
+}), z.strictObject({
+  reviewId: z.string().check(z.minLength(1)),
+  destination: z.literal('prompt'),
 })]));
 export type ReviewFindingsApplyInputV1 = z.infer<typeof ReviewFindingsApplyInputV1Schema>;
 export const ReviewFindingsApplyResultV1Schema = lazyZodSchema(() => z.union([
   SessionMessageSendResultV1Schema,
+  z.strictObject({ status: z.literal('prepared'), prompt: z.string(), commentIds: z.array(z.string()) }),
   z.strictObject({ status: z.literal('unchanged'), commentIds: z.array(z.string()) }),
 ]));
+export type ReviewFindingsApplyResultV1 = z.infer<typeof ReviewFindingsApplyResultV1Schema>;

@@ -266,6 +266,8 @@ function createReviewActionSpecs(): readonly [
   } satisfies PreNormalizedActionSpec,
   {
     id: 'review.apply', executionPlacement: 'session', approval: { result: 'optional', flow: 'deferred' },
+    executionPlacements: ['session', 'account'],
+    executionPlacementForInput: input => readRecord(input).destination === 'prompt' ? 'account' : 'session',
     title: 'Apply accepted review findings',
     sideEffectClass: 'external',
     safety: 'safe',
@@ -274,7 +276,10 @@ function createReviewActionSpecs(): readonly [
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     bindings: { mcpToolName: 'review_apply', voiceClientToolName: 'review_apply' },
     inputHints: { title: 'Apply accepted review findings', fields: [
-      { path: 'sessionId', title: 'Session', widget: 'select', required: true, optionsSourceId: 'sessions' },
+      { path: 'sessionId', title: 'Session', widget: 'select', optionsSourceId: 'sessions',
+        description: 'Destination Session when sending. Omit when preparing a prompt.' },
+      { path: 'destination', title: 'Prompt destination', widget: 'select',
+        options: [{ value: 'prompt', label: 'Prepare prompt for copying or a New Session draft' }] },
       { path: 'reviewId', title: 'Review', widget: 'text',
         description: 'Apply accepted persisted findings from this Review.' },
       { path: 'reviews', title: 'Reviewed findings', widget: 'json',

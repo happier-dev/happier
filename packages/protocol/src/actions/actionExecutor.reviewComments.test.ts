@@ -10,6 +10,7 @@ import { executeReviewCommentTransportV1 } from '../reviews/comments/transport.j
 import { ReviewCommentPrepareMutationRequestV1Schema, ReviewCommentCommitMutationRequestV1Schema, type ReviewCommentPreparedRecordV1 } from '../reviews/comments/mutation.js';
 import { ReviewCommentActionInputSchemasV1, ReviewCommentClaimPublicationDispatchResponseV1Schema } from '../reviews/comments/actions.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
+import { ReviewFindingsApplyResultV1Schema } from '../reviews/reviewApplyV1.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
   return {
@@ -46,6 +47,43 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
 }
 
 describe('createActionExecutor (review comments)', () => {
+  it('prepares the current accepted Review prompt without sending and excludes a newly rejected comment', async () => {
+    let comment = ReviewCommentV1Schema.parse({
+      v: 1, id: 'accepted', accountId: 'account', reviewId: 'review', workspace: { machineId: 'machine', path: '/repo' },
+      runId: 'review-run', findingId: 'finding', findingIdentity: 'a'.repeat(64),
+      body: 'The freshly edited accepted explanation', bodyVersion: 2,
+      finding: { id: 'finding', title: 'Preserve current evidence', summary: 'Stale engine summary',
+        severity: 'high', category: 'correctness', evidence: 'Current evidence' },
+      edits: [], flags: {}, dispositions: {}, threadId: 'accepted', transitions: [],
+      anchor: { kind: 'file', filePath: 'reader.ts' }, snapshot: { kind: 'none', capturedAt: 1 },
+      author: { kind: 'workflow', runId: 'workflow' }, state: 'open', reviewTriageStatus: 'accept',
+      serverRevision: 7, createdAt: 1, updatedAt: 2,
+    });
+    const executor = createActionExecutor({
+      // Substitute only the authorized comment transport. Selection and rendering
+      // remain in the same Review owner used by existing-Session Apply.
+      reviewCommentAction: async () => ({ items: [comment], cursor: null }),
+      sessionSendMessage: async () => { throw new Error('Preparing a prompt must not send a message'); },
+      sessionAuthoringOpen: async () => { throw new Error('Preparing a prompt must not open a draft'); },
+    });
+    const input = { reviewId: 'review', destination: 'prompt' };
+    const context = { surface: 'ui' as const, serverId: 'home', defaultSessionId: 'ambient-session' };
+    const result = await executor.execute('review.apply', input, context);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
+      result: { status: 'prepared', prompt: expect.any(String), commentIds: ['accepted'] } });
+    if (!result.ok) throw new Error(result.error);
+    const prepared = ReviewFindingsApplyResultV1Schema.parse(result.result);
+    if (!('prompt' in prepared)) throw new Error('Expected the prepared Review prompt');
+    expect(prepared.prompt).toContain(comment.body);
+    expect(prepared.prompt).toContain('Current evidence');
+    expect(prepared.prompt).toContain('"expectedServerRevision": 7');
+    expect(prepared.prompt).not.toContain('Stale engine summary');
+    comment = { ...comment, reviewTriageStatus: 'reject', serverRevision: 8 };
+    await expect(executor.execute('review.apply', input, context)).resolves.toMatchObject({
+      ok: true, result: { status: 'unchanged', commentIds: [] },
+    });
+  });
+
   it.each(['body-only', 'typed-edited'] as const)('applies accepted durable Review findings beyond the first page exactly once (%s)', async content => {
     const finding = content === 'typed-edited' ? { id: 'finding', title: 'Preserve the typed finding', summary: 'Original engine explanation',
       severity: 'high', category: 'security', evidence: 'Typed engine evidence', patch: 'A complete suggested patch',

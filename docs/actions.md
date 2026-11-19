@@ -521,6 +521,12 @@ selects accepted findings through the shared acceptance owner, and sends one
 verification-and-fix request through `session.message.send`. It does not start
 another review. Historical requests carrying raw findings retain their existing
 input contract and consume current persisted acceptance at the same owner.
+The `{ reviewId, destination: 'prompt' }` arm prepares that same fresh prompt
+without a Session or message delivery. Its result is `{ status: 'prepared',
+prompt, commentIds }`; no currently accepted findings returns `unchanged`.
+Clients copy the returned prompt through their existing clipboard owner or open
+an editable draft with `session.authoring.open({ seed: { prompt } })` and the
+ordinary authoring placement fields. Neither consumer formats findings again.
 Agent and MCP requests ask for approval by default; a person's saved surface
 waiver uses the existing Action approval policy.
 Prepared review-workspace materialization remains at the host-stamped source
@@ -2858,7 +2864,9 @@ canonical declarations; generic Voice `action_execute` reaches the same schemas,
 revision checks and approval policy. The internal publication-dispatch claim
 remains unavailable to Voice.
 In development source, `review.apply` (`actions invoke review.apply` in the CLI,
-`review_apply` on MCP and Voice) accepts a one-Session target and reviewed `{runId, findings}` sets. The
+`review_apply` on MCP and Voice) accepts a destination Session with a Review id
+or reviewed `{runId, findings}` sets, or `{ reviewId, destination: 'prompt' }`
+to prepare the same prompt for copying or an editable New Session draft. The
 review card and external plugins invoke that same Action. It reloads the scoped
 ReviewComments, including references reused from earlier rounds, selects current
 accepted groups, and sends the canonical verify-first instructions through
