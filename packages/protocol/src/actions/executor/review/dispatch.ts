@@ -561,11 +561,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
                 instructions: selection.includeSessionTranscript === true && transcript?.ok
                   ? `${instructions}\n\n${transcript.instructions}` : instructions,
                 reviewOutputSelection: reviewInput.outputs ? { outputs: reviewInput.outputs, narrator } : null,
-                ...(engineInput.childSelection ? { childSelection: engineInput.childSelection }
-                  : sessionId === null && engineInput.modelId === undefined && engineInput.modelSelection === undefined && !teamCredentialModel
-                    && connectedSelection.bindings === undefined && connectedSelection.defaultServiceIds.length === 0
-                    && !engineInput.roleId && !engineInput.launchProfileId && !engineInput.profileId
-                    && (!engineInput.intent || engineInput.intent === 'review') ? { childSelection: 'agentDefault' as const } : {}),
+                ...(engineInput.childSelection ? { childSelection: engineInput.childSelection } : {}),
                 ...(typeof engineInput.modelId === 'string' ? { modelId: engineInput.modelId } : {}),
                 ...(engineInput.modelSelection !== undefined ? { modelSelection: engineInput.modelSelection } : {}),
                 ...(engineInput.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: engineInput.sessionConfigOptionOverrides } : {}),

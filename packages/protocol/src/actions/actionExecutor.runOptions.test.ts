@@ -215,6 +215,24 @@ it('does not turn an omitted attached Review selection into an explicit Account-
   expect(received[0]).not.toHaveProperty('childSelection');
 });
 
+it.each([undefined, 'agentDefault'] as const)('preserves authored choice for a detached engine-only Review (%s)', async childSelection => {
+  const received: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
+  const deps = createDeps({
+    reviewEnginesList: async () => ({ items: [{ targetKey: START_TARGET_KEY, label: 'Codex' }] }),
+    executionRunStart: async (_id, input) => {
+      received.push(ExecutionRunStartRequestSchema.parse(input));
+      return { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' };
+    },
+  });
+  expect(await createActionExecutor(deps).execute('review.start', {
+    target: { kind: 'detached' }, scope: 'repository', instructions: 'Review',
+    reviewers: [{ kind: 'engine', engineId: START_TARGET_KEY, ...(childSelection ? { childSelection } : {}) }],
+  }, UI_CALLER)).toMatchObject({ ok: true, result: { results: [{ ok: true }] } });
+  expect(received).toHaveLength(1);
+  expect(received[0]?.childSelection).toBe(childSelection);
+  expect(received[0]?.backendTarget).toEqual(parseBackendTargetKeyV2(START_TARGET_KEY));
+});
+
 it.each([false, true])('keeps mixed-Agent fan-out inheritance local to each child: native=%s', async native => {
   const target = parseBackendTargetKeyV2(START_TARGET_KEY);
   const otherKey = 'agent:external.agent/worker';
