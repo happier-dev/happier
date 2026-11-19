@@ -24,27 +24,37 @@ export function encodeWorkbenchSubPath(
   if (relation) parts.push(relation.schema, relation.name, ...(relation.database ? [relation.database] : []));
   const place = parts.map(encodeURIComponent).join('/');
   if (!target) return place;
-  const selector = encodeBase64(new TextEncoder().encode(workbenchTargetKey(target)), 'base64url');
-  return `target/${selector}/${place}`;
+  return `${encodeWorkbenchRootSubPath(target)}/${place}`;
+}
+
+/**
+ * The database's root: its target with no place. Desktop shows it as the Overview beside the rail; a phone shows the
+ * rail itself (lab tablesp), the page every place it opens goes back to.
+ */
+export function encodeWorkbenchRootSubPath(target?: DatabaseTargetV1): string {
+  if (!target) return '';
+  return `target/${encodeBase64(new TextEncoder().encode(workbenchTargetKey(target)), 'base64url')}`;
 }
 
 /** Placement names the host installation. Only the credential-free target enters the plugin path. */
 export function encodeWorkbenchPageSubPath(
   { placement, target }: Pick<DatabaseDescriptorV1, 'placement' | 'target'>,
-  location: WorkbenchPlace,
+  /** Omitted: the database's root. */
+  location?: WorkbenchPlace,
 ): string {
-  return `~run-on/${placement.serverId}/${placement.machineId}/${placement.installationId}/${encodeWorkbenchSubPath(location, target)}`;
+  const path = location ? encodeWorkbenchSubPath(location, target) : encodeWorkbenchRootSubPath(target);
+  return `~run-on/${placement.serverId}/${placement.machineId}/${placement.installationId}/${path}`;
 }
 
 export function decodeWorkbenchSubPath(
   subPath: string | undefined,
-): { target?: DatabaseTargetV1; place: WorkbenchPlace } {
+): { target?: DatabaseTargetV1; place: WorkbenchPlace; root: boolean } {
   const parts = (subPath ?? '').replace(/^\/+/, '').split('/');
   try {
     let target: DatabaseTargetV1 | undefined;
     if (parts[0] === 'target') {
       const selector = parts[1];
-      if (!selector) return { place: { mode: 'overview' } };
+      if (!selector) return { place: { mode: 'overview' }, root: true };
       const decoded = JSON.parse(new TextDecoder().decode(decodeBase64(selector, 'base64url')));
       target = DatabaseTargetV1Schema.parse(decoded);
       parts.splice(0, 2);
@@ -54,8 +64,8 @@ export function decodeWorkbenchSubPath(
     const place: WorkbenchPlace = name && schema
       ? { mode: known, relation: { ...(database ? { database } : {}), schema, name } }
       : { mode: known === 'data' || known === 'structure' ? 'overview' : known };
-    return { target, place };
+    return { target, place, root: !mode };
   } catch {
-    return { place: { mode: 'overview' } };
+    return { place: { mode: 'overview' }, root: true };
   }
 }

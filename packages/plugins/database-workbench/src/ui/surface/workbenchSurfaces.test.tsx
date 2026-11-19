@@ -366,8 +366,9 @@ describe('Database workbench surfaces', () => {
       }));
       await act(async () => { await fixture.press(row); });
       await fixture.press(await fixture.findByRole('button', { name: 'Open in customers' }));
+      // On a phone the rail is the root (lab tablesp): the host's Back returns to it from any place it opens.
       expect(replacePageLocation).toHaveBeenCalledWith(expect.objectContaining({
-        subPath: `${savedDatabasePath}/data/public/customers`,
+        subPath: `${savedDatabasePath}/data/public/customers`, backLocation: savedDatabasePath,
       }));
       expect(watchResource).toHaveBeenCalledTimes(1);
     } finally { await fixture.dispose(); }
@@ -410,6 +411,7 @@ describe('Database workbench surfaces', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Stage row' }));
       await fixture.press(await fixture.getByRole('button', { name: 'Review' }));
       expect(await fixture.getByText('New row')).toBeTruthy();
+      expect(await fixture.getByRole('heading', { name: 'Review 1 change' })).toBeTruthy();
       expect(executeAction).not.toHaveBeenCalled();
     } finally { await fixture.dispose(); }
   });
@@ -454,9 +456,10 @@ describe('Database workbench surfaces', () => {
       await settle(10);
       await fixture.press(await fixture.getByRole('button', { name: 'Review' }));
       await settle(10);
-      expect(await fixture.getByText('Delete row')).toBeTruthy();
-      expect(await fixture.queryByText('48,212')).toBeUndefined();
-      expect(await fixture.getByText('48212')).toBeTruthy();
+      // The review counts what it applies and names each row by its key (lab dbEdit-review).
+      expect(await fixture.getByRole('heading', { name: 'Review 1 change' })).toBeTruthy();
+      expect(await fixture.queryByText('id 48,212')).toBeUndefined();
+      expect(await fixture.getByText('id 48212')).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
 
@@ -613,7 +616,8 @@ describe('Database workbench surfaces', () => {
       expect(openSurface).toHaveBeenCalledWith(
         expect.objectContaining({
           view: expect.objectContaining({ localId: WORKBENCH_PAGE_VIEW_ID }),
-          subPath: `~run-on/home/machine/installation/${savedDatabasePath}/overview`,
+          // The database's root: the Overview beside the rail, and on a phone the rail itself (lab tablesp).
+          subPath: `~run-on/home/machine/installation/${savedDatabasePath}`,
         }),
       );
       expect(openSurface.mock.lastCall?.[0]).not.toHaveProperty('input');

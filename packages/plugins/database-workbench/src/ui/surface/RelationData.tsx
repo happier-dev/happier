@@ -131,12 +131,9 @@ function RowDetail(
   const location = useWorkbenchLocation();
   const draft = useWorkbenchDraft(instance);
   const identity = props.row.identity;
-  const label = identity
-    ? identity.key
-        // A key names its row: digits ungrouped, as the table shows it.
-        .map((cell) => presentCell(cell.value, translate, { identifier: true }).text)
-        .join(' · ')
-    : props.row.rowKey;
+  const identityLine = rowIdentity(props.row, props.columns, props.uniqueColumns, props.relation, translate);
+  // Review names a staged row by its key, then its name ("id 1002 · INV-2026-04812", lab dbEdit-review).
+  const label = identityLine.reviewLabel;
   const stage = React.useCallback(
     (column: string, value: DatabaseValueV1 | null) => {
       if (!identity) return;
@@ -207,7 +204,6 @@ function RowDetail(
     props.relation,
     props.row.rowKey,
   ]);
-  const identityLine = rowIdentity(props.row, props.columns, props.uniqueColumns, props.relation, translate);
   // The row's name and Close stay put; its fields scroll under them, so a long row (its JSON last) is always reachable.
   return (
     <Stack gap="medium" grow>
@@ -376,12 +372,14 @@ function rowIdentity(
   uniqueColumns: readonly string[],
   relation: DatabaseRelationV1,
   translate: PluginTranslate,
-): Readonly<{ title: string; subtitle: string }> {
+): Readonly<{ title: string; subtitle: string; reviewLabel: string }> {
+  // A key names its row: digits ungrouped, as the table shows it.
   const key = row.identity?.key.map((cell) => `${cell.column} ${presentCell(cell.value, translate, { identifier: true }).text}`).join(' · ');
   const named = columns.findIndex((column) => column.kind === 'text' && uniqueColumns.includes(column.name)
     && row.cells[columns.indexOf(column)]?.type === 'text');
   const title = named >= 0 ? presentCell(row.cells[named], translate).text : key ?? row.rowKey;
-  return { title, subtitle: [relation.name, named >= 0 ? key : null].filter(Boolean).join(' · ') };
+  return { title, subtitle: [relation.name, named >= 0 ? key : null].filter(Boolean).join(' · '),
+    reviewLabel: [key ?? row.rowKey, named >= 0 ? title : null].filter(Boolean).join(' · ') };
 }
 
 function RowField(
@@ -610,7 +608,9 @@ export function RelationData(
   // Pushed (a phone) or in the host pane, the band names the row; beside the table the pane names it itself.
   const detailHeader = (key: string) => {
     const row = page.rows.find((candidate) => candidate.rowKey === key);
-    return row ? rowIdentity(row, page.columns, page.uniqueColumns ?? NO_UNIQUE, props.relation, translate) : { title: key };
+    if (!row) return { title: key };
+    const { title, subtitle } = rowIdentity(row, page.columns, page.uniqueColumns ?? NO_UNIQUE, props.relation, translate);
+    return { title, subtitle };
   };
   const first = location.page.offset + 1;
   const shownTo = location.page.offset + page.rows.length;

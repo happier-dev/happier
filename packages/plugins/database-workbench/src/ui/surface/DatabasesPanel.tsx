@@ -100,7 +100,8 @@ function DatabaseRows(
   const open = React.useCallback(
     (target: WorkbenchTarget) => {
       void props.context.hostApi.openSurface(WORKBENCH_PAGE_VIEW_ID, undefined, {
-        subPath: encodeWorkbenchPageSubPath(instance.target(target.targetKey), { mode: 'overview' }),
+        // The database's root: the Overview beside the rail; on a phone the rail itself (lab tablesp).
+        subPath: encodeWorkbenchPageSubPath(instance.target(target.targetKey)),
       });
     },
     [instance, props.context.hostApi],

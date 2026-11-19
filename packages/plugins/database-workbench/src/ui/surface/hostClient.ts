@@ -18,7 +18,7 @@ import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
-import { encodeWorkbenchSubPath } from './subPath.js';
+import { encodeWorkbenchRootSubPath, encodeWorkbenchSubPath } from './subPath.js';
 import type { WorkbenchClient } from '../models.js';
 
 type HostOptions = Readonly<{
@@ -151,6 +151,8 @@ export function createHostWorkbenchClient(
     async navigate(location) {
       if (!options.pageLocation) return;
       await hostApi.replacePageLocation(encodeWorkbenchSubPath(location, options.pageTarget), {
+        // Every place goes back to the database's root, which a phone shows as the rail (lab tablesp).
+        backLocation: encodeWorkbenchRootSubPath(options.pageTarget),
         preserveUnsavedChanges: true,
       });
     },

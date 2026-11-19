@@ -110,16 +110,17 @@ export function WorkbenchMain(props: Readonly<{ targetKey: string; scope: Workbe
 
 /** The workbench page: the rail beside what it opens; on a phone the rail pushes its choice. */
 function WorkbenchPage(context: RenderContext) {
-  const { target, place } = React.useMemo(() => decodeWorkbenchSubPath(context.subPath), [context.subPath]);
+  const { target, place, root } = React.useMemo(() => decodeWorkbenchSubPath(context.subPath), [context.subPath]);
   return target
-    ? <LinkedWorkbenchPage context={context} target={target} place={place} />
-    : <MountedWorkbenchPage context={context} launch={readWorkbenchLaunchInput(context)} place={place} />;
+    ? <LinkedWorkbenchPage context={context} target={target} place={place} root={root} />
+    : <MountedWorkbenchPage context={context} launch={readWorkbenchLaunchInput(context)} place={place} root={root} />;
 }
 
-function LinkedWorkbenchPage({ context, target, place }: Readonly<{
+function LinkedWorkbenchPage({ context, target, place, root }: Readonly<{
   context: RenderContext;
   target: DatabaseTargetV1;
   place: WorkbenchPlace;
+  root: boolean;
 }>) {
   const translate = usePluginTranslation();
   const linked = useLinkedWorkbench(context, target);
@@ -134,14 +135,16 @@ function LinkedWorkbenchPage({ context, target, place }: Readonly<{
       retryLabel={translate('plugins.database.retry', 'Try again')}
     />
   );
-  return <MountedWorkbenchPage context={context} place={place}
+  return <MountedWorkbenchPage context={context} place={place} root={root}
     launch={readWorkbenchLaunchInput(context, linked.descriptor)} client={linked.client} />;
 }
 
-function MountedWorkbenchPage({ context, launch, place, client }: Readonly<{
+function MountedWorkbenchPage({ context, launch, place, root, client }: Readonly<{
   context: RenderContext;
   launch: WorkbenchLaunchInput | null;
   place: WorkbenchPlace;
+  /** No place in the address: the database's root, which a phone shows as the rail. */
+  root: boolean;
   client?: WorkbenchClient;
 }>) {
   const translate = usePluginTranslation();
@@ -176,17 +179,19 @@ function MountedWorkbenchPage({ context, launch, place, client }: Readonly<{
   }
   return (
     <WorkbenchProvider instance={instance}>
-      <WorkbenchLayout targetKey={targetKey} scope={launch.scope} />
+      <WorkbenchLayout targetKey={targetKey} scope={launch.scope} root={root} />
     </WorkbenchProvider>
   );
 }
 
-function WorkbenchLayout(props: Readonly<{ targetKey: string; scope: WorkbenchLaunchInput['scope'] }>) {
+function WorkbenchLayout(props: Readonly<{ targetKey: string; scope: WorkbenchLaunchInput['scope']; root: boolean }>) {
   return (
     <ListDetailLayout
       minListWidth={232}
       minDetailWidth={360}
       preferredListRatio={0.24}
+      // A phone opens on the rail (lab tablesp) and pushes the page it picks; the host's Back returns to the rail.
+      stackedPane={props.root ? 'list' : 'detail'}
       list={<WorkbenchRail targetKey={props.targetKey} />}
       detail={<WorkbenchMain targetKey={props.targetKey} scope={props.scope} />}
     />

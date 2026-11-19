@@ -3,10 +3,13 @@ import type { DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
 import {
   Action,
   Button,
+  DiffViewer,
   ErrorState,
+  Icon,
   Item,
   ItemGroup,
-  PageHeader,
+  ModalCardFooterActions,
+  ModalHeader,
   Row,
   Stack,
   Surface,
@@ -17,6 +20,7 @@ import {
 import { useWorkbenchDraft, useWorkbenchInstance } from '../hooks.js';
 import type { WorkbenchApplyOutcome, WorkbenchReview } from '../models.js';
 import { presentCell } from './cells.js';
+import { formatMoment } from './insights/format.js';
 
 function countLine(
   counts: Readonly<{ edits: number; inserts: number; removals: number }>,
@@ -52,10 +56,10 @@ function outcomeLine(
     case 'applied':
       return {
         text: outcome.count === '1'
-          ? translate('plugins.database.apply.appliedOne', '1 row changed')
+          ? translate('plugins.database.apply.appliedOne', '1 change applied')
           : translate(
             'plugins.database.apply.applied',
-            '{count} rows changed',
+            '{count} changes applied',
             { count: outcome.count },
           ),
         tone: 'success',
@@ -104,12 +108,28 @@ export function StagedBar(props: Readonly<{ onReview: () => void }>) {
     draft.counts.edits + draft.counts.inserts + draft.counts.removals;
   const outcome = outcomeLine(draft.outcome, translate);
   if (total === 0) {
-    return outcome?.tone === 'success' ? (
-      <Text tone="success" variant="meta" value={outcome.text} />
+    // The bar becomes the receipt (lab dbEdit-applied): what was written, together, and when.
+    return outcome?.tone === 'success' && draft.outcome?.kind === 'applied' ? (
+      <Row justify="center">
+      <Stack>
+      <Surface materialRole="floating" floatingRole="panel" padding="small">
+        <Row gap="small" align="center">
+          <Icon name="check" tone="success" />
+          <Text value={outcome.text} />
+          <Text
+            tone="secondary"
+            value={translate('plugins.database.apply.appliedWhen', 'in one transaction · {time}', {
+              time: formatMoment(Date.parse(draft.outcome.at)),
+            })}
+          />
+        </Row>
+      </Surface>
+      </Stack>
+      </Row>
     ) : null;
   }
   return (
-    <Surface floatingRole="panel" padding="small">
+    <Surface materialRole="floating" floatingRole="panel" padding="small">
       <Row gap="small" align="center">
         <Text value={countLine(draft.counts, translate)} />
         <Stack grow />
@@ -130,6 +150,26 @@ export function StagedBar(props: Readonly<{ onReview: () => void }>) {
   );
 }
 
+/** One change as a diff: the old value in the removed role, the new one in the added role; a new row has only new. */
+function valueDiff(column: string, old: string | undefined, next: string): string {
+  const before = old === undefined ? [] : old.split('\n');
+  const after = next.split('\n');
+  return [
+    `--- ${column}`,
+    `+++ ${column}`,
+    `@@ -${before.length === 0 ? 0 : 1},${before.length} +1,${after.length} @@`,
+    ...before.map((line) => `-${line}`),
+    ...after.map((line) => `+${line}`),
+  ].join('\n');
+}
+
+function changesLabel(count: number, translate: PluginTranslate): string {
+  return count === 1
+    ? translate('plugins.database.review.oneChange', '1 change')
+    : translate('plugins.database.review.changes', '{count} changes', { count: String(count) });
+}
+
+/** One table's staged rows (lab dbEdit-review): each row by its key and name, each column old → new, a take-back on each. */
 function ReviewGroup(
   props: Readonly<{
     group: WorkbenchReview[number];
@@ -140,52 +180,58 @@ function ReviewGroup(
   const { translate } = props;
   return (
     <ItemGroup
-      title={`${props.group.relation.schema}.${props.group.relation.name}`}
+      title={props.group.relation.name}
+      description={changesLabel(props.group.rows.length, translate)}
     >
-      {props.group.rows.map((row) => {
-        const what =
-          row.kind === 'delete'
-            ? translate('plugins.database.review.delete', 'Delete row')
-            : row.kind === 'insert'
+      {props.group.rows.map((row) => (
+        <Item
+          key={row.rowKey}
+          icon={
+            <Icon
+              name={row.kind === 'insert' ? 'add' : row.kind === 'delete' ? 'close' : 'edit'}
+              tone={row.kind === 'insert' ? 'success' : row.kind === 'delete' ? 'danger' : 'info'}
+            />
+          }
+          title={
+            row.kind === 'insert'
               ? translate('plugins.database.review.insert', 'New row')
-              : row.label;
-        const lines =
-          row.kind === 'delete'
-            ? [row.label]
-            : row.changes.map((change) => {
+              : row.label
+          }
+          {...(row.kind === 'delete'
+            ? { subtitle: translate('plugins.database.review.delete', 'Delete row') }
+            : {})}
+          accessory={
+            <Button
+              variant="plain"
+              size="small"
+              title={translate('plugins.database.review.takeBack', 'Take back')}
+              onPress={() => props.onTakeBack(row.rowKey)}
+            />
+          }
+        >
+          {row.kind === 'delete' ? null : (
+            <Stack gap="small">
+              {row.changes.map((change) => {
                 const next =
                   change.new?.kind === 'default'
                     ? translate('plugins.database.cell.default', 'default')
-                    : presentCell(
-                        change.new?.kind === 'value'
-                          ? change.new.cell
-                          : undefined,
-                        translate,
-                      ).text;
-                return change.old === undefined
-                  ? `${change.column}: ${next}`
-                  : `${change.column}: ${presentCell(change.old, translate).text} → ${next}`;
-              });
-        return (
-          <Item
-            key={row.rowKey}
-            title={what}
-            subtitle={lines.join('\n')}
-            subtitleNumberOfLines={lines.length}
-            accessory={
-              <Button
-                variant="plain"
-                size="small"
-                title={translate(
-                  'plugins.database.review.takeBack',
-                  'Take back',
-                )}
-                onPress={() => props.onTakeBack(row.rowKey)}
-              />
-            }
-          />
-        );
-      })}
+                    : presentCell(change.new?.kind === 'value' ? change.new.cell : undefined, translate).text;
+                return (
+                  <DiffViewer
+                    key={change.column}
+                    label={change.column}
+                    unifiedDiff={valueDiff(
+                      change.column,
+                      change.old === undefined ? undefined : presentCell(change.old, translate).text,
+                      next,
+                    )}
+                  />
+                );
+              })}
+            </Stack>
+          )}
+        </Item>
+      ))}
     </ItemGroup>
   );
 }
@@ -219,11 +265,17 @@ export function StagedReview(
   React.useEffect(() => {
     if (draft.outcome !== openedWith.current && draft.outcome?.kind === 'applied') onClose();
   }, [draft.outcome, onClose]);
+  const total = draft.counts.edits + draft.counts.inserts + draft.counts.removals;
+  const count = String(total);
   return (
     <Stack gap="large">
-      <PageHeader
-        title={translate('plugins.database.review.title', 'Review changes')}
-        description={
+      <ModalHeader
+        title={
+          total === 1
+            ? translate('plugins.database.review.titleOne', 'Review 1 change')
+            : translate('plugins.database.review.titleCount', 'Review {count} changes', { count })
+        }
+        subtitle={
           production
             ? translate(
                 'plugins.database.review.production',
@@ -231,10 +283,12 @@ export function StagedReview(
                 { name: descriptor.label },
               )
             : translate(
-                'plugins.database.review.description',
-                'Nothing is written until you apply.',
+                'plugins.database.review.together',
+                '{name}. Applied together, or not at all.',
+                { name: descriptor.label },
               )
         }
+        onClose={props.onClose}
       />
       {review.map((group) => (
         <ReviewGroup
@@ -264,26 +318,20 @@ export function StagedReview(
       {outcome && outcome.tone !== 'success' ? (
         <ErrorState layout="line" kind="error" title={outcome.text} />
       ) : null}
-      <Row gap="small" justify="flex-end">
-        <Button
-          variant="secondary"
-          title={translate('plugins.database.review.back', 'Back to table')}
-          onPress={props.onClose}
-        />
+      <ModalCardFooterActions cancel={{ onPress: props.onClose }}>
         <Action.Control
           {...apply}
           reviewedInput={reviewedInput}
           variant={production ? 'destructive' : 'primary'}
           title={
             production
-              ? translate(
-                  'plugins.database.review.applyProduction',
-                  'Apply to Production',
-                )
-              : translate('plugins.database.review.apply', 'Apply')
+              ? translate('plugins.database.review.applyProduction', 'Apply to Production')
+              : total === 1
+                ? translate('plugins.database.review.applyOne', 'Apply 1 change')
+                : translate('plugins.database.review.applyCount', 'Apply {count} changes', { count })
           }
         />
-      </Row>
+      </ModalCardFooterActions>
     </Stack>
   );
 }
