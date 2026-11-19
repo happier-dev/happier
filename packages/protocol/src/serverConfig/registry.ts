@@ -6,6 +6,8 @@ import { REACH_SERVER_CONFIG } from './entries/reachEntries.js';
 import { SERVER_RUNTIME_SERVER_CONFIG } from './entries/serverRuntimeEntries.js';
 import { STORAGE_SERVER_CONFIG } from './entries/storageEntries.js';
 
+export { CONNECTED_ACCOUNT_PUBLIC_OAUTH_CLIENT_CONFIG } from './entries/integrationsEntries.js';
+
 /**
  * The hand-written part of the server configuration registry (plan §3.14): every key the server
  * reads that has no structured owner of its own. Feature keys, API rate limits and retention

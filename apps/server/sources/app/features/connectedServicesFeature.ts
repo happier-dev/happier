@@ -1,7 +1,7 @@
 import type { FeaturesPayloadDelta } from "./types";
 import { readConnectedServicesFeatureEnv } from "./catalog/readFeatureEnv";
 import { readServerConfig } from "@happier-dev/protocol/serverConfig/serverConfigCodec";
-import { SERVER_CONFIG } from "@happier-dev/protocol/serverConfig/registry";
+import { CONNECTED_ACCOUNT_PUBLIC_OAUTH_CLIENT_CONFIG } from "@happier-dev/protocol/serverConfig/registry";
 import { ConnectedAccountPublicOAuthClientV1Schema } from "@happier-dev/protocol/features/payload/capabilities/connectedServicesCapabilities";
 
 /**
@@ -10,22 +10,14 @@ import { ConnectedAccountPublicOAuthClientV1Schema } from "@happier-dev/protocol
  * advertised only when its client id (and scopes) are configured and valid.
  */
 function readPublicOAuthClients(env: NodeJS.ProcessEnv) {
-    const rows = [
-        {
-            service: { pluginId: "happier.deploy.cloudflare", localId: "cloudflare" },
-            clientId: readServerConfig(env, SERVER_CONFIG.HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_CLIENT_ID),
-            scopesByMode: { oauth: readServerConfig(env, SERVER_CONFIG.HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_SCOPES) },
-        },
-        {
-            // Vercel permissions are set on the app, so consent asks only for identity and offline access.
-            service: { pluginId: "happier.machine.vercel", localId: "vercel-account" },
-            clientId: readServerConfig(env, SERVER_CONFIG.HAPPIER_CONNECTED_SERVICES_VERCEL_OAUTH_CLIENT_ID),
-            scopesByMode: { oauth: ["openid", "email", "profile", "offline_access"] },
-        },
-    ];
-    // Validate per row: the client-side schema drops the whole list on one malformed row.
-    return rows.flatMap(row => {
-        const parsed = ConnectedAccountPublicOAuthClientV1Schema.safeParse({ ...row, clientId: row.clientId.trim() });
+    // Validate per row so one malformed setting cannot withdraw another provider.
+    return CONNECTED_ACCOUNT_PUBLIC_OAUTH_CLIENT_CONFIG.flatMap(entry => {
+        const { service, scopes } = entry;
+        const parsed = ConnectedAccountPublicOAuthClientV1Schema.safeParse({
+            service,
+            clientId: readServerConfig(env, entry),
+            scopesByMode: { oauth: 'key' in scopes ? readServerConfig(env, scopes) : scopes },
+        });
         return parsed.success ? [parsed.data] : [];
     });
 }

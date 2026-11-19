@@ -59,6 +59,34 @@ describe("resolveConnectedServicesFeature core contract", () => {
         })).toEqual([vercel]);
     });
 
+    it("advertises Railway and DigitalOcean independently through the Home configuration", () => {
+        const values = {
+            HAPPIER_CONNECTED_SERVICES_RAILWAY_OAUTH_CLIENT_ID: "railway-public",
+            HAPPIER_CONNECTED_SERVICES_DIGITALOCEAN_OAUTH_CLIENT_ID: "digitalocean-public",
+        };
+        expect(validateHomeSettingsWrite(SERVER_CONFIG_REGISTRY_BASE, { values })).toMatchObject({ ok: true, values });
+        const read = (env: NodeJS.ProcessEnv) => {
+            const feature = resolveConnectedServicesFeature(env);
+            return FeaturesResponseSchema.parse({
+                features: feature.features,
+                capabilities: feature.capabilities,
+            }).capabilities.connectedServices.publicOAuthClients;
+        };
+        const railway = {
+            service: { pluginId: "happier.machine.railway", localId: "railway-account" },
+            clientId: "railway-public",
+            scopesByMode: { oauth: expect.arrayContaining(["openid", "offline_access", "project:member"]) },
+        };
+        const digitalocean = {
+            service: { pluginId: "happier.machine.digitalocean", localId: "digitalocean-account" },
+            clientId: "digitalocean-public",
+            scopesByMode: { oauth: expect.arrayContaining(["account:read", "droplet:create", "droplet:delete"]) },
+        };
+        expect(read(values)).toEqual([railway, digitalocean]);
+        expect(read({ ...values, HAPPIER_CONNECTED_SERVICES_RAILWAY_OAUTH_CLIENT_ID: "bad\nclient" })).toEqual([digitalocean]);
+        expect(read({ ...values, HAPPIER_CONNECTED_SERVICES_DIGITALOCEAN_OAUTH_CLIENT_ID: " " })).toEqual([railway]);
+    });
+
     it("defaults to connected services enabled (including quotas)", () => {
         const malformed = resolveConnectedServicesFeature({
             HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_CLIENT_ID: "happier-public-client",
