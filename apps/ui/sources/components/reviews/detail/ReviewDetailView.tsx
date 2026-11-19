@@ -180,6 +180,11 @@ export function ReviewDetailView(
   );
 }
 
+/** Page content that is not a section (a button, a state line) standing on the sections' sheet edge. */
+export function ReviewDetailInset(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
+  return <View style={styles.inset}>{props.children}</View>;
+}
+
 /** One verdict sentence, then its facts on one quiet line (lab glance; no stat strip). */
 export function ReviewGlanceLine(
   props: Readonly<{ glance: ReviewDetailGlance }>,
@@ -329,6 +334,7 @@ const CONTENT_INSET_PX = resolveItemGroupContentHorizontalInsetPx();
 const styles = StyleSheet.create((theme) => ({
     column: { gap: theme.space.s16, paddingBottom: theme.space.s32 },
     lead: { gap: theme.space.s8, paddingHorizontal: CONTENT_INSET_PX, paddingTop: theme.space.s16 },
+    inset: { paddingHorizontal: CONTENT_INSET_PX, alignItems: 'flex-start' },
     glance: { gap: theme.space.s4 },
     glanceSentence: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     glanceDot: { width: theme.space.s8, height: theme.space.s8, borderRadius: theme.space.s4 },

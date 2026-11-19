@@ -7,6 +7,7 @@ import type { ReviewListItemV1 } from '@happier-dev/protocol/reviews/reviewListV
 import { useIsFocused, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
+import { useOptionalUniversalSearchRuntime } from '@/components/appShell/search/UniversalSearchRuntimeContext';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -52,6 +53,8 @@ export function ReviewsListHost(): React.ReactElement {
     const header = useReviewsSpaceHeader(view, 'reviews-space');
     const { list } = view;
     const router = useRouter();
+    // Starting a Review needs a subject; the one Start review command picks it (the palette's).
+    const universalSearch = useOptionalUniversalSearchRuntime();
     const reviewLabel = t('detailsSurface.review.title');
     const moreLabel = t('common.more');
     const [searchOpen, setSearchOpen] = React.useState(false);
@@ -111,7 +114,11 @@ export function ReviewsListHost(): React.ReactElement {
                 accessibilityLabel={t('homeSettings.groups.reviews')}
                 scroll="page-virtualized" minListWidth={0} minDetailWidth={0} preferredListRatio={1}
                 loading={list.items === null && list.error === null} testID="reviews:list"
-                empty={failure ?? <SurfaceStateCard kind="empty" title={t('ui.pluginUi.empty')} replacesContent />} />
+                empty={failure ?? (searching ? <SurfaceStateCard kind="empty" title={t('ui.pluginUi.empty')} replacesContent />
+                    : <SurfaceStateCard testID="reviews:empty" kind="empty" title={t('reviewWalkthrough.detail.emptyTitle')}
+                        reason={t('reviewWalkthrough.detail.emptyReason')} replacesContent
+                        action={universalSearch ? { testID: 'reviews:empty:start', label: t('reviewWalkthrough.detail.startReview'),
+                            onPress: () => universalSearch.open(t('commandPalette.commands.startReviewRunTitle')) } : undefined} />)} />
         </PageContentColumn>
     </CoreCollectionScope></ItemList>;
 }

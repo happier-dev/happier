@@ -51,6 +51,7 @@ import { ReviewPagePluginContent } from '../plugins/ReviewPluginContent';
 import type { PluginReviewPageSelection } from '@/components/plugins/pages/pluginPageRoute';
 
 import {
+  ReviewDetailInset,
   ReviewDetailState,
   ReviewDetailView,
   type ReviewDetailParticipant,
@@ -78,8 +79,10 @@ const ROUND_STATE_KEYS = {
 type ReviewRecordRound = ReviewArtifactV1['rounds'][number];
 
 /** The opened record's rounds as the page draws them: who reviewed and how the round ended. */
-function projectRound(round: ReviewRecordRound): ReviewDetailRound {
+export function projectRound(round: ReviewRecordRound): ReviewDetailRound {
   const state = t(ROUND_STATE_KEYS[round.state]);
+  // A round only people review has no agent or engine row; its people row says who was asked.
+  if (round.reviewerIds.length === 0) return { ordinal: round.ordinal, state: round.state, groups: [] };
   return {
     ordinal: round.ordinal,
     state: round.state,
@@ -331,10 +334,10 @@ export function ReviewDetailHost(props: Readonly<{
       onSelectTab={setTab}
     >
       {activeTab === 'findings' ? <>
-        {canEdit && findings.rows.length > 0 ? <RoundButton testID="review-detail:implement" size="small"
+        {canEdit && findings.rows.length > 0 ? <ReviewDetailInset><RoundButton testID="review-detail:implement" size="small"
           title={t('runPage.review.implementFixes', { count: findings.implement.count })}
           disabled={findings.implement.destinationDisabled} loading={findings.implement.busy}
-          onPress={implementFindings} /> : null}
+          onPress={implementFindings} /></ReviewDetailInset> : null}
         {comments.status === 'idle' || comments.status === 'loading' ? <SurfaceStateCard kind="loading" title={t('common.loading')} />
           : findings.rows.length > 0 || findings.unavailableFindings.length === 0 ? <ReviewFindingsList rows={findings.rows.map(row => ({ rowId: row.rowId, severity: row.finding.severity, decision: row.decision }))}
               renderRow={(rowId, divided) => {

@@ -18,7 +18,6 @@ import {
   SegmentedTabBar,
   type SegmentedTab,
 } from '@/components/ui/navigation/SegmentedTabBar';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
 export type ReviewFindingsListRow = Readonly<{
@@ -93,16 +92,8 @@ export function ReviewFindingsList(
         REVIEW_SEVERITY_RANK[left] - REVIEW_SEVERITY_RANK[right],
     );
   }, [active, props.rows]);
-  if (props.rows.length === 0) {
-    return (
-      <SurfaceStateCard
-        testID="review-findings:empty"
-        kind="success"
-        size="line"
-        title={t('reviewWalkthrough.detail.glanceNoFindings')}
-      />
-    );
-  }
+  // No findings is the page glance's sentence ("Nothing to fix"); the list says it once there, not twice.
+  if (props.rows.length === 0) return null;
   return (
     <View testID={props.testID ?? 'review-findings'} style={styles.list}>
       <View style={styles.filters}>

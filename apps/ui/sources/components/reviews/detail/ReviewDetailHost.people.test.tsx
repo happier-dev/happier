@@ -7,7 +7,7 @@ vi.mock('@/text', async () => {
   return createTextModuleMock();
 });
 
-import { projectPeople } from './ReviewDetailHost';
+import { projectPeople, projectRound } from './ReviewDetailHost';
 
 const human: ReviewHumanStateV1 = {
   reviewId: 'review-1',
@@ -39,5 +39,12 @@ describe('Review page people', () => {
 
   it('has no people row for a round nobody was asked to review', () => {
     expect(projectPeople({ human: { ...human, requests: [] }, round: 2, names: null, viewerAccountId: 'me' })).toBeNull();
+  });
+
+  it('draws no reviewers row for a round only people review', () => {
+    const round = projectRound({ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] });
+    expect(round.groups).toEqual([]);
+    const reviewed = projectRound({ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: ['s0:r0'], runs: [] });
+    expect(reviewed.groups.map(group => group.id)).toEqual(['reviewers']);
   });
 });

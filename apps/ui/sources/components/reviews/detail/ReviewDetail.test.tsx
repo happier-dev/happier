@@ -44,6 +44,15 @@ describe('ReviewFindingsList', () => {
   });
 });
 
+describe('ReviewFindingsList empty', () => {
+  it('draws nothing when there are no findings: the page glance already says so', async () => {
+    const screen = await renderScreen(<ReviewFindingsList rows={[]} renderRow={() => null} />);
+    expect(screen.findByTestId('review-findings:empty')).toBeNull();
+    expect(screen.findByTestId('review-findings')).toBeNull();
+    await screen.unmount();
+  });
+});
+
 describe('ReviewSubmitPanel', () => {
   it('sends the chosen verdict with the trimmed summary and keeps both when the send fails', async () => {
     const sent: unknown[] = [];

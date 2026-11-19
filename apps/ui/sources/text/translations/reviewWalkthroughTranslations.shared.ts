@@ -136,6 +136,9 @@ export type ReviewWalkthroughTranslations = {
         historyOpenElsewhere: (params: Count) => string;
         historyNotFoundThisTime: string;
         openReview: string;
+        emptyTitle: string;
+        emptyReason: string;
+        startReview: string;
         round: (params: Readonly<{ round: number }>) => string;
         rounds: string;
         failedTitle: string;
@@ -343,6 +346,9 @@ export const en: ReviewWalkthroughTranslations = {
         historyOpenElsewhere: ({ count }) => count === 1 ? 'Open in 1 other review' : `Open in ${count} other reviews`,
         historyNotFoundThisTime: 'Not found this time',
         openReview: 'Open review',
+        emptyTitle: 'No reviews yet',
+        emptyReason: 'Ask reviewers to check a session, a branch or a pull request before you merge. Findings land here, and fixes go back to a session.',
+        startReview: 'Start a review',
         round: ({ round }) => `Round ${round}`,
         rounds: 'Rounds',
         failedTitle: 'This review didn’t open',

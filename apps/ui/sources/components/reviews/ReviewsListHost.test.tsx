@@ -22,6 +22,7 @@ import { t } from '@/text';
 import { createDefaultCollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import { COLLECTION_SPACE_ENABLEMENT_SETTING_KEYS_V1 } from '@happier-dev/protocol/collections/spaces/collectionSpaceEnablementV1';
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { UniversalSearchRuntimeProvider, type UniversalSearchRuntime } from '@/components/appShell/search/UniversalSearchRuntimeContext';
 
 const routerPush = vi.hoisted(() => vi.fn());
 const membershipAlert = vi.hoisted(() => vi.fn());
@@ -166,6 +167,31 @@ describe('/reviews live host', () => {
             await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:row:review-repo')).toBeNull());
             expect(screen.findHostByTestId('reviews:row:review-pr')).not.toBeNull();
             expect(screen.findByTestId('reviews:search-scope')).not.toBeNull();
+        } finally {
+            await screen.unmount();
+            storage.setState({ profileScope: previousScope });
+            publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+        }
+    });
+
+    it('offers Start a review once when there are no Reviews, through the same Start review command', async () => {
+        const serverId = await homes.addHome({ serverUrl: 'https://reviews-empty.example', name: 'Reviews', accountId: 'alice' });
+        await setActiveServerId(serverId, { scope: 'device' });
+        const previousScope = storage.getState().profileScope;
+        const previousApplied = getAppliedActiveServerSnapshot();
+        const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+        storage.setState({ profileScope: { serverId, accountId: 'alice' } });
+        homes.answer(serverId, 'POST /v1/reviews/list', { select: () => ({ body: { items: [], cursor: null } }) });
+        const opened: (string | undefined)[] = [];
+        const runtime: UniversalSearchRuntime = { open: query => { opened.push(query); }, buildCommands: () => [] };
+        const screen = await renderScreen(<UniversalSearchRuntimeProvider value={runtime}>
+            <PluginSurfaceFocusEligibilityProvider active presentationActive><WorkspaceRouteBody /></PluginSurfaceFocusEligibilityProvider>
+        </UniversalSearchRuntimeProvider>);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('reviews:empty')).not.toBeNull());
+            await screen.pressByTestIdAsync('reviews:empty:start');
+            expect(opened).toEqual([t('commandPalette.commands.startReviewRunTitle')]);
         } finally {
             await screen.unmount();
             storage.setState({ profileScope: previousScope });
