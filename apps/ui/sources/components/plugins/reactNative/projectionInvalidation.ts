@@ -52,14 +52,35 @@ export type PluginUiReactNativeRuntimeProjectionReconciler = Readonly<{
     releaseRetained: () => void;
 }>;
 
-type SourceSnapshot = PluginUiReactNativeRuntimeProjectionSourceInput & Readonly<{
-    identities: readonly PluginReactNativeBundleCacheIdentity[];
+type Artifact = Readonly<{
+    identity: PluginReactNativeBundleCacheIdentity;
+    cacheKey: string;
 }>;
 
-type RetainedArtifact = Readonly<{
-    identity: PluginReactNativeBundleCacheIdentity;
-    accountLifetime: ActiveServerAccountScopeLifetime;
+type Retention = Readonly<{
+    key: string;
+    lifetime: ActiveServerAccountScopeLifetime;
 }>;
+
+type RetainedArtifact = Artifact & Readonly<{ retention: Retention }>;
+
+type SourceArtifacts = Readonly<{
+    byCacheKey: ReadonlyMap<string, Artifact>;
+    byRetentionSlot: ReadonlyMap<string, RetainedArtifact>;
+}>;
+
+type SourceState = {
+    snapshot: PluginUiReactNativeRuntimeProjectionSourceInput | null;
+    artifacts: SourceArtifacts;
+    active: SourceArtifacts;
+};
+
+type RetentionSlot = {
+    active: Map<number, RetainedArtifact>;
+    retained: RetainedArtifact | null;
+};
+
+const EMPTY_ARTIFACTS: SourceArtifacts = { byCacheKey: new Map(), byRetentionSlot: new Map() };
 
 function retainedArtifactKey(scope: ActiveServerAccountScopeLifetime['scope'], identity: PluginReactNativeBundleCacheIdentity): string {
     return JSON.stringify([scope.serverId, scope.accountId, identity.pluginId, identity.contributionId]);
@@ -111,123 +132,198 @@ function isCurrentSnapshot(snapshot: PluginUiReactNativeRuntimeProjectionSourceI
 export function createPluginUiReactNativeRuntimeProjectionReconciler(
     targets: PluginUiReactNativeRuntimeProjectionReconcilerTargets,
 ): PluginUiReactNativeRuntimeProjectionReconciler {
-    const sources = new Map<symbol, SourceSnapshot | null>();
-    const retained = new Map<string, RetainedArtifact>();
-    const retiringLifetimes = new Map<ActiveServerAccountScopeLifetime, Readonly<{ dispose: () => void }>>();
+    // Source order preserves the winner for overlapping declarations of one slot.
+    let nextSourceId = 0;
+    const sources = new Map<number, SourceState>();
+    const activeByCacheKey = new Map<string, { artifact: Artifact; owners: number }>();
+    const retentionSlots = new Map<string, RetentionSlot>();
+    const retiringLifetimes = new Map<ActiveServerAccountScopeLifetime, {
+        slots: Set<RetentionSlot>;
+        retirement: Readonly<{ dispose: () => void }>;
+    }>();
+    // Resolved declaration rows are immutable and structurally shared across publications.
+    const artifactsByDeclaration = new WeakMap<Readonly<Record<string, unknown>>, Artifact | null>();
+    const retentionsByLifetime = new WeakMap<ActiveServerAccountScopeLifetime, WeakMap<Artifact, RetainedArtifact>>();
 
-    // Normalized bundle maps are immutable. Derive each source's identities on
-    // publication; a neighboring source update does not revalidate its graphs.
-    const readIdentities = (input: PluginUiReactNativeRuntimeProjectionSourceInput): readonly PluginReactNativeBundleCacheIdentity[] => {
-        const { projection, accountLifetime } = input;
-        const currentProjection = accountLifetime
-            ? readCurrentPluginUiRendererProjection(accountLifetime.scope) : null;
-        const identities: PluginReactNativeBundleCacheIdentity[] = [];
-        if (projection) {
-            for (const bundle of Object.values(projection.reactNativeBundlesById)) {
-                const entry = resolveBundledPluginUiRendererArtifact(readRecord(bundle), currentProjection);
-                const runtime = readRecord(entry?.runtime);
-                const decision = readRecord(runtime?.decision);
-                const loadPolicy = readRecord(runtime?.loadPolicy);
-                if (
-                    decision?.state !== 'load'
-                    || loadPolicy?.source !== 'installedArtifact'
-                ) {
-                    continue;
-                }
+    const readArtifact = (entry: Readonly<Record<string, unknown>>): Artifact | null => {
+        const cached = artifactsByDeclaration.get(entry);
+        if (cached !== undefined) return cached;
 
-                const cacheKey = readNonEmptyString(runtime?.cacheKey);
-                const pluginId = readNonEmptyString(entry?.pluginId);
-                const contributionId = readNonEmptyString(entry?.contributionId);
-                const graph = readPluginUiArtifactGraph(entry?.artifactGraph);
-                const identity = pluginId && contributionId && graph !== null && graph.tier === 'reactNative'
-                    ? readPluginUiReactNativeBundleCacheIdentity(runtime?.cacheIdentity, {
-                        pluginId,
-                        contributionId,
-                        artifactId: graph.artifactId,
-                        platform: 'web',
-                    })
-                    : null;
-                if (
-                    !identity
-                    || !cacheKey
-                    || !pluginId
-                    || !contributionId
-                    || identity.pluginId !== pluginId
-                    || identity.contributionId !== contributionId
-                    || cacheKey !== derivePluginReactNativeBundleCacheKey(identity)
-                ) {
-                    continue;
-                }
-                identities.push(identity);
+        const runtime = readRecord(entry.runtime);
+        const decision = readRecord(runtime?.decision);
+        const loadPolicy = readRecord(runtime?.loadPolicy);
+        let artifact: Artifact | null = null;
+        if (decision?.state === 'load' && loadPolicy?.source === 'installedArtifact') {
+            const cacheKey = readNonEmptyString(runtime?.cacheKey);
+            const pluginId = readNonEmptyString(entry.pluginId);
+            const contributionId = readNonEmptyString(entry.contributionId);
+            const graph = readPluginUiArtifactGraph(entry.artifactGraph);
+            const identity = pluginId && contributionId && graph?.tier === 'reactNative'
+                ? readPluginUiReactNativeBundleCacheIdentity(runtime?.cacheIdentity, {
+                    pluginId, contributionId, artifactId: graph.artifactId, platform: 'web',
+                })
+                : null;
+            if (
+                identity
+                && cacheKey
+                && identity.pluginId === pluginId
+                && identity.contributionId === contributionId
+                && cacheKey === derivePluginReactNativeBundleCacheKey(identity)
+            ) {
+                artifact = { identity, cacheKey };
             }
         }
-        return identities;
+        artifactsByDeclaration.set(entry, artifact);
+        return artifact;
     };
 
-    const releaseRetiredLifetimes = (): void => {
-        for (const [key, artifact] of retained) {
-            if (!isCurrentLifetime(artifact.accountLifetime)) retained.delete(key);
+    const readArtifacts = ({ projection, accountLifetime }: PluginUiReactNativeRuntimeProjectionSourceInput): SourceArtifacts => {
+        if (!projection) return EMPTY_ARTIFACTS;
+        const rendererProjection = accountLifetime ? readCurrentPluginUiRendererProjection(accountLifetime.scope) : null;
+        let scopedArtifacts = accountLifetime ? retentionsByLifetime.get(accountLifetime) : undefined;
+        if (accountLifetime && !scopedArtifacts) {
+            scopedArtifacts = new WeakMap();
+            retentionsByLifetime.set(accountLifetime, scopedArtifacts);
         }
-        for (const [lifetime, retirement] of retiringLifetimes) {
-            if ([...retained.values()].some((artifact) => artifact.accountLifetime === lifetime)) continue;
-            retirement.dispose();
-            retiringLifetimes.delete(lifetime);
+        const byCacheKey = new Map<string, Artifact>();
+        const byRetentionSlot = new Map<string, RetainedArtifact>();
+        for (const bundle of Object.values(projection.reactNativeBundlesById)) {
+            const entry = resolveBundledPluginUiRendererArtifact(readRecord(bundle), rendererProjection);
+            const artifact = entry && readArtifact(entry);
+            if (!artifact) continue;
+            byCacheKey.set(artifact.cacheKey, artifact);
+            if (!accountLifetime || !scopedArtifacts) continue;
+            let scoped = scopedArtifacts.get(artifact);
+            if (!scoped) {
+                scoped = { ...artifact, retention: {
+                    key: retainedArtifactKey(accountLifetime.scope, artifact.identity),
+                    lifetime: accountLifetime,
+                } };
+                scopedArtifacts.set(artifact, scoped);
+            }
+            byRetentionSlot.set(scoped.retention.key, scoped);
         }
+        return byCacheKey.size > 0 ? { byCacheKey, byRetentionSlot } : EMPTY_ARTIFACTS;
     };
 
-    const retain = (snapshot: SourceSnapshot): void => {
-        const lifetime = snapshot.accountLifetime;
-        if (!lifetime) return;
-        for (const identity of snapshot.identities) {
-            retained.set(retainedArtifactKey(lifetime.scope, identity), { identity, accountLifetime: lifetime });
-        }
-        if (snapshot.identities.length > 0 && !retiringLifetimes.has(lifetime)) {
-            retiringLifetimes.set(lifetime, lifetime.onRetire(() => reconcile()));
-        }
-    };
-
-    const reconcile = (): void => {
-        const identitiesByCacheKey = new Map<string, PluginReactNativeBundleCacheIdentity>();
-        for (const snapshot of sources.values()) {
-            // Authority can retire without replacing the immutable declaration.
-            if (!snapshot || !isCurrentSnapshot(snapshot)) continue;
-            retain(snapshot);
-            for (const identity of snapshot.identities) {
-                identitiesByCacheKey.set(derivePluginReactNativeBundleCacheKey(identity), identity);
+    const setRetained = (slot: RetentionSlot, artifact: RetainedArtifact | null): void => {
+        const previousLifetime = slot.retained?.retention.lifetime;
+        const lifetime = artifact?.retention.lifetime;
+        slot.retained = artifact;
+        if (previousLifetime === lifetime) return;
+        if (previousLifetime) {
+            const previous = retiringLifetimes.get(previousLifetime);
+            previous?.slots.delete(slot);
+            if (previous?.slots.size === 0) {
+                previous.retirement.dispose();
+                retiringLifetimes.delete(previousLifetime);
             }
         }
-        releaseRetiredLifetimes();
-        // Evaluated surface namespaces stay with the mounting scopes: a Triage artifact's
-        // evaluation holds hundreds of MB of native memory (P03-NATIVE-MEMORY). Only the
-        // bytes and the compiled program are retained past a scope's withdrawal.
-        const activeCacheKeys = [...identitiesByCacheKey.keys()];
-        for (const { identity } of retained.values()) {
-            identitiesByCacheKey.set(derivePluginReactNativeBundleCacheKey(identity), identity);
+        if (lifetime) {
+            const bound = retiringLifetimes.get(lifetime);
+            if (bound) {
+                bound.slots.add(slot);
+            } else {
+                retiringLifetimes.set(lifetime, {
+                    slots: new Set([slot]),
+                    retirement: lifetime.onRetire(() => reconcile()),
+                });
+            }
+        }
+    };
+
+    const reconcile = (release?: (artifact: RetainedArtifact) => boolean): void => {
+        const changedSlots = new Set<RetentionSlot>();
+        // Currentness callbacks can change before their producers publish a new snapshot.
+        // Recheck them, but visit artifacts only when a source's active declarations change.
+        for (const [sourceId, source] of sources) {
+            const active = source.snapshot && isCurrentSnapshot(source.snapshot) ? source.artifacts : EMPTY_ARTIFACTS;
+            if (source.active === active) continue;
+            for (const key of source.active.byCacheKey.keys()) {
+                if (active.byCacheKey.has(key)) continue;
+                const current = activeByCacheKey.get(key)!;
+                if (--current.owners === 0) activeByCacheKey.delete(key);
+            }
+            for (const [key, artifact] of active.byCacheKey) {
+                if (source.active.byCacheKey.has(key)) continue;
+                const current = activeByCacheKey.get(key);
+                if (current) current.owners += 1;
+                else activeByCacheKey.set(key, { artifact, owners: 1 });
+            }
+
+            for (const key of source.active.byRetentionSlot.keys()) {
+                if (active.byRetentionSlot.has(key)) continue;
+                const slot = retentionSlots.get(key)!;
+                slot.active.delete(sourceId);
+                changedSlots.add(slot);
+            }
+            for (const [key, artifact] of active.byRetentionSlot) {
+                if (source.active.byRetentionSlot.get(key) === artifact) continue;
+                let slot = retentionSlots.get(key);
+                if (!slot) {
+                    slot = { active: new Map(), retained: null };
+                    retentionSlots.set(key, slot);
+                }
+                slot.active.set(sourceId, artifact);
+                changedSlots.add(slot);
+            }
+            source.active = active;
         }
 
-        targets.cache.reconcileActiveProjectionIdentities([...identitiesByCacheKey.values()]);
+        for (const slot of changedSlots) {
+            let latest = -1;
+            let winner: RetainedArtifact | undefined;
+            for (const [sourceId, artifact] of slot.active) {
+                if (sourceId <= latest) continue;
+                latest = sourceId;
+                winner = artifact;
+            }
+            if (winner) setRetained(slot, winner);
+        }
+        for (const [lifetime, { slots }] of retiringLifetimes) {
+            if (isCurrentLifetime(lifetime)) continue;
+            for (const slot of slots) setRetained(slot, null);
+        }
+
+        // Evaluated namespaces follow mounted scopes. Bytes and compiled programs
+        // also stay warm for retained Artifacts.
+        const activeCacheKeys = [...activeByCacheKey.keys()];
+        const artifactCacheKeys = new Set(activeCacheKeys);
+        const identities = Array.from(activeByCacheKey.values(), ({ artifact }) => artifact.identity);
+        for (const [key, slot] of retentionSlots) {
+            const retained = slot.retained;
+            if (!retained || (slot.active.size === 0 && release?.(retained))) {
+                if (retained) setRetained(slot, null);
+                if (slot.active.size === 0) retentionSlots.delete(key);
+                continue;
+            }
+            if (artifactCacheKeys.has(retained.cacheKey)) continue;
+            artifactCacheKeys.add(retained.cacheKey);
+            identities.push(retained.identity);
+        }
+        targets.cache.reconcileActiveProjectionIdentities(identities);
         targets.surfaceModules.reconcileActiveCacheKeys(activeCacheKeys);
+    };
+
+    const releaseRetainedWhere = (release: (artifact: RetainedArtifact) => boolean): void => {
+        for (const { retained } of retentionSlots.values()) {
+            if (!retained || !release(retained)) continue;
+            reconcile(release);
+            return;
+        }
     };
 
     return Object.freeze({
         retainEnabledPlugins: (accountLifetime, enabledPluginIds) => {
             if (!accountLifetime || !isCurrentLifetime(accountLifetime)) return;
-            let released = false;
-            for (const [key, artifact] of retained) {
-                if (!areServerAccountScopesEqual(artifact.accountLifetime.scope, accountLifetime.scope)
-                    || enabledPluginIds.has(artifact.identity.pluginId)) continue;
-                retained.delete(key);
-                released = true;
-            }
-            if (released) reconcile();
+            releaseRetainedWhere(({ identity, retention }) =>
+                areServerAccountScopesEqual(retention.lifetime.scope, accountLifetime.scope)
+                && !enabledPluginIds.has(identity.pluginId));
         },
-        releaseRetained: () => {
-            if (retained.size === 0) return;
-            retained.clear();
-            reconcile();
-        },
+        releaseRetained: () => releaseRetainedWhere(() => true),
         createSource: () => {
-            const sourceId = Symbol('plugin-ui-react-native-projection-source');
+            const sourceId = nextSourceId++;
+            const source: SourceState = { snapshot: null, artifacts: EMPTY_ARTIFACTS, active: EMPTY_ARTIFACTS };
             let disposed = false;
             let boundLifetime: ActiveServerAccountScopeLifetime | null = null;
             let retirement: Readonly<{ dispose: () => void }> | null = null;
@@ -239,18 +335,21 @@ export function createPluginUiReactNativeRuntimeProjectionReconciler(
                     boundLifetime = input.accountLifetime;
                     retirement = boundLifetime?.onRetire(() => {
                         if (disposed || boundLifetime !== input.accountLifetime) return;
-                        sources.set(sourceId, null);
+                        source.snapshot = null;
+                        source.artifacts = EMPTY_ARTIFACTS;
                         reconcile();
                     }) ?? null;
                 }
-                const previous = sources.get(sourceId);
-                const identities = previous && previous.projection?.reactNativeBundlesById === input.projection?.reactNativeBundlesById
-                    ? previous.identities : readIdentities(input);
-                sources.set(sourceId, { ...input, identities });
+                const previous = source.snapshot;
+                if (!previous || previous.accountLifetime !== input.accountLifetime
+                    || previous.projection?.reactNativeBundlesById !== input.projection?.reactNativeBundlesById) {
+                    source.artifacts = readArtifacts(input);
+                }
+                source.snapshot = input;
                 reconcile();
             };
 
-            sources.set(sourceId, null);
+            sources.set(sourceId, source);
             return Object.freeze({
                 update,
                 dispose: () => {
@@ -259,8 +358,10 @@ export function createPluginUiReactNativeRuntimeProjectionReconciler(
                     retirement?.dispose();
                     retirement = null;
                     boundLifetime = null;
-                    sources.delete(sourceId);
+                    source.snapshot = null;
+                    source.artifacts = EMPTY_ARTIFACTS;
                     reconcile();
+                    sources.delete(sourceId);
                 },
             });
         },

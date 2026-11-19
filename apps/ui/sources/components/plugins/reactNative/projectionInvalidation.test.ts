@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     createPluginReactNativeBundleCache,
     derivePluginReactNativeBundleCacheKey,
+    type PluginReactNativeBundleCacheIdentity,
 } from './bundleCache';
 import { createPluginReactNativeModuleRegistry } from './moduleRegistry';
 import {
@@ -23,7 +24,7 @@ import {
 } from '@/sync/domains/plugins/ui/projection';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
-function identity(projectionGeneration: number) {
+function identity(projectionGeneration: number): PluginReactNativeBundleCacheIdentity {
     return Object.freeze({
         pluginId: 'acme.preview',
         contributionId: 'client-runtime',
@@ -108,6 +109,59 @@ function createRetirableAccountLifetime(): Readonly<{
 }
 
 describe('plugin UI React Native runtime projection invalidation owner', () => {
+    it('serializes retention keys only for new artifact identities in the changed source', () => {
+        const cache = createPluginReactNativeBundleCache();
+        const surfaceModules = createPluginReactNativeModuleRegistry();
+        const owner = createPluginUiReactNativeRuntimeProjectionReconciler({ cache, surfaceModules });
+        const { lifetime, retire } = createRetirableAccountLifetime();
+        const identities = Array.from({ length: 4 }, (_, sourceIndex) =>
+            Array.from({ length: 24 }, (_, artifactIndex): ReturnType<typeof identity> => {
+                const position = sourceIndex * 24 + artifactIndex;
+                return { ...identity(12), pluginId: `acme.fixture-${position}`,
+                    artifactDigest: `sha256:${position.toString(16).padStart(64, '0')}` };
+            }));
+        const entries = identities.map((group) => group.map(bundle));
+        const sources = entries.map(() => owner.createSource());
+        const publish = (sourceIndex: number, projection: PluginUiProjectionModel) => {
+            sources[sourceIndex].update({ projection, accountLifetime: lifetime, isCurrent: lifetime.isCurrent });
+        };
+        entries.forEach((group, index) => publish(index, model(1, group)));
+        const retainedIdentity = identities[1][0];
+        const replacedIdentity = identities[0][0];
+        cache.putInstalledArtifact({ identity: retainedIdentity, format: 'plainJs', bytes: new Uint8Array([1]) });
+        cache.putInstalledArtifact({ identity: replacedIdentity, format: 'plainJs', bytes: new Uint8Array([1]) });
+        const replacement = { ...identity(13), pluginId: replacedIdentity.pluginId };
+
+        // Observe the actual serialized Account/plugin/contribution keys, with the real caches below the owner.
+        const stringify = vi.spyOn(JSON, 'stringify');
+        const countKeys = () => {
+            const count = stringify.mock.calls.filter(([value]) => Array.isArray(value)
+                && value.length === 4 && value[0] === lifetime.scope.serverId && value[1] === lifetime.scope.accountId).length;
+            stringify.mockClear();
+            return count;
+        };
+        try {
+            publish(0, model(2, entries[0]));
+            const unchanged = countKeys();
+            publish(0, model(3, [bundle(replacement), ...entries[0].slice(1)]));
+            const changed = countKeys();
+            const replacementKey = derivePluginReactNativeBundleCacheKey(replacement);
+            expect(surfaceModules.captureWriteFence(replacementKey)).not.toBeNull();
+            expect(cache.readInstalledArtifact(replacedIdentity)).toBeNull();
+            expect(cache.readInstalledArtifact(retainedIdentity)).not.toBeNull();
+
+            sources[1].dispose();
+            const disposed = countKeys();
+            expect(surfaceModules.captureWriteFence(derivePluginReactNativeBundleCacheKey(retainedIdentity))).toBeNull();
+            expect(cache.readInstalledArtifact(retainedIdentity)).not.toBeNull();
+            expect({ unchanged, changed, disposed }).toEqual({ unchanged: 0, changed: 1, disposed: 0 });
+        } finally {
+            stringify.mockRestore();
+            sources.forEach((source) => source.dispose());
+            retire();
+        }
+    });
+
     it('validates a retained source graph only when its bundles change, while rechecking currentness', () => {
         const cache = createPluginReactNativeBundleCache();
         const modules = createPluginReactNativeModuleRegistry();
@@ -254,6 +308,48 @@ describe('plugin UI React Native runtime projection invalidation owner', () => {
         reconciler.retainEnabledPlugins(sourceBAccountLifetime, new Set());
         expect(cache.readInstalledArtifact(generation13Identity)).toBeNull();
         expect(surfaceModules.read(generation13CacheKey)).toBeNull();
+    });
+
+    it('keeps a shared module active until the last source leaves and retains the remaining declaration', () => {
+        const cache = createPluginReactNativeBundleCache();
+        const surfaceModules = createPluginReactNativeModuleRegistry();
+        const owner = createPluginUiReactNativeRuntimeProjectionReconciler({ cache, surfaceModules });
+        const { lifetime, retire } = createRetirableAccountLifetime();
+        const first = owner.createSource();
+        const second = owner.createSource();
+        const shared = owner.createSource();
+        const older = identity(12);
+        const newer = identity(13);
+        const olderKey = derivePluginReactNativeBundleCacheKey(older);
+        const newerKey = derivePluginReactNativeBundleCacheKey(newer);
+        const olderProjection = model(12, [bundle(older)]);
+        const publish = (source: typeof first, projection: PluginUiProjectionModel) =>
+            source.update({ projection, accountLifetime: lifetime, isCurrent: lifetime.isCurrent });
+
+        publish(shared, olderProjection);
+        publish(first, olderProjection);
+        publish(second, model(13, [bundle(newer)]));
+        for (const installed of [older, newer]) {
+            cache.putInstalledArtifact({ identity: installed, format: 'plainJs', bytes: new Uint8Array([1]) });
+        }
+        const fence = surfaceModules.captureWriteFence(olderKey)!;
+        expect(surfaceModules.write(olderKey, { renderSurface: vi.fn() }, fence)).toBe(true);
+
+        shared.dispose();
+        owner.releaseRetained();
+        expect(surfaceModules.read(olderKey)).not.toBeNull();
+        expect(cache.readInstalledArtifact(newer)).not.toBeNull();
+
+        second.dispose();
+        expect(surfaceModules.captureWriteFence(newerKey)).toBeNull();
+        expect(cache.readInstalledArtifact(newer)).toBeNull();
+        expect(surfaceModules.write(olderKey, { renderSurface: vi.fn() }, fence)).toBe(true);
+
+        first.dispose();
+        expect(surfaceModules.read(olderKey)).toBeNull();
+        expect(cache.readInstalledArtifact(older)).not.toBeNull();
+        retire();
+        expect(cache.readInstalledArtifact(older)).toBeNull();
     });
 
     it('compiles a plugin Artifact once across Session opens and leaves, and again only when its Artifact changes', async () => {
