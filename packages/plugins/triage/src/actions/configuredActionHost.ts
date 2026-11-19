@@ -8,11 +8,14 @@ import type { runTriageConfiguredHandoffV1 } from '../sessions/configuredActionR
 type HandoffHost = Parameters<typeof runTriageConfiguredHandoffV1>[0];
 
 /** Capability adapter only: configured choice, creation and delivery retain
- * their existing owners. No UI is fabricated for a headless invocation. */
-export function createTriageConfiguredActionHost(context: PluginAccountActionContext): HandoffHost {
+ * their existing owners. No UI is fabricated for a headless invocation.
+ * `bound.signal` replaces each call's own signal (a configured run is cancelled with its invocation). */
+export function createTriageConfiguredActionHost(context: PluginAccountActionContext,
+    bound?: Readonly<{ signal: AbortSignal }>): HandoffHost {
     const ui = context.ui;
     const executeAction = async (action: string | PluginContributionRef,
-        input: JsonValue, options?: ActionExecutionOptions): Promise<unknown> => {
+        input: JsonValue, callOptions?: ActionExecutionOptions): Promise<unknown> => {
+        const options = bound ? { ...callOptions, signal: bound.signal } : callOptions;
         if (ui) return await ui.executeAction(action, input, options);
         if (typeof action !== 'string') return await context.services.actions.execute(action, input, options);
         const request = parsePluginHostActionInvocation(action, input);
@@ -20,8 +23,10 @@ export function createTriageConfiguredActionHost(context: PluginAccountActionCon
         // validates its actual result; this adapter never calls it a success.
         return await context.services.actions.execute(request.actionId, request.input, options);
     };
-    const selectActionInput: PluginClientActionUi['selectActionInput'] = ui?.selectActionInput
-        ?? (() => Promise.reject(new PluginError({ code: 'plugin_action_input_selection_unavailable' })));
+    const selectFromUi = ui?.selectActionInput;
+    const selectActionInput: PluginClientActionUi['selectActionInput'] = !selectFromUi
+        ? () => Promise.reject(new PluginError({ code: 'plugin_action_input_selection_unavailable' }))
+        : bound ? (request, options) => selectFromUi(request, { ...options, signal: bound.signal }) : selectFromUi;
     return {
         ...ui,
         version: () => ui?.version() ?? { methods: [] },

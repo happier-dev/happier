@@ -95,6 +95,8 @@ export type PluginAccountActionContext = Readonly<{
     invokedAtMs: number;
     /** Host Action request identity for diagnostics; absent on other portable callbacks. Grants no authority. */
     invocationId?: PluginInvocationContext['invocationId'];
+    /** Originating host request identity; separate from an independently admitted Action identity. */
+    requestId?: PluginInvocationContext['requestId'];
     caller?: PluginInvocationContext['caller'];
     signal: AbortSignal;
     /** Authenticated invoking Account, never derived from Action input. */

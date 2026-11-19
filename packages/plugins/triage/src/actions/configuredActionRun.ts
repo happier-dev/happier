@@ -1,6 +1,5 @@
 import type { JsonValue, PluginAccountApi } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
-import type { PluginUiHostApi, PluginUiActionReference, PluginUiActionInputFor, PluginUiActionExecutionOptions } from '@happier-dev/plugin-sdk/ui';
 import type { TriageSessionHandoffResultV1 } from '@happier-dev/triage-protocol/v1';
 import { triageEntryRowKey } from '../projection/listWindow.js';
 import { runTriageConfiguredActionV1, runTriageConfiguredHandoffV1, type TriageConfiguredActionRunRequestV1 } from '../sessions/configuredActionRun.js';
@@ -122,15 +121,7 @@ export function createTriageRunConfiguredActionHandler() {
         if (!continuing && destination === 'single' && unavailableKeys.length > 0) {
             return finish({ v: 1, status: 'unavailable', reason: 'singleEntryRequired', unavailableKeys });
         }
-        const executionHost = {
-            ...host,
-            executeAction: <TAction extends PluginUiActionReference>(action: TAction, value?: PluginUiActionInputFor<TAction>, options?: PluginUiActionExecutionOptions) => host.executeAction<TAction>(
-                action, value, { ...options, signal: context.signal },
-            ),
-            selectActionInput: (request: Parameters<PluginUiHostApi['selectActionInput']>[0], options?: Parameters<PluginUiHostApi['selectActionInput']>[1]) => host.selectActionInput(
-                request, { ...options, signal: context.signal },
-            ),
-        };
+        const executionHost = createTriageConfiguredActionHost(context, { signal: context.signal });
         const result = await runTriageConfiguredActionV1(executionHost, {
             actionId: input.handoff.configuredActionId, destination, entries, unavailableKeys,
             ...(input.singleIntent === undefined ? {} : { singleIntent: input.singleIntent }),

@@ -201,7 +201,12 @@ export type PluginActionPlacement =
  */
 export type PluginActionExecutionV2 =
     | Readonly<{ target: 'daemon' }>
-    | Readonly<{ target: 'account'; account: Readonly<{ artifactId: string; exportName: string }> }>
+    | Readonly<{
+        target: 'account';
+        account: Readonly<{ artifactId: string; exportName: string }>;
+        /** Retain ordinary UI authoring on an invoking UI host; headless hosts remain portable. */
+        invokingUi?: true;
+    }>
     | Readonly<{
         target: 'client';
         client: Readonly<{
