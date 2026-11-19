@@ -3,7 +3,7 @@ import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/arti
 import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { readReviewCommentChangesHintV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { db } from '@/storage/db';
-import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { createDatabaseIntegrationHarness } from '@/testkit/databaseIntegrationHarness';
 import { createSqlReviewCommentStore } from './store';
 import { createReviewCommentOperations } from './operations';
 import { inReadSnapshot } from '@/storage/inTx';
@@ -11,9 +11,9 @@ import { readReviewHistoryInTx } from '@/app/reviews/reviewListService';
 import { ReviewHistoryRequestV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
 import { resolveReviewAccessInTx } from '@/app/reviews/reviewAccess';
 
-let harness: LightSqliteHarness;
+let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
 beforeAll(async () => {
-    harness = await createLightSqliteHarness({ tempDirPrefix: 'review-bound-storage-', initAuth: false });
+    harness = await createDatabaseIntegrationHarness({ tempDirPrefix: 'review-bound-storage-', initAuth: false });
 }, 120_000);
 afterAll(async () => { await harness?.close(); });
 
@@ -23,7 +23,8 @@ it('reloads a human comment and its reply in their Review round without inventin
         header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
     const store = createSqlReviewCommentStore();
     let id = 0;
-    const operations = createReviewCommentOperations(store, { now: () => 1000, createId: prefix => `${prefix}-human-${++id}` });
+    const runtime = { now: () => 1000, createId: (prefix: string) => `${prefix}-human-${++id}` };
+    const operations = createReviewCommentOperations(store, runtime);
     const principal = { accountId: owner.id, actor: { kind: 'user' as const, userId: owner.id },
         reviewAccess: { reviewId: review.id, ownerAccountId: owner.id, level: 'admin' as const, encryptionMode: 'plain' as const } };
     const input = { reviewId: review.id, anchor: { kind: 'line' as const, filePath: 'a.ts', line: 2 },
@@ -35,7 +36,7 @@ it('reloads a human comment and its reply in their Review round without inventin
     const created = await operations.create({ ...principal, input: { ...input, roundOrdinal: 2, clientMutationId: 'human-round' } });
     const reply = await operations.reply({ ...principal, input: { reviewId: review.id, parentCommentId: created.comment.id,
         expectedParentServerRevision: 1, body: 'Here is the reason', clientMutationId: 'human-reply' } });
-    const reload = (roundOrdinal: number) => createReviewCommentOperations(createSqlReviewCommentStore()).list({ ...principal,
+    const reload = (roundOrdinal: number) => createReviewCommentOperations(createSqlReviewCommentStore(), runtime).list({ ...principal,
         input: { reviewId: review.id, roundOrdinal, states: [], includeHistory: true, limit: 50 } });
     expect((await reload(2)).items).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: created.comment.id, roundOrdinal: 2, body: 'Explain this change' }),
@@ -107,7 +108,7 @@ it('persists Review decisions and appearances and publishes only real changes to
     const beforeReplay = await db.accountChange.findMany({ where: { kind: 'artifact', entityId: reviewId }, orderBy: { accountId: 'asc' } });
     expect(beforeReplay.map(row => row.accountId).sort()).toEqual([ownerId, recipientId].sort());
     for (const row of beforeReplay) expect(readReviewCommentChangesHintV1(row.hint)?.changes).toEqual([
-        { commentId: created.comment.id, state: 'dismissed', serverRevision: 2, reviewTriageStatus: 'reject' },
+        { commentId: created.comment.id, state: 'dismissed', serverRevision: 2, reviewTriageStatus: 'reject', appearanceCount: 2 },
     ]);
     await operations.create({ ...laterPrincipal, input: laterInput });
     expect(await db.accountChange.findMany({ where: { kind: 'artifact', entityId: reviewId }, orderBy: { accountId: 'asc' } })).toEqual(beforeReplay);

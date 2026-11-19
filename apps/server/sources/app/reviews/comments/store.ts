@@ -711,8 +711,11 @@ async function recordAppearanceInTx(tx: Tx, appearance: ReviewCommentAppearanceV
         ? Prisma.sql`${insert} ON DUPLICATE KEY UPDATE source_key = source_key`
         : Prisma.sql`${insert} ON CONFLICT (comment_id, round_ordinal, source_key) DO NOTHING`);
     if (inserted > 0 && publish) {
-        const rows = await tx.$queryRaw<ReviewCommentRow[]>(Prisma.sql`SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)} FROM review_comments WHERE id = ${appearance.commentId} LIMIT 1`);
-        if (rows[0]) await publishReviewCommentChangeInTx(tx, rowToSource(rows[0]).structural);
+        const rows = await tx.$queryRaw<Array<ReviewCommentRow & { appearance_count: number | bigint }>>(Prisma.sql`
+            SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)},
+                (SELECT COUNT(*) FROM review_comment_appearances WHERE comment_id = ${appearance.commentId}) AS appearance_count
+            FROM review_comments WHERE id = ${appearance.commentId} LIMIT 1`);
+        if (rows[0]) await publishReviewCommentChangeInTx(tx, rowToSource(rows[0]).structural, toNumber(rows[0].appearance_count));
     }
 }
 
@@ -727,11 +730,12 @@ export async function publishReviewChangeInTx(tx: Tx, input: Readonly<{
             ...(input.commentChanges ? { reviewComments: { v: 1, changes: input.commentChanges } } : {}) } });
 }
 
-async function publishReviewCommentChangeInTx(tx: Tx, comment: ReviewCommentStructuralV1): Promise<void> {
+async function publishReviewCommentChangeInTx(tx: Tx, comment: ReviewCommentStructuralV1, appearanceCount?: number): Promise<void> {
     if (!comment.reviewId) return;
     await publishReviewChangeInTx(tx, { reviewId: comment.reviewId, commentChanges: [{
         commentId: comment.id, serverRevision: comment.serverRevision, state: comment.state,
         ...(comment.reviewTriageStatus ? { reviewTriageStatus: comment.reviewTriageStatus } : {}),
+        ...(appearanceCount === undefined ? {} : { appearanceCount }),
     }] });
 }
 

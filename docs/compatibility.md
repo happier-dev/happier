@@ -2017,6 +2017,16 @@ database migration, additional schema epoch or released 0.2 adapter is needed.
 
 ## Artifact kind change hints (unreleased 0.3)
 
+Review comment hints may carry the derived `appearanceCount` when a new round or
+reviewer corroborates an existing finding without changing its decision revision.
+Consumers compare this count with held appearances, so retained hints do not
+reopen unchanged evidence. No additional counter is stored.
+The closed hint and nested change objects retain their V1 wire epoch, independent
+of the package version. Matching development Protocol, server and UI readers load
+together; an older hint reader falls back to coarse Review invalidation. The
+inspected `../0.2` frontier `73c533b470ac33a7605b50689b6cd93089a3ae6f` has no Review
+comment hint contract, so this adds no predecessor adapter or migration.
+
 The existing Account-change wake adds optional `artifactKinds`, and Artifact
 catch-up hints may carry the same array of encoded, server-visible `Artifact.kind`
 values. New UI readers accept omission from an older server and retain the existing

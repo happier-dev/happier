@@ -353,6 +353,8 @@ export const ReviewCommentChangesHintV1Schema = lazyZodSchema(() => z.strictObje
     serverRevision: z.number().check(z.int(), z.positive()),
     state: ReviewCommentStateV1Schema,
     reviewTriageStatus: z.optional(ReviewTriageStatusSchema),
+    /** New corroborating evidence does not advance the finding's decision revision. */
+    appearanceCount: z.optional(z.number().check(z.int(), z.positive())),
   })),
 }));
 export type ReviewCommentChangesHintV1 = z.infer<typeof ReviewCommentChangesHintV1Schema>;
