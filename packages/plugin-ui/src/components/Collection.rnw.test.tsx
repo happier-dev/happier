@@ -3897,6 +3897,43 @@ describe('row hairlines', () => {
       view.unmount();
     }
   });
+
+  // PRESETS-ACCEPT-1119 fix 6: a page list's rule stopped where its row's "…" cell began (x≈1318 of a 1360 row), while
+  // the header's rule ran on to the row's end. Where the "…" is a laid-out cell (its 28 trigger and its 12 end inset) the
+  // rule runs on under it; where it overlays the row's end (a touch resting list) the rule already ends there.
+  it.each([
+    { rows: 'ruled resting', pointer: 'precise', restingRows: 'ruled' as const },
+    { rows: 'ruled resting', pointer: 'touch', restingRows: 'ruled' as const },
+    { rows: 'page-sheet', pointer: 'precise', restingRows: undefined },
+    { rows: 'page-sheet', pointer: 'touch', restingRows: undefined },
+  ])("ends a $rows row's rule on the row's end edge under its row actions ($pointer)", ({ pointer, restingRows }) => {
+    const matchMedia = (globalThis as { matchMedia?: unknown }).matchMedia;
+    (globalThis as { matchMedia?: unknown }).matchMedia = (query: string) => ({
+      matches: pointer === 'precise' && (query === '(pointer: fine)' || query === '(hover: hover)'),
+    });
+    const view = mount({
+      presentation: 'list', scroll: 'page', grouped: false, detail: 'none',
+      ...(restingRows === undefined ? {} : { restingRows }),
+      anatomy: { ...anatomy, peek: undefined },
+      useRowActions: () => ({ secondaryActions: [{ id: 'pin', label: 'Pin' }], onSecondaryAction: () => undefined }),
+    });
+    try {
+      view.measure(1440);
+      const cell = view.query('row:a:cell')!;
+      const rule = cell.querySelector<HTMLElement>('[data-testid="happier-list-row-rule"]')!;
+      const trigger = view.query('row:a')!.closest('[role="row"]')!.querySelector<HTMLElement>('[aria-label="More actions"]')!;
+      let overlaid = false;
+      for (let node: HTMLElement | null = trigger; node !== null && !node.matches('[role="row"]'); node = node.parentElement) {
+        if (getComputedStyle(node).position === 'absolute') overlaid = true;
+      }
+      const end = rule.style.right || rule.style.getPropertyValue('inset-inline-end') || '0px';
+      // How far the rule reaches past its content cell (`+ 0` reads a negated zero as 0).
+      expect(-Number.parseFloat(end) + 0).toBe(overlaid ? 0 : 40);
+    } finally {
+      view.unmount();
+      (globalThis as { matchMedia?: unknown }).matchMedia = matchMedia;
+    }
+  });
 });
 
 describe('the title suffix', () => {

@@ -461,6 +461,12 @@ export type HappierCollectionTableRowFacts = Readonly<{
 export const HappierCollectionTableRowContext = createContext<HappierCollectionTableRowFacts | null>(null);
 
 /**
+ * Set by a collection grid row whose trailing cell (its `⋯` or control) is laid out beside its content rather than overlaying
+ * the row's end: a rule the content draws runs on under that cell, so it ends on the row's end edge.
+ */
+export const HappierListRowTrailingCellContext = createContext(false);
+
+/**
  * How a Collection's resting list (no detail beside it) parts its rows. `air` (default): the page's own edges,
  * rows apart by space, for a phone or a page. `ruled`: the table's own insets and the row hairline, as the list
  * beside an open detail, for a host whose list fills a dialog and keeps one rhythm at rest and beside the detail.

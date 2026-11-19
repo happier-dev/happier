@@ -2433,6 +2433,10 @@ function renderListItem(
           onOpenChange={input.onOpenChange}
           trigger={input.trigger}
           triggerIcon="more"
+          // A row's "…" is its quietest mark: the secondary ink at the small glyph, as core's row "⋯" draws it
+          // (PRESETS-ACCEPT-1119 fix 5).
+          triggerTextTone="secondary"
+          triggerSize="small"
           triggerAccessibilityLabel={input.triggerAccessibilityLabel}
           testID={input.testID}
           disabled={input.disabled}

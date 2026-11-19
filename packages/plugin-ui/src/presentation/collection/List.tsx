@@ -58,6 +58,7 @@ import {
   HappierCollectionTreeRowContext,
   HappierListRowFollowedContext,
   HappierListRowRule,
+  HappierListRowTrailingCellContext,
   resolveHappierCollectionRowTextStartPx,
   resolveHappierListRowRuleShown,
 } from './CollectionList.js';
@@ -1238,6 +1239,10 @@ export function HappierListItem({
   ) : null;
   const rowAccessory = overlaidRowActions ?? accessory;
   const outsideAccessory = behavior.accessoryPlacement === 'outside';
+  // A grid row's trailing cell laid out beside its content (not overlaid, wrapped, stacked or in a card corner): a page
+  // sheet's row as well as a resting list's.
+  const trailingCellBeside = isGridRow && Boolean(accessory) && outsideAccessory && overlaidRowActions === null
+    && cardCornerAccessory === null && !stackPageAccessory && !accessoryWraps;
   const rowContent = isGridRow ? (
     <ListGridRow
       primaryStyle={cardCornerAccessory !== null ? { flex: 1, minWidth: 0, alignSelf: 'stretch' }
@@ -1377,7 +1382,7 @@ export function HappierListItem({
           ? { marginHorizontal: collectionItem.fillInsetPx } : null),
       } : undefined]}
     >
-      {rowContent}
+      <HappierListRowTrailingCellContext.Provider value={trailingCellBeside}>{rowContent}</HappierListRowTrailingCellContext.Provider>
       {collectionRow && resolvedTheme ? (
         <>
           {/* Overlays, never layout: the row keeps the exact height its Collection planned. A selected row's fill

@@ -48,7 +48,7 @@ import type { HappierTypeRole, HappierUiTheme, HappierUiTypography } from '../en
 import { useOptionalPluginUiPresentationHost, type PluginUiMenuSelection } from '../presentationHost/context.js';
 import { PluginUiScrollActivityProvider } from '../presentationHost/scrollActivity.js';
 import { HappierCollectionDetailWidthContext, HappierCollectionLayoutContext, resolveHappierCollectionLayoutState } from '../presentation/collection/collectionLayout.js';
-import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HappierCollectionRestingRowsContext, HappierCollectionTableRowContext, resolveHappierCollectionRowRole, type HappierCollectionRowRole, type HappierCollectionRestingRows, HappierCollectionTreeRowContext, type HappierCollectionTableRowFacts, type HappierCollectionTreeRowFacts, HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, HappierListRowRule, resolveHappierCatalogDirectoryRowEdges, resolveHappierListRowRuleShown } from '../presentation/collection/CollectionList.js';
+import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HappierCollectionRestingRowsContext, HappierCollectionTableRowContext, resolveHappierCollectionRowRole, type HappierCollectionRowRole, type HappierCollectionRestingRows, HappierCollectionTreeRowContext, type HappierCollectionTableRowFacts, type HappierCollectionTreeRowFacts, HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, HappierListRowRule, HappierListRowTrailingCellContext, resolveHappierCatalogDirectoryRowEdges, resolveHappierListRowRuleShown } from '../presentation/collection/CollectionList.js';
 import { useHappierListRowHovered } from '../presentation/collection/ListItemFrame.js';
 import {
   HAPPIER_COLLECTION_INSTANT_MOTION,
@@ -839,6 +839,8 @@ function listTitleMinWidth(textScale: number): number {
 }
 /** The list row's action stands at the row's end inset, mirroring where its text starts. */
 const LIST_ACTION_INSET = TABLE.insetTrailing - TABLE.insetEnd;
+/** A row's `⋯` cell when it stands alone after the row's content: its chevron-sized trigger and the row's end inset. */
+const ROW_ACTIONS_CELL_WIDTH = TABLE.chevronWidth + LIST_ACTION_INSET;
 /** The place a row's own ⋯ takes after its meta, on every row of a collection whose rows carry actions. */
 const ROW_ACTIONS_WIDTH = 36;
 /**
@@ -1555,6 +1557,8 @@ function ListCells<Item>(props: Readonly<{
   travelling: boolean;
   /** The row's own accessory, recomposed under the title on a narrow resting row (`narrowRows`), else null. */
   beneath: ReactNode;
+  /** The row's trailing cell, when laid out, is its `⋯` (or that cell's reserved place) alone: its rule runs on under it. */
+  rowActionsCell: boolean;
   /** The `listColumn` fields drawn as the row's end columns (`CollectionStage.listColumns`). */
   listColumns: readonly CollectionField<Item>[];
   /** The row draws the one list-row rule under it (every list row but a page sheet's, whose sheet divides its rows). */
@@ -1790,6 +1794,7 @@ function ListCells<Item>(props: Readonly<{
       {props.rule || props.divided ? (
         <CollectionListRowRule
           {...(props.rule ? {} : { followed: true })}
+          rowActionsCell={props.rowActionsCell}
           // The row's text column: its content inset, then its glyph column and gap when it leads with one.
           startPx={(page ? pageRowInsetPx - 1
             : props.directory ? DIRECTORY_ROW_INSET - 1
@@ -1809,7 +1814,7 @@ function ListCells<Item>(props: Readonly<{
 }
 
 /** A list row's rule, drawn while its list says another row follows and neither it nor the next row is filled. */
-function CollectionListRowRule(props: Readonly<{ startPx: number; multiline: boolean; followed?: boolean }>): ReactElement | null {
+function CollectionListRowRule(props: Readonly<{ startPx: number; multiline: boolean; followed?: boolean; rowActionsCell: boolean }>): ReactElement | null {
   // The list-row rule's ink every list and column row uses (the palette's `listRowRule`, else its `rowDivider`).
   const theme = useHappierUiTheme();
   const palette = useOptionalHappierUiPalette() ?? resolveHappierUiPalette(theme);
@@ -1821,8 +1826,10 @@ function CollectionListRowRule(props: Readonly<{ startPx: number; multiline: boo
   const open = useContext(HappierListRowOpenContext);
   const precedesSelected = useContext(HappierListRowPrecedesSelectedContext);
   const hovered = useHappierListRowHovered();
+  const trailingCell = useContext(HappierListRowTrailingCellContext);
   return resolveHappierListRowRuleShown({ followed, multiline: props.multiline, selected: selection?.selected === true || open, precedesSelected, hovered })
-    ? <HappierListRowRule startPx={props.startPx} color={color} /> : null;
+    // Under a laid-out `⋯` cell the rule runs on to the row's end edge, as the header's rule does (PRESETS-ACCEPT-1119).
+    ? <HappierListRowRule startPx={props.startPx} color={color} endPx={props.rowActionsCell && trailingCell ? -ROW_ACTIONS_CELL_WIDTH : 0} /> : null;
 }
 
 /**
@@ -1967,6 +1974,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
         ownsTrailingInset={(stage.pageSections || stage.wrapTitles) && accessory === null}
         travelling={travel !== null}
         beneath={beneath}
+        rowActionsCell={stage.useRowActions !== undefined && actions.accessory === undefined && listAction === null && chevron === null}
         listColumns={stage.listColumns}
         rule={stage.dividedKeys === null}
         divided={stage.dividedKeys?.has(itemKey) === true}

@@ -595,6 +595,37 @@ describe('plugin-ui List item presentation', () => {
     mount.unmount();
   });
 
+  // PRESETS-ACCEPT-1119 fix 5: the row-actions "…" drew bold primary-ink dots, the loudest mark on a healthy row. It is
+  // quiet: the secondary ink and the small glyph, as core's row "⋯" draws it.
+  it('draws the row-actions trigger quiet: the secondary ink at the small glyph size', async () => {
+    const { Icon } = await import('./Icon.js');
+    const drawn: { name: string; size: number; color?: string }[] = [];
+    const context = createSurfaceContext();
+    const presentationHost = {
+      renderMarkdown: () => null,
+      renderCodeBlock: () => null,
+      renderIcon: (input) => { drawn.push({ name: input.name, size: input.size, color: input.color }); return null; },
+    } satisfies PluginUiPresentationHost;
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <PluginUiPresentationHostProviderInternal host={presentationHost}>
+          <Icon name="link" tone="secondary" size="small" />
+          <List accessibilityLabel="Presets">
+            <List.Item title="Yours" secondaryActions={[{ id: 'rebuild', label: 'Rebuild' }]} onSecondaryAction={() => {}} />
+          </List>
+        </PluginUiPresentationHostProviderInternal>
+      </PluginUiProvider>,
+    );
+    try {
+      const quiet = drawn.find((icon) => icon.name === 'link');
+      const trigger = drawn.find((icon) => icon.name === 'more');
+      expect(trigger).toBeDefined();
+      expect({ size: trigger?.size, color: trigger?.color }).toEqual({ size: quiet?.size, color: quiet?.color });
+    } finally {
+      mount.unmount();
+    }
+  });
+
   it('keeps disabled and busy row secondary actions inert while enabled row actions operate', async () => {
     const onSecondaryAction = vi.fn();
     const context = createSurfaceContext();

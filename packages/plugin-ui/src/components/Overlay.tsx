@@ -81,7 +81,7 @@ export type PopoverProps = Readonly<{
    * inside this same owned trigger.
    */
   triggerAppearance?: 'text' | 'control' | 'primary' | 'well' | 'status' | 'composerStatus';
-  /** A primary trigger's button size; the default is the page's. */
+  /** A primary trigger's button size, and an icon-only trigger's glyph size; the default is the page's. */
   triggerSize?: 'normal' | 'small';
   /** The side a primary trigger shares with its Button in a split button (Fix | ⌄). */
   triggerJoinedEdge?: 'start' | 'end';
@@ -382,7 +382,7 @@ function PopoverPresentation({
           <View style={iconChrome(state).surface}>
             {triggerTaskStatus !== undefined
               ? <TaskStatusGlyph category={triggerTaskStatus} />
-              : triggerIcon === undefined ? null : <Icon name={triggerIcon} size="medium" tone={triggerTextTone} />}
+              : triggerIcon === undefined ? null : <Icon name={triggerIcon} size={triggerSize === 'small' ? 'small' : 'medium'} tone={triggerTextTone} />}
             {well && triggerCount !== undefined && triggerCount > 0 ? (
               <HappierBadge
                 shape="capsule"
