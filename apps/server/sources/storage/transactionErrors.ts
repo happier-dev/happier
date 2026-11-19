@@ -61,6 +61,10 @@ export function readDatabaseErrorCode(error: unknown): 'database_transaction_con
     if (isTransactionDeadlineExceededError(error)) {
         return error.code;
     }
+    // pg-pool's pending-acquisition timeout crosses adapter-pg without a Prisma code.
+    if (error instanceof Error && error.message === "timeout exceeded when trying to connect") {
+        return "database_connection_unavailable";
+    }
     // Availability is not proof of rollback: connection loss must never opt
     // an unknown transaction outcome into the confirmed-no-effect replay path.
     if (['P1001', 'P1002', 'P1017', 'P2024'].some(code => isPrismaErrorCode(error, code)) || isTransactionAcquisitionUnavailableError(error)) {
