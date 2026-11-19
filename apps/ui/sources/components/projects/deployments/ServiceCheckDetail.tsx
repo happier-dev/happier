@@ -74,11 +74,6 @@ const m = 'projects.deployments.monitoring' as const;
 
 const unit = formatServiceCheckUnit;
 const formatLatency = formatServiceCheckLatency;
-const formatClock = (ms: number) =>
-  formatWithCachedDateTimeFormatter(ms, getPreferredLanguage(), {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
 const formatSpan = (ms: number) => {
   const minutes = Math.max(0, Math.floor(ms / 60_000));
   const hours = Math.floor(minutes / 60);
@@ -258,7 +253,7 @@ export function ServiceCheckDetail(
   const heroBars = serviceCheckRecentBars(recent, PAGE_RESULTS);
   const heroCells = heroBars.bars.map((bar): ServiceCheckBarCell => ({
     key: bar.key, tone: bar.tone,
-    label: bar.observedAt === null ? t('projects.deployments.healthNotChecked') : formatClock(bar.observedAt),
+    label: bar.observedAt === null ? t('projects.deployments.healthNotChecked') : formatServiceCheckMoment(bar.observedAt),
     ...(bar.status ? { valueLabel: serviceCheckStatusWord(bar.status) } : {}),
   }));
   const heroKept = heroBars.bars.filter((bar) => bar.observedAt !== null).length;
@@ -376,7 +371,7 @@ export function ServiceCheckDetail(
               <Text variant="meta" style={styles.captionText}>
                 {stale
                   ? t(`${m}.staleState`, { time: formatServiceCheckMoment(shown.result.observedAt, nowMs) })
-                  : [statusText, t(`${m}.checkedAt`, { time: formatClock(shown.result.observedAt) })].join(' · ')}
+                  : [statusText, t(`${m}.checkedAt`, { time: formatServiceCheckMoment(shown.result.observedAt) })].join(' · ')}
               </Text>
             </View>
           </View>
@@ -403,7 +398,7 @@ export function ServiceCheckDetail(
               label: t(`${k}.response`),
               color: theme.colors.text.secondary,
               points: latencies.map((result) => ({ id: String(result.observedAt), x: result.observedAt, y: result.latencyMs ?? null,
-                label: formatClock(result.observedAt) })),
+                label: formatServiceCheckMoment(result.observedAt) })),
             }]}
             variant="line"
             size="full"
@@ -462,7 +457,7 @@ export function ServiceCheckDetail(
               // When, what it answered and from where on line 2; the response alone on the right, the same short value
               // on every row so a phone never switches one row to stacked facts (lab A3 recent results).
               subtitle={[
-                formatClock(result.observedAt),
+                formatServiceCheckMoment(result.observedAt),
                 result.cause?.httpStatus === undefined ? null : String(result.cause.httpStatus),
                 // A measured check (a Key flow) says its error share beside its time (lab p7Flows detail).
                 result.measurements?.errorRate === undefined ? null

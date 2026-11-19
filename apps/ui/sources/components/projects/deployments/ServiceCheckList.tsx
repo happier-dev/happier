@@ -250,7 +250,9 @@ export function ServiceCheckList(
       // automation's name it would then flip from.
       titlePending: (row) => settling || row.definitionFacts.kind === 'loading',
       // Line 2 says what the check is, or why it fails when it does; a phone (no columns) also draws its bars there.
-      byline: (row, layout) => (
+      // A row with nothing to say on line 2 passes no line, so a speaking state word stands alone instead of
+      // trailing a separator before an empty element (PAGE-ACCEPT-176 R3-D7).
+      byline: (row, layout) => checkBylineEmpty(row, factsOf(row), staleOf(row), layout?.fieldColumns === true) ? null : (
         <CheckByline
           row={row}
           facts={factsOf(row)}
@@ -510,6 +512,16 @@ const CheckState = React.memo(function CheckState(
   if (props.facts.status === 'notChecked') return quiet(t(`${m}.waiting`));
   return null;
 });
+
+/** Whether {@link CheckByline} would draw nothing: the same branches, decided before it mounts. */
+function checkBylineEmpty(row: ManagedConfiguredCheckRow, facts: ServiceCheckListFacts, stale: boolean, columns: boolean): boolean {
+  if (!columns && !checkStateSpeaks(row, facts, stale)) return false;
+  if (stale && facts.observerMachineId) return false;
+  const failing = row.native.enabled && (facts.status === 'down' || (facts.status === 'degraded' && facts.causeText !== null));
+  if (failing) return !facts.causeText && facts.failingSince === null;
+  const slow = row.native.enabled && facts.status === 'degraded' && facts.latencyMs !== null && facts.usualMs !== null;
+  return !slow && !facts.kind && facts.title === row.native.name && !facts.every;
+}
 
 /**
  * Line 2: why it fails while it does (cause and since when, or how much slower than usual), which Machine stopped
