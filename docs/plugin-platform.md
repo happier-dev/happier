@@ -29,9 +29,9 @@ HTTP 413. Local admission uses the loopback context; the collector supplies
 token-hash admission through the same receiver callback.
 
 The shared PostgreSQL observation normalizer owns SQL classification and masking.
-It masks SQL literals, sensitive parameter fields and credential URLs, including
-URLs in binary wire parameters, before persistence; database span names use the
-normalized shape.
+It masks SQL literals, sensitive parameter fields, exported OTLP database
+parameter values, and credential URLs, including URLs in binary wire parameters,
+before persistence. Database span names use the normalized shape.
 Unsupported SQL retains timing with an unknown classification. Summary reads
 exclude detail bodies; detail is loaded only on demand and visibly truncated
 against daemon-database input/result bounds. `read.ts` pages selected-worktree
