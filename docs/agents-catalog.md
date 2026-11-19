@@ -124,6 +124,10 @@ Optional `answerDetails` preserves `freeText` and `note` separately under the sa
 question ids through the public Action, Session RPC, SDK, and native interaction
 result. Existing clients can continue sending the original answer arrays.
 
+The shared ACP native permission policy keeps the `question` interaction
+available in read-only and planning Runs. Asking the person does not permit
+workspace changes: native edit, write and shell permissions remain denied.
+
 ## Session compaction capabilities and preferences (0.3 development)
 
 The Agent definition owns `capabilities.sessions.compaction`: `events: true`,

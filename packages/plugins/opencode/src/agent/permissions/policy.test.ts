@@ -47,13 +47,16 @@ describe('OpenCode permission policy', () => {
     }, { docs: { unlisted: 'ask', tools: { 'file.read': 'off', 'file/read': 'allow' } } });
     expect(rules.at(-1)).toEqual({ permission: 'session-docs_file_read', pattern: '*', action: 'deny' });
   });
-  it('keeps read-only intent fail-closed while preserving safe aliases', () => {
-    const config = resolveOpenCodePermissionConfig('read-only');
+  it('keeps native questions usable under read-only intent without permitting effects', () => {
+    const config = JSON.parse(buildOpenCodeManagedLaunchEnvironment(undefined, 'read-only').OPENCODE_PERMISSION!);
 
     expect(config['*']).toBe('deny');
     expect(config.read).toBe('allow');
+    expect(config.glob).toBe('allow');
+    expect(config.question).toBe('allow');
     expect(config.edit).toBe('deny');
     expect(config.write).toBe('deny');
+    expect(config.bash).toBe('deny');
     expect(config.happier_change_title).toBe('allow');
     expect(config.happier_session_title_set).toBe('allow');
     expect(config.happier_action_execute).toBe('allow');

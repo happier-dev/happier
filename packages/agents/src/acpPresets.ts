@@ -92,6 +92,7 @@ export const ACP_HAPPIER_MCP_BRIDGE_STATIC_APPROVAL_TOOL_NAMES = listHappierTool
 // These native permission maps are consumed by OpenCode/Kilo, whose MCP tool
 // names are <server>_<tool>. ACP title aliases belong to host recognition only.
 const ACP_TOOL_SAFE_ALLOW_PERMISSIONS = [
+  'question',
   ...listHappierToolAutoApprovedNameSpellingsV1('happier_'),
   ...listHappierToolAutoApprovedNameSpellingsV1('happy_'),
 ];
