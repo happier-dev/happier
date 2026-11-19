@@ -125,6 +125,7 @@ import { useOptionalPluginUiScrollActivityTracker } from '../presentationHost/sc
 import { HAPPIER_COLLECTION_LIST_METRICS, HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, type HappierCollectionRowRole } from '../presentation/collection/CollectionList.js';
 import { CatalogDirectory } from '../presentation/collection/CatalogDirectory.js';
 import { resolveHappierColumnCountForWidth } from '../presentation/layout/columnLayout.js';
+import { resolveHappierLayoutGap, type HappierLayoutGap } from '../presentation/layout/Layout.js';
 
 const LIST_MORE_ACTIONS_TRANSLATION_KEY = 'happier.plugin-ui.list.moreActions';
 
@@ -351,7 +352,18 @@ type VirtualizedListSectionData<Item> = ReactNativeSectionListData<
 type VirtualizedListSharedProps<Item> = Readonly<{
   /** Window custom rows in the containing physical page, retaining its scroller. Heights are measured from
    * rendered rows; the estimate comes from the caller's existing row geometry. Columns use the shared width rule. */
-  pageLayout?: Readonly<{ estimatedRowHeight: number; columns?: number; columnGapPx?: number; rowGapPx?: number }>;
+  pageLayout?: Readonly<{
+    columns?: number;
+    columnGapPx?: number;
+    rowGapPx?: number;
+  }> & (
+    | Readonly<{ estimatedRowHeight: number; sectionSheets?: never }>
+    | Readonly<{
+        /** Draw each titled section as an ItemGroup sheet in the same viewport window. */
+        sectionSheets: Readonly<{ gap: HappierLayoutGap }>;
+        estimatedRowHeight?: number;
+      }>
+  );
   /** Replace platform rendering only; List keeps selection, focus and viewport custody. */
   virtualizer?: CollectionVirtualizer;
   /** Stable identity is mandatory for inserts/reorders and virtualized state retention. */
@@ -905,7 +917,8 @@ function VirtualizedList<Item>(
   // Rows on a framed page sheet sit flush and divided, like the sheet's own rows; the density gap
   // separates rows only where nothing else does.
   const pageSection = useHappierPageSection();
-  const onSheet = pageSection?.framed === true;
+  const sectionSheets = props.sections !== undefined ? props.pageLayout?.sectionSheets : undefined;
+  const onSheet = pageSection?.framed === true || sectionSheets !== undefined;
   const densityStyle: HappierPortableStyle = onSheet
     ? { gap: 0 }
     : props.density === 'flush' ? { gap: 0 } : props.density === 'compact' ? { gap: 4 } : { gap: 8 };
@@ -1720,6 +1733,7 @@ function VirtualizedList<Item>(
       multiRovingEntries,
       multiStore,
       observeFocus,
+      onSheet,
       onRovingKey,
       registerTarget,
       renderItem,
@@ -1835,17 +1849,20 @@ function VirtualizedList<Item>(
     pageWidth.current = event.nativeEvent.layout.width;
     setPageColumns(resolvePageColumns(pageWidth.current));
   }, [resolvePageColumns]);
-  const pageRowHeight = props.pageLayout?.estimatedRowHeight;
+  const pageRowHeight = props.pageLayout?.estimatedRowHeight
+    ?? (sectionSheets === undefined ? undefined : HAPPIER_PAGE_METRICS.rowMinHeightPx);
   const pageColumnGap = props.pageLayout?.columnGapPx;
   const pageRowGap = props.pageLayout?.rowGapPx;
+  const sectionSheetGap = sectionSheets === undefined ? 0 : resolveHappierLayoutGap(sectionSheets.gap, theme.spacing);
+  const drawsSectionSheets = sectionSheets !== undefined;
   const authorPageGeometry = useMemo(() => pageRowHeight === undefined ? undefined : {
     rowHeight: () => pageRowHeight,
     defaultRowHeight: pageRowHeight,
-    headerHeight: HAPPIER_COLLECTION_LIST_METRICS.groupLabelHeight,
+    headerHeight: HAPPIER_COLLECTION_LIST_METRICS.groupLabelHeight + sectionSheetGap,
     width: null,
     rowGapPx: pageRowGap,
-    directory: { columns: pageColumns, columnGapPx: pageColumnGap ?? 0 },
-  }, [pageRowHeight, pageRowGap, pageColumnGap, pageColumns]);
+    ...(drawsSectionSheets ? {} : { directory: { columns: pageColumns, columnGapPx: pageColumnGap ?? 0 } }),
+  }, [pageRowHeight, pageRowGap, pageColumnGap, pageColumns, drawsSectionSheets, sectionSheetGap]);
   const pageGeometry = authorPageGeometry ?? collectionControl?.pageVirtualization;
   const retainedRowKeys = collectionControl?.retainedRowKeys;
   const retainedVirtualizerKeys = useMemo(() => (retainedRowKeys === undefined ? undefined
@@ -1853,7 +1870,7 @@ function VirtualizedList<Item>(
   [retainedRowKeys, visibleSections === undefined]);
   const pageSheet = pageScroll ? collectionControl?.pageSheet : undefined;
   const catalogDirectory = authorPageGeometry === undefined ? pageScroll ? collectionControl?.catalogDirectory : undefined
-    : { ...authorPageGeometry.directory, rowGapPx: authorPageGeometry.rowGapPx };
+    : authorPageGeometry.directory === undefined ? undefined : { ...authorPageGeometry.directory, rowGapPx: authorPageGeometry.rowGapPx };
   // Rows exist to sit on it: an empty or still-reading list keeps its own empty state on the page.
   const flatPageSheet = pageSheet !== undefined && visibleSections === undefined && (visibleItems?.length ?? 0) > 0;
   // A table's sheet: one rounded edge around its bar, bands, rows and footer, clipping their fills to its corners.
@@ -2029,6 +2046,22 @@ function VirtualizedList<Item>(
     while (at > 0 && key !== undefined && virtualizedSections[at - 1]?.section?.key === key) at -= 1;
     return sectionIndex - at;
   };
+  const renderItemGroupHeading = (sectionIndex: number) => {
+    const section = virtualizedSections[sectionIndex];
+    if (section === undefined || section.title === '') return null;
+    return (
+      <ItemGroupPageColumn style={sectionIndex === 0 ? undefined : { paddingTop: sectionSheetGap }}>
+        <ItemGroupPageHeading title={section.title} description={section.description} />
+      </ItemGroupPageColumn>
+    );
+  };
+  const renderItemGroupRows = (sectionIndex: number, rows: ReactNode) => (
+    <ItemGroupPageColumn>
+      <ItemGroupPageSheet surface="sheet" accessibilityLabel={virtualizedSections[sectionIndex]?.title} rowDividers={false}>
+        {rows}
+      </ItemGroupPageSheet>
+    </ItemGroupPageColumn>
+  );
   const virtualizerRequest: CollectionVirtualizerRequest<Item> = {
     ...(visibleSections === undefined
       ? ({
@@ -2047,7 +2080,7 @@ function VirtualizedList<Item>(
       : ({
           kind: 'sections',
           sections: virtualizedSections,
-          renderSectionHeader: pageSheets === undefined ? renderVirtualizedSectionHeader : (sectionIndex: number) => {
+          renderSectionHeader: drawsSectionSheets ? renderItemGroupHeading : pageSheets === undefined ? renderVirtualizedSectionHeader : (sectionIndex: number) => {
             const section = virtualizedSections[sectionIndex];
             if (section === undefined) return null;
             if (section.section === undefined) return renderSectionHeader({ section });
@@ -2059,7 +2092,7 @@ function VirtualizedList<Item>(
               </>
             );
           },
-          ...(pageSheets === undefined ? {} : {
+          ...(drawsSectionSheets ? { renderSectionRows: renderItemGroupRows } : pageSheets === undefined ? {} : {
             renderPartHeading: (sectionIndex: number) => {
               const head = virtualizedSections[sectionIndex];
               return head?.section === undefined ? null : renderPartHeading(head, head.section);
@@ -2179,8 +2212,8 @@ function VirtualizedList<Item>(
               const sectionRows = rowsOf(section);
               return (
                 <Fragment key={section.key}>
-                  {renderSectionHeader({ section })}
-                  {catalogDirectory !== undefined ? (
+                  {drawsSectionSheets ? renderItemGroupHeading(partIndex) : renderSectionHeader({ section })}
+                  {drawsSectionSheets ? renderItemGroupRows(partIndex, sectionRows) : catalogDirectory !== undefined ? (
                     // A catalog directory's rows stand on the page, row-major in its columns.
                     <CatalogDirectory rows={sectionRows} {...catalogDirectory} />
                   ) : pageSheet === undefined ? (
@@ -2798,14 +2831,8 @@ export type ItemGroupProps = Readonly<{
  */
 export function ItemGroup(props: ItemGroupProps): ReactElement {
   const translate = usePluginTranslation();
-  const theme = usePluginTheme();
-  const palette = useOptionalHappierUiPalette(theme) ?? resolveHappierUiPalette(theme);
-  const pageChrome = useHappierPageChrome();
   // On a popover or menu a section is not a page's: no section gap above it, no page sheet inset beside it.
   const floating = useHappierFloatingSurface();
-  // In a column that already draws part of the edge (a detail's body) the sheet and its title keep their edges.
-  const sheetInsetPx = useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.sheetInsetPx);
-  const headingInsetPx = useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.sheetInsetPx + HAPPIER_PAGE_METRICS.headingOpticalInsetPx);
   const {
     accessibilityLabel,
     accessibilityLabelKey,
@@ -2860,44 +2887,67 @@ export function ItemGroup(props: ItemGroupProps): ReactElement {
     );
   }
   return (
-    // Centred in the page's content column, like the page header above it, so
-    // the section title and sheet sit on the page title's line.
-    <View testID={testID} style={[{ alignItems: 'center' }, style]}>
-      <View style={{ width: '100%', maxWidth: pageChrome?.columnMaxWidthPx }}>
-        {hasHeader ? (
-          <HappierPageSectionHeader
-            title={title}
-            description={description}
-            action={action}
-            insetPx={headingInsetPx}
-          />
-        ) : floating ? null : (
-          // An untitled page section starts one section gap below what precedes it, like a titled one
-          // (the header → first block distance does not depend on what the first block is).
-          <View style={{ height: HAPPIER_PAGE_METRICS.sectionGapPx }} />
+    <ItemGroupPageColumn testID={testID} style={style}>
+      {hasHeader ? (
+        <ItemGroupPageHeading title={title} description={description} action={action} />
+      ) : floating ? null : (
+        // An untitled page section starts one section gap below what precedes it, like a titled one.
+        <View style={{ height: HAPPIER_PAGE_METRICS.sectionGapPx }} />
+      )}
+      <HappierItemGroupBehavior
+        accessibilityRole={rest.accessibilityRole}
+        accessibilityLabel={resolvedAccessibilityLabel}
+        selectableItemCount={Children.count(children)}
+        renderContent={(rows) => (
+          <ItemGroupPageSheet
+            surface={resolvedSurface}
+            accessibilityRole={rest.accessibilityRole}
+            accessibilityLabel={resolvedAccessibilityLabel}
+          >
+            {/* The radio projection runs first, so the sheet divides the projected rows. */}
+            {rows}
+          </ItemGroupPageSheet>
         )}
-        <HappierItemGroupBehavior
-          accessibilityRole={rest.accessibilityRole}
-          accessibilityLabel={resolvedAccessibilityLabel}
-          selectableItemCount={Children.count(children)}
-          renderContent={(rows) => (
-            <View
-              role={rest.accessibilityRole ?? 'group'}
-              accessibilityRole={rest.accessibilityRole}
-              accessibilityLabel={resolvedAccessibilityLabel}
-              aria-label={resolvedAccessibilityLabel}
-              style={{ marginHorizontal: floating ? 0 : sheetInsetPx }}
-            >
-              {/* The radio projection runs first, so the sheet divides the projected rows. */}
-              <HappierPageSheet surface={resolvedSurface} colors={palette}>
-                {rows}
-              </HappierPageSheet>
-            </View>
-          )}
-        >
-          {children}
-        </HappierItemGroupBehavior>
-      </View>
+      >
+        {children}
+      </HappierItemGroupBehavior>
+    </ItemGroupPageColumn>
+  );
+}
+
+function ItemGroupPageColumn({ children, testID, style }: Readonly<{
+  children: ReactNode;
+  testID?: string;
+  style?: HappierStyleProp;
+}>): ReactElement {
+  const pageChrome = useHappierPageChrome();
+  return (
+    <View testID={testID} style={[{ alignItems: 'center' }, style]}>
+      <View style={{ width: '100%', maxWidth: pageChrome?.columnMaxWidthPx }}>{children}</View>
+    </View>
+  );
+}
+
+function ItemGroupPageHeading(props: Readonly<{ title?: string; description?: ReactNode; action?: ReactNode }>): ReactElement {
+  const insetPx = useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.sheetInsetPx + HAPPIER_PAGE_METRICS.headingOpticalInsetPx);
+  return <HappierPageSectionHeader {...props} insetPx={insetPx} />;
+}
+
+function ItemGroupPageSheet({ children, surface, accessibilityRole, accessibilityLabel, rowDividers }: Readonly<{
+  children: ReactNode;
+  surface: 'sheet' | 'none';
+  accessibilityRole?: ItemGroupProps['accessibilityRole'];
+  accessibilityLabel?: string;
+  rowDividers?: boolean;
+}>): ReactElement {
+  const theme = usePluginTheme();
+  const colors = useOptionalHappierUiPalette(theme) ?? resolveHappierUiPalette(theme);
+  const floating = useHappierFloatingSurface();
+  const sheetInsetPx = useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.sheetInsetPx);
+  return (
+    <View role={accessibilityRole ?? 'group'} accessibilityRole={accessibilityRole}
+      accessibilityLabel={accessibilityLabel} aria-label={accessibilityLabel} style={{ marginHorizontal: floating ? 0 : sheetInsetPx }}>
+      <HappierPageSheet surface={surface} colors={colors} rowDividers={rowDividers}>{children}</HappierPageSheet>
     </View>
   );
 }

@@ -1563,12 +1563,15 @@ component; the shared list owner retains row semantics, accessibility,
 virtualization, and host presentation behavior. Do not replace it with a raw
 list implementation just to reproduce a curated List surface.
 
-In 0.3 development source, a `List` with `items` and `renderItem` can pass
+In 0.3 development source, a `List` with `items` or `sections` and `renderItem` can pass
 `pageLayout={{ estimatedRowHeight }}` to window its custom rows in the containing
 Happier page. Use the existing row owner's height for the initial estimate; the
 shared page virtualizer measures rendered rows. Optional `columns`,
 `columnGapPx` and `rowGapPx` retain a directory layout. The containing page keeps
 scroll ownership; omitting `pageLayout` retains ordinary List scrolling.
+To keep `ItemGroup` headings and sheets in a sectioned list, set
+`pageLayout={{ sectionSheets: { gap: 'large' } }}`. This uses the shared page row
+minimum as the initial estimate and accepts any `Stack` gap.
 
 In 0.3 development source, `leadHappierListRows` and
 `HappierListOverflowFooter` are public `/components` and root exports for a

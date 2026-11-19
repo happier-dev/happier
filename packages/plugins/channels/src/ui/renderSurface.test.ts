@@ -21,6 +21,7 @@ import {
   type PluginUiTestkitHostHandlers,
 } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -10384,6 +10385,71 @@ describe('Channels collapsed row identity', () => {
       };
     });
   }
+
+  it('windows the phone index and reads Session activity for mounted conversations', async () => {
+    // READY204 has 119 bindings, 46 of which are index rows. The remaining
+    // bindings are router children, which the index already excludes.
+    const entries = Array.from({ length: 119 }, (_, index) => {
+      const key = String(index).padStart(3, '0');
+      return {
+        bindingId: `binding-window-${key}`, revision: 1, connectionId: 'connection-1',
+        ...(index < 46 ? {} : { parentBindingId: 'binding-window-000' }),
+        endpoint: { audience: 'direct', label: `Conversation ${key}` },
+        target: { kind: 'session', summary: 'Session', sessionId: `session-window-${key}` },
+        inputMode: 'allAllowedMessages', deliveryMode: 'repliesOnly', approval: { kind: 'off' },
+        enabled: true, deletionState: 'none',
+      };
+    });
+    const viewport = { top: 0, bottom: 390 };
+    const sessionReads: string[] = [];
+    let reply = 'Initial reply';
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'phone-index-window', mountNonce: 'phone-index-window' },
+      authorPlugin: { id: 'happier.channels', version: '0.0.0' },
+      surface: renderSurface,
+      surfaceContext: createChannelsPageSurfaceContext(),
+      subPath: '',
+      adapter: createChannelsSemanticAdapter(emptyDataClient, {
+        ...focusTransferPresentationHost(),
+        createScrollActivityTracker: () => ({
+          onScroll() {}, onLayout() {}, onContentSizeChange() {},
+          subscribe: () => () => {},
+          getWindow: () => viewport,
+          measureSpan: async () => ({ top: 0 }),
+          invalidateLayout() {}, getLayoutRevision: () => 0,
+        }),
+      }),
+      handlers: {
+        readResource: bindingResourceReader(() => jsonResource({ bindings: entries }, '8')),
+        watchSession: () => {},
+        readSession: ({ sessionId }) => {
+          sessionReads.push(sessionId);
+          return {
+            sessionId, lifecycle: 'active', runtime: 'idle', operational: 'none', pendingPermissions: [],
+            workStatus: { state: 'waiting', bucket: 'idle', tone: 'neutral', attentionType: null, word: 'Idle' },
+            latestActivity: { kind: 'ready', text: sessionId === 'session-window-000' ? reply : 'Other reply', createdAt: 1000 },
+          };
+        },
+      },
+    });
+    try {
+      const firstRow = () => collapsedRowByIdentity('channels-page-row-binding-window-000');
+      await vi.waitFor(async () => { expect((await firstRow()).text).toContain('Initial reply'); });
+      const mounted = document.querySelectorAll('[data-testid^="channels-page-row-binding-window-"]');
+      const windowRowLimit = Math.floor(viewport.bottom / HAPPIER_PAGE_METRICS.rowMinHeightPx) + 1;
+      expect(mounted.length, 'mounted phone rows').toBeLessThanOrEqual(windowRowLimit);
+      expect(new Set(sessionReads).size, 'Sessions read by the phone index').toBe(mounted.length);
+      expect(document.querySelector('[data-testid="channels-page-row-binding-window-045"]')).toBeNull();
+      reply = 'Updated reply';
+      sessionReads.length = 0;
+      await act(async () => { fixture.invalidateSession('session-window-000', `sha256:${'a'.repeat(64)}`); });
+      await vi.waitFor(async () => { expect((await firstRow()).text).toContain('Updated reply'); });
+      expect(sessionReads).toEqual(['session-window-000']);
+      expect(document.querySelector('[data-testid="channels-page-bots"]')).not.toBeNull();
+    } finally {
+      await fixture.dispose();
+    }
+  });
 
   it('names each linked conversation by its endpoint label or short identity, and its page by its bot', async () => {
     const mountAt = async (subPath: string, instance: string) => await createPluginUiTestkit({

@@ -21,6 +21,9 @@ from the existing row presentation owner; the shared virtualizer measures the
 rendered heights. Optional `columns`, `columnGapPx` and `rowGapPx` preserve the
 directory layout through the shared measured-width rule. This uses the same
 page window and positioning owner as Collection, without adding a scroller.
+For a sectioned `List`, `pageLayout.sectionSheets` uses the same headings and
+sheets as `ItemGroup` and windows the rows of all sections together. Its initial
+row estimate defaults to the shared page row minimum.
 
 Peek expansion has one mount-lifetime owner in the headless model. The Collection
 reads its expanded set to place Peek cells; rows and Peek content use the model's

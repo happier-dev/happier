@@ -218,7 +218,6 @@ import {
   buildChannelsConversationIndex,
   channelsConversationActivity,
   formatConversationTime,
-  useConversationSessionStates,
   readChannelsPageLocation,
   channelsJustLinkedSubPath,
   channelsLinkSubPath,
@@ -226,7 +225,7 @@ import {
   type ChannelsConversationActivity,
   type ChannelsConversationIndexRow,
 } from './conversationRows.js';
-import { selectChannelsRouterThreadSessionState, selectChannelsSessionTitle, type ChannelsRouterThreadSessionState } from './conversationSessionState.js';
+import { selectChannelsConversationSessionState, selectChannelsRouterThreadSessionState, selectChannelsSessionTitle, type ChannelsRouterThreadSessionState } from './conversationSessionState.js';
 import {
   bindingPermissionIntentLabel,
   bindingPermissionIntentOptions,
@@ -3307,6 +3306,14 @@ function ConversationsEmptyPage(props: Readonly<{
  * where no column stands beside the page. It reads the same index the column
  * reads.
  */
+const conversationIndexPageLayout = {
+  sectionSheets: { gap: 'large' },
+} as const;
+
+function conversationIndexRowKey(row: ChannelsConversationIndexRow): string {
+  return row.binding.bindingId;
+}
+
 function ConversationsIndexPage(props: Readonly<{
   presentations: readonly BindingPresentation[];
   connections: readonly ChannelsConnection[];
@@ -3315,7 +3322,7 @@ function ConversationsIndexPage(props: Readonly<{
   onOpenSettings: () => void;
   t: Translate;
 }>): React.ReactElement {
-  const { t } = props;
+  const { onOpen, t } = props;
   const resolveProviderName = useConversationProviderDisplayNameResolver();
   const providerName = React.useCallback(
     (providerPluginId: string) => resolveProviderName(providerPluginId)
@@ -3326,15 +3333,25 @@ function ConversationsIndexPage(props: Readonly<{
     () => props.presentations.map((presentation) => presentation.binding),
     [props.presentations],
   );
-  const sessionStates = useConversationSessionStates(bindings);
   const { locale } = useSurfaceContext();
-  const groups = React.useMemo(() => buildChannelsConversationIndex({
+  const sections = React.useMemo(() => buildChannelsConversationIndex({
     bindings,
     connections: props.connections,
     providerName,
     t,
-    sessionStates,
-  }), [bindings, props.connections, providerName, sessionStates, t]);
+  }).map((group): ListSectionData<ChannelsConversationIndexRow> => ({
+    key: group.key,
+    title: group.connection !== undefined
+      ? connectionLabel(group.connection)
+      : group.providerPluginId !== undefined
+        ? providerName(group.providerPluginId)
+        : t('plugins.channels.column.otherGroup', 'Other conversations'),
+    ...(group.botAttention === undefined ? {} : { description: group.botAttention.label }),
+    data: group.rows,
+  })), [bindings, props.connections, providerName, t]);
+  const renderRow = React.useCallback((row: ChannelsConversationIndexRow) => (
+    <ConversationIndexPageRow row={row} locale={locale} t={t} onOpen={onOpen} />
+  ), [locale, t, onOpen]);
   return (
     <Stack gap="large" testID="channels-page-index">
       <PageHeader
@@ -3351,38 +3368,7 @@ function ConversationsIndexPage(props: Readonly<{
           ),
         })}
       />
-      {groups.map((group) => (
-        <ItemGroup
-          key={group.key}
-          title={group.connection !== undefined
-            ? connectionLabel(group.connection)
-            : group.providerPluginId !== undefined
-              ? providerName(group.providerPluginId)
-              : t('plugins.channels.column.otherGroup', 'Other conversations')}
-          {...(group.botAttention === undefined ? {} : { description: group.botAttention.label })}
-        >
-          {group.rows.map((row) => {
-            const line = conversationIndexRowLine(row, locale, t);
-            return (
-              <Item
-                key={row.binding.bindingId}
-                testID={`channels-page-row-${row.binding.bindingId}`}
-                title={row.title}
-                titleNumberOfLines={1}
-                subtitle={line.subtitle}
-                subtitleNumberOfLines={1}
-                {...(line.detail === undefined ? {} : { detail: line.detail })}
-                {...(line.detailTone === undefined ? {} : { detailTone: line.detailTone })}
-                accessibilityLabel={line.accessibilityLabel}
-                {...(row.connection === undefined ? {} : {
-                  icon: <BrandMark pluginId={row.connection.providerPluginId} size="small" externallyLabelled />,
-                })}
-                onPress={() => props.onOpen(row.binding.bindingId)}
-              />
-            );
-          })}
-        </ItemGroup>
-      ))}
+      <List sections={sections} keyForItem={conversationIndexRowKey} pageLayout={conversationIndexPageLayout} renderItem={renderRow} />
       {/* Without the column (phones), its "Bots & connections" footer lives at the end of the list. */}
       <ItemGroup>
         <Item
@@ -3393,6 +3379,36 @@ function ConversationsIndexPage(props: Readonly<{
         />
       </ItemGroup>
     </Stack>
+  );
+}
+
+function ConversationIndexPageRow({ row, locale, t, onOpen, showDivider }: Readonly<{
+  row: ChannelsConversationIndexRow;
+  locale: string;
+  t: Translate;
+  onOpen: (bindingId: string) => void;
+  showDivider?: boolean;
+}>): React.ReactElement {
+  const { binding } = row;
+  const sessionId = binding.target.kind === 'session' ? binding.target.sessionId : undefined;
+  const session = useSessionState(sessionId ?? null, { select: selectChannelsConversationSessionState });
+  const line = conversationIndexRowLine({ ...row, session }, locale, t);
+  return (
+    <Item
+      testID={`channels-page-row-${binding.bindingId}`}
+      title={row.title}
+      titleNumberOfLines={1}
+      subtitle={line.subtitle}
+      subtitleNumberOfLines={1}
+      {...(line.detail === undefined ? {} : { detail: line.detail })}
+      {...(line.detailTone === undefined ? {} : { detailTone: line.detailTone })}
+      accessibilityLabel={line.accessibilityLabel}
+      {...(row.connection === undefined ? {} : {
+        icon: <BrandMark pluginId={row.connection.providerPluginId} size="small" externallyLabelled />,
+      })}
+      showDivider={showDivider}
+      onPress={() => onOpen(binding.bindingId)}
+    />
   );
 }
 
