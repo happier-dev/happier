@@ -5,7 +5,7 @@ import {
   type AgentExecutionRunRuntimeFactory,
   type AgentRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import {
   REVIEW_SCM_SCOPE_INPUT_KEY,
   ReviewScmScopeV1Schema,
@@ -194,7 +194,11 @@ async function resolveSelectedScopePaths(params: Readonly<{
   const paths: string[] = [];
   for (const selectedPath of scope.selectedPaths) {
     if (params.signal.aborted) throw params.signal.reason;
-    const normalizedPath = relative(cwd, resolve(worktreeRoot, selectedPath)).replace(/\\/g, '/');
+    const relativePath = relative(cwd, resolve(worktreeRoot, selectedPath));
+    // DeepSec treats every backslash as a separator. On POSIX it can instead
+    // belong to the filename, so refuse that identity before portable fs access.
+    if (sep !== '\\' && relativePath.includes('\\')) return selectedScopeUnavailable(selectedPath);
+    const normalizedPath = relativePath.split(sep).join('/');
     try {
       const stat = await params.context.services.fs.stat({
         root: 'workspace',
