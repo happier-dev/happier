@@ -141,22 +141,26 @@ function slotFor(scopeKey: string): AccountSettingsSlot {
   return (readSharedHostSession() && hostedAccountSlots.get(scopeKey)) || currentSlot();
 }
 
-/** A hosted Session's Account commit binds that Session to its Account's incumbent. */
+/**
+ * A hosted Session's first Account commit binds it to that Account's incumbent.
+ * A bound Session never moves: a commit for another Account reaches that Account only.
+ */
 function slotForCommit(next: ActiveAccountSettingsSnapshot): AccountSettingsSlot {
   const session = readSharedHostSession();
   const own = currentSlot();
-  if (!session || !next.scopeKey) return own;
+  if (!session || !next.scopeKey || own.scopeKey === next.scopeKey) return own;
+  const unbound = own.scopeKey === undefined;
   let slot = hostedAccountSlots.get(next.scopeKey);
   if (!slot) {
-    slot = own.scopeKey === undefined ? own : createAccountSettingsSlot();
+    slot = unbound ? own : createAccountSettingsSlot();
     slot.scopeKey = next.scopeKey;
     hostedAccountSlots.set(next.scopeKey, slot);
-  } else if (own !== slot && own.scopeKey === undefined) {
+  } else if (unbound) {
     // Listeners this Session registered before its Account was known follow it.
     for (const listener of own.listeners) slot.listeners.add(listener);
     for (const listener of own.connectedServiceProjectionListeners) slot.connectedServiceProjectionListeners.add(listener);
   }
-  hostedSessionSlots.set(session, slot);
+  if (unbound) hostedSessionSlots.set(session, slot);
   return slot;
 }
 

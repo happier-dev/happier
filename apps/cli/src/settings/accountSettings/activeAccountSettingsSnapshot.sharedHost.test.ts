@@ -1,11 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { NotificationChannelRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 
 import {
   bindToHostedSessionScope,
   runAddedHostedSession,
 } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { sendReadyWithPushNotification } from '@/agent/runtime/notifications/sendReadyWithPushNotification';
 import { configuration } from '@/configuration';
 import type { TokenOnlyCredentials } from '@/persistence';
+import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
+import { logger } from '@/ui/logger';
 
 import {
   applyAccountSettingsV2Update,
@@ -13,6 +19,8 @@ import {
   resetInMemoryAccountSettingsContextForTests,
 } from './bootstrapAccountSettingsContext';
 import {
+  commitActiveAccountSettingsSnapshot,
+  commitActiveNotificationChannelCatalog,
   getActiveAccountSettingsSnapshot,
   getActiveAccountSettingsSnapshotLifetimeToken,
   isActiveAccountSettingsSnapshotLifetimeCurrent,
@@ -208,5 +216,68 @@ describe('Account settings incumbent in a shared session host', () => {
       scopeKey: first.open.scopeKey,
       timing: 'after_foreground_ready',
     });
+  });
+
+  it('keeps a bound Session on its Account when another Account commits inside its scope', async () => {
+    const owner = await startHostedSession('owner-token', 'after_runtime_idle');
+    const guest = await startHostedSession('guest-token', 'after_foreground_ready');
+    const guestSnapshot = guest.run(() => getActiveAccountSettingsSnapshot())!;
+
+    owner.run(() => commitActiveAccountSettingsSnapshot({ ...guestSnapshot, settingsVersion: 2,
+      settings: { ...guestSnapshot.settings, sessionPendingQueueDeliveryTiming: 'after_runtime_idle' } }));
+
+    expect(readTurn(owner)).toEqual({ current: true, scopeKey: owner.open.scopeKey, timing: 'after_runtime_idle' });
+    expect(readTurn(guest)).toEqual({ current: true, scopeKey: guest.open.scopeKey, timing: 'after_runtime_idle' });
+  });
+
+  it("delivers an Account's ready notification only to that Account's channels", async () => {
+    // Webhook delivery is real, to a loopback receiver; the Session client (transcript
+    // commit, own push sender, Session read) is the stubbed boundary.
+    const received: { path: string | undefined; body: string }[] = [];
+    const receiver = createServer((request, response) => {
+      let body = '';
+      request.on('data', chunk => { body += chunk; });
+      request.on('end', () => { received.push({ path: request.url, body }); response.writeHead(200).end(); });
+    });
+    await new Promise<void>(resolve => receiver.listen(0, '127.0.0.1', resolve));
+    const { port } = receiver.address() as AddressInfo;
+    const outcomes = vi.spyOn(logger, 'infoFile');
+    try {
+      const withChannels = async (token: string, hookPath: string) => {
+        const session = await startHostedSession(token, 'after_runtime_idle');
+        expect(session.run(() => commitActiveNotificationChannelCatalog({ ...session.open, catalog: {
+          status: 'ready', revision: 1, diagnostics: [], channels: [NotificationChannelRecordV1Schema.parse({ v: 1,
+            id: `${token}-hook`, kind: 'webhook', enabled: true, topics: { ready: true },
+            url: `http://127.0.0.1:${port}${hookPath}`, signingSecretRef: null })],
+        } }))).toBe(true);
+        return session;
+      };
+      const owner = await withChannels('owner-token', '/owner-hook');
+      await withChannels('guest-token', '/guest-hook');
+      const pushes: string[] = [];
+
+      await owner.run(() => sendReadyWithPushNotification({
+        session: { sessionId: 'owner-session',
+          enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: true, localId: 'ready-1', committedSequence: 1 }) },
+        pushSender: {
+          sendToAllDevicesAsync: async (title: string) => { pushes.push(title); return true; },
+          fetchSessionNotificationContext: async (id: string) => {
+            const record = createSessionNotificationContextFixture(id);
+            return { ...record, viewer: { ...record.viewer!, follow: { ...record.viewer!.follow,
+              policy: { preset: 'everything' as const } } } };
+          },
+          readAccountSessionDeliveryMutedScopes: async () => [],
+        },
+        waitingForCommandLabel: 'Agent', logPrefix: '[shared-host]',
+        sessionTitle: 'Owner title', assistantPreviewText: 'Owner preview',
+      }));
+      await vi.waitFor(() => expect(outcomes.mock.calls.some(([message]) => message === '[activityNotifications] Dispatch outcome')).toBe(true));
+
+      expect(received.map(({ path }) => path)).toEqual(['/owner-hook']);
+      expect(JSON.parse(received[0]!.body)).toMatchObject({ topic: 'ready', session: { sessionId: 'owner-session' } });
+    } finally {
+      outcomes.mockRestore();
+      await new Promise(resolve => receiver.close(resolve));
+    }
   });
 });
