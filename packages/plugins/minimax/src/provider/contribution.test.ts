@@ -59,6 +59,11 @@ describe('MiniMax provider contributions', () => {
       id: 'MiniMax-M3.1-Flash', contextWindowTokens: 1_000_000,
       capabilities: { toolRoundTrips: 'supported' },
     });
+    expect(contribution.catalog.staticModels).toMatchObject([
+      { upstreamRef: { vendor: 'minimax', vendorModelId: 'MiniMax-M3.1-Flash' } },
+      { upstreamRef: { vendor: 'minimax', vendorModelId: 'MiniMax-M3' } },
+      { upstreamRef: { vendor: 'minimax', vendorModelId: 'MiniMax-M2.7' } },
+    ]);
   });
 
   it.each(REGIONS)('declares extended-context variants for $label rather than hardcoding suffixes', ({ contribution }) => {

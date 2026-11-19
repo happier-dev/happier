@@ -12,6 +12,7 @@ const MINIMAX_MODELS = [
   {
     id: 'MiniMax-M3.1-Flash',
     name: 'MiniMax M3.1 Flash',
+    upstreamRef: { vendor: 'minimax', vendorModelId: 'MiniMax-M3.1-Flash' },
     aliases: ['MiniMax-M3.1-Flash[1m]'] as string[],
     contextWindowTokens: 1_000_000,
     extendedContextModelId: 'MiniMax-M3.1-Flash[1m]',
@@ -20,6 +21,7 @@ const MINIMAX_MODELS = [
   {
     id: 'MiniMax-M3',
     name: 'MiniMax M3',
+    upstreamRef: { vendor: 'minimax', vendorModelId: 'MiniMax-M3' },
     aliases: ['MiniMax-M3[1m]'] as string[],
     contextWindowTokens: 1_000_000,
     // MiniMax gates M3's full window behind a `[1m]` model id, the same
@@ -37,6 +39,7 @@ const MINIMAX_MODELS = [
   {
     id: 'MiniMax-M2.7',
     name: 'MiniMax M2.7',
+    upstreamRef: { vendor: 'minimax', vendorModelId: 'MiniMax-M2.7' },
     contextWindowTokens: 204_800,
     capabilities: { toolRoundTrips: 'supported' },
   },
