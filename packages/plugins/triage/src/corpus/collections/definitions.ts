@@ -5,6 +5,7 @@ import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     TriageConfiguredSourceInstanceV1JsonSchema,
+    TriageAdmittedReviewV1Schema,
     TriageEntryRefV1JsonSchema,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -229,6 +230,7 @@ export const CORPUS_USER_MARKS_COLLECTION = defineAccountCollection({
             // Optional private intent widens the existing contract; no new index
             // or row migration is needed for retained marks without an origin.
             [CORPUS_USER_MARKS_FIELD.originReview]: TriageTaskOriginReviewV1Schema.jsonSchema,
+            [CORPUS_USER_MARKS_FIELD.admittedReview]: TriageAdmittedReviewV1Schema.jsonSchema,
             [CORPUS_USER_MARKS_FIELD.originError]: {
                 type: 'object',
                 properties: { entryRef: TriageEntryRefV1JsonSchema, display: MARK_DISPLAY_SCHEMA },

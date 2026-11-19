@@ -23,6 +23,17 @@ describe('Triage detail surface input', () => {
         }).success).toBe(true);
     });
 
+    it('carries the exact admitted Review and round as an additive field and refuses a malformed one', () => {
+        const admittedReview = { reviewId: 'review-1', roundOrdinal: 2 };
+        expect(TriageDetailSurfaceInputV1Schema.parse({ ...fixture.detailInput, admittedReview }).admittedReview)
+            .toEqual(admittedReview);
+        expect(TriageDetailSurfaceInputV1Schema.parse(fixture.detailInput).admittedReview).toBeUndefined();
+        for (const malformed of [{ reviewId: '', roundOrdinal: 1 }, { reviewId: 'review-1', roundOrdinal: 0 },
+            { reviewId: 'review-1', roundOrdinal: 1, latest: true }]) {
+            expect(TriageDetailSurfaceInputV1Schema.safeParse({ ...fixture.detailInput, admittedReview: malformed }).success).toBe(false);
+        }
+    });
+
     it('preserves an unavailable Session id without transcript metadata', () => {
         const parsed = TriageDetailSurfaceInputV1Schema.parse({
             ...fixture.detailInput,

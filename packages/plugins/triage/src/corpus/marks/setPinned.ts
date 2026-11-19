@@ -1,6 +1,6 @@
 import type { TriageTaskOriginReviewV1 } from '../../actions/taskReviewProtocol.js';
 import { isPluginError, PluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import type { TriageEntryRefV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageAdmittedReviewV1, TriageEntryRefV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { CorpusCollectionsV1 } from '../collections/bindCorpusCollections.js';
 import { putCorpusRowOnce } from '../collections/putRowOnce.js';
@@ -114,9 +114,9 @@ async function deleteLiveMark(collections: MarkCollections, markTag: string, rev
 }
 
 /** An unpinned mark stays live only while it carries one of the user's or a Review's relationships. */
-function carriesRelationship(row: Pick<CorpusUserMarkRowV1, 'fixPullRequests' | 'originError' | 'originReview'>): boolean {
+function carriesRelationship(row: Pick<CorpusUserMarkRowV1, 'fixPullRequests' | 'originError' | 'originReview' | 'admittedReview'>): boolean {
     return row.fixPullRequests !== undefined || row.originError !== undefined
-        || row.originReview !== undefined;
+        || row.originReview !== undefined || row.admittedReview !== undefined;
 }
 
 function withoutFixPullRequests(row: CorpusUserMarkRowV1): CorpusUserMarkRowV1 {
@@ -357,4 +357,39 @@ export async function setTaskOriginReview(input: Readonly<{
         ...(input.signal ? { signal: input.signal } : {}),
     });
     return written.status === 'written' ? { status } : { status: 'conflict' };
+}
+
+/** The exact Review and round the entry's latest PR review start admitted, if one ever did. */
+export async function readAdmittedReview(input: Readonly<{
+    collections: MarkCollections; entryRef: TriageEntryRefV1; signal?: AbortSignal;
+}>): Promise<TriageAdmittedReviewV1 | null> {
+    const options = input.signal ? { signal: input.signal } : undefined;
+    const markTag = await deriveUserMarkTag(input.collections.userMarks, input.entryRef, options);
+    return (await readLiveMark(input.collections, markTag, options))?.value.admittedReview ?? null;
+}
+
+/** Records the receipt's Review and round on the entry's mark; the latest admission replaces the earlier one. */
+export async function setAdmittedReview(input: Readonly<{
+    collections: MarkCollections; entryRef: TriageEntryRefV1; displayAtMark: CorpusUserMarkDisplayV1;
+    admittedReview: TriageAdmittedReviewV1; nowMs: number; signal?: AbortSignal;
+}>): Promise<CorpusSetFixPullRequestResultV1> {
+    const options = input.signal ? { signal: input.signal } : undefined;
+    const markTag = await deriveUserMarkTag(input.collections.userMarks, input.entryRef, options);
+    const existing = await readLiveMark(input.collections, markTag, options);
+    if (existing) {
+        const current = existing.value.admittedReview;
+        if (current?.reviewId === input.admittedReview.reviewId && current.roundOrdinal === input.admittedReview.roundOrdinal) {
+            return { status: 'linked' };
+        }
+        return await rewriteLiveMark(input.collections, existing.revision,
+            { ...existing.value, admittedReview: input.admittedReview }, input.signal)
+            ? { status: 'linked' } : { status: 'conflict' };
+    }
+    const written = await putCorpusRowOnce<CorpusUserMarkRowV1>({
+        collection: input.collections.userMarks, rowId: markTag,
+        row: { markTag, pinned: false, markedAtMs: input.nowMs, entryRef: input.entryRef,
+            displayAtMark: input.displayAtMark, admittedReview: input.admittedReview },
+        ...(input.signal ? { signal: input.signal } : {}),
+    });
+    return written.status === 'written' ? { status: 'linked' } : { status: 'conflict' };
 }

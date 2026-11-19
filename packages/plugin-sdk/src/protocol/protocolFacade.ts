@@ -7,6 +7,8 @@ import { createProtocolStoredReadSchema as canonicalCreateProtocolStoredReadSche
 import { pluginJsonValuesEqual as canonicalPluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { embedProtocolJsonSchema as canonicalEmbedProtocolJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 export { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+export { ReviewRoundBindingV1ProtocolSchema } from '@happier-dev/protocol/reviews/reviewRoundBindingV1';
+export type { ReviewRoundBindingV1 } from '@happier-dev/protocol/reviews/reviewRoundBindingV1';
 
 /** Embed an existing schema without changing the meaning of its document-local references. */
 export const embedProtocolJsonSchema: (projection: PluginJsonSchema, path: readonly (string | number)[]) => PluginJsonSchema = canonicalEmbedProtocolJsonSchema;

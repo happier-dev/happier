@@ -46,6 +46,8 @@ export type TriageDetailSurfaceInputBuildInputV1 = Readonly<{
   linkedSessions: TriageDetailSurfaceInputV1['linkedSessions'];
   /** Whether another page exists; absence is complete, as in the published detail input. */
   linkedSessionsHasMore?: boolean;
+  /** The entry's latest admitted PR Review and round, recorded by Triage; absent when none. */
+  admittedReview?: TriageDetailSurfaceInputV1['admittedReview'];
   /** Transient source-owned facts from this exact opening read. */
   detailData?: TriageDetailSurfaceInputV1['detailData'];
   /** The panel rendered by this physical mount. */
@@ -74,6 +76,7 @@ export function buildTriageDetailSurfaceInputV1(
       instance: input.instance,
       observation: input.observation,
       ...(input.detailData === undefined ? {} : { detailData: input.detailData }),
+      ...(input.admittedReview === undefined ? {} : { admittedReview: input.admittedReview }),
       linkedSessions: sessions.slice(0, MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1),
       linkedSessionsHasMore: input.linkedSessionsHasMore || sessions.length > MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
       ...(input.panel === undefined ? {} : { panel: input.panel }),

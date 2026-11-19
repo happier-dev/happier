@@ -23,6 +23,7 @@ import {
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
+    TriageAdmittedReviewV1Schema,
     TriageEntryLocatorV1Schema,
     TriageEntryRefV1Schema,
     TriageConfiguredSourceInstanceV1Schema,
@@ -565,6 +566,7 @@ export const TriageStartPullRequestReviewResultV1Schema = defineProtocolUnion([
         status: defineProtocolLiteral('started'),
         startedEngineIds: defineProtocolArray(reviewEngineId, { minItems: 1 }),
         failedEngineIds: defineProtocolArray(reviewEngineId),
+        review: TriageAdmittedReviewV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),

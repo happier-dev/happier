@@ -1,3 +1,4 @@
+import { ReviewStartInputSchema, reviewReviewerIdsForStartV1, reviewReviewersForEngineIdsV1 } from '@happier-dev/plugin-sdk/reviews';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { fanoutStarts } from '@happier-dev/protocol/actions/executor/executionRuns';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -21,6 +22,7 @@ import { fromCorpusStoredRow, toCorpusStoredValue } from '../corpus/collections/
 import type { CorpusSessionLinkRowV1 } from '../corpus/collections/rows.js';
 import { deriveSessionLinkTag } from '../corpus/identity/tags.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
+import { readAdmittedReview } from '../corpus/marks/setPinned.js';
 import { administerConfiguredSourceInstance } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import {
     TESTKIT_SOURCE_INSTANCE_ID,
@@ -241,13 +243,19 @@ function formalReviewInput() {
  */
 function reviewStartFanout(
     outcomes: Readonly<Record<string, 'started' | 'unavailable'>>,
+    reviewRound?: Readonly<{ reviewId: string; roundOrdinal: number }>,
 ): unknown {
+    const engineIds = Object.keys(outcomes);
+    const keys = reviewReviewerIdsForStartV1(ReviewStartInputSchema.parse({
+        reviewers: reviewReviewersForEngineIdsV1(engineIds), instructions: 'Review the selected pull request.',
+    }));
     return {
         intent: 'review',
         sessionId: 'session-a',
-        results: Object.entries(outcomes).map(([key, outcome], index) => (outcome === 'started'
+        ...(reviewRound === undefined ? {} : { reviewRound }),
+        results: engineIds.map((key, index) => (outcomes[key] === 'started'
             ? {
-                key: `step-1-reviewer-${index + 1}`,
+                key: keys[index],
                 ok: true,
                 result: {
                     runId: `run-${key}`,
@@ -256,7 +264,7 @@ function reviewStartFanout(
                 },
             }
             : {
-                key: `step-1-reviewer-${index + 1}`,
+                key: keys[index],
                 ok: false,
                 errorCode: 'review_engine_unavailable',
                 error: 'review_engine_unavailable',
@@ -274,8 +282,10 @@ function createFormalReviewContext(input: Readonly<{
     expectedComparisonSource?: unknown;
     expectedReviewInputs?: Readonly<Record<string, unknown>>;
     expectedEngineIds?: readonly string[];
+    collections?: CorpusCollectionsV1;
 }>): PluginInvocationContext {
     const review = input.expectedReview ?? formalReviewInput().review;
+    const collections = input.collections ?? createTestkitCorpusCollections().collections;
     const operation = { role: 'verifyReviewWorkspace' };
     const source = START_INPUT_BASE.entryRef.source;
     const admitted = [{
@@ -302,6 +312,7 @@ function createFormalReviewContext(input: Readonly<{
     return {
         signal: new AbortController().signal,
         services: {
+            storage: { account: { collection: () => collections.userMarks } },
             targetedContributions: {
                 observeForSelf: () => ({
                     readCurrent: async () => {
@@ -351,7 +362,7 @@ function createFormalReviewContext(input: Readonly<{
                     expect(actionId).toBe('review.start');
                     expect(actionInput).toEqual({
                         sessionId: 'session-a',
-                        engineIds: input.expectedEngineIds ?? ['engine-a', 'engine-b'],
+                        reviewers: reviewReviewersForEngineIdsV1(input.expectedEngineIds ?? ['engine-a', 'engine-b']),
                         instructions: 'Review the selected pull request.',
                         changeType: 'committed',
                         base: {
@@ -1127,6 +1138,35 @@ describe('the registered formal Review transition', () => {
             'source.verifyReviewWorkspace',
             'review.start',
         ]);
+    });
+
+    it('reports the exact admitted Review and round from the fan-out receipt, never a guess', async () => {
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+        const review = { reviewId: 'review-admitted', roundOrdinal: 2 };
+
+        await expect(handler(formalReviewInput(), createFormalReviewContext({
+            verifyResult: { kind: 'verified', pullRequest: { number: 17 } },
+            reviewStartResult: reviewStartFanout({ 'engine-a': 'started', 'engine-b': 'started' }, review),
+            events: [],
+        }))).resolves.toEqual({
+            v: 1, status: 'started', startedEngineIds: ['engine-a', 'engine-b'], failedEngineIds: [], review,
+        });
+    });
+
+    it('records the admitted Review on the entry relation the detail reads, and nothing without a receipt', async () => {
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+        const { collections } = createTestkitCorpusCollections();
+        const entryRef = formalReviewInput().review.entryRef;
+        const context = (reviewStartResult: unknown) => createFormalReviewContext({
+            verifyResult: { kind: 'verified', pullRequest: { number: 17 } }, reviewStartResult, events: [], collections,
+        });
+
+        await handler(formalReviewInput(), context(reviewStartFanout({ 'engine-a': 'started', 'engine-b': 'started' })));
+        expect(await readAdmittedReview({ collections, entryRef })).toBeNull();
+
+        await handler(formalReviewInput(), context(reviewStartFanout({ 'engine-a': 'started', 'engine-b': 'started' },
+            { reviewId: 'review-admitted', roundOrdinal: 2 })));
+        expect(await readAdmittedReview({ collections, entryRef })).toEqual({ reviewId: 'review-admitted', roundOrdinal: 2 });
     });
 
     /**

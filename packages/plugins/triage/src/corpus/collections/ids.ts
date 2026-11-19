@@ -43,6 +43,7 @@ export const CORPUS_USER_MARKS_FIELD = {
     fixPullRequests: 'fixPullRequests',
     originError: 'originError',
     originReview: 'originReview',
+    admittedReview: 'admittedReview',
 } as const;
 
 export const CORPUS_SOURCE_INSTANCES_INDEX_ID = {

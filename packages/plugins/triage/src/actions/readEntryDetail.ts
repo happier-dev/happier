@@ -1,7 +1,9 @@
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import {
+    type TriageAdmittedReviewV1,
     type TriageLinkedSessionProjectionV1,
+    type TriageEntryRefV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
@@ -11,6 +13,7 @@ import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
 import {
     CORPUS_SOURCE_INSTANCE_LIFECYCLE,
 } from '../corpus/collections/ids.js';
+import { readAdmittedReview } from '../corpus/marks/setPinned.js';
 import { createTriageSourceSessionRelations, type TriageSourceSessionLinkV1 } from '../sessions/sourceSessionRelations.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { resolveTriageCallerSources } from './callerSource.js';
@@ -53,6 +56,8 @@ export type TriageLinkedSessionSummaryReaderV1 = (
 export type TriageReadEntryDetailDepsV1 = Readonly<{
     readSessionSummary: TriageLinkedSessionSummaryReaderV1;
     sourceRelations: Pick<ReturnType<typeof createTriageSourceSessionRelations>, 'findConfiguredInstance' | 'read'>;
+    /** The user-mark owner's recorded Review relation for the entry; absent reads as none. */
+    readAdmittedReview?: (entryRef: TriageEntryRefV1, options?: PluginCancellationOptions) => Promise<TriageAdmittedReviewV1 | null>;
     signal?: AbortSignal;
 }>;
 
@@ -120,10 +125,12 @@ export async function readTriageEntryDetail(
         options,
     );
 
+    const admittedReview = await deps.readAdmittedReview?.(input.entryRef, options) ?? null;
     return Object.freeze({
         kind: 'read',
         instance: configured,
         linkedSessions: linkedSessionPage.sessions,
+        ...(admittedReview === null ? {} : { admittedReview }),
         ...(sourceLinks.nextCursor === undefined
             ? {}
             : { linkedSessionsNextCursor: sourceLinks.nextCursor }),
@@ -140,7 +147,7 @@ export function createTriageReadEntryDetailActionHandler(): TriageDataActionHand
             || !resolution.callers[0]?.contribution.descriptor.kinds.some((kind) => kind.id === input.entryRef.kindId)) {
             return UNAVAILABLE;
         }
-        const { sourceInstances, sessionLinks } = bindCorpusCollections(
+        const { sourceInstances, sessionLinks, userMarks } = bindCorpusCollections(
             requireTriageAccountStorage(context),
         );
         let selected: Parameters<typeof createTriageSourceSessionRelations>[2];
@@ -158,6 +165,8 @@ export function createTriageReadEntryDetailActionHandler(): TriageDataActionHand
             // Portable Account execution has no Session service. These optional
             // display facts stay absent while authoritative links remain present.
             readSessionSummary: async () => null,
+            readAdmittedReview: (entryRef, readOptions) => readAdmittedReview({ collections: { userMarks }, entryRef,
+                ...(readOptions?.signal ? { signal: readOptions.signal } : {}) }),
             ...(context.signal ? { signal: context.signal } : {}),
         });
     };

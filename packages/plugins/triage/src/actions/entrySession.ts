@@ -7,13 +7,14 @@ import {
     type TriageVerifyReviewWorkspaceResultV1,
 } from '@happier-dev/triage-protocol/v1';
 import { projectNativeJsonValueForTransport, pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
-import { readReviewStartActionResultV1, reviewReviewerIdsForStartV1, ReviewStartInputSchema } from '@happier-dev/plugin-sdk/reviews';
+import { readReviewStartActionResultV1, reviewReviewerIdsForStartV1, reviewReviewersForEngineIdsV1, ReviewStartInputSchema } from '@happier-dev/plugin-sdk/reviews';
 import { SessionIdSchema, SessionStatusActionResultV1Schema, SessionMessageSendResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/sessions';
 
 import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { configuredSourceInstanceIsOwnedBy, findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
+import { setAdmittedReview } from '../corpus/marks/setPinned.js';
 import { sameTriageEntryReference } from '../corpus/identity/components.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';
@@ -351,7 +352,7 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
         // credential fields, never host-selected overrides of the PR review intent.
         const admission = ReviewStartInputSchema.safeParse({
             sessionId: input.sessionId,
-            engineIds: input.engineIds,
+            reviewers: reviewReviewersForEngineIdsV1(input.engineIds),
             instructions: input.instructions,
             ...(input.outputs === undefined ? {} : { outputs: input.outputs }),
             ...(input.narrator === undefined ? {} : { narrator: input.narrator }),
@@ -370,7 +371,7 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
 
         const fanout = await context.services.actions.execute('review.start', {
             sessionId: input.sessionId,
-            engineIds: [...input.engineIds],
+            reviewers: admission.data.reviewers,
             instructions: input.instructions,
             changeType: 'committed',
             base: { kind: 'commit', baseCommit: input.review.observed.baseSha },
@@ -383,6 +384,22 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
             ...(admission.data.teamCredentialSessionBindingConsent === undefined ? {} : { teamCredentialSessionBindingConsent: admission.data.teamCredentialSessionBindingConsent }),
         }, context.signal === undefined ? undefined : { signal: context.signal });
         const parsed = readReviewStartActionResultV1(fanout, admission.data);
+        if (parsed.kind === 'native' && parsed.reviewRound !== undefined) {
+            // The Review is admitted; its relation is recorded from the receipt so no reader has to infer it.
+            // A lost write leaves the answer below unchanged: it names the Review, and the next admission records it again.
+            try {
+                await setAdmittedReview({
+                    collections: bindCorpusCollections(requireTriageAccountStorage(context)),
+                    entryRef: input.review.entryRef,
+                    displayAtMark: { title: input.review.lastKnownLocator.displayPath ?? input.review.entryRef.entryId,
+                        scopeLabel: input.review.entryRef.collisionScope },
+                    admittedReview: parsed.reviewRound, nowMs: Date.now(),
+                    ...(context.signal === undefined ? {} : { signal: context.signal }),
+                });
+            } catch (error) {
+                if (context.signal?.aborted === true) throw error;
+            }
+        }
         if (parsed.kind !== 'native') {
             // The write happened and its per-engine effect is unknown. Failing
             // loudly reaches the caller's existing outcome-unknown state, which
@@ -409,17 +426,6 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
         const failed = parsed.failed
             .map(run => engineIdForReviewerId(run.key))
             .filter((engineId): engineId is string => engineId !== undefined);
-        if (started.length + failed.length !== input.engineIds.length) {
-            const answer = projectNativeJsonValueForTransport(fanout);
-            const items = isJsonRecord(answer) && Array.isArray(answer.results) ? answer.results : [];
-            throw new PluginError({
-                code: 'action_outcome_unknown',
-                details: answer,
-                diagnostics: items.flatMap(item => typeof item === 'object' && item !== null
-                    && !Array.isArray(item) && item.ok === false && typeof item.errorCode === 'string'
-                    ? [{ code: item.errorCode, severity: 'error' as const }] : []),
-            });
-        }
         if (started.length === 0) {
             return { v: 1, status: 'refused', reason: 'noEngineStarted' };
         }
@@ -428,6 +434,7 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
             status: 'started',
             startedEngineIds: started,
             failedEngineIds: failed,
+            ...(parsed.reviewRound === undefined ? {} : { review: parsed.reviewRound }),
         };
     };
 }

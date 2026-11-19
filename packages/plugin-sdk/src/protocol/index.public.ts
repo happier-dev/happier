@@ -5,6 +5,8 @@
  * entrypoint so the two public owners remain disjoint.
  */
 export { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from './protocolFacade.js';
+export { ReviewRoundBindingV1ProtocolSchema } from './protocolFacade.js';
+export type { ReviewRoundBindingV1 } from './protocolFacade.js';
 export type {
     EnvVarRequirement,
     EnvVarRequirementInput,

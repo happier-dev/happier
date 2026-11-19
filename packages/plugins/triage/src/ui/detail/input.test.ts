@@ -40,6 +40,12 @@ describe('Triage detail surface input', () => {
     if (built.kind !== 'admitted') throw new Error('expected admitted embedded detail');
     expect(built.input.detailData).toEqual({ overview: { body } });
   });
+  it('carries the admitted Review and round through the one admitted boundary and refuses a malformed one', () => {
+    const admittedReview = { reviewId: 'review-1', roundOrdinal: 2 };
+    const built = build({ admittedReview });
+    expect(built.kind === 'admitted' ? built.input.admittedReview : 'refused').toEqual(admittedReview);
+    expect(build({ admittedReview: { reviewId: '', roundOrdinal: 1 } }).kind).toBe('refused');
+  });
   it('preserves source-produced relationships in the embedded typed detail', async () => {
     const [{ readGithubIssueRelations }, { createGithubRepositoryReader }, {
       GITHUB_ISSUE_RESPONSE, GITHUB_OTHER_REPOSITORY_RESPONSE,

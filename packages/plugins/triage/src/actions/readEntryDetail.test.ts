@@ -29,6 +29,7 @@ import {
     testkitSnapshot,
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
+import { setAdmittedReview } from '../corpus/marks/setPinned.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import {
     TriageReadEntryDetailInputV1Schema,
@@ -375,6 +376,23 @@ describe('the entry detail read', () => {
             linkedSessions: result.linkedSessions,
             linkedSessionsHasMore: result.linkedSessionsNextCursor !== undefined,
         })).not.toThrow();
+    });
+
+    it('carries the entry\'s admitted Review and round into the mounted detail input, and none when never admitted', async () => {
+        const { collections } = await seedTwoConnections();
+        const admittedReview = { reviewId: 'review-admitted', roundOrdinal: 3 };
+        const read = async () => await readTriageEntryDetailState({ executeAction: async (_action, input) => (
+            await createTriageReadEntryDetailActionHandler()(TriageReadEntryDetailInputV1Schema.parse(input), createContext({ collections }))
+        ) }, { selection: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE_A }, observation: {
+            entryRef: ENTRY_REF, observedAtMs: 2_000, locator: testkitLocator(), snapshot: testkitSnapshot(), viewer: testkitViewer(),
+        } });
+
+        const before = await read();
+        expect(before.kind === 'ready' ? before.input.admittedReview : 'unread').toBeUndefined();
+        await setAdmittedReview({ collections, entryRef: ENTRY_REF, admittedReview,
+            displayAtMark: { title: 'example/repository#17', scopeLabel: 'example/repository' }, nowMs: 2_000 });
+        const after = await read();
+        expect(after.kind === 'ready' ? after.input.admittedReview : 'unread').toEqual(admittedReview);
     });
 
     it('refuses a retired connection instead of opening it', async () => {

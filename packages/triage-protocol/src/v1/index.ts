@@ -317,11 +317,13 @@ export type {
 } from './workspace.js';
 
 export {
+    TriageAdmittedReviewV1Schema,
     TriageDetailSurfaceInputV1JsonSchema,
     TriageDetailSurfaceInputV1Schema,
     TriageLinkedSessionProjectionV1Schema,
 } from './detail.js';
 export type {
+    TriageAdmittedReviewV1,
     TriageDetailSurfaceInputV1,
     TriageLinkedSessionProjectionV1,
 } from './detail.js';

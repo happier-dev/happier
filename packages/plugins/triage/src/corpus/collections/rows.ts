@@ -1,5 +1,6 @@
 import type { TriageTaskOriginReviewV1 } from '../../actions/taskReviewProtocol.js';
 import type {
+    TriageAdmittedReviewV1,
     TriageConfiguredSourceInstanceV1,
     TriageEntryRefV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -121,4 +122,6 @@ export type CorpusUserMarkRowV1 = Readonly<{
     originError?: CorpusTaskOriginErrorV1;
     /** Selected Review/finding identities only; never a finding snapshot. */
     originReview?: TriageTaskOriginReviewV1;
+    /** The exact Review and round this entry's latest PR review start admitted, from its receipt. */
+    admittedReview?: TriageAdmittedReviewV1;
 }>;

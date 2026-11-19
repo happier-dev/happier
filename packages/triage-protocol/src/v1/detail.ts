@@ -1,4 +1,5 @@
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+import { ReviewRoundBindingV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 
 import {
     defineProtocolArray,
@@ -39,6 +40,15 @@ export const TriageLinkedSessionProjectionV1Schema = defineProtocolObject({
 export type TriageLinkedSessionProjectionV1 = ReturnType<
     typeof TriageLinkedSessionProjectionV1Schema.parse
 >;
+
+/**
+ * The exact Review and round the entry's latest pull-request review start
+ * admitted, read from the canonical fan-out receipt and recorded by Triage.
+ * Absent means no start was admitted through Triage; a consumer never infers
+ * one from a linked Session, a title or a timestamp.
+ */
+export const TriageAdmittedReviewV1Schema = ReviewRoundBindingV1ProtocolSchema;
+export type TriageAdmittedReviewV1 = ReturnType<typeof TriageAdmittedReviewV1Schema.parse>;
 
 /**
  * The mounted detail input: the exact configured instance, the host-applied
@@ -84,6 +94,8 @@ export const TriageDetailSurfaceInputV1Schema = defineProtocolObject({
     linkedSessions: defineProtocolArray(TriageLinkedSessionProjectionV1Schema, {
         maxItems: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
     }),
+    /** Outside the closed linked-Session item so a source pinned to an older copy stays renderable. */
+    admittedReview: TriageAdmittedReviewV1Schema.optional(),
     /**
      * The one detail tab the target asks the source to render as a panel
      * (r0.42): a shared tab id or one of the source's own declared tab ids.

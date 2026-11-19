@@ -134,3 +134,4 @@ export { resolveAccountDisplayLabelV1 } from './discussionContent.js';
 export { resolveLaunchProfilePlacementDirectoryIntentV1 } from './launchProfilePreferences.js';
 
 export { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from './protocolFacade.js';
+export { ReviewRoundBindingV1ProtocolSchema } from './protocolFacade.js';

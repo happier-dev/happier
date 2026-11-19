@@ -1,5 +1,6 @@
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { reviewReviewersForEngineIdsV1 } from '@happier-dev/plugin-sdk/reviews';
 import type { SelectActionInputRequest, SelectActionInputResult } from '@happier-dev/plugin-sdk/ui';
 import {
     TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
@@ -41,7 +42,7 @@ export async function prepareTriagePullRequestReviewContinuationV1(
             const selected = await host.selectActionInput({
                 hostAction: { action: 'review.start', projection: 'executionRunLaunch' },
                 sessionId: pending.sessionId, serverId: pending.review.workspace.serverId,
-                draft: { reviewers: choice.engineIds.map((engineId) => ({ kind: 'engine', engineId })), instructions: pending.instructions },
+                draft: { reviewers: reviewReviewersForEngineIdsV1(choice.engineIds), instructions: pending.instructions },
             }, cancellation);
             if (!current() || selected.kind === 'cancelled') return { kind: 'cancelled' };
             if (selected.kind !== 'executionRunLaunch') return { kind: 'unavailable' };

@@ -116,6 +116,11 @@ export function reviewReviewerIdForSelectionV1(reviewerIndex: number, stepIndex 
   return `step-${stepIndex + 1}-reviewer-${reviewerIndex + 1}`;
 }
 
+/** The one roster an engine-id choice becomes; the Review owner admits it like any authored selection. */
+export function reviewReviewersForEngineIdsV1(engineIds: readonly string[]): Pick<ReviewEngineReviewerSelectionV1, 'kind' | 'engineId'>[] {
+  return engineIds.map(engineId => ({ kind: 'engine', engineId }));
+}
+
 export function reviewReviewerIdsForStartV1(input: Pick<ReviewStartInput, 'reviewers' | 'steps'>): string[] {
   return (input.steps ?? [{ reviewers: input.reviewers }]).flatMap((step, stepIndex) =>
     step.reviewers.flatMap((reviewer, reviewerIndex) => reviewer.kind === 'person' ? []
