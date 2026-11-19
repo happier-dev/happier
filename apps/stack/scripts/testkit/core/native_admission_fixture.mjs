@@ -262,8 +262,8 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     await copyFile(admissionClientSourcePath, join(proc, 'admission_client.mjs'));
     await copyFile(join(dirname(admissionClientSourcePath), 'admission_socket.mjs'), join(proc, 'admission_socket.mjs'));
     // This worker's memory is simulated (broker-memory-observation.json). Its
-    // client must not report the test runner's real jobs-scope kernel peak.
-    await writeFile(join(proc, 'admission_memory.mjs'), 'export const readJobScopePeakKiB = () => null;\n');
+    // client must not report the test runner's real jobs-scope working set.
+    await writeFile(join(proc, 'admission_memory.mjs'), 'export const readProcessJobScopeWorkingSetKiB = () => null;\n');
     await copyFile(join(dirname(admissionClientSourcePath), '../dev_targets/command_resources.mjs'), join(targets, 'command_resources.mjs'));
     const nativeCustody = pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/native_custody_preparation.mjs')).href;
     await writeFile(join(targets, 'native_custody_preparation.mjs'), `export * from ${JSON.stringify(nativeCustody)};\n`);

@@ -14,29 +14,20 @@ export function isInAdmissionJobsSlice(pid) {
   } catch { return false; }
 }
 
-/** The kernel high-water mark of this dispatch's jobs scope (cgroup v2
- * memory.peak). Every payload phase runs inside that scope, so it is never
- * below the payload's true peak. Outside the jobs slice there is no peak. */
-export function readJobScopePeakKiB() {
+/** Only a dedicated dispatch scope can be attributed to this workload. File
+ * cache belongs to the cgroup charge but is reclaimable under memory pressure.
+ * shmem is separate from anon and must remain charged. */
+export function readProcessJobScopeWorkingSetKiB(pid, read = readFileSync) {
   try {
-    const path = readFileSync('/proc/self/cgroup', 'utf8').match(/^0::(.*)$/m)?.[1] ?? '';
-    if (!path.startsWith(`${jobsSlice(process.getuid())}/`)) return null;
-    // Only a per-dispatch jobs scope belongs to this payload. A local run that
-    // inherits its caller's scope (e.g. a tmux session) reports none.
-    if (!/\/happier-jobs-\d+-[^/]+\.scope$/.test(path)) return null;
-    const bytes = Number(readFileSync(`/sys/fs/cgroup${path}/memory.peak`, 'utf8').trim());
-    return Number.isSafeInteger(bytes) && bytes > 0 ? Math.ceil(bytes / 1024) : null;
-  } catch { return null; }
-}
-
-/** A recovered slot's job scope memory.current. A scope shared with the reader
- * (same cgroup) is not attributable to that slot, so it reports none. */
-export function readProcessJobScopeCurrentKiB(pid) {
-  try {
-    const scope = file => readFileSync(file, 'utf8').match(/^0::(.*)$/m)?.[1] ?? '';
-    const path = scope(`/proc/${pid}/cgroup`);
-    if (!path.startsWith(`${jobsSlice(process.getuid())}/`) || path === scope('/proc/self/cgroup')) return null;
-    const bytes = Number(readFileSync(`/sys/fs/cgroup${path}/memory.current`, 'utf8').trim());
+    const scope = file => read(file, 'utf8').match(/^0::(.*)$/m)?.[1] ?? '';
+    const path = scope(`/proc/${pid ?? 'self'}/cgroup`);
+    if (!path.startsWith(`${jobsSlice(process.getuid())}/`)
+      || !/\/happier-jobs-\d+-[^/]+\.scope$/.test(path)
+      || (pid !== undefined && path === scope('/proc/self/cgroup'))) return null;
+    const stat = read(`/sys/fs/cgroup${path}/memory.stat`, 'utf8');
+    const usage = ['anon', 'shmem', 'kernel'].map(key => Number(new RegExp(`^${key} +(\\d+)$`, 'm').exec(stat)?.[1]));
+    if (!usage.every(value => Number.isSafeInteger(value) && value >= 0)) return null;
+    const bytes = usage.reduce((total, value) => total + value, 0);
     return Number.isSafeInteger(bytes) && bytes > 0 ? Math.ceil(bytes / 1024) : null;
   } catch { return null; }
 }

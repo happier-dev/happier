@@ -271,7 +271,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               socket.once('close', () => slotConnections.delete(socket));
               socket.on('error', () => socket.destroy());
               if (admittedDuration) socket.write(JSON.stringify(admittedDuration) + '\n');
-              // A successor broker re-sizes this recovered slot with its identity peak.
+              // A successor broker re-sizes this recovered slot from its current and recorded working set.
               if (request.entry !== undefined) socket.write(JSON.stringify({ kind: 'slot-identity', className: request.className,
                 resourceClass: request.resourceClass, projects: request.projects, component: request.component, entry: request.entry }) + '\n');
             });
@@ -302,8 +302,8 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
                 acquiredEnv.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS = String(selectedCpuCores);
               }
             }
-            // Report the scope's kernel peak on the slot before it closes, so the
-            // broker records this identity's true high-water mark, success or not.
+            // Include the terminal scope observation before the lifetime socket
+            // closes. The broker combines it with its in-flight observations.
             const report = line => Promise.all([...slotConnections].map(socket =>
               new Promise(done => socket.write(JSON.stringify(line) + '\n', () => done()))));
             payload = run(acquiredEnv).then(async result => {
@@ -312,11 +312,11 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               return result;
             }).finally(async () => {
               // Only the outermost admission owns its jobs scope. A client nested in
-              // another admitted payload shares that scope, so its peak is the parent's.
+              // another admitted payload shares that scope with its parent.
               if (env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT || env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN) return;
-              const peakKiB = await (readJobPeakKiB ?? (await import('./admission_memory.mjs')).readJobScopePeakKiB)();
+              const peakKiB = await (readJobPeakKiB ?? (await import('./admission_memory.mjs')).readProcessJobScopeWorkingSetKiB)();
               if (!Number.isSafeInteger(peakKiB) || peakKiB <= 0) return;
-              await report({ kind: 'slot-peak', peakKiB, className: request.className,
+              await report({ kind: 'slot-working-set', peakKiB, className: request.className,
                 resourceClass: request.resourceClass, projects: request.projects, component: request.component, entry: request.entry });
             });
             payload.then(() => control?.destroy(), () => control?.destroy());

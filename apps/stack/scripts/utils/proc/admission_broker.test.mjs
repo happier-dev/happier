@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { brokerAddress, createAdmissionBroker, readAdmissionMemorySample } from './admission_broker.mjs';
 import { connectAdmissionBroker, requestAdmissionSample, runAdmittedTask, runAdmissionClient, runAdmissionCommand, watchAdmissionSamples } from './admission_client.mjs';
+import * as admissionMemory from './admission_memory.mjs';
 import { slotAddress } from './admission_socket.mjs';
 import { tryWorkspaceBuildResources } from './workspace_build_admission.mjs';
 import { createWorkspaceBundleLockPriorityScope } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
@@ -452,20 +453,20 @@ async function acquire(root, floorKiB, t, extra = {}) {
     client.socket.write(JSON.stringify({ kind: 'ready' }) + '\n');
     const admitted = await client.next();
     assert.equal(admitted.kind, 'admitted');
-    // A slot line from the client (as runAdmittedTask writes slot-peak/slot-completed).
+    // A slot line from the client (as runAdmittedTask writes working-set and completion metadata).
     const report = line => Promise.all([...peers].map(peer => new Promise(done => peer.write(JSON.stringify(line) + '\n', done))));
     return { admitted, reserved, release, report, slotAddress: reserved.slotAddress };
   } };
 }
 
-async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }), readProcesses = () => new Map(), admitDisk, cpuCores = 128 } = {}) {
+async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }), readProcesses = () => new Map(), admitDisk, cpuCores = 128, readSlotWorkingSetKiB = () => null } = {}) {
   // Unix socket metadata needs a short pathname, independent of the command's
   // potentially deep workspace/custody TMPDIR. This remains a private root.
   const root = await mkdtemp('/tmp/happier-broker-test-');
   const sampleResources = ({ slots }) => readAdmissionMemorySample({ slots,
     readMemory, readProcesses });
   const broker = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources,
-    readCpuCapacity: () => cpuCores,
+    readCpuCapacity: () => cpuCores, readSlotWorkingSetKiB,
     ...(admitDisk ? { admitDisk } : {}) });
   await broker.start();
   t.after(async () => { await broker.close(); await rm(root, { recursive: true, force: true }); });
@@ -1008,7 +1009,7 @@ test('completed slots retain sampled RSS peaks by class without extra process wa
   assert.deepEqual(Object.keys(rows[0]).sort(), ['className', 'completedAt', 'floorKiB', 'maxGapMs', 'method', 'peakRssKiB', 'samples'].sort());
 });
 
-test('identity keys on component and entry, never the argument list; unrecorded identities reserve their package set maximum', linux, async t => {
+test('identity keys on component and entry, never the argument list; unrecorded identities use typical related history', linux, async t => {
   const gib = 1024 * 1024;
   const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }),
     admitDisk: () => ({ admitted: true }) });
@@ -1025,15 +1026,15 @@ test('identity keys on component and entry, never the argument list; unrecorded 
   assert.equal(await run(entryA, ['alpha.test.mjs'], 1 * gib), 0); await settle();
   assert.equal(await admittedFloor(), 38 * gib, 'a class without kernel history reserves its floor');
   assert.equal(await run(entryB, ['beta.test.mjs'], 9 * gib), 0); await settle();
-  assert.equal(await admittedFloor(), 1 * gib, 'an unrecorded identity reserves its package set maximum (1 GiB so far), not the floor');
+  assert.equal(await admittedFloor(), 1 * gib, 'an unrecorded identity uses the 1 GiB related history so far');
   assert.equal(await run(entryA, ['gamma.test.mjs', 'delta.test.mjs'], 1 * gib), 0); await settle();
   assert.equal(await admittedFloor(), 1 * gib, 'new arguments for a recorded entry keep its identity');
   await writeFile(join(root, 'entry-c.mjs'), record);
   assert.equal(await run(join(root, 'entry-c.mjs'), ['x.test.mjs'], 1 * gib), 0); await settle();
-  assert.ok(await admittedFloor() >= 9 * gib, 'an unrecorded entry reserves at least its package set maximum');
+  assert.equal(await admittedFloor(), 1 * gib, 'an unrecorded entry uses the related median');
 });
 
-test('an unrecorded identity starts from its command family or package set, not the class kernel maximum', linux, async t => {
+test('an unrecorded identity starts from its command family or package set, with a class median as the last fallback', linux, async t => {
   const gib = 1024 * 1024;
   const { root, broker } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }),
     admitDisk: () => ({ admitted: true }) });
@@ -1041,11 +1042,11 @@ test('an unrecorded identity starts from its command family or package set, not 
   const fixtureCompile = 'node scripts/workspaces/runTypeScriptCli.mjs';
   const checker = 'node scripts/workspaces/checkCommitTypeCoherence.mjs';
   await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
-    [key(fixtureCompile, ['packages/plugin-sdk/fixtures/a/tsconfig.json'])]: Math.round(1.4 * gib),
-    [key(checker, ['.'])]: Math.round(32.7 * gib),
-    [key(checker, ['apps/cli', 'apps/ui'])]: 17 * gib,
-    [key(checker, ['apps/bootstrap', 'apps/cli', 'apps/desktop', 'apps/server'])]: Math.round(39.9 * gib),
-    [key('pnpm run typecheck:local', ['packages/plugins/machine-lima'], 'packages/plugins/machine-lima')]: Math.round(4.8 * gib),
+    [key(fixtureCompile, ['packages/plugin-sdk/fixtures/a/tsconfig.json'])]: [Math.round(1.4 * gib)],
+    [key(checker, ['.'])]: [Math.round(32.7 * gib)],
+    [key(checker, ['apps/cli', 'apps/ui'])]: [17 * gib],
+    [key(checker, ['apps/bootstrap', 'apps/cli', 'apps/desktop', 'apps/server'])]: [Math.round(39.9 * gib)],
+    [key('pnpm run typecheck:local', ['packages/plugins/machine-lima'], 'packages/plugins/machine-lima')]: [Math.round(4.8 * gib)],
   }));
   const reserved = async identity => {
     const held = await (await acquire(root, 38 * gib, t, { className: 'compilation', resourceClass: 'compilation',
@@ -1055,15 +1056,15 @@ test('an unrecorded identity starts from its command family or package set, not 
     return floorKiB;
   };
   assert.equal(await reserved({ entry: fixtureCompile, projects: ['packages/plugin-sdk/fixtures/b/tsconfig.json'] }), 1.5 * gib,
-    'a new fixture compile takes its command family maximum (1.4 GiB), not the 39.9 GiB class maximum');
-  assert.equal(await reserved({ entry: checker, projects: ['apps/cli'] }), 17 * gib,
-    'a package set inside recorded runs of the same command takes the smallest such superset');
+    'a new fixture compile takes its command family median (1.4 GiB), not the 39.9 GiB class maximum');
+  assert.equal(await reserved({ entry: checker, projects: ['apps/cli'] }), 33 * gib,
+    'a package set inside recorded runs of the same command takes their median');
   assert.equal(await reserved({ entry: 'pnpm run typecheck:local', projects: ['packages/plugins/machine-lima'],
     component: 'packages/plugins/machine-lima-copy' }), 5 * gib, 'the same command in another component is the same family');
   assert.equal(await reserved({ entry: 'node other-checker.mjs', projects: ['apps/cli', 'apps/ui'] }), 17 * gib,
-    'an unknown command on a recorded package set takes that package set\'s maximum');
-  assert.equal(await reserved({ entry: 'node other-checker.mjs', projects: ['apps/website'] }), 40 * gib,
-    'with no related record the class kernel maximum still applies');
+    'an unknown command on a recorded package set uses that package set\'s history');
+  assert.equal(await reserved({ entry: 'node other-checker.mjs', projects: ['apps/website'] }), 17 * gib,
+    'with no closer related record the class median applies');
 });
 
 test('a routed command is identified by its own argv, not the remote wrapper script', linux, async t => {
@@ -1075,8 +1076,8 @@ test('a routed command is identified by its own argv, not the remote wrapper scr
   const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }),
     admitDisk: () => ({ admitted: true }) });
   await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
-    [JSON.stringify(['validation', 'apps/ui', 'vitest', ['.']])]: 1.5 * gib,
-    [JSON.stringify(['validation', '.', 'node other.mjs', ['.']])]: 9 * gib }));
+    [JSON.stringify(['validation', 'apps/ui', 'vitest', ['.']])]: [1.5 * gib],
+    [JSON.stringify(['validation', '.', 'node other.mjs', ['.']])]: [9 * gib] }));
   const floorFile = join(root, 'floor.txt');
   const wrapper = `set -euo pipefail; cd -- apps/ui; node -e 'require("node:fs").writeFileSync(${JSON.stringify(floorFile)}, process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB)' x.test.ts`;
   const previous = process.exitCode;
@@ -1097,7 +1098,7 @@ test('a sample for a routed command answers the floor the broker would reserve f
   const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }),
     admitDisk: () => ({ admitted: true }) });
   await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
-    [JSON.stringify(['compilation-ui', 'apps/ui', 'vitest', ['.']])]: 1.5 * gib }));
+    [JSON.stringify(['compilation-ui', 'apps/ui', 'vitest', ['.']])]: [1.5 * gib] }));
   const sample = async identityArgs => {
     let written = '';
     const write = t.mock.method(process.stdout, 'write', chunk => { written += chunk; return true; });
@@ -1121,7 +1122,7 @@ test('a queued request uses its own newly recorded peak instead of its initial c
     admitDisk: () => ({ admitted: true }),
   });
   await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
-    [JSON.stringify(['compilation', '.', 'node unrelated.mjs', ['apps/ui']])]: 22 * gib,
+    [JSON.stringify(['compilation', '.', 'node unrelated.mjs', ['apps/ui']])]: [22 * gib],
   }));
   const identity = { className: 'compilation', resourceClass: 'compilation',
     component: 'apps/cli', entry: 'pnpm run typecheck', projects: ['apps/cli'] };
@@ -1138,7 +1139,7 @@ test('a queued request uses its own newly recorded peak instead of its initial c
   // The first run supplies a precise peak while its successor stays connected.
   // There is still insufficient memory for the old estimate after release.
   availableMemoryKiB = 15 * gib;
-  await active.report({ kind: 'slot-peak', ...identity, peakKiB: 4.25 * gib });
+  await active.report({ kind: 'slot-working-set', ...identity, peakKiB: 4.25 * gib });
   await active.release();
   const before = sample.sampleCount;
   do { sample = await requestAdmissionSample(root); } while (sample.sampleCount === before);
@@ -1149,13 +1150,13 @@ test('a queued request uses its own newly recorded peak instead of its initial c
   await next.release();
 });
 
-test('succession re-sizes a recovered slot to max(its scope memory.current, its identity kernel peak)', linux, async t => {
+test('succession re-sizes a recovered slot to the greater of its current and recorded working set', linux, async t => {
   const gib = 1024 * 1024;
   const readMemory = () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib });
   const { root, broker, sampleResources } = await fixture(t, { readMemory, admitDisk: () => ({ admitted: true }) });
   const settle = async () => { while ((await requestAdmissionSample(root)).activeCount !== 0) await new Promise(resolve => setImmediate(resolve)); };
   const identity = { component: 'apps/ui', entry: 'pnpm run typecheck' };
-  // Record a 9 GiB kernel peak for the identity, then hold one admitted job of it.
+  // Record a 9 GiB working-set peak for the identity, then hold one admitted job of it.
   assert.equal(await runAdmissionCommand({ root, className: 'compilation', floorKiB: 38 * gib, machine: 'fixture', repoDir: root,
     cacheBaseDir: root, env: {}, projects: ['.'], ...identity, readJobPeakKiB: () => 9 * gib,
     command: process.execPath, args: ['-e', ''] }), 0);
@@ -1175,65 +1176,89 @@ test('succession re-sizes a recovered slot to max(its scope memory.current, its 
   await new Promise(resolve => setImmediate(resolve));
   await requestAdmissionSample(root);
   assert.equal(replacement.status().reservedMemoryKiB, 1.5 * gib + 9 * gib,
-    'the anonymous recovered slot reserves its 1.2 GiB memory.current; the identified one its 9 GiB identity peak');
+    'the anonymous recovered slot reserves its 1.2 GiB current working set; the identified one its 9 GiB identity peak');
   finished.resolve();
   await task;
   await anonymous.release();
 });
 
-test('an identity whose history includes a 38.9 GiB kernel peak never reserves less than 38.9 GiB', linux, async t => {
-  const gib = 1024 * 1024;
-  const peakKiB = Math.round(38.9 * gib);
-  const { root, broker, sampleResources } = await fixture(t, {
-    readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }),
-    // Event samples see only 1.2 GiB; they are lower bounds and must never size a reservation.
-    readProcesses: () => new Map([[process.pid, { pid: process.pid, parentPid: 1, rssKiB: Math.round(1.2 * gib), pssKiB: 0 }]]),
-    admitDisk: () => ({ admitted: true }),
-  });
-  const identity = { component: 'apps/stack', entry: 'node --test' };
-  const settle = async () => { while ((await requestAdmissionSample(root)).activeCount !== 0) await new Promise(resolve => setImmediate(resolve)); };
-  const run = readJobPeakKiB => runAdmissionCommand({ root, className: 'compilation', floorKiB: 38 * gib, machine: 'fixture',
-    repoDir: root, cacheBaseDir: root, env: {}, projects: ['.'], ...identity, readJobPeakKiB,
-    command: process.execPath, args: ['-e', ''] });
-  for (const observed of [Math.round(6.1 * gib), peakKiB, Math.round(1 * gib)]) {
-    assert.equal(await run(() => observed), 0);
-    await settle();
-  }
-  const probe = async (extra = {}) => {
-    const client = await acquire(root, 38 * gib, t, { className: 'compilation', resourceClass: 'compilation',
-      projects: ['.'], ...identity, noWait: true, ...extra });
-    const reply = await client.next();
-    client.socket.destroy();
-    await settle();
-    return { next: async () => reply };
+test('working-set reads use anon, shmem and kernel and ignore the file cache and lifetime peak', linux, () => {
+  const scope = `/user.slice/user-${process.getuid()}.slice/user@${process.getuid()}.service/happier.slice/happier-jobs.slice/happier-jobs-123-fixture.scope`;
+  const files = new Map([
+    ['/proc/123/cgroup', `0::${scope}\n`],
+    ['/proc/self/cgroup', '0::/\n'],
+    [`/sys/fs/cgroup${scope}/memory.stat`, 'anon 1048576\nfile 104857600\nshmem 65536\nkernel 32768\n'],
+  ]);
+  const read = file => {
+    assert.ok(files.has(file), `unexpected read: ${file}`);
+    return files.get(file);
   };
-  const reserved = await (await probe()).next();
-  assert.ok(reserved.floorKiB >= peakKiB, `reserved ${reserved.floorKiB} KiB below the recorded ${peakKiB} KiB peak`);
-  const unrecorded = await (await probe({ entry: 'node other.mjs' })).next();
-  assert.ok(unrecorded.floorKiB >= peakKiB, 'an unrecorded identity reserves at least the class kernel maximum');
-  const otherClass = await (await probe({ className: 'compilation-cli', resourceClass: 'compilation-cli' })).next();
-  assert.equal(otherClass.floorKiB, 38 * gib, 'a class without kernel history keeps the requested floor');
-  const successor = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission-2.lock'), sampleResources, readCpuCapacity: () => 128 });
-  assert.ok(successor.recordedIdentityFloorKiB({ className: 'compilation', resourceClass: 'compilation', projects: ['.'], ...identity,
-    floorKiB: 38 * gib }) >= peakKiB, 'broker succession keeps the recorded maximum');
-  void broker;
+  assert.equal(admissionMemory.readProcessJobScopeWorkingSetKiB(123, read), 1120);
 });
 
-test('a web export with a recorded kernel peak reserves that peak, not its largest worker-count floor', linux, async t => {
+test('recent working sets replace a historical outlier and survive succession', linux, async t => {
+  const gib = 1024 * 1024;
+  const { root, broker, sampleResources } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }),
+  });
+  const identity = { className: 'compilation', component: 'apps/stack', entry: 'node --test', projects: ['.'] };
+  const key = JSON.stringify(['compilation', identity.component, identity.entry, identity.projects]);
+  const legacyKey = JSON.stringify(['compilation', '.', 'node previous.mjs', ['.']]);
+  const target = join(root, 'identity-kernel-peaks.json');
+  await writeFile(target, JSON.stringify({ [key]: [39 * gib, ...Array(18).fill(6 * gib)], [legacyKey]: 45 * gib }));
+  assert.equal(broker.recordedIdentityFloorKiB({ ...identity, floorKiB: 38 * gib }), 39 * gib);
+  const run = async peakKiB => {
+    await runAdmittedTask({ root, ...identity, floorKiB: 38 * gib, machine: 'fixture', repoDir: root,
+      cacheBaseDir: root, env: {}, readJobPeakKiB: () => peakKiB }, async () => 0);
+    while ((await requestAdmissionSample(root)).activeCount) await new Promise(resolve => setImmediate(resolve));
+  };
+  await run(6 * gib);
+  assert.equal(broker.recordedIdentityFloorKiB({ ...identity, floorKiB: 38 * gib }), 6 * gib,
+    'p95 discounts one outlier once there are 20 completed observations');
+  await run(5 * gib);
+  const stored = JSON.parse(await readFile(target, 'utf8'));
+  assert.deepEqual(stored[key], [...Array(19).fill(6 * gib), 5 * gib], 'keeps the newest 20 in completion order');
+  assert.equal(stored[legacyKey], undefined, 'scalar lifetime peaks are not part of the new cache');
+  const successor = createAdmissionBroker({ root, sampleResources });
+  assert.equal(successor.recordedIdentityFloorKiB({ ...identity, floorKiB: 38 * gib }), 6 * gib);
+});
+
+test('broker observations preserve an in-flight working-set peak above the terminal sample', linux, async t => {
+  const gib = 1024 * 1024;
+  let scopeKiB = 1 * gib;
+  const { root } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }),
+    readSlotWorkingSetKiB: () => scopeKiB,
+  });
+  const identity = { className: 'compilation', component: '.', entry: 'node --test', projects: ['.'] };
+  await runAdmittedTask({ root, ...identity, floorKiB: 10 * gib, machine: 'fixture', repoDir: root,
+    cacheBaseDir: root, env: {}, readJobPeakKiB: () => scopeKiB }, async () => {
+    scopeKiB = 4 * gib;
+    const observer = await (await acquire(root, 1, t, { pid: 999999 })).admit();
+    scopeKiB = 1 * gib;
+    await observer.release();
+    return 0;
+  });
+  while ((await requestAdmissionSample(root)).activeCount) await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await requestAdmissionSample(root, { kind: 'sample', identity: { ...identity,
+    resourceClass: identity.className, floorKiB: 10 * gib } })).identityFloorKiB, 4 * gib);
+});
+
+test('a web export reserves the recorded working set with a fitting worker count', linux, async t => {
   const gib = 1024 * 1024;
   const { root, broker } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }) });
   const identity = { className: 'source-web-export', resourceClass: 'source-web-export', component: '.',
     entry: 'node apps/stack/scripts/build/build_source_web_ui.mjs', projects: ['apps/stack'] };
-  // The persisted maximum kernel peak of this export identity (broker record).
+  // The persisted working-set history of this export identity (broker record).
   await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
-    [JSON.stringify([identity.resourceClass, identity.component, identity.entry, identity.projects])]: Math.round(16.25 * gib) }));
+    [JSON.stringify([identity.resourceClass, identity.component, identity.entry, identity.projects])]: [Math.round(16.25 * gib)] }));
   const floorOptions = [{ floorKiB: 32 * gib, workers: 47 }, { floorKiB: 16 * gib, workers: 20 }, { floorKiB: 8 * gib, workers: 1 }];
   const held = await (await acquire(root, 32 * gib, t, { ...identity, commandClass: 'source-web-export', floorOptions })).admit();
   assert.equal(broker.status().reservedMemoryKiB, 16.5 * gib, 'reserves the recorded peak (rounded), not the 32 GiB maximum');
   assert.equal(held.admitted.workers, 20, 'runs the most workers whose modelled floor fits inside the recorded peak');
   const fresh = await (await acquire(root, 32 * gib, t, { ...identity, entry: 'node other-export.mjs', commandClass: 'source-web-export',
     floorOptions })).admit();
-  assert.equal(fresh.admitted.workers, 20, 'an unrecorded export identity takes the class kernel maximum');
+  assert.equal(fresh.admitted.workers, 20, 'an unrecorded export identity takes the class median');
 });
 
 for (const resourceClass of ['focused-validation-ui', 'entry-loads']) {
@@ -1977,7 +2002,7 @@ test('queued notices report the floor the broker reserves, not the client class 
   const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 0, totalMemoryKiB: 100 * gib }) });
   const identity = { className: 'compilation', component: '.', entry: 'node scripts/workspaces/commitPackageTypecheck.mjs', projects: ['.'] };
   await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
-    [JSON.stringify(['compilation', '.', identity.entry, ['.']])]: Math.round(16.9 * gib) }));
+    [JSON.stringify(['compilation', '.', identity.entry, ['.']])]: [Math.round(16.9 * gib)] }));
   await acquire(root, 38 * gib, t, identity);
   const barrier = await request(root, { kind: 'sample' });
   await barrier.next();

@@ -13,7 +13,7 @@ import { readLinuxWorkerProcesses } from './service_memory.mjs';
 import { createWorkspaceBuildResourceObservation } from './workspace_build_admission.mjs';
 import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { brokerAddress, readSlotAddress, slotAddress } from './admission_socket.mjs';
-import { isInAdmissionJobsSlice, readLinuxAdmissionMemory, readProcessJobScopeCurrentKiB } from './admission_memory.mjs';
+import { isInAdmissionJobsSlice, readLinuxAdmissionMemory, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
 export { brokerAddress } from './admission_socket.mjs';
 
 // Nearest-rank p95 of 63,482 successful targeted-validation wrapper durations
@@ -76,11 +76,11 @@ function headPriorityRank(request) {
   return HEAD_PRIORITY_RANKS.get(`${request.resourceClass ?? request.className} ${path}`) ?? 0;
 }
 
-// Coordination 2026-11-14 18:21Z (Systemic) and the coordinator's follow-up:
-// a recorded job identity reserves its maximum kernel-observed peak (the
-// dispatch scope's cgroup memory.peak), rounded up to 0.5 GiB. Event samples are
-// lower bounds and never size a reservation. Identities without a kernel peak,
-// or requests without a command identity, keep the client's class floor.
+// A 20-completion p95 retains the high end while allowing one isolated
+// outlier to stop sizing future runs. Each run contributes its maximum sampled
+// working set; scalar lifetime peaks from the page-cache era are ignored.
+const IDENTITY_PEAK_WINDOW = 20;
+const nearestRank = (values, percentile) => values.toSorted((a, b) => a - b)[Math.ceil(values.length * percentile) - 1];
 const IDENTITY_FLOOR_ROUNDING_KIB = 512 * 1024;
 const IDENTITY_PEAKS_FILENAME = 'identity-kernel-peaks.json';
 // P03 ORCH 2026-11-18 (P03-BROKER-W2): a request without its run's duration (a
@@ -197,7 +197,8 @@ const HOST_LEGACY_LOCK_PATH = '/tmp/happier-heavyweight-admission-v3/lock';
 export function createAdmissionBroker({ root,
   oldLockPath = root === HOST_ADMISSION_ROOT ? HOST_LEGACY_LOCK_PATH : join(root, 'old-admission.lock'),
   oldLockFd, startupLockFd, sampleResources = readAdmissionMemorySample, readCpuCapacity = availableParallelism,
-  readRecoveredSlotMemoryKiB = readProcessJobScopeCurrentKiB,
+  readSlotWorkingSetKiB = readProcessJobScopeWorkingSetKiB,
+  readRecoveredSlotMemoryKiB = readSlotWorkingSetKiB,
   admitDisk = request => request.cacheBaseDir
     ? admitWorkerDiskBudget({ ...request, commandClass: request.className }) : { admitted: true } } = {}) {
   const slots = new Map();
@@ -229,8 +230,10 @@ export function createAdmissionBroker({ root,
     if (identityPeaks) return identityPeaks;
     identityPeaks = new Map();
     try {
-      for (const [key, peak] of Object.entries(JSON.parse(readFileSync(join(root, IDENTITY_PEAKS_FILENAME), 'utf8')))) {
-        if (Number.isSafeInteger(peak) && peak > 0) identityPeaks.set(key, peak);
+      for (const [key, peaks] of Object.entries(JSON.parse(readFileSync(join(root, IDENTITY_PEAKS_FILENAME), 'utf8')))) {
+        if (Array.isArray(peaks) && peaks.length && peaks.every(peak => Number.isSafeInteger(peak) && peak > 0)) {
+          identityPeaks.set(key, peaks.slice(-IDENTITY_PEAK_WINDOW));
+        }
       }
     } catch (error) { if (error.code !== 'ENOENT') recordFailure(error); }
     return identityPeaks;
@@ -259,44 +262,35 @@ export function createAdmissionBroker({ root,
     return p99DurationMs > 0 ? { durationClass: IDENTITY_DURATION_CLASS, p99DurationMs } : {};
   }
   const roundPeak = peakKiB => Math.ceil(peakKiB / IDENTITY_FLOOR_ROUNDING_KIB) * IDENTITY_FLOOR_ROUNDING_KIB;
-  function classKernelMaximumKiB(resourceClass) {
-    let maximum;
-    for (const [key, peak] of recordedIdentityPeaks()) {
-      if (JSON.parse(key)[0] === resourceClass) maximum = Math.max(maximum ?? 0, peak);
-    }
-    return maximum;
-  }
-  // A project contains another when it is the same path, an ancestor directory, or the whole repository.
-  const projectContains = (outer, inner) => outer === '.' || outer === inner || inner.startsWith(`${outer}/`);
-  /** An unrecorded identity starts from its relatives in the same class, most specific first: recorded
-   * runs of the same command (entry) over a superset of its projects (the smallest such peak bounds
-   * it); otherwise that command's maximum; otherwise the maximum over runs of its exact project set.
-   * Only with no related record does it take the class kernel maximum. Its own first completion then
-   * records its real peak, which sizes every later run. */
-  function relatedIdentityPeakKiB(item) {
-    const resourceClass = item.resourceClass ?? item.className;
-    const projects = [...(item.projects ?? [])].sort();
-    let supersetMinimum; let familyMaximum; let projectSetMaximum;
-    for (const [key, peak] of recordedIdentityPeaks()) {
-      const [recordedClass, , entry, recordedProjects] = JSON.parse(key);
-      if (recordedClass !== resourceClass) continue;
-      if (entry === item.entry) {
-        familyMaximum = Math.max(familyMaximum ?? 0, peak);
-        if (projects.length && projects.every(inner => recordedProjects.some(outer => projectContains(outer, inner)))) {
-          supersetMinimum = Math.min(supersetMinimum ?? Infinity, peak);
-        }
-      } else if (projects.length && JSON.stringify(recordedProjects) === JSON.stringify(projects)) {
-        projectSetMaximum = Math.max(projectSetMaximum ?? 0, peak);
-      }
-    }
-    return supersetMinimum ?? familyMaximum ?? projectSetMaximum ?? classKernelMaximumKiB(resourceClass);
-  }
   function recordedIdentityPeakKiB(item) {
     const key = identityKey(item);
-    // Never below the identity's observed maximum, even above the class floor.
-    // Unrecorded identities start from related records (relatedIdentityPeakKiB); no history, none.
-    return (key === null ? undefined : recordedIdentityPeaks().get(key) ?? relatedIdentityPeakKiB(item))
-      ?? classKernelMaximumKiB(item.resourceClass ?? item.className);
+    const own = recordedIdentityPeaks().get(key);
+    if (own) return nearestRank(own, 0.95);
+
+    const resourceClass = item.resourceClass ?? item.className;
+    const projects = [...(item.projects ?? [])].sort();
+    const projectSet = JSON.stringify(projects);
+    const supersets = [];
+    const family = [];
+    const sameProjects = [];
+    const sameClass = [];
+    // Use one vote per related identity so a frequently run job cannot
+    // dominate the estimate for a newly seen command.
+    for (const [recordedKey, peaks] of recordedIdentityPeaks()) {
+      const [recordedClass, , entry, recordedProjects] = JSON.parse(recordedKey);
+      if (recordedClass !== resourceClass) continue;
+      const typical = nearestRank(peaks, 0.5);
+      sameClass.push(typical);
+      if (key === null) continue;
+      if (entry === item.entry) {
+        family.push(typical);
+        if (projects.length && projects.every(inner => recordedProjects.some(outer =>
+          outer === '.' || outer === inner || inner.startsWith(`${outer}/`)))) supersets.push(typical);
+      }
+      if (projects.length && JSON.stringify(recordedProjects) === projectSet) sameProjects.push(typical);
+    }
+    return nearestRank(supersets, 0.5) ?? nearestRank(family, 0.5)
+      ?? nearestRank(sameProjects, 0.5) ?? nearestRank(sameClass, 0.5);
   }
   function recordedIdentityFloorKiB(item) {
     const peak = recordedIdentityPeakKiB(item);
@@ -322,15 +316,16 @@ export function createAdmissionBroker({ root,
     const key = identityKey(identity);
     if (key === null) return;
     const peaks = recordedIdentityPeaks();
-    if ((peaks.get(key) ?? 0) >= peakKiB) return;
-    peaks.set(key, peakKiB);
+    const recent = [...(peaks.get(key) ?? []), peakKiB].slice(-IDENTITY_PEAK_WINDOW);
+    peaks.set(key, recent);
     const target = join(root, IDENTITY_PEAKS_FILENAME);
     writeFileSync(`${target}.tmp`, JSON.stringify(Object.fromEntries(peaks)), { mode: 0o600 });
     renameSync(`${target}.tmp`, target);
     // A retained waiter can gain its own measurement while it is queued.
     // Update it before the normal release drain chooses the next reservation.
+    const estimatedPeak = nearestRank(recent, 0.95);
     for (const item of waiting) {
-      if (!item.slot && identityKey(item) === key) sizeWaitingItem(item, peakKiB);
+      if (!item.slot && identityKey(item) === key) sizeWaitingItem(item, estimatedPeak);
     }
   }
 
@@ -548,6 +543,12 @@ export function createAdmissionBroker({ root,
       ...resources };
     const now = Date.now();
     for (const slot of slots.values()) {
+      if (slot.admitted && slot.identityKey) {
+        const workingSetKiB = readSlotWorkingSetKiB(slot.pid);
+        if (Number.isSafeInteger(workingSetKiB) && workingSetKiB > 0) {
+          slot.peakWorkingSetKiB = Math.max(slot.peakWorkingSetKiB ?? 0, workingSetKiB);
+        }
+      }
       const rss = slotRssKiB?.get(slot.pid);
       if (!slot.admitted || rss === undefined) continue;
       slot.peakRssKiB = Math.max(slot.peakRssKiB ?? 0, rss);
@@ -702,8 +703,8 @@ export function createAdmissionBroker({ root,
         }) + '\n', { mode: 0o600 });
       } catch (error) { recordFailure(error); }
     }
-    if (slot.kernelPeak) {
-      try { recordIdentityPeak(slot.kernelPeak, slot.kernelPeak.peakKiB); } catch (error) { recordFailure(error); }
+    if (slot.workingSetIdentity && !slot.recovered) {
+      try { recordIdentityPeak(slot.workingSetIdentity, slot.peakWorkingSetKiB); } catch (error) { recordFailure(error); }
     }
     if (slot.succeeded && slot.identityKey && slot.admitted && Number.isFinite(slot.admittedAt)) {
       try { recordIdentityDuration(slot.identityKey, Math.max(1, Date.now() - slot.admittedAt)); } catch (error) { recordFailure(error); }
@@ -901,12 +902,17 @@ export function createAdmissionBroker({ root,
     lines.on('line', line => {
       let metadata;
       try { metadata = JSON.parse(line); } catch { return; }
-      if (metadata.kind === 'slot-peak') {
+      // Older retained clients sent lifetime memory.peak as slot-peak.
+      // Only the working-set message may complete a new sample.
+      if (metadata.kind === 'slot-working-set') {
         if (!Number.isSafeInteger(metadata.peakKiB) || metadata.peakKiB <= 0 || typeof metadata.className !== 'string'
           || (metadata.resourceClass !== undefined && typeof metadata.resourceClass !== 'string')
           || (metadata.projects !== undefined && (!Array.isArray(metadata.projects) || metadata.projects.some(project => typeof project !== 'string')))) return;
-        const { peakKiB, className, resourceClass, projects, component, entry } = metadata;
-        enqueue(() => { if (!slot.kernelPeak || slot.kernelPeak.peakKiB < peakKiB) slot.kernelPeak = { peakKiB, className, resourceClass, projects, component, entry }; });
+        enqueue(() => {
+          if (!slot.admitted || slot.identityKey !== identityKey(metadata)) return;
+          slot.workingSetIdentity = metadata;
+          slot.peakWorkingSetKiB = Math.max(slot.peakWorkingSetKiB ?? 0, metadata.peakKiB);
+        });
         return;
       }
       if (metadata.kind === 'slot-completed') {
@@ -918,7 +924,8 @@ export function createAdmissionBroker({ root,
         enqueue(() => {
           slot.identityKey ??= identityKey(metadata);
           const key = slot.recovered ? identityKey(metadata) : null;
-          const peak = key === null ? undefined : recordedIdentityPeaks().get(key);
+          const peaks = recordedIdentityPeaks().get(key);
+          const peak = peaks && nearestRank(peaks, 0.95);
           if (peak !== undefined) slot.floorKiB = Math.max(slot.floorKiB, roundPeak(peak));
         });
         return;
@@ -1114,9 +1121,8 @@ export function createAdmissionBroker({ root,
             slot.recovered = true;
             try {
               await connectSlot(slot);
-              // Systemic 20:31Z: a recovered slot reserves max(its scope's
-              // memory.current, its identity kernel peak), not its old floor. The
-              // identity peak applies when the client re-advertises its identity.
+              // The current working set replaces the old floor when attributable.
+              // Apply the recorded estimate too when the client identifies itself.
               const currentKiB = readRecoveredSlotMemoryKiB(slot.pid);
               if (Number.isSafeInteger(currentKiB) && currentKiB > 0) slot.floorKiB = roundPeak(currentKiB);
               slots.set(slot.address, slot);
