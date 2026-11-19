@@ -13,6 +13,7 @@ import { createResolvedContributionRegistry, resolveMergedContributionRegistry }
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import {
   PluginContributesV2Schema,
+  PluginManifestV2Schema,
   createPluginContributionIdentity,
 } from '@happier-dev/protocol';
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/protocol/automations/event-setup-result';
@@ -629,6 +630,33 @@ describe('getResolvedContributionRegistry', () => {
       event: { id: 'alpha.plugin/repository/updated' },
     });
     expect(removedRecoveryAction.automationEligibleEvents?.[0]?.historyGapResetAction).toBeUndefined();
+
+    for (const [verifier, expected] of [
+      [{ kind: 'github_hmac_sha256_v1', routing: 'accountEndpoint' }, { kind: 'accountEndpointV1', credential: 'serverGenerated' }],
+      [{ kind: 'capabilityUrl_v1', routing: 'accountEndpoint' }, { kind: 'capabilityUrlV1' }],
+      [{ kind: 'github_hmac_sha256_v1', routing: 'providerInstallation' }, undefined],
+    ] as const) {
+      const webhookEvent = inputs.events[0];
+      const withWebhook = createResolvedContributionRegistry({ ...inputs,
+        events: [{ ...webhookEvent, definition: { ...webhookEvent.definition,
+          automation: { ...webhookEvent.definition.automation, source: { ...webhookEvent.definition.automation.source,
+            supportedObservationTransports: ['durablePush'],
+            webhookContributionRef: { pluginId: 'alpha.plugin', localId: 'delivery' },
+          } } } }],
+        pluginDeclarations: [{ pluginId: 'alpha.plugin', pluginRootPath: '/plugins/alpha.plugin',
+          manifestPath: '/plugins/alpha.plugin/plugin.json', daemonEntryPath: null, devDaemonEntryPath: null,
+          sourceSpec: { kind: 'path', locator: '/plugins/alpha.plugin', trustPolicy: 'local_trusted', installPolicy: 'link' },
+          manifest: PluginManifestV2Schema.parse(createPluginManifestV2Fixture({ id: 'alpha.plugin', contributes: {
+            actions: [{ ...action('alpha.plugin', 'deliver', 'Delivery').definition, id: 'deliver' }],
+            webhooks: [{ id: 'delivery', title: 'Delivery', verifier, handlerAction: { localId: 'deliver' } }],
+          } })),
+        }],
+      });
+      expect(withWebhook.automationEligibleEvents?.[0]).toHaveProperty('event.identity.pluginId', 'alpha.plugin');
+      expect(withWebhook.automationEligibleEvents?.[0]).toMatchObject(expected === undefined
+        ? {} : { webhookEndpointSetup: expected });
+      if (expected === undefined) expect(withWebhook.automationEligibleEvents?.[0]).not.toHaveProperty('webhookEndpointSetup');
+    }
   });
 
   it('rejects duplicate event local ids within the same plugin', () => {

@@ -121,6 +121,7 @@ const availabilityResponse = PluginAccountAvailabilityIntentReadResponseV1Schema
 
 function eligibleEvent(): DaemonContributionRegistryProjectionAutomationEligibleEventV1 {
     return DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
+        webhookEndpointSetup: { kind: 'accountEndpointV1', credential: 'serverGenerated' },
         event: {
             id: `${PLUGIN_ID}/${EVENT_LOCAL_ID}`,
             identity: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },

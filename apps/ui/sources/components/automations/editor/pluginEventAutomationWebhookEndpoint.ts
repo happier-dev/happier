@@ -1,4 +1,4 @@
-import { PluginWebhookEndpointEnsureInputV1Schema, PluginWebhookEndpointEnsureResultV1Schema, PluginWebhookEndpointReadInputV1Schema, PluginWebhookEndpointReadResultV1Schema, type PluginWebhookEndpointEnsureResultV1, type PluginWebhookEndpointReadResultV1, type PluginWebhookEndpointSetupV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import { PluginWebhookEndpointEnsureInputV1Schema, PluginWebhookEndpointEnsureResultV1Schema, PluginWebhookEndpointReadInputV1Schema, PluginWebhookEndpointReadResultV1Schema, resolvePluginWebhookEndpointAuthoringSetupV1, type PluginWebhookEndpointEnsureResultV1, type PluginWebhookEndpointReadResultV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
@@ -11,21 +11,6 @@ import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRun
 import { resolvePluginEventAutomationObserverMaterialization } from './pluginEventAutomationObservationBinding';
 
 const executePluginWebhookEndpointAction = createFrontDoorUiActionExecutor();
-
-/**
- * The one setup arm an authoring client can complete on its own: the server
- * mints the shared secret and hands it back once, and the user configures the
- * provider with it. The shared-installation arm needs an installation
- * authorization this composer cannot obtain, so it is deliberately absent.
- *
- * Both the ensure call and the Automation writer input read this same
- * constant, so the endpoint and the trigger can never be ensured with one
- * setup identity and persisted with another.
- */
-export const PLUGIN_EVENT_AUTOMATION_WEBHOOK_ENDPOINT_SETUP_V1 = Object.freeze({
-    kind: 'accountEndpointV1',
-    credential: 'serverGenerated',
-} as const) satisfies PluginWebhookEndpointSetupV1;
 
 export type PluginEventAutomationWebhookEndpoint = Readonly<{
     webhookEndpointId: string;
@@ -135,7 +120,8 @@ export async function ensurePluginEventAutomationWebhookEndpoint(params: Readonl
 }>): Promise<PluginEventAutomationWebhookEndpointResult> {
     const webhookContribution = params.eligibleEvent.event.automation.source.webhookContributionRef;
     const materializationRef = resolvePluginEventAutomationObserverMaterialization(params.eligibleEvent, params.origin.origin);
-    if (!materializationRef) return { kind: 'unavailable' };
+    const setup = resolvePluginWebhookEndpointAuthoringSetupV1(params.eligibleEvent.webhookEndpointSetup, params.sourceInstanceId);
+    if (!materializationRef || !setup) return { kind: 'unavailable' };
     // Read through a call so the post-await recheck below observes the live
     // signal instead of the state narrowed by this first guard.
     const aborted = (): boolean => params.signal?.aborted === true;
@@ -152,7 +138,7 @@ export async function ensurePluginEventAutomationWebhookEndpoint(params: Readonl
         webhookContribution,
         targetMaterialization: materializationRef,
         sourceInstanceId: params.sourceInstanceId,
-        setup: PLUGIN_EVENT_AUTOMATION_WEBHOOK_ENDPOINT_SETUP_V1,
+        setup,
         idempotencyKey: ensureIdempotencyKey({
             webhookContribution,
             materializationRef,

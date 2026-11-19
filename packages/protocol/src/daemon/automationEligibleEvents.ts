@@ -9,6 +9,7 @@ import { PluginMachineExecutionOriginV1Schema, getPluginMachineExecutionOriginRe
 import { PluginMachineMaterializationRefV1Schema } from '../plugins/availability/materializationRefV1.js';
 import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema } from '../plugins/contributions/publicTypes.js';
 import { PluginEventAutomationDeclarationV1Schema } from '../automations/automationEventDeclarationV1.js';
+import { PluginWebhookEndpointAuthoringSetupV1Schema } from '../plugins/webhooks/endpointV1.js';
 
 const PluginContributionIdentityV1Schema = lazyZodSchema(() => asProtocolZod(CanonicalPluginContributionIdentityV1Schema));
 const PluginUiRuntimeOccurrenceIdV1Schema = lazyZodSchema(() => asProtocolZod(CanonicalPluginUiRuntimeOccurrenceIdV1Schema));
@@ -44,6 +45,8 @@ export const AutomationEligibleEventCatalogEntryV1Schema = lazyZodSchema(() => z
   }),
   setupAction: DaemonContributionRegistryProjectionAutomationEligibleEventActionV1Schema,
   historyGapResetAction: z.optional(DaemonContributionRegistryProjectionAutomationEligibleEventActionV1Schema),
+  /** Derived from the admitted webhook declaration; no credential is projected. */
+  webhookEndpointSetup: z.optional(PluginWebhookEndpointAuthoringSetupV1Schema),
   /** Same current daemon source, with its actual host-owned observer assignment. */
   observationBinding: z.optional(z.strictObject({
     executionOrigin: PluginMachineExecutionOriginV1Schema,
@@ -85,8 +88,9 @@ export const AutomationEligibleEventsCatalogV1Schema = lazyZodSchema(() => z.arr
 export function projectAutomationEligibleEventsCatalogV1(
   events: readonly AutomationEligibleEventCatalogEntryV1[],
 ): AutomationEligibleEventCatalogEntryV1[] {
-  return events.map(({ event, setupAction, historyGapResetAction, observationBinding }) => ({
+  return events.map(({ event, setupAction, historyGapResetAction, webhookEndpointSetup, observationBinding }) => ({
     event, setupAction, ...(historyGapResetAction === undefined ? {} : { historyGapResetAction }),
+    ...(webhookEndpointSetup === undefined ? {} : { webhookEndpointSetup }),
     ...(observationBinding === undefined ? {} : { observationBinding }),
   }));
 }

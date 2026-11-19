@@ -77,15 +77,34 @@ export const PluginWebhookEndpointReadinessV1Schema = lazyZodSchema(() => z.enum
   'routeUnavailable',
 ]));
 
-export const PluginWebhookEndpointSetupV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({
+const PluginWebhookCapabilityUrlSetupV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('capabilityUrlV1'),
     checkId: DeploymentIdentifierV1Schema,
-  }),
-  z.strictObject({
+}));
+const PluginWebhookAccountEndpointSetupV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('accountEndpointV1'),
     credential: z.literal('serverGenerated'),
-  }),
+}));
+
+/** Setup the generic Event author can complete without installation authorization. */
+export const PluginWebhookEndpointAuthoringSetupV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.omit(PluginWebhookCapabilityUrlSetupV1Schema, { checkId: true }),
+  PluginWebhookAccountEndpointSetupV1Schema,
+]));
+export type PluginWebhookEndpointAuthoringSetupV1 = z.infer<typeof PluginWebhookEndpointAuthoringSetupV1Schema>;
+
+/** The configured Event source supplies the capability endpoint's existing check identity. */
+export function resolvePluginWebhookEndpointAuthoringSetupV1(
+  setup: PluginWebhookEndpointAuthoringSetupV1 | undefined,
+  sourceInstanceId: string,
+): PluginWebhookEndpointSetupV1 | null {
+  if (!setup) return null;
+  return setup.kind === 'capabilityUrlV1' ? { ...setup, checkId: sourceInstanceId } : setup;
+}
+
+export const PluginWebhookEndpointSetupV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  PluginWebhookCapabilityUrlSetupV1Schema,
+  PluginWebhookAccountEndpointSetupV1Schema,
   z.strictObject({
     kind: z.literal('githubSharedInstallationV1'),
     installationId: z.string().check(z.regex(/^[1-9][0-9]{0,19}$/u)),

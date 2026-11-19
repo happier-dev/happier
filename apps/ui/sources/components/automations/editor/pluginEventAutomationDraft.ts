@@ -2,7 +2,7 @@ import { AutomationEventFilterV1Schema, type AutomationEventFilterV1 } from '@ha
 import { AutomationTriggerDefinitionInputSchema, type AutomationPluginEventDefinitionTrigger, type AutomationPluginEventObservationTransportInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { arePluginMachineExecutionOriginsEqual, PluginMachineExecutionOriginV1Schema, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginMachineMaterializationRefV1 } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
-import { PluginWebhookEndpointIdV1Schema, type PluginWebhookEndpointIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import { PluginWebhookEndpointIdV1Schema, resolvePluginWebhookEndpointAuthoringSetupV1, type PluginWebhookEndpointAuthoringSetupV1, type PluginWebhookEndpointIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginEventAutomationSetupResultV1 } from '@happier-dev/protocol/automations/event-setup-result';
 
@@ -11,7 +11,6 @@ import {
     arePluginContributionIdentitiesEqual,
 } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 
-import { PLUGIN_EVENT_AUTOMATION_WEBHOOK_ENDPOINT_SETUP_V1 } from './pluginEventAutomationWebhookEndpoint';
 import { validatePluginEventAutomationSetupResult } from './pluginEventAutomationSetupResult';
 import { resolvePluginEventAutomationObserverMaterialization } from './pluginEventAutomationObservationBinding';
 
@@ -70,8 +69,8 @@ export type PluginEventAutomationCreateDraft = Readonly<{
 
 /**
  * The declared Event is the only authority on which transports it supports.
- * Durable push additionally requires the declared webhook contribution, which
- * the Automation writer resolves server-side from this same declaration.
+ * Durable push also consumes the registry's authorable webhook setup selection;
+ * the Automation writer resolves the same declared contribution server-side.
  */
 export function supportsPluginEventAutomationObservationTransport(
     eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
@@ -79,7 +78,7 @@ export function supportsPluginEventAutomationObservationTransport(
 ): boolean {
     const source = eligibleEvent.event.automation.source;
     return source.supportedObservationTransports.includes(kind)
-        && (kind !== 'durablePush' || source.webhookContributionRef !== undefined);
+        && (kind !== 'durablePush' || (source.webhookContributionRef !== undefined && eligibleEvent.webhookEndpointSetup !== undefined));
 }
 
 function isExactEligibleEventForDraft(
@@ -121,18 +120,22 @@ function normalizeObservationDraft(
 function buildObservationTransportInput(
     draft: PluginEventAutomationAuthoringDraft,
     materializationRef: PluginMachineMaterializationRefV1,
-): AutomationPluginEventObservationTransportInput {
-    return draft.observation.kind === 'checkpointedPull'
-        ? { kind: 'checkpointedPull', watcherMaterializationRef: materializationRef }
-        : draft.observation.kind === 'socket'
-            ? { kind: 'socket', watcherMaterializationRef: materializationRef }
-            : {
-                kind: 'durablePush',
-                webhookEndpointId: draft.observation.webhookEndpointId,
-                endpointMaterializationRef: materializationRef,
-                webhookRoutingSourceInstanceId: draft.source.sourceInstanceId,
-                setup: PLUGIN_EVENT_AUTOMATION_WEBHOOK_ENDPOINT_SETUP_V1,
-            };
+    webhookEndpointSetup: PluginWebhookEndpointAuthoringSetupV1 | undefined,
+): AutomationPluginEventObservationTransportInput | null {
+    if (draft.observation.kind === 'checkpointedPull') {
+        return { kind: 'checkpointedPull', watcherMaterializationRef: materializationRef };
+    }
+    if (draft.observation.kind === 'socket') {
+        return { kind: 'socket', watcherMaterializationRef: materializationRef };
+    }
+    const setup = resolvePluginWebhookEndpointAuthoringSetupV1(webhookEndpointSetup, draft.source.sourceInstanceId);
+    return setup ? {
+        kind: 'durablePush',
+        webhookEndpointId: draft.observation.webhookEndpointId,
+        endpointMaterializationRef: materializationRef,
+        webhookRoutingSourceInstanceId: draft.source.sourceInstanceId,
+        setup,
+    } : null;
 }
 
 function parseMaximumObservationAgeMs(value: unknown): number | null {
@@ -246,6 +249,8 @@ export function buildPluginEventAutomationTriggerInput(params: Readonly<{
     ) {
         return null;
     }
+    const observationTransport = buildObservationTransportInput(params.draft, observerMaterializationRef, eligibleEvent.webhookEndpointSetup);
+    if (!observationTransport) return null;
     const trigger = AutomationTriggerDefinitionInputSchema.safeParse({
             kind: 'pluginEvent',
             enabled: true,
@@ -254,7 +259,7 @@ export function buildPluginEventAutomationTriggerInput(params: Readonly<{
             sourceContractVersion: params.draft.source.sourceContractVersion,
             sourceConfig: params.draft.source.sourceConfig,
             displayLabel: params.draft.source.displayLabel,
-            observationTransport: buildObservationTransportInput(params.draft, observerMaterializationRef),
+            observationTransport,
             filter: params.draft.filter,
             maximumObservationAgeMs: params.draft.maximumObservationAgeMs,
     });

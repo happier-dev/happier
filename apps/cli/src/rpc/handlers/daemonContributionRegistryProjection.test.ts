@@ -58,8 +58,9 @@ import { loadBundledPluginLocatorResult } from '@/plugins/projection/registry/bu
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { buildPluginContributionRegistry } from '@/plugins/projection/registry/normalize/package';
-import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
+import { normalizePluginManifestV2, readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { projectAutomationEligibleEventsCatalogV1 } from '@happier-dev/protocol/daemon/automationEligibleEvents';
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import { projectPluginCatalogEntryIntrospection } from '@/plugins/projection/introspection/catalogEntry';
 
@@ -4492,6 +4493,14 @@ describe('daemon contribution registry projection rpc handler', () => {
         projectionModule.invalidateDaemonContributionRegistryProjectionCache?.();
         const eventOccurrenceId = createPluginRuntimeOccurrenceId('acme.events');
         const registry = createResolvedContributionRegistry({
+            pluginDeclarations: [{ pluginId: 'acme.events', pluginRootPath: '/plugins/acme.events',
+                manifestPath: '/plugins/acme.events/plugin.json', daemonEntryPath: null, devDaemonEntryPath: null,
+                sourceSpec: { kind: 'path', locator: '/plugins/acme.events', trustPolicy: 'local_trusted', installPolicy: 'link' },
+                manifest: normalizePluginManifestV2(createPluginManifestV2Fixture({ id: 'acme.events', contributes: {
+                    webhooks: [{ id: 'delivery', title: 'Delivery', verifier: { kind: 'capabilityUrl_v1', routing: 'accountEndpoint' },
+                        delivery: 'recordReceiptOnly' }],
+                } })),
+            }],
             agents: [],
             actions: [{
                 provenance: 'external',
@@ -4575,7 +4584,8 @@ describe('daemon contribution registry projection rpc handler', () => {
                         eligible: true,
                         source: {
                             sourceContractVersion: 1,
-                            supportedObservationTransports: ['checkpointedPull'],
+                            supportedObservationTransports: ['checkpointedPull', 'durablePush'],
+                            webhookContributionRef: { pluginId: 'acme.events', localId: 'delivery' },
                             sourceConfigSchema: { type: 'object', additionalProperties: false },
                             setupActionRef: {
                                 pluginId: 'acme.events',
@@ -4622,6 +4632,8 @@ describe('daemon contribution registry projection rpc handler', () => {
         const raw = await handlers
             .get(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)!({ machineId: 'm1' });
 
+        expect(projectAutomationEligibleEventsCatalogV1(raw.automationEligibleEvents ?? [])[0])
+            .toMatchObject({ webhookEndpointSetup: { kind: 'capabilityUrlV1' } });
         expect(raw).toMatchObject({
             protocolVersion: 1,
             automationEligibleEvents: [{

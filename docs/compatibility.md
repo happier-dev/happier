@@ -1,5 +1,22 @@
 # Compatibility and version skew
 
+## Event webhook authoring setup (unreleased 0.3)
+
+The closed daemon eligible-Event catalog accepts optional `webhookEndpointSetup`.
+The admitted webhook contribution supplies either a server-generated Account
+endpoint or a capability URL setup; installation-authorized contributions omit
+this field. The generic Event composer consumes that selection for both endpoint
+creation and the Automation writer. A capability setup uses the configured
+source instance as its existing check identity. Missing setup is unavailable for
+durable-push authoring, while pull and socket sources remain available.
+
+Matching Protocol, daemon and UI development readers load together: earlier
+strict readers can reject the added catalog field. Existing endpoint and trigger
+formats are unchanged; no migration, wire epoch or compatibility adapter is added.
+The scoped clean `../0.2` frontier at `73c533b470ac33a7605b50689b6cd93089a3ae6f`
+has neither the eligible-Event catalog nor the endpoint setup owner, so it supplies
+no predecessor producer or reader for this unreleased authoring contract.
+
 ## Private Inbox notice reminders (unreleased 0.3)
 
 The recipient-private `account_notice.v1` header accepts optional `remindAt`.

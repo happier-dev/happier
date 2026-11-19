@@ -1,5 +1,6 @@
 import type { PluginWorkItemsContributionV1 } from '@happier-dev/protocol/plugins/contributions/workItems';
 import type { ParsedPluginEventContributionV1 } from '@happier-dev/protocol/plugins/contributions/events';
+import type { PluginWebhookEndpointAuthoringSetupV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 import type { PluginBotTemplateContributionV1 } from '@happier-dev/protocol/plugins/contributions/botTemplates';
 import type { PluginLanguageServerContributionV1 } from '@happier-dev/protocol/plugins/contributions/languageServers';
 import type {
@@ -637,6 +638,7 @@ export type ResolvedAutomationEligibleEvent = Readonly<{
     setupAction: ResolvedAutomationEligibleEventAction;
     /** Optional current recovery binding; absent is not a second owner or fallback. */
     historyGapResetAction?: ResolvedAutomationEligibleEventAction;
+    webhookEndpointSetup?: PluginWebhookEndpointAuthoringSetupV1;
 }>;
 
 export type ResolvedSettingsContribution = Readonly<{

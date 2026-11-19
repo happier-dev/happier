@@ -356,6 +356,7 @@ function durablePushEligibleEvent(): DaemonContributionRegistryProjectionAutomat
     const base = eligibleEvent();
     return DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
         ...base,
+        webhookEndpointSetup: { kind: 'accountEndpointV1', credential: 'serverGenerated' },
         event: {
             ...base.event,
             automation: {
@@ -523,6 +524,38 @@ describe('Plugin Event Automation setup orchestration', () => {
             invalidateConfiguredSource() { throw new Error('Current source was invalidated'); } }, completed);
         expect(completed).toHaveBeenCalledWith(expect.objectContaining({ kind: 'pluginEvent' }),
             expect.objectContaining({ observationOnly: { kind: 'observationOnly' }, payloadSchema: event.event.payloadSchema }));
+    });
+    it('uses the projected capability URL setup for both endpoint ensure and trigger writing', async () => {
+        const event = Object.assign(durablePushEligibleEvent(), {
+            webhookEndpointSetup: { kind: 'capabilityUrlV1' as const },
+        });
+        const expectedSetup = { kind: 'capabilityUrlV1', checkId: 'repository:42' };
+        const ensured: unknown[] = [];
+        const result = await configurePluginEventAutomationSetup({ ...durablePushSetupParams(event), observationTransport: 'durablePush',
+            ensureWebhookEndpoint: input => ensurePluginEventAutomationWebhookEndpoint({ ...input,
+                executeAction: async (_action, request) => {
+                    ensured.push(request);
+                    return { webhookEndpointId: WEBHOOK_ENDPOINT_ID, revision: 1,
+                        publicUrl: 'https://home.example/webhook', readiness: 'ready' };
+                } }),
+        });
+        expect(result.kind).toBe('configured');
+        if (result.kind !== 'configured') throw new Error('Expected configured capability source');
+        expect(ensured).toEqual([expect.objectContaining({ setup: expectedSetup })]);
+        const watcher = result.draft.resolveFreshWatcherOrigin();
+        if (!watcher) throw new Error('Expected current monitoring origin');
+        expect(buildPluginEventAutomationTriggerInput({ eligibleEvents: [event], draft: result.draft.draft,
+            watcherOrigin: watcher.origin })?.observationTransport).toMatchObject({ kind: 'durablePush', setup: expectedSetup });
+    });
+    it('leaves an unsupported webhook setup unavailable without invoking endpoint creation', async () => {
+        const event = { ...durablePushEligibleEvent(), webhookEndpointSetup: undefined };
+        const executeAction = vi.fn(async () => ({ webhookEndpointId: WEBHOOK_ENDPOINT_ID, revision: 1,
+            publicUrl: 'https://home.example/webhook', readiness: 'ready' }));
+        const result = await configurePluginEventAutomationSetup({ ...durablePushSetupParams(event), observationTransport: 'durablePush',
+            ensureWebhookEndpoint: input => ensurePluginEventAutomationWebhookEndpoint({ ...input, executeAction }),
+        });
+        expect(result).toMatchObject({ kind: 'unavailable', code: 'webhook_endpoint_unavailable' });
+        expect(executeAction).not.toHaveBeenCalled();
     });
     it.each(['automatic', 'required'] as const)('persists the ensured endpoint through the existing durable-push arm for %s delivery', async (webhookDelivery) => {
         const event = durablePushEligibleEvent();

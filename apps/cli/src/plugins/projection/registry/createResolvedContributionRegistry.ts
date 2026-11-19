@@ -3,6 +3,7 @@ import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnos
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { qualifyPluginEventIdV1 } from '@happier-dev/protocol/plugins/events/v1';
+import type { PluginWebhookEndpointAuthoringSetupV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 
 import { buildPluginContributionIntrospectionQualifiedId } from '@/plugins/projection/introspection/project';
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -445,6 +446,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         events,
         actionsById,
         occurrenceIdsByPluginId,
+        pluginDeclarations: inputs.pluginDeclarations,
     });
 
     for (const profile of executionRunProfiles) {
@@ -667,7 +669,20 @@ function deriveAutomationEligibleEvents(params: Readonly<{
     events: readonly ResolvedEventContribution[];
     actionsById: ReadonlyMap<string, ResolvedActionContribution>;
     occurrenceIdsByPluginId: Readonly<Record<string, PluginRuntimeOccurrenceId>>;
+    pluginDeclarations: ResolvedContributionInputs['pluginDeclarations'];
 }>): readonly ResolvedAutomationEligibleEvent[] {
+    const webhookSetups = new Map<string, PluginWebhookEndpointAuthoringSetupV1>();
+    for (const declaration of params.pluginDeclarations ?? []) {
+        for (const webhook of declaration.manifest.contributes.webhooks ?? []) {
+            if (webhook.verifier.routing !== 'accountEndpoint') continue;
+            webhookSetups.set(buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+                pluginId: declaration.pluginId,
+                localId: webhook.id,
+            })), webhook.verifier.kind === 'capabilityUrl_v1'
+                ? { kind: 'capabilityUrlV1' }
+                : { kind: 'accountEndpointV1', credential: 'serverGenerated' });
+        }
+    }
     const eligible: ResolvedAutomationEligibleEvent[] = [];
     for (const event of params.events) {
         if (event.definition.kind !== 'event' || event.definition.automation?.eligible !== true) continue;
@@ -695,6 +710,10 @@ function deriveAutomationEligibleEvents(params: Readonly<{
         });
         if (!eventTitle || !setupAction) continue;
         const eventIdentity = createPluginContributionIdentity({ pluginId, localId });
+        const webhookRef = event.definition.automation.source.webhookContributionRef;
+        const webhookEndpointSetup = webhookRef
+            ? webhookSetups.get(buildQualifiedPluginContributionKey(webhookRef))
+            : undefined;
         const historyGapResetAction = resolveCurrentAutomationEventAction({
             actionRef: event.definition.automation.source.historyGapResetActionRef,
             pluginId,
@@ -720,6 +739,7 @@ function deriveAutomationEligibleEvents(params: Readonly<{
                 automation: event.definition.automation,
             }),
             setupAction,
+            ...(webhookEndpointSetup === undefined ? {} : { webhookEndpointSetup }),
             ...(historyGapResetAction === null ? {} : { historyGapResetAction }),
         }));
     }
