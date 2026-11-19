@@ -129,7 +129,7 @@ afterEach(async () => {
 });
 
 describe('canonical review Run comments', () => {
-  it.each(['ephemeral', 'resumable', 'fresh', 'launch-failed'] as const)('starts a new native round from the retained launch selection (%s)', async mode => runWithScmAccountScope('new-native-round', async () => {
+  it.each(['ephemeral', 'resumable', 'fresh', 'launch-failed'] as const)('starts a new native round from the retained requester and launch selection (%s)', async mode => runWithScmAccountScope('new-native-round', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-new-round-' });
     repositories.push(fixture.rootPath);
     await writeFile(join(fixture.rootPath, fixture.trackedPath), 'first round();\n');
@@ -147,6 +147,7 @@ describe('canonical review Run comments', () => {
     const comments = createReviewRunCommentService({ cwd: fixture.rootPath,
       scope: { workspace: { machineId: 'machine-1', path: fixture.rootPath } }, execute: transport(), reviewRecords: records });
     const initial: ExecutionRunState = { ...run(), status: 'succeeded',
+      requesterWorkAttributionV1: { serverId: 'home', accountId: 'new-native-round', machineId: 'machine-1', installationId: 'installation-1' },
       retentionPolicy: mode === 'ephemeral' || mode === 'launch-failed' ? 'ephemeral' : 'resumable',
       ...(mode === 'resumable' ? { resumeHandle: { kind: 'provider_session.v1',
         backendTarget: readBackendTargetRefV2({ kind: 'builtInAgent', agentId: 'claude' }), providerSessionId: 'original-conversation' } } : {}),
@@ -159,14 +160,14 @@ describe('canonical review Run comments', () => {
         reviewRound, reviewReviewerId: 'step-1-reviewer-1', reviewRoundSettlement: 'execution', comparisonId: first.comparison.id },
     };
     const started: ExecutionRunManagerStartParams[] = [];
-    const result = await applyExecutionRunAction({ runId: initial.runId,
+    const result = await runWithScmAccountScope('different-live-account', () => applyExecutionRunAction({ runId: initial.runId,
       params: { actionId: 'review.new_round', input: mode === 'fresh' ? { fresh: true } : {} },
       runs: new Map([[initial.runId, initial]]), controllers: new Map(), parentProvider: 'claude',
       voiceAgentManager: {} as import('@/agent/voice/agent/VoiceAgentManager').VoiceAgentManager,
       reviewComments: comments, startRun: async input => { started.push(input);
         if (mode === 'launch-failed') throw Object.assign(new Error('Provider unavailable'), { code: 'execution_run_failed' });
         return { runId: 'next-run', callId: 'next-call', sidechainId: 'next-sidechain' }; },
-    });
+    }));
     if (mode === 'launch-failed') {
       expect(result).toMatchObject({ ok: false, errorCode: 'execution_run_failed' });
       expect((await records.read('stable-review'))?.rounds[1]).toMatchObject({ state: 'failed', runs: [] });

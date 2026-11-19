@@ -17,7 +17,7 @@ import type { ReviewCommentActionExecutor } from '@/agent/reviews/comments/execu
 import { resolveReviewCommentSnapshot } from '@/agent/reviews/comments/snapshots';
 import type { ExecutionRunActionResult, ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
-import { runWithScmComparisonOperations } from '@/scm/comparisons/comparisonOperations';
+import { runWithScmExecutionRunAccountScope } from '@/agent/runtime/bridges/executionRun/profileStart';
 
 export type ReviewRunMaterialization = Readonly<{
   engineId: string;
@@ -97,7 +97,7 @@ export function createReviewRunCommentService(deps: Readonly<{
             ...(run.sessionId ? { sessionId: run.sessionId } : {}) })).comparison,
         });
       };
-      return run.scmComparisonOperations ? await runWithScmComparisonOperations(run.scmComparisonOperations, prepare) : await prepare();
+      return await runWithScmExecutionRunAccountScope(run, prepare);
     },
     async failUnstartedRound(reviewRound: ReviewRoundBindingV1): Promise<void> {
       if (!deps.reviewRecords) throw Object.assign(new Error('Review records are unavailable'), { code: 'review_record_unavailable' });
