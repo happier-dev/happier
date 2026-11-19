@@ -11,7 +11,11 @@ import { useWorkbenchMount } from './mount.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-it.each(['postgresql', 'mysql', 'sqlite'] as const)('runs the caret statement through the mounted %s lexer', async engine => {
+const engines = ['postgresql', 'mysql', 'sqlite'] as const;
+
+it.each(engines.flatMap(engine => [
+    { engine, caret: 'inside' }, { engine, caret: 'after terminator' },
+]))('runs the mounted $engine statement with the caret $caret', async ({ engine, caret }) => {
     const descriptor = { ...createDatabaseDescriptorV1Fixture(), engine };
     const targetKey = workbenchTargetKey(descriptor.target);
     const scope = { kind: 'worktree' as const, accountId: 'account', installationId: 'installation', projectKey: 'project',
@@ -35,7 +39,8 @@ it.each(['postgresql', 'mysql', 'sqlite'] as const)('runs the caret statement th
         const console = instance.console(targetKey);
         const sql = "select ';' as first;\nselect 'second;value' as second;";
         await act(async () => console.setText(sql));
-        console.setSelection({ start: sql.indexOf('second;value'), end: sql.indexOf('second;value') });
+        const offset = caret === 'inside' ? sql.indexOf('second;value') : sql.length;
+        console.setSelection({ start: offset, end: offset });
         const prepared = await console.run().controller.prepare({ signal: new AbortController().signal });
         expect(prepared?.input).toMatchObject({ operation: 'statement.run', mode: 'read',
             statement: { sql: "select 'second;value' as second", parameters: [] } });

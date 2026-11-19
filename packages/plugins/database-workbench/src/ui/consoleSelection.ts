@@ -12,7 +12,11 @@ export function selectConsoleStatements(text: string, selection: ConsoleSelectio
     const chosen = mode === 'write'
         ? selection.start === selection.end ? ranges : ranges.filter(range => range.end > selection.start && range.start < selection.end)
             .map(range => ({ start: Math.max(range.start, selection.start), end: Math.min(range.end, selection.end) }))
-        : [ranges.find(range => selection.start >= range.start && selection.start <= range.end) ?? ranges.find(range => range.start > selection.start)].filter((range): range is ConsoleSelection => range !== undefined);
+        : [
+            ranges.find(range => selection.start >= range.start && selection.start <= range.end)
+            ?? ranges.find(range => range.start > selection.start)
+            ?? ranges.at(-1),
+        ].filter((range): range is ConsoleSelection => range !== undefined);
     return chosen.map(range => ({ sql: text.slice(range.start, range.end), range }));
 }
 
