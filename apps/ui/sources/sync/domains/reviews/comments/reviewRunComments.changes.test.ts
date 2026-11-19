@@ -25,7 +25,7 @@ it('surfaces a targeted read failure without discarding retained comments', asyn
     } finally { release(); }
 });
     it('refreshes a remotely changed finding once for all mounted readers and ignores held revisions and other Reviews', async () => {
-        let current = comment('account-b', { reviewId: 'review-a' });
+        let current = comment('account-b', { reviewId: 'review-a', reviewTriageStatus: 'accept' });
         let finishRead!: () => void;
         const heldRead = new Promise<void>(resolve => { finishRead = resolve; });
         const reads: string[] = [];
@@ -43,17 +43,17 @@ it('surfaces a targeted read failure without discarding retained comments', asyn
         const releases = [observe(), observe()];
         const wake = (reviewId: string, revision: number) => publishHomeAccountChange(scope.serverId, [reviewId], {
             changeKinds: ['artifact'], reviewCommentChanges: [{ reviewId, commentId: current.id,
-                serverRevision: revision, state: 'dismissed', reviewTriageStatus: 'reject' }],
+                serverRevision: revision, state: 'dismissed', reviewTriageStatus: 'accept' }],
         });
         try {
             wake('review-b', 4);
             wake('review-a', 3);
             expect(reads).toEqual([]);
-            current = { ...current, state: 'dismissed', reviewTriageStatus: 'reject', serverRevision: 4 };
+            current = { ...current, state: 'dismissed', serverRevision: 4 };
             wake('review-a', 4);
             await vi.waitFor(() => expect(reads).toEqual([current.id]));
             finishRead();
-            await vi.waitFor(() => expect(readReviewRunComments(target).comments[0]?.reviewTriageStatus).toBe('reject'));
+            await vi.waitFor(() => expect(readReviewRunComments(target).comments[0]).toMatchObject({ state: 'dismissed', reviewTriageStatus: 'accept' }));
             wake('review-a', 4);
             expect(reads).toEqual([current.id]);
         } finally { releases.forEach(release => release()); }

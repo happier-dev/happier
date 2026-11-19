@@ -77,10 +77,17 @@ async function serveTwoHomes() {
 }
 
 describe('review run comments (one cache, bound to its Home and Account)', () => {
-    it('shares Review-key comments across Sessions and authors while isolating another Review', async () => {
+    it.each([
+        { name: 'new finding', state: 'proposed', status: undefined, decision: 'accept', nextState: 'open', writes: 1 },
+        // QA live-finish-apply-first-readback: a state-only bulk Ignore left the earlier accept at revision 5.
+        { name: 'bulk-dismissed accepted finding', state: 'dismissed', status: 'accept', decision: 'accept', nextState: 'open', writes: 1 },
+        { name: 'new refinement', state: 'proposed', status: undefined, decision: 'needs_refinement', nextState: 'proposed', writes: 1 },
+        { name: 'already requested refinement', state: 'proposed', status: 'needs_refinement', decision: 'needs_refinement', nextState: 'proposed', writes: 0 },
+    ] as const)('shares Review-key decisions across Sessions and authors: $name', async ({ state, status, decision, nextState, writes }) => {
         const dataKey = new Uint8Array(32).fill(19);
         const codec = new ArtifactEncryption(dataKey);
         const durable = comment('another-author', { reviewId: 'review-1', sessionId: 'original-session', runId: 'earlier-round',
+            state, reviewTriageStatus: status, serverRevision: 5,
             appearances: [{ roundOrdinal: 2, runId: 'current-round', reviewerId: 'reviewer', sessionId: 'opened-session' }] });
         const stored = storePlainReviewCommentFixture(durable);
         if (stored.sensitiveEnvelope.t !== 'plain') throw new Error('Expected logical content');
@@ -129,20 +136,20 @@ describe('review run comments (one cache, bound to its Home and Account)', () =>
         const anotherSession = { ...target, sessionId: 'another-session' };
         expect(readReviewRunComments(anotherSession)).toBe(readReviewRunComments(target));
         expect(readReviewRunComments(target).comments).toEqual([durable]);
-        expect(await decideReviewRunFinding({ ...anotherSession, execute, commentId: durable.id, decision: 'accept' })).toBe(true);
+        expect(await decideReviewRunFinding({ ...anotherSession, execute, commentId: durable.id, decision })).toBe(true);
         expect(readReviewRunComments(target).comments[0]).toMatchObject({ reviewId: 'review-1', accountId: 'another-author',
-            state: 'open', serverRevision: 4, reviewTriageStatus: 'accept' });
-        expect(reads.filter(path => path.endsWith('/mutations/prepare'))).toHaveLength(1);
-        expect(reads.filter(path => path.endsWith('/mutations/commit'))).toHaveLength(1);
+            state: nextState, serverRevision: durable.serverRevision + writes, reviewTriageStatus: decision });
+        expect(reads.filter(path => path.endsWith('/mutations/prepare'))).toHaveLength(writes);
+        expect(reads.filter(path => path.endsWith('/mutations/commit'))).toHaveLength(writes);
         const unrelated = { ...target, reviewId: 'review-2' };
         const unrelatedBefore = readReviewRunComments(unrelated);
         const notify = vi.fn();
         const stop = subscribeReviewRunComments(anotherSession, notify);
         try {
-            recordReviewCommentWrites([{ ...durable, serverRevision: 5, reviewTriageStatus: 'reject' }], target.scope);
+            recordReviewCommentWrites([{ ...durable, serverRevision: 7, reviewTriageStatus: 'reject' }], target.scope);
             expect(readReviewRunComments(anotherSession).comments[0]?.reviewTriageStatus).toBe('reject');
             expect(notify).toHaveBeenCalledTimes(1);
-            recordReviewCommentWrites([{ ...durable, serverRevision: 5, reviewTriageStatus: 'reject' }], target.scope);
+            recordReviewCommentWrites([{ ...durable, serverRevision: 7, reviewTriageStatus: 'reject' }], target.scope);
             expect(notify).toHaveBeenCalledTimes(1);
             expect(readReviewRunComments(unrelated)).toBe(unrelatedBefore);
         } finally { stop(); }

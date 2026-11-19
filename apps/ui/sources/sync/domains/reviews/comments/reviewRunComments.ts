@@ -1,7 +1,7 @@
 import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
 import { REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1, type ReviewCommentListResponseV1, type ReviewCommentGetResponseV1, type ReviewCommentTransitionResponseV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import type { ReviewCommentScopeV1, ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
-import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
+import { readReviewFindingDecisionV1, type ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { randomUUID } from '@/platform/randomUUID';
@@ -331,7 +331,8 @@ export function decideReviewRunFinding(params: ReviewRunCommentsTarget & Readonl
         const comment = entry.snapshot.comments.find((item) => item.id === params.commentId);
         try {
             if (!comment) throw new Error('review_comment_reference_unavailable');
-            if (comment.reviewTriageStatus === params.decision) {
+            if (readReviewFindingDecisionV1(comment.reviewTriageStatus, comment.state) === params.decision
+                || (params.decision === 'needs_refinement' && comment.reviewTriageStatus === params.decision)) {
                 confirmed = true;
                 return;
             }
