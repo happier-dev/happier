@@ -19081,7 +19081,6 @@ const it: WorkflowEditorPageTranslations = {
         inputCount: ({ count }) => count === 1 ? '1 input' : `${count} input`,
         finalOutput: ({ output }) => `Risultato finale: ${output}`,
         originSession: 'La sessione che l’ha avviato',
-        choiceDefault: 'Predefinito',
         conversationShared: 'Condivisa',
         conversationFresh: 'Nuova',
         conversationContinue: 'Continua',

@@ -19106,7 +19106,6 @@ const ru: WorkflowEditorPageTranslations = {
         inputCount: ({ count }) => `Входных данных: ${count}`,
         finalOutput: ({ output }) => `Итоговый результат: ${output}`,
         originSession: 'Сессия, которая его запустила',
-        choiceDefault: 'По умолчанию',
         conversationShared: 'Общий',
         conversationFresh: 'Новый',
         conversationContinue: 'Продолжить',

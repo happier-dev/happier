@@ -28,6 +28,7 @@ import { resolveWorkflowSessionChoice } from '../presentation/workflowSessionCho
 import { workflowSessionOptionRow } from '../presentation/workflowSessionOptionRow';
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { WorkflowFieldPair } from './WorkflowStepDataEditor';
+import { WorkflowFieldReset } from './WorkflowStepInspector';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 
@@ -166,6 +167,8 @@ function ContinuityField(props: Readonly<{
     );
 }
 
+const RESET_LINE = { alignItems: 'flex-start' } as const;
+
 export function WorkflowContinuityControls(props: Readonly<{
     draft: WorkflowEditorDraft;
     consumerBlockId?: string;
@@ -190,6 +193,11 @@ export function WorkflowContinuityControls(props: Readonly<{
      * beside the label (How and where it runs, round 1116).
      */
     layout?: 'item' | 'track';
+    /**
+     * `track` in a narrow popover column (Step options): the bar spans the control column, ending on the fields' edge
+     * (WF-ACCEPT-1119B fix 1). Default: the bar hugs its segments, as on the How card (lab 1116 `.e-row .seg`).
+     */
+    fillControlColumn?: boolean;
     testIDPrefix: string;
 }>): React.ReactElement {
     const { draft, onChangeConversation, testIDPrefix } = props;
@@ -326,22 +334,28 @@ export function WorkflowContinuityControls(props: Readonly<{
     // than one target (which step, which worktree source).
     // Continuing another conversation (a step's or an existing Session) is one segment; which one is
     // chosen beneath it, so the row keeps to four short, always-visible options.
-    type ConversationSegment = 'default' | 'shared_run' | 'fresh' | 'origin_session' | 'input' | 'continue';
+    // A step following its workflow reads the workflow's value in the same bar, quiet, as Runs in does; choosing pins it
+    // (even the workflow's own value, F24) and "Use workflow's" clears it (WF-ACCEPT-1119B fix 1). No "Default" segment.
+    type ConversationSegment = 'shared_run' | 'fresh' | 'origin_session' | 'input' | 'continue';
     const continuesConversation = choosingSession || props.conversation?.kind === 'from_step'
         || props.conversation?.kind === 'existing_session';
-    const conversationSegment: ConversationSegment = continuesConversation ? 'continue'
-        : props.conversation === undefined ? (inherits ? 'default' : 'shared_run') : props.conversation.kind as ConversationSegment;
+    const followsWorkflow = inherits && props.conversation === undefined && !choosingSession;
+    const shownConversation = followsWorkflow ? props.inherited?.conversation : props.conversation;
+    const conversationSegment: ConversationSegment = continuesConversation
+        || shownConversation?.kind === 'from_step' || shownConversation?.kind === 'existing_session' ? 'continue'
+        : shownConversation === undefined ? 'shared_run' : shownConversation.kind as ConversationSegment;
     const sessionOffered = sessionChoice !== null || recordedSession !== null;
+    // A fitted value choice measures its labels (and becomes one field select only where they cannot fit).
+    const fittedBar = React.useMemo(() => ({ label: t('common.more') }), []);
     const conversationSegments: SegmentedChoiceOption<ConversationSegment>[] = [];
-    if (inherits) conversationSegments.push({ id: 'default', label: t('workflows.page.inspector.choiceDefault') });
     conversationSegments.push({ id: 'shared_run', label: t('workflows.page.inspector.conversationShared') });
     conversationSegments.push({ id: 'fresh', label: t('workflows.page.inspector.conversationFresh') });
     // A recorded origin-session or input continuation stays selectable as recorded; never silently replaced.
-    if (props.conversation?.kind === 'origin_session' || props.conversation?.kind === 'input') {
-        conversationSegments.push({ id: props.conversation.kind,
-            label: formatWorkflowConversationLabel({ draft, conversation: props.conversation }) });
+    if (shownConversation?.kind === 'origin_session' || shownConversation?.kind === 'input') {
+        conversationSegments.push({ id: shownConversation.kind,
+            label: formatWorkflowConversationLabel({ draft, conversation: shownConversation }) });
     }
-    if (producers.length > 0 || sessionOffered || props.conversation?.kind === 'from_step') {
+    if (producers.length > 0 || sessionOffered || conversationSegment === 'continue') {
         conversationSegments.push({ id: 'continue', label: t('workflows.page.inspector.conversationContinue') });
     }
     const conversationConsequence = props.conversation === undefined && inherits
@@ -357,7 +371,6 @@ export function WorkflowContinuityControls(props: Readonly<{
     };
     const selectConversationSegment = (segment: ConversationSegment) => {
         if (segment !== 'continue') { setChoosingSession(false); setSessionNotice(null); }
-        if (segment === 'default') { onChangeConversation(undefined); return; }
         if (segment === 'continue') {
             if (continuesConversation) return;
             const producer = producers[0];
@@ -367,6 +380,8 @@ export function WorkflowContinuityControls(props: Readonly<{
         }
         if (segment === props.conversation?.kind) return;
         if (segment === 'shared_run' || segment === 'fresh') onChangeConversation({ kind: segment });
+        // The workflow's recorded origin-session or input continuation, chosen here, is pinned as recorded.
+        else if (followsWorkflow && segment === shownConversation?.kind) onChangeConversation(shownConversation);
     };
     // What "Continue" continues: a step's conversation, or an existing Session through its picker.
     const continueItems: DropdownMenuItem[] = [...conversationItems];
@@ -389,7 +404,17 @@ export function WorkflowContinuityControls(props: Readonly<{
 
     const conversationDetails = (
         <>
-            {conversationSegment === 'continue' && (continueItems.length > 1 || continueItems[0]?.id === EXISTING_SESSION_OPTION_ID) ? (
+            {inherits && props.conversation !== undefined ? (
+                // Under the bar on the control edge, as wide as its words (a stretched target would reset from empty space).
+                <View style={RESET_LINE}>
+                    <WorkflowFieldReset testID={`${testIDPrefix}-conversation-reset`} onReset={() => {
+                        setChoosingSession(false);
+                        setSessionNotice(null);
+                        onChangeConversation(undefined);
+                    }} />
+                </View>
+            ) : null}
+            {continuesConversation && (continueItems.length > 1 || continueItems[0]?.id === EXISTING_SESSION_OPTION_ID) ? (
                 <ContinuityField
                     title={t('workflows.page.inspector.continueFrom')}
                     items={continueItems}
@@ -454,15 +479,17 @@ export function WorkflowContinuityControls(props: Readonly<{
     const conversation = props.layout === 'track' ? (
         <View style={workflowEditorStyles.actionFieldRow}>
             <WorkflowFieldPair label={t('workflows.conversation.title')} trackKey="conversation" labelAlign="control"
-                // A step following its workflow says what Default means here (the item layout's subtitle), under the row.
-                note={props.conversation === undefined && inherits ? (
+                // The bar names the workflow's value it follows; only a continuation needs saying what it continues.
+                note={followsWorkflow && conversationSegment === 'continue' ? (
                     <Text testID={`${testIDPrefix}-conversation-consequence`} style={workflowEditorStyles.actionFieldNote}>{conversationConsequence}</Text>
                 ) : null}>
                 <SegmentedTabBar<ConversationSegment>
                     tabs={conversationSegments}
                     activeTabId={conversationSegment}
+                    valueSource={followsWorkflow ? 'inherited' : 'set'}
                     onSelectTab={selectConversationSegment}
-                    segmentSizing="content"
+                    segmentSizing={props.fillControlColumn === true ? 'equal-or-label' : 'content'}
+                    {...(props.fillControlColumn === true ? { overflow: fittedBar } : {})}
                     accessibilityLabel={t('workflows.conversation.title')}
                     role="radiogroup"
                     testIDPrefix={`${testIDPrefix}-conversation`}
@@ -478,7 +505,7 @@ export function WorkflowContinuityControls(props: Readonly<{
                 subtitle={conversationConsequence}
                 options={conversationSegments}
                 value={conversationSegment}
-                valueSource={conversationSegment === 'default' ? 'inherited' : 'set'}
+                valueSource={followsWorkflow ? 'inherited' : 'set'}
                 onChange={selectConversationSegment}
                 accessoryLayout="stacked"
                 showDivider={false}

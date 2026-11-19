@@ -2,10 +2,10 @@ import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback
 import * as React from 'react';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 
 import {
     type WorkflowStep,
@@ -24,13 +24,6 @@ import { workflowEditorStyles } from './workflowEditorStyles';
  * A step's own options beside the workflow's: which Session fields form its engine, whether the step
  * chooses its own, the way back to the workflow's, and its deadline.
  */
-
-const styles = StyleSheet.create((theme) => ({
-    resetAction: {
-        ...Typography.variant('meta', 'semiBold'),
-        color: theme.colors.button.secondary.tint,
-    },
-}));
 
 /**
  * A step's result-wait deadline: the exact value the author types, in the unit
@@ -74,24 +67,46 @@ export function withoutWorkflowStepEngine(execution: WorkflowStep['execution']):
     return withoutWorkflowAuthoringEngine(execution);
 }
 
+const QUIET_ACTION_START = { justifyContent: 'flex-start' } as const;
+
+/**
+ * The editor's quiet text action in a popover row: its words in the secondary tint, led by a + when it adds something
+ * ("+ Add condition", "+ Add input"). One anatomy for every such action, so a row never grows a bare text button.
+ */
+export function WorkflowQuietAction(props: Readonly<{
+    label: string;
+    onPress: () => void;
+    testID?: string;
+    /** Spoken name when the visible words are not the whole action. Default: the words. */
+    accessibilityLabel?: string;
+    leadingPlus?: boolean;
+}>): React.ReactElement {
+    const { theme } = useUnistyles();
+    return (
+        <HappierPressable
+            {...(props.testID === undefined ? {} : { testID: props.testID })}
+            accessibilityRole="button"
+            accessibilityLabel={props.accessibilityLabel ?? props.label}
+            onPress={props.onPress}
+            style={(state) => [
+                workflowEditorStyles.actionTarget,
+                workflowEditorStyles.addRow,
+                // Its words start on the row's edge (the target's centring is for its height, not across a stretched column).
+                QUIET_ACTION_START,
+                state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
+            ]}
+        >
+            {props.leadingPlus === true ? <Icon name="plus" size={ICON_SIZE.xs} color={theme.colors.text.secondary} /> : null}
+            <Text style={workflowEditorStyles.metaAction}>{props.label}</Text>
+        </HappierPressable>
+    );
+}
+
 /**
  * The way back to the workflow's value on a step row whose own control shows that it is changed (a segmented bar's set
  * state), beside that control, as a changed chip offers it in its menu.
  */
 export function WorkflowFieldReset(props: Readonly<{ testID: string; onReset: () => void }>): React.ReactElement {
-    const { theme } = useUnistyles();
-    return (
-        <HappierPressable
-            testID={props.testID}
-            accessibilityRole="button"
-            accessibilityLabel={t('workflows.editor.useWorkflowDefault')}
-            onPress={props.onReset}
-            style={(state) => [
-                workflowEditorStyles.actionTarget,
-                state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
-            ]}
-        >
-            <Text style={styles.resetAction}>{t('workflows.page.useWorkflowsValue')}</Text>
-        </HappierPressable>
-    );
+    return <WorkflowQuietAction testID={props.testID} label={t('workflows.page.useWorkflowsValue')}
+        accessibilityLabel={t('workflows.editor.useWorkflowDefault')} onPress={props.onReset} />;
 }

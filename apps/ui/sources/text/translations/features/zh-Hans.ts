@@ -18955,7 +18955,6 @@ const zhHans: WorkflowEditorPageTranslations = {
         inputCount: ({ count }) => `${count} 个输入`,
         finalOutput: ({ output }) => `最终输出：${output}`,
         originSession: '启动它的会话',
-        choiceDefault: '默认',
         conversationShared: '共享',
         conversationFresh: '新建',
         conversationContinue: '继续',

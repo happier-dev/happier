@@ -19105,7 +19105,6 @@ const pl: WorkflowEditorPageTranslations = {
         inputCount: ({ count }) => `${count} ${pluralPl(count, 'dana wejściowa', 'dane wejściowe', 'danych wejściowych')}`,
         finalOutput: ({ output }) => `Wynik końcowy: ${output}`,
         originSession: 'Sesja, która go uruchomiła',
-        choiceDefault: 'Domyślne',
         conversationShared: 'Wspólna',
         conversationFresh: 'Nowa',
         conversationContinue: 'Kontynuuj',

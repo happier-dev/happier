@@ -165,7 +165,6 @@ export const en = {
         inputCount: ({ count }: { count: number }) => count === 1 ? '1 input' : `${count} inputs`,
         finalOutput: ({ output }: { output: string }) => `Final output: ${output}`,
         originSession: 'The session that started it',
-        choiceDefault: 'Default',
         conversationShared: 'Shared',
         conversationFresh: 'Fresh',
         conversationContinue: 'Continue',

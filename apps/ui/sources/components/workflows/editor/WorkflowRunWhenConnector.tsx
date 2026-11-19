@@ -39,6 +39,8 @@ export function WorkflowRunWhenOption(props: Readonly<{
 }>): React.ReactElement {
     const options = WorkflowRunWhenV1Schema.options.map(id => ({ id, label: id === 'failure' ? t('workflows.runWhen.failure')
         : id === 'always' ? t('workflows.runWhen.always') : t('workflows.runWhen.success') }));
+    // A fitted value choice measures its labels (and becomes one field select only where they cannot fit).
+    const fitted = React.useMemo(() => ({ label: t('common.more') }), []);
     if (props.layout === 'track') return (
         <View style={workflowEditorStyles.actionFieldRow}>
             <WorkflowFieldPair label={t('workflows.runWhen.title')} trackKey="run-when" labelAlign="control"
@@ -47,7 +49,9 @@ export function WorkflowRunWhenOption(props: Readonly<{
                     tabs={options}
                     activeTabId={props.value ?? 'success'}
                     onSelectTab={props.onChange}
-                    segmentSizing="content"
+                    // Step options' narrow control column: the bar spans it, ending on the fields' edge (WF-ACCEPT-1119B fix 1).
+                    segmentSizing="equal-or-label"
+                    overflow={fitted}
                     accessibilityLabel={t('workflows.runWhen.title')}
                     role="radiogroup"
                     testIDPrefix={props.testIDPrefix}

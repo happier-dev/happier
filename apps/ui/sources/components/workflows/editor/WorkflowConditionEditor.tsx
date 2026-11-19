@@ -1,9 +1,6 @@
-import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { formatWorkflowConditionSentence, WORKFLOW_CONDITION_OPERATOR_LABEL_KEYS as OPERATOR_LABEL_KEYS } from '../presentation/workflowConditionPresentation';
 import * as React from 'react';
 import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import {
     collectWorkflowConditionValueReferences,
@@ -12,7 +9,6 @@ import {
 } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
@@ -36,6 +32,7 @@ import {
 import { workflowEditorStyles } from './workflowEditorStyles';
 import { resolveWorkflowConditionValueFacts } from './workflowConditionValueOptions';
 import { WorkflowFieldSelect, WorkflowReferenceSentence } from './WorkflowStepDataEditor';
+import { WorkflowQuietAction } from './WorkflowStepInspector';
 import { WorkflowValuePicker } from './WorkflowValuePicker';
 import { WorkflowEventValueContext } from './WorkflowEventValueContext';
 
@@ -50,31 +47,6 @@ function testLabel(test: WorkflowConditionTest): string {
     if (test === 'exists') return t('workflows.condition.exists');
     if (test === 'not_exists') return t('workflows.condition.notExists');
     return t(OPERATOR_LABEL_KEYS[test]);
-}
-
-function ConditionAction(props: Readonly<{
-    label: string;
-    onPress: () => void;
-    testID?: string;
-    leadingPlus?: boolean;
-}>): React.ReactElement {
-    const { theme } = useUnistyles();
-    return (
-        <HappierPressable
-            {...(props.testID === undefined ? {} : { testID: props.testID })}
-            accessibilityRole="button"
-            accessibilityLabel={props.label}
-            onPress={props.onPress}
-            style={(state) => [
-                workflowEditorStyles.actionTarget,
-                workflowEditorStyles.addRow,
-                state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
-            ]}
-        >
-            {props.leadingPlus === true ? <Icon name="plus" size={ICON_SIZE.xs} color={theme.colors.text.secondary} /> : null}
-            <Text style={workflowEditorStyles.metaAction}>{props.label}</Text>
-        </HappierPressable>
-    );
 }
 
 type RuleContext = Readonly<{
@@ -232,7 +204,7 @@ function ConditionGroup(props: RuleContext & Readonly<{
     testIDPrefix: string;
 }>): React.ReactElement {
     const { mode, rows } = readWorkflowConditionGroup(props.condition);
-    const add = <ConditionAction leadingPlus label={t('workflows.condition.addCondition')} testID={`${props.testIDPrefix}-add`}
+    const add = <WorkflowQuietAction leadingPlus label={t('workflows.condition.addCondition')} testID={`${props.testIDPrefix}-add`}
         onPress={() => props.onChange(addWorkflowConditionRow(props.condition))} />;
     if (mode === 'single') {
         return <View style={workflowEditorStyles.conditionGroup}>
@@ -301,7 +273,7 @@ export function WorkflowConditionEditor(props: Readonly<{
         return (
             <View testID={props.testIDPrefix} style={workflowEditorStyles.metaRow}>
                 <Text style={workflowEditorStyles.metaText}>{`${props.label} · ${t('workflows.condition.always')}`}</Text>
-                <ConditionAction
+                <WorkflowQuietAction
                     label={t('workflows.condition.addCondition')}
                     onPress={() => props.onChange(WORKFLOW_CONDITION_UNSET)}
                     testID={`${props.testIDPrefix}-add-condition`}

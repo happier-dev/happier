@@ -2720,7 +2720,6 @@ describe('workflow editor body', () => {
 
         for (const [trackKey, helper] of [
             ['review', 'workflow-editor-inspector-review-note'],
-            ['conversation', 'workflow-editor-inspector-continuity-conversation-consequence'],
         ] as const) {
             const { pair, label, control } = columnsOf(trackKey);
             expect(inside(pair, helper)).toBe(true);
@@ -2740,20 +2739,62 @@ describe('workflow editor body', () => {
         expect(draft.blocks[0]).not.toHaveProperty('execution');
     });
 
-    it('offers Workflow default first in a step Conversation and deletes the step choice when it is picked', async () => {
+    it('reads a step Conversation in the Runs in idiom: quiet while it follows the workflow, Use workflow\'s once changed (WF-ACCEPT-1119B fix 1)', async () => {
         const harness = await loadHarness();
-        const changed = vi.fn();
-        const pinned = harness.setWorkflowStepExecutionField(buildDraft(harness), 'analyze', 'conversation', { kind: 'shared_run' });
-        const screen = await renderBody(harness, { draft: pinned, onChange: changed });
-        await activatePromptPreview(screen, 'workflow-editor-step-analyze-prompt');
+        let draft: WorkflowEditorDraft = buildDraft(harness);
+        function Controlled(): React.ReactElement {
+            const [current, setCurrent] = React.useState(draft);
+            draft = current;
+            return React.createElement(harness.WorkflowEditorBody, {
+                draft: current, onChange: setCurrent, machineName: 'Mac Studio', composerScope: MACHINE_COMPOSER_SCOPE,
+                selectedBlockId: 'analyze', onSelectBlock: () => {}, onCustomizeBlock: () => {},
+                view: 'steps', onChangeView: () => {}, executionTarget: 'session',
+            } as never);
+        }
+        const screen = await renderScreen(React.createElement(Controlled));
         await screen.pressByTestIdAsync('workflow-editor-step-analyze-customize');
+        const bar = () => screen.findAll((node) => node.props?.testIDPrefix === 'workflow-editor-inspector-continuity-conversation'
+            && Array.isArray(node.props?.tabs))[0]!;
+        const reset = 'workflow-editor-inspector-continuity-conversation-reset';
 
-        const field = segmentedField(screen, 'workflow-editor-inspector-continuity-conversation');
-        expect(field.props.options[0]).toMatchObject({ id: 'default' });
-        // The option equal to the default is still offered, and it is what is pinned now (F24).
-        expect(field.props.value).toBe('shared_run');
-        await act(async () => { field.props.onChange('default'); });
-        expect(changed.mock.calls.at(-1)?.[0].blocks[0]).not.toHaveProperty('execution');
+        // Following the workflow: the workflow's own value, quiet, with no extra "Default" choice and no way back to offer.
+        expect(bar().props.tabs.map((tab: { id: string }) => tab.id)).not.toContain('default');
+        expect(bar().props.activeTabId).toBe('shared_run');
+        expect(bar().props.valueSource).toBe('inherited');
+        expect(screen.findByTestId(reset)).toBeNull();
+
+        // Choosing a value pins it, even the workflow's own (F24); the bar is then set and "Use workflow's" clears it.
+        await screen.pressByTestIdAsync('workflow-editor-inspector-continuity-conversation:shared_run');
+        expect(draft.blocks[0]).toMatchObject({ execution: { conversation: { kind: 'shared_run' } } });
+        expect(bar().props.valueSource).toBe('set');
+        await screen.pressByTestIdAsync('workflow-editor-inspector-continuity-conversation:fresh');
+        expect(draft.blocks[0]).toMatchObject({ execution: { conversation: { kind: 'fresh' } } });
+        await screen.pressByTestIdAsync(reset);
+        expect(draft.blocks[0]).not.toHaveProperty('execution');
+        expect(bar().props.valueSource).toBe('inherited');
+    });
+
+    it('adds a step input from This step as a labelled + action on the label edge (WF-ACCEPT-1119B fix 2)', async () => {
+        const harness = await loadHarness();
+        let draft: WorkflowEditorDraft = buildDraft(harness);
+        function Controlled(): React.ReactElement {
+            const [current, setCurrent] = React.useState(draft);
+            draft = current;
+            return React.createElement(harness.WorkflowEditorBody, {
+                draft: current, onChange: setCurrent, machineName: 'Mac Studio', composerScope: MACHINE_COMPOSER_SCOPE,
+                selectedBlockId: 'analyze', onSelectBlock: () => {}, onCustomizeBlock: () => {},
+                view: 'steps', onChangeView: () => {}, executionTarget: 'session',
+            } as never);
+        }
+        const screen = await renderScreen(React.createElement(Controlled));
+        await screen.pressByTestIdAsync('workflow-editor-step-analyze-customize');
+        const add = screen.findHostByTestId('workflow-editor-inspector-add-input');
+        expect(add).not.toBeNull();
+        // A + glyph leads its words, as every other add in the editor.
+        expect(add!.findAll((node) => node.props?.name === 'plus').length).toBeGreaterThan(0);
+        const before = (draft.blocks[0] as { input: readonly unknown[] }).input.length;
+        await screen.pressByTestIdAsync('workflow-editor-inspector-add-input');
+        expect((draft.blocks[0] as { input: readonly unknown[] }).input).toHaveLength(before + 1);
     });
 
     // WF-REDESIGN-1116 change a: a step picks its Workspace through the sessions' checkout picker, not segments.

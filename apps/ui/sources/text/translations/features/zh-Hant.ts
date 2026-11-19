@@ -18955,7 +18955,6 @@ const zhHant: WorkflowEditorPageTranslations = {
         inputCount: ({ count }) => `${count} 個輸入`,
         finalOutput: ({ output }) => `最終輸出：${output}`,
         originSession: '啟動它的工作階段',
-        choiceDefault: '預設',
         conversationShared: '共用',
         conversationFresh: '新建',
         conversationContinue: '繼續',

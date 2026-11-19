@@ -19015,7 +19015,6 @@ const ja: WorkflowEditorPageTranslations = {
         inputCount: ({ count }) => `入力 ${count} 件`,
         finalOutput: ({ output }) => `最終出力: ${output}`,
         originSession: '開始したセッション',
-        choiceDefault: 'デフォルト',
         conversationShared: '共有',
         conversationFresh: '新規',
         conversationContinue: '続ける',

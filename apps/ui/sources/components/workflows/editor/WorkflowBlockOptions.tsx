@@ -58,6 +58,7 @@ import { WorkflowResultFieldsEditor } from './WorkflowResultFieldsEditor';
 import {
     WORKFLOW_SESSION_FIELD_IDS_BESIDE_ENGINE,
     WorkflowFieldReset,
+    WorkflowQuietAction,
     WorkflowStepTimeoutField,
 } from './WorkflowStepInspector';
 import { listWorkflowStepSessionChanges } from './WorkflowStepCardChips';
@@ -607,6 +608,8 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
     const continuedSessionLabel = useWorkflowContinuedSessionLabel(effectiveExecution.conversation);
     const workspace = React.useMemo(() => buildWorkflowStepWorkspace({ draft, step,
         write: (next) => onChange(setWorkflowStepExecutionField(draft, step.id, 'workspace', next)) }), [draft, onChange, step]);
+    // A fitted value choice measures its labels (and becomes one field select only where they cannot fit).
+    const fittedBar = React.useMemo(() => ({ label: t('common.more') }), []);
     if (props.documentEditable === false) return <>
         <ItemGroup title={t('workflows.page.sections.conversationTitle')}><SectionContentRow>
             <Text style={workflowEditorStyles.metaText}>{formatWorkflowContinuitySummary({ draft,
@@ -696,7 +699,9 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                             valueSource={ownTarget === undefined ? 'inherited' : 'set'}
                             // Choosing a value pins it, even one equal to the workflow's (F24); "Use workflow's" clears it.
                             onSelectTab={(next) => onChange(setWorkflowStepExecutionTarget(draft, step.id, next))}
-                            segmentSizing="content"
+                            // The bar spans the control column, ending on the fields' edge; "Use workflow's" goes under it.
+                            segmentSizing="equal-or-label"
+                            overflow={fittedBar}
                             accessibilityLabel={t('workflows.page.inspector.runsIn')}
                             role="radiogroup"
                             testIDPrefix={`${testIDPrefix}-runs-in`}
@@ -721,6 +726,7 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                     </View>
                     <WorkflowContinuityControls
                         layout="track"
+                        fillControlColumn
                         draft={draft}
                         consumerBlockId={step.id}
                         conversation={step.execution?.conversation}
@@ -784,18 +790,20 @@ function StepMainPage(props: WorkflowInspectorProps & Readonly<{
                             onPress={() => props.onOpenPage('result')}
                         />
                     </StepOptionRow>
+                    {/* Adding an input lives with Result (named results), not on the step's footer, so selecting a step never
+                        reveals a row (DESIGN-7 N27): the editor's "+" action on the label edge, its own line under Returns
+                        (WF-ACCEPT-1119B fix 2). The new input is edited in the document, where bound inputs read. */}
+                    <View style={workflowEditorStyles.actionFieldRow}>
+                        <WorkflowQuietAction
+                            testID={`${testIDPrefix}-add-input`}
+                            leadingPlus
+                            label={t('workflows.inputs.addInput')}
+                            onPress={() => onChange(updateWorkflowBlock(draft, step.id, (current) => (
+                                current.kind === 'step' ? { ...current, input: [...current.input, { kind: 'literal', value: '' }] } : current
+                            )))}
+                        />
+                    </View>
                 </BareSectionContent>
-                {/* Adding an input lives with Result (named results), not on the step's footer, so
-                    selecting a step never reveals a row (DESIGN-7 N27). The new input is edited in
-                    the document, where bound inputs read. */}
-                <Item
-                    testID={`${testIDPrefix}-add-input`}
-                    title={t('workflows.inputs.addInput')}
-                    showChevron={false}
-                    onPress={() => onChange(updateWorkflowBlock(draft, step.id, (current) => (
-                        current.kind === 'step' ? { ...current, input: [...current.input, { kind: 'literal', value: '' }] } : current
-                    )))}
-                />
             </ItemGroup>
         </>
     );
