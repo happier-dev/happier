@@ -1,5 +1,5 @@
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorDeps, HostReviewedChildrenDomainPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import { prepareManagedMachineWakeChildren, type ManagedWakePreparationReads } from '@happier-dev/cli-common/machines/managed';
 import { createManagedMachineActionClient, ManagedMachineActionError } from '@/sync/api/machines/managedMachineActions';
 import { SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
@@ -11,21 +11,50 @@ import { readOriginalAccountActionMachine } from '@/sync/api/externalActionAccou
 import type { LazyActionAccountContext } from './actionAccountContext';
 import { executeUiManagedMachineRuntimeDemand } from './managedMachineWake';
 import { readUiManagedProvisioners } from './managedProvisionerAction';
+import { preparedSessionMessageTarget, projectSessionMessageTarget, type SessionMessageTargetContext } from './sessionMessageDelivery';
 import { openManagedMachineReadSnapshots } from '@/sync/ops/machines/machinePresetCollectionClient';
 
 /** The captured Account supplies exact reads; shared preparation alone decides whether a wake is demanded. */
 export async function prepareUiManagedMachineWake(
     request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0],
     account: LazyActionAccountContext | undefined,
-) {
+): Promise<HostReviewedChildrenDomainPreparationV1> {
     if (!request.machineRuntimeDemand) return null;
     if (!account) return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
-    return prepareManagedMachineWakeChildren(request, createUiManagedMachineWakeReads(account),
+    let facts: ReturnType<typeof projectSessionMessageTarget> | undefined;
+    const captureTarget = request.actionId === 'session.message.send' ? (read: SessionTargetRead) => {
+        facts = projectSessionMessageTarget(read);
+    } : undefined;
+    const prepared = await prepareManagedMachineWakeChildren(request, createUiManagedMachineWakeReads(account, captureTarget),
         execution => executeUiManagedMachineRuntimeDemand(execution, account));
+    if (!facts || prepared && 'ok' in prepared) return prepared;
+    const executeWake = prepared?.executeAdmittedAction;
+    // Input-owned wakes happen after delivery. An explicit wake runs before delivery
+    // and may change the Session host, so its continuation must resolve fresh facts.
+    if (executeWake && prepared?.children.some(child => child.role === 'managed-wake')) return prepared;
+    const { serverId, accountId, endpointUrl, credentialAuthorityKind } = account;
+    const targetFacts = { facts, serverId, accountId, endpointUrl, credentialAuthorityKind };
+    return {
+        children: prepared?.children ?? [],
+        ...prepared,
+        executeAdmittedAction: execution => {
+            const execute: typeof execution.execute = (context, target) => {
+                const original = !target || target.machineId === targetFacts.facts.machineId
+                    && (target.serverId === undefined || target.serverId === serverId);
+                const sendContext: SessionMessageTargetContext = original
+                    ? { ...context, [preparedSessionMessageTarget]: targetFacts } : context;
+                return execution.execute(sendContext, target);
+            };
+            return executeWake ? executeWake({ ...execution, execute }) : execute(execution.context);
+        },
+    };
 }
 
+type SessionTargetRead = Awaited<ReturnType<typeof readMachineControlTargetForSessionAuthority>>;
+
 /** Preparation resolves the captured Home's exact Session target once. */
-export function createUiManagedMachineWakeReads(account: LazyActionAccountContext): ManagedWakePreparationReads {
+export function createUiManagedMachineWakeReads(account: LazyActionAccountContext,
+    captureTarget?: (read: SessionTargetRead) => void): ManagedWakePreparationReads {
     return {
         readMachineTarget: async (machineId, context) => {
             try {
@@ -53,12 +82,13 @@ export function createUiManagedMachineWakeReads(account: LazyActionAccountContex
         },
         readSessionMachineId: async (target, context) => {
             try {
-                const { target: controlTarget } = await runWithServerRequestAuthorityForServerAccountScope({
+                const read = await runWithServerRequestAuthorityForServerAccountScope({
                     scope: account.accountLifetime.scope, activeRequest: account.request,
                 }, authority => readMachineControlTargetForSessionAuthority({ authority, sessionId: target.sessionId,
                     signal: context.signal, isCurrent: account.accountLifetime.isCurrent }));
                 account.assertCurrent();
-                return controlTarget?.machineId ?? null;
+                captureTarget?.(read);
+                return read.target?.machineId ?? null;
             } catch (error) {
                 const code = context.signal?.aborted ? 'cancelled'
                     : error instanceof SessionSnapshotReadError ? error.errorCode : 'session_target_unavailable';

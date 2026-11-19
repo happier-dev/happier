@@ -9,6 +9,7 @@ import { createDefaultActionExecutor } from './defaultActionExecutor';
 import { storage } from '@/sync/domains/state/storage';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionWithDisplayRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui';
@@ -17,7 +18,13 @@ import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/machine-verc
 import { captureLazyActionAccountContext } from './actionAccountContext';
 import { replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
 import { bindPresentUserActionConfirmation } from './presentUserConfirmation';
-import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema,
+    ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import nacl from 'tweetnacl';
+import { encodeBase64 } from '@/encryption/base64';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 installApprovalCommonModuleMocks();
 afterEach(async () => { await standardCleanup(); });
@@ -149,14 +156,17 @@ it.each(['power', 'send'] as const)('prepares original Account %s provider roles
     } finally { await homes.dispose(); }
 });
 
-it.each(['agent', 'person', 'running', 'manual', 'passive', 'required', 'waived', 'agent-send', 'person-send', 'person-send-now'] as const)(
+it.each(['agent', 'person', 'running', 'manual', 'passive', 'required', 'waived', 'agent-send', 'person-send', 'person-send-now', 'warm-send', 'send-after-wake'] as const)(
     'prepares %s runtime demand through default UI admission without extra effects or passive reads', async mode => {
     // Each external Account has its own real Settings baseline; retained live Settings must not mask a new fixture document.
     const homeId = `srv_wake_${mode}`;
     const settings = setActionApprovalOverride({ settings: ActionsSettingsV1Schema.parse({ v: 1 }),
         actionId: 'machines.managed.power.set', surface: mode === 'required' ? 'ui' : 'agent',
         approvalRequired: mode === 'required' ? true : mode === 'waived' ? false : null });
-    const machine = ManagedMachineV1Schema.parse({ id: 'managed-guest', homeId, custodianAccountId: 'owner',
+    const warmSend = mode === 'warm-send';
+    const sendAfterWake = mode === 'send-after-wake';
+    const deliverSend = warmSend || sendAfterWake;
+    let machine = ManagedMachineV1Schema.parse({ id: 'managed-guest', homeId, custodianAccountId: 'owner',
         controller: { machineId: 'controller', installationId: 'installation' },
         enrolledMachineId: 'guest', allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 4,
         launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
@@ -168,52 +178,94 @@ it.each(['agent', 'person', 'running', 'manual', 'passive', 'required', 'waived'
     const queries: unknown[] = [];
     const wakeAdmissions: unknown[] = [];
     const inventoryRequests: string[] = [];
-    const guest = createPlainMachineRowFixture({ id: 'guest', accountId: 'owner', machine: createMachineFixture({
-        id: 'guest', active: mode === 'running', presenceProtocolVersion: 1,
-        managedMachineRef: mode === 'manual' ? null : { homeId, managedId: machine.id },
-    }) });
-    const sessions = createSessionReadBatchHttpBoundary(async request => request.path === '/v2/sessions/requested-session'
-        ? Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: 'requested-session',
-            metadata: { machineId: 'guest', path: '/workspace', host: 'qa-host' } }) }) : undefined);
+    const managedMachineRef = warmSend || mode === 'manual' ? null : { homeId, managedId: machine.id };
+    const guestMachine = createMachineFixture({
+        id: 'guest', active: warmSend || mode === 'running', presenceProtocolVersion: 1, managedMachineRef,
+    });
+    const guest = createPlainMachineRowFixture({ id: 'guest', accountId: 'owner', machine: guestMachine });
+    const deliveryGuest = deliverSend ? { ...guest, installationId: 'guest-installation',
+        installationPublicKey: encodeBase64(nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).publicKey) } : guest;
+    const sendTrace: string[] = [];
+    let hostPid = 1;
+    const sessions = createSessionReadBatchHttpBoundary(request => {
+        if (request.path !== '/v2/sessions/requested-session') return undefined;
+        const metadata = { machineId: 'guest', path: '/workspace', host: 'qa-host' };
+        if (!deliverSend) return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: 'requested-session', metadata }) });
+        sendTrace.push(`detail:${hostPid}`);
+        return Response.json({ session: createPlainSessionWithDisplayRecordFixture({ id: 'requested-session',
+            metadataVersion: hostPid, metadata: { ...metadata, hostPid } }) });
+    });
+    let serverId: string;
     const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: `https://wake-${mode}.test`,
         serverIdentityId: homeId, accountId: 'owner', currentAccount: true,
         settings: { actionsSettingsV1: settings } }], route: request => {
         if (request.path === '/v1/machines') {
             inventoryRequests.push(request.path);
-            return Response.json([guest]);
+            return Response.json([deliveryGuest]);
         }
         if (request.path === '/v1/machines/read-batch') {
             inventoryRequests.push(request.path);
-            return createMachineReadBatchResponseFixture(request.body, machineId => machineId === guest.id ? guest : null);
+            return createMachineReadBatchResponseFixture(request.body, machineId => machineId === guest.id ? deliveryGuest : null);
         }
+        if (deliverSend && request.path === '/v1/machines/guest') return Response.json({ machine: deliveryGuest });
         const artifact = artifacts.handle(request.path, { method: request.method, body: JSON.stringify(request.body) });
         if (artifact) return artifact;
         if (request.path === '/v1/machines/managed/actions/get') {
             queries.push(request.body);
             return Response.json(machine);
         }
-        if (mode === 'person-send-now' && request.path === '/v1/actions/machines.managed.power.set') {
+        if ((mode === 'person-send-now' || sendAfterWake) && request.path === '/v1/actions/machines.managed.power.set') {
             const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.body);
             expect(envelope.target).toEqual({ kind: 'machine', machineId: 'controller' });
             expect(envelope.input).toMatchObject({ managedId: machine.id, intent: 'start' });
             wakeAdmissions.push(envelope);
+            if (sendAfterWake) {
+                sendTrace.push('wake');
+                hostPid++;
+                machine = { ...machine, intentRevision: 5,
+                    observation: { availability: 'present', power: 'running', storage: 'retained', observedAt: 2 } };
+                storage.getState().applyMachines([{ ...guestMachine, active: true, activeAt: 2 }], false,
+                    { sourceServerId: serverId, sourceAccountId: 'owner' });
+                observeMachinePresenceForTest({ serverId, accountId: 'owner' }, ['guest']);
+                publishHomeAccountChange(serverId, [machine.id], { source: 'socket', machineResourcesAffect: true });
+                return Response.json({ v: 1, actionId: 'machines.managed.power.set', requestId: envelope.requestId,
+                    execution: { ok: true, result: { kind: 'accepted', managedId: machine.id, intentRevision: 5 } } });
+            }
             return Response.json({ v: 1, actionId: 'machines.managed.power.set', requestId: envelope.requestId,
                 execution: { ok: false, errorCode: 'native_resource_unavailable', error: 'native_resource_unavailable' } });
         }
-        if (mode === 'person-send-now' && request.path.endsWith('/actions/list')) return Response.json({ machines: [] });
+        if ((mode === 'person-send-now' || sendAfterWake) && request.path.endsWith('/actions/list')) return Response.json({ machines: [] });
+        if (deliverSend && request.path === '/v1/actions/session.message.send/execution-authorization') {
+            const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);
+            return Response.json({ v: 1, token: 'send-root', binding: {
+                accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 },
+                serverIdentityId: homeId, machineId: 'guest', installationId: 'guest-installation', custodianAccountId: 'owner',
+                accountEncryptionMode: 'plain', actionId: 'session.message.send', requestId: envelope.requestId,
+                target: envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            } });
+        }
+        if (deliverSend && request.path === '/v1/actions/session.message.send') {
+            const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);
+            expect(envelope.target).toEqual({ kind: 'machine', machineId: 'guest' });
+            sendTrace.push('send');
+            return Response.json({ v: 1, actionId: 'session.message.send', requestId: envelope.requestId,
+                execution: { ok: true, result: { status: 'accepted', localId: 'test-send' } } });
+        }
         if (request.path.includes('/machines/managed/')) throw new Error('Preparation cannot issue native work');
         return sessions.handle(request);
     } });
+    serverId = homes.homes.a!.id;
     try {
         // Admission consumes the active Account's admitted Settings projection, not an incidental bootstrap fetch.
         const state = storage.getState();
         state.applySettings({ ...state.settings, actionsSettingsV1: settings }, (state.settingsVersion ?? 0) + 1);
-        const person = mode === 'person' || mode === 'required' || mode === 'person-send' || mode === 'person-send-now';
-        const send = mode === 'agent-send' || mode === 'person-send' || mode === 'person-send-now';
+        const person = mode === 'person' || mode === 'required' || mode === 'person-send' || mode === 'person-send-now' || deliverSend;
+        const send = mode === 'agent-send' || mode === 'person-send' || mode === 'person-send-now' || deliverSend;
         const actionId = send ? 'session.message.send' : mode === 'passive' ? 'daemon.filesystem.listDirectory' : 'daemon.filesystem.readFile';
         const prepared = await createDefaultActionExecutor().prepare(actionId, send
             ? { sessionId: 'requested-session', message: 'Wake only after accepted input', reply: 'none',
-                ...(mode === 'person-send-now' ? { requestedAction: { v: 1, kind: 'send_now' } } : {}) }
+                ...(deliverSend ? { localId: 'test-send' } : {}),
+                ...(mode === 'person-send-now' || sendAfterWake ? { requestedAction: { v: 1, kind: 'send_now' } } : {}) }
             : { rootPath: '/workspace', path: 'README.md' }, {
             surface: person ? 'ui' : 'agent', authority: person ? 'present_user' : 'account_automation', actionCaller: { kind: 'host' },
             ...(mode === 'agent-send' ? { defaultSessionId: 'caller', callerPermissionMode: 'default',
@@ -235,13 +287,20 @@ it.each(['agent', 'person', 'running', 'manual', 'passive', 'required', 'waived'
             expect(prepared, JSON.stringify(prepared)).toMatchObject({ kind: 'ready' });
             expect(artifacts.list()).toHaveLength(0);
         }
-        expect(queries).toEqual(mode === 'passive' || mode === 'manual' ? [] : [{ homeId, managedId: machine.id }]);
+        expect(queries).toEqual(mode === 'passive' || mode === 'manual' || warmSend ? [] : [{ homeId, managedId: machine.id }]);
         expect(inventoryRequests).toEqual(mode === 'passive' ? [] : ['/v1/machines']);
         if (mode === 'person-send-now') {
             if (prepared.kind !== 'ready') throw new Error('expected_ready_send');
             const result = await prepared.invocation.run();
             expect(wakeAdmissions, JSON.stringify(result)).toHaveLength(1);
             expect(result).toMatchObject({ ok: false, errorCode: 'native_resource_unavailable' });
+        }
+        if (deliverSend) {
+            if (prepared.kind !== 'ready') throw new Error('expected_ready_send');
+            const result = await prepared.invocation.run();
+            expect(result, JSON.stringify({ result, sendTrace })).toMatchObject({ ok: true,
+                result: { status: 'accepted', localId: 'test-send' } });
+            expect(sendTrace).toEqual(sendAfterWake ? ['detail:1', 'wake', 'detail:2', 'send'] : ['detail:1', 'send']);
         }
     } finally { await homes.dispose(); }
 });

@@ -4,8 +4,6 @@ import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountS
 import { readHomeAccountDepartures } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import { getMachineContributionRegistryProjectionAuthorityRevision } from '@/sync/ops/machineContributionRegistryProjectionRevision';
-import type { Session } from '@/sync/domains/state/storageTypes';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import { createUiAccountAction } from './accountActionDeps';
 
@@ -19,12 +17,13 @@ const schemasByAccount = new Map<string, { departures: number; sessions: Map<str
 /** Native host schemas belong to the selected Session occurrence, not to an individual send. */
 export async function readSessionMessageInputSchema(params: Readonly<{
     account: LazyActionAccountContext;
-    session: Pick<Session, 'id' | 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView'>;
+    sessionId: string;
+    hostOccurrence: readonly [number | null, number | null, string | null];
     machineId: string;
     context: ActionExecutorContext;
     signal?: AbortSignal;
 }>): Promise<object> {
-    const { account, session, machineId, context, signal } = params;
+    const { account, sessionId, hostOccurrence, machineId, context, signal } = params;
     account.assertCurrent();
     const accountKey = serverAccountScopeKeySuffix(account.accountLifetime.scope);
     const departures = readHomeAccountDepartures(account.serverId);
@@ -33,14 +32,12 @@ export async function readSessionMessageInputSchema(params: Readonly<{
         held = { departures, sessions: new Map() };
         schemasByAccount.set(accountKey, held);
     }
-    const metadata = readSessionOwnerMetadataView(session);
-    const occurrence = JSON.stringify([machineId, metadata?.hostPid ?? null,
-        metadata?.hostProcessStartTimeMs ?? null, metadata?.hostProcessInstanceFingerprint ?? null,
+    const occurrence = JSON.stringify([machineId, ...hostOccurrence,
         getMachineContributionRegistryProjectionAuthorityRevision({ serverId: account.serverId, machineId })]);
-    let entry = held.sessions.get(session.id);
+    let entry = held.sessions.get(sessionId);
     if (!entry || entry.occurrence !== occurrence) {
         entry = { occurrence, pending: createScopedResolutionSingleFlight<object>() };
-        held.sessions.set(session.id, entry);
+        held.sessions.set(sessionId, entry);
     }
     if (entry.inputSchema) return entry.inputSchema;
     const selected = entry;

@@ -6,6 +6,7 @@ import { withSessionMessageModelSelectionV1 } from '@happier-dev/protocol/provid
 import { supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import type { readMachineControlTargetForSessionAuthority } from '@/sync/ops/sessionMachineTarget';
 import { projectServerScopedSessionSendMessageResult, sendSessionMessageWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
@@ -14,6 +15,25 @@ import { createUiAccountAction } from './accountActionDeps';
 import { readSessionMessageInputSchema } from './sessionMessageInputSchema';
 
 export type SessionMessageDelivery = NonNullable<ActionExecutorDeps['sessionSendMessage']>;
+
+export function projectSessionMessageTarget({ session, target }: Awaited<ReturnType<typeof readMachineControlTargetForSessionAuthority>>) {
+  const metadata = readSessionOwnerMetadataView(session);
+  return { sessionId: session.id, machineId: target?.machineId ?? null,
+    isRecipient: isSessionAccessRecipient(session.access, session.accessLevel),
+    hostOccurrence: [metadata?.hostPid ?? null, metadata?.hostProcessStartTimeMs ?? null,
+      metadata?.hostProcessInstanceFingerprint ?? null] as const };
+}
+
+export const preparedSessionMessageTarget = Symbol('preparedSessionMessageTarget');
+export type SessionMessageTargetContext = ActionExecutorContext & {
+  readonly [preparedSessionMessageTarget]?: Readonly<{
+    serverId: string;
+    accountId: string;
+    endpointUrl: string;
+    credentialAuthorityKind: LazyActionAccountContext['credentialAuthorityKind'];
+    facts: ReturnType<typeof projectSessionMessageTarget>;
+  }>;
+};
 
 export async function deliverSessionMessageToAccountPending(
   args: Parameters<SessionMessageDelivery>[0],
@@ -74,8 +94,13 @@ export function createSessionMessageDelivery(params: Readonly<{
     try {
       if (ownedAccount) assertExpectedActionAccount(account, args.context);
       account.assertCurrent();
-      const { session, target } = await readAccountSessionControlTarget(account, sessionId, signal);
-      if (isSessionAccessRecipient(session.access, session.accessLevel)
+      throwIfAborted(signal);
+      const { [preparedSessionMessageTarget]: prepared, ...actionContext } = args.context as SessionMessageTargetContext;
+      const { machineId, isRecipient, hostOccurrence } = prepared?.facts.sessionId === sessionId
+        && prepared.serverId === account.serverId && prepared.accountId === account.accountId
+        && prepared.endpointUrl === account.endpointUrl && prepared.credentialAuthorityKind === account.credentialAuthorityKind
+        ? prepared.facts : projectSessionMessageTarget(await readAccountSessionControlTarget(account, sessionId, signal));
+      if (isRecipient
         && account.credentialAuthorityKind === 'account'
         && (!args.actionCaller || args.actionCaller.kind === 'host')
         && args.context.authority !== 'account_automation'
@@ -87,14 +112,14 @@ export function createSessionMessageDelivery(params: Readonly<{
         return await withActionAccountRequestSignal(account, signal, pendingSignal =>
           deliverSessionMessageToAccountPending({ ...args, serverId: account.serverId, signal: pendingSignal }));
       }
-      if (!target) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      if (!machineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
       if (requiresReplyCustody) {
         const machines = await withActionAccountRequestSignal(account, signal, ownedSignal => readMachineRows({
           readTransport: account.readTransport, request: (path, init) => account.request(path, { ...init, signal: ownedSignal }),
-          machineIds: [target.machineId], signal: ownedSignal }));
+          machineIds: [machineId], signal: ownedSignal }));
         account.assertCurrent();
         throwIfAborted(signal);
-        const row = machines.get(target.machineId);
+        const row = machines.get(machineId);
         const machine = row?.revokedAt === null && row.replacedByMachineId === null ? row : null;
         if (!supportsMachineOperationProtocolCapabilityV1(machine?.operationProtocolCapabilities, 'sessionMessageReply')) {
           return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
@@ -102,9 +127,9 @@ export function createSessionMessageDelivery(params: Readonly<{
       }
       // Relay the validated authored variant, not its local text/metadata projection.
       let input = { ...args.authoredInput, sessionId };
-      const context: ActionExecutorContext = { ...args.context, actionCaller: args.actionCaller ?? args.context.actionCaller,
+      const context: ActionExecutorContext = { ...actionContext, actionCaller: args.actionCaller ?? args.context.actionCaller,
         serverId: account.serverId, runtimeAccountId: account.accountId,
-        externalActionTarget: { kind: 'machine', machineId: target.machineId } };
+        externalActionTarget: { kind: 'machine', machineId } };
       const execute = createUiAccountAction({ account });
       // Authenticated receivers strictly parse ordinary Send, including authored
       // metadata and the full model selection. The original Send can therefore
@@ -117,8 +142,7 @@ export function createSessionMessageDelivery(params: Readonly<{
       let advertisedInputSchema: object | undefined;
       if (requiresTargetInputSchema) {
         try {
-          advertisedInputSchema = await readSessionMessageInputSchema({ account, session,
-            machineId: target.machineId, context, signal });
+          advertisedInputSchema = await readSessionMessageInputSchema({ account, sessionId, hostOccurrence, machineId, context, signal });
           account.assertCurrent();
           throwIfAborted(signal);
           if (!supportsSessionMessageInputJsonSchema(advertisedInputSchema, input)) {
@@ -135,7 +159,7 @@ export function createSessionMessageDelivery(params: Readonly<{
         const { uploadSessionMessageAttachmentDrafts } = await import('@/components/sessions/attachments/uploadSessionMessageAttachmentDrafts');
         const uploaded = await uploadSessionMessageAttachmentDrafts({
           target: { serverId: account.serverId, accountId: account.accountId, sessionId },
-          executionTarget: { serverId: account.serverId, machineId: target.machineId },
+          executionTarget: { serverId: account.serverId, machineId },
           drafts: composerSubmission.legacyAttachments.drafts, config: composerSubmission.legacyAttachments.config,
           onUploadedDraftCheckpoint: composerSubmission.legacyAttachments.onUploadedDraftCheckpoint,
           messageLocalId: localId, ...(signal ? { signal } : {}),
@@ -159,7 +183,7 @@ export function createSessionMessageDelivery(params: Readonly<{
           attachments: input.structuredInput.composerAttachments,
           sourceComposerRef: composerSubmission.sourceComposerRef,
           targetComposerRef: { kind: 'session', sessionId },
-          executionTarget: { serverId: account.serverId, machineId: target.machineId },
+          executionTarget: { serverId: account.serverId, machineId },
           messageLocalId: localId, signal, isCurrent: () => account.accountLifetime.isCurrent() && composerSubmission.isCurrent(),
         });
         if (!preparedAttachments) return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
@@ -182,7 +206,7 @@ export function createSessionMessageDelivery(params: Readonly<{
         && composerSubmission?.legacyAttachments && localId && 'message' in input) {
         composerSubmission.legacyAttachments.onUploadedDraftCheckpointStale({
           target: { serverId: account.serverId, accountId: account.accountId, sessionId },
-          executionTarget: { serverId: account.serverId, machineId: target.machineId }, messageLocalId: localId,
+          executionTarget: { serverId: account.serverId, machineId }, messageLocalId: localId,
           handles: input.structuredInput?.sessionAttachments ?? [],
         });
         await preparedAttachments?.releaseOnRejection();
