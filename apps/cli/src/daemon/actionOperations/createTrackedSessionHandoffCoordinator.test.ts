@@ -31,8 +31,9 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import nacl from 'tweetnacl';
 import { createSessionRecordFixture, createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionMachineRpcExecutionV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { resolveExternalActionRootInvocationAuthority } from '@/api/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createSessionHandoffSourceExportStore } from '@/session/handoff/state/sessionHandoffSourceExportStore';
 import { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { createRequesterSessionCredentialCustody, resolveRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
@@ -84,6 +85,20 @@ function handoffSourceHttpBoundary(sessionId: string) {
     if (!config.url) throw new Error('Missing Home URL');
     return await axios.get(config.url, config);
   });
+}
+
+function createSandboxHandoffTarget(activeServerDir: string) {
+  const target = new RpcHandlerManager({ scopePrefix: 'target', localMachineId: 'target', encryptionMode: 'plain',
+    authorizeRequest: async () => ({ ok: true }), logger: () => undefined });
+  registerMachineSessionHandoffRpcHandlers({
+    rpcHandlerManager: target, localMachineId: 'target', runtimeConfig: { activeServerDir },
+    readHandoffTargetMachineMetadata: () => ({ status: 'ready', metadataVersion: 1, metadata: { isolationPolicyV1: {
+      configuredSandboxes: { local: { provisioner: { pluginId: 'custom.compute', localId: 'lima' }, presetId: 'local-preset' } },
+      workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: 'fresh' },
+        botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } },
+    } } }),
+  });
+  return target;
 }
 
 describe('createTrackedSessionHandoffCoordinator', () => {
@@ -214,16 +229,7 @@ describe('createTrackedSessionHandoffCoordinator', () => {
           handoffPreflight: { rootRequestId: root.binding.requestId, rootRequestEnvelopeDigest: root.binding.requestEnvelopeDigest },
         } } };
       });
-      const targetDaemon = new RpcHandlerManager({ scopePrefix: 'target', localMachineId: 'target', encryptionMode: 'plain',
-        authorizeRequest: async () => ({ ok: true }), logger: () => undefined });
-      registerMachineSessionHandoffRpcHandlers({
-        rpcHandlerManager: targetDaemon, localMachineId: 'target', runtimeConfig: { activeServerDir },
-        readHandoffTargetMachineMetadata: () => ({ status: 'ready', metadataVersion: 1, metadata: { isolationPolicyV1: {
-          configuredSandboxes: { local: { provisioner: { pluginId: 'custom.compute', localId: 'lima' }, presetId: 'local-preset' } },
-          workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: 'fresh' },
-            botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } },
-        } } }),
-      });
+      const targetDaemon = createSandboxHandoffTarget(activeServerDir);
       const callMachine = vi.fn(async (input: MachineCallInput) => {
         const signed = input.externalAction;
         expect(signed?.effectActionId).toBe('session.handoff');
@@ -265,15 +271,17 @@ describe('createTrackedSessionHandoffCoordinator', () => {
     });
   });
 
-  it.each(['continuation', 'linked_workspace', 'relationship', 'retired_linked_workspace'] as const)(
-    'preserves installed Project rows during a cold requester handoff: %s', async scenario => {
+  it.each(['refuses without sending requester custody', 'continuation', 'linked_workspace', 'relationship', 'retired_linked_workspace'] as const)(
+    'handles a cold requester handoff: %s', async scenario => {
     let phase = 'prepare requester custody and Home boundaries';
     onTestFailed(() => console.error('Cold requester Project handoff fixture failed', { scenario, phase }));
     await withTempDir('handoff-requester-continuation-', async activeServerDir => {
       const sessionId = `c${'b'.repeat(24)}`;
       const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(32));
+      const targetKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(33));
+      const targetCustodian = scenario === 'refuses without sending requester custody' ? 'carol' : 'alice';
       const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'accepted-original-root', binding: {
-        accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 7 }, serverIdentityId: 'srv_bob',
+        accountId: 'bob', accountEncryptionMode: 'plain', authentication: { kind: 'account', tokenEpoch: 7 }, serverIdentityId: 'srv_bob',
         machineId: 'source', custodianAccountId: 'alice', installationId: 'source-installation', actionId: 'session.handoff',
         requestId: 'original-request', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'source' },
         sessionActionOrigin: { v: 1, caller: { kind: 'session', sessionId, starterDepth: 1, turnDepth: 2 },
@@ -295,7 +303,10 @@ describe('createTrackedSessionHandoffCoordinator', () => {
         if (path === '/v1/machines/source' || path === '/v1/machines/target') {
           const id = path.split('/').at(-1)!;
           return { status: 200, data: { machine: { id, active: true, installationId: `${id}-installation`,
-            access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready' },
+            installationPublicKey: Buffer.from(id === 'target' ? targetKeys.publicKey : keys.publicKey).toString('base64'),
+            access: { custodian: { accountId: id === 'target' ? targetCustodian : 'alice',
+              displayName: id === 'target' && targetCustodian === 'carol' ? 'Carol' : 'Alice' },
+            role: 'use', resourceMode: 'plain', accessState: 'ready' },
             metadataVersion: 1, daemonStateVersion: 0, daemonState: null, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
             devcontainerChild: null, metadata: encodePlainMachineStoredContent({ host: id, platform: 'linux', homeDir: '/home/user',
               happyHomeDir: '/home/user/.happier', happyCliVersion: 'source-fixture' }) } } };
@@ -360,7 +371,7 @@ describe('createTrackedSessionHandoffCoordinator', () => {
         if (request.handoffPreflight) {
           expect(request.handoffPreflight).toEqual({ authorization: root });
           return { status: 200, data: { v: 1, token: 'target-child', binding: { ...root.binding,
-            machineId: 'target', installationId: 'target-installation', target: request.envelope.target,
+            machineId: 'target', custodianAccountId: targetCustodian, installationId: 'target-installation', target: request.envelope.target,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
             handoffPreflight: { rootRequestId: root.binding.requestId, rootRequestEnvelopeDigest: root.binding.requestEnvelopeDigest },
           } } };
@@ -385,6 +396,69 @@ describe('createTrackedSessionHandoffCoordinator', () => {
           readInstallation: () => ({ installationId: 'source-installation', privateKey: keys.secretKey }) } });
       expect(requester).not.toBeNull();
       onTestFinished(() => requester?.dispose());
+      if (scenario === 'refuses without sending requester custody') {
+        phase = 'send the signed capability request to the foreign custodian';
+        const target = createSandboxHandoffTarget(activeServerDir);
+        const custodyOnWire: boolean[] = [];
+        const answer = async (event: string, packet: unknown) => {
+          if (event !== SOCKET_RPC_EVENTS.CALL || !packet || typeof packet !== 'object'
+            || !('method' in packet) || typeof packet.method !== 'string' || !('params' in packet)
+            || !('requestId' in packet) || typeof packet.requestId !== 'string') {
+            throw new Error('Expected a Machine capability RPC');
+          }
+          expect(packet.method).toBe(`target:${RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET}`);
+          const execution = ExternalActionMachineRpcExecutionV1Schema.parse(Reflect.get(packet, 'externalActionExecution'));
+          expect(execution.authorization.binding).toMatchObject({
+            accountId: 'bob', custodianAccountId: 'carol', machineId: 'target', installationId: 'target-installation',
+            handoffPreflight: { rootRequestId: root.binding.requestId },
+          });
+          expect(verifyExternalActionMachineRpcRequestV1({
+            authorizationToken: execution.authorization.token, requesterAccountContext: execution.authorization.requesterAccountContext,
+            effectActionId: execution.effectActionId, target: execution.target, installationId: execution.installationId,
+            method: packet.method, requestId: packet.requestId, params: packet.params,
+            publicKey: keys.publicKey, signature: execution.machineSignature,
+          })).toBe(true);
+          const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, packet.params, packet.method);
+          custodyOnWire.push(execution.authorization.requesterAccountContext !== undefined
+            || decoded.params !== null && typeof decoded.params === 'object' && 'requesterBootstrap' in decoded.params);
+          return { ok: true, result: await target.handleRequest({
+            method: packet.method, params: packet.params, callerInputAuthorization: execution.authorization,
+            callerAuthority: resolveExternalActionRootInvocationAuthority(execution.authorization),
+            sessionActionOrigin: execution.authorization.binding.sessionActionOrigin,
+            machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'carol', machineId: 'target',
+              installationId: 'target-installation', role: 'use', encryptionMode: 'plain' },
+          }) };
+        };
+        bindApiSessionSocketMock(socketIo, createApiSessionSocketStub({
+          emitWithAck: answer,
+          emit: async (event, args) => {
+            const response = await answer(event, args[0]);
+            if (typeof args[1] !== 'function') throw new Error('Missing Machine RPC acknowledgement');
+            args[1](response);
+          },
+        }));
+        const coordinate = createTrackedSessionHandoffCoordinator({ expectedAccountServerId: 'bob-home',
+          readCredentials: async () => requester!.credentials,
+          handoffAuthorization: { sourceExportStore: store, serverHttpBaseUrl: 'https://bob-home.test',
+            readSourceInstallation: () => ({ machineId: 'source', installationId: 'source-installation', privateKey: keys.secretKey }) },
+          workspaceSyncAdapter: createWorkspaceSyncHandoffAdapter({ sync: {} as never,
+            bootstrap: async () => { throw new Error('Unexpected workspace bootstrap'); } }),
+        });
+        const start = vi.fn(async () => ({ ok: false as const, errorCode: 'source_stopped', error: 'source_stopped' }));
+        const result = await runWithServerHttpBaseUrl('https://bob-home.test', () => coordinate({
+          operationId: root.binding.requestId, actionInput: { sessionId, targetMachineId: 'target', targetPath: '/target', stateTransfer: 'transfer' },
+          start, signal: new AbortController().signal, publishOwnerUpdate: vi.fn(),
+          context: { surface: 'rpc', externalActionExecutionAuthorization: root, requesterSessionBootstrap: requester! },
+        })).catch((error: unknown) => {
+          if (!custodyOnWire.length) throw error;
+          return error;
+        });
+        if (!custodyOnWire.length) expect(result).toMatchObject({ ok: false, errorCode: 'handoff_target_requires_sandbox_preset' });
+        expect(custodyOnWire).toEqual([false]);
+        expect(result).toMatchObject({ ok: false, errorCode: 'handoff_target_requires_sandbox_preset' });
+        expect(start).not.toHaveBeenCalled();
+        return;
+      }
       phase = 'read installed Project rows';
       const installedSnapshot = await runWithServerHttpBaseUrl('https://bob-home.test', () => readProjectAccountRows({
         credentials: { token: 'installed-daemon', encryption: null }, serverId: 'bob-home', publication: 'installed' }));
@@ -427,12 +501,12 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       const callMachine = vi.fn(async (request: Parameters<typeof import('@/session/transport/rpc/machineRpc').callMachineRpc>[0]) => {
         expect(request.externalAction?.context.externalActionExecutionAuthorization).toMatchObject({ token: 'target-child',
           binding: { sessionActionOrigin: root.binding.sessionActionOrigin } });
-        expect(typeof request.externalAction?.context.externalActionExecutionAuthorization?.requesterAccountProjection?.sealRequesterAccountContext)
-          .toBe('function');
         expect(request.authorityCeiling).toBe('account_automation');
         if (request.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET) {
           return { protocolVersion: 3, atomicTargetResume: false, targetCleanup: false, existingState: true };
         }
+        expect(typeof request.externalAction?.context.externalActionExecutionAuthorization?.requesterAccountProjection?.sealRequesterAccountContext)
+          .toBe('function');
         expect(request.request).toMatchObject({ kind: 'requester_session_handoff_bootstrap_v1',
           input: { handoffId: 'handoff-cold', sessionId, sourceMachineId: 'source', targetMachineId: 'target' },
           requesterBootstrap: { credentials: { token: 'bob-ordinary' } } });

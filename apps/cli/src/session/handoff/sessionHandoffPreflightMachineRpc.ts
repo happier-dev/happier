@@ -73,7 +73,7 @@ export function createSessionHandoffPreflightMachineRpc(deps: Readonly<{
           ...(input.credentials.encryption?.type === 'dataKey' ? { material: input.credentials.encryption } : {}),
           ...(signal ? { signal } : {}),
         });
-        const authorization = child && requester
+        const authorization = child && requester && input.method !== RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET
           ? await requester.projectExternalActionAuthorization(child, child.binding.serverIdentityId, signal) : child;
         const currentSigner = boundary.readSourceInstallation();
         if (!authorization || !currentSigner || currentSigner.machineId !== signer.machineId
