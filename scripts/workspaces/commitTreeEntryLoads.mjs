@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -26,7 +26,7 @@ const ROOT_RUNTIME_INPUT = /(\.[cm]?[jt]sx?|\.json|\.ya?ml)$|^patches\//;
 // The entry-load harness and the process probe it runs every graph through.
 const HARNESS = /^apps\/stack\/scripts\/(perf|utils\/proc)\//;
 // Extracted trees and derived server clients share one filesystem so a derivation is renamed, never copied.
-const defaultRoot = () => join(tmpdir(), 'happier-commit-tree');
+const defaultRoot = () => join(process.env.P03_COMMIT_TREE_HOST_TMP || tmpdir(), 'happier-commit-tree');
 
 /** The gate mode both HEAD writers share: `report` (default), `block` or `off`. */
 export function commitTreeGateMode(env = process.env) {
@@ -187,8 +187,9 @@ export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo
 /** One tree: extract, derive its generated inputs, mount the installation, load the graphs. */
 async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, timings }) {
   const git = gitAt(repo);
-  await mkdir(join(root, 'trees'), { recursive: true });
-  const dir = await mkdtemp(join(root, 'trees', 'tree-'));
+  const trees = env.P03_COMMIT_TREE_WORK_DIR || join(root, 'trees');
+  await mkdir(trees, { recursive: true });
+  const dir = await mkdtemp(join(trees, 'tree-'));
   const mark = (name, from) => { timings[name] = Math.round(performance.now() - from); return performance.now(); };
   try {
     const { extractRevision } = await import(new URL('apps/stack/scripts/build/source_revision_install.mjs', tooling).href);
@@ -197,6 +198,7 @@ async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, 
     const { withDependencyConsumption } = await import(new URL('apps/stack/scripts/utils/proc/dependency_refresh.mjs', tooling).href);
     let at = performance.now();
     await extractRevision({ repoDir: repo, revision: tree, outputDir: dir });
+    signal?.throwIfAborted();
     at = mark('extractMs', at);
     // The shared installation stays published while the tree consumes it.
     const results = await withDependencyConsumption({ installDir, env, signal }, async () => {
@@ -223,6 +225,15 @@ async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, 
   }
 }
 
+// AbortSignal emits an error before the subprocess exits. The tree stays until its reader closes.
+function waitForTreeChild(child) {
+  return new Promise((resolvePromise, reject) => {
+    let failure;
+    child.once('error', error => { failure = error; });
+    child.once('close', code => { if (failure) reject(failure); else resolvePromise(code); });
+  });
+}
+
 async function runTreeHarness({ dir, selected, env, signal }) {
   const code = `const { ENTRY_GRAPHS, loadEntryGraph } = await import(${JSON.stringify(pathToFileURL(join(dir, ENTRY_LOAD_PATH)).href)});
 const ids = ${JSON.stringify(selected)};
@@ -232,7 +243,7 @@ for (const graph of ENTRY_GRAPHS.filter(graph => ids.includes(graph.id))) consol
   let stdout = ''; let stderr = '';
   child.stdout.on('data', chunk => { stdout += chunk; });
   child.stderr.on('data', chunk => { stderr += chunk; });
-  const [code_] = await new Promise((resolvePromise, reject) => { child.once('error', reject); child.once('close', (...args) => resolvePromise(args)); });
+  const code_ = await waitForTreeChild(child);
   const results = stdout.split('\n').filter(line => line.startsWith('ENTRY_RESULT ')).map(line => JSON.parse(line.slice('ENTRY_RESULT '.length)));
   if (code_ !== 0 || results.length !== selected.length) {
     throw new Error(`tree entry-load harness exited ${code_} with ${results.length}/${selected.length} results: ${stderr.slice(-400)}`);
@@ -285,7 +296,7 @@ async function runServerRoutes({ dir, env, signal }) {
     let stdout = ''; let stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; });
     child.stderr.on('data', chunk => { stderr += chunk; });
-    const code = await new Promise((resolvePromise, reject) => { child.once('error', reject); child.once('close', resolvePromise); });
+    const code = await waitForTreeChild(child);
     const line = stdout.split('\n').find(entry => entry.startsWith('ENTRY_RESULT '));
     // A probe that dies before reporting failed to load the server's startup graph; the stderr names the cause.
     if (!line) {
@@ -311,8 +322,12 @@ export function startCommitTreeEntryLoadReport({ repo, base, tree, label, ledger
   try { gitAt(repo)(['cat-file', '-e', `${tree}:${ENTRY_GRAPHS_PATH}`]); } catch { return null; }
   mkdirSync(dirname(ledger), { recursive: true });
   const log = openSync(`${ledger}.log`, 'a');
+  // A detached report owns its tree and can outlive the packet that launched it.
+  const { P03_COMMIT_TREE_WORK_DIR: packetWork, P03_COMMIT_TREE_HOST_TMP: hostTmp, ...reportEnv } = env;
+  if (packetWork) reportEnv.TMPDIR = hostTmp || '/tmp';
   const child = spawn(process.execPath, [self, '--report', '--repo', repo, '--base', base, '--tree', tree, '--label', label, '--ledger', ledger],
-    { cwd: repo, env, detached: true, stdio: ['ignore', log, log] });
+    { cwd: repo, env: reportEnv, detached: true, stdio: ['ignore', log, log] });
+  closeSync(log);
   child.unref();
   return child.pid;
 }
@@ -350,8 +365,12 @@ if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[
   const record = entry => { if (ledger) appendFileSync(ledger, `${JSON.stringify({ at: new Date().toISOString(), label, base, tree, ...entry })}\n`); };
   const release = args.includes('--report') ? takeReportLock(defaultRoot()) : () => {};
   if (!release) { record({ verdict: 'skipped', reason: 'another report run is active on this host' }); process.exit(0); }
+  const stop = new AbortController();
+  const interrupt = () => stop.abort();
+  process.once('SIGINT', interrupt);
+  process.once('SIGTERM', interrupt);
   try {
-    const result = await commitTreeEntryLoads({ repo, base, tree, installDir: resolve(option('install-dir') ?? repo) });
+    const result = await commitTreeEntryLoads({ repo, base, tree, installDir: resolve(option('install-dir') ?? repo), signal: stop.signal });
     for (const finding of result.findings) console.error(`tree entry load: ${finding}`);
     for (const finding of result.preexisting) console.error(`tree entry load (also fails at the base): ${finding}`);
     console.log(`commit tree entry loads: ${result.selected.length}/${result.graphs} graph(s), ${result.findings.length} failure(s), ${JSON.stringify(result.timings)}`);
@@ -361,5 +380,9 @@ if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[
     console.error(`commit tree entry loads unavailable: ${String(error?.stack ?? error).slice(0, 800)}`);
     record({ verdict: 'unavailable', error: String(error?.message ?? error).slice(0, 400) });
     process.exitCode = 75;
-  } finally { release(); }
+  } finally {
+    process.off('SIGINT', interrupt);
+    process.off('SIGTERM', interrupt);
+    release();
+  }
 }

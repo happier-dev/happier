@@ -1,10 +1,12 @@
-import os, pathlib, subprocess, tempfile, time, sys
+import os, pathlib, signal, subprocess, tempfile, time, sys
 ROOT = pathlib.Path(__file__).resolve().parent
 CP = os.environ.get('P03_SELFTEST_CP', str(ROOT / 'commit-partial.sh'))
 REAL_GIT = subprocess.check_output(['which', 'git'], text=True).strip()
 def case(kind):
     d = pathlib.Path(tempfile.mkdtemp(prefix='p03-replay-test.'))
-    env = dict(os.environ, P03_COMMIT_KICK='true')
+    scratch = d/'wrapper-scratch'; scratch.mkdir()
+    cache = d/'shared-cache'; cache.mkdir()
+    env = dict(os.environ, P03_COMMIT_KICK='true', TMPDIR=str(scratch), P03_GATE_CACHE=str(cache))
     def git(*args):
         return subprocess.check_output([REAL_GIT, *args], cwd=d, env=env, text=True).strip()
     git('init', '-q', '-b', 'main'); git('config', 'user.name', 'Replay test'); git('config', 'user.email', 'replay@test.invalid')
@@ -21,7 +23,7 @@ def case(kind):
     (d/'msg').write_text('test: packet A\n')
     idx = str(d/'private-b'); envb = dict(env, GIT_INDEX_FILE=idx)
     subprocess.check_call([REAL_GIT, 'read-tree', base], cwd=d, env=envb)
-    target = 'b.txt' if kind in ('disjoint','newfile','cheapmiss','cas-loss','requeue') else 'package.json' if kind == 'manifest' else 'a.txt'
+    target = 'b.txt' if kind in ('disjoint','newfile','cheapmiss','cas-loss','requeue','retention') else 'package.json' if kind == 'manifest' else 'a.txt'
     content = initial.replace('line 20\n', 'packet B\n') if kind != 'conflict' else initial.replace('line 2\n', 'conflict B\n')
     blob = subprocess.check_output([REAL_GIT, 'hash-object', '-w', '--stdin'], input=content, cwd=d, text=True).strip()
     subprocess.check_call([REAL_GIT, 'update-index', '--cacheinfo', f'100644,{blob},{target}'], cwd=d, env=envb)
@@ -42,6 +44,32 @@ exec '{REAL_GIT}' "$@"
     # A second writer can land while the replayed candidate's full gate runs.
     later = git('commit-tree', tree, '-p', b, '-m', 'test: another wrapper landed')
     gate = d/'gate.sh'; gate.write_text(f'''#!/bin/bash
+printf '%s\n' "$0" >> '{d}/gate-paths'
+if [ -n "${{P03_COMMIT_TREE_WORK_DIR:-}}" ]; then
+ mkdir -p "$P03_COMMIT_TREE_WORK_DIR/tree-test" || exit 99
+ echo payload > "$P03_COMMIT_TREE_WORK_DIR/tree-test/input"
+fi
+if [ '{kind}' = retention ] || [ '{kind}' = requeue ]; then
+ if [ -n "${{P03_TEST_HEAD_SEED:-}}" ]; then
+   [ -f "$P03_GATE_CACHE/scan-v2-T$P03_TEST_HEAD_SEED.txt" ] || exit 99
+   [ -f "$P03_GATE_CACHE/scanidx-v2-T$P03_TEST_HEAD_SEED.gz" ] || exit 99
+ elif [ -e '{d}/prior-cache' ]; then
+   prior=$(cat '{d}/prior-cache')
+   [ -f "$P03_GATE_CACHE/scan-v2-T$prior.txt" ] || exit 99
+ else
+   git rev-parse "$2^{{tree}}" > '{d}/prior-cache'
+ fi
+ for rev in "$1" "$2"; do
+   tree=$(git rev-parse "$rev^{{tree}}") || exit 99
+   printf '%s\n' "$tree" > "$P03_GATE_CACHE/scan-v2-T$tree.txt"
+   printf '%s\n' "$tree" > "$P03_GATE_CACHE/scanidx-v2-T$tree.gz"
+ done
+ echo private > "$P03_GATE_CACHE/packet-local-test"
+fi
+if [ '{kind}' = signal ]; then
+ touch '{d}/ready'
+ exec sleep 120
+fi
 l=unlocked; flock -n "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" true || l=locked
 if [ '{kind}' != cas-loss ] && [ ! -e '{d}/moved' ]; then
  touch '{d}/moved'
@@ -62,7 +90,26 @@ sleep 0.2
     if kind == 'newfile':
         (d/'wholefiles').write_text('c.txt\n'); selected=str(d/'wholefiles')
     start=time.monotonic()
-    run=subprocess.run(['bash', CP, str(d/'msg'), selected, str(d/'packet.patch')], cwd=d, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    command = ['bash', CP, str(d/'msg'), selected, str(d/'packet.patch')]
+    if kind == 'signal':
+        with subprocess.Popen(command, cwd=d, env=env, text=True, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, start_new_session=True) as child:
+            try:
+                until = time.monotonic() + 5
+                while not (d/'ready').exists() and time.monotonic() < until and child.poll() is None:
+                    time.sleep(0.01)
+                assert (d/'ready').exists(), 'wrapper never started the gate'
+            finally:
+                os.killpg(child.pid, signal.SIGTERM)
+            output, _ = child.communicate(timeout=5)
+        print(f'{kind}: rc={child.returncode} scratch={list(scratch.iterdir())} evidence={d}', flush=True)
+        assert child.returncode in (-signal.SIGTERM, 143), output
+        assert git('rev-parse','HEAD') == base
+        assert not list(scratch.iterdir()), 'aborted packet leaked its gate copy or tree'
+        return
+    run=subprocess.run(command, cwd=d, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    assert not list(scratch.iterdir()), f'packet leaked scratch: {list(scratch.iterdir())}'
+    assert all(not pathlib.Path(path).exists() for path in (d/'gate-paths').read_text().splitlines())
     elapsed=time.monotonic()-start
     (d/'run.log').write_text(run.stdout)
     gates=(d/'gates').read_text().splitlines()
@@ -73,6 +120,10 @@ sleep 0.2
     else:
         assert run.returncode == 0, run.stdout
         assert git('rev-parse','HEAD^') == (later if kind == 'requeue' else b)
+        if kind in ('retention', 'requeue'):
+            head_tree = git('rev-parse', 'HEAD^{tree}')
+            payloads = sorted(p.name for p in cache.rglob('*') if p.is_file() and not p.name.endswith('.lock') and not p.name.endswith('.slot'))
+            assert payloads == sorted([f'scan-v2-T{head_tree}.txt', f'scanidx-v2-T{head_tree}.gz']), payloads
         assert 'packet B' in git('show',f'HEAD:{target}'), 'replay lost B tree content'
         assert git('show','HEAD:a.txt').splitlines()[2] == 'packet A', 'replay lost A'
         if kind == 'intersect': assert git('show','HEAD:a.txt').splitlines()[20] == 'packet B', 'merged file lost B'
@@ -95,4 +146,11 @@ sleep 0.2
         if kind == 'cas-loss':
             assert 'CAS lost to a commit outside the wrapper' in run.stdout, run.stdout
         assert git('reflog', '-1', '--format=%gs', 'refs/heads/main').startswith('commit-partial: pid '), 'reflog does not name the wrapper'
-for kind in sys.argv[1:] or ['disjoint','intersect','conflict','refused','newfile','manifest','cheapmiss','cas-loss','requeue']: case(kind)
+        if kind == 'retention':
+            (d/'b.txt').write_text(git('show', 'HEAD:b.txt').replace('line 1\n', 'next packet\n')+'\n')
+            (d/'packet.patch').write_text(git('diff', '-U3', 'HEAD', '--', 'b.txt')+'\n')
+            dry = subprocess.run(command, cwd=d, env=dict(env, DRY='1', P03_TEST_HEAD_SEED=head_tree),
+                                 text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            assert dry.returncode == 0 and 'DRY candidate' in dry.stdout, dry.stdout
+            assert not list(cache.glob('packet.*')), 'dry packet retained its private files'
+for kind in sys.argv[1:] or ['disjoint','intersect','conflict','refused','newfile','manifest','cheapmiss','cas-loss','requeue','signal','retention']: case(kind)

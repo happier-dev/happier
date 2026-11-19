@@ -13,7 +13,8 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, openSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { commitSourceSyntax } from './commitSourceSyntax.mjs';
@@ -37,11 +38,6 @@ export function commitTypecheckGateMode(env = process.env) {
   return mode;
 }
 
-/** Cross-run caches (manifest parser bundles per tree, import-cycle facts); they only save time. */
-export function commitGateCacheDir(env = process.env) {
-  return resolve(env.P03_GATE_CACHE || join(homedir(), '.happier-stack/cache/p03-commit-gate'));
-}
-
 class CommitGateUnavailable extends Error {
   constructor(check, cause) {
     super(`commit gate unavailable: ${check} could not judge: ${String(cause?.message ?? cause).slice(0, 600)}`);
@@ -57,7 +53,20 @@ class CommitGateUnavailable extends Error {
  * landed commits cannot change is reused, and nothing detached is started again. `cheapOnly`: try the quick recheck first;
  * a check that takes minutes returns `needs-full`.
  */
-export async function runCommitGate({ repo, base, tree, prior, cheapOnly = false, env = process.env, cacheDir = commitGateCacheDir(env), label = 'commit-gate' }) {
+export async function runCommitGate(options) {
+  const cacheDir = options.cacheDir ?? (options.env ?? process.env).P03_GATE_CACHE;
+  if (cacheDir) return judgeCommit({ ...options, cacheDir: resolve(cacheDir) });
+
+  // Other HEAD writers own only this invocation. The wrapper supplies its longer-lived packet cache.
+  const scratch = await mkdtemp(join(tmpdir(), 'happier-commit-gate-'));
+  try {
+    return await judgeCommit({ ...options, cacheDir: scratch });
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+}
+
+async function judgeCommit({ repo, base, tree, prior, cheapOnly = false, env = process.env, cacheDir, label = 'commit-gate' }) {
   const notes = [];
   const typecheckMode = commitTypecheckGateMode(env);
   const treeMode = commitTreeGateMode(env);

@@ -29,8 +29,24 @@ GATE=${P03_COMMIT_GATE:-/home/leeroy.guest/.happier-stack/workspace/0.3/.project
 # R3: every gate run executes a private copy. Bash reads a running script by offset, so an in-place edit
 # of gate.sh/fastgate.sh crashed running gates (22:41Z); the copy is immune. (Sourced helpers and node
 # programs are read whole when they start.)
-rungate() { local copy rc=0; copy=$(mktemp "${TMPDIR:-/tmp}/p03-gate-copy.XXXXXX"); cp "$1" "$copy"; shift
-  bash "$copy" "$@" 9>&- || rc=$?; rm -f "$copy"; return $rc; }
+gateScratch=
+cleanup_gate() {
+  [ -z "$gateScratch" ] || rm -rf -- "$gateScratch"
+  gateScratch=
+}
+rungate() {
+  local rc=0
+  if [ "${P03_SCAN_CHEAP_ONLY:-0}" != 1 ]; then publish_head_cache "$1" || echo "gate cache: could not publish HEAD seed" >&2; fi
+  seed_gate_cache
+  gateScratch=$(mktemp -d "${TMPDIR:-/tmp}/p03-gate.XXXXXX") || return 75
+  cp "$1" "$gateScratch/gate.sh" || { cleanup_gate; return 75; }
+  shift
+  P03_GATE_CACHE="$packetCache" P03_GATE_PACKET_CACHE=1 P03_COMMIT_TREE_HOST_TMP="${TMPDIR:-/tmp}" \
+    P03_COMMIT_TREE_WORK_DIR="$gateScratch" TMPDIR="$gateScratch" bash "$gateScratch/gate.sh" "$@" 9>&- || rc=$?
+  cleanup_gate
+  if [ "${P03_SCAN_CHEAP_ONLY:-0}" != 1 ]; then publish_head_cache "$1" || echo "gate cache: could not publish HEAD seed" >&2; fi
+  return "$rc"
+}
 # After a commit lands, kick the single rolling HEAD typecheck (it coalesces, never waits). The selftests'
 # scratch repos replace it.
 kick() { if [ -n "${P03_COMMIT_KICK:-}" ]; then $P03_COMMIT_KICK || true
@@ -38,8 +54,66 @@ kick() { if [ -n "${P03_COMMIT_KICK:-}" ]; then $P03_COMMIT_KICK || true
 # Serialize replay, its cheap delta recheck, and CAS.
 # Gates run with fd 9 closed, so detached children cannot keep the commit lock.
 LOCK="$(git rev-parse --git-common-dir)/p03-commit-partial.lock"
-packet=$(mktemp "${TMPDIR:-/tmp}/p03-packet.XXXXXX")
-exec 9>"$LOCK"; trap 'unlock 2>/dev/null || true; rm -f "$packet"' EXIT
+cacheRoot=$(realpath -m -- "${P03_GATE_CACHE:-$HOME/.happier-stack/cache/p03-commit-gate}")
+packetDir=
+exec 9>"$LOCK"
+trap 'unlock 2>/dev/null || true; cleanup_gate; [ -z "$packetDir" ] || rm -rf -- "$packetDir"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+mkdir -p "$cacheRoot/head"
+# A requeue keeps the packet and its accepted scan index. All of its files go away on the final EXIT.
+if [[ ${P03_CP_FROZEN:-} == "$cacheRoot"/packet.??????/packet && -s "$P03_CP_FROZEN" ]]; then
+  packetDir=${P03_CP_FROZEN%/packet}
+else
+  packetDir=$(mktemp -d "$cacheRoot/packet.XXXXXX")
+fi
+packet=$packetDir/packet
+packetCache=$packetDir/cache
+mkdir -p "$packetCache"
+ln -sfn -- "$cacheRoot/fullscan.slot" "$packetCache/fullscan.slot"
+
+# Gate producers publish completed files by rename. A hardlink lends these files to the packet
+# without copying their contents or making an active reader depend on the next HEAD publication.
+seed_gate_cache() (
+  if [ "${P03_SCAN_CHEAP_ONLY:-0}" = 1 ]; then flock -n -s 6 || exit 0; else flock -s 6 || exit 0; fi
+  local file
+  for file in "$cacheRoot/head/"*; do
+    [ -f "$file" ] && ln -- "$file" "$packetCache/" 2>/dev/null || true
+  done
+) 6>"$cacheRoot/head.lock"
+
+publish_head_cache() (
+  local rev=$1 sha tree packages key source scan= bundle=
+  local -A keep=()
+  flock -x 6 || exit 0
+  [ "$(git rev-parse HEAD)" = "$rev" ] || exit 0
+  pin() {
+    local name=$1 dir
+    for dir in "$packetCache" "$cacheRoot/head" "$cacheRoot"; do
+      if [ -f "$dir/$name" ]; then
+        [ "$dir/$name" -ef "$cacheRoot/head/$name" ] || ln -f -- "$dir/$name" "$cacheRoot/head/$name" || return 1
+        keep[$name]=1
+        return 0
+      fi
+    done
+    return 1
+  }
+  packages=$(git rev-parse --verify "$rev:packages" 2>/dev/null) && pin "manifest-parsers-$packages.mjs" || true
+  pin "hbg-$rev.txt" || true
+  # When another writer moves HEAD without preparing a scan/bundle, keep its nearest usable seed.
+  while read -r sha tree; do
+    if [ -z "$scan" ] && pin "scan-v2-T$tree.txt"; then
+      if pin "scanidx-v2-T$tree.gz"; then scan=1; else unset "keep[scan-v2-T$tree.txt]"; fi
+    fi
+    if [ -z "$bundle" ] && pin "hbx-$sha.json.gz"; then bundle=1; fi
+    [ -z "$scan" ] || [ -z "$bundle" ] || break
+  done < <(git log --first-parent -64 --format='%H %T' "$rev")
+  for source in "$cacheRoot/head/"*; do
+    key=${source##*/}
+    if [ -f "$source" ] && [ -z "${keep[$key]:-}" ]; then rm -f -- "$source"; fi
+  done
+) 6>"$cacheRoot/head.lock"
+
 # /proc/locks names the short-lived `flock` child, which exits at once, so the real holder (this wrapper,
 # holding fd 9) looked "invisible" (2026-11-16 00:44Z, 01:14Z, 01:36Z asks). The holder writes who it is.
 lock() { flock -x 9; printf 'pid=%s since=%s msg=%s\n' "$$" "$(date -u +%H:%M:%SZ)" "$msg" > "$LOCK.holder"; }
@@ -89,7 +163,8 @@ replay() { # new HEAD -> fresh tree and parent; never reuse an old tree with a n
 # moved HEAD instead of running the full gate again (20 wrappers re-gating at once on an install would cost ~5 GB each).
 resumed=""
 if [ -n "${P03_CP_FROZEN:-}" ] && [ -s "$P03_CP_FROZEN" ]; then
-  mv -f "$P03_CP_FROZEN" "$packet"; unset P03_CP_FROZEN
+  [ "$P03_CP_FROZEN" = "$packet" ] || mv -f "$P03_CP_FROZEN" "$packet"
+  unset P03_CP_FROZEN
   if [ -n "${P03_CP_GATED:-}" ] && git cat-file -e "${P03_CP_GATED%% *}^{commit}" 2>/dev/null; then
     commit=${P03_CP_GATED%% *}; head=${P03_CP_GATED#* }; resumed=1
   else head=$(git rev-parse HEAD); replay "$head"; fi
@@ -117,7 +192,7 @@ check_gate() {
 [ -z "${DRY:-}" ] || { echo "DRY candidate $commit"; exit 0; }
 # HEAD moved after this packet's gate (P03-GATE-FIX 2026-11-17). The packet is replayed exactly; then only what
 # the landed commits can change for it is re-verified, against the real new HEAD (whose bundle/scan results are
-# cached single-flight per HEAD and shared by every waiter):
+# shared as a seed by every waiter):
 # - a merged file (both sides edited it) is parsed again (syntaxgate) and its imports/exports rescanned;
 # - a landed commit can drop an export the packet imports, disjoint path or not: the export scan of the replayed
 #   candidate, derived from the last accepted candidate's scan, refuses any finding it adds over the new HEAD;
@@ -177,7 +252,7 @@ if [ "$now" != "$head" ]; then
   locked_recheck
 fi
 if git update-ref -m "commit-partial: pid $$ $(head -1 "$msg" | cut -c1-80)" "refs/heads/$branch" "$commit" "$head"; then
-  unlock; echo "COMMITTED $commit parent $head (after $rounds recheck round(s))"
+  unlock; publish_head_cache "$commit" || echo "gate cache: could not publish HEAD seed" >&2; echo "COMMITTED $commit parent $head (after $rounds recheck round(s))"
   { git show --stat --format="%h %s" "$commit" | head -40 || true; }
   register_new_paths; kick; exit 0
 fi
