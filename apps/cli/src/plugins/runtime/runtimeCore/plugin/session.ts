@@ -786,12 +786,18 @@ export function resolvePublicSessionModelSelection(params: Readonly<{
         if (!accepted || accepted.slot.kind !== 'provider_model' || accepted.resourceId === null
             || accepted.resourceId !== requested.resourceId
             || (accepted.teamId ?? params.sessionInput.primaryTeamId) !== requested.teamId
-            || accepted.expectedResourceRevision !== requested.expectedResourceRevision
+            || accepted.expectedResourceRevision < requested.expectedResourceRevision
+            || (requested.deliveryMode === 'vendor-native' && accepted.expectedResourceRevision !== requested.expectedResourceRevision)
             || accepted.deliveryMode !== requested.deliveryMode
             || !isDeepStrictEqual(accepted.nativeDelivery ?? null, requested.nativeDelivery ?? null)) {
             throw new SessionTeamCredentialLaunchUnavailableError();
         }
-        return intentV2;
+        // Broker/direct admission reopens the same resource at its current revision.
+        // The retained model intent supplies the model, while the handoff supplies the revision.
+        return accepted.expectedResourceRevision === requested.expectedResourceRevision ? intentV2 : {
+            ...intentV2,
+            ref: { ...requested, expectedResourceRevision: accepted.expectedResourceRevision },
+        };
     }
     return selection ?? undefined;
 }

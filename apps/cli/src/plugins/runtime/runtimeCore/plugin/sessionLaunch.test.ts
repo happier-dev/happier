@@ -59,6 +59,28 @@ describe('plugin session launch binding', () => {
     });
   });
 
+  it('opens retained Team model intent after the same brokered resource grant is restored', () => {
+    const retained = SessionModelSelectionV2Schema.parse({
+      v: 2, updatedAt: 7, ref: {
+        source: 'team_resource', teamId: 'team-1', resourceId: 'resource-1', expectedResourceRevision: 2,
+        deliveryMode: 'brokered', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'selected-model',
+      },
+    });
+    const restored = SessionModelSelectionV2Schema.parse({
+      ...retained, ref: { ...retained.ref, expectedResourceRevision: 4 },
+    });
+    const input = (selection: typeof retained) => buildPluginSessionBindingInput({
+      credentials, backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      modelSelection: selection, teamCredentialBindings: [sessionModelSelectionV2TeamBindingIntent(selection)],
+    });
+    const metadata = { modelSelectionIntentV2: retained };
+    expect(resolvePublicSessionModelSelection({ sessionInput: input(retained), metadata })).toEqual(retained);
+    expect(resolvePublicSessionModelSelection({ sessionInput: input(restored), metadata })).toEqual(restored);
+    expect(() => resolvePublicSessionModelSelection({
+      sessionInput: input(retained), metadata: { modelSelectionIntentV2: restored },
+    })).toThrow(expect.objectContaining({ code: 'team_credential_provider_selection_not_current' }));
+  });
+
   it.each(['child', 'local', 'server-only', 'authored-scope', 'authored-getter'])('preserves only actual host credential context through Session normalization (%s)', async kind => {
     let sourceCredentials = decodeStoredCredentials({ token: 'normalizer-fixture' });
     if (!sourceCredentials) throw new Error('Invalid stored credential fixture');
