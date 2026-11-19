@@ -20,19 +20,24 @@ use std::io::{self, Read, Write};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
-pub fn encode(kind: u8, payload: &[u8]) -> Vec<u8> {
-    let mut frame = Vec::with_capacity(5 + payload.len());
+fn frame_header(kind: u8, payload_len: usize) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(5 + payload_len);
     frame.push(kind);
-    frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    frame.extend_from_slice(&(payload_len as u32).to_be_bytes());
+    frame
+}
+
+pub fn encode(kind: u8, payload: &[u8]) -> Vec<u8> {
+    let mut frame = frame_header(kind, payload.len());
     frame.extend_from_slice(payload);
     frame
 }
 
 pub fn encode_sequenced(kind: u8, seq: u64, data: &[u8]) -> Vec<u8> {
-    let mut payload = Vec::with_capacity(8 + data.len());
-    payload.extend_from_slice(&seq.to_be_bytes());
-    payload.extend_from_slice(data);
-    encode(kind, &payload)
+    let mut frame = frame_header(kind, 8 + data.len());
+    frame.extend_from_slice(&seq.to_be_bytes());
+    frame.extend_from_slice(data);
+    frame
 }
 
 /// Reads one frame; `Ok(None)` at a clean end of stream.
