@@ -6,7 +6,7 @@ import { AUTH_PROVIDER_CONFIGURATION_CHANGED_ERROR, OAuthProviderConfigurationCh
 import { TeamOAuthAdmissionAbort } from "@/app/teams/memberships/teamOAuthAdmission";
 import { InvalidUsernameError, UsernameTakenError } from "@/app/social/usernameUpdate";
 
-export async function oauthExternalFinalizeErrorHandler(error: FastifyError, request: FastifyRequest, reply: FastifyReply): Promise<void> {
+export async function oauthExternalFinalizeErrorHandler(error: FastifyError, request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
     if (error instanceof UsernameTakenError) {
         reply.code(409).send({ error: 'username-taken' });
         return reply;
