@@ -234,10 +234,9 @@ export function UsageDailyWidget(props: UsageBodyProps) {
       : point.label ?? '') ?? [];
     const lastStart = starts[labels.length - 1] ?? null;
     const now = Date.now();
-    // The still-running bucket is named for what it is: today, or this week.
-    const span = weekly ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-    const running = (props.query.granularity === 'day' || weekly) && lastStart !== null && now >= lastStart && now - lastStart < span;
-    return usageAxisTicks(labels, running ? (weekly ? t('usage.summary.thisWeek') : t('usage.today')) : undefined);
+    // The still-running day is named for what it is. A running week keeps its date: "This week" wraps under its bar.
+    const running = props.query.granularity === 'day' && lastStart !== null && now >= lastStart && now - lastStart < 24 * 60 * 60 * 1000;
+    return usageAxisTicks(labels, running ? t('usage.today') : undefined);
   }, [series, metric, byAgent, props.query.granularity, props.query.timeZoneOffsetMinutes, weekly, range]);
   const measure = `${metric === 'cost' ? t('usage.cost') : t('usage.tokens')} · ${usagePeriodPhrase(props.query)}${weekly ? ` · ${t('usage.board.page.byWeek')}` : ''}`;
   // The frame's subtitle is the same from the first paint: whether the bars split by agent is only known once the
