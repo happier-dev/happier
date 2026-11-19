@@ -7,6 +7,7 @@ import { WorkflowEventsListOutputV1Schema } from '@happier-dev/protocol/actions/
 import { DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/automationEventSetupResultV1';
 import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { WorkflowRunGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_PROMOTE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN, ScmWorktreeCreateResponseSchema } from '@happier-dev/protocol/scm/worktrees';
@@ -77,6 +78,7 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
   const source = PluginEventAutomationSetupResultV1Schema.parse(setup.result);
   const linked = await actor.executeReviewed('workflow.trigger.add', {
     target: { kind: 'inline', definition: { version: 1,
+      inputs: [{ name: 'payload', valueType: 'json', required: true }],
       defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
       blocks: [{ kind: 'step', id: 'review', document: { text: 'Review the settled worktree removal.',
         references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
@@ -91,6 +93,7 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
   expect(linked.ok, JSON.stringify(linked)).toBe(true);
   if (!linked.ok) throw new Error(`Removal trigger refused (${linked.errorCode})`);
   const saved = WorkflowTriggerWriteResultV1Schema.parse(linked.result);
+  expect(saved.triggerId, 'A single trigger add returns the committed trigger identity').toBeTypeOf('string');
   const readSelectedTrigger = async () => {
     const listed = await actor.execute('workflow.trigger.list', { automationId: saved.set.automationId, triggerId: saved.triggerId });
     if (!listed.ok) throw new Error(`Removal source read refused (${listed.errorCode})`);
@@ -100,8 +103,10 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
   const readSourceDiagnostic = async () => {
     const trigger = await readSelectedTrigger();
     const status = trigger?.kind === 'pluginEvent' ? trigger.sourceStatus : undefined;
-    return status ? { state: status.state, code: status.code, observedCount: status.observedCount,
-      admittedCount: status.admittedCount, skippedCount: status.skippedCount } : null;
+    return { automationId: saved.set.automationId, triggerId: saved.triggerId ?? null,
+      triggerFound: trigger !== undefined, triggerKind: trigger?.kind ?? null,
+      source: status ? { state: status.state, code: status.code, observedCount: status.observedCount,
+        admittedCount: status.admittedCount, skippedCount: status.skippedCount } : null };
   };
   try {
     await waitFor(async () => {
@@ -156,6 +161,12 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
     expect(response.status).toBe(200);
     return AutomationV3RunListResponseSchema.parse(response.data).runs;
   };
+  const readRunPayload = async (runId: string) => {
+    const opened = await actor.execute('workflow.run.get', { runId });
+    expect(opened.ok, JSON.stringify(opened)).toBe(true);
+    if (!opened.ok) throw new Error(`Removal Run read refused (${opened.errorCode})`);
+    return WorkflowRunGetResultV1Schema.parse(opened.result).acceptedContext.inputs.payload;
+  };
   expect(await readRuns()).toEqual([]);
   const removed = await actor.execute('scm.worktree.remove', removalInput, removalContext);
   expect(removed, removed.ok ? undefined : JSON.stringify({ errorCode: removed.errorCode,
@@ -183,9 +194,14 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
   const runs = await readRuns();
   expect(runs).toHaveLength(1);
   expect(runs[0]!.cause).toMatchObject({ kind: 'trigger', triggerId: saved.triggerId,
-    triggerKind: 'pluginEvent', evidence: { eventRef: selected.event.identity,
-      payload: { workspace: accepted.workspace, machineId: machine.target.machineId,
-        worktreePath: checkoutPhysicalRoot, outcome: 'removed', removalKind: 'deleted' } } });
+    triggerKind: 'pluginEvent', evidence: { eventRef: selected.event.identity } });
+  // Membership is public routing evidence. The canonical Run reader opens the
+  // immutable payload selected by this Workflow's declared input.
+  const payload = await readRunPayload(runs[0]!.id);
+  expect(payload).toMatchObject({ workspace: accepted.workspace, machineId: machine.target.machineId,
+    worktreePath: checkoutPhysicalRoot, outcome: 'removed', removalKind: 'deleted' });
+  expect(JSON.stringify(payload)).not.toMatch(/stdout|stderr/);
+  expect(JSON.stringify(payload)).not.toContain(secret);
   expect(JSON.stringify(runs[0]!.cause)).not.toContain(secret);
   expect(JSON.stringify(runs[0]!.cause)).not.toContain('stdout');
   expect(JSON.stringify(runs[0]!.cause)).not.toContain('stderr');
@@ -222,14 +238,15 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
     await waitFor(async () => {
       const observed = await readRuns();
       expect(observed.length).toBeLessThanOrEqual(expectedCount);
-      return observed.length === expectedCount;
+      return observed.length === expectedCount && observed.every(run => typeof run.producedSessionId === 'string');
     }, { failFast: true, context: `One unassociated storage ${removalKind} fact retains its original physical root` });
     expect(await readRuns()).toEqual(expect.arrayContaining([expect.objectContaining({ cause: expect.objectContaining({
       kind: 'trigger', triggerId: saved.triggerId, triggerKind: 'pluginEvent',
-      evidence: expect.objectContaining({ eventRef: selected.event.identity,
-        payload: expect.objectContaining({ workspace: null, project: null,
-          machineId: machine.target.machineId, worktreePath: physicalRoot, outcome: 'removed', removalKind }) }),
+      evidence: expect.objectContaining({ eventRef: selected.event.identity }),
     }) })]));
+    expect(await Promise.all((await readRuns()).map(run => readRunPayload(run.id))))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ workspace: null, project: null,
+        machineId: machine.target.machineId, worktreePath: physicalRoot, outcome: 'removed', removalKind })]));
   }
   await assertGuardStopLifecycle(fixture, actor, machine);
   await assertCredentialAttentionLifecycle(fixture);
