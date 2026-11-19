@@ -74,19 +74,29 @@ export function createSessionMessageDelivery(params: Readonly<{
         serverId: account.serverId, runtimeAccountId: account.accountId,
         externalActionTarget: { kind: 'machine', machineId: target.machineId } };
       const execute = createUiAccountAction({ account });
-      let advertisedInputSchema: object;
-      try {
-        advertisedInputSchema = await readSessionMessageInputSchema({ account, session,
-          machineId: target.machineId, context, signal });
-        account.assertCurrent();
-        throwIfAborted(signal);
-        if (!supportsSessionMessageInputJsonSchema(advertisedInputSchema, input)) {
+      // Authenticated receivers strictly parse ordinary Send, including authored
+      // metadata and the full model selection. The original Send can therefore
+      // reach Home's managed wake without an online descriptor read.
+      const requiresTargetInputSchema = requiresReplyCustody || !('message' in input)
+        || input.structuredInput !== undefined || input.recipient !== undefined
+        || input.idempotencyKey !== undefined || input.forgeEvidence !== undefined
+        || args.actionCaller?.kind === 'plugin' || args.sessionInputSource !== undefined
+        || args.context.authority === 'account_automation' || composerSubmission?.legacyAttachments !== undefined;
+      let advertisedInputSchema: object | undefined;
+      if (requiresTargetInputSchema) {
+        try {
+          advertisedInputSchema = await readSessionMessageInputSchema({ account, session,
+            machineId: target.machineId, context, signal });
+          account.assertCurrent();
+          throwIfAborted(signal);
+          if (!supportsSessionMessageInputJsonSchema(advertisedInputSchema, input)) {
+            return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
+          }
+        } catch {
+          throwIfAborted(signal);
+          account.assertCurrent();
           return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
         }
-      } catch {
-        throwIfAborted(signal);
-        account.assertCurrent();
-        return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
       }
       if (composerSubmission?.legacyAttachments && 'message' in input) {
         if (!localId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
@@ -129,7 +139,7 @@ export function createSessionMessageDelivery(params: Readonly<{
           return { ok: false, errorCode: 'session_account_scope_retired', error: 'session_account_scope_retired' };
         }
       }
-      if (!supportsSessionMessageInputJsonSchema(advertisedInputSchema, input)) {
+      if (advertisedInputSchema && !supportsSessionMessageInputJsonSchema(advertisedInputSchema, input)) {
         await preparedAttachments?.releaseOnRejection();
         return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
       }

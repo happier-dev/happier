@@ -4,7 +4,7 @@ import nacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { projectSessionInputReferencesV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
@@ -97,9 +97,11 @@ afterEach(async () => {
 });
 
 describe('submitSessionDraft', () => {
-    it.each(['composer', 'composer-direct', 'composer-held', 'composer-direct-held', 'composer-settings', 'composer-team', 'sync', 'sync-direct', 'voice', 'draft', 'public'] as const)('keeps %s Send on the Home Action delivery owner', async entry => {
+    it.each(['composer', 'composer-direct', 'composer-held', 'composer-direct-held', 'composer-settings', 'composer-team-asleep', 'composer-team-predecessor', 'sync', 'sync-direct', 'voice', 'draft', 'public'] as const)('keeps %s Send on the Home Action delivery owner', async entry => {
         const direct = entry.includes('-direct');
         const held = entry.endsWith('-held');
+        const teamModel = entry.startsWith('composer-team');
+        const predecessor = entry === 'composer-team-predecessor';
         const machine = createHydratedPlainMachineFixture({ id: 'machine_1', accountId: 'alice',
             machine: { active: false, presenceProtocolVersion: 1 } });
         publishMachineActivity(machine, { active: false, activeAt: machine.activeAt }, []);
@@ -113,27 +115,38 @@ describe('submitSessionDraft', () => {
             metadata: { machineId: 'machine_1', path: '/repo', host: 'qa-host', flavor: 'claude',
                 version: direct ? '0.0.1' : '999.0.0', claudeSessionId: 'retained-session' },
         } });
-        const text = 'READY169 UI asleep first attempt SUCCESS';
+        const text = entry === 'composer-team-asleep' ? 'Reply exactly L12_FC_R180_UI_ASLEEP_OK. Do not use tools or change files.'
+            : 'READY169 UI asleep first attempt SUCCESS';
         const localId = 'ui-asleep-input';
-        const desiredModel = entry === 'composer-team'
+        const permissionMode = teamModel ? 'read-only' : 'safe-yolo';
+        const desiredModel = teamModel
             ? { v: 2 as const, updatedAt: 1234, ref: { source: 'team_resource' as const, teamId: 'team-1',
                 resourceId: 'team-model', expectedResourceRevision: 7, deliveryMode: 'vendor-native' as const,
-                agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'desired-model' } }
+                agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'muse-spark-1.3-contributor' } }
             : { v: 1 as const, updatedAt: 1234, ref: {
                 agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: 'pc_ui', modelId: 'desired-model' } };
+        if (teamModel) homes.answer(serverId, '/v1/actions/action.spec.get', { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            const refusal = projectExternalActionHttpError('target_unavailable', request.envelope.requestId);
+            return { status: refusal.statusCode, body: refusal.payload };
+        } });
         homes.answer(serverId, '/v1/actions/session.message.send', { select: body => {
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
             expect(request.envelope).toMatchObject({ target: { kind: 'machine', machineId: 'machine_1' },
                 input: { sessionId, message: text, requestedAction: { v: 1, kind:
-                    entry === 'composer' || entry === 'composer-held' || entry === 'composer-settings' || entry === 'composer-team' || entry === 'sync' ? 'enqueue' : 'send_now' } } });
+                    entry === 'composer' || entry === 'composer-held' || entry === 'composer-settings' || teamModel || entry === 'sync' ? 'enqueue' : 'send_now' } } });
             if (entry !== 'draft' && entry !== 'public') expect(request.envelope).toMatchObject({ input: {
-                permissionModeOverride: 'safe-yolo', modelSelection: desiredModel,
+                permissionModeOverride: permissionMode, modelSelection: desiredModel,
                 messageMeta: { displayText: 'Readable composer prompt', appendSystemPrompt: 'Keep my selected context.',
                     providerExtra: { enabled: true }, modelSelectionV1: desiredModel },
             } });
             if (entry === 'composer-settings') expect(request.envelope).toMatchObject({ input: {
                 messageMeta: { claudeRemoteMaxThinkingTokens: 8192 },
             } });
+            // The older authenticated receiver's strict Send parser refuses new authored fields
+            // before enqueuing input (a7a76a82577 and 27141215f5a^).
+            if (predecessor) return { body: { v: 1, actionId: 'session.message.send', requestId: request.envelope.requestId,
+                execution: { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' } } };
             return { body: { v: 1, actionId: 'session.message.send', requestId: request.envelope.requestId,
                 execution: { ok: true, result: held
                     ? { status: 'held', localId, code: 'session_input_target_unavailable' }
@@ -141,7 +154,7 @@ describe('submitSessionDraft', () => {
         } });
         let result: unknown;
         const metaOverrides = { appendSystemPrompt: 'Keep my selected context.', providerExtra: { enabled: true },
-            permissionMode: 'safe-yolo', model: 'desired-model', modelSelectionV1: desiredModel };
+            permissionMode, model: desiredModel.ref.modelId, modelSelectionV1: desiredModel };
         if (entry.startsWith('composer')) {
             const { submitAppSessionComposerMessage } = await import('@/components/sessions/transcript/source/appSessionTranscriptActions');
             const { createSyncBackedSubmitPort } = await import('@/sync/domains/session/input/syncBackedSubmitPort');
@@ -151,7 +164,9 @@ describe('submitSessionDraft', () => {
                 resumeCapabilityOptions: { accountSettings: entry === 'composer-settings'
                     ? { ...storage.getState().settings, claudeRemoteMaxThinkingTokens: 4096 }
                     : storage.getState().settings } });
-            expect(result).toMatchObject(held
+            if (predecessor) expect(result).toMatchObject({ persistence: 'none', errorCode: 'invalid_parameters',
+                wake: { attempted: false, state: 'not_needed' } });
+            else expect(result).toMatchObject(held
                 ? { type: 'wake_pending', persistence: 'pending', localId, errorCode: 'session_input_target_unavailable',
                     wake: { attempted: false, state: 'not_needed' } }
                 : { type: 'success', persistence: 'pending', localId });
@@ -174,6 +189,7 @@ describe('submitSessionDraft', () => {
             expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId } });
         }
         expect(homes.requestsFor('/v1/actions/session.message.send'), JSON.stringify(result)).toHaveLength(1);
+        if (teamModel) expect(homes.requestsFor('/v1/actions/action.spec.get')).toHaveLength(0);
         expect(homes.requestsFor(`/v2/sessions/${sessionId}/pending`)).toHaveLength(0);
     });
 
