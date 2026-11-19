@@ -15,7 +15,7 @@ describe('admitted Review attention inventory', () => {
         const matches = (where: Where, id: string): boolean => {
             if (where.OR) return where.OR.some(arm => matches(arm, id));
             const selected = where.reviewId ?? where.artifactId;
-            return typeof selected === 'string' ? selected === id : selected?.in.includes(id);
+            return typeof selected === 'string' ? selected === id : selected?.in.includes(id) === true;
         };
         // Prisma is the persistent database boundary. Keep all Review projection
         // logic real, and record query shape rather than mocking the human owner.
