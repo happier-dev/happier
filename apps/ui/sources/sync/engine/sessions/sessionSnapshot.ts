@@ -1,3 +1,4 @@
+import { getSessionListViewportDemandedIds } from '@/sync/domains/session/listing/sessionListViewportDemand';
 import {
     V2SessionListResponseSchema,
     isSessionEncryptionModeAllowedByClientRequirement,
@@ -1632,6 +1633,7 @@ export async function fetchAndApplySessions(params: {
     if (shouldApplyRenderables) {
         const priorityHydrationSessionIds = new Set([
             ...normalizeSessionListHydrationSessionIds(params.priorityHydrationSessionIds),
+            ...getSessionListViewportDemandedIds(params.serverId),
         ]);
         for (const row of sessions) {
             if (isSessionListRowAttentionHydrationPriority(row)) {

@@ -464,6 +464,7 @@ import {
     type SessionListFetchHydrationTelemetrySource,
 } from './engine/sessions/sessionListHydrationTelemetry';
 import { normalizeSessionListHydrationSessionIds } from './engine/sessions/sessionListHydrationPriority';
+import { isSessionListViewportRowDemanded, registerSessionListViewportDemand } from './domains/session/listing/sessionListViewportDemand';
 import {
     fetchUserMessageHistoryPage,
     USER_MESSAGE_HISTORY_REMOTE_PAGE_SIZE,
@@ -1000,6 +1001,7 @@ class Sync {
     private sessionsSync: InvalidateSync;
     private fetchSessionsInFlight: { generation: number; promise: Promise<void> } | null = null;
     private fetchMoreSessionsInFlight: Promise<void> | null = null;
+    private sessionListViewportHydrationInFlight = new Set<string>();
     private sessionListNextCursor: string | null = null;
     private sessionListHasMore = false;
     private sessionListScrollActive = false;
@@ -2144,6 +2146,7 @@ class Sync {
         this.deferredWebVisibilityTeardown = null;
         this.stopJsThreadLagTelemetryRuntime();
         this.serverScopeGeneration += 1;
+        this.sessionListViewportHydrationInFlight = new Set();
         this.activePendingQueueOwnerContextBySession.clear();
         this.scopedPendingQueueOwnerContextBySession.clear();
         this.flushPendingSettingsForCurrentScopeNow();
@@ -4455,6 +4458,41 @@ class Sync {
         if (!isRequiredScope) {
             this.sessionListNextCursor = result.hasNext ? result.nextCursor : null;
             this.sessionListHasMore = result.hasNext;
+        }
+    }
+
+    public registerSessionListViewportRows = (rows: readonly { serverId: string | null; sessionId: string }[]): (() => void) => {
+        const release = registerSessionListViewportDemand(rows);
+        fireAndForget(this.hydrateColdSessionListViewportRows(rows), { tag: 'Sync.hydrateColdSessionListViewportRows' });
+        return release;
+    };
+
+    private async hydrateColdSessionListViewportRows(rows: readonly { serverId: string | null; sessionId: string }[]): Promise<void> {
+        const { serverId } = getActiveServerSnapshot();
+        const generation = this.serverScopeGeneration;
+        if (!this.credentials || !rows.some((row) => row.serverId === serverId)) return;
+        const snapshot = this.fetchSessionsInFlight;
+        if (snapshot?.generation === generation) await snapshot.promise;
+        if (generation !== this.serverScopeGeneration) return;
+
+        const pending = this.sessionListViewportHydrationInFlight;
+        const renderables = storage.getState().sessionListRenderables;
+        const ids: string[] = [];
+        for (const row of rows) {
+            const { sessionId } = row;
+            if (row.serverId !== serverId || pending.has(sessionId) || !isSessionListViewportRowDemanded(serverId, sessionId)) continue;
+            const renderable = renderables[sessionId];
+            if (!renderable || renderable.metadata != null || renderable.metadataUnavailable === true) continue;
+            pending.add(sessionId);
+            ids.push(sessionId);
+        }
+        if (ids.length === 0) return;
+        try {
+            // A viewport can be reported after the ordinary snapshot has scheduled its fixed budget.
+            // Ask the existing required-row path for just those now-visible cold rows.
+            await this.fetchSessions({ sessionListScope: 'required', requiredHydrationSessionIds: ids });
+        } finally {
+            for (const id of ids) pending.delete(id);
         }
     }
 

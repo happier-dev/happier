@@ -4,6 +4,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createServerFetchWithReachabilityProbe } from '@/dev/testkit/mocks/serverFetch';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { encodeBase64 } from '@/encryption/base64';
 import type { Encryption } from '@/sync/encryption/encryption';
 import type { SyncTuning } from '@/sync/runtime/syncTuning';
 import type { InvalidateSync } from '@/utils/sessions/sync';
@@ -66,6 +67,55 @@ describe('snapshot refresh completion', () => {
         runtime?.disconnectServer();
         vi.useRealTimers();
         vi.unstubAllGlobals();
+    });
+
+    it('hydrates only demanded cold list rows through the targeted snapshot', async () => {
+        const { sync } = await import('./sync');
+        const { storage } = await import('./domains/state/storage');
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const serverId = getActiveServerSnapshot().serverId;
+        const ids = ['visible-first', 'visible-last', 'offscreen'];
+        const cipher = await Encryption.create(new Uint8Array(32).fill(7));
+        const key = new Uint8Array(32).fill(11);
+        const dataEncryptionKey = encodeBase64(await cipher.encryptEncryptionKey(key), 'base64');
+        await cipher.initializeSessions(new Map(ids.map((id) => [id, key])), { serverId });
+        runtime.encryption = cipher;
+        runtime.syncTuning = { ...runtime.syncTuning, sessionListEagerHydrationCount: 0, sessionListBackgroundHydrationMaxRows: 0 };
+        const rows = await Promise.all(ids.map(async (id) => ({
+            id, seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 0, archivedAt: null,
+            encryptionMode: 'e2ee' as const, metadataVersion: 1, agentState: null, agentStateVersion: 0, dataEncryptionKey,
+            metadata: await cipher.getSessionEncryption(id)!.encryptMetadata({ path: '/workspace', host: 'test', name: id }),
+        })));
+        const requiredReads: string[][] = [];
+        vi.stubGlobal('fetch', vi.fn(createServerFetchWithReachabilityProbe(async (input) => {
+            const url = new URL(input instanceof Request ? input.url : String(input));
+            if (url.pathname === '/v2/session-organization') return Response.json({ snapshot: {
+                schemaVersion: 1, version: 1, pins: [], folders: [], folderAssignments: [],
+                tags: [], tagAssignments: [], orderEntries: [], labels: [],
+            } });
+            if (url.pathname === '/v2/sessions') {
+                const required = url.searchParams.get('requiredSessionIds');
+                if (url.searchParams.get('requiredOnly') !== 'true' || !required) {
+                    return Response.json({ sessions: rows, nextCursor: null, hasNext: false, includedActive: true });
+                }
+                const requested: string[] = JSON.parse(required);
+                requiredReads.push(requested);
+                return Response.json({ sessions: rows.filter((row) => requested.includes(row.id)), nextCursor: null, hasNext: false });
+            }
+            throw new Error(`Unexpected request: ${url.pathname}`);
+        })));
+
+        await runtime.fetchSessions();
+        expect(ids.map((id) => storage.getState().sessionListRenderables[id]?.metadata?.name ?? null)).toEqual([null, null, null]);
+        const release = sync.registerSessionListViewportRows(ids.slice(0, 2).map((sessionId) => ({ serverId, sessionId })));
+        try {
+            await vi.waitFor(() => expect(ids.map((id) => storage.getState().sessionListRenderables[id]?.metadata?.name ?? null))
+                .toEqual(['visible-first', 'visible-last', null]));
+            expect(requiredReads).toEqual([ids.slice(0, 2)]);
+        } finally {
+            release();
+        }
     });
 
     it('does not checkpoint a missing cursor when the app pauses before snapshot repair starts', async () => {

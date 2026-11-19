@@ -200,7 +200,8 @@ export const SessionListRowModelBoundary = React.memo(function SessionListRowMod
     // and the list is blank; wait first and it is populated but scrolled to the top.
     const frozenRowStoreStateRef = React.useRef<SessionListRowStoreState | null>(null);
     const frozenDraftProjectionRef = React.useRef<ExistingSessionDraftProjection | null>(null);
-    if (props.dataActive) {
+    const hasLiveRowState = props.dataActive && props.rowStoreSubscriptionEnabled;
+    if (hasLiveRowState) {
         frozenRowStoreStateRef.current = liveRowStoreState;
         frozenDraftProjectionRef.current = liveDraftProjection;
     } else if (frozenRowStoreStateRef.current === null) {
@@ -214,10 +215,10 @@ export const SessionListRowModelBoundary = React.memo(function SessionListRowMod
             ? getExistingSessionDraftProjection(draftScope, props.item.session.id)
             : null;
     }
-    const rowStoreState = props.dataActive
+    const rowStoreState = hasLiveRowState
         ? liveRowStoreState
         : frozenRowStoreStateRef.current ?? EMPTY_SESSION_LIST_ROW_STORE_STATE;
-    const draftProjection = props.dataActive
+    const draftProjection = hasLiveRowState
         ? liveDraftProjection
         : frozenDraftProjectionRef.current;
 

@@ -47,6 +47,7 @@ function canReuseHeader(
     return sourceHeader.title === item.title
         && areNullableValuesEqual(sourceHeader.headerKind, item.headerKind)
         && areNullableValuesEqual(sourceHeader.groupKey, item.groupKey)
+        && areNullableValuesEqual(sourceHeader.projectSection, item.projectSection)
         && areNullableValuesEqual(sourceHeader.workspaceKey, item.workspaceKey)
         && areNullableValuesEqual(sourceHeader.workspace, item.workspace)
         && areNullableValuesEqual(sourceHeader.folderId, item.folderId)
@@ -72,6 +73,7 @@ function rehydrateHeader(
         title: item.title,
         headerKind: item.headerKind,
         groupKey: item.groupKey,
+        projectSection: item.projectSection,
         workspaceKey: item.workspaceKey,
         workspace: item.workspace,
         folderId: item.folderId,
@@ -120,6 +122,9 @@ function rehydrateSession(
     if (
         previousItem?.type === 'session'
         && previousItem.session === sourceItem.session
+        && (previousItem.pathlessProjectHeader === sourceItem.pathlessProjectHeader
+            || (previousItem.pathlessProjectHeader && sourceItem.pathlessProjectHeader
+                && areHeaderRowsEquivalent(previousItem.pathlessProjectHeader, sourceItem.pathlessProjectHeader)))
         && canReuseSession(item, previousItem)
     ) {
         return previousItem;
@@ -166,6 +171,7 @@ function areHeaderRowsEquivalent(
     return previous.title === next.title
         && areNullableValuesEqual(previous.headerKind, next.headerKind)
         && areNullableValuesEqual(previous.groupKey, next.groupKey)
+        && areNullableValuesEqual(previous.projectSection, next.projectSection)
         && areNullableValuesEqual(previous.workspaceKey, next.workspaceKey)
         && areNullableValuesEqual(previous.workspace, next.workspace)
         && areNullableValuesEqual(previous.renderWorkspaceKey, next.renderWorkspaceKey)

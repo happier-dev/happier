@@ -1,4 +1,5 @@
 import type { SessionFolderWorkspaceRefV1, SessionFoldersV1 } from '@/sync/domains/session/folders';
+import { buildSessionListViewItemNodeId } from '@/sync/domains/session/listing/sessionListIndex';
 import { PINNED_GROUP_KEY_V1 } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import {
     buildSessionWorkspaceOrderScopeKey,
@@ -14,22 +15,47 @@ import { areSessionAppearanceColorsEqual, type SessionAppearanceColor } from './
 import type { SessionListViewItem } from '@/sync/domains/session/listing/sessionListViewData';
 import type { SessionOrganizationLabel } from '@happier-dev/protocol';
 
+type Header = Extract<SessionListViewItem, { type: 'header' }>;
+const decoratedProjectHeaderBySource = new WeakMap<Header, Header>();
 const coloredProjectHeaders = new WeakMap<SessionListViewItem[], SessionListViewItem[]>();
 
-/** Adds exact-Home project display data, retaining equivalent header/list identities. */
+/** Joins exact-Home display data before the list runs folder, collapse and search projections. */
 export function applyWorkspaceDisplayToSessionListViewData(items: SessionListViewItem[] | null, labelsByLabelKey: Readonly<Record<string, SessionOrganizationLabel>>): SessionListViewItem[] | null {
     if (!items) return null;
     const previous = coloredProjectHeaders.get(items);
-    const next = items.map((item, index) => {
-        if (item.type !== 'header' || item.headerKind !== 'project') return item;
+    const next: SessionListViewItem[] = [];
+    const seenCandidates = new Set<string>();
+
+    const decorate = (item: Header, pathless: boolean): Header | null => {
         const { label, color } = resolveServerWorkspaceDisplay(labelsByLabelKey, item.workspaceScopeHint?.serverId ?? item.serverId, item.workspaceKey);
+        if (pathless && !label) return null;
         if ((item.workspaceLabel ?? null) === label && areSessionAppearanceColorsEqual(item.appearanceColor, color)) return item;
-        const cached = previous?.[index];
-        return cached?.type === 'header' && cached.workspaceLabel === label && areSessionAppearanceColorsEqual(cached.appearanceColor, color)
-            ? cached : { ...item, workspaceLabel: label, appearanceColor: color };
-    });
-    const result = previous && next.every((item, index) => item === previous[index]) ? previous
-        : next.every((item, index) => item === items[index]) ? items : next;
+        const cached = decoratedProjectHeaderBySource.get(item);
+        if (cached?.workspaceLabel === label && areSessionAppearanceColorsEqual(cached.appearanceColor, color)) return cached;
+        const header = { ...item, title: pathless && label ? label : item.title, workspaceLabel: label, appearanceColor: color };
+        decoratedProjectHeaderBySource.set(item, header);
+        return header;
+    };
+
+    for (const item of items) {
+        if (item.type === 'header' && item.headerKind === 'project') {
+            next.push(decorate(item, false)!);
+            continue;
+        }
+        if (item.type === 'session' && item.groupKind === 'project' && item.pathlessProjectHeader) {
+            const candidate = item.pathlessProjectHeader;
+            const nodeId = buildSessionListViewItemNodeId(candidate);
+            if (!seenCandidates.has(nodeId)) {
+                seenCandidates.add(nodeId);
+                const header = decorate(candidate, true);
+                if (header) next.push(header);
+            }
+        }
+        next.push(item);
+    }
+
+    const result = previous && next.length === previous.length && next.every((item, index) => item === previous[index]) ? previous
+        : next.length === items.length && next.every((item, index) => item === items[index]) ? items : next;
     coloredProjectHeaders.set(items, result);
     return result;
 }

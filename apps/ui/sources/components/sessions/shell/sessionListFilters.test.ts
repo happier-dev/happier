@@ -77,6 +77,47 @@ describe('filterSessionListItemsForHeaderControls', () => {
         ]);
     });
 
+    it('finds a session by its pasted session id', () => {
+        const result = filterSessionListItemsForHeaderControls([
+            activeHeader,
+            sessionItem('cmabc123XYZ', { name: 'Deploy fix', summaryText: null, path: '/repo/api', host: 'api-host' }),
+            sessionItem('cmdef456', { name: 'Draft docs', summaryText: null, path: '/repo/docs', host: 'docs-host' }),
+        ], {
+            searchQuery: '  cmABC123xyz ',
+            selectedTags: [],
+            sessionTags: {},
+            searchableTextBySessionKey: {},
+        });
+
+        expect(result.map((item) => item.type === 'session' ? item.session.id : item.title)).toEqual([
+            'Active',
+            'cmabc123XYZ',
+        ]);
+    });
+
+    it('includes only the project and parent folder of a matching row', () => {
+        const project = (title: string) => ({ type: 'header', headerKind: 'project', title } as const);
+        const folder = (title: string, depth: number) => ({ type: 'header', headerKind: 'folder', title, depth } as const);
+        const row = (id: string, name: string, folderDepth: number) => ({
+            ...sessionItem(id, { name, path: '/repo', host: 'host' }), folderDepth,
+        });
+
+        expect(filterSessionListItemsForHeaderControls([
+            activeHeader,
+            project('Unrelated project'),
+            row('unrelated', 'Other work', 0),
+            project('Matching project'),
+            folder('Parent folder', 0),
+            folder('Unrelated child', 1),
+            row('child', 'Draft notes', 2),
+            row('parent', 'Install guide', 1),
+        ], {
+            searchQuery: 'guide', selectedTags: [], sessionTags: {}, searchableTextBySessionKey: {},
+        }).map((item) => item.type === 'session' ? item.session.id : item.title)).toEqual([
+            'Active', 'Matching project', 'Parent folder', 'parent',
+        ]);
+    });
+
     it('filters sessions by decrypted text already present in the store', () => {
         const result = filterSessionListItemsForHeaderControls([
             activeHeader,

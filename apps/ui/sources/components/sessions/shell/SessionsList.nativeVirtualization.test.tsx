@@ -572,6 +572,7 @@ vi.mock('@/sync/ops', async (importOriginal) => {
 vi.mock('@/sync/sync', () => ({
     sync: {
         fetchMoreSessions: fetchMoreSessionsMock,
+        registerSessionListViewportRows: () => () => {},
         refreshSessions: refreshSessionsMock,
         markSessionListScrollActivity: markSessionListScrollActivityMock,
     },

@@ -26,6 +26,7 @@ export type SessionListViewItem =
     | {
         type: 'header';
         title: string;
+        projectSection?: SessionListSectionScope;
         headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'sessions' | 'project' | 'pinned' | 'attention' | 'working' | 'shared' | 'folder';
         groupKey?: string;
         workspaceKey?: string;
@@ -49,6 +50,7 @@ export type SessionListViewItem =
         session: SessionListRenderableSession;
         section?: 'active' | 'inactive';
         groupKey?: string;
+        pathlessProjectHeader?: Extract<SessionListViewItem, { type: 'header' }>;
         groupKind?: 'active' | 'date' | 'project' | 'pinned' | 'attention' | 'working' | 'shared' | 'folder';
         folderId?: string | null;
         folderDepth?: number;
@@ -288,6 +290,7 @@ function pushProjectGroupsToList(params: Readonly<{
             type: 'header',
             title: group.displayTitle,
             headerKind: 'project',
+            projectSection: params.section,
             groupKey,
             workspaceKey: group.workspaceKey,
             workspaceScopeHint: params.serverScopeMeta.serverId && group.workspaceMachineId && group.workspaceRootPath
@@ -319,6 +322,7 @@ function pushProjectGroupsToList(params: Readonly<{
                 section: resolveSectionForSession(params.section, session),
                 groupKey,
                 groupKind: 'project',
+                ...(!hasGroupHeader ? { pathlessProjectHeader: projectHeader } : {}),
                 variant: hasGroupHeader && checkout.pathKey === group.workspaceRootPath ? 'no-path' : 'default',
                 workspace: workspace ?? undefined,
                 ...params.serverScopeMeta,
