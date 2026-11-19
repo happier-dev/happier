@@ -1,12 +1,14 @@
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { ScmWorkspaceWatchRequestSchema, type ScmWorkspaceWatchResponse, type ScmWorkspaceWatchUnavailable } from '@happier-dev/protocol/scm';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { ScmWorkspaceWatchRequestSchema, type ScmWorkspaceWatchRequest, type ScmWorkspaceWatchResponse, type ScmWorkspaceWatchUnavailable } from '@happier-dev/protocol/scm';
 
-import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { resolveCwd } from '@/scm/runtime';
 import { startScmWorkspaceWatch } from '@/scm/watch/startScmWorkspaceWatch';
 import { filesystemPathComparisonKey, type FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
-import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { runWithWorkspaceSourceDemand, workspaceTargetUnavailable, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
+import type { FilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 
 type WorkspaceObservation = {
     revision: number;
@@ -24,26 +26,23 @@ export function registerScmWorkspaceWatchHandler(
     options: Readonly<{
         accessPolicy: FilesystemAccessPolicy;
         registry?: ScmBackendRegistry;
+        selectWorkspaceSource: (input: ScmWorkspaceWatchRequest, context?: RpcHandlerContext) => Promise<WorkspaceSource>;
+        admitWorkspaceSource?: FilesystemEffectAdmission['rpc'];
         invalidateStatusSnapshot(): void;
     }>,
 ): void {
     const observations = new Map<string, WorkspaceObservation>();
     let revision = 0;
-    registrar.registerHandler<unknown, ScmWorkspaceWatchResponse>(RPC_METHODS.SCM_WORKSPACE_WATCH, async (raw, context) => {
-        const request = ScmWorkspaceWatchRequestSchema.safeParse(raw);
-        if (!request.success) return { status: 'unavailable', reason: { code: 'invalid_request', message: 'Invalid workspace watch request' } };
-        if (context?.signal.aborted) return { status: 'cancelled' };
-        const root = resolveCwd(request.data.directory, workingDirectory, options.accessPolicy);
-        if (!root.ok) return { status: 'unavailable', reason: { code: 'path_not_allowed', message: root.error } };
+    const observe = async (source: WorkspaceSource, directory: string, request: ScmWorkspaceWatchRequest,
+        context?: RpcHandlerContext): Promise<ScmWorkspaceWatchResponse> => {
         // One subscription per workspace of one source: the same path in two sources is two workspaces.
-        const source = currentWorkspaceSource();
-        const key = `${source.id}\0${filesystemPathComparisonKey(root.cwd)}`;
+        const key = `${source.id}\0${filesystemPathComparisonKey(directory)}`;
         let observation = observations.get(key);
         if (!observation) {
             const created: WorkspaceObservation = { revision: ++revision, ready: false, users: 0, listeners: new Set(), dispose() {} };
             const notify = () => { for (const listener of created.listeners) listener(); };
             observations.set(key, created);
-            created.dispose = startScmWorkspaceWatch({ source, directory: root.cwd, registry: options.registry,
+            created.dispose = startScmWorkspaceWatch({ source, directory, registry: options.registry,
                 onReady: () => { options.invalidateStatusSnapshot(); created.ready = true; notify(); },
                 onChange: () => { options.invalidateStatusSnapshot(); created.revision = ++revision; notify(); },
                 onUnavailable: reason => { created.unavailable = reason; notify(); },
@@ -58,9 +57,9 @@ export function registerScmWorkspaceWatchHandler(
                 check = () => {
                     if (context?.signal.aborted) resolve({ status: 'cancelled' });
                     else if (current.unavailable) resolve({ status: 'unavailable', reason: current.unavailable });
-                    else if (!request.data.observationOnly && current.ready) {
-                        if (request.data.sinceRevision === undefined) resolve({ status: 'ready', revision: current.revision });
-                        else if (request.data.sinceRevision !== current.revision) resolve({ status: 'changed', revision: current.revision });
+                    else if (!request.observationOnly && current.ready) {
+                        if (request.sinceRevision === undefined) resolve({ status: 'ready', revision: current.revision });
+                        else if (request.sinceRevision !== current.revision) resolve({ status: 'changed', revision: current.revision });
                     }
                 };
                 current.listeners.add(check);
@@ -74,6 +73,36 @@ export function registerScmWorkspaceWatchHandler(
                 current.dispose();
                 observations.delete(key);
             }
+        }
+    };
+    registrar.registerHandler<unknown, ScmWorkspaceWatchResponse>(RPC_METHODS.SCM_WORKSPACE_WATCH, async (raw, context) => {
+        const request = ScmWorkspaceWatchRequestSchema.safeParse(raw);
+        if (!request.success) return { status: 'unavailable', reason: { code: 'invalid_request', message: 'Invalid workspace watch request' } };
+        if (context?.signal.aborted) return { status: 'cancelled' };
+        const { workspace } = request.data;
+        try {
+            const source = await options.selectWorkspaceSource(request.data, context);
+            let directory: string;
+            if (workspace) {
+                if (source.kind === 'local') throw workspaceTargetUnavailable();
+                if (!options.admitWorkspaceSource) return { status: 'unavailable', reason: {
+                    code: 'filesystem_identity_custody_unavailable', message: 'Workspace watch admission is unavailable',
+                } };
+                const failure = await options.admitWorkspaceSource(context, source);
+                if (failure) return { status: 'unavailable', reason: { code: failure.errorCode, message: failure.error } };
+                directory = workspace.rootPath;
+            } else {
+                const root = resolveCwd(request.data.directory, workingDirectory, options.accessPolicy);
+                if (!root.ok) return { status: 'unavailable', reason: { code: 'path_not_allowed', message: root.error } };
+                directory = root.cwd;
+            }
+            if (context?.signal.aborted) return { status: 'cancelled' };
+            return await runWithWorkspaceSourceDemand(source, () => observe(source, directory, request.data, context));
+        } catch (error) {
+            if (context?.signal.aborted) return { status: 'cancelled' };
+            const code = readRpcErrorCode(error);
+            if (!code) throw error;
+            return { status: 'unavailable', reason: { code, message: error instanceof Error ? error.message : code } };
         }
     });
 }

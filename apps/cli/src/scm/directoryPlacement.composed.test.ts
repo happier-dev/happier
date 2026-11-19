@@ -14,6 +14,7 @@ import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/acces
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { createScmBackendRegistry } from '@/scm/registry';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ScmWorkspaceWatchResponseSchema } from '@happier-dev/protocol/scm';
 import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
@@ -58,6 +59,84 @@ it('refuses an unadmitted SCM requester before opening a registered managed work
         expect(channels).toBe(0);
     } finally { lifetime.abort(); }
 });
+
+it('F2: a managed Project watch cannot observe a same-path fallback or bypass requester admission', async () => {
+    const lifetime = new AbortController();
+    const workspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'watch-project', managedId: 'guest',
+        controller: { machineId: 'controller', installationId: 'install' }, rootPath: process.cwd() } as const;
+    const handlers = new Map<string, RpcHandler>();
+    const admission = createFilesystemEffectAdmission({ resolveWorkspaceTarget: resolveSessionTargetWorkspace });
+    registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler as RpcHandler); } }, process.cwd(),
+        { machineId: 'controller', selectWorkspaceSource: admission.selectWorkspaceSource, admitWorkspaceSource: admission.rpc });
+    const observe = () => handlers.get(RPC_METHODS.SCM_WORKSPACE_WATCH)!({ directory: workspace.rootPath, workspace }, { signal: lifetime.signal });
+    try {
+        await expect(observe()).resolves.toMatchObject({ status: 'unavailable', reason: { code: 'workspace_target_unavailable' } });
+        let channels = 0;
+        registerManagedWorkspaceTarget({ workspace, target: { lifetime: lifetime.signal, holderPath: 'holder', helperPath: 'helper',
+            openChannel() { channels += 1; throw new Error('An unadmitted watch opened a guest channel'); } } });
+        await expect(observe()).resolves.toMatchObject({ status: 'unavailable', reason: { code: 'filesystem_identity_custody_unavailable' } });
+        expect(channels).toBe(0);
+    } finally { lifetime.abort(); }
+});
+
+it.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)(
+    'F2: a managed Project watch receives guest Git changes over one holder until presentation ends', async () => {
+        const rootPath = await mkdtemp(join(tmpdir(), 'managed-scm-watch-'));
+        const guestLifetime = new AbortController();
+        const presentation = new AbortController();
+        const workspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'native-watch-project', managedId: 'guest',
+            controller: { machineId: 'controller', installationId: 'install' }, rootPath } as const;
+        const holderExits: Promise<number | null>[] = [];
+        let parked: Promise<unknown> | undefined;
+        try {
+            const tracked = join(rootPath, 'notes.txt');
+            await writeFile(tracked, 'first\n');
+            const git = (...args: string[]) => execFileSync('git', args, { cwd: rootPath, stdio: 'pipe' });
+            git('init', '-q');
+            git('add', 'notes.txt');
+            git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'initial');
+            registerManagedWorkspaceTarget({ workspace, target: { lifetime: guestLifetime.signal,
+                holderPath: holderPath!, helperPath: helperPath!, openChannel(argv) {
+                    const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'] });
+                    holderExits.push(new Promise((resolve, reject) => { child.once('close', resolve); child.once('error', reject); }));
+                    return Duplex.from({ readable: child.stdout, writable: child.stdin });
+                } } });
+            const registration = createGitScmBackendRuntimeRegistration();
+            const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+                definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+                executableDefinition: registration.runtime!, registration,
+                scmCommandRunner: createHostScmCommandRunner({ isCurrent: () => true }),
+                hostingProviderRuntimeServices: createHostScmHostingProviderRuntimeServices({ contributes: {}, scmHostingProvidersById: new Map() }),
+            })]);
+            const handlers = new Map<string, RpcHandler>();
+            const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home',
+                resolveWorkspaceTarget: resolveSessionTargetWorkspace });
+            registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, rootPath,
+                { registry, machineId: 'controller', selectWorkspaceSource: admission.selectWorkspaceSource, admitWorkspaceSource: admission.rpc });
+            const context: RpcHandlerContext = { signal: presentation.signal, callerAuthority: 'present_user',
+                machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'controller', installationId: 'install',
+                    role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
+            const observe = (observation: { observationOnly?: true; sinceRevision?: number } = {}) =>
+                handlers.get(RPC_METHODS.SCM_WORKSPACE_WATCH)!({ directory: rootPath, workspace, ...observation }, context);
+            parked = observe({ observationOnly: true });
+            const ready = ScmWorkspaceWatchResponseSchema.parse(await observe());
+            expect(ready.status, JSON.stringify(ready)).toBe('ready');
+            if (ready.status !== 'ready') throw new Error('The guest did not start its workspace watch');
+            const next = observe({ sinceRevision: ready.revision });
+            await writeFile(tracked, 'changed in the guest\n');
+            await expect(next).resolves.toMatchObject({ status: 'changed' });
+            expect(holderExits).toHaveLength(1);
+            presentation.abort();
+            await expect(parked).resolves.toEqual({ status: 'cancelled' });
+            await expect(holderExits[0]).resolves.toBe(0);
+        } finally {
+            presentation.abort();
+            guestLifetime.abort();
+            if (parked) await Promise.allSettled([parked, ...holderExits]);
+            await rm(rootPath, { recursive: true, force: true });
+        }
+    },
+);
 
 describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('directory-only daemon SCM placement', () => {
     const status = { method: RPC_METHODS.SCM_STATUS_SNAPSHOT, operation: {} };

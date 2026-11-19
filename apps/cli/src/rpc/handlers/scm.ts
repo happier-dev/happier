@@ -128,7 +128,7 @@ import { resolve as resolvePath } from 'node:path';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { registerScmWorkspaceWatchHandler } from './scmWorkspaceWatch';
 import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
-import { bindWorkspaceSourceRegistrar, currentWorkspaceSource, runWithWorkspaceSource, runWithWorkspaceSourceDemand, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { currentWorkspaceSource, runWithWorkspaceSource, runWithWorkspaceSourceDemand, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { runWithScmComparisonOperations } from '@/scm/comparisons/comparisonOperations';
 import { createMemberScmComparisonOperations } from '@/scm/rpc/memberScmComparison';
 import { runWithScmAccountScope } from '@/scm/accountScope';
@@ -277,8 +277,6 @@ export function registerScmHandlers(
         const directory = targeted?.success && targeted.data.target.kind === 'machine' ? targeted.data.target.project?.directory : undefined;
         return deps?.selectWorkspaceSource?.(context, directory ? { rootPath: directory } : request) ?? localWorkspaceSource;
     };
-    const sourceBoundRegistrar = bindWorkspaceSourceRegistrar(rpcHandlerManager,
-        (context: RpcHandlerContext | undefined, request) => selectSource(request, context));
     const scopedRegistrar = (unwrapTarget: boolean): RpcHandlerRegistrar => ({
         registerHandler<TRequest, TResponse>(
             method: string,
@@ -485,9 +483,11 @@ export function registerScmHandlers(
         statusSnapshotInFlight.clear();
         statusSnapshotCache.clear();
     };
-    if (deps?.machineId) registerScmWorkspaceWatchHandler(sourceBoundRegistrar, workingDirectory, {
+    if (deps?.machineId) registerScmWorkspaceWatchHandler(rpcHandlerManager, workingDirectory, {
         accessPolicy: deps.accessPolicy ?? resolveFilesystemAccessPolicy(),
         registry: deps.registry,
+        selectWorkspaceSource: selectSource,
+        admitWorkspaceSource: deps.admitWorkspaceSource,
         invalidateStatusSnapshot: invalidateStatusSnapshotCache,
     });
     const runWithStatusSnapshotCacheInvalidation = async <T>(operation: () => Promise<T>): Promise<T> => {

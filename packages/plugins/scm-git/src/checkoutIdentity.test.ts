@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
+import { runWithBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 import { describe, expect, it } from 'vitest';
 
 import { inspectGitCheckoutIdentity } from './checkoutIdentity.js';
-import { runWithRealGitScmRuntime } from './testkit/scmRuntime.test-support.js';
+import { createRealGitScmBackendRuntimeServices, runWithRealGitScmRuntime } from './testkit/scmRuntime.test-support.js';
 
 const execFile = promisify(execFileCallback);
 
@@ -149,6 +150,21 @@ describe('inspectGitCheckoutIdentity', () => {
                 commonDirPath,
                 worktreePath,
                 registeredWorktreePath: worktreePath,
+            });
+
+            const services = createRealGitScmBackendRuntimeServices();
+            const fileSystem = services.repositoryFileSystem!;
+            const registeredGuestPath = join(worktreePath, 'registered');
+            await expect(runWithBackendRuntimeServices({
+                ...services,
+                repositoryFileSystem: {
+                    ...fileSystem,
+                    readFile: async (path) => path === join(gitDirPath, 'gitdir')
+                        ? new TextEncoder().encode(join(registeredGuestPath, '.git'))
+                        : await fileSystem.readFile(path),
+                },
+            }, () => inspectGitCheckoutIdentity({ cwd: worktreeRoot }))).resolves.toMatchObject({
+                registeredWorktreePath: registeredGuestPath,
             });
         } finally {
             await rm(repoRoot, { recursive: true, force: true });

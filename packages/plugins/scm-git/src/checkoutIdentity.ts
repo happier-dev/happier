@@ -74,6 +74,17 @@ async function readGitValue(cwd: string, args: string[]): Promise<string | null>
     return value.length > 0 ? value : null;
 }
 
+function toGitCommandPath(path: string): string {
+    return readCurrentBackendRuntimeServices()?.repositoryFileSystem?.commandPaths?.toCommandPath(path) ?? path;
+}
+
+async function readGitAdminFile(path: string): Promise<string> {
+    const fileSystem = readCurrentBackendRuntimeServices()?.repositoryFileSystem;
+    if (!fileSystem) return readFile(path, 'utf8');
+    const addressedPath = fileSystem.commandPaths?.fromCommandPath(path) ?? path;
+    return Buffer.from(await fileSystem.readFile(addressedPath)).toString('utf8');
+}
+
 async function readGitAbsolutePathValue(input: Readonly<{
     cwd: string;
     pathArgs: string[];
@@ -88,7 +99,7 @@ async function readGitAbsolutePathValue(input: Readonly<{
         return null;
     }
 
-    return isAbsolute(fallbackValue) ? fallbackValue : resolve(input.cwd, fallbackValue);
+    return isAbsolute(fallbackValue) ? fallbackValue : resolve(toGitCommandPath(input.cwd), fallbackValue);
 }
 
 export async function readGitCommonDirPath(params: Readonly<{ cwd: string }>): Promise<string | null> {
@@ -105,7 +116,7 @@ async function readRegisteredWorktreePath(input: Readonly<{
     }
 
     try {
-        const rawGitFilePath = (await readFile(join(input.gitDirPath, 'gitdir'), 'utf8')).trim();
+        const rawGitFilePath = (await readGitAdminFile(join(input.gitDirPath, 'gitdir'))).trim();
         if (!rawGitFilePath) {
             return input.worktreePath;
         }
@@ -135,29 +146,30 @@ export function resolveGitAdminPath(cwd: string, rawGitFileContents: string): st
 
 async function inspectGitCheckoutIdentityFromAdminFiles(cwd: string): Promise<GitCheckoutIdentity | null> {
     try {
-        const gitFileContents = await readFile(join(cwd, '.git'), 'utf8');
-        const gitDirPath = resolveGitAdminPath(cwd, gitFileContents.trim());
+        const worktreePath = toGitCommandPath(cwd);
+        const gitFileContents = await readGitAdminFile(join(worktreePath, '.git'));
+        const gitDirPath = resolveGitAdminPath(worktreePath, gitFileContents.trim());
         if (!gitDirPath) {
             return null;
         }
 
-        const commonDirValue = (await readFile(join(gitDirPath, 'commondir'), 'utf8')).trim();
+        const commonDirValue = (await readGitAdminFile(join(gitDirPath, 'commondir'))).trim();
         const commonDirPath = commonDirValue
             ? (isAbsolute(commonDirValue) ? commonDirValue : resolve(gitDirPath, commonDirValue))
             : gitDirPath;
-        const headValue = (await readFile(join(gitDirPath, 'HEAD'), 'utf8')).trim();
+        const headValue = (await readGitAdminFile(join(gitDirPath, 'HEAD'))).trim();
         const branchName = headValue.startsWith('ref: refs/heads/')
             ? headValue.slice('ref: refs/heads/'.length)
             : null;
         const headRevision = branchName
-            ? (await readFile(join(commonDirPath, 'refs', 'heads', branchName), 'utf8')).trim() || null
+            ? (await readGitAdminFile(join(commonDirPath, 'refs', 'heads', branchName))).trim() || null
             : /^[0-9a-f]{40}$/i.test(headValue)
                 ? headValue
                 : null;
         const registeredWorktreePath = await readRegisteredWorktreePath({
             gitDirPath,
             commonDirPath,
-            worktreePath: cwd,
+            worktreePath,
         });
 
         return {
@@ -165,7 +177,7 @@ async function inspectGitCheckoutIdentityFromAdminFiles(cwd: string): Promise<Gi
             headRevision,
             gitDirPath,
             commonDirPath,
-            worktreePath: cwd,
+            worktreePath,
             registeredWorktreePath,
         };
     } catch {

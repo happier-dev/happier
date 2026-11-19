@@ -1,3 +1,4 @@
+import { readCurrentBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 import { join, resolve } from 'node:path';
 
 import { inspectGitCheckoutIdentity } from './checkoutIdentity.js';
@@ -22,23 +23,36 @@ export const readGitWorkspaceWatchInputs: NonNullable<NonNullable<ScmBackend['wo
     if (!origins.success || !excludes.success || !globalConfig.success || !systemConfig.success) {
         throw Object.assign(new Error('Git ignore configuration sources are unavailable.'), { code: 'COMMAND_FAILED' });
     }
-    const paths = new Set([
+    const commandPaths = readCurrentBackendRuntimeServices()?.repositoryFileSystem?.commandPaths;
+    const commandDirectory = commandPaths?.toCommandPath(context.cwd) ?? context.cwd;
+    const metadata = [
         join(identity.gitDirPath, 'HEAD'), join(identity.gitDirPath, 'index'),
         join(identity.gitDirPath, 'config.worktree'), join(identity.commonDirPath, 'config'),
         join(identity.commonDirPath, 'packed-refs'), join(identity.commonDirPath, 'info', 'exclude'),
         join(identity.commonDirPath, 'refs', 'stash'),
-    ]);
-    if (identity.branchName) paths.add(join(identity.commonDirPath, 'refs', 'heads', identity.branchName));
+    ];
+    if (identity.branchName) metadata.push(join(identity.commonDirPath, 'refs', 'heads', identity.branchName));
+    const paths = new Set(metadata.map(path => commandPaths?.fromCommandPath(path) ?? path));
+    function addConfigPath(path: string): void {
+        const absolute = resolve(commandDirectory, path);
+        try {
+            paths.add(commandPaths?.fromCommandPath(absolute) ?? absolute);
+        } catch (error) {
+            // System and global configuration outside the admitted workspace are not observable here.
+            if (error instanceof Error && 'code' in error && error.code === 'workspace_root_unsafe') return;
+            throw error;
+        }
+    }
     const fields = origins.stdout.split('\0');
     for (let index = 0; index + 1 < fields.length; index += 2) {
         const origin = fields[index];
-        if (origin.startsWith('file:')) paths.add(resolve(context.cwd, origin.slice('file:'.length)));
+        if (origin.startsWith('file:')) addConfigPath(origin.slice('file:'.length));
     }
     // Origins omit absent files. Git's own candidates keep first creation observable too.
     for (const config of [globalConfig, systemConfig]) {
-        for (const path of config.stdout.split(/\r?\n/u).filter(Boolean)) paths.add(resolve(context.cwd, path));
+        for (const path of config.stdout.split(/\r?\n/u).filter(Boolean)) addConfigPath(path);
     }
     const excludePath = excludes.stdout.trim();
-    if (excludePath) paths.add(resolve(context.cwd, excludePath));
+    if (excludePath) addConfigPath(excludePath);
     return { paths: [...paths], workspaceFileNames: ['.gitignore', '.git'] };
 };
