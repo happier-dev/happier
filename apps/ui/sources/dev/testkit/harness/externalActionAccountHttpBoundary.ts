@@ -105,7 +105,8 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
     /** Real encrypted Account codec; plaintext Accounts never acquire key material. */
     encryption?: Pick<Encryption, 'openEncryption' | 'getContentPrivateKey'>;
     /** A dispatched Action refusal is an HTTP execution envelope, not a transport rejection. */
-    failure?: (result: unknown) => Readonly<{ errorCode: string; error: string; details?: unknown }> | null;
+    failure?: (result: unknown) => Readonly<{ errorCode: string; error: string; details?: unknown;
+        effectAttempted?: boolean; failureCause?: unknown }> | null;
 } & (
     | {
         requesterInvocation?: 'required';

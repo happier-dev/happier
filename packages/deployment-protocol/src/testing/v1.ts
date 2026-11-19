@@ -44,10 +44,15 @@ export function createDeploymentEnvironmentHeaderV1(overrides: Partial<Deploymen
 }
 
 export function createDeploymentReceiptHeaderV1(overrides: Partial<DeploymentReceiptHeaderV1> = {}): DeploymentReceiptHeaderV1 {
-    return ProtocolDeploymentReceiptHeaderV1Schema.parse({
+    return ProtocolDeploymentReceiptHeaderV1Schema.parse(withoutUndefined({
         v: 1, id: 'deployment-a', environmentId: 'environment-staging', targetLinkId: 'target-link', revision: 1,
         operation: 'deploy', state: 'succeeded', requestKey: 'request-a', requestedByAccountId: 'account-owner',
         actionOperationId: 'operation-a', requestedAtMs: 1000, startedAtMs: 1001, settledAtMs: 1002,
         contentArtifactId: 'artifact-deployment', contentHeaderVersion: 1, contentBodyVersion: 1, ...overrides,
-    });
+    }));
+}
+
+/** An override set to `undefined` removes that default (a queued receipt has no start); protocol input is strict JSON. */
+function withoutUndefined<T extends object>(value: T): T {
+    return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }

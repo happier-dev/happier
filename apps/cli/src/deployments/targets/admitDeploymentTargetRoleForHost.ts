@@ -22,7 +22,7 @@ import { admitDeploymentTargetCredentialPrincipalForHost } from './admitDeployme
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { PluginError } from '@happier-dev/cli-common/plugins/errors';
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { DeploymentTargetLinkProviderContentV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+import { DeploymentTargetInspectDraftInputV1Schema, type DeploymentTargetLinkProviderContentV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 
 export type DeploymentTargetRoleAdmissionHost = Readonly<{
     serverId: string;
@@ -157,7 +157,9 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
             continue;
         }
         if (binding.role === 'inspect' || binding.role === 'link' || binding.role.includes('.')) {
-            const value = projectPreparationInput(request.input, DeploymentTargetRoleInputSchemasV1[binding.role]);
+            // Inspect also answers the pre-Create notice draft, which names no provider resource yet.
+            const value = projectPreparationInput(request.input, DeploymentTargetRoleInputSchemasV1[binding.role])
+                ?? (binding.role === 'inspect' ? projectPreparationInput(request.input, DeploymentTargetInspectDraftInputV1Schema) : null);
             if (value) parsed.push({ binding, input: value });
         } else {
             const value = DeploymentTargetRoleInputSchemasV1[binding.role].safeParse(request.input);
@@ -240,7 +242,8 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
         // (DeploymentTargetPreparationBaseV1). Its own credential principal and the Action's declared
         // purpose, admitted above, are the whole authority; every other role needs its Environment.
         if (matched.every(entry => entry.binding.role === 'inspect') && isDeepStrictEqual(principal.purpose, authorization.purpose)) {
-            return { input: DeploymentTargetRoleInputSchemasV1.inspect.parse(input), role: 'inspect' };
+            const inspected = DeploymentTargetRoleInputSchemasV1.inspect.safeParse(input);
+            return { input: inspected.success ? inspected.data : DeploymentTargetInspectDraftInputV1Schema.parse(input), role: 'inspect' };
         }
         return refuse('deployment_access_denied', 'deployment.target.admission.environment_read');
     }

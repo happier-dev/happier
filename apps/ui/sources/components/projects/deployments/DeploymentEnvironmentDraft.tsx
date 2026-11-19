@@ -560,7 +560,15 @@ export const DeploymentEnvironmentDraft = React.memo(
             }}
           />
     );
-    const partialProgress = partial && refusal?.kind === 'refused' && refusal.failure
+    // Create saved the Environment, then the platform refused its resource (journey-deploy revFail after a partial
+    // Create): the stepped Review keeps its plan and says what exists, row by row, instead of the generic progress list.
+    const platformRefusal = stepped && prepared && onPlatform && platformTarget && partial?.phase === 'target'
+      && refusal?.kind === 'refused' ? refusal : null;
+    const platformCause = platformRefusal?.failure?.failureCause;
+    // The platform answered 409 to the project it was asked to create: its name is taken (Vercel, Cloudflare Pages).
+    const platformNameTaken = platformProvider?.kind === 'create' && platformCause !== undefined
+      && (platformCause.httpStatus === 409 || platformCause.errorCode === 'conflict');
+    const partialProgress = partial && refusal?.kind === 'refused' && refusal.failure && !platformRefusal
       ? <DeploymentPartialProgress testID="project-deployments.draft.progress" progress={partial} failure={refusal.failure} /> : null;
     // One notice per cause: a chosen Machine that stopped answering is said once, by its own notice, in place of the
     // target refusal and the setup failure that both come from it (journey-deploy revFail).
@@ -580,6 +588,15 @@ export const DeploymentEnvironmentDraft = React.memo(
               tone="neutral"
               title={t('projects.deployments.createApprovalTitle')}
               description={t('projects.deployments.createApprovalBody')}
+            />
+          ) : platformRefusal && platformTarget ? (
+            <AttentionBanner
+              testID="project-deployments.draft.refused"
+              tone="danger"
+              title={t('newApp.deploy.plan.platformRefusedTitle', { platform: platformTarget.title })}
+              description={platformNameTaken ? t('newApp.deploy.plan.platformNameTaken', { platform: platformTarget.title })
+                : t('newApp.deploy.plan.platformRefused', { platform: platformTarget.title })}
+              details={[platformRefusal.code]}
             />
           ) : refusal && refusal.kind === 'refused' ? (
             <AttentionBanner
@@ -602,7 +619,8 @@ export const DeploymentEnvironmentDraft = React.memo(
         machine: machineName(chosen.id), resource: platformProvider?.kind === 'existing' ? 'existing' : 'create' }
         : { kind: 'machine', machine: machineName(chosen.id) },
       answered: refusal !== null,
-      refused: refusal?.kind === 'refused',
+      refused: refusal?.kind === 'refused' && !platformRefusal,
+      ...(platformRefusal ? { platformRefused: { status: platformNameTaken ? t('newApp.deploy.plan.nameTaken') : t('newApp.deploy.plan.refusedRow') } } : {}),
     } : null;
     // The account this platform acts through, once Configure has named it: Review says which of its plans it is on.
     const platformAccount = onPlatform ? readPreparedPlatformAccount(platformProvider) : null;

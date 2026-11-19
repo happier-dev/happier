@@ -21,6 +21,7 @@ vi.mock('expo-router', () => routerMock.module);
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { DeploymentEnvironmentDraft } = await import('./DeploymentEnvironmentDraft');
+import type { DeploymentDraftFrame } from './DeploymentEnvironmentDraft';
 const { ProjectDeploymentsView } = await import('./ProjectDeploymentsBody');
 const { createDeploymentReadControllerV1 } = await import('@happier-dev/deployments');
 const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
@@ -1220,6 +1221,105 @@ describe('Environment draft Machine Home', () => {
         source: { kind: 'plugin', contribution: { pluginId, localId: 'beta' } },
         providerCreate: { providerAccountId: 'organization', resourceName: 'new-project' } });
       expect(saved).toEqual([['created-environment', undefined]]);
+      await screen.unmount();
+    } finally { standardCleanup(); await receiver.dispose(); await installed.dispose(); account.dispose(); storage.setState(previous); }
+  });
+
+  // AUTO-LIVE-REVIEW F-REVFAIL (journey-deploy revFail, A3): Create saved the Environment, then the platform refused to
+  // make its project (Vercel 409: the name is taken). Review keeps the stepped plan and says, row by row, what exists.
+  it('a platform that refuses to create its project after the Environment is saved says the name is taken and what was saved', async () => {
+    const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-platform-create-taken.test', accountId: 'alice',
+      serverIdentityId: `srv_${'f'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    const saved: Array<[string, unknown]> = [];
+    const frames: DeploymentDraftFrame[] = [];
+    let links = 0;
+    const pluginId = 'com.example.draft-platform-taken';
+    const authoredPlugin = createDeploymentTargetsTestPlugin(pluginId, undefined, { create: true });
+    const installed = await installPortableAccountPluginReleaseForTest({ manifest: authoredPlugin.manifest,
+      activate: api => authoredPlugin.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account),
+      accountLifetime: account.accountLifetime, publishProjection: true });
+    const receiver = await answerDeploymentTargetInspectForHome({ homes, serverId, accountId: 'alice', machineId: 'runtime', plugin: authoredPlugin });
+    try {
+      homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+        id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
+        createdByAccountId: 'alice', repository, defaultRef: 'main' } } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0,
+        execute: input => {
+          if (typeof input === 'object' && input !== null && 'mode' in input) {
+            const authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input) as Record<string, unknown>;
+            const { mode: _mode, name: _name, definition: _definition, ...selectors } = authored;
+            return DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: {
+              ...selectors, controllerMachineId: 'runtime', buildMachineId: 'runtime',
+              contentArtifactId: 'host-prepared-content', contentHeaderVersion: 2, contentBodyVersion: 3,
+            }, review: { creationDefaults: { values: { buildMachineId: 'runtime', controllerMachineId: 'runtime', retainPreviousDeployments: 1 },
+              sources: { controllerMachineId: 'explicit', buildMachineId: 'builtin', retainPreviousDeployments: 'builtin' } },
+            creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 3, projectDefaultsRevision: 0, content: null } } });
+          }
+          DeploymentEnvironmentCreateInputV1Schema.parse(input);
+          return { ok: true, environmentId: 'created-environment', revision: 1 };
+        } });
+      const { createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+      homes.answer(serverId, 'GET /v1/deployments/environments/created-environment', { body: { ok: true,
+        environment: createDeploymentEnvironmentHeaderV1({ id: 'created-environment', projectSourceId: 'source-app',
+          serverId: `srv_${'f'.repeat(32)}`, controllerMachineId: 'runtime' }), targetLinks: [] } });
+      homes.answer(serverId, 'POST /v1/deployments/targets/list', {
+        body: { ok: true, items: [], nextCursor: null, coverage: 'complete' } });
+      // The provider refuses the project at link time: HTTP 409 conflict, as Vercel answers a taken project name.
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.targets.link', tokenEpoch: 0, execute: () => { links++; return { refused: true }; },
+        failure: result => typeof result === 'object' && result !== null && 'refused' in result
+          ? { errorCode: 'provider_request_failed', error: 'provider_request_failed', effectAttempted: true,
+            failureCause: { phase: 'deployment.provider.link', errorClass: 'Error', errorCode: 'conflict', httpStatus: 409 } } : null });
+      await publishMachineInventoryForTest(account.accountLifetime.scope,
+        [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
+      const steps = { onFrame: (frame: DeploymentDraftFrame) => { frames.push(frame); }, onExit: () => {} };
+      const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
+        phone={false} platformAvailable actions={createDeploymentActions(account.accountLifetime, 'source-app')} steps={steps}
+        onApprovalRequested={() => {}} onSaved={(id, next) => saved.push([id, next])} onDiscard={() => {}} />);
+      const frame = () => frames[frames.length - 1]!;
+      const settle = (check: () => void) => waitForHomeGovernance(async () => { await act(async () => {}); check(); });
+      await waitForTestEvent(screen.subscribe,
+        () => screen.findHostByTestId(`project-deployments.draft.target:${pluginId}/beta`), node => node !== null);
+      await screen.pressByTestIdAsync(`project-deployments.draft.target:${pluginId}/beta`);
+      await settle(() => expect(frame().primary.disabled).toBe(false));
+      await act(async () => frame().press());
+      await settle(() => expect(frame().step).toBe('configure'));
+      const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+      const mode = () => screen.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === 'project-deployments.platform.mode');
+      await settle(() => expect(mode(), screen.getTextContent()).toBeDefined());
+      await act(async () => mode()!.props.onChange('create'));
+      const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
+      const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
+      await act(async () => screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account',
+        account: { service: { pluginId: 'com.example.cloud', localId: 'cloud-account' }, accountId: 'cloud-account' } }, null));
+      const patch = async (value: Record<string, unknown>) => act(async () => screen.findAllByType(ActionInputFields)[0]!.props.onPatch(value));
+      await patch({ providerAccountId: 'organization' });
+      await patch({ resourceName: 'taken-project' });
+      await patch({ providerEnvironment: { kind: 'production' } });
+      await settle(() => expect(frame().primary.disabled, screen.getTextContent()).toBe(false));
+      await act(async () => frame().press());
+      await settle(() => expect(frame().step).toBe('review'));
+      await settle(() => expect(frame().primary.disabled).toBe(false));
+      await act(async () => frame().press());
+      await settle(() => expect(links, screen.getTextContent()).toBe(1));
+      await settle(() => expect(screen.findByTestId('project-deployments.draft.refused'), screen.getTextContent()).not.toBeNull());
+      const { t } = await import('@/text');
+      const rowText = (testID: string) => screen.findByTestId(testID)?.findAll(() => true)
+        .flatMap(node => node.children.filter(value => typeof value === 'string')).join(' ') ?? '';
+      // The cause is named once, and the rows say what exists: the Environment is saved, the provider project is not.
+      expect(screen.getTextContent()).toContain(t('newApp.deploy.plan.platformNameTaken', { platform: 'Beta runtime' }));
+      expect(rowText('project-deployments.draft.creates.environment')).toContain(t('newApp.deploy.plan.saved'));
+      expect(rowText('project-deployments.draft.creates.platform.refused')).toContain(t('newApp.deploy.plan.nameTaken'));
+      // The generic partial-progress view (raw Environment id, "Couldn't change this setting") is not this Review.
+      expect(screen.findByTestId('project-deployments.draft.progress')).toBeNull();
+      expect(frame().refused, 'something was created, so the dialog does not say nothing was').toBe(false);
+      // Its one continuation opens the saved Environment, where the provider project is linked or renamed.
+      await act(async () => frame().press());
+      await settle(() => expect(saved).toHaveLength(1));
+      expect(saved[0]![0]).toBe('created-environment');
       await screen.unmount();
     } finally { standardCleanup(); await receiver.dispose(); await installed.dispose(); account.dispose(); storage.setState(previous); }
   });

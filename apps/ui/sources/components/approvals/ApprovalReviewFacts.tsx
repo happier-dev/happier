@@ -159,6 +159,11 @@ export type DeploymentCreationReviewPlan = Readonly<{
   answered: boolean;
   /** Create refused: nothing was created, and the Environment row says it couldn't be (journey-deploy revFail). */
   refused: boolean;
+  /**
+   * Create saved the Environment, then the platform refused its resource (journey-deploy revFail after a partial
+   * Create): the Environment row says it is saved and the platform row carries the platform's refusal.
+   */
+  platformRefused?: Readonly<{ status: string }>;
 }>;
 
 /** The order things happen after Create, from what the prepared review creates (journey-deploy rev "What happens next"). */
@@ -201,6 +206,7 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
         title={t('newApp.deploy.plan.environment', { name: plan.environment.name })}
         subtitle={plan.refused ? <RowStatusLine testID={`${testID}.creates.environment.refused`} tone="bad"
           text={t('newApp.deploy.plan.refusedRow')} />
+          : plan.platformRefused ? t('newApp.deploy.plan.saved')
           : plan.answered ? t('newApp.deploy.plan.notCreated')
           : [plan.environment.production ? t('newApp.deploy.plan.production') : null,
             t('newApp.deploy.plan.deployers', { who: deployersLabel(plan.environment.deployers) })].filter(Boolean).join(' · ')} />
@@ -208,7 +214,9 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
         icon={<PluginMark title={runsOn.platform} pluginId={runsOn.pluginId} />}
         title={runsOn.resource === 'create' ? t('newApp.deploy.plan.platformCreate', { platform: runsOn.platform })
           : t('newApp.deploy.plan.platformLink', { platform: runsOn.platform })}
-        subtitle={plan.answered ? t('newApp.deploy.plan.notCreated')
+        subtitle={plan.platformRefused ? <RowStatusLine testID={`${testID}.creates.platform.refused`} tone="bad"
+          text={plan.platformRefused.status} />
+          : plan.answered ? t('newApp.deploy.plan.notCreated')
           : runsOn.resource === 'create' ? t('newApp.deploy.plan.platformCreateNote', { platform: runsOn.platform })
           : t('newApp.deploy.plan.platformLinkNote')} /> : null}
     </ItemGroup> : null}

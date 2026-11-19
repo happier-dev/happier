@@ -411,6 +411,26 @@ describe('deployment role host admission', () => {
         expect(fixture.state.reads).toBe(0);
     });
 
+    it('admits the pre-Create notice draft (no provider resource named) as Inspect without an Environment read', async () => {
+        // AUTO-LIVE-REVIEW F-NOTICE: Review asks the target what creating a resource means before Create (deploy
+        // auto-mode U8; deploy-cloudflare pages-inspect answers with "A Pages source is final at creation"). The draft
+        // names its source method and provider environment only; no Environment, link or provider Account exists yet.
+        const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
+        const { environmentId: _environment, expectedRevision: _revision, targetLinkId: _link,
+            expectedTargetLinkRevision: _linkRevision, providerIdentity: _identity, providerAccountId: _account,
+            preparedNative: _native, ...rest } = fixture.input as typeof fixture.input & { providerAccountId?: string };
+        const input = { ...rest, sourceMethod: 'upload' as const, credentialPrincipal: { ...rest.credentialPrincipal,
+            purpose: fixture.request.purposeAuthorization!.purpose } };
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, input }, fixture.host))
+            .resolves.toMatchObject({ role: 'inspect', input: { sourceMethod: 'upload' } });
+        expect(fixture.state.reads).toBe(0);
+        // The draft never stands in for a link, which still needs the provider resource it associates.
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, input,
+            bindings: [{ ...fixture.request.bindings[0]!, role: 'link' }] }, fixture.host))
+            .rejects.toMatchObject({ code: 'deployment_invalid' });
+        expect(fixture.state.reads).toBe(0);
+    });
+
     it('admits a saved profile for the same Home and refuses a foreign Home before reading', async () => {
         const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
         const host = { ...fixture.host, serverId: 'srv_deployment_home' };

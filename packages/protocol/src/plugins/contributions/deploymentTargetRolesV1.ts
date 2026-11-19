@@ -156,6 +156,16 @@ export const DeploymentTargetInspectInputV1Schema = preparationInput;
 export const DeploymentTargetLinkRoleInputV1Schema = preparationInput;
 export type DeploymentTargetInspectInputV1 = z.infer<typeof DeploymentTargetInspectInputV1Schema>;
 export type DeploymentTargetLinkRoleInputV1 = z.infer<typeof DeploymentTargetLinkRoleInputV1Schema>;
+/**
+ * Before Create, Inspect says what making a resource means (deploy auto-mode U8, e.g. "A Pages source is final at
+ * creation"). The draft names its source method and provider environment only: no Environment, link or provider
+ * resource exists yet, so it never stands in for a link or a lifecycle role.
+ */
+export const DeploymentTargetInspectDraftInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTargetPreparationBaseV1Schema, {
+    environmentId: z.optional(z.never()), expectedRevision: z.optional(z.never()), providerAccountId: z.optional(z.never()),
+    providerIdentity: z.optional(z.never()), targetLinkId: z.optional(z.never()), expectedTargetLinkRevision: z.optional(z.never()),
+    sourceMethod: DeploymentSourceMethodV1Schema,
+}));
 
 /** A reviewed provider resource creation precedes the host-owned association write. */
 export const DeploymentTargetCreateInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTargetPreparationBaseV1Schema, {
