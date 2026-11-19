@@ -215,6 +215,54 @@ describe('workflow library page anatomy', () => {
         }
     });
 
+    it('groups a Workflow by the viewer’s own authored placement without opening either document', async () => {
+        windowSize.width = 1440;
+        const scope = storage.getState().profileScope!;
+        const placed = '10000000-0000-4000-8000-000000000083';
+        const shared = '10000000-0000-4000-8000-000000000084';
+        const workspace = { id: 'payments-checkout', machineId: 'machine-1', serverId: scope.serverId,
+            rootPath: '/repo/payments', projectKey: 'payments', label: 'Payments', createdAtMs: 1 };
+        execute.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [
+                { definitionId: placed, access: 'owner', ownerAccountId: scope.accountId, metadata: { title: 'Release notes' } },
+                { definitionId: shared, access: 'view', ownerAccountId: 'another-account', metadata: { title: 'Shared report' } },
+            ].map(row => ({ ...row, kind: 'workflow-definition.v1', revision: { headerVersion: 1, bodyVersion: 1 },
+                contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null })) } };
+            if (actionId === 'workflow.run.summaries') return { ok: true, result: { summaries: [], remainingSourceArtifactIds: [] } };
+            return { ok: false, errorCode: 'unexpected', error: 'Unexpected fixture request' };
+        });
+        const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
+        try {
+            const { HostCollection } = await import('@happier-dev/plugin-ui');
+            const library = () => screen.findAllByType(HostCollection).find(node => node.props.testID === 'workflows-home:collection')!;
+            await vi.waitFor(() => expect(library().props.model.keys).toEqual(expect.arrayContaining([placed, shared])));
+            await act(async () => {
+                storage.getState().activateProjectAccountRowsScope(scope);
+                storage.getState().applyProjectAccountRowsForScope(scope, {
+                    scope, status: 'ready', coverage: 'complete', workspaceRefs: [workspace], relationships: [],
+                    organizations: [], revisionsByPhysicalKey: {},
+                });
+                storage.getState().applyAuthoringMemory({ workflowProjectTargetsByDefinitionId: {
+                    [placed]: { machineId: workspace.machineId, directory: workspace.rootPath, workspaceRefId: workspace.id },
+                } });
+            });
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            await act(async () => {
+                expect(await createDefaultActionExecutor().execute('settings.set', {
+                    anchor: 'appearance.collectionDisplay', value: { kind: 'workflow', groupBy: 'project' },
+                }, { surface: 'agent', serverId: scope.serverId, expectedAccountId: scope.accountId })).toMatchObject({ ok: true });
+            });
+            const sections = library().props.model.sections;
+            expect(sections).toEqual(expect.arrayContaining([
+                expect.objectContaining({ group: expect.objectContaining({ title: 'Payments' }), items: [expect.objectContaining({ key: placed })] }),
+                expect.objectContaining({ group: expect.objectContaining({ title: 'workflows.destination.sections.noProject' }), items: [expect.objectContaining({ key: shared })] }),
+            ]));
+            expect(execute.mock.calls.map(([id]) => id)).not.toContain('workflow.definition.get');
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('returns focus to the moved New action after the last workflow is deleted on a wide page', async () => {
         const { WorkflowsColumn } = await import('../column/WorkflowsColumn');
         const definitionId = '10000000-0000-4000-8000-000000000081';
@@ -1010,11 +1058,8 @@ describe('workflow library page anatomy', () => {
         </AppShellColumnContext.Provider>, { wrapper: Wrapper });
         await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${definitionId}`)).not.toBeNull());
         expect(screen.findHostByTestId('workflows-home:idle')).toBeNull();
-        // F5 (owner 2026-11-12): the page's toolbar owns the one scope and search beside the column.
         expect(screen.findHostByTestId('workflows-home:search')).not.toBeNull();
-        // ov-B (list-detail lab; LAB-PARITY-ALL-1114 → QA-SHELL-1114): the column already lists Built-in, so the page
-        // beside it does not repeat that list.
-        expect(screen.findAll((node) => node.props.testID === 'workflows-home:builtins')).toHaveLength(0);
+        expect(screen.findByTestId('workflows-home:builtins')).not.toBeNull();
         expect(screen.findHostByTestId('workflows-home:scope-line')).not.toBeNull();
         // One primary: New workflow opens the blank draft.
         await screen.pressByTestIdAsync('workflows-home:new');

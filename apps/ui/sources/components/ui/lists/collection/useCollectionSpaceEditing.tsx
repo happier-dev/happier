@@ -43,6 +43,7 @@ const NO_MEMBERSHIP = { create: undefined, edit: undefined } as const;
 const SPACE_MEMBERSHIP_FOR: SpaceMembershipFor = {
   sessionWork: (mode) => (mode ? { create: { mode, tags: [] }, edit: { mode } } : NO_MEMBERSHIP),
   workflow: () => NO_MEMBERSHIP,
+  workflowRun: () => NO_MEMBERSHIP,
   discussion: () => NO_MEMBERSHIP,
   deploymentEnvironment: () => NO_MEMBERSHIP,
   // A Review space's manual members are Account-scoped associations (P02), not tags on its definition.

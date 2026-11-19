@@ -75,6 +75,17 @@ when the window expands. Switching presentation preserves the current search,
 space, and list window. Cards read the authored step preview in the list header.
 Opening a workflow loads its full definition for editing.
 
+The same Action accepts partial, kind-keyed options. Workflows group by Source
+or the viewer's private Project placement. The Runs collection model groups by
+Date, Project or Workflow over the shared Account list window. The collection
+Spaces Action accepts Run-specific filters and saved Spaces.
+Sessions Lines 1, 2 and 3 still write the existing `sessionListDensity` key.
+Session Row details and the View menu share independent choices. Current work
+and Progress default on. Project, Machine and Branch inherit the retained
+context choice until set independently. PR and Changes default off. Artifacts
+use `{ kind: 'artifact', presentation: 'grid' | 'list' | 'folders' }` and fall
+back to the previous device preference before an Account choice exists.
+
 ## Model and presentation
 
 Row secondary actions carry optional menu-selection context through Overlay,
@@ -123,6 +134,13 @@ saved selections when a plugin is retired. Admission and evaluation acquire no
 Resources and activate no plugin. Resource-backed loading is available at the
 Services fact adapter; other host-row loading and its dependent host filters
 remain deferred. Row operations use ordinary plugin Actions.
+
+The Workflow list reads `stepCount`, `lastRunAt` and `state` from its held
+row facts. Runs expose `createdAt`, `result` and `startedBy`. Extensions can
+render declared columns and row marks from these facts. Column choices use
+the Columns Action. Row marks use that entity's Row details choice, keyed by
+the qualified field id. Column, card and row options acquire zero extra list,
+body or Resource reads.
 
 Fields may declare a display-only `number` value with its `unit` and optional
 `column` presentation (`title`, `width`, `align`, `priority`, `defaultHidden`).

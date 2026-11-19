@@ -22,6 +22,8 @@ export const COLLECTION_SPACE_KIND_PRESENTATION = {
         listRoute: '/reviews', listTitleKey: 'detailsSurface.review.title', settingsPageId: 'settings' },
     workflow: { defaultNameKey: 'sessionsList.spacesAllWorkflows', manageTitleKey: 'sessionsList.spacesManageWorkflows',
         listRoute: '/workflows', listTitleKey: 'workflows.title', settingsPageId: 'settings' },
+    workflowRun: { defaultNameKey: 'workflows.destination.allRuns', manageTitleKey: 'workflows.destination.display.runSpaces',
+        listRoute: '/workflows/runs', listTitleKey: 'workflows.destination.allRuns', settingsPageId: 'settings' },
     discussion: { defaultNameKey: 'sessionsList.spacesAllDiscussions', manageTitleKey: 'sessionsList.spacesManageDiscussions',
         listRoute: '/discussions', listTitleKey: 'session.collaboration.discussion.title', settingsPageId: 'settings' },
     deploymentEnvironment: { defaultNameKey: 'projects.deployments.services.allServices', manageTitleKey: 'sessionsList.spacesManageServices',

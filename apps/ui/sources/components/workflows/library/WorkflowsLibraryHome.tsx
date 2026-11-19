@@ -61,7 +61,6 @@ import { WorkflowRunStripView } from './WorkflowRunStripView';
 import { WorkflowsLibraryHeaderActions } from './WorkflowsLibraryHeaderActions';
 import { WorkflowExamplesSection } from './WorkflowExamplesSection';
 import { WorkflowBuiltinsSection } from './WorkflowBuiltinsSection';
-import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { useWorkflowAgentAuthoring } from '../authoring/useWorkflowAgentAuthoring';
 import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
 import { formatNextScheduledRun, formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
@@ -144,7 +143,6 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     const ownLibraryView = useWorkflowLibraryView(focused && lent === null);
     const libraryView = lent?.libraryView ?? ownLibraryView;
     const { library, filter, needle, searchQuery: query } = libraryView;
-    const columnListsBuiltins = useAppShellColumn().columnVisible;
     const spaceHeader = useWorkflowLibrarySpaceHeader(ownLibraryView, 'workflows-home-space', 'section');
     React.useEffect(() => {
         const definitionId = library.deletedDefinitionId;
@@ -181,16 +179,26 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         if (openAccount) { openAccount(); return; }
         router.push(`/workflows/${encodeURIComponent(key)}` as never);
     }, [router]);
+    const display = useCollectionDisplayOptions('workflow', phone);
+    const projects = libraryView.projectsByWorkflow;
+    const groups = React.useMemo(() => {
+        if (display.groupBy === 'source') return LIBRARY_GROUPS;
+        const noProject = { key: 'noProject', title: t('workflows.destination.sections.noProject') };
+        const byProject = new Map([...projects.values()].map(project => [project.key, project]));
+        return {
+            axis: [...byProject.values()].sort((left, right) => left.title.localeCompare(right.title)).concat(noProject),
+            groupOf: (row: LibraryRow) => projects.get(row.key)?.key ?? noProject.key,
+        };
+    }, [display.groupBy, projects]);
     const model = useHappierCollection<LibraryRow>({
         items: rows,
         keyOf: readRowKey,
-        groups: LIBRARY_GROUPS,
+        groups,
         filter,
         window,
         openKey: null,
         onOpenChange: openDefinition,
     });
-    const display = useCollectionDisplayOptions('workflow', phone);
     const anatomy = useLibraryAnatomy();
     const commands = useLibraryRowCommands(library.deletedDefinitionId);
     const deleted = library.deletedDefinitionId !== null;
@@ -344,8 +352,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                             />
                         <WorkflowLibraryFreshness library={library} hasRows={rows.length > 0} />
                         <AddressedAccountTriggersSlot />
-                        {/* ov-B: beside the Workflows column, which lists Built-in, the page does not repeat it. */}
-                        {columnListsBuiltins ? null : <WorkflowBuiltinsSection isVisible={libraryView.isVisible} />}
+                        <WorkflowBuiltinsSection isVisible={libraryView.isVisible} />
                         {/* Secondary on a returning library: one compact row, the whole catalog one press away. */}
                         <WorkflowExamplesSection presentation="strip" />
                     </PageContentColumn>
@@ -626,7 +633,6 @@ async function exportDefinition(definitionId: string): Promise<void> {
  * examples use the same catalog as the returning home and column picker (08 §6).
  */
 function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImport: () => void; onCreateWithAgent: () => void }>) {
-    const columnListsBuiltins = useAppShellColumn().columnVisible;
     return (
         <ItemList pageColumn="wide">
             <PageContentColumn>
@@ -640,9 +646,9 @@ function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImpo
                     primaryAction={{ label: t('workflows.newWorkflow'), onPress: props.onNewWorkflow, testID: 'workflows-home:firstVisit:new' }}
                     secondaryAction={{ label: t('workflows.authoring.create'), onPress: props.onCreateWithAgent, testID: 'workflows-home:firstVisit:agent' }}
                 />
-                {/* The examples are the invitation and follow it; without a column, Built-in comes after them. */}
+                {/* The examples lead, followed by the standalone Built-in section. */}
                 <WorkflowExamplesSection presentation="featured" />
-                {columnListsBuiltins ? null : <WorkflowBuiltinsSection />}
+                <WorkflowBuiltinsSection />
                 <View style={styles.importLine}>
                     <Text style={styles.importPrompt}>{t('workflows.destination.importPrompt')}</Text>
                     <RoundButton

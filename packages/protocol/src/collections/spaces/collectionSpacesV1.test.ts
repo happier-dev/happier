@@ -74,6 +74,26 @@ describe('collection spaces', () => {
             resolveCollectionSpacesV1(created, 'deploymentEnvironment'), { authoritative: true })).toBe('failing');
     });
 
+    it('admits Run spaces through the existing settings Action independently of Workflow spaces', () => {
+        const workflow = { ...createDefaultCollectionSpaceV1('workflow'), id: 'automation' };
+        const admitted = SettingsDeclarationActionInputSchemasV1['settings.invoke'].parse({
+            anchor: 'session.list.spaces',
+            input: { kind: 'collection_space', entityKind: 'workflowRun', mutation: { op: 'create', space: {
+                entityKind: 'workflowRun', id: 'recent-runs', name: 'Recent runs',
+                icon: { kind: 'icon', name: 'list' }, filter: { workflows: { include: ['workflow-a'], exclude: [] } },
+                includeNeedsYouEverywhere: false,
+            } } },
+        });
+        if (admitted.input?.kind !== 'collection_space') throw new Error('Expected space intent');
+        const result = reduceCollectionSpacesV1({ v: 1, spaces: [workflow] }, admitted.input);
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        const reopened = CollectionSpacesStoredReadV1Schema.parse(result.value);
+        expect(reopened.spaces).toEqual([workflow, expect.objectContaining({
+            entityKind: 'workflowRun', id: 'recent-runs', filter: { workflows: { include: ['workflow-a'], exclude: [] } },
+        })]);
+    });
+
     it('reorders only its entity subsequence and resets default content at its current ordinal', () => {
         const workflow = { ...createDefaultCollectionSpaceV1('workflow'), id: 'automation' };
         const catalog: CollectionSpacesV1 = { v: 1, spaces: [custom('a'), workflow, custom('b')] };
