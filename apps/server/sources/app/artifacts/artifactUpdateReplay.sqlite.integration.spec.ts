@@ -8,7 +8,7 @@ import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createHash } from 'node:crypto';
-import { request as requestHttp } from 'node:http';
+import { createServer, request as requestHttp } from 'node:http';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import type { onSendHookHandler } from 'fastify';
 import { initFilesLocalFromEnv, initFilesS3FromEnv, loadFiles, writePublicFile } from '@/storage/blob/files';
@@ -61,6 +61,110 @@ it('refuses a binary upload with the missing private bucket reason while public 
         vi.doUnmock('minio');
         initFilesLocalFromEnv();
         await loadFiles();
+    }
+});
+
+it('skips private IO for a full Artifact budget and removes the candidate that loses a concurrent quota check', async () => {
+    const owner = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+    const dataEncryptionKey = encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32),
+        recipientPublicKey: owner.contentPublicKey!, randomBytes: tweetnacl.randomBytes }));
+    const pendingBlobId = crypto.randomUUID();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const objects = new Set<string>();
+    const writes: string[] = [];
+    const deletes: string[] = [];
+    const s3 = createServer(async (request, response) => {
+        const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+        if (url.searchParams.has('location')) {
+            response.end('<LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">us-east-1</LocationConstraint>');
+        } else if (url.searchParams.has('policy')) {
+            response.end('{"Statement":[]}');
+        } else if (request.method === 'HEAD') {
+            response.end();
+        } else if (request.method === 'PUT') {
+            for await (const _chunk of request) { /* Drain the real object upload. */ }
+            objects.add(url.pathname);
+            writes.push(url.pathname);
+            if (url.pathname.includes(pendingBlobId)) {
+                started.resolve();
+                await release.promise;
+            }
+            response.setHeader('ETag', '"test-etag"').end();
+        } else if (request.method === 'DELETE') {
+            objects.delete(url.pathname);
+            deletes.push(url.pathname);
+            response.writeHead(204).end();
+        } else {
+            response.writeHead(405).end();
+        }
+    });
+    await new Promise<void>(resolve => s3.listen(0, '127.0.0.1', resolve));
+    try {
+        const address = s3.address();
+        if (!address || typeof address === 'string') throw new Error('Missing S3 fixture port');
+        await initFilesS3FromEnv({ S3_HOST: '127.0.0.1', S3_PORT: String(address.port), S3_USE_SSL: 'false',
+            S3_PUBLIC_URL: 'https://cdn.example.com', S3_BUCKET: 'public', S3_PRIVATE_BUCKET: 'private',
+            S3_ACCESS_KEY: 'key', S3_SECRET_KEY: 'secret' });
+        await loadFiles();
+        const makeCreate = (blobId = crypto.randomUUID()) => ({ kind: 'create', artifactId: crypto.randomUUID(), blobId,
+            header: 'AgAD', body: 'AgAE', dataEncryptionKey } satisfies ArtifactUploadDestinationV1);
+        const content = { t: 'encrypted', c: 'AQID' } as const;
+        // These opaque values use three stored bytes each for the header, body, and object.
+        vi.stubEnv('HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES', '9');
+        vi.stubEnv('HAPPIER_ARTIFACT_REVISION_RETENTION_COUNT', '1');
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const upload = (destination: ArtifactUploadDestinationV1) => app.inject({ method: 'POST', url: ARTIFACT_UPLOAD_PATH_V1,
+                headers: { 'x-test-user-id': owner.id, 'content-type': ARTIFACT_UPLOAD_CONTENT_TYPE_V1,
+                    'x-happier-account-stored-content-protocol': String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) },
+                payload: Buffer.from(encodeArtifactUploadFrameV1(destination, content)) });
+            const pending = makeCreate(pendingBlobId);
+            const losing = upload(pending);
+            try {
+                await Promise.race([started.promise, losing.then(result => { throw new Error(`Upload stopped before S3 PUT: ${result.body}`); })]);
+                const winner = makeCreate();
+                const accepted = await upload(winner);
+                expect(accepted.statusCode, accepted.body).toBe(200);
+                release.resolve();
+                const refused = await losing;
+                expect(refused.statusCode, refused.body).toBe(413);
+                expect(refused.json()).toEqual({ error: 'quota_exceeded', budget: 'account', limitBytes: 9, usedBytes: 18 });
+                expect(writes).toHaveLength(2);
+                expect(deletes).toEqual([writes[0]]);
+                expect([...objects]).toEqual([writes[1]]);
+
+                const full = await upload(makeCreate());
+                expect(full.statusCode, full.body).toBe(413);
+                expect(full.json()).toEqual(refused.json());
+                const update = await upload({ kind: 'update', artifactId: winner.artifactId, blobId: crypto.randomUUID(),
+                    expectedBodyVersion: 1, body: 'AgAF' });
+                expect(update.statusCode, update.body).toBe(413);
+                expect(update.json()).toMatchObject({ error: 'quota_exceeded', budget: 'account', limitBytes: 9 });
+                vi.stubEnv('HAPPIER_ARTIFACT_DOCUMENT_LIMIT_BYTES', '8');
+                const oversized = await upload(makeCreate());
+                expect(oversized.statusCode, oversized.body).toBe(413);
+                expect(oversized.json()).toEqual({ error: 'quota_exceeded', budget: 'document', limitBytes: 8, usedBytes: 9 });
+                expect(writes).toHaveLength(2);
+                expect(deletes).toEqual([writes[0]]);
+                expect([...objects]).toEqual([writes[1]]);
+                expect(await db.artifact.count({ where: { accountId: owner.id } })).toBe(1);
+                expect(await db.artifactBlob.count({ where: { artifactId: winner.artifactId } })).toBe(1);
+                expect(await db.uploadedFile.count({ where: { accountId: owner.id } })).toBe(0);
+
+                const replay = await upload(winner);
+                expect(replay.statusCode, replay.body).toBe(200);
+                expect([...objects]).toEqual([writes[1]]);
+                expect(await db.uploadedFile.count({ where: { accountId: owner.id } })).toBe(0);
+            } finally {
+                release.resolve();
+                await losing;
+            }
+        });
+    } finally {
+        vi.unstubAllEnvs();
+        initFilesLocalFromEnv();
+        await loadFiles();
+        await new Promise<void>((resolve, reject) => s3.close(error => error ? reject(error) : resolve()));
     }
 });
 

@@ -11,13 +11,13 @@ import { buildAccountChangeWakeUpdate } from '@/app/events/eventPayloadBuilders'
 import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
 import * as privacyKit from 'privacy-kit';
 import { artifactConversionBlobKey, artifactConversionBlobCustody, type PreparedArtifactAccountEncryptionConversionBlob, type PreparedArtifactAccountEncryptionConversionBlobs } from './artifactEncryptionConversionBlobService';
-import { db, getDbProviderFromEnv } from '@/storage/db';
+import { getDbProviderFromEnv } from '@/storage/db';
 import { isPrismaErrorCode } from '@/storage/prisma';
 import { readArtifactStorageEnv } from '@/app/features/catalog/readFeatureEnv';
 import { deletePrivateFile, PrivateStorageUnavailableError } from '@/storage/blob/files';
 import type { ArtifactBlobWriteV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { tryDeriveArtifactStoredKindV1, ArtifactStoredKindV1Schema, decodeArtifactKindV1, getArtifactContentDeliveryPolicyV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
-import { prepareArtifactBlobWrite, admitArtifactBlobWriteInTx, completeArtifactBlobCandidateCustodyInTx, discardArtifactBlobCandidate, cleanupArtifactOrphanBlobs, cleanupArtifactOrphanBlobsAfterCommit, cleanupRejectedArtifactBlobUploads, artifactBlobRejectedUploadReuseKey, type PreparedArtifactBlobWrite } from './artifactBlobService';
+import { prepareArtifactBlobCandidate, storeArtifactBlobCandidate, prepareArtifactBlobWrite, admitArtifactBlobWriteInTx, completeArtifactBlobCandidateCustodyInTx, discardArtifactBlobCandidate, cleanupArtifactOrphanBlobs, cleanupArtifactOrphanBlobsAfterCommit, cleanupRejectedArtifactBlobUploads, artifactBlobRejectedUploadReuseKey, type PreparedArtifactBlobWrite } from './artifactBlobService';
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged, markAccountsChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
 import { readArtifactKindsV1 } from '@happier-dev/protocol/changes';
 import {
@@ -29,7 +29,7 @@ import { ArtifactBlobReferenceV1Schema } from '@happier-dev/protocol/artifacts/a
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
-import { checkArtifactStorageBudgetInTx, retainArtifactBodyRevisionInTx, type ArtifactQuotaExceeded } from "./artifactStorageService";
+import { checkArtifactBlobUploadBudgetInSnapshot, checkArtifactStorageBudgetInTx, retainArtifactBodyRevisionInTx, type ArtifactQuotaExceeded } from "./artifactStorageService";
 import {
     artifactDataKeyMatchesAccountMode,
     artifactProvenanceMatchesAccountMode,
@@ -763,8 +763,15 @@ export async function createArtifact(params: {
     try {
         if (params.blob) {
             if (!params.blob.content) return { ok: false, error: 'invalid-params' };
+            const { blobId, content } = params.blob;
+            const candidate = prepareArtifactBlobCandidate({ accountId: actorUserId, artifactId, blobId, content });
+            if (!params.mutationGuard) {
+                const quota = await checkArtifactBlobUploadBudgetInSnapshot({ accountId: actorUserId, artifactId, header, body,
+                    provenance: params.provenance, plain: content.t === 'plain', candidateBlobBytes: candidate.stored.byteLength });
+                if (quota) return { ok: false, ...quota };
+            }
             await cleanupRejectedArtifactBlobUploads(actorUserId);
-            preparedBlob = await prepareArtifactBlobWrite({ accountId: actorUserId, artifactId, blob: params.blob }) ?? undefined;
+            preparedBlob = await storeArtifactBlobCandidate(candidate);
         }
         const result = await inTx(async (tx) => await createArtifactTx(tx, {
             actorUserId,
@@ -1181,13 +1188,24 @@ export async function updateArtifact(params: {
             transactionClass: "artifact-update-admission",
         });
         if (!access || access.level === 'view') return { ok: false, error: 'not-found' };
+        const accountId = access.ownerAccountId;
+        const content = params.blob?.content;
+        const candidate = content && params.blob
+            ? prepareArtifactBlobCandidate({ accountId, artifactId, blobId: params.blob.blobId, content })
+            : undefined;
+        // Shared or guarded writes must reach their commit-time authorization before exposing quota details.
+        if (candidate && content && body && access.level === 'owner' && !params.mutationGuard) {
+            const quota = await checkArtifactBlobUploadBudgetInSnapshot({ accountId, artifactId, header: header?.bytes, body: body.bytes,
+                provenance: params.provenance, plain: content.t === 'plain', candidateBlobBytes: candidate.stored.byteLength,
+                update: { expectedHeaderVersion: header?.expectedVersion ?? params.expectedHeaderVersion,
+                    expectedBodyVersion: body.expectedVersion, approvalInputCustody: params.approvalInputCustody } });
+            if (quota) return { ok: false, ...quota };
+        }
         if (header || body) await cleanupArtifactOrphanBlobs(artifactId);
         if (params.blob) {
-            if (!body) return { ok: false, error: 'invalid-params' };
-            const owner = await db.artifact.findUnique({ where: { id: artifactId }, select: { accountId: true } });
-            if (!owner) return { ok: false, error: 'not-found' };
-            await cleanupRejectedArtifactBlobUploads(owner.accountId);
-            preparedBlob = await prepareArtifactBlobWrite({ accountId: owner.accountId, artifactId, blob: params.blob }) ?? undefined;
+            await cleanupRejectedArtifactBlobUploads(accountId);
+            preparedBlob = candidate ? await storeArtifactBlobCandidate(candidate)
+                : await prepareArtifactBlobWrite({ accountId, artifactId, blob: params.blob }) ?? undefined;
         }
         const result = await inTx(async (tx) => await updateArtifactTx(tx, {
             updateOperationKey: params.updateOperationKey,

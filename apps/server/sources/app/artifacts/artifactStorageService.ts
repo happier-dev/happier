@@ -1,8 +1,9 @@
-import type { Tx } from "@/storage/inTx";
+import { inReadSnapshot, type Tx } from "@/storage/inTx";
 import type { ApprovalInputCustody } from '@happier-dev/protocol/approvals/approvalInputCustody';
 import { getActivePrismaRuntime, getDbProviderFromEnv } from "@/storage/prisma";
 import { readArtifactStorageEnv } from "@/app/features/catalog/readFeatureEnv";
-import { artifactOrdinarySqlPredicate } from "./artifactClassification";
+import { artifactOrdinarySqlPredicate, artifactVisibleWhere } from "./artifactClassification";
+import { storePlainArtifactDbBytes } from "./artifactStoredContent";
 import type { ArtifactQuotaExceededV1, ArtifactStorageUsageV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 
 export type ArtifactQuotaExceeded = ArtifactQuotaExceededV1;
@@ -105,6 +106,50 @@ export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
     return usedBytes > config.accountLimitBytes
         ? { error: "quota_exceeded", budget: "account", limitBytes: config.accountLimitBytes, usedBytes }
         : null;
+}
+
+/** A snapshot can avoid a doomed object write. Serialized mutation still decides admission. */
+export async function checkArtifactBlobUploadBudgetInSnapshot(input: Readonly<{
+    accountId: string;
+    artifactId: string;
+    plain: boolean;
+    header?: Uint8Array;
+    body: Uint8Array;
+    provenance?: Uint8Array;
+    candidateBlobBytes: number;
+    update?: Readonly<{ expectedHeaderVersion?: number; expectedBodyVersion: number; approvalInputCustody?: ApprovalInputCustody }>;
+}>): Promise<ArtifactQuotaExceeded | null> {
+    const config = readArtifactStorageEnv(process.env);
+    if (config.documentLimitBytes === null && config.accountLimitBytes === null) return null;
+
+    const { accountId, artifactId, update } = input;
+    const storedSize = (field: 'header' | 'body' | 'provenance', content: Uint8Array) =>
+        (input.plain ? storePlainArtifactDbBytes({ accountId, artifactId, field, content }) : content)?.byteLength;
+    const nextHeaderBytes = input.header && storedSize('header', input.header);
+    const nextBodyBytes = storedSize('body', input.body);
+    const nextProvenanceBytes = input.provenance ? storedSize('provenance', input.provenance) : 0;
+    if ((input.header && nextHeaderBytes === undefined) || nextBodyBytes === undefined || nextProvenanceBytes === undefined) return null;
+
+    return inReadSnapshot(async tx => {
+        const next = { accountId, artifactId, nextBodyBytes, nextProvenanceBytes, nextBlobId: null,
+            candidateBlobBytes: input.candidateBlobBytes };
+        if (!update) {
+            // The existing create path owns replay and ID conflicts.
+            if (await tx.artifact.findUnique({ where: { id: artifactId }, select: { id: true } })) return null;
+            return checkArtifactStorageBudgetInTx(tx, { ...next, nextHeaderBytes: nextHeaderBytes ?? 0 });
+        }
+        const current = await tx.artifact.findFirst({ where: { id: artifactId, accountId, ...artifactVisibleWhere }, select: {
+            headerVersion: true, bodyVersion: true, header: true, body: true, provenance: true, currentBlobId: true,
+        } });
+        // A version mismatch goes through the incumbent replay/CAS path.
+        if (!current || current.bodyVersion !== update.expectedBodyVersion
+            || (update.expectedHeaderVersion !== undefined && current.headerVersion !== update.expectedHeaderVersion)) return null;
+        return checkArtifactStorageBudgetInTx(tx, { ...next, approvalInputCustody: update.approvalInputCustody,
+            nextHeaderBytes: nextHeaderBytes ?? current.header.byteLength,
+            currentHeaderBytes: current.header.byteLength, currentBodyBytes: current.body.byteLength,
+            currentProvenanceBytes: current.provenance?.byteLength ?? 0,
+            currentBlobId: current.currentBlobId, retainCurrentBody: true });
+    }, { transactionClass: 'artifact-blob-quota-snapshot' });
 }
 
 /** Successful body CAS writes retain the displaced stored bytes in the same transaction. */

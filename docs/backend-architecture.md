@@ -643,6 +643,12 @@ Existing Account Pet locators created before backend selection still refer to
 private disk paths. Keep that volume available for reads and erasure while those
 locators exist.
 
+Ordinary binary Artifact uploads by the owning Account use a read snapshot to
+refuse an over-budget upload before private storage IO when limits are set.
+The existing serialized mutation still enforces the limit. When concurrent
+uploads pass the snapshot and one later exceeds quota, the server returns HTTP
+413 and discards that upload through the existing private file custody owner.
+
 ### Redis
 A Redis client is initialized in `main.ts` and pinged at startup. It can be expanded for caching or pub/sub if needed.
 

@@ -32,24 +32,38 @@ export async function openArtifactBlobBytes(accountId: string, row: ArtifactBlob
     return openPrivateBinaryContent(blobPath(accountId, row.artifactId, row.id), row);
 }
 
-/** Unique candidate paths prevent rejected/replayed uploads from overwriting retained bytes. */
-export async function prepareArtifactBlobWrite(input: Readonly<{ accountId: string; artifactId: string; blob: ArtifactBlobWriteV1 }>): Promise<PreparedArtifactBlobWrite | null> {
-    if (!input.blob.content) {
-        const row = await db.artifactBlob.findFirst({ where: { id: input.blob.blobId, artifactId: input.artifactId } });
-        return row ? { accountId: input.accountId, row, bytes: await openArtifactBlobBytes(input.accountId, row), candidate: false } : null;
-    }
-    const storageKey = artifactBlobCandidateStorageKey(input.artifactId, input.blob.blobId, randomUUID());
-    const stored = storePrivateBinaryContent(blobPath(input.accountId, input.artifactId, input.blob.blobId), input.blob.content);
+type ArtifactBlobCandidate = Readonly<{ prepared: PreparedArtifactBlobWrite; stored: Uint8Array }>;
+
+/** Encode once so quota admission can use the stored size before private IO. */
+export function prepareArtifactBlobCandidate(input: Readonly<{
+    accountId: string; artifactId: string; blobId: string; content: ArtifactBlobStoredContentV1;
+}>): ArtifactBlobCandidate {
+    const storageKey = artifactBlobCandidateStorageKey(input.artifactId, input.blobId, randomUUID());
+    const stored = storePrivateBinaryContent(blobPath(input.accountId, input.artifactId, input.blobId), input.content);
     const prepared: PreparedArtifactBlobWrite = { accountId: input.accountId,
-        row: { id: input.blob.blobId, artifactId: input.artifactId, storageKey,
-        encryptionMode: input.blob.content.t === 'plain' ? 'plain' : 'e2ee', storedSizeBytes: BigInt(stored.byteLength) },
-        bytes: new Uint8Array(privacyKit.decodeBase64(input.blob.content.t === 'plain' ? input.blob.content.v : input.blob.content.c)), candidate: true };
+        row: { id: input.blobId, artifactId: input.artifactId, storageKey,
+        encryptionMode: input.content.t === 'plain' ? 'plain' : 'e2ee', storedSizeBytes: BigInt(stored.byteLength) },
+        bytes: new Uint8Array(privacyKit.decodeBase64(input.content.t === 'plain' ? input.content.v : input.content.c)), candidate: true };
+    return { prepared, stored };
+}
+
+/** Unique candidate paths prevent rejected/replayed uploads from overwriting retained bytes. */
+export async function storeArtifactBlobCandidate({ prepared, stored }: ArtifactBlobCandidate): Promise<PreparedArtifactBlobWrite> {
+    const { accountId, row } = prepared;
     // Capture every candidate before IO, not just conversion stages. The Account
     // fence orders admission against erasure even when another API replica owns it.
-    await writeAccountPrivateFileCandidate({ accountId: input.accountId, path: storageKey, bytes: stored,
-        writingReuseKey: `${artifactBlobWritingUploadPrefix}${input.artifactId}`,
-        rejectedReuseKey: artifactBlobRejectedUploadReuseKey(input.artifactId) });
+    await writeAccountPrivateFileCandidate({ accountId, path: row.storageKey, bytes: stored,
+        writingReuseKey: `${artifactBlobWritingUploadPrefix}${row.artifactId}`,
+        rejectedReuseKey: artifactBlobRejectedUploadReuseKey(row.artifactId) });
     return prepared;
+}
+
+export async function prepareArtifactBlobWrite(input: Readonly<{ accountId: string; artifactId: string; blob: ArtifactBlobWriteV1 }>): Promise<PreparedArtifactBlobWrite | null> {
+    if (input.blob.content) {
+        return storeArtifactBlobCandidate(prepareArtifactBlobCandidate({ ...input, blobId: input.blob.blobId, content: input.blob.content }));
+    }
+    const row = await db.artifactBlob.findFirst({ where: { id: input.blob.blobId, artifactId: input.artifactId } });
+    return row ? { accountId: input.accountId, row, bytes: await openArtifactBlobBytes(input.accountId, row), candidate: false } : null;
 }
 
 /** Settle pending custody atomically with admission, or transfer it to a live conversion stage. */
