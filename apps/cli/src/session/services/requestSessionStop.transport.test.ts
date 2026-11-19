@@ -319,7 +319,7 @@ describe('requestSessionStop machine transport', () => {
       // 041b59b1086d: Delete runs at its exact native Machine, under its real operation owner.
       machineActionDirectTargetTransport: { machineId: 'owning-machine',
         sessionDelete: request => operations.runActionOperation({ actionId: 'session.delete', input: request.input,
-          context: request.context, execute: context => nativeDelete({ ...request, context }) }),
+          context: request.context, execute: (context: ActionExecutorContext) => nativeDelete({ ...request, context }) }),
         invoke: (method, request, options) => callMachineRpc({ credentials, machineId: 'owning-machine',
           serverUrl: 'https://delete.test', method, request, timeoutMs: null,
           ...(options?.signal ? { signal: options.signal } : {}),
