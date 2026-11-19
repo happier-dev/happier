@@ -1,5 +1,5 @@
 import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
-import type { ReviewWorkflowHistoryRequestV1 } from '@happier-dev/protocol/reviews/reviewListV1';
+import type { ReviewHistoryRequestV1 } from '@happier-dev/protocol/reviews/reviewListV1';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readReviewHistory } from '@/sync/api/reviews/history';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
@@ -8,9 +8,9 @@ import { homeAccountChangeAffectsArtifactKinds } from '@/sync/runtime/orchestrat
 import { applyReviewHistory, applyReviewHistoryFailure, beginReviewHistoryLoad, getReviewHistorySnapshot,
     invalidateReviewHistory, retireReviewHistory, reviewHistoryKey } from '@/sync/store/domains/reviews/history';
 
-type Target = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope; input: ReviewWorkflowHistoryRequestV1 }>;
+type Target = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope; input: ReviewHistoryRequestV1 }>;
 const kinds = Object.freeze([REVIEW_ARTIFACT_KIND_V1]);
-function targetFor(scope: ServerAccountScope, input: ReviewWorkflowHistoryRequestV1): Target {
+function targetFor(scope: ServerAccountScope, input: ReviewHistoryRequestV1): Target {
     return { key: reviewHistoryKey(scope, input), serverId: scope.serverId, scope, input };
 }
 const loader = createScopedSnapshotLoader<Target>({
@@ -32,9 +32,9 @@ const loader = createScopedSnapshotLoader<Target>({
     onCredentialMutation: (_event, target) => { retireReviewHistory(target.key); return true; },
 });
 
-export function observeReviewHistory(scope: ServerAccountScope, input: ReviewWorkflowHistoryRequestV1): () => void {
+export function observeReviewHistory(scope: ServerAccountScope, input: ReviewHistoryRequestV1): () => void {
     return loader.observe(targetFor(scope, input));
 }
-export function refreshReviewHistory(scope: ServerAccountScope, input: ReviewWorkflowHistoryRequestV1): Promise<void> {
+export function refreshReviewHistory(scope: ServerAccountScope, input: ReviewHistoryRequestV1): Promise<void> {
     return loader.refresh(targetFor(scope, input));
 }

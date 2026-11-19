@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useReviewHistory } from './useReviewHistory';
 import '@/sync/ops/actions/defaultActionExecutor';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -13,6 +14,7 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { Text } from '@/components/ui/text/Text';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
+import { ReviewHistoryRequestV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -38,7 +40,71 @@ function ActiveHomeControl() {
     return <Text testID="active-home">{lifetime?.scope.accountId ?? 'none'}</Text>;
 }
 
+function OpenedFindingHistory({ scope, findingIdentity, enabled, id }: Readonly<{
+    scope: ServerAccountScope | null; findingIdentity: string; enabled: boolean; id: string;
+}>) {
+    const history = useReviewHistory({ reviewId: 'current', findingIdentity }, { scope, enabled });
+    return <Text testID={id}>{history.data
+        ? history.data.matches.map(match => `${match.reviewId}:${match.commentId}:${match.createdAt}`).join(',') || 'empty'
+        : history.status}</Text>;
+}
+
 describe('demanded Hunt history through the real Action transport', () => {
+    it('reads exact opened-finding history on its captured Home without competing with workflow or other finding snapshots', async () => {
+        const serverId = await homes.addHome({ serverUrl: 'https://finding-history.example', name: 'Finding history', accountId: 'alice' });
+        const otherHome = await homes.addHome({ serverUrl: 'https://finding-active.example', name: 'Active', accountId: 'bob' });
+        await setActiveServerId(otherHome, { scope: 'device' });
+        const scope = { serverId, accountId: 'alice' };
+        const requests: unknown[] = [];
+        const unrelatedRequests: unknown[] = [];
+        homes.answer(otherHome, 'POST /v1/reviews/history/list', { select: input => {
+            unrelatedRequests.push(input);
+            return { body: { matches: [] } };
+        } });
+        homes.answer(serverId, 'POST /v1/reviews/history/list', { select: input => {
+            const request = ReviewHistoryRequestV1Schema.parse(input);
+            requests.push(request);
+            return { body: 'workflowId' in request ? { previousReviewId: null, items: [] } : {
+                matches: [{ reviewId: `earlier-${request.findingIdentity}`, commentId: `comment-${request.findingIdentity}`, createdAt: 11 }],
+            } };
+        } });
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://finding-active.example', accountId: 'bob',
+            additionalRequestOrigins: ['https://finding-history.example'], request: homes.request });
+        const page = (opened: boolean, findingIdentity = 'first', presented = true) =>
+            <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+                <OpenedHistory scope={scope} id="workflow" />
+                <OpenedFindingHistory scope={scope} findingIdentity={findingIdentity} enabled={opened} id="finding" />
+                <OpenedFindingHistory scope={scope} findingIdentity={findingIdentity} enabled={opened} id="same-finding" />
+                <OpenedFindingHistory scope={scope} findingIdentity="closed" enabled={false} id="closed" />
+                <OpenedFindingHistory scope={null} findingIdentity="unbound" enabled={true} id="unbound" />
+                <ActiveHomeControl />
+            </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(page(false));
+        try {
+            await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow')?.props.children).toBe('empty'));
+            expect(screen.findHostByTestId('finding')?.props.children).toBe('idle');
+            expect(requests).toEqual([{ workflowId: 'hunt', reviewId: 'current' }]);
+            await act(async () => { screen.update(page(true)); });
+            await waitForHomeGovernance(() => expect(screen.findHostByTestId('finding')?.props.children).toBe('earlier-first:comment-first:11'));
+            expect(screen.findHostByTestId('same-finding')?.props.children).toBe('earlier-first:comment-first:11');
+            expect(screen.findHostByTestId('closed')?.props.children).toBe('idle');
+            expect(screen.findHostByTestId('unbound')?.props.children).toBe('idle');
+            expect(screen.findHostByTestId('active-home')?.props.children).toBe('bob');
+            expect(unrelatedRequests).toEqual([]);
+            expect(requests).toEqual([{ workflowId: 'hunt', reviewId: 'current' }, { reviewId: 'current', findingIdentity: 'first' }]);
+            await act(async () => { screen.update(page(true, 'second')); });
+            await waitForHomeGovernance(() => expect(screen.findHostByTestId('finding')?.props.children).toBe('earlier-second:comment-second:11'));
+            expect(screen.findHostByTestId('same-finding')?.props.children).toBe('earlier-second:comment-second:11');
+            expect(screen.findHostByTestId('workflow')?.props.children).toBe('empty');
+            expect(requests).toEqual([{ workflowId: 'hunt', reviewId: 'current' },
+                { reviewId: 'current', findingIdentity: 'first' }, { reviewId: 'current', findingIdentity: 'second' }]);
+            await act(async () => { screen.update(page(true, 'hidden', false)); });
+            await flushHookEffects();
+            expect(requests).toHaveLength(3);
+            expect(unrelatedRequests).toEqual([]);
+        } finally { await screen.unmount(); await connection.dispose(); }
+    });
+
     it('keeps a pending read distinct from answered empty and exposes a failed refresh with retry', async () => {
         const serverId = await homes.addHome({ serverUrl: 'https://hunt-history-states.example', name: 'History', accountId: 'alice' });
         const scope = { serverId, accountId: 'alice' };
