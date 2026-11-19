@@ -12,6 +12,7 @@ import { ReviewStartTerminalValueV1Schema } from '@happier-dev/protocol/actions/
 import { ReviewGetResponseV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { readMuseRecord } from '../../../plugins/muse/src/agent/nativeInput';
+import { buildMuseNativeAuth } from '../../../plugins/muse/src/connectedAccounts/nativeAuth';
 import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import { startFinJourneyFixture, type FinJourneyFixture } from '../../src/testkit/finJourney';
 import { writeFinMuseExecutable } from '../../src/testkit/finMuse';
@@ -44,6 +45,12 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
     const bin = join(testDir, 'bin');
     const nativeHome = join(testDir, 'native-home');
     await Promise.all([bin, nativeHome].map(path => mkdir(path, { recursive: true })));
+    const nativeConfig = join(nativeHome, 'config');
+    await mkdir(join(nativeConfig, 'muse'), { recursive: true });
+    await writeFile(join(nativeConfig, 'muse', 'auth.json'), JSON.stringify(buildMuseNativeAuth({
+      access_token: 'synthetic-review-account-token', api_key: 'synthetic-review-inference-key',
+      api_base_url: 'https://api.meta.ai/v1', obtained_via: 'device_code', mechanism: 'oauth',
+    })), { mode: 0o600 });
     recordingPath = join(testDir, 'muse-playback.json');
     auditPath = join(testDir, 'muse-native-audit.json');
     recording = await readMuseLoginRecording();
@@ -83,6 +90,7 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
     if (!ui) throw new Error('Review Action client is not mounted');
     const result = await ui.executeConfirmed(actionId, input, { surface: 'ui', authority: 'present_user',
       actionCaller: { kind: 'host' }, serverId: ui.serverId, serverIdentityId: fixture!.serverId,
+      executionRunTargetMachineId: machine.target.machineId,
       actionRequestId: randomUUID(), externalActionTarget: { kind: 'machine', machineId: machine.target.machineId,
       project: { machineId: machine.target.machineId, directory: machine.workspaceDir } } });
     expect(result.ok, `${actionId}: ${JSON.stringify(result)}`).toBe(true);
