@@ -39,6 +39,9 @@ function withDebugRouteEnv<T>(value: string | undefined, run: () => T): T {
 
 describe('isPublicRouteForUnauthenticated', () => {
     const routeCases: Array<{ name: string; segments: string[]; expected: boolean }> = [
+        { name: 'Source setup import before sign-in', segments: ['(app)', 'projects', 'setup'], expected: true },
+        { name: 'Source collection stays private', segments: ['(app)', 'projects', 'sources'], expected: false },
+        { name: 'nested setup routes stay private', segments: ['(app)', 'projects', 'setup', 'other'], expected: false },
         { name: 'empty root', segments: [], expected: true },
         { name: 'group-only route', segments: ['(app)'], expected: true },
         { name: 'home index', segments: ['index'], expected: true },

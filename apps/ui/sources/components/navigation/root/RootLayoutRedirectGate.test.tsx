@@ -95,6 +95,16 @@ function NavProbe({ counter }: { counter: Counter }): null {
 }
 
 describe('RootLayoutRedirectGate', () => {
+    it('mounts the exact Source setup landing on a signed-out device', async () => {
+        authState.isAuthenticated = false;
+        setNav('/projects/setup', ['(app)', 'projects', 'setup']);
+        const screen = await renderGateScreen(<RootLayoutRedirectGate><div data-testid="source-setup" /></RootLayoutRedirectGate>);
+        try {
+            expect(screen.findAll(node => node.props['data-testid'] === 'source-setup')).toHaveLength(1);
+            expect(screen.findAllByType('Redirect' as never)).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+
     it('mounts the signed-in Artifact landing while signed out so the route can retain its transient fragment', async () => {
         authState.isAuthenticated = false;
         setNav('/share/artifact/invite', ['(app)', 'share', 'artifact', '[lookupId]']);

@@ -298,6 +298,8 @@ describe('Projects › Sources', () => {
     const screen = await renderScreen(<ProjectSourcesScreen setupLink />);
     await flushHookEffects();
     expect(shared.calls).toEqual([]);
+    expect(screen.getTextContent()).toContain('teams.join.unknownHomeTitle');
+    expect(screen.getTextContent()).toContain('server.addServerTitle');
     expect(screen.getTextContent()).not.toContain('Wrong Home Source');
     await screen.unmount();
   });

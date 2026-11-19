@@ -14,6 +14,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { CollectionDraftTitleScope } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { HomeCredentialUnreadableCard, UnknownHomeStateCard } from '@/components/sessions/access/UnboundSessionHomeScopeCard';
 import { useTeamsDirectory } from '@/hooks/teams/useTeamsDirectory';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -81,12 +82,21 @@ function ProjectSourceSetupEntry(props: Readonly<{
   }, [recovery?.params.recoveryProfile, recovery?.params.recoveryReturnTo, router]);
   const binding = credentials.binding;
   if (selection && binding) return <CollectionDraftTitleScope><ProjectSourcesCollection scope={binding.scope} lifetime={binding} selectedSourceId={selection.sourceId} /></CollectionDraftTitleScope>;
-  const pending = target.kind === 'acquiring' || (target.kind === 'resolved' && (credentials.resolution.kind === 'resolving' || recovery !== null));
-  return <ItemList testID="projects.sources.setup.target"><SurfaceStateCard
-    kind={pending ? 'loading' : 'unavailable'}
-    title={t(pending ? 'projects.sources.loading' : 'projects.sources.unavailable')}
-    {...(target.kind === 'acquisition_failed' ? { action: { label: t('common.retry'), onPress: target.retry } } : {})}
-  /></ItemList>;
+  const resolution = credentials.resolution;
+  let content: React.ReactNode;
+  if (target.kind === 'unknown_home' || (target.kind === 'resolved' && resolution.kind === 'unknown_home')) {
+    content = <UnknownHomeStateCard testID="project-source-setup-unknown-home" />;
+  } else if (target.kind === 'resolved' && resolution.kind === 'unavailable') {
+    content = <HomeCredentialUnreadableCard serverId={target.serverId} testID="project-source-setup-unreadable" />;
+  } else if (target.kind === 'acquisition_failed') {
+    content = <SurfaceStateCard kind="unavailable" title={t('teams.join.unknownHomeTitle')}
+      reason={t('teams.join.unknownHomeBody')} action={{ label: t('common.retry'), onPress: target.retry }} />;
+  } else if (target.kind === 'acquiring' || (target.kind === 'resolved' && (resolution.kind === 'resolving' || recovery !== null))) {
+    content = <SurfaceStateCard kind="loading" title={t('projects.sources.loading')} />;
+  } else {
+    content = <SurfaceStateCard kind="unavailable" title={t('projects.sources.unavailable')} />;
+  }
+  return <ItemList testID="projects.sources.setup.target">{content}</ItemList>;
 }
 
 const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(

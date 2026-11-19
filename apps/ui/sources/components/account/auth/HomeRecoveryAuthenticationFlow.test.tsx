@@ -15,6 +15,7 @@ import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { t } from '@/text';
 import { HomeAuthenticationFlow } from './HomeAuthenticationFlow';
 import { HomeRecoveryAuthenticationFlow } from './HomeRecoveryAuthenticationFlow';
 
@@ -93,6 +94,14 @@ describe('HomeRecoveryAuthenticationFlow', () => {
         expect(screen.findAllByTestId('home-auth-key_challenge-login-keyed')).toHaveLength(0);
     });
 
+    it('offers a way back when a recovery link names a Home absent from this device', async () => {
+        const screen = await renderRecovery('missing-profile');
+        const card = screen.findByType(SurfaceStateCard);
+        expect(card.props.title).toBe(t('teams.join.unknownHomeTitle'));
+        expect(card.props.reason).toBe(t('server.notificationAddServerHint'));
+        expect(screen.findAllByType(HomeAuthenticationFlow)).toHaveLength(0);
+    });
+
     it('names an incompatible Home and retries its actual authentication entry', async () => {
         const { selected, state, focused } = await createRecoveryHome();
         state.entryReady = false;
@@ -100,6 +109,7 @@ describe('HomeRecoveryAuthenticationFlow', () => {
         await vi.waitFor(() => expect(screen.findByTestId('home-recovery-authentication-unavailable')).not.toBeNull());
         const card = screen.findByType(SurfaceStateCard);
         expect(card.props.title).toBe('welcome.serverIncompatibleTitle');
+        expect(card.props.reason).toBe(t('welcome.serverIncompatibleBody', { serverUrl: 'Home B' }));
         expect(screen.findAllByType(HomeAuthenticationFlow)).toHaveLength(0);
         state.entryReady = true;
         await screen.pressByTestIdAsync('home-recovery-authentication-unavailable-action');

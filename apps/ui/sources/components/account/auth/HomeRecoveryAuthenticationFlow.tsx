@@ -35,10 +35,10 @@ function HomeRecoveryAuthenticationFlowBody(props: HomeRecoveryAuthenticationFlo
         return <SurfaceStateCard
             testID="home-recovery-authentication-target-unavailable"
             kind="unavailable"
-            title={t('welcome.serverUnavailableTitle')}
+            title={t(profile ? 'welcome.serverUnavailableTitle' : 'teams.join.unknownHomeTitle')}
             reason={profile
                 ? t('welcome.serverUnavailableBody', { serverUrl: profile.serverUrl })
-                : t('errors.operationFailed')}
+                : t('server.notificationAddServerHint')}
             action={{ label: t('common.back'), onPress: props.onBack }}
             accessibilitySemantics="status"
         />;
@@ -53,14 +53,16 @@ function HomeRecoveryAuthenticationFlowBody(props: HomeRecoveryAuthenticationFlo
         />;
     }
 
-    if (catalog.state === 'ready' && catalog.actions.length > 0) {
+    const loginActions = catalog.actions.filter(({ action }) => action.id === 'login');
+    const homeLabel = resolveHomeDisplayLabel(profile, profile.id);
+    if (catalog.state === 'ready' && loginActions.length > 0) {
         return <HomeAuthenticationFlow
             target={{ kind: 'saved_profile', profileRef: profile.id }}
-            actions={catalog.actions}
+            actions={loginActions}
             transport={catalog.transport ?? undefined}
             keyChallengeV2Available={catalog.keyChallengeV2Available}
             returnTo={props.returnTo}
-            homeLabel={resolveHomeDisplayLabel(profile, profile.id)}
+            homeLabel={homeLabel}
             onAuthenticated={() => props.onAuthenticated()}
             onBack={props.onBack}
         />;
@@ -69,10 +71,14 @@ function HomeRecoveryAuthenticationFlowBody(props: HomeRecoveryAuthenticationFlo
     return <SurfaceStateCard
         testID="home-recovery-authentication-unavailable"
         kind="unavailable"
-        title={catalog.incompatible
+        title={catalog.state === 'ready'
+            ? t('welcome.signInServiceMethodlessTitle')
+            : catalog.incompatible
             ? t('welcome.serverIncompatibleTitle')
             : t('welcome.serverUnavailableTitle')}
-        reason={t('errors.operationFailed')}
+        reason={catalog.state === 'ready'
+            ? homeLabel
+            : t(catalog.incompatible ? 'welcome.serverIncompatibleBody' : 'welcome.serverUnavailableBody', { serverUrl: homeLabel })}
         action={{ label: t('common.retry'), onPress: catalog.retry }}
         secondaryAction={{ label: t('common.back'), onPress: props.onBack }}
         accessibilitySemantics="status"

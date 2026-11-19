@@ -39,6 +39,18 @@ export function HomeCredentialUnreadableCard(props: Readonly<{
     );
 }
 
+export function UnknownHomeStateCard(props: Readonly<{ testID: string }>): React.ReactElement {
+    const router = useRouter();
+    return <SurfaceStateCard
+        testID={props.testID}
+        kind="unavailable"
+        title={t('teams.join.unknownHomeTitle')}
+        reason={t('server.notificationAddServerHint')}
+        action={{ label: t('server.addServerTitle'), onPress: () => openAddHome(router) }}
+        accessibilitySemantics="status"
+    />;
+}
+
 /**
  * The ONE presentation of a Session host's non-bound exact-Home resolution.
  *
@@ -72,16 +84,7 @@ export function UnboundSessionHomeScopeCard(props: Readonly<{
         );
     }
     if (props.resolution.kind === 'unknown_home') {
-        return (
-            <SurfaceStateCard
-                testID={`${props.testIDPrefix}-unknown-home`}
-                kind="unavailable"
-                title={t('teams.join.unknownHomeTitle')}
-                reason={t('server.notificationAddServerHint')}
-                action={{ label: t('server.addServerTitle'), onPress: openHomes }}
-                accessibilitySemantics="status"
-            />
-        );
+        return <UnknownHomeStateCard testID={`${props.testIDPrefix}-unknown-home`} />;
     }
     if (props.resolution.kind === 'unavailable') {
         return (

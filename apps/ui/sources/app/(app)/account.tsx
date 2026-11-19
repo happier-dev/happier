@@ -2,8 +2,8 @@ import { router, useLocalSearchParams } from 'expo-router';
 import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
-import { promptAccountConnectApprovalRequired } from '@/components/account/restore/accountConnectApprovalGuidance';
-import { fireAndForget } from '@/utils/system/fireAndForget';
+import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { t } from '@/text';
 
 export default function LegacyAccountRoute() {
     const params = useLocalSearchParams();
@@ -20,29 +20,22 @@ export default function LegacyAccountRoute() {
         }
         return { kind: 'redirect' as const, href: '/settings/account' as const };
     }, [params.accountConnectKey, params.server]);
-    const handledRequestRef = React.useRef<string | null>(null);
-
     React.useEffect(() => {
-        const requestKey = decision.kind === 'legacy-account-connect'
-            ? 'legacy-account-connect'
-            : `redirect:${JSON.stringify(decision.href)}`;
-        if (handledRequestRef.current === requestKey) return;
-        handledRequestRef.current = requestKey;
-
         if (decision.kind === 'redirect') {
             router.replace(decision.href);
-            return;
         }
+    }, [decision]);
 
-        fireAndForget((async () => {
-            const action = await promptAccountConnectApprovalRequired({ showQr: true });
-            if (auth.isAuthenticated) {
-                router.replace(action === 'showQr' ? '/settings/add-phone' : '/settings/account');
-                return;
-            }
-            router.replace(action === 'showQr' ? '/restore' : '/');
-        })(), { tag: 'LegacyAccountRoute.processAccountConnect' });
-    }, [auth.isAuthenticated, decision]);
-
-    return null;
+    if (decision.kind === 'redirect') return null;
+    return <AuthRouteStepFrame
+        testID="legacy-account-qr"
+        title={t('connect.updateRequiredTitle')}
+        subtitle={t('connect.legacyAccountQrUnavailable')}
+        onBack={() => router.replace(auth.isAuthenticated ? '/settings/account' : '/')}
+        primary={{
+            testID: 'legacy-account-create-new-qr',
+            label: t(auth.isAuthenticated ? 'connect.generateNewQrCode' : 'connect.scanNewQr'),
+            onPress: () => router.replace(auth.isAuthenticated ? '/settings/add-phone' : '/restore'),
+        }}
+    >{null}</AuthRouteStepFrame>;
 }

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useLocalSearchParams } from 'expo-router';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { HomeRecoveryAuthenticationFlow } from '@/components/account/auth/HomeRecoveryAuthenticationFlow';
@@ -47,7 +48,7 @@ export default function ServerConfigRoute() {
         <HomeRecoveryAuthenticationFlow
             profileRef={recovery.profileRef}
             returnTo={recovery.returnTo}
-            onAuthenticated={() => router.replace(recovery.returnTo as never)}
+            onAuthenticated={() => resolvePostAuthLanding({ replace: router.replace, returnTo: recovery.returnTo })}
             onBack={() => router.replace(recovery.returnTo as never)}
         />
     );

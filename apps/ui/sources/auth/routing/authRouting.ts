@@ -71,6 +71,8 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
   // reachable before a Home Account exists. Keep ordinary Team surfaces
   // private: only the exact entry leaf is an unauthenticated destination.
   if (isTeamEntryRoute(segments)) return true;
+  // The import landing owns its explicit Home/sign-in continuation. The Source collection stays private.
+  if (first === 'projects' && normalized.length === 2 && normalized[1] === 'setup') return true;
   // The account service's sign-in returns to `/homes/sign-in` before this device is signed in to a
   // Home; only that exact leaf is public (Add a Home and the Homes page stay private).
   if (

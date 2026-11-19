@@ -13,14 +13,7 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 const routerReplaceSpy = vi.fn();
 let localSearchParams: Record<string, unknown> = {};
 let isAuthenticated = false;
-// The person's choice in the real guidance dialog: the Modal boundary presses the matching button.
-let guidanceChoice: 'showQr' | 'dismiss' = 'showQr';
-const alertAsyncSpy = vi.fn<IModal['alertAsync']>(async (_title, _message, buttons) => {
-    const pressed = guidanceChoice === 'showQr'
-        ? buttons?.find((button) => button.style !== 'cancel' && button.onPress)
-        : buttons?.find((button) => button.style === 'cancel');
-    pressed?.onPress?.();
-});
+const alertAsyncSpy = vi.fn<IModal['alertAsync']>();
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -49,7 +42,6 @@ const Screen = (await import('@/app/(app)/account')).default;
 afterEach(() => {
     localSearchParams = {};
     isAuthenticated = false;
-    guidanceChoice = 'showQr';
     routerReplaceSpy.mockClear();
     alertAsyncSpy.mockClear();
 });
@@ -83,18 +75,17 @@ describe('Legacy /account route', () => {
     });
 
     it.each([
-        { signedIn: true, choice: 'showQr', destination: '/settings/add-phone' },
-        { signedIn: true, choice: 'dismiss', destination: '/settings/account' },
-        { signedIn: false, choice: 'showQr', destination: '/restore' },
-        { signedIn: false, choice: 'dismiss', destination: '/' },
-    ] as const)('explains an account-connect request (signed in: $signedIn, choice: $choice) and opens $destination', async ({ signedIn, choice, destination }) => {
+        { signedIn: true, destination: '/settings/add-phone' },
+        { signedIn: false, destination: '/restore' },
+    ] as const)('explains the older QR and opens $destination only on press', async ({ signedIn, destination }) => {
         isAuthenticated = signedIn;
-        guidanceChoice = choice;
         localSearchParams = { accountConnectKey: 'abc+123/=', server: 'https://ignored.example' };
         const screen = await renderRoute();
         try {
-            await vi.waitFor(() => expect(routerReplaceSpy).toHaveBeenCalledWith(destination));
-            expect(alertAsyncSpy).toHaveBeenCalledOnce();
+            expect(alertAsyncSpy).not.toHaveBeenCalled();
+            expect(routerReplaceSpy).not.toHaveBeenCalled();
+            await screen.pressByTestIdAsync('legacy-account-create-new-qr');
+            expect(routerReplaceSpy).toHaveBeenCalledWith(destination);
             expect(routerReplaceSpy).toHaveBeenCalledOnce();
         } finally {
             await screen.unmount();
