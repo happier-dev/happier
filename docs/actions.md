@@ -6223,6 +6223,12 @@ its content, and the Machine reads keep their existing access rules. After
 approval, member activation uses the accepted deployment receipt for the
 same reference read.
 
+An explicit Domain Add to reconcile after a restart starts a new Domain
+operation. Home admits it against the current Environment, runtime Link, and
+Domain revisions. Any native work uses the placements captured for that
+pending operation. The deployment receipt describes the incumbent workload.
+A settled Domain capture cannot authorize new native work.
+
 ### Transport and header refusals (0.3 development source)
 
 `not_authenticated` means Home answered an authentication refusal (HTTP 401/403).

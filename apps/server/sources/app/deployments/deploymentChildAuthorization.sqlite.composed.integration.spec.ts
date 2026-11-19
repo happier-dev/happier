@@ -5082,15 +5082,22 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
-    async function domainRootFixture(contentMode: 'plain' | 'e2ee' = 'plain', encryptedRoot = false, separateControllerCustodian = false) {
+    async function domainRootFixture(contentMode: 'plain' | 'e2ee' = 'plain', encryptedRoot = false,
+        separateControllerCustodian = false, bothListenersOnController = false) {
         const f = await fixture('team', 'account', { separateMemberCustodian: true, separateControllerCustodian,
             separateContentOwner: true, contentMode });
         const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const receiver = bothListenersOnController ? f.controller : f.member;
+        if (bothListenersOnController) await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: {
+            machines: { deleteMany: {}, create: { machineId: receiver.id, installationId: receiver.installationId, position: 0, state: 'active' } },
+        } });
+        const privatePlacement = { machineId: receiver.id, installationId: receiver.installationId, nativeServer: 'private',
+            listener: 'privateOrigin' as const, dockerEngineId: 'domain-engine' };
         const input = { serverId, environmentId: f.environment.id, domainId: crypto.randomUUID(),
             expectedRevision: f.environmentRevision, targetLinkId: f.link.id, expectedTargetLinkRevision: f.link.revision,
             requestKey: crypto.randomUUID(), ...await f.content('deployment-domain.v1'),
-            placements: [{ machineId: f.member.id, installationId: f.member.installationId, nativeServer: 'private', listener: 'privateOrigin' as const,
-                dockerEngineId: 'domain-engine' }] };
+            placements: bothListenersOnController ? [privatePlacement, { ...privatePlacement, nativeServer: 'public', listener: 'public' as const }]
+                : [privatePlacement] };
         const requestId = crypto.randomUUID();
         const authentication = { kind: 'account' as const, tokenEpoch: f.account.tokenEpoch };
         const { placements: _derivedPlacements, ...withoutPlacements } = input;
@@ -5108,7 +5115,7 @@ describe('deployment children retain their controller Action authority', () => {
             actionId: 'deployments.domains.add', machineId: f.controller.id, target, requestId: envelope.requestId,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, {
                 input: encryptedRoot ? deploymentNativeAdmission : input, deploymentNativeAdmission }).finally(stopMintQueries);
-        return { f, target, input, envelope, authorization, mintQueries };
+        return { f, target, input, envelope, authorization, mintQueries, receiver };
     }
 
     it.each(['plain', 'e2ee'] as const)('reads the incumbent receipt only inside the signed %s Domain Environment', async mode => {
@@ -5218,6 +5225,99 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+
+    it('admits installed Domain reads for both listeners only under the fresh reconciled operation', async () => {
+        const { f, input, envelope, target, authorization, receiver } = await domainRootFixture('plain', false, false, true);
+        const actionId = 'deployments.domains.add';
+        const path = `/v1/deployments/environments/${input.environmentId}/domains`;
+        const transitionPath = `${path}/${input.domainId}/transitions`;
+        const machinePath = `/v1/machines/${receiver.id}`;
+        const headers = (authorization: ExternalActionExecutionAuthorizationV1, method: string, path: string, body?: unknown,
+            packet?: Parameters<typeof encodeDeploymentChildExecutionV1>[0]) => {
+            const signer = packet ? receiver : f.controller;
+            return createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId, target, method, path, body,
+                installationId: signer.installationId, privateKey: signer.keys.secretKey, deploymentChildExecution: packet });
+        };
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); machinesRoutes(app); }, async app => {
+            const submit = async (admission: typeof input & { expectedDomainRevision?: number }, authz: ExternalActionExecutionAuthorizationV1) => {
+                const body = { ...admission, actionOperationId: crypto.randomUUID(), requestId: authz.binding.requestId };
+                const result = await app.inject({ method: 'POST', url: path, payload: body, headers: headers(authz, 'POST', path, body) });
+                expect(result.statusCode, result.body).toBe(200);
+                const accepted = DeploymentDomainMutationResultV1Schema.parse(result.json());
+                if (!accepted.ok || !accepted.domain.placements?.length) throw new Error('Expected signed Domain admission');
+                return { ...accepted, captures: accepted.domain.placements, operationId: body.actionOperationId };
+            };
+            const first = await submit(input, authorization);
+            const observations = first.captures.map(capture => {
+                const observation = { capture, state: 'active' as const };
+                return { ...observation, proof: signMachineInstallationProof({ payload: deploymentDomainObservationProofPayloadV1({
+                    expectedDomainRevision: first.domain.revision, observation }), privateKey: receiver.keys.secretKey }) };
+            });
+            const transition = { serverId, environmentId: input.environmentId, domainId: input.domainId,
+                expectedDomainRevision: first.domain.revision, observations };
+            const response = await app.inject({ method: 'POST', url: transitionPath, payload: transition,
+                headers: headers(authorization, 'POST', transitionPath, transition) });
+            expect(response.statusCode, response.body).toBe(200);
+            const settled = DeploymentDomainMutationResultV1Schema.parse(response.json());
+            if (!settled.ok) throw new Error(settled.error);
+            expect(settled.domain.state).toBe('active');
+
+            const environment = await db.deploymentEnvironment.update({ where: { id: f.environment.id },
+                data: { revision: { increment: 1 } } });
+            const recoveryInput = { ...input, ...await f.content('deployment-domain.v1'),
+                expectedRevision: environment.revision, expectedDomainRevision: settled.domain.revision, requestKey: crypto.randomUUID() };
+            const recoveryEnvelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: recoveryInput };
+            const recoveryAuth = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+                accountId: f.account.id, authentication: authorization.binding.authentication,
+                actionId, machineId: f.controller.id, target, requestId: recoveryEnvelope.requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(recoveryEnvelope) }, {
+                input: recoveryInput, deploymentNativeAdmission: projectExternalActionDeploymentNativeEnvelopeAdmissionV1({
+                    actionId, envelope: recoveryEnvelope }) });
+
+            const openChild = async (authz: ExternalActionExecutionAuthorizationV1, capture: (typeof first.captures)[number],
+                expectedDomainRevision: number, actionOperationId: string) => {
+                const params = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domain', actionId,
+                    input: { serverId, environmentId: input.environmentId, domainId: input.domainId },
+                    machineId: receiver.id, installationId: receiver.installationId, expectedDomainRevision, capture, actionOperationId });
+                const method = `${receiver.id}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`;
+                const requestId = crypto.randomUUID();
+                const deploymentChildRouting = projectDeploymentChildRoutingV1(params);
+                const packet = { method, requestId, params, originalActionEnvelope: authz === recoveryAuth ? recoveryEnvelope : envelope,
+                    externalActionExecution: { v: 1 as const, authorization: authz, effectActionId: actionId, target,
+                        installationId: f.controller.installationId, deploymentChildRouting,
+                        machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authz.token,
+                            effectActionId: actionId, target, installationId: f.controller.installationId,
+                            method, requestId, params, deploymentChildRouting, privateKey: f.controller.keys.secretKey }) } };
+                return app.inject({ method: 'GET', url: machinePath, headers: {
+                    ...currentAccountStoredContentCompatibilityHeaders, ...headers(authz, 'GET', machinePath, undefined, packet) } });
+            };
+            const settledCapture = settled.domain.placements![0]!;
+            for (const authz of [authorization, recoveryAuth]) {
+                const refused = await openChild(authz, settledCapture, settled.domain.revision, first.operationId);
+                expect(refused.statusCode, refused.body).toBe(401);
+                expect(refused.json()).toMatchObject({ authorizationRefusal: 'deployment_child_admission' });
+            }
+            const approved = await submit(recoveryInput, recoveryAuth);
+            expect(approved.captures.map(capture => [capture.listener, capture.desired])).toEqual([
+                ['privateOrigin', false], ['public', false], ['privateOrigin', true], ['public', true],
+            ]);
+            for (const capture of approved.captures) {
+                const opened = await openChild(recoveryAuth, capture, approved.domain.revision, approved.operationId);
+                expect(opened.statusCode, opened.body).toBe(200);
+            }
+            const wrongOperation = { ...approved.captures[0]!, placement: {
+                ...approved.captures[0]!.placement, actionOperationId: first.operationId,
+            } };
+            for (const refused of [
+                await openChild(authorization, approved.captures[0]!, approved.domain.revision, approved.operationId),
+                await openChild(recoveryAuth, wrongOperation, approved.domain.revision, first.operationId),
+                await openChild(recoveryAuth, approved.captures[0]!, settled.domain.revision, approved.operationId),
+            ]) {
+                expect(refused.statusCode, refused.body).toBe(401);
+                expect(refused.json()).toMatchObject({ authorizationRefusal: 'deployment_child_admission' });
+            }
+        }, { authentication: 'real' });
+    });
 
     it.each(['save', 'initializeAndSave'] as const)('publishes backup bindings after an unchanged %s configuration save', async intent => {
         const f = await fixture('account', 'account', { readableEnvironment: true });
