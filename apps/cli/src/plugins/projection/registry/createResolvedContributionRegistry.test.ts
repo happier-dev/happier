@@ -647,7 +647,8 @@ describe('getResolvedContributionRegistry', () => {
           manifestPath: '/plugins/alpha.plugin/plugin.json', daemonEntryPath: null, devDaemonEntryPath: null,
           sourceSpec: { kind: 'path', locator: '/plugins/alpha.plugin', trustPolicy: 'local_trusted', installPolicy: 'link' },
           manifest: PluginManifestV2Schema.parse(createPluginManifestV2Fixture({ id: 'alpha.plugin', contributes: {
-            actions: [{ ...action('alpha.plugin', 'deliver', 'Delivery').definition, id: 'deliver' }],
+            actions: [{ id: 'deliver', title: 'Delivery', scopes: ['global'], surfaces: ['plugin'],
+              dangerLevel: 'safe', execution: { target: 'daemon' } }],
             webhooks: [{ id: 'delivery', title: 'Delivery', verifier, handlerAction: { localId: 'deliver' } }],
           } })),
         }],
