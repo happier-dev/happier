@@ -1,7 +1,7 @@
 import type { ActionSessionAddressV1 } from '../../actions/sessionAddressV1.js';
 import type { ActionExecuteFailure, ActionApprovalRequestCreatedResult } from '../../actions/actionExecutionResult.js';
 import type { SessionAuthoringOpenResultV1 } from '../../plugins/ui/hostApiRequests.js';
-import type { SessionSpawnNewActionAuthoringInputV2 } from '../creation/sessionSpawnNewInputV2.js';
+import { SessionSpawnNewActionInputV2Schema, type SessionSpawnNewActionAuthoringInputV2 } from '../creation/sessionSpawnNewInputV2.js';
 import type { SessionSpawnNewActionResultV1 } from '../creation/sessionSpawnNewResultV1.js';
 import type { SessionMessageSendActionResultV1 } from './sessionInputAdmission.js';
 import type { SessionInputHandoffInputV1, SessionInputHandoffContentV1, SessionInputHandoffResultV1, SessionInputHandoffNewDestinationV1 } from './sessionInputHandoffV1.js';
@@ -115,7 +115,7 @@ export async function runSessionInputHandoffV1(input: SessionInputHandoffInputV1
         destination = { kind: 'existing', session: execution.resolvedSession };
     } else {
         if (selected.destination.spawn === undefined) return { kind: 'selectionRequired', fields: ['placement'] };
-        destination = { kind: 'new', spawn: selected.destination.spawn };
+        destination = { kind: 'new', spawn: SessionSpawnNewActionInputV2Schema.parse(selected.destination.spawn) };
     }
     const completed = await runSessionInputDestinationV1(destination, {
         spawn: deps.spawn,
