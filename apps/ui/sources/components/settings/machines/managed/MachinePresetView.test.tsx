@@ -1163,7 +1163,7 @@ describe('reachable preset detail', () => {
   it.each([
     ['fixed', 'https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img'],
     ['failing', 'template:fixture-missing-g1-options-1111'],
-  ] as const)('keeps saved Lima launch facts in the expanded Summary before and after a typed use failure (%s)', async (_kind, image) => {
+  ] as const)('keeps saved Lima launch facts in the receipt before and after a typed use failure (%s)', async (_kind, image) => {
     const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
     const { Modal, ModalProvider } = await import('@/modal');
     try {
@@ -1225,7 +1225,6 @@ describe('reachable preset detail', () => {
       { wrapper: ({ children }) => <ModalProvider>{children}</ModalProvider> });
       await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
       expect(screen.findByTestId('managed-config.unavailable')).toBeNull();
-      await act(async () => screen.pressByTestId('managed-config.summary'));
       await waitForHomeGovernance(() => expect(screen.tree.findAllByType(MachineConfigurationReceipt)).toHaveLength(1));
       const expectSavedSummary = (rendered = screen) => {
         const receipt = rendered.tree.findByType(MachineConfigurationReceipt).props.model;
@@ -1976,9 +1975,11 @@ describe('reachable preset detail', () => {
           screen.findByTestId('managed-config.create')?.props.disabled,
         ).toBe(false),
       );
+      expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(1);
       await act(async () => screen.pressByTestId('managed-config.create'));
       await waitForHomeGovernance(() => expect(modalHost.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
       expect(harness.artifacts(serverId).list()).toEqual([]);
+      expect(harness.requestsFor('/v1/machines/presets/get'), 'Save admission reads the incumbent once').toHaveLength(2);
       harness.answer(serverId, '/v1/machines/presets/get', {
         body: { kind: 'refused', code },
       });
@@ -1989,7 +1990,7 @@ describe('reachable preset detail', () => {
       expect(
         harness.requestsFor('/v1/machines/presets/get'),
         'The mounted preset editor must refresh its read on the same Home wake',
-      ).toHaveLength(2);
+      ).toHaveLength(3);
       if (code === 'permission_denied') {
         expect(
           screen.findByTestId('managed-config.setup.setup.input'),
@@ -2750,15 +2751,17 @@ describe('reachable preset detail', () => {
         false,
       ),
     );
+    expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(1);
     await act(async () => screen.pressByTestId('managed-config.create'));
     await waitForHomeGovernance(() => expect(modalHost.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
       expect(harness.artifacts(serverId).list()).toEqual([]);
     expect(harness.requestsFor('/v1/machines/presets/update')).toEqual([]);
+    expect(harness.requestsFor('/v1/machines/presets/get'), 'Save admission reads the incumbent once').toHaveLength(2);
     const { publishHomeAccountChange } =
       await import('@/sync/runtime/orchestration/homeAccountChange');
     await act(async () => publishHomeAccountChange(scopeId));
     await flushHookEffects();
-    expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(2);
+    expect(harness.requestsFor('/v1/machines/presets/get'), 'The mounted editor refreshes once on the Home wake').toHaveLength(3);
     expect(modalHost.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull();
     await modalHost.pressByTestIdAsync('actions.confirmation-review.decision-reject');
     await waitForHomeGovernance(() =>
