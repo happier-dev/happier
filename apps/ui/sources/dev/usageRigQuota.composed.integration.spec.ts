@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { pipeline, Readable, Transform, type Duplex } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import type { Fastify } from '../../../server/sources/app/api/types';
@@ -8,11 +9,12 @@ import { CHANGES_AFTER_CURSOR_HTTP_HEADER, ChangesResponseSchema, CurrentCursorR
 import { readProviderAccountUsageChangedRecordIdsV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1, CONNECTED_PRESENTATION_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
-import { PROVIDER_ACCOUNT_USAGE_DAY_MS, PROVIDER_ACCOUNT_USAGE_DAY_SUMMARY_ENCODING, type ProviderAccountUsageDaySummaryResponseV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
+import { PROVIDER_ACCOUNT_USAGE_DAY_MS, PROVIDER_ACCOUNT_USAGE_DAY_SUMMARY_ENCODING, ProviderAccountUsageDaySummaryResponseV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { resolveProviderAccountUsageRecentHistoryRangesV1 } from '@happier-dev/protocol/connect/deriveProviderAccountUsagePace';
 import type { QualifiedProviderAccountUsageHistoryResponseV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistorySchemasV1';
 import { QualifiedConnectedServiceUsageSourceResolutionV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { getUsageQueryKey } from '@happier-dev/protocol/inputs/usageQuery';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
 import { registerQualifiedConnectedAccountCredentialRoutesV4 } from '../../../server/sources/app/api/routes/connect/qualifiedConnectedAccounts/registerQualifiedConnectedAccountCredentialRoutesV4';
@@ -60,10 +62,10 @@ const WAKE_COUNT = 3;
 // reset seconds, with three provider timestamp variants within each second.
 const PROVIDERS = [
     { id: 'claude', accountId: 'claude-pro', days: 13, count: 25_611 },
-    { id: 'codex', accountId: 'codex-pro', days: 22, count: 9_500 },
-    { id: 'codex', accountId: 'codex-work', days: 19, count: 3_088 },
+    { id: 'codex', accountId: 'codex-pro', days: 22, count: 9_500, splitRecentRange: true },
+    { id: 'codex', accountId: 'codex-work', days: 19, count: 3_088, splitRecentRange: true },
     { id: 'gemini', accountId: 'gemini-work', days: 20, count: 2_000 },
-    { id: 'copilot', accountId: 'copilot-work', days: 17, count: 2_000 },
+    { id: 'copilot', accountId: 'copilot-work', days: 17, count: 2_000, splitRecentRange: true },
     { id: 'cursor', accountId: 'cursor-work', days: 16, count: 1_500 },
     { id: 'codex', accountId: 'codex-reauth', days: 15, count: 1_001, needsReauth: true },
     { id: 'muse', accountId: 'muse-no-summary', days: 14, count: 300, missingSummary: true },
@@ -73,6 +75,7 @@ type Provider = typeof PROVIDERS[number];
 type SummaryResponse = ReturnType<typeof ProviderAccountUsageDaySummaryResponseV1Schema.parse>;
 type HistoryResponse = ReturnType<typeof QualifiedProviderAccountUsageHistoryResponseV4Schema.parse>;
 type HistoryTransmission = { observations: number; outsideRange: number; terminalFrames: number };
+const RESET_START_READ_PATH = '/v2/pending/reset-starts/read';
 type Traffic = Readonly<{
     method: string; path: string; recordId?: string; range?: { startAtMs: number; endAtMs: number };
     afterAtMs?: number; purpose?: string;
@@ -106,7 +109,10 @@ function retainedHistory(provider: Provider, accountId: string, today: number) {
         const day = today - (provider.days - Math.floor(ordinal * provider.days / groupCount)) * DAY;
         const observedAtMs = day + 12 * HOUR + (index % 2_400) * 15_000;
         const resetAt = provider.id === 'claude' ? day + DAY + ordinal * 1_000 + index % 3 : day + DAY + ordinal * 1_000;
-        const snapshot = quotaSnapshot(provider, observedAtMs, resetAt, 10 + index % 79);
+        const accepted = quotaSnapshot(provider, observedAtMs, resetAt, 10 + index % 79);
+        // A skewed provider clock can make an older accepted day part of the
+        // recent demand, giving this record two disjoint history requests.
+        const snapshot = index === 0 && 'splitRecentRange' in provider ? { ...accepted, observedAtMs: today - DAY } : accepted;
         return { accountId, recordId: snapshot.recordId, observedAt: new Date(observedAtMs),
             payload: { accountId, recordId: snapshot.recordId, recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1',
                 status: 'ok', fetchedAt: observedAtMs, staleAfterMs: snapshot.staleAfterMs, snapshot } };
@@ -122,9 +128,17 @@ function summarizeTraffic(traffic: readonly Traffic[]) {
     const byKind = (kind: Traffic['kind']) => summarize(reads.filter(row => row.kind === kind));
     return { httpReads: reads.length, summary: byKind('summary'), projection: byKind('projection'),
         exact: { ...byKind('exact'), observations: reads.reduce((total, row) => total + (row.history?.observations ?? 0), 0) },
+        resetStarts: traffic.filter(row => row.method === 'POST' && row.path === RESET_START_READ_PATH).length,
         sourceResolution: summarize(reads.filter(row => row.path.endsWith('/sources/resolve'))),
         currentRecords: summarize(reads.filter(row => row.path.endsWith('/record'))),
         other: byKind('other') };
+}
+
+function countSettledQuotaReads(traffic: readonly Traffic[]) {
+    return {
+        history: traffic.filter(row => row.method === 'GET' && row.path.endsWith('/provider-account-usage/history')).length,
+        resetStarts: traffic.filter(row => row.method === 'POST' && row.path === RESET_START_READ_PATH).length,
+    };
 }
 
 function assertQuotaViewAcquisition(plans: ReturnType<typeof projectUsagePlans>, traffic: readonly Traffic[], nowMs: number, history: boolean) {
@@ -246,7 +260,8 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                 changesPages.push({ after: Number(url.searchParams.get('after') ?? request.headers[CHANGES_AFTER_CURSOR_HTTP_HEADER] ?? 0),
                     count: page.changes.length, full: page.full, recordIds: readProviderAccountUsageChangedRecordIdsV1(page.changes) });
             }
-            if (url.pathname.startsWith('/v4/connect/qualified/provider-account-usage') || url.pathname.startsWith('/v2/usage/')) {
+            if (url.pathname.startsWith('/v4/connect/qualified/provider-account-usage') || url.pathname.startsWith('/v2/usage/')
+                || url.pathname === RESET_START_READ_PATH) {
                 const raw = url.searchParams.get('query');
                 const query = raw ? JSON.parse(raw) : null;
                 const kind = url.pathname.endsWith('/day-summaries') ? 'summary'
@@ -431,7 +446,7 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
             await expect.poll(() => entry.getSnapshot().pending, { timeout: 120_000 }).toBe('idle');
             const snapshot = entry.getSnapshot();
             expect(snapshot.pending).toBe('idle');
-            expect(snapshot.error).toBeUndefined();
+            expect(snapshot.error, snapshot.error && JSON.stringify({ code: snapshot.error.code, message: snapshot.error.message })).toBeUndefined();
             if (!snapshot.value) throw new Error('Usage Resource emitted no payload');
             const slice = decodeUsageQueryResource(snapshot.value).results.find(row => row.key === getUsageQueryKey(query));
             if (!slice) throw new Error('Usage Resource emitted no matching query slice');
@@ -457,6 +472,10 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                 const plans = projectUsagePlans(slice.quota, now, slice.pools, slice.sources);
                 const series = assertQuotaViewAcquisition(plans, reads, now, true);
                 expect(series).toHaveLength(6);
+                const historyUrls = reads.filter(row => row.kind === 'exact' && row.method === 'GET')
+                    .map(({ path, recordId, range }) => JSON.stringify([path, recordId, range]));
+                expect(historyUrls).toHaveLength(9);
+                expect(new Set(historyUrls).size).toBe(9);
                 const missing = plans.accounts.find(row => row.accountId === 'muse-no-summary');
                 expect(missing?.read?.pageFacts?.historyStatus).not.toBe('complete');
                 const claude = plans.accounts.find(row => row.accountId === 'claude-pro')!;
@@ -475,6 +494,12 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                 expect(packedBytes).toBeLessThan(expandedBytes);
                 console.info('quota-rig rendered', JSON.stringify({ renderedWindows, packedBytes, expandedBytes }));
             });
+            const assertSettledRecentHistory = (slice: Awaited<ReturnType<typeof read>>, reads: readonly Traffic[]) => {
+                expect(slice.quota?.filter(row => row.pageFacts?.historyStatus === 'complete')).toHaveLength(6);
+                expect(summarizeTraffic(reads).exact).toEqual({ requests: 0, bodies: 0, bytes: 0, observations: 0 });
+            };
+            await check('Source switch', { ...projections, sources: ['codex'] }, assertSettledRecentHistory);
+            await check('Period switch', { ...projections, period: { relative: 'all' } }, assertSettledRecentHistory);
             await check('Resets', resets, (slice, reads) => {
                 const plan = projectUsagePlans(slice.quota, now, slice.pools, slice.sources).accounts.find(row => row.accountId === 'claude-pro')!;
                 expect(plan.windows[0]?.resetAtMs).toBe(lastReset);
@@ -486,15 +511,16 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                 expect(plans.accounts).not.toHaveLength(0);
                 expect(summarizeUsagePlanFit(plans.accounts[0]!, null)).toBeDefined();
                 expect(slice.planInsights?.accounts).toHaveLength(7);
-                assertQuotaViewAcquisition(plans, reads, now, true);
+                assertSettledRecentHistory(slice, reads);
             });
             let plansEntry: ReturnType<typeof mount> | undefined;
             await cell('Plans', async () => {
                 const begin = traffic.length;
-                plansEntry = mount([capacity, projections, resets, planFit]);
-                const slice = await read(plansEntry, projections);
+                const entry = mount([capacity, projections, resets, planFit]);
+                const slice = await read(entry, projections);
+                plansEntry = entry;
                 expect(slice.quota).toHaveLength(7);
-                assertQuotaViewAcquisition(projectUsagePlans(slice.quota, now, slice.pools, slice.sources), traffic.slice(begin), now, true);
+                assertSettledRecentHistory(slice, traffic.slice(begin));
                 console.info('quota-rig payload', JSON.stringify({ bytes: plansEntry.getSnapshot().value?.bytes.length,
                     accounts: slice.quota?.map(row => ({ id: row.source.ref.accountId,
                         days: row.pageFacts?.dayQuotaHistory?.length,
@@ -587,7 +613,8 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                     expect({
                         currentDayBodies: clientHistoryReads.filter(row => row.kind === 'summary' && row.days?.some(day => day.dayStartAtMs === today)).length,
                         sourceResolutions: traffic.slice(begin).filter(row => row.method === 'GET' && row.path.endsWith('/sources/resolve')).length,
-                    }).toEqual({ currentDayBodies: 1, sourceResolutions: 1 });
+                        suffixBodies: clientHistoryReads.filter(row => row.kind === 'exact' && row.history?.terminalFrames === 1).length,
+                    }).toEqual({ currentDayBodies: 1, sourceResolutions: 1, suffixBodies: 1 });
                     if (tick === WAKE_COUNT) {
                         expect(changesPages.slice(changePageStart)).toEqual(expect.arrayContaining([
                             { after: before, count: pageLimit - 1, full: true, recordIds: undefined },
@@ -658,6 +685,35 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                     release();
                 }
             });
+            const week = { period: { relative: '7days' as const } };
+            const weekProjections = resolveUsageWidgetQuery(week, {}, 'usage_projections', false)!.query;
+            const weekPlanFit = resolveUsageWidgetQuery(week, {}, 'usage_plan_fit', false)!.query;
+            const weekCapacity = resolveUsageWidgetQuery(week, {}, 'usage_capacity', false)!.query;
+            const noSettledReads = { history: 0, resetStarts: 0 };
+            await cell('Seven-day Account feed settled', async () => {
+                const { sync } = await import('../sync/sync');
+                const { cursor } = CurrentCursorResponseSchema.parse(await (await request('/v2/cursor')).json());
+                await expect.poll(() => sync.readAppliedAccountChangesCursor(serverId, account.id)).toBe(cursor);
+            });
+            await check('Seven-day cold quota view', weekProjections, (slice, reads) => {
+                expect(slice.quota?.some(row => row.pageFacts?.historyStatus === 'complete')).toBe(true);
+                const counts = countSettledQuotaReads(reads);
+                expect(counts.history).toBeGreaterThan(0);
+                expect(counts.resetStarts).toBeGreaterThan(0);
+            });
+            await check('Seven-day warm quota view switch', weekPlanFit, (slice, reads) => {
+                expect(slice.quota?.some(row => row.pageFacts?.historyStatus === 'complete')).toBe(true);
+                expect(countSettledQuotaReads(reads)).toEqual(noSettledReads);
+            });
+            await cell('Seven-day second quota consumer', async () => {
+                const first = mount([weekProjections]);
+                await read(first, weekProjections);
+                const mark = traffic.length;
+                const second = mount([weekProjections, weekCapacity]);
+                const slice = await read(second, weekProjections);
+                expect(slice.quota?.some(row => row.pageFacts?.historyStatus === 'complete')).toBe(true);
+                expect(countSettledQuotaReads(traffic.slice(mark))).toEqual(noSettledReads);
+            });
         } finally {
             observeChanges();
             subscriptions.reverse().forEach(dispose => dispose());
@@ -665,6 +721,145 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
         }
         expect(failures, 'Every quota cell was attempted').toEqual([]);
     }, RIG_TIMEOUT_MS);
+
+    it('retains a settled recent body on fresh demand and rereads a rewritten day through HTTP', async () => {
+        const { getProviderAccountUsageQuota } = await import('../sync/api/account/apiProviderAccountUsage');
+        const { runWithServerHttpBaseUrl } = await import('../../../cli/src/api/client/serverHttpBaseUrl');
+        const { writeQualifiedProviderAccountUsageV4 } = await import('../../../cli/src/api/client/qualifiedConnectedAccountApi');
+        const { persistProviderAccountUsageWithDaySummaries } = await import('../../../cli/src/daemon/connectedServices/accountUsage/persistence');
+        const account = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
+        const { request, send } = makeRigHttp(origin, token);
+        const today = Math.floor(Date.now() / DAY) * DAY;
+        const yesterday = today - DAY;
+        const now = today + 13 * HOUR;
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 1_000);
+        onTestFinished(() => clock.mockRestore());
+        const provider = PROVIDERS[0];
+        const source = makeSource(provider);
+        const previous = quotaSnapshot(provider, yesterday + 13 * HOUR, today + 3 * DAY, 20);
+        const current = quotaSnapshot(provider, now, today + 3 * DAY, 30);
+        const { credentialRevision } = await send<{ credentialRevision: string }>('/v4/connect/qualified/credential', 'POST', {
+            ref: source.ref, authenticationModeId: 'api-key', expectedCredentialRevision: null,
+            content: { t: 'plain', v: { token: 'test' } }, metadata: { scopes: [], providerIdentity: { accountId: current.recordKey.accountSubjectId } },
+        });
+        const persist = async (snapshot: typeof current) => {
+            const persisted = await runWithServerHttpBaseUrl(origin, () => persistProviderAccountUsageWithDaySummaries({ token, nowMs: snapshot.fetchedAtMs,
+                write: { source, expectedCredentialRevision: credentialRevision, expectedConfigurationRevision: null, recordId: snapshot.recordId,
+                    recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1', status: 'ok', snapshot,
+                    fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs } }));
+            expect(persisted.dailySummary).toEqual({ status: 'written', days: 1 });
+        };
+        await persist(previous);
+        await persist(current);
+        const alias = { ...source, ref: { ...source.ref, accountId: `${source.ref.accountId}-alias` } };
+        const aliasCredential = await send<{ credentialRevision: string }>('/v4/connect/qualified/credential', 'POST', {
+            ref: alias.ref, authenticationModeId: 'api-key', expectedCredentialRevision: null,
+            content: { t: 'plain', v: { token: 'alias' } }, metadata: { scopes: [], providerIdentity: { accountId: current.recordKey.accountSubjectId } },
+        });
+        await runWithServerHttpBaseUrl(origin, () => writeQualifiedProviderAccountUsageV4({ token, write: {
+            source: alias, expectedCredentialRevision: aliasCredential.credentialRevision, expectedConfigurationRevision: null,
+            recordId: current.recordId, recordKey: current.recordKey, payloadMode: 'plain_json_v1', status: 'ok', snapshot: current,
+            fetchedAt: current.fetchedAtMs, staleAfterMs: current.staleAfterMs,
+        } }));
+        const documents: import('../sync/api/account/apiProviderAccountUsage').ProviderAccountUsageProjectionDocuments = new Map();
+        const read = async (nowMs: number) => {
+            const { cursor } = CurrentCursorResponseSchema.parse(await (await request('/v2/cursor')).json());
+            const mark = traffic.length;
+            const quota = await getProviderAccountUsageQuota({ token }, { source, projection: {
+                range: { startAtMs: today - WEEK, endAtMs: nowMs }, resolution: 'accepted_observations',
+            } }, { accountMode: 'plain', historyView: 'daily', includePendingWork: false, nowMs, changesCursor: cursor,
+                request: (path, init) => fetch(origin + path, init), projectionDocuments: documents });
+            expect(quota.pageFacts?.historyStatus).toBe('complete');
+            return traffic.slice(mark).filter(row => row.kind === 'exact' && row.method === 'GET');
+        };
+        const cold = await read(now);
+        expect(cold).toHaveLength(1);
+        expect(cold[0]?.history).toMatchObject({ observations: 2, terminalFrames: 1 });
+        const same = await read(now);
+        const later = await read(now + 1_000);
+        const { createPresentUserSessionAccessAuthentication } = await import('../../../server/sources/app/session/access/sessionAccessAuthentication.testkit');
+        const { createSessionMachineAccessKeyInTx } = await import('../../../server/sources/app/accessKeys/sessionMachineAccessKeyMutations');
+        const { enqueuePendingMessage, updatePendingRequestedAction } = await import('../../../server/sources/app/session/pending/pendingMessageService');
+        // This case gives the pending machine target a portable Home identity.
+        // The composed Account restore cases keep their original anonymous Home.
+        vi.stubEnv('HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY', 'optional');
+        vi.stubEnv('HAPPIER_SERVER_IDENTITY_ID', 'srv_01234567890123456789012345678901');
+        onTestFinished(() => { vi.unstubAllEnvs(); });
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', active: false } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, installationId: randomUUID(),
+            metadata: encodePlainMachineStoredContent({ host: 'host', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] }, sessionPendingResetStart: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1 } });
+        expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId: account.id, sessionId: session.id, machineId: machine.id, data: 'key' }))).toMatchObject({ ok: true });
+        const pending = { actorUserId: account.id, authentication: createPresentUserSessionAccessAuthentication(), sessionId: session.id, localId: randomUUID() };
+        const enqueued = await enqueuePendingMessage({ ...pending, targetMachineId: machine.id, requestedAction: { v: 1, kind: 'enqueue' },
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Usage rig input' } } } });
+        expect(enqueued.ok, enqueued.ok ? undefined : JSON.stringify(enqueued)).toBe(true);
+        const witness = await db.providerAccountUsageHistory.findFirstOrThrow({ where: { accountId: account.id, recordId: current.recordId,
+            observedAt: new Date(previous.fetchedAtMs) }, select: { id: true } });
+        expect(await updatePendingRequestedAction({ ...pending, requestedAction: { v: 1, kind: 'reset_start', reset: {
+            source, recordId: current.recordId, meterId: current.meters[0]!.meterId, witness: { ...witness, observedAtMs: previous.fetchedAtMs },
+        } } })).toMatchObject({ ok: true });
+        const readExact = async (nowMs: number, qualifiedSource = source) => {
+            const { cursor } = CurrentCursorResponseSchema.parse(await (await request('/v2/cursor')).json());
+            const mark = traffic.length;
+            const quota = await getProviderAccountUsageQuota({ token }, { source: qualifiedSource, projection: {
+                range: { startAtMs: today - WEEK, endAtMs: nowMs }, resolution: 'accepted_observations',
+            } }, { accountMode: 'plain', nowMs, changesCursor: cursor,
+                request: (path, init) => fetch(origin + path, init), projectionDocuments: documents });
+            expect(quota.current?.recordId).toBe(current.recordId);
+            expect(quota.pageFacts?.historyStatus).toBe('complete');
+            if (quota.waitingWork?.status !== 'available') throw new Error('Pending reset-start reads did not settle');
+            expect(quota.waitingWork.entries).toHaveLength(qualifiedSource === alias ? 0 : 1);
+            return { counts: countSettledQuotaReads(traffic.slice(mark)), readiness: quota.waitingWork.entries[0]?.readiness };
+        };
+        const coldExact = await readExact(now + 1);
+        expect(coldExact.counts.history).toBeGreaterThan(0);
+        expect(coldExact.counts.resetStarts).toBe(1);
+        expect(coldExact.readiness).toMatchObject({ status: 'waiting', reason: 'before_reset' });
+        const coldAlias = await readExact(now + 1, alias);
+        const warmExact = await readExact(now + 1_000);
+        const warmAlias = await readExact(now + 1_000, alias);
+
+        const summaryPath = '/v4/connect/qualified/provider-account-usage/day-summaries';
+        const query = new URLSearchParams({ query: JSON.stringify({ recordId: current.recordId, range: { startAtMs: yesterday, endAtMs: today } }) });
+        const { summaries: [stored] } = ProviderAccountUsageDaySummaryResponseV1Schema.parse(await send(`${summaryPath}?${query}`, 'GET', undefined));
+        const payload = stored?.payload;
+        if (payload?.content.t !== 'plain' || !payload.content.v.observedAtRange) throw new Error('Expected a settled plain day with clock bounds');
+        const { v } = payload.content;
+        const observedAtRange = payload.content.v.observedAtRange;
+        await send(summaryPath, 'PUT', { recordId: current.recordId, dayStartAtMs: yesterday,
+            payload: { ...payload, content: { t: 'plain', v: { ...v, observedAtRange: { ...observedAtRange, startAtMs: observedAtRange.startAtMs - 1 } } } } });
+        const rewritten = await read(now + 1_000);
+        await persist(quotaSnapshot(provider, now + 250, today + 3 * DAY, 33));
+        const late = await read(now + 1_000);
+        const changedExact = await readExact(now + 1_000);
+        const { pruneProviderAccountUsageSummaryDetail } = await import('../../../server/sources/app/api/routes/connect/providerAccountUsage/daySummaryStorage');
+        const beforePrune = CurrentCursorResponseSchema.parse(await (await request('/v2/cursor')).json()).cursor;
+        const compacted = await inTx(tx => pruneProviderAccountUsageSummaryDetail({ accountId: account.id, recordId: current.recordId,
+            dayStartAtMs: yesterday, cutoff: new Date(today), dryRun: false, limit: 1 }, tx));
+        expect(compacted.deleted).toBe(1);
+        expect(CurrentCursorResponseSchema.parse(await (await request('/v2/cursor')).json()).cursor).toBe(beforePrune);
+        const prunedExact = await readExact(now + 1_000);
+        console.info('quota-rig seven-day', JSON.stringify({ coldExact, warmExact, coldAlias, warmAlias, changedExact, prunedExact }));
+        const summarize = (rows: readonly Traffic[]) => summarizeTraffic(rows).exact;
+        console.info('quota-rig fresh demand', JSON.stringify({ cold: summarize(cold), same: summarize(same), later: summarize(later), rewritten: summarize(rewritten), late: summarize(late) }));
+        const selected = (rows: readonly Traffic[]) => rows.map(row => ({ recordId: row.recordId, range: row.range, observations: row.history?.observations }));
+        expect({ same: summarize(same), later: summarize(later), rewritten: selected(rewritten), late: selected(late), warmExact: warmExact.counts }).toEqual({
+            same: summarize([]), later: summarize([]), rewritten: [{ recordId: current.recordId, range: { startAtMs: yesterday, endAtMs: today }, observations: 1 }],
+            late: [{ recordId: current.recordId, range: { startAtMs: today, endAtMs: now + 251 }, observations: 2 }],
+            warmExact: { history: 0, resetStarts: 0 },
+        });
+        expect(coldAlias.counts).toEqual({ history: 0, resetStarts: 1 });
+        expect(warmAlias.counts).toEqual({ history: 0, resetStarts: 0 });
+        expect(warmExact.readiness).toEqual(coldExact.readiness);
+        expect(changedExact.counts.history).toBeGreaterThan(0);
+        expect(changedExact.counts.resetStarts).toBe(1);
+        expect(prunedExact.counts.history).toBeGreaterThan(0);
+        expect(prunedExact.readiness).toMatchObject({ status: 'waiting', reason: 'witness_unavailable' });
+    }, 30_000);
 
     it('reuses the cold Projections admission across actual initial-cursor capture', async () => {
         const webStorage = installLocalStorageMock();

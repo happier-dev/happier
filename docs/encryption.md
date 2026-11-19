@@ -1472,6 +1472,12 @@ content or initiate a foreground raw-history backfill. The daemon's separate
 With `includeCoverage: true`, omitting `range` selects all admitted stored days
 and pending coverage without a timestamp filter. There is no client-chosen
 upper date or full-history foreground read.
+The UI quota reader retains opened history for each qualified record within the
+Account read scope. A fresh selection reuses recent intervals when their opened
+summary and accepted count and frontier agree. A paired observation publication
+advances its accepted suffix. A changed day without suffix evidence reopens its
+affected interval. Exact history reuse also checks accepted day coverage because
+detail retention can prune rows without an Account feed update.
 Daily summaries optionally retain `observedAtRange: { startAtMs, endAtMs }`,
 a half-open range of provider observation clocks, inside the existing sealed body.
 The key-holding daemon computes it from a complete read of the selected pending

@@ -545,7 +545,7 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
                 acceptedBySource.set(index, accepted);
                 publishProgress(index, accepted, true);
             } catch (error) { failSource(index, error); }
-        })), { includePendingWork: !!range, ...(daily ? { historyView: 'daily', exactHistoryRange, dayChange, changesCursor } : {}), readAllHistory: { onProgress: value => {
+        })), { includePendingWork: !!range, changesCursor, ...(daily ? { historyView: 'daily', exactHistoryRange, dayChange } : {}), readAllHistory: { onProgress: value => {
             const index = sourceIndices.get(createCanonicalJsonSigningInput(value.source));
             if (index === undefined) throw new Error('Quota reader returned an unrequested source');
             acceptedBySource.set(index, value);
