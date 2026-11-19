@@ -2,6 +2,7 @@ import type { SupportedLanguage } from '../_all';
 
 export const deploymentMoveTranslations = {
   "en": {
+    "service": "Service to check",
     "dataReviewLead": "Review the source services to stop and the app changes. The Workflow stops writes, verifies a final backup, restores and checks the destination, then deploys the app. The original data stays on the source. An uncertain cutover needs your decision in the run before continuing.",
     "writers": "Services to stop",
     "writerReviewRequired": "The source writers could not be identified. Review the source services and their running state, then try again.",

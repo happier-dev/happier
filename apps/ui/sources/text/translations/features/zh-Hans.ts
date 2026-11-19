@@ -381,6 +381,7 @@ return { simulatorDeviceToolsTranslations };
 const Domain_deploymentMoveTranslations = (() => {
 const deploymentMoveTranslations = {
   "zh-Hans": {
+    "service": "要检查的服务",
     "dataReviewLead": "检查要停止的源服务和应用更改。工作流将停止写入、验证最终备份、恢复并检查目标，然后部署应用。原始数据会保留在源端。 切换结果不确定时，需要你在运行中决定后再继续。",
     "writers": "要停止的服务",
     "writerReviewRequired": "无法确定源端的写入服务。请检查源服务及其运行状态，然后重试。",

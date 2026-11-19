@@ -382,6 +382,7 @@ return { simulatorDeviceToolsTranslations };
 const Domain_deploymentMoveTranslations = (() => {
 const deploymentMoveTranslations = {
   "zh-Hant": {
+    "service": "要檢查的服務",
     "dataReviewLead": "檢查要停止的來源服務與應用程式變更。工作流程會停止寫入、驗證最終備份、還原並檢查目標，然後部署應用程式。原始資料會保留在來源端。 切換結果不確定時，需要你在執行中決定後再繼續。",
     "writers": "要停止的服務",
     "writerReviewRequired": "無法識別來源端的寫入服務。請檢查來源服務及其執行狀態，然後重試。",

@@ -389,6 +389,7 @@ return { simulatorDeviceToolsTranslations };
 const Domain_deploymentMoveTranslations = (() => {
 const deploymentMoveTranslations = {
   "fr": {
+    "service": "Service à vérifier",
     "dataReviewLead": "Vérifiez les services source à arrêter et les modifications de l’application. Le workflow arrête les écritures, vérifie une dernière sauvegarde, restaure et contrôle la destination, puis déploie l’application. Les données originales restent à la source. Une bascule incertaine nécessite votre décision dans l’exécution avant de continuer.",
     "writers": "Services à arrêter",
     "writerReviewRequired": "Les services source qui écrivent n’ont pas pu être identifiés. Vérifiez les services et leur état, puis réessayez.",

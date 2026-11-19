@@ -387,6 +387,7 @@ return { simulatorDeviceToolsTranslations };
 const Domain_deploymentMoveTranslations = (() => {
 const deploymentMoveTranslations = {
   "it": {
+    "service": "Servizio da verificare",
     "dataReviewLead": "Controlla i servizi di origine da arrestare e le modifiche all’app. Il flusso arresta le scritture, verifica un backup finale, ripristina e controlla la destinazione, poi distribuisce l’app. I dati originali restano all’origine. Un passaggio incerto richiede la tua decisione nell’esecuzione prima di continuare.",
     "writers": "Servizi da arrestare",
     "writerReviewRequired": "Non è stato possibile identificare i servizi che scrivono all’origine. Controlla i servizi e il loro stato, poi riprova.",

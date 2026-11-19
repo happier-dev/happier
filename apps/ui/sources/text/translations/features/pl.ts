@@ -386,6 +386,7 @@ return { simulatorDeviceToolsTranslations };
 const Domain_deploymentMoveTranslations = (() => {
 const deploymentMoveTranslations = {
   "pl": {
+    "service": "Usługa do sprawdzenia",
     "dataReviewLead": "Sprawdź usługi źródłowe do zatrzymania i zmiany aplikacji. Przepływ zatrzyma zapisy, zweryfikuje końcową kopię, przywróci i sprawdzi cel, a potem wdroży aplikację. Oryginalne dane pozostaną u źródła. Niepewne przełączenie wymaga twojej decyzji w uruchomieniu przed kontynuowaniem.",
     "writers": "Usługi do zatrzymania",
     "writerReviewRequired": "Nie udało się zidentyfikować usług zapisujących u źródła. Sprawdź usługi i ich stan, a potem spróbuj ponownie.",

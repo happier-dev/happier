@@ -386,6 +386,7 @@ return { simulatorDeviceToolsTranslations };
 const Domain_deploymentMoveTranslations = (() => {
 const deploymentMoveTranslations = {
   "ja": {
+    "service": "ヘルスチェックの対象サービス",
     "dataReviewLead": "停止する移動元のサービスとアプリの変更を確認します。ワークフローは書き込みを停止し、最終バックアップを検証して移動先に復元・確認した後、アプリをデプロイします。元のデータは移動元に保持されます。 切り替えが不確かな場合は、続行前に実行画面で判断が必要です。",
     "writers": "停止するサービス",
     "writerReviewRequired": "移動元の書き込みサービスを特定できませんでした。サービスと実行状態を確認してから、もう一度お試しください。",

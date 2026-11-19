@@ -385,6 +385,7 @@ return { simulatorDeviceToolsTranslations };
 const Domain_deploymentMoveTranslations = (() => {
 const deploymentMoveTranslations = {
   "de": {
+    "service": "Zu prüfender Dienst",
     "dataReviewLead": "Prüfe die anzuhaltenden Quelldienste und die App-Änderungen. Der Workflow stoppt Schreibzugriffe, prüft eine letzte Sicherung, stellt das Ziel wieder her und prüft es, dann wird die App bereitgestellt. Die ursprünglichen Daten bleiben an der Quelle. Bei einem ungewissen Wechsel musst du im Lauf entscheiden, bevor es weitergeht.",
     "writers": "Anzuhaltende Dienste",
     "writerReviewRequired": "Die schreibenden Quelldienste konnten nicht bestimmt werden. Prüfe die Dienste und ihren Laufzustand und versuche es erneut.",

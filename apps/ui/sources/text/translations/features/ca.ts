@@ -389,6 +389,7 @@ return { simulatorDeviceToolsTranslations };
 const Domain_deploymentMoveTranslations = (() => {
 const deploymentMoveTranslations = {
   "ca": {
+    "service": "Servei que es comprovarà",
     "dataReviewLead": "Revisa els serveis d’origen que s’aturaran i els canvis de l’aplicació. El flux atura les escriptures, verifica una còpia final, restaura i comprova la destinació i desplega l’aplicació. Les dades originals es conserven a l’origen. Un canvi incert necessita la teva decisió al flux abans de continuar.",
     "writers": "Serveis que s’aturaran",
     "writerReviewRequired": "No s’han pogut identificar els processos que escriuen a l’origen. Revisa els serveis i el seu estat i torna-ho a provar.",

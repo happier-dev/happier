@@ -389,6 +389,7 @@ return { simulatorDeviceToolsTranslations };
 const Domain_deploymentMoveTranslations = (() => {
 const deploymentMoveTranslations = {
   "pt": {
+    "service": "Serviço a verificar",
     "dataReviewLead": "Revise os serviços de origem a parar e as alterações da aplicação. O fluxo para as escritas, verifica uma cópia final, restaura e verifica o destino e implementa a aplicação. Os dados originais ficam na origem. Uma mudança incerta exige a tua decisão na execução antes de continuar.",
     "writers": "Serviços a parar",
     "writerReviewRequired": "Não foi possível identificar os serviços que escrevem na origem. Revise os serviços e o seu estado e tente novamente.",
