@@ -2856,6 +2856,14 @@ facts and the Agent's admitted authentication-isolation declaration, as Account
 Provider selections do. When that binding replaces native authentication, native
 sign-in is not a launch prerequisite; installation and worker compatibility
 remain required.
+
+In 0.3 development, use `teams.credentials.entitled.list` with the exact Agent
+and Provider `application` and the borrower's `executionMachineId` to read the
+Team model catalog. The native `agents.models.list` probe refuses qualified Team
+credentials before acquiring material. Its `connected-service-preflight-failed`
+response carries `team_credential_session_admission_required` in
+`failureCause.actionCause.nativeErrorReason`.
+
 The picker retains the last successfully admitted Team catalog choices during a
 background refresh, including a matching Home wake. Refresh freshness is separate
 from picker eligibility: an explicit invalidation, observer gap, failed read or

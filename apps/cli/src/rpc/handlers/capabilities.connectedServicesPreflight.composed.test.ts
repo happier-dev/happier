@@ -25,6 +25,7 @@ import { PluginAvailabilityActionHttpPathsV1,
   PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 
 import type { ApiClient } from '@/api/api';
+import { normalizeActionExecuteResult, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import type { StoredCredentials } from '@/persistence';
 import type {
   ConnectedAccountPurposeBindingOwner,
@@ -192,27 +193,31 @@ describe('capabilities.invoke connected-service preflight', () => {
       const { call } = await createAdmittedCapabilityClient(registerCapabilitiesHandlers, { createApiClient });
       await call(RPC_METHODS.CAPABILITIES_DESCRIBE, {});
       readStoredCredentials.mockClear();
+      const agentId = selection.deliveryMode === 'brokered' ? 'pi' : 'codex';
+      const serviceKey = selection.deliveryMode === 'brokered'
+        ? 'happier.agent.muse/muse-account' : 'happier.agent.codex/openai-codex';
+      const connectedServices = { v: 2, bindingsByServiceId: { [serviceKey]: selection } };
+      const failureCause = { actionCause: { nativeErrorReason: 'team_credential_session_admission_required' } };
       for (const method of ['probeModels', 'probeConfigOptions', 'probeModes', 'probeCatalogs']) {
         const response = await call(RPC_METHODS.CAPABILITIES_INVOKE, {
-          id: 'cli.codex', method,
-          params: {
-            cwd: tempDir,
-            connectedServices: { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': selection } },
-          },
+          id: `cli.${agentId}`, method,
+          params: { cwd: tempDir, connectedServices },
         });
-        expect(response, method).toMatchObject({ ok: false, error: { code: 'connected-service-preflight-failed' } });
+        expect(response, method).toMatchObject({ ok: false, error: { code: 'connected-service-preflight-failed', failureCause } });
         if (method === 'probeModels') {
           const parsed = parseCapabilitiesInvokeResponse(response);
           if (!parsed) throw new Error('Invalid real capability response');
           uiCapabilityTransport.invoke.mockResolvedValue({ supported: true, response: parsed });
           expect(await probeAgentModelsForActions({ machineId: 'machine-test', probe: { cwd: tempDir } },
-            { agentId: 'codex', backendTargetParam: null })).toMatchObject({ ok: false, errorCode: 'connected-service-preflight-failed' });
+            { agentId, backendTargetParam: null })).toMatchObject({ ok: false, errorCode: 'connected-service-preflight-failed', details: { failureCause } });
           const inventory = createCliActionInventoryDeps({ token: 'fixture-token', sessionId: '', mode: 'plain', ctx: null,
             callMachineAction: async () => response });
           const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...inventory });
-          const failure = await executor.execute('agents.models.list', { agentId: 'codex', machineId: 'machine-test',
+          const failure = await executor.execute('agents.models.list', { agentId, machineId: 'machine-test',
             probe: { cwd: tempDir } }, { surface: 'cli', authority: 'present_user' });
-          expect(ActionExecuteFailureSchema.parse(failure)).toMatchObject({ errorCode: 'connected-service-preflight-failed' });
+          const normalized = normalizeActionExecuteResult(ActionExecuteFailureSchema.parse(failure));
+          if (normalized.ok) throw new Error('Expected a public Action refusal');
+          expect(projectCliActionFailure(normalized)).toMatchObject({ code: 'connected-service-preflight-failed', details: { failureCause } });
         }
       }
       expect(readStoredCredentials).not.toHaveBeenCalled();

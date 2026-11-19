@@ -287,7 +287,24 @@ export async function invokeCliPreflightMethod(
     // neither that authority nor a direct-material origin, so do not reinterpret
     // the requested resource as personal Account credentials or native auth.
     if (connectedServiceSelections.some((selection) => selection.kind === 'team_resource')) {
-        return { ok: false, error: { code: 'connected-service-preflight-failed', message: 'Could not prepare the selected connected-service account for this probe.' } };
+        return {
+            ok: false,
+            error: {
+                code: 'connected-service-preflight-failed',
+                message: 'Could not prepare the selected connected-service account for this probe.',
+                failureCause: {
+                    phase: 'client_start',
+                    failureReason: 'permission_denied',
+                    actionCause: {
+                        phase: 'capabilities.preflight.credentials',
+                        errorClass: 'Error',
+                        errorCode: null,
+                        nativeErrorReason: 'team_credential_session_admission_required',
+                        httpStatus: null,
+                    },
+                },
+            },
+        };
     }
     const hasConnectedServiceSelection = connectedServiceSelections.length > 0;
     const explicitEnvironment = method === 'probeCatalogs'
