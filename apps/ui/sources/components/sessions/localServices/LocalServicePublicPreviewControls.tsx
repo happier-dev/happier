@@ -27,6 +27,7 @@ import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { Modal } from '@/modal';
 import {
     DEFAULT_LOCAL_SERVICE_PUBLIC_PREVIEW_TTL_MS,
+    readLocalServicePublicPreviewBinding,
     type LocalServicePublicPreviewActions,
     type LocalServicePublicPreviewActionTarget,
 } from '@/components/sessions/localServices/publicPreviewActions';
@@ -175,11 +176,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
+/** Only a registered, bound preview counts; a declared service's stable Open locator still needs registration. */
 function readTargetPreviewId(target: LocalServiceLaunchTargetV1): string | null {
-    const browserTarget = target.browserTarget;
-    return browserTarget?.kind === 'localServicePreview' && browserTarget.targetId.trim().length > 0
-        ? browserTarget.targetId.trim()
-        : null;
+    return readLocalServicePublicPreviewBinding(target)?.previewId ?? null;
 }
 
 /**
@@ -771,7 +770,8 @@ export function LocalServicePublicPreviewControls(props: Readonly<{
     const targets = React.useMemo(
         (): readonly PublicPreviewTarget[] => (state && actions
             ? props.browserTarget
-                ? [{ target: props.browserTarget, previewId: props.browserTarget.targetId, targetKey: props.browserTarget.targetId, title: props.serviceTitle ?? props.browserTarget.display?.title ?? props.browserTarget.targetId }]
+                ? [{ target: props.browserTarget, previewId: readLocalServicePublicPreviewBinding(props.browserTarget)?.previewId ?? null,
+                    targetKey: props.browserTarget.targetId, title: props.serviceTitle ?? props.browserTarget.display?.title ?? props.browserTarget.targetId }]
                 : publicPreviewTargets(props.launchTargets)
             : []),
         [actions, props.browserTarget, props.launchTargets, props.serviceTitle, state],

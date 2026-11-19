@@ -62,6 +62,45 @@ const snapshot = {
 } satisfies LocalServicePublicPreviewSnapshotV1;
 
 describe('local service public preview actions', () => {
+    it('shares a declared service after registration returns a stable browser locator', async () => {
+        // #130 C41: the daemon publishes an occurrence binding beside a stable
+        // browser locator. Registration must retain the binding for the share.
+        const serviceTarget = { kind: 'managed_service' as const, machineId: 'machine_1', managedServiceId: 'actual-instance',
+            workspaceId: 'accepted-workspace', cwd: '/accepted/web',
+            declaration: { workspaceRefId: 'accepted-workspace', selection: { kind: 'manifest' as const, name: 'web' } } };
+        const browserTarget = { kind: 'localServicePreview' as const, targetId: 'project-service:' + 'a'.repeat(64),
+            machineId: 'machine_1', display: { title: 'Web' } };
+        const launchTarget = { ...target, id: browserTarget.targetId, source: 'managed_service' as const, sessionId: undefined,
+            workspaceId: serviceTarget.workspaceId, cwd: serviceTarget.cwd, declaration: serviceTarget.declaration,
+            sourceClass: { kind: 'managed_service' as const, managedServiceId: serviceTarget.managedServiceId },
+            actions: ['open_preview', 'register_preview'], browserTarget } satisfies LocalServiceLaunchTargetV1;
+        const resource = { previewId: 'actual-instance', machineId: 'machine_1', serviceTarget, browserTarget,
+            owner: { kind: 'user' as const, id: 'account_1' }, target: { scheme: 'http' as const, host: '127.0.0.1', port: 42518 },
+            initialPath: { pathname: '/', search: '' }, display: { title: 'Web', addressLabel: '127.0.0.1:42518' }, originMode: 'host' as const };
+        const preview = { previewId: resource.previewId, resource, expiresAt: 601_000, diagnostics: [] };
+        const { sessionId: _sessionId, ...baseExposure } = exposure;
+        const serviceExposure = { ...baseExposure, previewId: resource.previewId, serviceTarget };
+        const requests: Parameters<FrontDoorRuntimeActionExecute>[0][] = [];
+        // Action transport boundary; registration parsing and share projection stay real.
+        const runtimeActionExecute: FrontDoorRuntimeActionExecute = async request => {
+            requests.push(request);
+            if (request.actionId === 'localServices.preview.openOrCreate') return { protocolVersion: 1, status: 'created', preview,
+                snapshot: { v: 1, machineId: 'machine_1', generatedAt: 2_000, refreshState: 'idle', resources: [resource], previews: [preview], diagnostics: [] } };
+            return { protocolVersion: 1, exposure: serviceExposure, snapshot: { ...snapshot, sessionId: undefined, exposures: [serviceExposure] } };
+        };
+        const { createLocalServicePublicPreviewActions } = await import('./publicPreviewActions');
+        const actions = createLocalServicePublicPreviewActions({ runtimeActionExecute, serverId: 'server_1',
+            sessionId: 'viewing-session', copyToClipboard: async () => false });
+        const prepared = await actions.preparePreview!(launchTarget);
+        expect(prepared).toMatchObject({ status: 'succeeded' });
+        if (!('status' in prepared) || prepared.status !== 'succeeded') throw new Error('Registration failed');
+        if (prepared.target.kind !== 'localServicePreview') throw new Error('Registration returned a different target kind');
+        await expect(actions.create(prepared.target)).resolves.toMatchObject({ exposure: serviceExposure });
+        expect(requests.at(-1)).toMatchObject({ actionId: 'localServices.publicPreview.create',
+            input: { machineId: 'machine_1', previewId: resource.previewId, serviceTarget } });
+        expect(requests.at(-1)!.input).not.toHaveProperty('sessionId');
+    });
+
     it('does not create a public exposure for a stale qualified row from another Home', async () => {
         const serviceTarget = { kind: 'managed_service' as const, machineId: 'machine_1', managedServiceId: 'actual-instance',
             workspaceId: 'accepted-workspace', cwd: '/accepted/web',

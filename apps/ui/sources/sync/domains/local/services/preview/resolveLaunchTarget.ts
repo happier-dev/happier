@@ -1,4 +1,4 @@
-import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
+import type { BrowserLocalServicePreviewTargetV1, BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 import type { LocalServiceLaunchTargetV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import {
     DaemonLocalServicePreviewOpenOrCreateResponseV1Schema,
@@ -20,7 +20,10 @@ import { resolveLocalServiceStartFailure } from '../serviceFailure';
 import { normalizeLocalServicePreviewSnapshotPayload } from './api';
 
 export type LocalServiceBrowserTargetResult =
-    | Readonly<{ status: 'succeeded'; target: BrowserViewTargetV1; currentUrl?: string }>
+    | Readonly<{ status: 'succeeded'; target: BrowserViewTargetV1; currentUrl?: string;
+        /** The registration this call admitted: its preview id and exact Session or occurrence binding.
+         * `target` stays the browser locator Open uses (stable for declared services). */
+        registeredTarget?: BrowserLocalServicePreviewTargetV1 }>
     | Readonly<{ status: 'denied'; reasonCode: string }>
     | Extract<ActionExecuteResult, { ok: false }>
     | ActionApprovalRequestCreatedResult;
@@ -95,13 +98,15 @@ export async function resolveLocalServiceBrowserTarget(target: LocalServiceBrows
         return { status: 'denied', reasonCode: 'preview_registration_failed' };
     if (deps.accountLifetime && !deps.accountLifetime.isCurrent()) return { ok: false,
         errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
-    // The admitted runtime publishes through its captured Account owner. Preserve
-    // the resource binding when a sessionless service has no browser projection.
+    // The admitted runtime publishes through its captured Account owner. Open keeps the
+    // resource's browser locator; the registration keeps its own id and exact binding.
     const preview = response.data.preview;
-    return { status: 'succeeded', target: preview.resource.browserTarget ?? {
+    const registeredTarget: BrowserLocalServicePreviewTargetV1 = {
         kind: 'localServicePreview', targetId: preview.previewId, machineId: preview.resource.machineId,
         ...(preview.resource.sessionId ? { sessionId: preview.resource.sessionId } : {}),
         ...(preview.resource.serviceTarget ? { serviceTarget: preview.resource.serviceTarget } : {}),
         display: preview.resource.display,
-    }, ...(preview.accessUrl ? { currentUrl: preview.accessUrl } : {}) };
+    };
+    return { status: 'succeeded', target: preview.resource.browserTarget ?? registeredTarget, registeredTarget,
+        ...(preview.accessUrl ? { currentUrl: preview.accessUrl } : {}) };
 }

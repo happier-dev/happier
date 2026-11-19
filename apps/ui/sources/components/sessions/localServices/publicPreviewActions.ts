@@ -69,7 +69,11 @@ function isTargetInHome(target: LocalServicePublicPreviewActionTarget, input: Cr
     return true;
 }
 
-function readPreviewTarget(target: LocalServicePublicPreviewActionTarget): Pick<DaemonLocalServicePublicPreviewCreateRequestV1, 'machineId' | 'sessionId' | 'serviceTarget' | 'previewId'> | null {
+/**
+ * The registered preview a share binds to: its id plus its Session or exact occurrence.
+ * A stable browser locator (a declared service's Open identity) binds nothing.
+ */
+export function readLocalServicePublicPreviewBinding(target: LocalServicePublicPreviewActionTarget): Pick<DaemonLocalServicePublicPreviewCreateRequestV1, 'machineId' | 'sessionId' | 'serviceTarget' | 'previewId'> | null {
     const browserTarget = 'id' in target ? target.browserTarget : target;
     if (browserTarget?.kind !== 'localServicePreview') {
         return null;
@@ -105,7 +109,7 @@ function defaultCreateRequest(
     input: CreateLocalServicePublicPreviewActionsInput,
     options?: LocalServicePublicPreviewCreateOptions,
 ): DaemonLocalServicePublicPreviewCreateRequestV1 | null {
-    const preview = readPreviewTarget(target);
+    const preview = readLocalServicePublicPreviewBinding(target);
     if (preview?.serviceTarget) return {
         ...preview,
         mode: options?.mode ?? 'secret_link',
@@ -158,13 +162,16 @@ export function createLocalServicePublicPreviewActions(
         async preparePreview(target) {
             if (!runtimeActionExecute || !isTargetInHome(target, input))
                 return { status: 'denied', reasonCode: 'browser_target_unavailable' };
-            return resolveLocalServiceBrowserTarget(target, {
+            const result = await resolveLocalServiceBrowserTarget(target, {
                 serverId: input.serverId, sessionId: input.sessionId,
                 execute: (request, registrationContext) => runtimeActionExecute({
                     actionId: 'localServices.preview.openOrCreate', input: request,
                     context: { ...context(input), ...registrationContext },
                 }),
             });
+            // A share binds to what was registered, never to the Open locator.
+            return 'status' in result && result.status === 'succeeded' && result.registeredTarget
+                ? { ...result, target: result.registeredTarget } : result;
         },
         async create(target, options) {
             if (!isTargetInHome(target, input)) return undefined;
