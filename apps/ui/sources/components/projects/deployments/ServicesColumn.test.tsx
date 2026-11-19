@@ -228,10 +228,12 @@ describe('Services column', () => {
     controller.retire();
   });
 
-  it('opens the addressed Environment from Services when a retained Project is duplicating another Environment', async () => {
+  it('opens any addressed Environment from Services when a retained Project is duplicating an Environment', async () => {
     const { ProjectDeploymentsView } = await import('./ProjectDeploymentsBody');
     const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
     const { resolveCompactAppDestinations, resolveDestinationRefFromHref } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+    const { createWorkspaceNavigationAdapter } = await import('@/components/appShell/workspace/workspaceNavigationAdapter');
+    const { createWorkspaceState, reduceWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const { createDeploymentActions } = await import('./deploymentActions');
     const { ModalProvider } = await import('@/modal');
@@ -272,23 +274,42 @@ describe('Services column', () => {
     const project = <ProjectDeploymentsView controller={controller} demand={shown} lifetime={account.accountLifetime}
       serverId={serverId} accountId="alice" sourceId="source-shop" actions={createDeploymentActions(account.accountLifetime, 'source-shop')} />;
     const onNavigate = vi.fn();
-    function RetainedProject() {
-      const [href, setHref] = React.useState(`${pathname}?serverId=${serverId}&deploymentEnvironment=env-shop-production`);
-      const ref = resolveDestinationRefFromHref(catalog, href);
-      if (!ref) throw new Error(`Missing Environment destination for ${href}`);
+    const tabId = 'project-tab';
+    const initialHref = `${pathname}?serverId=${serverId}&deploymentEnvironment=env-shop-production`;
+    const target = resolveDestinationRefFromHref(catalog, initialHref);
+    if (!target) throw new Error(`Missing Environment destination for ${initialHref}`);
+    const RetainedProject = () => {
+      const [, publish] = React.useReducer((version: number) => version + 1, 0);
+      const [owner] = React.useState(() => {
+        let workspace = createWorkspaceState({ id: tabId, target, pinned: false, preview: false });
+        let nextId = 0;
+        const adapter = createWorkspaceNavigationAdapter({ getState: () => workspace, getCatalog: () => catalog,
+          dispatch: action => { workspace = reduceWorkspaceState(workspace, action); publish(); },
+          transport: { commit: () => {} }, createId: () => `services-tab:${++nextId}`, onChange: () => {} });
+        return { adapter, readTarget: () => workspace.tabs[tabId].target,
+          navigation: { ...routerMock.module.router,
+            setParams: (values: Parameters<typeof adapter.setParams>[1]) => adapter.setParams(tabId, values) } };
+      });
+      const ref = owner.readTarget();
       return <ModalProvider>
         <Column controller={column} selection={readServicesColumnSelection(pathname, ref.params.deploymentEnvironment ?? null)}
-          onNavigate={next => { onNavigate(next); setHref(next); }} />
-        <DestinationInstanceContext.Provider value={{ tabId: 'project-tab', pathname, ref, focused: true, visible: true,
-          isFocused: () => true, navigation: routerMock.module.router }}>
+          onNavigate={next => { onNavigate(next); expect(owner.adapter.openHref(next)).toBe(true); }} />
+        <DestinationInstanceContext.Provider value={{ tabId, pathname, ref, focused: true, visible: true,
+          isFocused: () => true, navigation: owner.navigation }}>
           {project}
         </DestinationInstanceContext.Provider>
       </ModalProvider>;
-    }
+    };
     const screen = await renderAccountScreen(<RetainedProject />);
     const waitFor = (id: string) => waitForTestEvent(screen.subscribe, () => screen.findByTestId(id), node => node !== null);
     const openedEnvironment = () => screen.findAllByType(PageHeader)
       .find(node => node.props.testID === 'project-deployments.environment.header')?.props.title;
+    const duplicateProduction = async () => {
+      await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitFor('project-deployments.environment.menu.duplicate');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu.duplicate');
+      await waitFor('project-deployments.draft');
+    };
     // The real menu registers layout listeners on the browser window.
     vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     try {
@@ -305,10 +326,7 @@ describe('Services column', () => {
       await waitFor('project-deployments.rail.add');
       await waitFor('project-deployments.environment.menu');
       expect(openedEnvironment()).toBe('Production');
-      await screen.pressByTestIdAsync('project-deployments.environment.menu');
-      await waitFor('project-deployments.environment.menu.duplicate');
-      await screen.pressByTestIdAsync('project-deployments.environment.menu.duplicate');
-      await waitFor('project-deployments.draft');
+      await duplicateProduction();
       await screen.pressByTestIdAsync('services-column:environment:env-shop-staging');
       expect(onNavigate).toHaveBeenCalledWith(`${pathname}?serverId=${serverId}&deploymentEnvironment=env-shop-staging`);
       expect(screen.findByTestId('project-deployments.draft')).toBeNull();
@@ -316,6 +334,11 @@ describe('Services column', () => {
       await screen.pressByTestIdAsync('services-column:environment:env-shop-production');
       await waitForTestEvent(screen.subscribe, () => expect(openedEnvironment()).toBe('Production'));
       expect(screen.findByTestId('project-deployments.draft')).toBeNull();
+      await duplicateProduction();
+      await screen.pressByTestIdAsync('services-column:environment:env-shop-production');
+      expect(onNavigate).toHaveBeenLastCalledWith(initialHref);
+      expect(screen.findByTestId('project-deployments.draft')).toBeNull();
+      await waitForTestEvent(screen.subscribe, () => expect(openedEnvironment()).toBe('Production'));
       await screen.pressByTestIdAsync('services-column:project:source-shop');
       expect(onNavigate).toHaveBeenLastCalledWith(`${pathname}?serverId=${serverId}`);
     } finally {

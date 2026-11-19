@@ -76,6 +76,7 @@ const NOTHING_SELECTED: Selection = Object.freeze({
   deploymentId: null,
 });
 const DRAFTING: Selection = Object.freeze({ environmentId: null, deploymentId: null, drafting: true });
+const LOCAL_ENVIRONMENT_DRAFT = 'local';
 
 /**
  * Project → Deployments (lab d1/d3): the Environments rail beside the selected Environment, which pushes one
@@ -222,8 +223,7 @@ const ProjectDeploymentsPage = React.memo(
     const shellColumnVisible = useAppShellColumn().columnVisible;
     const pageStateSize = usePageSurfaceStateSize();
     const railWidth = useCollectionRailWidth('project-deployments');
-    // The open Environment, its receipt, tab and Settings section live in the URL, so a link opens them.
-    // Only the new-Environment editor is local: it is never a destination of its own.
+    // The URL selects the Environment, its receipt, tab and Settings section, or the draft in this page.
     const params = useLocalSearchParams<Record<string, string | string[] | undefined>>();
     const routeEnvironmentId = readProjectRouteStringParam(params.deploymentEnvironment);
     const routeDeploymentId = readProjectRouteStringParam(params.deployment);
@@ -241,22 +241,21 @@ const ProjectDeploymentsPage = React.memo(
       () => resolveDeploymentEnvironmentDestinationV1({ tab: routeTab, section: routeSection }),
       [routeSection, routeTab],
     );
-    // The current address owns Store and Deploy an app drafts, even when the tab stays mounted.
     const routeNewDefinition = readProjectRouteStringParam(params.newDefinition);
     const newDefinition = routeNewDefinition === 'compose' || routeNewDefinition === 'image' ? routeNewDefinition : null;
-    const routedDraft = newDefinition !== null || routeNewDefinition === DEPLOYMENT_NEW_REPOSITORY_DRAFT;
-    const initialMachineId = routedDraft ? readProjectRouteStringParam(params.deployMachine) : null;
-    // An in-page draft belongs to the addressed selection from which it was opened.
-    const draftAddress = JSON.stringify([props.serverId, props.accountId, props.sourceId,
-      routeEnvironmentId, routeDeploymentId, routeDatabase, routeDefaults, destination.tab, destination.section]);
+    const seededDraft = newDefinition !== null || routeNewDefinition === DEPLOYMENT_NEW_REPOSITORY_DRAFT;
+    const initialMachineId = seededDraft ? readProjectRouteStringParam(params.deployMachine) : null;
+    const localDraftSelected = routeNewDefinition === LOCAL_ENVIRONMENT_DRAFT;
+    const draftScope = JSON.stringify([props.serverId, props.accountId, props.sourceId]);
     const [localDraft, setLocalDraft] = React.useState<Readonly<{
-      address: string;
+      scope: string;
       source: DeploymentEnvironmentDetailV1 | null;
     }>>();
-    const activeDraft = localDraft?.address === draftAddress ? localDraft : undefined;
-    if (localDraft !== activeDraft) setLocalDraft(undefined);
-    const draftSource = activeDraft?.source;
-    const drafting = routedDraft || activeDraft !== undefined;
+    const draftSource = localDraftSelected && localDraft?.scope === draftScope ? localDraft.source : undefined;
+    React.useLayoutEffect(() => {
+      setLocalDraft(current => localDraftSelected && current?.scope === draftScope ? current : undefined);
+    }, [draftScope, localDraftSelected]);
+    const drafting = seededDraft || draftSource !== undefined;
     const selection = React.useMemo<Selection>(() => drafting && sourceAvailable ? DRAFTING : routeDefaults ? {
       environmentId: null, deploymentId: null, defaults: true,
     } : {
@@ -268,9 +267,9 @@ const ProjectDeploymentsPage = React.memo(
     selectionRef.current = selection;
     const setSelection = React.useCallback((next: Selection) => {
       const current = selectionRef.current;
-      setLocalDraft(undefined);
       const sameEnvironment = next.environmentId === current.environmentId;
-      router.setParams({
+      // Keep the underlying Environment address for history after the local draft is gone.
+      router.setParams(next.drafting ? { newDefinition: LOCAL_ENVIRONMENT_DRAFT, deployMachine: undefined } : {
         newDefinition: undefined,
         deployMachine: undefined,
         deploymentSettings: next.defaults ? 'defaults' : undefined,
@@ -379,9 +378,9 @@ const ProjectDeploymentsPage = React.memo(
       },
     }), [approval.approvalPending, approval.requestApproval, approvalId, props.serverId, router, openRecoveryDestination]);
     const startDraft = React.useCallback((source: DeploymentEnvironmentDetailV1 | null) => {
-      setLocalDraft({ address: draftAddress, source });
-      if (routedDraft) router.setParams({ newDefinition: undefined, deployMachine: undefined });
-    }, [draftAddress, routedDraft, router]);
+      setLocalDraft({ scope: draftScope, source });
+      setSelection(DRAFTING);
+    }, [draftScope, setSelection]);
     const openDefaults = React.useCallback(() => setSelection({ ...NOTHING_SELECTED, defaults: true }), [setSelection]);
     // Delete environment, Link and Unlink target run through one owner hook in the detail; the page holds their Actions.
     const deleteEnvironment = props.actions?.deleteEnvironment;
@@ -437,8 +436,8 @@ const ProjectDeploymentsPage = React.memo(
     }
     const draft = selection.drafting ? (
       <DeploymentEnvironmentDraft
-        key={routedDraft ? JSON.stringify([routeNewDefinition, initialMachineId]) : draftSource?.environment.id ?? 'new'}
-        copyFrom={routedDraft ? null : draftSource}
+        key={seededDraft ? JSON.stringify([routeNewDefinition, initialMachineId]) : draftSource?.environment.id ?? 'new'}
+        copyFrom={seededDraft ? null : draftSource}
         definitionKind={newDefinition}
         initialMachineId={initialMachineId}
         lifetime={props.lifetime}
