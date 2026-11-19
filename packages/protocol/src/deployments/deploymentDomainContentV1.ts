@@ -47,7 +47,10 @@ export function readDeploymentDomainHostnameV1(value: unknown): string | null {
         if (/[\s/%\\?#@:]/u.test(hostname) || hostname.includes('*')) return null;
         const address = new URL(`https://${hostname}`);
         if (address.port || address.username || address.password || address.pathname !== '/' || address.search || address.hash) return null;
-        return address.hostname;
+        // The URL parser canonicalizes IDNs and IPv4 but also accepts punctuation that a DNS label cannot contain.
+        const normalized = address.hostname.replace(/\.$/, '');
+        return normalized.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label))
+            ? normalized : null;
     } catch { return null; }
 }
 

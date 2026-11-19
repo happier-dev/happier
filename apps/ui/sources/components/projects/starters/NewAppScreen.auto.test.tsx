@@ -443,6 +443,14 @@ it('a catalog app picked by hand stays in this dialog and Configure uses its cat
     await screen.pressByTestIdAsync('project-deployments.draft.continue');
     expect(screen.findByTestId('project-deployments.draft.domain.public')).not.toBeNull();
     expect(screen.findByTestId('project-deployments.draft.review')?.props.disabled).toBe(true);
+    for (const invalidAddress of ['not a host', 'invalid_host.example.test']) {
+      await act(async () => screen.changeTextByTestId('project-deployments.draft.domain.public', invalidAddress));
+      expect(screen.findByTestId('project-deployments.draft.review')?.props.disabled).toBe(true);
+      expect(screen.findByTestId('project-deployments.draft.domain.public.error')).not.toBeNull();
+    }
+    await act(async () => screen.changeTextByTestId('project-deployments.draft.domain.public', 'app.example.test'));
+    expect(screen.findByTestId('project-deployments.draft.review')?.props.disabled).toBe(false);
+    expect(screen.findByTestId('project-deployments.draft.domain.public.error')).toBeNull();
     expect(reads).toHaveLength(readCount);
     await screen.unmount();
   } finally {

@@ -29,6 +29,7 @@ import { DeploymentPartialProgress } from './DeploymentPartialProgress';
 import { createDeploymentActions } from './deploymentActions';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { DeploymentTemplateChoices, type DeploymentTemplateChoicesValue } from './DeploymentTemplateChoices';
+import { projectDeploymentTemplateDomainChoices } from './DeploymentTemplateDomainRows';
 import { DeploymentTemplateMappingCorrection } from './DeploymentTemplateMappingCorrection';
 
 type Detail = DeploymentEnvironmentReadDetailV1;
@@ -63,7 +64,18 @@ export function DeploymentAddReview(props: Readonly<{
   const app = read.kind === 'ready' ? read.app : null;
   const [choices, setChoices] = React.useState<DeploymentTemplateChoicesValue>({});
   const [reviewedChoices, setReviewedChoices] = React.useState<DeploymentTemplateChoicesValue>({});
+  const domainChoices = React.useMemo(() => app && !props.update
+    ? projectDeploymentTemplateDomainChoices(app.domains, Object.fromEntries(
+      choices.domainBindings?.map(binding => [binding.templateDomainId, binding.hostname]) ?? []))
+    : undefined, [app, choices.domainBindings, props.update]);
+  const invalidDomain = Boolean(domainChoices?.invalidKeys.size);
   const choicesChanged = !sameStrictJsonValue(choices, reviewedChoices);
+  const reviewChoices = () => {
+    if (invalidDomain) return;
+    const normalized = choices.domainBindings && domainChoices ? { ...choices, domainBindings: domainChoices.bindings } : { ...choices };
+    setChoices(normalized);
+    setReviewedChoices(normalized);
+  };
   const operands = app ? { ...props.operands, ...reviewedChoices,
     ...(read.kind === 'ready' && read.appMappingCorrection ? { appMappingCorrection: read.appMappingCorrection } : {}),
     ...(props.update ? { bindings: reviewedChoices.bindings ?? [] } : buildCatalogAppTemplateBindings(app, reviewedChoices.bindings)) } : null;
@@ -130,8 +142,8 @@ export function DeploymentAddReview(props: Readonly<{
       <RoundButton testID="project-deployments.add.confirm" size="normal" title={choicesChanged ? t('capabilities.store.appPage.review')
         : t(props.operands.destination.kind === 'repositoryPullRequest'
           ? 'projects.deployments.settingsSections.moveToRepository.review' : props.update ? 'common.save' : 'projects.deployments.addConfirm')}
-        disabled={!templateRef || press.running || preflight.status === 'checking' || (!choicesChanged && preflight.status !== 'ready')}
-        loading={press.running} onPress={choicesChanged ? () => setReviewedChoices({ ...choices }) : add} />
+        disabled={!templateRef || invalidDomain || press.running || preflight.status === 'checking' || (!choicesChanged && preflight.status !== 'ready')}
+        loading={press.running} onPress={choicesChanged ? reviewChoices : add} />
     </ModalCardFooterActions>
   );
   const { setChrome } = props;
@@ -179,11 +191,11 @@ export function DeploymentAddReview(props: Readonly<{
               </View>) : null}
             {read.kind === 'ready' && !props.update ? <>
               <DeploymentTemplateChoices template={read.app} lifetime={props.lifetime} value={choices} onChange={setChoices}
-                services={preflight.connectToServices ?? []} includeDomains testID="project-deployments.add.choices"
+                services={preflight.connectToServices ?? []} domainChoices={domainChoices} testID="project-deployments.add.choices"
                 existingVariableNames={props.detail.content.bindings.flatMap(binding => binding.purpose === 'variable' ? [binding.name] : [])} />
               {!choicesChanged && preflight.status === 'failed' ? <RoundButton testID="project-deployments.add.reviewChoices"
                 size="small" display="secondary" title={t('capabilities.store.appPage.review')} disabled={preflight.status === 'checking' || press.running}
-                onPress={() => setReviewedChoices({ ...choices })} /> : null}
+                onPress={reviewChoices} /> : null}
             </> : null}
             {props.update && preflight.status === 'ready' && preflight.document && props.detail.content.definition.kind === 'stored' ? <>
               <DiffViewer mode="text" oldText={props.detail.content.definition.document} newText={preflight.document}

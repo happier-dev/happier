@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import type { DeploymentTemplateV1 } from '@happier-dev/protocol/registries';
+import { readDeploymentDomainHostnameV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { Item } from '@/components/ui/lists/Item';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -13,24 +14,31 @@ export function projectDeploymentTemplateDomainChoices(
   hostnames: Readonly<Record<string, string>>,
 ) {
   const bindings: NonNullable<DeploymentTemplateInstantiateInputV1['domainBindings']> = [];
+  const invalidKeys = new Set<string>();
   let missingRequired = false;
   for (const domain of domains) {
-    const hostname = hostnames[domain.key]?.trim();
-    if (hostname) bindings.push({ templateDomainId: domain.key, hostname });
-    else if (domain.required) missingRequired = true;
+    const text = hostnames[domain.key]?.trim();
+    if (!text) {
+      if (domain.required) missingRequired = true;
+      continue;
+    }
+    const hostname = readDeploymentDomainHostnameV1(text);
+    if (hostname === null) invalidKeys.add(domain.key);
+    else bindings.push({ templateDomainId: domain.key, hostname });
   }
-  return { bindings, missingRequired };
+  return { bindings, missingRequired, invalidKeys };
 }
 
 /**
  * One address row per template Domain: the hostname a person types for that service, with its DNS route beneath.
  * Deploy an app, Store preparation, a Project's Add review and a preset's App share these rows.
- * The template preparer owns hostname validation.
+ * The Domain hostname owner validates typed addresses before Review.
  */
 export function DeploymentTemplateDomainRows(
   props: Readonly<{
     domains: readonly TemplateDomain[];
     hostname: (domainKey: string) => string;
+    invalidKeys?: ReadonlySet<string>;
     onChangeHostname: (domainKey: string, hostname: string) => void;
     testIDPrefix: string;
   }>,
@@ -77,6 +85,7 @@ export function DeploymentTemplateDomainRows(
                   }
                   accessibilityLabel={label}
                   accessibilityHint={helper}
+                  error={props.invalidKeys?.has(domain.key) ? t('capabilities.store.appPage.domainInvalid') : undefined}
                   placeholder={t(
                     'capabilities.store.appPage.domainPlaceholder',
                   )}

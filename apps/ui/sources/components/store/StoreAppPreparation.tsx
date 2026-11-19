@@ -163,7 +163,7 @@ export function StoreAppPreparationReview(
       ? t('capabilities.store.appPage.nameEnvironment')
       : domainChoices.missingRequired
         ? t('capabilities.store.appPage.domainRequired')
-        : projectChoice.missing;
+        : domainChoices.invalidKeys.size > 0 ? t('capabilities.store.appPage.domainInvalid') : projectChoice.missing;
 
   const review = React.useCallback(async () => {
     if (reviewState.getState().pending || !chosen?.installationId || missing) return;
@@ -343,7 +343,7 @@ export function StoreAppPreparationReview(
       {prepared.recommendation ? <Item mode="info" testID="store.app.prepare.recommendation"
         title={deploymentRecommendationDescription(prepared.recommendation)} /> : null}
       {prepared.template.domains.flatMap((domain) => {
-        const hostname = domainHostnames[domain.key];
+        const hostname = domainChoices.bindings.find(binding => binding.templateDomainId === domain.key)?.hostname;
         return hostname ? [(
           <Item
             key={domain.key}
@@ -448,7 +448,7 @@ export function StoreAppPreparationReview(
         />
         <DeploymentTemplateDomainRows
           domains={ready.app.domains}
-          hostname={(key) => domainHostnames[key] ?? ''}
+          hostname={(key) => domainHostnames[key] ?? ''} invalidKeys={domainChoices.invalidKeys}
           onChangeHostname={(key, hostname) => reviewState.setState(current => ({ domainHostnames: { ...current.domainHostnames, [key]: hostname } }))}
           testIDPrefix="store.app.prepare.domain"
         />

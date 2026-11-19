@@ -12,7 +12,7 @@ import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRe
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { DeploymentBindingReplacementChoices } from './DeploymentBindingReplacementChoices';
-import { DeploymentTemplateDomainRows } from './DeploymentTemplateDomainRows';
+import { DeploymentTemplateDomainRows, type projectDeploymentTemplateDomainChoices } from './DeploymentTemplateDomainRows';
 
 type Input = DeploymentTemplateInstantiateInputV1;
 export type DeploymentTemplateChoicesValue = Partial<Pick<Input, 'bindings' | 'volumeBindings' | 'domainBindings' | 'connectTo' | 'replace' | 'companions'>>;
@@ -28,7 +28,7 @@ export function DeploymentTemplateChoices(props: Readonly<{
     services?: readonly string[];
     /** The Environment's own variable names: only these can be replaced. */
     existingVariableNames?: readonly string[];
-    includeDomains?: boolean;
+    domainChoices?: ReturnType<typeof projectDeploymentTemplateDomainChoices>;
 }>) {
     const { template, value, onChange, testID } = props;
     const [connectionsOpen, setConnectionsOpen] = React.useState(false);
@@ -91,8 +91,9 @@ export function DeploymentTemplateChoices(props: Readonly<{
                     onChangeText={source => onChange({ ...value, volumeBindings: [...(value.volumeBindings ?? []).filter(binding => binding.templateVolumeId !== volume.id),
                         ...(source.trim() ? [{ templateVolumeId: volume.id, source: source.trim() }] : [])] })} autoCapitalize="none" />} />)}
         </ItemGroup> : null}
-        {props.includeDomains && template.domains.length ? <ItemGroup title={t('capabilities.store.appPage.addressTitle')}>
-            <DeploymentTemplateDomainRows domains={template.domains} hostname={key => domainHostnames.get(key) ?? ''} testIDPrefix={`${testID}.domain`}
+        {props.domainChoices && template.domains.length ? <ItemGroup title={t('capabilities.store.appPage.addressTitle')}>
+            <DeploymentTemplateDomainRows domains={template.domains} hostname={key => domainHostnames.get(key) ?? ''}
+                invalidKeys={props.domainChoices.invalidKeys} testIDPrefix={`${testID}.domain`}
                 onChangeHostname={(key, hostname) => onChange({ ...value, domainBindings: [...(value.domainBindings ?? []).filter(binding => binding.templateDomainId !== key),
                     ...(hostname.trim() ? [{ templateDomainId: key, hostname: hostname.trim() }] : [])] })} />
         </ItemGroup> : null}

@@ -62,6 +62,7 @@ export type StoreAppPageTranslation = Readonly<{
   domainDnsHint: (params: Readonly<{ route: string }>) => string;
   domainPlaceholder: string;
   domainRequired: string;
+  domainInvalid: string;
   chooseProject: string;
   projectPlaceholder: string;
   review: string;
@@ -143,6 +144,7 @@ const en: StoreAppPageTranslation = {
   domainDnsHint: ({ route }) => `Point this name's DNS at the Machine; ${route}`,
   domainPlaceholder: 'status.example.com',
   domainRequired: 'This app needs a public address, like status.example.com.',
+  domainInvalid: "Enter a valid hostname, such as app.example.com.",
   chooseProject: 'Choose a project first',
   projectPlaceholder: 'Choose a project',
   review: 'Review',
@@ -224,6 +226,7 @@ const ca: StoreAppPageTranslation = {
   domainDnsHint: ({ route }) => `Fes que el DNS d’aquest nom apunti a la màquina; ${route}`,
   domainPlaceholder: 'status.example.com',
   domainRequired: 'Aquesta aplicació necessita una adreça pública, com ara status.example.com.',
+  domainInvalid: "Introdueix un nom d’amfitrió vàlid, com ara app.example.com.",
   chooseProject: 'Primer tria un projecte',
   projectPlaceholder: 'Tria un projecte',
   review: 'Revisa',
@@ -305,6 +308,7 @@ const de: StoreAppPageTranslation = {
   domainDnsHint: ({ route }) => `Richte den DNS dieses Namens auf die Maschine; ${route}`,
   domainPlaceholder: 'status.example.com',
   domainRequired: 'Diese App benötigt eine öffentliche Adresse, z. B. status.example.com.',
+  domainInvalid: "Gib einen gültigen Hostnamen ein, etwa app.example.com.",
   chooseProject: 'Wähle zuerst ein Projekt',
   projectPlaceholder: 'Projekt wählen',
   review: 'Prüfen',
@@ -387,6 +391,7 @@ const es: StoreAppPageTranslation = {
   domainDnsHint: ({ route }) => `Apunta el DNS de este nombre a la máquina; ${route}`,
   domainPlaceholder: 'status.example.com',
   domainRequired: 'Esta aplicación necesita una dirección pública, como status.example.com.',
+  domainInvalid: "Introduce un nombre de host válido, como app.example.com.",
   chooseProject: 'Elige primero un proyecto',
   projectPlaceholder: 'Elige un proyecto',
   review: 'Revisar',
@@ -468,6 +473,7 @@ const fr: StoreAppPageTranslation = {
   domainDnsHint: ({ route }) => `Fais pointer le DNS de ce nom vers la machine ; ${route}`,
   domainPlaceholder: 'status.example.com',
   domainRequired: 'Cette application a besoin d’une adresse publique, par exemple status.example.com.',
+  domainInvalid: "Saisissez un nom d’hôte valide, par exemple app.example.com.",
   chooseProject: 'Choisis d’abord un projet',
   projectPlaceholder: 'Choisis un projet',
   review: 'Vérifier',
@@ -549,6 +555,7 @@ const it: StoreAppPageTranslation = {
   domainDnsHint: ({ route }) => `Punta il DNS di questo nome alla macchina; ${route}`,
   domainPlaceholder: 'status.example.com',
   domainRequired: 'Questa app richiede un indirizzo pubblico, ad esempio status.example.com.',
+  domainInvalid: "Inserisci un nome host valido, ad esempio app.example.com.",
   chooseProject: 'Scegli prima un progetto',
   projectPlaceholder: 'Scegli un progetto',
   review: 'Verifica',
@@ -625,6 +632,7 @@ const ja: StoreAppPageTranslation = {
   domainDnsHint: ({ route }) => `この名前の DNS をマシンに向けてください。${route}`,
   domainPlaceholder: 'status.example.com',
   domainRequired: 'このアプリには status.example.com のような公開アドレスが必要です。',
+  domainInvalid: "app.example.com のような有効なホスト名を入力してください。",
   chooseProject: '先にプロジェクトを選んでください',
   projectPlaceholder: 'プロジェクトを選択',
   review: '確認',
@@ -706,6 +714,7 @@ const pl: StoreAppPageTranslation = {
   domainDnsHint: ({ route }) => `Skieruj DNS tej nazwy na maszynę; ${route}`,
   domainPlaceholder: 'status.example.com',
   domainRequired: 'Ta aplikacja wymaga publicznego adresu, np. status.example.com.',
+  domainInvalid: "Wpisz prawidłową nazwę hosta, na przykład app.example.com.",
   chooseProject: 'Najpierw wybierz projekt',
   projectPlaceholder: 'Wybierz projekt',
   review: 'Przejrzyj',
@@ -786,6 +795,7 @@ const pt: StoreAppPageTranslation = {
   domainDnsHint: ({ route }) => `Aponta o DNS deste nome para a máquina; ${route}`,
   domainPlaceholder: 'status.example.com',
   domainRequired: 'Esta aplicação precisa de um endereço público, como status.example.com.',
+  domainInvalid: "Introduza um nome de host válido, como app.example.com.",
   chooseProject: 'Escolhe primeiro um projeto',
   projectPlaceholder: 'Escolhe um projeto',
   review: 'Rever',
@@ -863,6 +873,7 @@ const ru: StoreAppPageTranslation = {
   domainDnsHint: ({ route }) => `Направь DNS этого имени на машину; ${route}`,
   domainPlaceholder: 'status.example.com',
   domainRequired: 'Этому приложению нужен публичный адрес, например status.example.com.',
+  domainInvalid: "Введите допустимое имя хоста, например app.example.com.",
   chooseProject: 'Сначала выберите проект',
   projectPlaceholder: 'Выберите проект',
   review: 'Проверить',
@@ -935,6 +946,7 @@ const zhHans: StoreAppPageTranslation = {
   domainDnsHint: ({ route }) => `将此名称的 DNS 指向机器；${route}`,
   domainPlaceholder: 'status.example.com',
   domainRequired: '此应用需要公共地址，例如 status.example.com。',
+  domainInvalid: "请输入有效的主机名，例如 app.example.com。",
   chooseProject: '请先选择项目',
   projectPlaceholder: '选择项目',
   review: '审核',
@@ -1007,6 +1019,7 @@ const zhHant: StoreAppPageTranslation = {
   domainDnsHint: ({ route }) => `將此名稱的 DNS 指向機器；${route}`,
   domainPlaceholder: 'status.example.com',
   domainRequired: '此應用程式需要公開位址，例如 status.example.com。',
+  domainInvalid: "請輸入有效的主機名稱，例如 app.example.com。",
   chooseProject: '請先選擇專案',
   projectPlaceholder: '選擇專案',
   review: '審核',

@@ -294,7 +294,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     const reusableBindings = copyChoices?.secrets.filter(choice => choice.kind !== 'omit' && choice.binding.purpose === 'variable')
       .map(choice => choice.binding) ?? [];
     const valid =
-      configure.name.status === 'valid' && (!props.projectChoice || projectSelection != null) && !domainChoices?.missingRequired &&
+      configure.name.status === 'valid' && (!props.projectChoice || projectSelection != null) &&
+      !domainChoices?.missingRequired && !domainChoices?.invalidKeys.size &&
       (copyChoices?.data.every(choice => choice.kind === 'createEmpty' ? provisionDrafts[choice.targetLinkId] != null
         : choice.kind !== 'reuse' || Boolean(choice.bindings?.length && choice.bindings.every(binding =>
           reusableBindings.some(eligible => environmentSecretBindingIdentityV1(eligible) === environmentSecretBindingIdentityV1(binding))))) ?? true) &&
@@ -861,7 +862,7 @@ export const DeploymentEnvironmentDraft = React.memo(
             {props.copyFrom ? <Item title={deploymentDefinitionLabel(props.copyFrom.content) ?? t('projects.deployments.whatRunsTitle')}
               subtitle={props.copyFrom.content.name} mode="info" /> : props.catalogApp ? <>
                 <DeploymentTemplateDomainRows domains={props.catalogApp.domains} testIDPrefix="project-deployments.draft.domain"
-                  hostname={key => domainHostnames[key] ?? ''}
+                  hostname={key => domainHostnames[key] ?? ''} invalidKeys={domainChoices?.invalidKeys}
                   onChangeHostname={(key, hostname) => setDomainHostnames(current => ({ ...current, [key]: hostname }))} />
               </> : definitionKind === 'image' ? <>
               <Item title={t('managedMachines.config.image')} accessoryLayout={stepped ? 'adaptive' : 'stacked'} showChevron={false}
