@@ -35,6 +35,7 @@ import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -705,13 +706,19 @@ describe('MCP servers collection and tools', () => {
     });
 
     it('keeps a rejected Registry Add in the modal with its draft and no saved-page follow-up', async () => {
+        const { HappierUiEnvironmentProvider, projectHappierUiEnvironment } = await import('@happier-dev/plugin-ui/environment');
+        const { t } = await vi.importActual<typeof import('@/text')>('@/text');
+        const environment = projectHappierUiEnvironment(createPluginSurfaceContextFixture());
+        const renderInPresentation = (content: React.ReactNode) => renderSettingsView(
+            <HappierUiEnvironmentProvider environment={environment}>{content}</HappierUiEnvironmentProvider>,
+        );
         const onAdded = vi.fn();
         const onClose = vi.fn();
-        const screen = await renderSettingsView(<McpAddModal params={{ query: 'stdio', onAdded }} onClose={onClose} />);
+        const screen = await renderInPresentation(<McpAddModal params={{ query: 'stdio', onAdded }} onClose={onClose} />);
         const config = () => screen.tree.root.findByType(CapabilityAddModalBody).props.config as CapabilityAddModalConfig<RegistryItemSummaryV1>;
         await vi.waitFor(() => expect(config().catalog.items.some(row => row.itemId === 'example.test/stdio-docs')).toBe(true));
         const row = config().catalog.items.find(row => row.itemId === 'example.test/stdio-docs')!;
-        const details = await renderSettingsView(<>{config().renderDetail(row, { pushed: false, added: false })}</>);
+        const details = await renderInPresentation(config().renderDetail(row, { pushed: false, added: false }));
         await vi.waitFor(() => expect(config().detailFooter(row).primary.disabledReason).toBeUndefined());
         const before = config();
         // Another writer advances the real HTTP CAS after this form captured its revision.
@@ -721,7 +728,7 @@ describe('MCP servers collection and tools', () => {
         });
         const failedDetail = config().renderDetail(row, { pushed: false, added: false });
         if (!React.isValidElement<{ state: unknown }>(failedDetail)) throw new Error('Expected the retained Registry detail');
-        expect(failedDetail.props.state).toMatchObject({ status: 'failed', error: 'mcp_catalog_conflict' });
+        expect(failedDetail.props.state).toMatchObject({ status: 'failed', error: t('approvals.conflictFailure') });
         expect(onAdded).not.toHaveBeenCalled();
         expect(onClose).not.toHaveBeenCalled();
         expect(settingsState.value.servers.map(server => server.id)).toEqual(['server-1']);

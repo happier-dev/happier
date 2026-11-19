@@ -6,6 +6,7 @@ import {
   HAPPIER_PICKS_SOURCE_ID,
 } from '@happier-dev/protocol/registries';
 import { MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import {
@@ -25,6 +26,7 @@ import { useRegistryItems } from '@/registries/useRegistryItems';
 import { admitRegistrySummaryMark } from '@/registries/registryBrandMark';
 import { useRegistrySources } from '@/registries/useRegistrySources';
 import { useRegistrySourcesSlot } from '@/registries/useRegistrySourcesSlot';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
 import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
@@ -335,14 +337,14 @@ function McpAddModalContent(props: McpAddContentProps & Readonly<{ inputs: McpAd
           }),
           ...(draft.where ? { where: draft.where } : {}),
         });
-        if (!result.ok) throw new Error(result.errorCode ?? result.error);
+        if (!result.ok) throw createActionExecuteFailureError(result);
         const parsed = MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1['mcp.servers.create'].safeParse(result.result);
         if (!parsed.success || !('serverId' in parsed.data)) throw new Error('invalid_action_output');
         const serverId = parsed.data.serverId;
         setAdd(key, { status: 'added', serverId });
         return serverId;
       } catch (error) {
-        setAdd(key, { status: 'failed', error: error instanceof Error ? error.message : t('capabilities.add.addFailed') });
+        setAdd(key, { status: 'failed', error: resolveActionExecutionErrorMessage(error, t('capabilities.add.addFailed')) });
         throw error;
       }
     },
