@@ -18,7 +18,7 @@ export type TranscriptSendToSessionModalProps = CustomModalInjectedProps & Reado
     onResolve: (destination: SendTranscriptSelectionDestination | null) => void;
 }> & (Readonly<{ selectionOnly: true; sourceSessionId?: never; previewText?: never; selectedCount?: never;
     /** A destination picker excludes its source and asks for edit access; a reference picker asks for reading. */
-    destination?: Readonly<{ excludedSessionId: string; capability: 'editSessionRecords'; title: string }> }>
+    destination?: Readonly<{ excludedSessionId: string; capability: 'editSessionRecords' | 'submitAgentInput'; title: string }> }>
     | Readonly<{ selectionOnly?: false; sourceSessionId: string; previewText: string; selectedCount?: number; destination?: never }>);
 
 export const TranscriptSendToSessionModal = React.memo(function TranscriptSendToSessionModal(

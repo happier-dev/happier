@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 import { setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
-import { resolveTranscriptSendToSessionTargets, type TranscriptSendToSessionTargetCandidate } from './resolveTranscriptSendToSessionTargets';
+import { resolveReadableSessionPickerTargets, resolveTranscriptSendToSessionTargets, type TranscriptSendToSessionTargetCandidate } from './resolveTranscriptSendToSessionTargets';
 
 function candidate(input: Partial<TranscriptSendToSessionTargetCandidate> & Pick<TranscriptSendToSessionTargetCandidate, 'id'>): TranscriptSendToSessionTargetCandidate {
     return {
@@ -17,6 +17,15 @@ function candidate(input: Partial<TranscriptSendToSessionTargetCandidate> & Pick
 }
 
 describe('resolveTranscriptSendToSessionTargets', () => {
+    it('offers only input-capable Sessions when a Review chooses a fix destination without a source Session', () => {
+        const targets = resolveReadableSessionPickerTargets({ serverId: 'server-a', capability: 'submitAgentInput', sessions: [
+            candidate({ id: 'editable', access: createSessionAccessFixture('edit') }),
+            candidate({ id: 'read-only', access: createSessionAccessFixture('view') }),
+            candidate({ id: 'other-home', serverId: 'server-b' }),
+            candidate({ id: 'hidden', metadata: { hiddenSystemSession: true } }),
+        ] });
+        expect(targets.map(target => target.id)).toEqual(['editable']);
+    });
     it('keeps only same-server writable user-facing destination sessions and excludes the source session', () => {
         const targets = resolveTranscriptSendToSessionTargets({
             sourceSessionId: 'source',

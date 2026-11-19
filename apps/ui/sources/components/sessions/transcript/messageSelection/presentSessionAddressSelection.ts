@@ -14,7 +14,7 @@ import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessi
  * or a destination for Session records (excluding its source, editable Sessions only).
  */
 export function presentSessionAddressSelection(serverId: string, anchor?: PopoverAnchor,
-    destination?: Readonly<{ excludedSessionId: string; capability: 'editSessionRecords'; title: string }>,
+    destination?: Readonly<{ excludedSessionId: string; capability: 'editSessionRecords' | 'submitAgentInput'; title: string }>,
     sessionCandidates?: readonly ActionSessionAddressV1[]) {
     const deferred = createDeferredOnce<SendTranscriptSelectionDestination | null>();
     let modalId = '';

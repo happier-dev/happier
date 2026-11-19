@@ -85,7 +85,7 @@ export function resolveReadableSessionPickerTargets<T extends TranscriptSendToSe
     serverId: string;
     sessions: ReadonlyArray<T>;
     excludedSessionId?: string;
-    capability?: 'readTranscript' | 'editSessionRecords';
+    capability?: 'readTranscript' | 'editSessionRecords' | 'submitAgentInput';
     sessionCandidates?: readonly ActionSessionAddressV1[];
 }>): ReadonlyArray<T> {
     const candidates = params.sessionCandidates === undefined ? undefined : new Set(params.sessionCandidates
@@ -93,6 +93,6 @@ export function resolveReadableSessionPickerTargets<T extends TranscriptSendToSe
         .map(candidate => candidate.sessionId));
     return resolveQualifiedSessionTargets({ serverId: params.serverId, sessions: params.sessions, excludedSessionId: params.excludedSessionId ?? '',
         accepts: candidate => (candidates === undefined || candidates.has(candidate.id))
-            && (candidates !== undefined ? isWritableSession(candidate)
+            && (candidates !== undefined || params.capability === 'submitAgentInput' ? isWritableSession(candidate)
                 : params.capability === 'editSessionRecords' ? isRecordEditableSession(candidate) : isReadableSession(candidate)) });
 }
