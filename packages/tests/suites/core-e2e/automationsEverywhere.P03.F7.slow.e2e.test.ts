@@ -1,15 +1,21 @@
 import { createServer, type Server } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
+import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { applyTrustedLocalPluginFixture } from '../../src/testkit/externalSessionLiveLifecycleFixture';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
+import { createIsolatedFakeClaudeControlShim, readFakeClaudeLogEvents, FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS } from '../../src/testkit/fakeClaude';
+import { waitFor } from '../../src/testkit/timing';
 
 describe('Shared approval profiles: contributed target admission', () => {
   let fixture: TeamSetupFFixture | undefined;
@@ -38,8 +44,18 @@ describe('Shared approval profiles: contributed target admission', () => {
     const providerUrl = `http://127.0.0.1:${address.port}/deploy`;
     fixture = await startTeamSetupFFixture({ testDir, observeActionRequests: true });
     const actor = await fixture.createAccount('actor');
-    const machine = await fixture.enrollDaemon(actor, { env: { HAPPIER_SERVER_URL: fixture.actionServerApiUrl } });
-    const session = await fixture.assertKnownGoodSessionControl(actor, machine);
+    const agent = await createIsolatedFakeClaudeControlShim({ testDir: join(testDir, 'agent'),
+      invocationId: 'profile-contributed-admission', captureEnvironmentKeys: [], logFullStdin: false });
+    const machine = await fixture.enrollDaemon(actor, { env: { HAPPIER_SERVER_URL: fixture.actionServerApiUrl,
+      HAPPIER_CLAUDE_PATH: agent.executablePath } });
+    await fixture.assertKnownGoodSessionControl(actor, machine);
+    const spawned = await actor.execute('session.spawn_new', { executionTarget: machine.target,
+      directory: { kind: 'path', path: machine.workspaceDir }, terminal: { mode: 'plain' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } });
+    expect(spawned.ok, JSON.stringify(spawned)).toBe(true);
+    if (!spawned.ok) throw new Error(spawned.errorCode);
+    const session = SessionSpawnNewActionResultV1Schema.parse(spawned.result);
+    if (session.type !== 'success') throw new Error('Contributed profile Session did not start');
     const action = { pluginId: 'acme.approval-profile-deploy', localId: 'deploy' };
     const actionId = formatQualifiedPluginActionId(action);
     const pluginRoot = join(testDir, 'deploy-plugin');
@@ -67,8 +83,9 @@ describe('Shared approval profiles: contributed target admission', () => {
     await applyTrustedLocalPluginFixture({ ...plugin, interactionId: 'profile-deploy-install' });
     // A raw Account read would allow this operation. The Ask profile must
     // change the result, independently of the manifest's dangerous default.
-    expect(await actor.execute('actions.policy.set', { actionId, audience: 'agent', mode: 'allowed' }))
-      .toMatchObject({ ok: true });
+    const accountPolicy = await actor.executeAsPerson('actions.policy.set', { actionId, audience: 'agent', mode: 'allowed' });
+    expect(accountPolicy, JSON.stringify(accountPolicy))
+      .toMatchObject({ ok: true, result: { actionId, mode: 'allowed', enabled: true, actionEnabled: true } });
     const profiles: string[] = [];
     for (let index = 0; index < 50; index += 1) {
       const ask = index === 0;
@@ -81,44 +98,59 @@ describe('Shared approval profiles: contributed target admission', () => {
       } } });
       expect(created.ok, JSON.stringify(created)).toBe(true);
       if (!created.ok) throw new Error(created.errorCode);
-      const change = created.result as { profileChange: { id: string } };
+      const change = ActionPolicyOutputSchemas['actions.policy.set'].parse(created.result);
+      if (!('profileChange' in change) || change.profileChange.kind !== 'create') throw new Error('Profile creation did not return an Artifact');
       profiles.push(change.profileChange.id);
     }
     const input = { action, input: {} };
-    const context = { surface: 'agent' as const, authority: 'account_automation' as const, defaultSessionId: session.sessionId,
-      actionCaller: { kind: 'session' as const, sessionId: session.sessionId, starterDepth: 0, turnDepth: 0 },
-      externalActionTarget: { kind: 'machine' as const, machineId: machine.target.machineId,
-        project: { machineId: machine.target.machineId, directory: machine.workspaceDir } } };
+    // The Session's real MCP host owns daemon placement and caller provenance.
+    // A test-process Account executor has no local daemon or native turn.
+    async function invoke() {
+      const requestId = randomUUID();
+      const sent = await actor.execute('session.message.send', { sessionId: session.sessionId,
+        message: `SESSION_MCP_ACTION_JSON:${JSON.stringify({ requestId, actionId: 'action.invoke', input })}`, reply: 'none' });
+      expect(sent.ok, JSON.stringify(sent)).toBe(true);
+      if (!sent.ok) throw new Error(sent.errorCode);
+      expect(SessionMessageSendResultV1Schema.parse(sent.result).status).toMatch(/^(?:accepted|alreadyAccepted)$/);
+      let outcome: unknown;
+      await waitFor(async () => {
+        const event = (await readFakeClaudeLogEvents(agent.logPath)).find(row =>
+          row.type === 'session_mcp_action_result' && row.requestId === requestId);
+        outcome = event?.result;
+        return event !== undefined;
+      }, { timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS, context: 'Contributed profile native MCP admission' });
+      return ActionExecuteResultSchema.parse(outcome);
+    }
     async function pickProfile(approvalProfileId: string) {
       const stored = await fetchSessionV2(fixture!.server.baseUrl, actor.credentials.token, session.sessionId);
-      expect(await actor.execute('session.approval_profile.set', { sessionId: session.sessionId,
+      expect(await actor.executeAsPerson('session.approval_profile.set', { sessionId: session.sessionId,
         serverId: fixture!.serverId, expectedMetadataRevision: stored.metadataVersion, approvalProfileId }))
         .toMatchObject({ ok: true });
     }
     await pickProfile(profiles[0]!);
-    const asked = await actor.execute('action.invoke', input, context);
+    const asked = await invoke();
     expect(asked.ok, JSON.stringify(asked)).toBe(true);
     if (!asked.ok) throw new Error(asked.errorCode);
     const pending = ActionApprovalRequestCreatedResultSchema.parse(asked.result);
     expect(effects).toBe(0);
-    expect(await actor.execute('approval.request.decide', { artifactId: pending.artifactId, decision: 'reject' }))
+    expect(await actor.executeAsPerson('approval.request.decide', { artifactId: pending.artifactId, decision: 'reject' }))
       .toMatchObject({ ok: true });
     // Warm the catalog before measuring repeated admissions: this admission is
     // also the positive control that the external effect is actually reachable.
     await pickProfile(profiles[1]!);
-    expect(await actor.execute('action.invoke', input, context))
+    expect(await invoke())
       .toMatchObject({ ok: true, result: { deployed: true } });
     expect(effects).toBe(1);
     fixture.takeRequestObservations();
     for (let admission = 0; admission < 3; admission += 1) {
-      expect(await actor.execute('action.invoke', input, context))
+      expect(await invoke())
         .toMatchObject({ ok: true, result: { deployed: true } });
     }
     expect(effects).toBe(4);
     expect(fixture.takeRequestObservations().filter(({ method, path }) => method === 'GET'
       && /^\/v[12]\/artifacts(?:\/|\?|$)/u.test(path))).toEqual([]);
     await pickProfile(profiles[2]!);
-    const disabled = await actor.execute('action.invoke', input, context);
+    const disabled = await invoke();
     expect(disabled.ok).toBe(false);
     if (!disabled.ok) expect(['action_disabled', 'plugin_action_unavailable']).toContain(disabled.errorCode);
     expect(effects).toBe(4);
