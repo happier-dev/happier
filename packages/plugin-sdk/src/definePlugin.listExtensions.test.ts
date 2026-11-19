@@ -10,6 +10,36 @@ import { admitPluginListFilterFieldV1, compileEntityListFilterV1, createPluginLi
     type PluginListFilterFactsV1, type PluginListFilterSelectionV1 } from './ui/index.public.js';
 
 describe('public list extension authoring', () => {
+    it('admits and projects a Workflow Run column backed by a held numeric fact', () => {
+        const plugin = definePlugin({
+            id: 'com.acme.run-columns',
+            version: '1.0.0',
+            ui: { listExtensions: { timing: {
+                entity: 'workflowRun',
+                filterFields: [{
+                    id: 'duration',
+                    title: 'Duration',
+                    source: { factKey: 'durationMs' },
+                    value: { kind: 'number', unit: 'ms' },
+                    column: { title: 'Duration', align: 'end', defaultHidden: true },
+                }],
+            } } },
+        });
+        const parsed = parsePluginManifest(plugin.manifest);
+        if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
+        const manifest = PluginManifestV2Schema.parse(parsed.manifest);
+        const entry = projectPluginPortableUiDeclarationsV1(manifest)['listExtension:com.acme.run-columns:timing'];
+        expect(entry?.listExtension).toMatchObject({
+            entity: 'workflowRun',
+            filterFields: [{
+                id: 'duration',
+                source: { factKey: 'durationMs' },
+                value: { kind: 'number', unit: 'ms' },
+                column: { title: 'Duration', align: 'end', defaultHidden: true },
+            }],
+        });
+    });
+
     it('rejects wrong entities, executable declarations, dangling Resources and marks from another entity', () => {
         const manifest = definePlugin({ id: 'com.acme.invalid-list', version: '1.0.0' }).manifest;
         const field = { id: 'stage', title: 'Stage', source: { factKey: 'stage' }, value: { kind: 'set' } };

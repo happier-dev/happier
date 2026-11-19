@@ -750,8 +750,10 @@ Host Follow and matching-session routing editors use `daemonRule`, so list-only
 Branch, Needs-you and plugin conditions cannot be saved as executable rules.
 
 Declare fields in `definePlugin({ ui: { listExtensions: { localId: descriptor } } })`.
-The descriptor selects `sessionWork`, `workflow`, `discussion`, or your `plugin:…`
-entity and supplies optional `filterFields`. Its optional `rowMark` references a
+The descriptor selects `sessionWork`, `workflow`, `workflowRun`, `discussion`,
+`service`, or your `plugin:…` entity and supplies optional `filterFields`.
+Workflow Run declarations can carry a held fact key and optional column
+presentation. The optional `rowMark` references a
 declared field for the same entity and chooses `context` or `mark`; the host
 qualifies that reference. Import the canonical `PluginCollectionListExtensionV1`
 type from `@happier-dev/plugin-sdk/ui`. Resource references use the existing

@@ -9866,6 +9866,12 @@ same schema under the unpublished direct cut. Older strict development readers
 reject these declarations. This changes no persisted preference format, wire
 epoch, Resource demand or collector query contract.
 
+Unreleased 0.3 `ui.listExtensions` also accepts the closed `workflowRun`
+entity for held facts and optional column presentation. Earlier 0.3 daemons
+using tolerant manifest load skip each unrecognized declaration and retain
+healthy siblings. Earlier strict development projection readers reject a
+`workflowRun` entry, so the new projection uses matching development readers.
+
 The service Resource field adapter also adds the closed batch launch input
 `{entity:'service',environmentIds:[...]}` and addressed scalar result
 `{items:[{environmentId,value}]}` at the existing field owner. Matching Protocol,

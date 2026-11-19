@@ -101,8 +101,10 @@ ownership, not release availability or completed host-header integration.
 
 In 0.3 development source, `definePlugin({ ui: { listExtensions: { localId:
 descriptor } } })` projects the single `ui.listExtensions` manifest family.
-Each closed descriptor selects `sessionWork`, `workflow`, `discussion`, `service`, or a
-`plugin:…` entity, with optional `filterFields` and one neutral `rowMark`.
+Each closed descriptor selects `sessionWork`, `workflow`, `workflowRun`,
+`discussion`, `service`, or a `plugin:…` entity, with optional `filterFields` and
+one neutral `rowMark`. Workflow Run declarations can carry held fact keys and
+optional column metadata through the same projection.
 Protocol's existing UI catalog admits the declaration and Resource references;
 the existing UI projection qualifies field references. A mark can reference a
 field declared by another extension for the same entity in that plugin.

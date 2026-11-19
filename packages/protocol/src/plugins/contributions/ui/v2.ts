@@ -863,7 +863,7 @@ export type PluginUiTranslationBundleV2 = z.infer<typeof PluginUiTranslationBund
 /** Closed, data-only list extension; field semantics stay with the collection filter owner. */
 export const PluginCollectionListExtensionV1Schema = lazyZodSchema(() => z.strictObject({
   id: asProtocolZod(PluginContributionLocalIdSchema),
-  entity: z.union([z.literal('sessionWork'), z.literal('workflow'), z.literal('discussion'), z.literal('service'),
+  entity: z.union([z.literal('sessionWork'), z.literal('workflow'), z.literal('workflowRun'), z.literal('discussion'), z.literal('service'),
     z.templateLiteral(['plugin:', z.string().check(z.minLength(1))])]),
   filterFields: z.optional(z.array(PluginListFilterFieldV1Schema)),
   rowMark: z.optional(z.strictObject({ fieldId: z.string().check(z.minLength(1)), slot: z.enum(['context', 'mark']) })),
