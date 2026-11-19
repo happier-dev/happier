@@ -56,6 +56,7 @@ import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShel
 import { buildDeploymentEnvironmentHref, DEPLOYMENT_NEW_REPOSITORY_DRAFT, ENVIRONMENT_AUTOMATIONS_DESTINATION } from './deploymentNavigation';
 import { useDeploymentProject } from './useDeploymentProject';
 import { useDeploymentCollection } from './useDeploymentReads';
+import { deploymentReadIssue } from './deploymentPresentation';
 import { useProjectSource } from '../sources/useProjectSources';
 
 /** The narrowest Environment detail that keeps its header facts beside the title. */
@@ -279,6 +280,8 @@ const ProjectDeploymentsPage = React.memo(
     }, [router]);
     const items = collection.snapshot.value?.items ?? [];
     const status = collection.snapshot.status;
+    const readFailure = collection.snapshot.failure;
+    const homeUnreachable = deploymentReadIssue(readFailure?.code) === 'homeUnreachable';
     const retained = collection.snapshot.value !== null;
     // The exact read owns admission; a paged collection is not a membership authority.
     const environmentId = selection.environmentId;
@@ -395,7 +398,7 @@ const ProjectDeploymentsPage = React.memo(
     }, [items, phone, props.sourceId, refresh, setSelection]);
 
     if (!selection.defaults && !environmentId && !retained && status === 'unavailable') {
-      const failureCode = collection.snapshot.failure?.code ?? null;
+      const failureCode = readFailure?.code ?? null;
       // Retrying cannot change a refused read; only a transient failure offers Retry.
       if ((!sourceAvailable && sourceRefused) || failureCode === 'deployment_unavailable') {
         return <ItemList testID="project-deployments.error">{sourceUnavailable(pageStateSize, sourceRead.issue ?? failureCode)}</ItemList>;
@@ -405,9 +408,9 @@ const ProjectDeploymentsPage = React.memo(
           <SurfaceStateCard
             kind="error"
             size={pageStateSize}
-            title={t('projects.deployments.loadErrorTitle')}
-            reason={t('projects.deployments.loadErrorBody')}
-            diagnosticCode={collection.snapshot.failure?.code ?? null}
+            title={t(homeUnreachable ? 'projects.deployments.unavailableTitle' : 'projects.deployments.loadErrorTitle')}
+            reason={homeUnreachable ? undefined : t('projects.deployments.loadErrorBody')}
+            diagnosticCode={failureCode}
             action={{
               label: t('common.retry'),
               onPress: () => {
@@ -474,10 +477,11 @@ const ProjectDeploymentsPage = React.memo(
       );
     }
 
+    const selectedOwnsHomeOutage = environmentId !== null && homeUnreachable && !retained;
     const stale =
-      status === 'unavailable'
+      status === 'unavailable' && !selectedOwnsHomeOutage
         ? {
-            reason: t('projects.deployments.unavailableTitle'),
+            reason: t(homeUnreachable ? 'projects.deployments.unavailableTitle' : 'projects.deployments.loadErrorTitle'),
             onRetry: () => {
               void collection.refresh();
             },

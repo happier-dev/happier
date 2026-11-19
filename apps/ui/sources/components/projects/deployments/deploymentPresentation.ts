@@ -18,6 +18,22 @@ import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deploymen
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
 export { deploymentRevisionLabel };
 
+/** Read failures carry Home transport and authority codes from their owners. */
+export function deploymentReadIssue(code: string | null | undefined): 'homeUnreachable' | 'withdrawn' | 'readFailed' {
+  switch (code) {
+    case 'home_unreachable':
+    case 'server_unreachable':
+      return 'homeUnreachable';
+    case 'access_denied':
+    case 'deployment_access_denied':
+    case 'source_access_denied':
+    case 'authority_changed':
+      return 'withdrawn';
+    default:
+      return 'readFailed';
+  }
+}
+
 /** The Action's reason remains visible beside the next useful step; this never retries or re-authorizes. */
 export function deploymentActionRefusalRemedy(code: string): string {
   if (code === 'deployment_conflict' || code === 'host_retired' || code === 'action_account_scope_changed')

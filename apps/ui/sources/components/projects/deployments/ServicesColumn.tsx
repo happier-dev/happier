@@ -26,6 +26,8 @@ import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { t } from '@/text';
 
 import { useOpenNewApp } from '../starters/newAppPresentation';
+import { readProjectRouteStringParam } from '../detail/projectRouteState';
+import { deploymentReadIssue } from './deploymentPresentation';
 import { ProjectsTreeEnvironmentRead, useProjectsTreeEnvironmentChildren } from '../ProjectsTreeEnvironmentReads';
 import type { ProjectsTreeEnvironmentChild } from '../projectsTreeRows';
 import type { AllDeploymentsRead } from './AllDeploymentsScreen';
@@ -81,12 +83,10 @@ export function readServicesColumnSelection(
     : { kind: 'project', projectSourceId };
 }
 
-const selectDeploymentEnvironmentParam = (
-  params: Readonly<Record<string, string | string[] | undefined>>,
-) => {
-  const value = params.deploymentEnvironment;
-  return typeof value === 'string' && value ? value : null;
-};
+const selectDeploymentColumnParams = (params: Readonly<Record<string, string | string[] | undefined>>) => ({
+  deploymentEnvironment: readProjectRouteStringParam(params.deploymentEnvironment),
+  selectedServerId: readProjectRouteStringParam(params.serverId),
+});
 
 // The column is mounted only while Services is open, so it demands its read for exactly that long.
 const COLUMN_DEMAND: DeploymentReadDemandV1 = Object.freeze({
@@ -108,9 +108,7 @@ export const ServicesColumn = React.memo(function ServicesColumn() {
   const lifetime = useActiveServerAccountScopeLifetime();
   const read = useDeploymentInventory(lifetime, COLUMN_DEMAND);
   const pathname = usePathname();
-  const deploymentEnvironment = useCurrentRouteParamsSelector(
-    selectDeploymentEnvironmentParam,
-  );
+  const { deploymentEnvironment, selectedServerId } = useCurrentRouteParamsSelector(selectDeploymentColumnParams);
   const selection = React.useMemo(
     () => readServicesColumnSelection(pathname, deploymentEnvironment),
     [deploymentEnvironment, pathname],
@@ -158,6 +156,7 @@ export const ServicesColumn = React.memo(function ServicesColumn() {
       serverId={lifetime?.scope.serverId ?? null}
       lifetime={lifetime}
       selection={selection}
+      selectedServerId={selectedServerId}
       onNavigate={navigate}
       create={create}
       pinnedEnvironmentIds={pinnedEnvironmentIds}
@@ -176,6 +175,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
     serverId: string | null;
     lifetime: ServerAccountScopeLifetime | null;
     selection: ServicesColumnSelection;
+    selectedServerId?: string | null;
     onNavigate: (href: string) => void;
     create: Readonly<{
       label: string;
@@ -292,6 +292,9 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
     !read.hasPreviousPage;
   const searchable = items.length > 0;
   const status = read.snapshot;
+  const homeUnreachable = deploymentReadIssue(status.failure?.code) === 'homeUnreachable';
+  const selectionOnThisHome = selection !== null && (props.selectedServerId == null || props.selectedServerId === serverId);
+  const selectedPageOwnsFailure = selection?.kind === 'all' || (selectionOnThisHome && homeUnreachable);
   // Where a service or database under an opened Environment goes (the tree below reads it while it builds).
   const childHref = (row: (typeof rows)[number], child: ProjectsTreeEnvironmentChild) => child.opens.kind === 'href'
     ? child.opens.href
@@ -476,14 +479,14 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
         </CollectionRows>
         {!status.value && status.status !== 'unavailable' ? (
           <CollectionSkeletonRows count={3} />
-        ) : !status.value && selection?.kind !== 'all' ? (
-          // Beside the Services page the page says the failure with its Retry; beside an Environment the column says it.
+        ) : !status.value && !selectedPageOwnsFailure ? (
           <View style={collectionListStyles.stateLine}>
             <SurfaceStateCard
               testID="services-column:error"
               kind="error"
               size="line"
-              title={t('projects.deployments.allLoadErrorTitle')}
+              title={t(homeUnreachable ? 'projects.deployments.unavailableTitle' : 'projects.deployments.allLoadErrorTitle')}
+              diagnosticCode={status.failure?.code ?? null}
               action={{
                 label: t('common.retry'),
                 onPress: () => {

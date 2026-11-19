@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DestinationInstanceContext } from '@/components/appShell/workspace/destinationInstanceContext';
 import { renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
@@ -111,7 +112,7 @@ describe('an unreadable Source', () => {
 });
 
 describe('a Home that is not answering', () => {
-  it('does not call the Source unavailable to you: the Home being away is said once, by the list (R2-D3)', async () => {
+  it.each([false, true])('says the Home outage once even if a direct Environment is open (selected=%s, R2-D3)', async selected => {
     const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://source-away.test', accountId: 'erin', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
     const previous = storage.getState();
@@ -121,13 +122,26 @@ describe('a Home that is not answering', () => {
       const away = { select: () => { throw new TypeError('Failed to fetch'); } };
       homes.answer(serverId, 'GET /v1/projects/sources/source-app', away);
       homes.answer(serverId, 'GET /v1/deployments/environments', away);
-      const screen = await renderScreen(<ProjectDeploymentsView lifetime={account.accountLifetime} sourceId="source-app"
-        controller={controller} demand={{ mounted: true, visible: true, focused: true }} accountId="erin" serverId={serverId}
-        actions={createDeploymentActions(account.accountLifetime, 'source-app')} />);
-      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.error'), node => node !== null);
+      if (selected) homes.answer(serverId, 'GET /v1/deployments/environments/environment-staging', away);
+      const screen = await renderScreen(
+        <DestinationInstanceContext.Provider value={{
+          tabId: 'project-tab', focused: true, visible: true, isFocused: () => true,
+          pathname: '/deployments/source-app', navigation: routerMock.module.router,
+          ref: { kind: 'deployments', params: { serverId, projectSourceId: 'source-app',
+            workspacePathname: '/deployments/source-app', ...(selected ? { deploymentEnvironment: 'environment-staging' } : {}) } },
+        }}>
+          <ProjectDeploymentsView lifetime={account.accountLifetime} sourceId="source-app"
+            controller={controller} demand={{ mounted: true, visible: true, focused: true }} accountId="erin" serverId={serverId}
+            actions={createDeploymentActions(account.accountLifetime, 'source-app')} />
+        </DestinationInstanceContext.Provider>,
+      );
+      const state = selected ? 'project-deployments.environment.state' : 'project-deployments.error';
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId(state), node => node !== null);
       const { t } = await import('@/text');
       expect(screen.findByTestId('project-deployments.sourceUnavailable')).toBeNull();
       expect(screen.getTextContent()).not.toContain(t('projects.sources.unavailable'));
+      expect(screen.getTextContent().split(t('projects.deployments.unavailableTitle'))).toHaveLength(2);
+      expect(screen.getTextContent()).not.toContain(t('projects.deployments.loadErrorTitle'));
       await screen.unmount();
     } finally { standardCleanup(); controller.retire(); account.dispose(); storage.setState(previous); }
   });

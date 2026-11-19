@@ -34,7 +34,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { useAppShellPluginUiDeclarationProjection, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useDeploymentInventory } from './useDeploymentProject';
 import { readServicesView, SERVICES_VIEWS, ServicesDatabasesView, ServicesDomainsView, ServicesPaging, ServicesViewTabs, type ServicesView, type ServicesViewCount } from './ServicesViews';
-import { deploymentEnvironmentRowState } from './deploymentPresentation';
+import { deploymentEnvironmentRowState, deploymentReadIssue } from './deploymentPresentation';
 import { ServicesChecksView, ServicesWatchedView } from './ServicesChecks';
 import { useServiceCheckSelection } from './ServiceCheckList';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
@@ -56,14 +56,6 @@ export type AllDeploymentsRead = Pick<
   | 'nextPage'
   | 'previousPage'
 >;
-
-/** A refusal that Retry cannot change: the Account's access to these Environments was withdrawn or denied. */
-const WITHDRAWN = new Set([
-  'access_denied',
-  'deployment_access_denied',
-  'source_access_denied',
-  'authority_changed',
-]);
 
 /**
  * Services (pfc-redesign; formerly Projects → All deployments, owner ruling Q9): everything this Account runs, as
@@ -280,10 +272,10 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     return <ItemList testID="all-deployments" pageColumn="wide">{header(true)}{selectedView}</ItemList>;
   }
 
+  const readIssue = deploymentReadIssue(snapshot.failure?.code);
+  const homeUnreachable = readIssue === 'homeUnreachable';
   if (!snapshot.value && snapshot.status === 'unavailable') {
-    const withdrawn = snapshot.failure
-      ? WITHDRAWN.has(snapshot.failure.code)
-      : false;
+    const withdrawn = readIssue === 'withdrawn';
     return (
       <ItemList
         pageColumn="wide"
@@ -301,8 +293,8 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
           <SurfaceStateCard
             kind="error"
             size={pageStateSize}
-            title={t('projects.deployments.allLoadErrorTitle')}
-            reason={t('projects.deployments.loadErrorBody')}
+            title={t(homeUnreachable ? 'projects.deployments.unavailableTitle' : 'projects.deployments.allLoadErrorTitle')}
+            reason={homeUnreachable ? undefined : t('projects.deployments.loadErrorBody')}
             diagnosticCode={snapshot.failure?.code ?? null}
             action={{ label: t('common.retry'), onPress: retry, testID: 'all-deployments.retry' }}
           />
@@ -345,7 +337,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
       {snapshot.status === 'unavailable' ? (
         <SurfaceFreshnessLine
           testID="all-deployments.stale"
-          reason={t('projects.deployments.unavailableTitle')}
+          reason={t(homeUnreachable ? 'projects.deployments.unavailableTitle' : 'projects.deployments.allLoadErrorTitle')}
           action={{ label: t('common.retry'), onPress: retry }}
         />
       ) : null}
@@ -466,12 +458,14 @@ function describeAppsCount(items: readonly EnvironmentItem[], paged: boolean, to
   }
   const projects = new Set(items.map((item) => item.environment.projectSourceId)).size;
   // With more pages, the Account-wide total when its read has answered (its Projects are not known); until then the
-  // count says it is this page's.
+  // count says these are at least that many ("500+ environments"), as the Checks count does, rather than a trailing
+  // "on this page" fragment (PAGE-ACCEPT-176 R3-D10).
   const accountTotal = paged && total !== undefined;
+  const counted = { environments: items.length, projects };
   return [
     accountTotal ? t('projects.deployments.services.countEnvironmentsTotal', { count: total })
-      : items.length > 0 ? t('projects.deployments.services.countEnvironments', { environments: items.length, projects }) : null,
-    items.length > 0 && paged && !accountTotal ? t('projects.deployments.services.countOnPage') : null,
+      : items.length === 0 ? null
+        : t(paged ? 'projects.deployments.services.countEnvironmentsAtLeast' : 'projects.deployments.services.countEnvironments', counted),
     // The count that needs the person speaks in the tab badge's tone (lab svcApps "3 need you").
     needYou > 0 ? { text: t('projects.deployments.services.needYou', { count: needYou }), tone: 'danger' as const } : null,
     deploying > 0 ? t('projects.deployments.services.countDeploying', { count: deploying }) : null,

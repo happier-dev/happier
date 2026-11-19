@@ -89,6 +89,7 @@ function Column(
   props: Readonly<{
     controller: DeploymentReadControllerV1;
     selection: Selection;
+    selectedServerId?: string | null;
     onNavigate: (href: string) => void;
     pinnedEnvironmentIds?: readonly string[];
     onTogglePinned?: (environmentId: string, pinned: boolean) => void;
@@ -104,6 +105,7 @@ function Column(
       serverId="home"
       lifetime={null}
       selection={props.selection}
+      selectedServerId={props.selectedServerId}
       onNavigate={props.onNavigate}
       create={null}
       pinnedEnvironmentIds={props.pinnedEnvironmentIds ?? []}
@@ -259,14 +261,15 @@ describe('Services column', () => {
 });
 
 describe('Services column read failure', () => {
-  function failing() {
-    const unavailable = async () => ({ ok: false as const, failure: { code: 'deployment_unavailable', retryable: true } });
+  function failing(code: 'deployment_unavailable' | 'home_unreachable' = 'deployment_unavailable') {
+    const unavailable = async () => ({ ok: false as const, failure: { code, retryable: true } });
     return createDeploymentReadControllerV1({ scope: { serverId: 'home', accountId: 'account-owner' },
       transport: { listEnvironments: unavailable, readEnvironment: unavailable, listHistory: unavailable, readReceipt: unavailable } });
   }
-  async function renderFailing(selection: Selection) {
-    const controller = failing();
-    const screen = await renderScreen(<Column controller={controller} selection={selection} onNavigate={vi.fn()} />);
+  async function renderFailing(selection: Selection, code?: Parameters<typeof failing>[0], selectedServerId?: string) {
+    const controller = failing(code);
+    const screen = await renderScreen(<Column controller={controller} selection={selection}
+      selectedServerId={selectedServerId} onNavigate={vi.fn()} />);
     await act(async () => {
       await waitForTestEvent(screen.subscribe, () => screen.findByTestId('services-column:all'), (node) => node !== null);
       await new Promise((resolve) => setTimeout(resolve, 20));
@@ -284,6 +287,31 @@ describe('Services column read failure', () => {
     });
     expect(environment.screen.findByTestId('services-column:error')).not.toBeNull();
     environment.controller.retire();
+  });
+
+  it('leaves the shared Home outage to the selected Project or Environment page', async () => {
+    for (const selection of [
+      { kind: 'project', projectSourceId: 'source-shop' },
+      { kind: 'environment', projectSourceId: 'source-shop', environmentId: 'env-1' },
+    ] as const) {
+      const { screen, controller } = await renderFailing(selection, 'home_unreachable', 'home');
+      try {
+        expect(screen.findByTestId('services-column:error')).toBeNull();
+      } finally {
+        controller.retire();
+        await screen.unmount();
+      }
+    }
+  });
+  it('keeps the outage visible when the selected page is on a different Home', async () => {
+    const { screen, controller } = await renderFailing(
+      { kind: 'project', projectSourceId: 'source-shop' }, 'home_unreachable', 'other-home');
+    try {
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('services-column:error'), node => node !== null);
+    } finally {
+      controller.retire();
+      await screen.unmount();
+    }
   });
 });
 

@@ -94,6 +94,7 @@ import {
   deploymentEnvironmentAttention,
   deploymentAttentionLeaves,
   deploymentPreviewAvailability,
+  deploymentReadIssue,
 } from './deploymentPresentation';
 import {
   useDeploymentPress,
@@ -423,14 +424,16 @@ export const DeploymentEnvironmentDetail = React.memo(
       if (environment.snapshot.status !== 'unavailable') {
         return <PageLoadingRows testID="project-deployments.environment.loading" header />;
       }
+      const diagnosticCode = environment.snapshot.failure?.code ?? null;
+      const homeUnreachable = deploymentReadIssue(diagnosticCode) === 'homeUnreachable';
       return (
         <ItemList testID="project-deployments.environment.state">
           <EnvironmentPageNavigation navigation={navigation} phone={props.phone} onSelect={selectPage} />
           {environment.snapshot.status === 'unavailable' ? (
             <SurfaceStateCard
               kind="error"
-              title={t('projects.deployments.environmentErrorTitle')}
-              diagnosticCode={environment.snapshot.failure?.code ?? null}
+              title={t(homeUnreachable ? 'projects.deployments.unavailableTitle' : 'projects.deployments.environmentErrorTitle')}
+              diagnosticCode={diagnosticCode}
               action={{
                 label: t('common.retry'),
                 onPress: () => {
