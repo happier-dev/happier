@@ -67,6 +67,7 @@ export const bitbucketHostingProviderAdapter: BitbucketScmHostingProviderAdapter
       kind: 'bitbucket' as const,
       displayName: 'Bitbucket',
       baseUrl: 'https://bitbucket.org',
+      urlSafety: BITBUCKET_URL_SAFETY,
     }];
   },
   detectRemote(input) {
@@ -84,11 +85,7 @@ export const bitbucketHostingProviderAdapter: BitbucketScmHostingProviderAdapter
       nameWithOwner,
       repositoryWebUrl: `https://bitbucket.org/${nameWithOwner}`,
       remoteName: input.remoteName ?? undefined,
-      urlSafety: {
-        allowedSchemes: ['https:'],
-        allowedBaseUrls: ['https://bitbucket.org'],
-        allowedOrigins: ['https://bitbucket.org'],
-      },
+      urlSafety: BITBUCKET_URL_SAFETY,
     };
   },
   buildCompareUrl(input) {

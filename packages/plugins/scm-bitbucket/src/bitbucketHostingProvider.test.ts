@@ -7,6 +7,7 @@ import { encodeBitbucketBasicAuthorization } from './auth/basicCredentials.js';
 /** The immutable account id Bitbucket answers `GET /2.0/user` with in these cases. */
 const VIEWER_UUID = '{9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19}';
 import { PLUGIN_MANIFEST } from './manifest.js';
+import { bitbucketHostingProviderAdapter, BITBUCKET_URL_SAFETY } from './adapter.js';
 
 type DetectionResult = Readonly<{
   id: string;
@@ -47,6 +48,11 @@ function decodeBasicAuthorization(value: string): string {
 }
 
 describe('bundled Bitbucket SCM hosting provider plugin', () => {
+  it('publishes the canonical URL policy for every listed Bitbucket deployment', () => {
+    expect(bitbucketHostingProviderAdapter.listDeployments()).toEqual([
+      expect.objectContaining({ baseUrl: 'https://bitbucket.org', urlSafety: BITBUCKET_URL_SAFETY }),
+    ]);
+  });
   it('declares a strict target SCM hosting-provider contribution and manual account identity', async () => {
     const mod = await import('./manifest.js').catch(() => null);
     expect(mod).not.toBeNull();
