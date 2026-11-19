@@ -851,7 +851,7 @@ describe('ordinary Account managed Action origination', () => {
             const requestId = crypto.randomUUID();
             const workflowActionOrigin = { runId: deriveMachineSetupCombinedRunIdV1({ homeId,
                 accountId: selected.account.id, requestId: selected.requestId }), requestId };
-            const workflowAdmission = await verifyWorkflowExternalActionRequesterAuthorization({ authorization: parent,
+            const workflowAdmission = await verifyWorkflowExternalActionRequesterAuthorization({ authorization: parent, actionId,
                 origin: workflowActionOrigin, publisherAccountId: selected.account.id,
                 publisherCustodianAccountId: selected.account.id, publisherMachineId: selected.controller.machineId,
                 publisherInstallationId: selected.controller.installationId,
@@ -876,7 +876,7 @@ describe('ordinary Account managed Action origination', () => {
             const leafOrigin = { runId: workflowActionOrigin.runId, requestId: leafRequestId, reviewedChild: {
                 actionId, role: crypto.randomUUID(), inputDigest: computeActionInputApprovalDigestV1(actionId, input) } };
             const verifyLeaf = (origin: typeof leafOrigin) => verifyWorkflowExternalActionRequesterAuthorization({
-                authorization: parent, origin, publisherAccountId: selected.account.id,
+                authorization: parent, actionId, origin, publisherAccountId: selected.account.id,
                 publisherCustodianAccountId: selected.account.id, publisherMachineId: selected.controller.machineId,
                 publisherInstallationId: selected.controller.installationId,
                 target, preparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({

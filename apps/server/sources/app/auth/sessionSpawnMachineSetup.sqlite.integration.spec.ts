@@ -25,6 +25,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { createSignedDiscussionHttpFixture } from '@/app/api/routes/actions/discussionExecutionAuthorization.testkit';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { MachineSetupApplyInputV1Schema, SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { db } from '@/storage/db';
 import { MachineOperationProtocolCapabilitiesV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { inTx } from '@/storage/inTx';
@@ -372,7 +373,7 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
         } finally { await f.app.close(); }
     });
 
-    it('retains shared Manage through installed Workflow setup without lending the grant to another Account', async () => {
+    it.each(['spawn setup', 'declared Agent'] as const)('retains shared Manage for an installed Workflow %s without lending the grant', async kind => {
         const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const f = await createSignedDiscussionHttpFixture(undefined, [], false, custodian.id);
         try {
@@ -382,17 +383,26 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
             const homeId = await getOrCreateServerIdentityId();
             const target = { kind: 'machine' as const, machineId: f.machine.id };
             const sources = [{ kind: 'direct' as const, setup: {} }];
-            const parent = await f.mint('session.spawn_new', { executionTarget: { serverId: homeId, machineId: f.machine.id },
-                directory: { kind: 'path', path: '/workspace' },
-                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-                machineSetupPlanInput: { homeId, machineId: f.machine.id, sources } }, true);
+            const agentAction = SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action;
+            const install = { machineId: f.machine.id, agentId: 'codex', intent: 'install',
+                waitForTerminal: true, consent: { vendorRecipe: true } };
+            const setupTarget = { homeId, machineId: f.machine.id, desiredRevision: 0, sources, recipePlans: [] };
+            const parent = kind === 'declared Agent'
+                ? await f.mint(MACHINE_SETUP_APPLY_ACTION_ID_V1, { homeId, machineId: f.machine.id, targets: [{ ...setupTarget,
+                    sources: [{ kind: 'direct', setup: { items: [{ kind: 'agent', agentId: 'codex' }] } }],
+                    appChildren: [{ sourceIndex: 0, itemIndex: 0, actionId: agentAction, input: install }] }] }, true)
+                : await f.mint('session.spawn_new', { executionTarget: { serverId: homeId, machineId: f.machine.id },
+                    directory: { kind: 'path', path: '/workspace' },
+                    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                    machineSetupPlanInput: { homeId, machineId: f.machine.id, sources } }, true);
             expect(parent.binding).toMatchObject({ accountId: f.account.id, custodianAccountId: custodian.id, admittedMachineRole: 'manage' });
-            const reviewedChild = { actionId: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.action,
-                role: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.role,
-                inputDigest: computeActionInputApprovalDigestV1(SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.action,
-                    { homeId, machineId: f.machine.id, sources, recipePlans: [] }) };
+            const actionId = kind === 'declared Agent' ? agentAction : MACHINE_SETUP_APPLY_ACTION_ID_V1;
+            const reviewedChild = kind === 'declared Agent'
+                ? { actionId, role: 'machine_setup_app', inputDigest: computeActionInputApprovalDigestV1(actionId, install) }
+                : { actionId, role: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.role,
+                    inputDigest: computeActionInputApprovalDigestV1(actionId, { homeId, machineId: f.machine.id, sources, recipePlans: [] }) };
             const runId = deriveMachineSetupCombinedRunIdV1({ homeId, accountId: f.account.id,
-                requestId: parent.binding.requestId, reviewedChild });
+                requestId: parent.binding.requestId, ...(kind === 'spawn setup' ? { reviewedChild } : {}) });
             const snapshot = await materializeWorkflowAcceptedSnapshotFixture({
                 definition: { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'review',
                     document: { text: 'Review', references: [], attachments: [] }, result: { kind: 'text' } }] },
@@ -411,16 +421,17 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
             expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
                 machineId: f.machine.id, principal: { kind: 'account', accountId: f.account.id } }))).toMatchObject({ kind: 'removed' });
             const requestId = `${runId}/${randomUUID()}/0`;
-            const envelope = { v: 1 as const, requestId, target, input: { homeId, machineId: f.machine.id,
-                targets: [{ homeId, machineId: f.machine.id, desiredRevision: 0, sources, recipePlans: [] }] } };
+            const envelope = { v: 1 as const, requestId, target, input: kind === 'declared Agent' ? install
+                : { homeId, machineId: f.machine.id, targets: [setupTarget] } };
             const workflowActionOrigin = { runId, requestId, reviewedChild };
-            const buildRequest = (accountId: string, origin = workflowActionOrigin, installationId = f.machine.installationId!) => ({ v: 1, machineId: f.machine.id, envelope,
+            const buildRequest = (accountId: string, origin = workflowActionOrigin, installationId = f.machine.installationId!,
+                leafEnvelope = envelope) => ({ v: 1, machineId: f.machine.id, envelope: leafEnvelope,
                 executionAuthorization: parent, workflowActionOrigin: origin,
                 installationProof: signMachineInstallationProof({ privateKey: f.keyPair.secretKey,
                     payload: { version: 1, accountId, machineId: f.machine.id, installationId,
-                        externalActionOrigin: { homeId, actionId: 'machines.setup.apply', requestId,
-                            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } }) });
-            const path = bindExternalActionExecutionAuthorizationHttpPathV1('machines.setup.apply');
+                        externalActionOrigin: { homeId, actionId, requestId,
+                            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(leafEnvelope), origin } } }) });
+            const path = bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
             const foreign = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
             const foreignToken = await auth.createToken(foreign.id, undefined, { kind: 'account', authority: 'present_user' });
             const refused = await f.app.inject({ method: 'POST', url: path, headers: { authorization: `Bearer ${foreignToken}` },
@@ -433,6 +444,8 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
             for (const payload of [
                 buildRequest(f.account.id, { ...workflowActionOrigin, runId: randomUUID() }),
                 buildRequest(f.account.id, workflowActionOrigin, randomUUID()),
+                buildRequest(f.account.id, workflowActionOrigin, f.machine.installationId!,
+                    { ...envelope, target: { kind: 'machine', machineId: randomUUID() } }),
                 { ...buildRequest(f.account.id), executionAuthorization: { ...parent,
                     binding: { ...parent.binding, admittedMachineRole: 'use' } } },
             ]) {
@@ -446,12 +459,18 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
             expect(response.json()).toMatchObject({ binding: { accountId: f.account.id, custodianAccountId: custodian.id,
                 machineId: f.machine.id, admittedMachineRole: 'manage', workflowActionOrigin } });
             const leaf = ExternalActionExecutionAuthorizationV1Schema.parse(response.json());
+            if (kind === 'declared Agent') {
+                await f.app.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                    headers: { authorization: `Bearer ${f.presentUserToken}` },
+                    payload: { v: 1, machineId: f.machine.id, envelope, executionAuthorization: leaf } });
+                expect(f.dispatchPrincipals).toContainEqual(expect.objectContaining({ accountId: f.account.id, workflowActionOrigin }));
+            }
             const principal = await verifyCurrentExternalActionPrincipal(leaf.binding);
             const workflowAdmission = await verifyWorkflowExternalActionRequesterAuthorization({ authorization: parent,
-                origin: workflowActionOrigin, publisherAccountId: f.account.id, publisherCustodianAccountId: custodian.id,
+                actionId, origin: workflowActionOrigin, publisherAccountId: f.account.id, publisherCustodianAccountId: custodian.id,
                 publisherMachineId: f.machine.id, publisherInstallationId: f.machine.installationId!, target,
                 // The route spends the child's exact Setup operands against the parent scope (72105c7511a).
-                preparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId: 'machines.setup.apply', envelope }) });
+                preparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId, envelope }) });
             if (!principal || !workflowAdmission) throw new Error('Expected verified retained Workflow requester');
             let guardedTarget = false;
             const dispatch = createExternalActionDaemonDispatcher({ io: new Server(), forwardRpc: async request => {
@@ -463,7 +482,7 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
                 expect(await forwardRpcCall({ ...request, io })).toMatchObject({ ok: true });
                 return { ok: false, error: 'Boundary observation complete' };
             } });
-            await dispatch({ actionId: 'machines.setup.apply', principal, envelope, executionAuthorization: leaf, workflowAdmission });
+            await dispatch({ actionId, principal, envelope, executionAuthorization: leaf, workflowAdmission });
             expect(guardedTarget).toBe(true);
             await db.automationRun.update({ where: { id: runId }, data: { state: 'cancelled' } });
             const completed = await f.app.inject({ method: 'POST', url: path,

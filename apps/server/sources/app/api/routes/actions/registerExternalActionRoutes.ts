@@ -147,7 +147,7 @@ async function readInstalledWorkflowRequestPrincipal(actionId: string,
                 externalActionOrigin: { homeId, actionId, requestId: body.envelope.requestId!,
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope), origin } } })) return null;
     const workflowAdmission = body.executionAuthorization ? await verifyWorkflowExternalActionRequesterAuthorization({
-        authorization: body.executionAuthorization, origin, publisherAccountId: principal.accountId,
+        authorization: body.executionAuthorization, actionId, origin, publisherAccountId: principal.accountId,
         publisherCustodianAccountId: source.accountId,
         publisherMachineId: body.machineId, publisherInstallationId: source.installationId,
         target: body.envelope.target,

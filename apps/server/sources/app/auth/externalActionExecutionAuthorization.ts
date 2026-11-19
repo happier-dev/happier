@@ -199,7 +199,8 @@ import { readExternalActionPendingResetStartPurpose, isExternalActionPendingRese
 import { isExternalActionApprovalReplyPurpose } from './externalActionApprovalReplyPurpose';
 import { isExternalActionApprovalArtifactPurpose } from './externalActionApprovalArtifactPurpose';
 import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1, isMachineSetupCombinedActionIdV1, isMachineSetupNativeCodecActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1, SESSION_AGENT_READINESS_CHILDREN_V1,
+    isMachineSetupCombinedActionIdV1, isMachineSetupNativeCodecActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { isArtifactSignedInLinkCreateHttpPurpose, readExternalActionArtifactSignedInLinkPurpose } from './externalActionArtifactSignedInLinkPurpose';
 import { isExternalActionDeploymentPendingCancelPurpose } from './externalActionDeploymentPendingCancelPurpose';
 import { SessionBoardMutationV1Schema } from '@happier-dev/protocol/sessions/board/mutations';
@@ -338,6 +339,10 @@ export type WorkflowExternalActionAdmission = Readonly<{
     principal: ExternalActionServerPrincipalV1 & Pick<VerifiedApiTokenPrincipal, 'authenticationEvidence'>;
 }>;
 
+function isReviewedSetupAgentInstall(actionId: string, origin: ExternalActionExecutionAuthorizationBindingV1['workflowActionOrigin']): boolean {
+    return actionId === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action && origin?.reviewedChild?.actionId === actionId;
+}
+
 /** Public spawn operands bind their destination through the existing API owner. */
 export function readExternalActionSessionSpawnAdmission(
     envelope: ExternalActionRequestEnvelope,
@@ -409,6 +414,13 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(reader:
         const admitted = await readAdmittedExternalActionMachineInTx(reader, native, native.machineId, native.installationId);
         return admitted ? { ...admitted, role: native.admittedMachineRole ?? admitted.role,
             sessionPresetAcquisition: native.sessionPresetAcquisition } : { kind: 'denied', code: 'machine_unavailable' };
+    }
+    if (native && native.admittedMachineRole === 'manage'
+        && input.actionId === native.actionId && isReviewedSetupAgentInstall(native.actionId, native.workflowActionOrigin)
+        && input.actorAccountId === native.accountId && input.machineId === native.machineId
+        && native.target.kind === 'machine' && native.target.machineId === native.machineId) {
+        const admitted = await readAdmittedExternalActionMachineInTx(reader, native, native.machineId, native.installationId);
+        return admitted ? { ...admitted, role: native.admittedMachineRole } : { kind: 'denied', code: 'machine_unavailable' };
     }
     if (native && (isManagedControlAdmissionActionIdV1(native.actionId)
         || isExternalActionManagedResourceAction(native.actionId) && native.actionId !== 'machines.managed.credentials.install')
@@ -583,6 +595,7 @@ export function readAdmittedFiniteOperationPrincipal(binding: ExternalActionExec
 /** The installed publisher transports an admitted Run; its credential never becomes the requester. */
 export async function verifyWorkflowExternalActionRequesterAuthorization(input: Readonly<{
     authorization: ExternalActionExecutionAuthorizationV1;
+    actionId: string;
     origin: NonNullable<ExternalActionExecutionAuthorizationBindingV1['workflowActionOrigin']>;
     publisherAccountId: string;
     publisherCustodianAccountId: string;
@@ -594,6 +607,8 @@ export async function verifyWorkflowExternalActionRequesterAuthorization(input: 
     const binding = await auth.verifyExternalActionExecutionAuthorization(input.authorization.token);
     const reviewedChild = input.origin.reviewedChild;
     const combinedActionId = reviewedChild?.actionId ?? binding?.actionId;
+    const declaredAgent = binding?.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
+        && isReviewedSetupAgentInstall(input.actionId, input.origin);
     // The Run is the root's own Run, or a reviewed child's Run. A root's own Run
     // may carry the live Run's exact leaf proof for the receiver; it never names the Run.
     const isAdmittedRun = (actionId: typeof combinedActionId, child?: typeof reviewedChild) => !!binding && !!actionId
@@ -609,16 +624,20 @@ export async function verifyWorkflowExternalActionRequesterAuthorization(input: 
         || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId
         || binding.admittedMachineRole !== 'manage'
         || !isAdmittedRun(combinedActionId, reviewedChild)
-            && !(reviewedChild?.actionId === binding.actionId && isAdmittedRun(binding.actionId))) return null;
+            && !((declaredAgent || reviewedChild?.actionId === binding.actionId) && isAdmittedRun(binding.actionId))) return null;
     // A spawn-reviewed Setup parent admitted only its own Machine; its reviewed child digest pins the plan.
     const spawnSetupScope: Extract<NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentPreparationAdmission']>,
         { operation: 'setup' }> | undefined = binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
             ? { operation: 'setup', machineTargets: [binding.machineId], deployments: [] } : undefined;
     const scope = binding.deploymentPreparationAdmission ?? spawnSetupScope;
-    const child = input.preparationAdmission;
     const target = input.target ?? binding.target;
+    if (target.kind !== 'machine') return null;
+    // The sealed reviewed Agent leaf has no deployment operands. Its signed
+    // receiver spends only a Machine already in the admitted Setup scope.
+    const child: typeof input.preparationAdmission = declaredAgent ? { operation: 'setup', machineTargets: [target.machineId], deployments: [] }
+        : input.preparationAdmission;
     // Every child operand spends a reviewed parent fact, never new permission.
-    if (target.kind !== 'machine' || scope?.operation !== 'setup' || child?.operation !== 'setup'
+    if (scope?.operation !== 'setup' || child?.operation !== 'setup'
         || !child.machineTargets?.includes(target.machineId)
         || !child.machineTargets.every(machineId => scope.machineTargets?.includes(machineId))
         || !child.deployments.every(selected => scope.deployments.some(admitted => sameManagedInput(admitted, selected)))
@@ -815,10 +834,15 @@ export async function hasCurrentOriginalSessionActionTargetInTx(
 }
 
 /** Issuance and currentness share FIN's assigned publisher and retained origin proof. */
+function isAdmittedWorkflowOriginAction(input: Pick<DeploymentWorkflowOriginInput, 'actionId' | 'admittedMachineRole' | 'workflowActionOrigin'>): boolean {
+    return isExternalActionWorkflowActionIdV1(input.actionId) || input.admittedMachineRole === 'manage'
+        && isReviewedSetupAgentInstall(input.actionId, input.workflowActionOrigin);
+}
+
 export async function hasCurrentExternalActionWorkflowOriginInTx(reader: Tx, input: DeploymentWorkflowOriginInput,
     continuation?: DeploymentReceiptContinuation, phase: MachineWorkflowOriginPhase = 'admission'): Promise<boolean> {
     const origin = input.workflowActionOrigin;
-    if (!origin || origin.requestId !== input.requestId || !isExternalActionWorkflowActionIdV1(input.actionId)) return false;
+    if (!origin || origin.requestId !== input.requestId || !isAdmittedWorkflowOriginAction(input)) return false;
     if (origin.sessionLeaf || input.admittedMachineRole !== undefined) {
         // The installed FIN producer already admitted the exact leaf/Session.
         // Home cannot open that E2EE binding; later effects only read Run liveness.
@@ -864,7 +888,7 @@ async function readCurrentExternalActionPrincipal(
     if (binding.actionId === 'approval.request.decide'
         && resolveMachineRpcExternalActionEffectV1(RPC_METHODS.APPROVAL_REQUEST_DECIDE, binding) !== binding.actionId) return null;
     if (binding.workflowActionOrigin) {
-        if (!isExternalActionWorkflowActionIdV1(binding.actionId)
+        if (!isAdmittedWorkflowOriginAction(binding)
             || purpose?.kind !== 'issued-managed-intent-native-fact'
                 && purpose?.kind !== 'issued-managed-native-credential-fact'
                 && !await hasCurrentExternalActionWorkflowOriginInTx(reader, binding, deploymentContinuation, 'execution')) return null;
