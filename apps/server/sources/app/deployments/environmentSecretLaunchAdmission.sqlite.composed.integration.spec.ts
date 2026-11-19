@@ -58,6 +58,7 @@ import { reloadConfiguration } from '../../../../cli/src/configuration';
 import { readOrCreateInstallationIdentitySync } from '../../../../cli/src/daemon/identity/store';
 import { createDeploymentTargetRoleAdmissionHost } from '../../../../cli/src/deployments/targets/createDeploymentTargetRoleAdmissionHost';
 import { sealMachineSecretGrant } from '../../../../cli/src/deployments/secrets/machineSecretGrant';
+import { readEnvironmentDataRoleLaunchAdmissionForHost } from '../../../../cli/src/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import { admitRequesterAccountActionContext } from '../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection';
 import { projectExternalActionRequesterHttpAuthorization } from '../../../../cli/src/api/externalActionExecutionAuthorization';
 import { managedDataQueryPostgresAvailable, managedQueryProviderHttp, managedQueryRolePassword,
@@ -96,7 +97,8 @@ describe('private installed Environment secret launch transport', () => {
     afterAll(async () => { await harness?.close(); });
 
     async function admittedTeamDelivery(mode: 'plain' | 'e2ee' = 'plain', distinctController = false, roleService?: string,
-        runtimePlacement: 'host' | 'plugin' = 'host', secretValue = 'launch-trims-private-sentinel') {
+        runtimePlacement: 'host' | 'plugin' = 'host', secretValue = 'launch-trims-private-sentinel',
+        installedIdentity?: ReturnType<typeof readOrCreateInstallationIdentitySync>) {
         const ownerKey = nacl.box.keyPair(), requesterKey = nacl.box.keyPair();
         const owner = await db.account.create({ data: { encryptionMode: mode,
             ...(mode === 'e2ee' ? createSignedAccountContentBinding(ownerKey.publicKey) : {}) } });
@@ -108,8 +110,9 @@ describe('private installed Environment secret launch transport', () => {
             { teamId: team.id, accountId: owner.id, role: 'owner' },
             { teamId: team.id, accountId: requester.id, role: 'admin' },
         ] });
-        const keys = nacl.sign.keyPair();
-        const machineId = crypto.randomUUID(), installationId = crypto.randomUUID();
+        const keys = installedIdentity ? { publicKey: decodeBase64(installedIdentity.publicKey, 'base64url'),
+            secretKey: decodeBase64(installedIdentity.privateKey, 'base64url') } : nacl.sign.keyPair();
+        const machineId = crypto.randomUUID(), installationId = installedIdentity?.installationId ?? crypto.randomUUID();
         const metadata = MachinePublishedMetadataV1Schema.parse({ host: 'delivery-host', platform: 'linux',
             happyCliVersion: '0.0.0-test', homeDir: '/home/happier', happyHomeDir: '/home/happier/.happier' });
         await db.machine.create({ data: { id: machineId, accountId: custodian.id,
@@ -758,6 +761,92 @@ describe('private installed Environment secret launch transport', () => {
                 }
                 await new Promise<void>(resolve => sockets.close(() => resolve()));
                 await app.close(); environment.restore(); reloadConfiguration();
+            }
+        });
+    });
+
+    it('opens the app-approved PostgreSQL read role after deployment through signed installed custody', async () => {
+        await withTempDir('happier-own-server-query-home-', async homeDir => {
+            const environment = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL']);
+            const app = createAuthenticatedTestApp({ authentication: 'real' });
+            const sockets = new SocketServer(app.server, { path: '/v1/updates' });
+            const lifetime = new AbortController();
+            let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> | undefined;
+            try {
+                environment.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: serverId });
+                reloadConfiguration();
+                accountRoutes(app); artifactsRoutes(app); registerDeploymentRoutes(app); registerExternalActionRoutes(app);
+                const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+                environment.patch({ HAPPIER_SERVER_URL: origin });
+                reloadConfiguration();
+                await seedTestServerProfile({ id: serverId, homeId: serverId, serverUrl: origin });
+                const installedIdentity = readOrCreateInstallationIdentitySync();
+                const fixture = await admittedTeamDelivery('plain', false, undefined, 'host', managedQueryRolePassword, installedIdentity);
+                const { machineId, installationId, environmentId, targetLinkId } = fixture.payload;
+                const { deploymentId } = fixture.receipt;
+                await db.deployment.update({ where: { id: deploymentId }, data: { state: 'succeeded' } });
+                await db.deploymentTargetLink.update({ where: { id: targetLinkId }, data: { activeDeploymentId: deploymentId,
+                    machines: { updateMany: { where: { machineId, installationId }, data: { state: 'active' } } } } });
+                const deployed = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environmentId } });
+                const serviceId = 'database';
+                // The app writes the read-role binding after the Receipt already exists.
+                const definition = DeploymentEnvironmentContentV1Schema.parse({ ...fixture.content, bindings: [{
+                    purpose: 'dataRole', service: serviceId, role: 'readOnlyPassword', source: { kind: 'secret',
+                        ref: formatSharedSavedSecretRefV1(fixture.resourceId), resourceRevision: fixture.resourceRevision },
+                }] });
+                const content = await fixture.artifact('deployment-environment.v1', definition);
+                const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId, machineId, installationId,
+                    resourceId: fixture.resourceId, resourceRevision: fixture.resourceRevision },
+                    installationPublicKey: decodeBase64(installedIdentity.publicKey, 'base64url'),
+                    content: { kind: 'secret', value: managedQueryRolePassword } });
+                const bound = await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, fixture.owner.id, {
+                    serverId, environmentId, expectedRevision: deployed.revision, ...content, grants: [grant],
+                    referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(definition.bindings),
+                }));
+                if (!bound.ok) throw new Error(bound.error);
+                expect(bound.revision).toBeGreaterThan(deployed.revision);
+                const action = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
+                if (!action) throw new Error('Expected the canonical database Action identity');
+                const input = { action, input: DatabaseStatementRunInputV1Schema.parse({ operation: 'statement.run', mode: 'read',
+                    target: { kind: 'deployment_service', environment: { serverId, projectSourceId: deployed.projectSourceId,
+                        environmentId }, deploymentId, targetLinkId, serviceId, database: 'postgres' },
+                    statement: { sql: 'SELECT 1 AS rows_data_176_value', parameters: [] } }) };
+                const target = { kind: 'machine' as const, machineId };
+                const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+                const actionId = 'action.invoke' as const;
+                const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId: fixture.owner.id,
+                    serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: fixture.owner.tokenEpoch },
+                    actionId, machineId, target, requestId: envelope.requestId,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                    deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, input) });
+                const token = await auth.createToken(fixture.owner.id, undefined, { kind: 'account', authority: 'present_user' });
+                requester = await admitRequesterAccountActionContext({ authorization, credentials: { token, encryption: null },
+                    serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin,
+                    isCurrent: async () => !lifetime.signal.aborted, isCustodyCurrent: async () => !lifetime.signal.aborted,
+                    signal: lifetime.signal });
+                if (!requester) throw new Error('Expected real requester Account admission');
+                const projected = await projectExternalActionRequesterHttpAuthorization({ authorization: requester.authorization,
+                    target, serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, installationId,
+                    privateKey: installedIdentity.privateKey, isCurrent: requester.isCurrent, signal: lifetime.signal });
+                if (!projected) throw new Error('Expected signed requester HTTP projection');
+                const machine = await db.machine.findUniqueOrThrow({ where: { id: machineId }, select: { accountId: true } });
+                expect(machine.accountId).not.toBe(fixture.owner.id);
+                const custodian = await auth.createToken(machine.accountId, undefined, { kind: 'account', authority: 'present_user' });
+                const admitted = await readEnvironmentDataRoleLaunchAdmissionForHost({
+                    credentials: { token: custodian, encryption: null }, serverId, serverHttpBaseUrl: origin, machineId, installationId,
+                    environmentId, targetLinkId, deploymentId, service: serviceId, expectedRevision: bound.revision, signal: lifetime.signal,
+                    context: { signal: lifetime.signal, externalActionTarget: target, externalActionExecutionAuthorization: projected },
+                });
+                try {
+                    expect(admitted.grants).toEqual([grant]);
+                } finally { await admitted.release?.(); }
+            } finally {
+                lifetime.abort();
+                await requester?.dispose();
+                await new Promise<void>(resolve => sockets.close(() => resolve()));
+                await app.close();
+                environment.restore();
+                reloadConfiguration();
             }
         });
     });
