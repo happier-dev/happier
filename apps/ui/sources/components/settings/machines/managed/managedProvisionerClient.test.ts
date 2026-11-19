@@ -10,6 +10,7 @@ import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestrati
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import type { ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
+import { defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 
 const harness = createHomeGovernanceHarness();
 const reviewedEnrollmentIdentity = { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
@@ -20,6 +21,61 @@ await import('@/sync/ops/actions/defaultActionExecutor');
 beforeEach(async () => { await harness.reset(); resetScopedHomeActionExecutorsForTests(); });
 afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); await harness.reset(); await standardCleanup(); });
 describe('managed configurator uses the exact Home Action front door', () => {
+    it.each(['acquired', 'session_holder_unavailable'] as const)('lists one saved account and attaches its selected workspace (%s)', async outcome => {
+        const homeId = 'srv_attach_compute';
+        const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://attach.compute.test',
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+        const contribution = { pluginId: 'test.machine.coder', localId: 'coder' };
+        const controller = { machineId: 'host', installationId: 'installation' };
+        const credential = {
+            purpose: { consumer: contribution, purpose: 'native-session' },
+            account: { service: { pluginId: 'test.machine.coder', localId: 'account' }, accountId: 'coder-alice' },
+        };
+        const nativeSelectors = { attachExisting: true };
+        const descriptor = {
+            schemaVersion: 1,
+            launchSchema: defineProtocolObject({ existingWorkspaceId: defineProtocolString() }, { policy: 'closed' }).jsonSchema,
+            workspaceAttachment: { when: { op: 'truthy' as const, path: 'existingWorkspaceId' } },
+        };
+        await answerExternalActionAccountForHome(harness, serverId, { ...controller,
+            actionId: 'machines.provisioners.options', tokenEpoch: 0, execute: input => {
+                expect(input).toEqual({ homeId, controller, contribution, credentials: [credential], selectors: nativeSelectors });
+                return createMachineProvisionerOptionsFixture({ base: { launch: {} }, dimensions: {
+                    size: [], location: [], duration: [], network: [], image: [{ id: 'outside-id', title: 'api-dev',
+                        nativeFacts: { image: { id: 'api', title: 'API Development' }, workspaceStatus: 'running' },
+                        assignments: [{ path: 'existingWorkspaceId', value: 'outside-id' }] }],
+                } });
+            } });
+        const admitted = await answerExternalActionAccountForHome(harness, serverId, { ...controller,
+            actionId: 'machines.managed.acquire', tokenEpoch: 0, execute: input => {
+                expect(input).toMatchObject({ selection: { kind: 'one-off', homeId, controller,
+                    launch: { provider: contribution, name: 'api-dev', choices: { existingWorkspaceId: 'outside-id' },
+                        credentials: [credential] },
+                    attachWorkspace: true, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+                return { managedId: 'attached' };
+            }, failure: () => outcome === 'acquired' ? null : { errorCode: outcome, error: outcome } });
+        harness.answer(serverId, '/v1/machines', { body: [admitted.machine] });
+        await import('./useAttachableRemoteWorkspaces');
+        const { readAttachableRemoteWorkspaces, attachRemoteWorkspace } = await import('./attachableRemoteWorkspaceActions');
+        const scope = { serverId, accountId: 'owner' };
+        const interest = new AbortController();
+        const read = await readAttachableRemoteWorkspaces({ scope, homeId, controller, contribution, credentials: [credential],
+            descriptor, selectors: nativeSelectors, signal: interest.signal });
+        expect(read.kind, JSON.stringify(read.kind === 'failed' ? { ...read, routes: harness.requests.map(request => request.path) } : {})).toBe('ready');
+        expect(read).toMatchObject({ kind: 'ready', workspaces: [{ id: 'outside-id', name: 'api-dev', template: 'API Development', status: 'running' }] });
+        expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(1);
+        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+        if (read.kind !== 'ready') throw new Error('Missing selectable workspace');
+        const progress: string[] = [];
+        const result = await attachRemoteWorkspace({ account: read, workspaceId: 'outside-id', signal: interest.signal,
+            onApprovalPending: () => { throw new Error('Unexpected approval request'); },
+            onProgress: value => progress.push(value.kind) });
+        expect(result).toEqual(outcome === 'acquired' ? { kind: 'attached', managedId: 'attached', controller } : { kind: 'unsupported_platform' });
+        expect(progress).toContain('acquiring');
+        expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(1);
+        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
+    });
+
     it('shares the selected availability answer across concurrent readers and launch-option edits', async () => {
         const homeId = 'srv_shared_availability';
         const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://shared-availability.example',
