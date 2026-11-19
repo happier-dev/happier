@@ -551,6 +551,9 @@ describe('held Agent isolation launch admission', () => {
         const origin = { v: 1 as const, caller, sourceTurnId: 'agent-turn', callerPermissionMode: null, requestId: 'request' };
         expect(selectHostRequesterExecutionIdentity({ ...input, rpcContext: { ...rpcContext, sessionActionOrigin: origin } }))
             .toMatchObject({ kind: 'isolated', separationRequired: false });
+        expect(isHostRequesterUnrestrictedOwner(selectHostRequesterExecutionIdentity({ ...input,
+            rpcContext: { ...rpcContext, sessionActionOrigin: origin, admittedHostWorkflowRequester: true },
+        }))).toBe(false);
         expect(selectHostRequesterExecutionIdentity({ actionContext: { machineAdmission: rpcContext.machineAdmission,
             authority: 'account_automation', actionCaller: caller, verifyMachineAdmissionCurrent: async () => true },
             hostHomeServerIdentityId: 'home' })).not.toHaveProperty('accountAutomation');
@@ -587,7 +590,14 @@ describe('held Agent isolation launch admission', () => {
             const identity = selectHostRequesterExecutionIdentity({ ...input,
                 rpcContext: { ...rpcContext, callerInputAuthorization: workflow } });
             expect(isHostRequesterUnrestrictedOwner(identity)).toBe(principal.kind === 'host');
+            expect(isHostRequesterUnrestrictedOwner(selectHostRequesterExecutionIdentity({ ...input,
+                rpcContext: { ...rpcContext, callerInputAuthorization: workflow, admittedHostWorkflowRequester: true },
+            }))).toBe(principal.kind === 'host');
         }
+        expect(selectHostRequesterExecutionIdentity({ ...input, rpcContext: {
+            ...rpcContext, admittedHostWorkflowRequester: true, callerInputAuthorization: nonsession,
+            machineAdmission: { ...rpcContext.machineAdmission, actorAccountId: 'other-account' },
+        } })).toMatchObject({ kind: 'unknown' });
     });
     it('selects a closed authenticated Account Agent without fabricating Session birth or person presence', async () => {
         const hostAccountAgent = { accountId: 'owner', custodianAccountId: 'owner', machineId: 'machine', installationId: 'installation' };

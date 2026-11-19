@@ -22,6 +22,7 @@ import { registerProjectFiniteRpcHandlers } from '@/rpc/handlers/projects/regist
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import type { WorkflowAcceptedAuthorizationV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { prepareRequesterNativeOperation } from '@/daemon/agentIsolation/prepareNativeOperation';
 import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
 import { createTestGitScmBackendRegistry, runGit } from '@/scm/rpc/__tests__/testRpcHarness';
@@ -330,13 +331,14 @@ describe('Workflow Run native Machine admission', () => {
       const comparisonInput = { cwd: root, source: { kind: 'workingTree' } };
       const comparisonRequest = (targetMachineId = machineId, input: unknown = comparisonInput) => createTargetedActionRpcRequestV1(input,
         { kind: 'machine', machineId: targetMachineId, project: { machineId: targetMachineId, directory: root } });
-      const compare = (callerRunId: string, targetMachineId = machineId, input?: unknown) => workflowTransport.transport.invoke(
+      const compare = (callerRunId: string, targetMachineId = machineId, input?: unknown,
+        principal: WorkflowAcceptedAuthorizationV1['principal'] = { kind: 'host' }) => workflowTransport.transport.invoke(
         RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE,
         comparisonRequest(targetMachineId, input), {
           localActionContext: {
             ...localActionContext(4).localActionContext,
             actionCaller: { kind: 'workflowRun', runId: callerRunId,
-              authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } } },
+              authorization: { admittedPermissionCeiling: 'default', principal } },
           },
         },
       );
@@ -415,6 +417,13 @@ describe('Workflow Run native Machine admission', () => {
         expect(scmAdmissionReads).toBe(1); // Only the unattached caller was checked for a fresh admission.
         expect(await compare(runId, machineId, { cwd: root, source: { kind: 'session', sessionId: 'source-session' } }))
           .toMatchObject({ effectAttempted: false, failureCause: { phase: 'rpc.admission.requester_execution_isolation' } });
+        for (const principal of [
+          { kind: 'session', sessionId: 'source-session' },
+          { kind: 'api', accountId, principalId: 'automation-api', credentialId: 'automation-token' },
+        ] as const) {
+          expect(await compare(runId, machineId, comparisonInput, principal))
+            .toMatchObject({ effectAttempted: false, failureCause: { phase: 'rpc.admission.requester_execution_isolation' } });
+        }
         expect(await compare(runId, 'other-machine')).toMatchObject({ effectAttempted: false });
         expect(await rebootStep(3)).toEqual({ kind: 'accepted', bootedAt: 1 });
         expect(reboots).toEqual([expect.objectContaining({
