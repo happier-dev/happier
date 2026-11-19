@@ -46,6 +46,11 @@ export function renderDropdownItemTriggerRightElement(params: Readonly<{
     boxRef?: React.Ref<unknown>;
     /** Field only: `chip` draws the compact borderless pill (pair it with soft `field` colours). */
     fieldDensity?: 'field' | 'chip';
+    /**
+     * Field only: the chosen value drawn as its own element (a workflow reference token) in place of the `detail`
+     * words, which still name it for its trigger's accessible name.
+     */
+    value?: React.ReactNode;
 }>) {
     const resolvedDensity = params.detailDensity ?? 'comfortable';
     const chevron = (
@@ -71,6 +76,8 @@ export function renderDropdownItemTriggerRightElement(params: Readonly<{
                 {...(params.fieldDensity === undefined ? {} : { density: params.fieldDensity })}>
                 {params.loading ? (
                     <HappierSkeletonBlock width={72} height={14} radius={5} color={params.field.placeholderColor} />
+                ) : params.value != null && !label.placeholder ? (
+                    <View style={{ flexShrink: 1, minWidth: 0 }}>{params.value}</View>
                 ) : <Text
                     style={[label.style, params.secondary ? { flexGrow: 0, flexShrink: 1, flexBasis: 'auto' } : null, params.quietValue && !label.placeholder && params.quietValueColor ? { color: params.quietValueColor } : null]}
                     numberOfLines={1}

@@ -87,6 +87,21 @@ describe('workflow final output accessibility', () => {
         }
     });
 
+    // WF-ACCEPT-1119 item 9 (lab round 1116 page-proposed Result row): the chosen value reads as the document's ↵ reference
+    // token inside the field select, as the prompt and Message rows draw it; "Nothing" stays plain words.
+    it('draws the chosen result as the reference token inside its field select, and Nothing as words', async () => {
+        const { WorkflowValueReferenceToken } = await import('./WorkflowStepDataEditor');
+        const draft = createWorkflowEditorDraft({ draftId: 'token', name: 'Review' });
+        const blockId = draft.blocks[0]!.id;
+        const finalOutput = { kind: 'result' as const, producer: { blockId, scope: { kind: 'current' as const } }, path: [] };
+        const screen = await renderScreen(<WorkflowFinalOutputEditor draft={{ ...draft, finalOutput }} onChange={vi.fn()} testIDPrefix="output" />);
+        const trigger = screen.findByTestId('output-final-output-trigger')!;
+        expect(trigger.findAllByType(WorkflowValueReferenceToken)).toHaveLength(1);
+        await screen.update(<WorkflowFinalOutputEditor draft={draft} onChange={vi.fn()} testIDPrefix="output" />);
+        expect(screen.findByTestId('output-final-output-trigger')!.findAllByType(WorkflowValueReferenceToken)).toHaveLength(0);
+        expect(screen.getTextContent()).toContain('workflows.finalOutput.none');
+    });
+
     it('keeps an unavailable authored producer visible without rewriting it', async () => {
         const draft = createWorkflowEditorDraft({ draftId: 'missing', name: 'Review' });
         const finalOutput = { kind: 'result' as const, producer: { blockId: 'removed', scope: { kind: 'current' as const } }, path: ['summary'] };

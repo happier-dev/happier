@@ -28,6 +28,8 @@ export function SessionAuthoringFieldSelectTrigger(
     accessibilityHint?: string;
     /** `column`: beside a row label, the width its row gives fields (a Workspace row); default sized to its value. */
     span?: 'content' | 'column';
+    /** The chosen value as its own element (a workflow reference token) in place of `label`, which still names it. */
+    value?: React.ReactNode;
     onPress: () => void;
     testID: string;
   }>,
@@ -57,6 +59,7 @@ export function SessionAuthoringFieldSelectTrigger(
           renderDropdownItemTriggerRightElement({
             leading: props.leading,
             detail: props.label,
+            ...(props.value === undefined ? {} : { value: props.value }),
             open: props.open,
             detailColor: theme.colors.text.primary,
             chevronColor: theme.colors.text.secondary,

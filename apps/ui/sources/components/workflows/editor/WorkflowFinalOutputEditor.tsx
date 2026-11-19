@@ -15,7 +15,7 @@ import { t } from '@/text';
 
 import { formatWorkflowValueReference, workflowResultFieldText } from '../presentation/workflowValuePresentation';
 import { WorkflowSentenceChip } from '../sentence/WorkflowSentenceChip';
-import { WorkflowResultFieldPathInput } from './WorkflowStepDataEditor';
+import { WorkflowResultFieldPathInput, WorkflowValueReferenceToken } from './WorkflowStepDataEditor';
 
 /**
  * What the workflow returns: the page-foot Result row's field select (round 1116), its menu listing the
@@ -84,6 +84,11 @@ export function WorkflowFinalOutputEditor(props: Readonly<{
                         anchorRef={anchorRef}
                         title={t('workflows.finalOutput.reports')}
                         label={selected === undefined ? t('workflows.finalOutput.none') : formatWorkflowValueReference(props.draft, selected)}
+                        // The chosen result reads as the document's reference token, as the prompt and Message rows
+                        // draw it (lab round 1116 page-proposed Result row; WF-ACCEPT-1119 item 9).
+                        {...(selected === undefined ? {} : {
+                            value: <WorkflowValueReferenceToken draft={props.draft} reference={selected} numberOfLines={1} />,
+                        })}
                         accessibilityHint={t('workflows.finalOutput.explain')}
                         open={open}
                         disabled={props.editable === false}

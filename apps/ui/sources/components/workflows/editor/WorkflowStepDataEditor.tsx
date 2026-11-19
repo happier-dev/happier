@@ -90,7 +90,11 @@ export function WorkflowResultFieldPathInput(props: Readonly<{
  * The document's reference token, including in a loop/condition sentence. A literal is the value
  * itself, so it reads as words in the sentence ("Repeat 2 times"), never as a binding token.
  */
-export function WorkflowValueReferenceToken(props: Readonly<{ draft: WorkflowEditorDraft; reference: WorkflowValueReference; label?: string; testID?: string }>): React.ReactElement {
+export function WorkflowValueReferenceToken(props: Readonly<{
+    draft: WorkflowEditorDraft; reference: WorkflowValueReference; label?: string; testID?: string;
+    /** `1`: one line ending in an ellipsis, where the token stands in a control (the Result field select). */
+    numberOfLines?: 1;
+}>): React.ReactElement {
     const { theme } = useUnistyles();
     if (props.reference.kind === 'literal') {
         return <Text testID={props.testID} selectable>{formatWorkflowValueReference(props.draft, props.reference)}</Text>;
@@ -98,7 +102,8 @@ export function WorkflowValueReferenceToken(props: Readonly<{ draft: WorkflowEdi
     // A reference reads as the lab's tinted chip (`.uwe-ref`): the accent's own tint behind accent words,
     // inline in a sentence or on a step's footer line, never a bare link-coloured run of text.
     return <Text testID={props.testID} style={{ color: theme.colors.state.active.textForeground, backgroundColor: theme.colors.state.active.background,
-        borderRadius: theme.borderRadius.sm, paddingHorizontal: theme.space.s4 }} selectable>
+        borderRadius: theme.borderRadius.sm, paddingHorizontal: theme.space.s4 }} selectable
+        {...(props.numberOfLines === undefined ? {} : { numberOfLines: props.numberOfLines })}>
         {/* A chip wraps whole, never inside its words (owner 2026-11-06): its spaces do not break. */}
         {`↵ ${props.label ?? formatWorkflowValueReference(props.draft, props.reference)}`.replace(/ /g, '\u00A0')}</Text>;
 }
