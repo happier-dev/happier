@@ -19,3 +19,11 @@ export function homePlanetSceneOptions(
   pane: HomePane,
   look: Readonly<{ theme: 'light' | 'dark'; style: HomePlanetStyle; digits: boolean }>,
 ): PlanetSceneOptions;
+
+export type GlyphPlanetGeometry = Readonly<{
+  R: number; cx: number; cy: number; rotate: number; halo: Required<PlanetSides>;
+  limb?: number; spin?: number; reveal?: number; light?: readonly [number, number, number]; dim?: number; glow?: number;
+}>;
+export type WelcomePlanetState = 'welcome' | 'welcomeDim' | 'deep' | 'deeper' | 'night' | 'place' | 'placeDeep' | 'team' | 'sheet';
+export function horizonPlanetGeometry(pane: HomePane, options?: Readonly<{ phone?: boolean; composerTop?: number; limb?: number; radius?: number }>): GlyphPlanetGeometry & { limb: number };
+export function welcomePlanetPose(state: WelcomePlanetState, pane: HomePane, options?: Readonly<{ phone?: boolean }>): GlyphPlanetGeometry & { limb: number };

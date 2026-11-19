@@ -142,7 +142,7 @@ function samplePlanetDot(px, py, dx, dy, sample) {
 }
 
 /** The sampler's colour for a cell, lit or not (a mark slot keeps its colour while a level lights it). */
-export function shadePlanetDot(px, py, dx, dy, { palette, light, reveal, breath, spin, glow, reach, gamma = 1, fleck: fleckShare = 0.06 /* lab: */, detail: detailK = 1 /* lab: */, full = 0 /* lab: */, fleckDot = false /* lab: */ }) {
+export function shadePlanetDot(px, py, dx, dy, { palette, light, reveal, breath, spin, glow, reach, gamma = 1, fleck: fleckShare = 0.06 /* lab: */, detail: detailK = 1 /* lab: */, full = 0 /* lab: */, fleckDot = false /* lab: */, bandStrength = 0.07, dusk = 0 }) {
   const distanceSquared = px * px + py * py;
   const threshold = BAYER[(dy & 3) * 4 + (dx & 3)];
   if (distanceSquared >= 1) {
@@ -165,8 +165,8 @@ export function shadePlanetDot(px, py, dx, dy, { palette, light, reveal, breath,
   const latitude = Math.asin(clamp(qy, -1, 1));
   const bands = Math.sin(latitude * 7 + Math.sin(longitude * 2 + latitude * 3) * 0.9) * 0.5 + 0.5;
   const grain = hash(Math.floor((longitude / (Math.PI * 2)) * 180 + 1000), Math.floor(latitude * 40 + 100));
-  const detail = 1 + ((bands - 0.5) * 0.07 + (grain - 0.5) * 0.12) * detailK;
-  let colour = gradient(palette.body, clamp(0.44 + py * 0.6 - px * 0.12));
+  const detail = 1 + ((bands - 0.5) * bandStrength + (grain - 0.5) * 0.12) * detailK;
+  let colour = gradient(palette.body, clamp(0.44 + py * 0.6 - px * 0.12 + dusk * 0.3));
   colour = mixRgb(colour, palette.rose, clamp(-px * 0.35) * (1 - Math.abs(py)));
   colour = mixRgb(palette.background, colour, clamp(day * detail * (1 + 0.08 * breath)) ** gamma);
   colour = mixRgb(colour, palette.rim, clamp(rim * 1.1));

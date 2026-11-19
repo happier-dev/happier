@@ -23,6 +23,10 @@
       "types": "./planet-placement.d.mts",
       "default": "./planet-placement.mjs"
     },
+    "./glyph-scene": {
+      "types": "./glyph-scene.d.mts",
+      "default": "./glyph-scene.mjs"
+    },
     "./atmosphere": {
       "types": "./atmosphere.d.mts",
       "default": "./atmosphere.mjs"
@@ -45,6 +49,10 @@
     "planet-moments.d.mts",
     "planet-placement.mjs",
     "planet-placement.d.mts",
+    "glyph-scene.mjs",
+    "glyph-scene.d.mts",
+    "glyph-mark.mjs",
+    "glyph-field.mjs",
     "atmosphere.mjs",
     "atmosphere.d.mts",
     "atmosphere-haze.mjs",
@@ -53,7 +61,7 @@
   ],
   "scripts": {
     "test": "../../apps/stack/bin/hstack-exec --script=test:local",
-    "test:local": "node --test planet.test.mjs atmosphere.test.mjs planet-moments.test.mjs planet-placement.test.mjs scripts/parityAssertions.test.mjs",
+    "test:local": "node --test planet.test.mjs atmosphere.test.mjs planet-moments.test.mjs planet-placement.test.mjs glyph-scene.test.mjs scripts/parityAssertions.test.mjs",
     "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "prepack": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",

@@ -70,7 +70,7 @@ export function gainPlanetScene(scene: PlanetScene, gain: number): PlanetScene;
 
 export type PlanetSample = Readonly<{
   palette: PlanetPalette; light: PlanetRgb; reveal: number; breath: number; spin: number; glow: number; reach: number;
-  gamma?: number; fleck?: number; detail?: number; full?: number; fleckDot?: boolean;
+  gamma?: number; fleck?: number; detail?: number; full?: number; fleckDot?: boolean; bandStrength?: number; dusk?: number;
 }>;
 export function shadePlanetDot(px: number, py: number, dx: number, dy: number, sample: PlanetSample): Readonly<{ rgb: PlanetRgb; lit: boolean }>;
 
