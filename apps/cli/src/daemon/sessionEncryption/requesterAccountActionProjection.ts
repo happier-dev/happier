@@ -409,7 +409,7 @@ async function projectAdmittedAccountCustody(
     // logs, or RPC forwarding. Strict wire parsing also drops this local facet.
     Object.defineProperty(carrier, 'requesterAccountProjection', { value: projection, enumerable: false });
     Object.defineProperty(projection, requesterActionContext, { enumerable: false, value: Object.freeze({
-      authorization: carrier, credentials: bootstrap.credentials, isCurrent,
+      authorization: carrier, credentials: bootstrap.credentials, serverHttpBaseUrl: bootstrap.serverHttpBaseUrl, isCurrent,
       resolveEncryption: createRequesterEncryptionResolver(bootstrap.credentials, input.serverIdentityId, isCurrent),
     } satisfies RequesterAccountActionTransportContext) });
     Object.freeze(projection);

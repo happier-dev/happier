@@ -86,6 +86,13 @@ hash; the normal transcript media renderer consumes it. Once admitted, draft-rec
 does not delete the attached bytes. A missing Session directory or failed custody admission
 fails recording finalization rather than reporting an attachment that was never admitted.
 
+The workspace read and the attachment use the Account custody that admitted the recording's
+start: installed requester ingress for a person, or the Session issuer's projected custody for
+an Agent's Action (`createRecordingSessionMediaHost`). A guest's Agent on another person's
+Machine therefore saves into the guest's own Session, never the Machine owner's. Only original
+own-Account ingress uses the daemon Account. A capture that stopped cleanly but could not be
+saved ends `failed` with `media_persistence_failed`; `capture_failed` means capture itself failed.
+
 The shared SessionMedia format list, Composer staging and transcript readers accept
 file-backed MP4 (`video/mp4`) alongside WebM (`video/webm`) in 0.3 development source.
 The browser recording producers in this matrix continue to emit WebM.

@@ -2,7 +2,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { readOwnSessionMachineWorkspace } from '@/session/machineControlLocality';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { readRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionContext';
+import { readRequesterAccountActionTransportContext } from '../sessionEncryption/requesterAccountActionContext';
 import { isOriginalOwnAccountActionCustody } from '../sessionEncryption/requesterAccountActionProjection';
 import { createDaemonSessionMutationCustody, type DaemonSessionMutationCustody } from '../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 
@@ -22,7 +22,9 @@ export function createRecordingSessionMediaHost(input: Readonly<{
   title: string;
 }>) {
   function custody(context?: RecordingOperationContext) {
-    const requester = readRequesterAccountActionContext(context?.externalActionExecutionAuthorization)
+    // Installed ingress and the Session issuer (an Agent's Action) both carry the admitted
+    // requester's own Account custody; persistence uses it, never the daemon Account.
+    const requester = readRequesterAccountActionTransportContext(context?.externalActionExecutionAuthorization)
       ?? context?.requesterSessionBootstrap;
     if (requester) return requester;
     const authorization = context?.externalActionExecutionAuthorization;

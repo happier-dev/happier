@@ -71,6 +71,8 @@ export const BrowserRecordingOutcomeReasonV1Schema = lazyZodSchema(() => z.enum(
   'session_closed',
   'logout',
   'capture_failed',
+  /** Capture stopped cleanly but its Session media could not be saved or attached. */
+  'media_persistence_failed',
   'capture_unavailable',
   'unsupported',
   'retention_limit',

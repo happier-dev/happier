@@ -409,16 +409,18 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
         if (outcome.status === 'unavailable') return outcome;
         return { status: 'failed', recording: outcome.recording, reason: 'policy_revoked' };
       }
+      // A stopped capture that could not be saved is not a capture failure.
+      const reason = artifact ? 'media_persistence_failed' as const : 'capture_failed' as const;
       const failed = parseRecordingSession({
         ...recording,
         status: 'failed',
-        outcomeReason: 'capture_failed',
+        outcomeReason: reason,
         stoppedAtMs: stopInput.stoppedAtMs ?? now(),
         durationMs: durationFrom(recording, stopInput.stoppedAtMs ?? now()),
         mediaRef: undefined,
       });
       await putRecording(failed, false);
-      return { status: 'failed', recording: failed, reason: 'capture_failed' };
+      return { status: 'failed', recording: failed, reason };
     } finally {
       if (artifact?.cleanup) await artifact.cleanup();
     }

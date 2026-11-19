@@ -58,7 +58,7 @@ export const requesterActionContext = Symbol('admittedRequesterAccountActionCont
 
 /** Session issuers already own Account custody without an ingress settings lifetime. */
 export type RequesterAccountActionTransportContext = Pick<RequesterAccountActionContext,
-  'authorization' | 'credentials' | 'isCurrent' | 'resolveEncryption'>;
+  'authorization' | 'credentials' | 'serverHttpBaseUrl' | 'isCurrent' | 'resolveEncryption'>;
 
 function readRequesterAccountCarrierContext(authorization?: ExternalActionExecutionAuthorizationV1):
   RequesterAccountActionContext | RequesterAccountActionTransportContext | null {
