@@ -1382,7 +1382,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const receiptId = `platform-receipt-${scenario.replaceAll(' ', '-')}`;
@@ -1409,6 +1409,7 @@ describe('installed deployment storage and target composition', () => {
         const domainState = vercelActiveDomainAdd ? 'active' as const : 'warning' as const;
         const nativeDomainRequests: { method: string; path: string }[] = [];
         const domainRole = domainTeardown || domainRemove ? 'domains.remove' as const : domainAdd ? 'domains.add' as const : 'domains.verify' as const;
+        const confirmedUpload = scenario === 'confirmed repository upload';
         const rootSource = scenario.startsWith('root source ');
         const rootSourceForeign = scenario === 'root source foreign';
         const rootApproval = scenario.startsWith('root source approval ');
@@ -1731,7 +1732,7 @@ describe('installed deployment storage and target composition', () => {
             let nativeReads = 0;
             let candidatesCreated = 0;
             vi.spyOn(axios, 'request').mockImplementation(async request => {
-                if ((scenario === 'compact repository missing SCM provider' || rootSource) && new URL(request.url!).pathname === `/v1/projects/sources/${environment.environment.projectSourceId}`) return { status: 200,
+                if ((scenario === 'compact repository missing SCM provider' || rootSource || confirmedUpload) && new URL(request.url!).pathname === `/v1/projects/sources/${environment.environment.projectSourceId}`) return { status: 200,
                     data: { ok: true, canManage: true, source: { id: environment.environment.projectSourceId, revision: 1,
                         name: 'Repository without attachment', audience: [], createdByAccountId: 'owner', attachments: [],
                         repository: { protocol: 'https', provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
@@ -1769,7 +1770,7 @@ describe('installed deployment storage and target composition', () => {
             });
             vi.spyOn(axios, 'post').mockImplementation(async (url, value) => {
                 if (url.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
-                if (new URL(url).pathname.startsWith('/v1/account/project-rows/')) return projectAccountRowsReadHttpResponse(rootSource
+                if (new URL(url).pathname.startsWith('/v1/account/project-rows/')) return projectAccountRowsReadHttpResponse(rootSource || confirmedUpload
                     ? [createPlainProjectAccountRefRow({ id: 'root-source-workspace', serverId: 'home', machineId: 'machine-a',
                         rootPath: '/root-source-checkout', createdAtMs: 1,
                         source: { sourceId: rootSourceIntent.projectSourceId, revision: rootSourceIntent.sourceRevision } })] : [], url, value);
@@ -1825,6 +1826,53 @@ describe('installed deployment storage and target composition', () => {
                     return lease;
                 },
                 runtime: { async acquire() { throw new Error('Platform must not acquire native execution'); } } });
+            if (confirmedUpload) {
+                environment.content.definition = { kind: 'repository', ref: 'main', compose: rootSourceIntent.compose };
+                put(environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content);
+                row.content = { ...row.content, sourceMethod: 'upload' };
+                put(row.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, row.content);
+                const actionId = 'deployments.deploy';
+                const input = { serverId: 'home', environmentId: environment.environment.id,
+                    targetLinkId: row.targetLink.id, sha: rootSourceIntent.sha };
+                const target = { kind: 'machine' as const, machineId: 'machine-a' };
+                const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
+                const makeContext = async (requestId: string, retain?: NonNullable<
+                    ExternalActionExecutionAuthorizationV1['binding']['deploymentCandidatePublication']>) => {
+                    const envelope = { v: 1 as const, requestId, target, input };
+                    const requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(envelope);
+                    const publication = retain ?? createDeploymentCandidatePublicationV1({ accountId: 'owner', serverIdentityId: 'home',
+                        actionId, requestId, requestEnvelopeDigest, environmentId: input.environmentId,
+                        source: { id: environment.environment.projectSourceId, revision: 1 } });
+                    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'upload-root', binding: {
+                        serverIdentityId: 'home', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+                        admittedMachineRole: 'manage', custodianAccountId: 'owner', machineId: 'machine-a', installationId: 'installation-a',
+                        actionId, requestId, requestEnvelopeDigest, target, accountEncryptionMode: 'plain',
+                        deploymentCandidatePublication: publication,
+                    } });
+                    const requester = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
+                        machineId: 'machine-a', installationId: 'installation-a', installationPrivateKey: identity.secretKey,
+                        serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://platform.test',
+                        ownCredentials: credentials, isCurrent: async () => true, createExecutor: () => executor });
+                    if (!requester) throw new Error('Expected signed upload custody');
+                    onTestFinished(() => requester.dispose());
+                    const context = { ...ownerContext, serverId: 'home', serverIdentityId: 'home', actionRequestId: requestId,
+                        runtimeAccountId: 'owner', originalActionEnvelope: envelope, externalActionTarget: target,
+                        externalActionExecutionAuthorization: requester.authorization };
+                    return { context, publication };
+                };
+                const first = await makeContext('review-upload');
+                const reviewed = await deps.prepareDeploymentAction({ actionId, input, context: first.context });
+                expect(reviewed).toMatchObject({ input: { contentArtifactId: first.publication.contentArtifactId },
+                    preview: { sourceMethod: 'upload', sourceIntent: { sha: input.sha } },
+                    hostReviewedChildren: { children: [{ role: 'uploadDeploy' }, { role: 'observe' }] } });
+                if (!('input' in reviewed)) throw new Error(JSON.stringify(reviewed));
+                const { contentArtifactId, contentHeaderVersion, contentBodyVersion } = reviewed.input;
+                const confirm = await makeContext('confirm-upload', { ...first.publication,
+                    reviewed: { contentArtifactId, contentHeaderVersion, contentBodyVersion } });
+                await expect(deps.prepareDeploymentAction({ actionId, input: reviewed.input, context: confirm.context })).resolves.toEqual(reviewed);
+                expect(candidatesCreated).toBe(1);
+                return;
+            }
             if (providerTeardown) {
                 const denied = scenario === 'provider teardown denied';
                 if (scenario === 'provider teardown created default') {
@@ -4042,6 +4090,16 @@ describe('installed deployment storage and target composition', () => {
                 revision: { kind: 'stored', contentRevision: 4 },
                 replaces: { deploymentId: servingDestination.deployment.id, revision: { kind: 'stored', contentRevision: 3 } },
             } });
+            if (form === 'simple') {
+                const receiptCandidate = { ...documents.get(prepared.input.contentArtifactId) };
+                const destinationCandidate = { ...candidateRow };
+                const reopened = await deps.prepareDeploymentAction({ actionId: 'deployments.promote', context: ownerContext,
+                    input: prepared.input });
+                expect(reopened).toEqual(prepared);
+                expect(createdIds.size).toBe(2);
+                expect(documents.get(prepared.input.contentArtifactId)).toEqual(receiptCandidate);
+                expect(documents.get(prepared.input.destinationContent.contentArtifactId)).toEqual(destinationCandidate);
+            }
             expect((await docker.readInvocations()).some(invocation => invocation.args.includes('up') || invocation.args.includes('build'))).toBe(false);
         } finally { await mounted.dispose(); await rm(root, { recursive: true, force: true }); }
     });
@@ -5568,9 +5626,48 @@ describe('installed deployment storage and target composition', () => {
                 // change only the installed tool's reported version.
                 await writeFile(docker.executablePath, executable.replace('2.39.4', '2.40.1'));
             }
-            const replay = await deps.prepareDeploymentAction({ actionId: preparation.actionId, input: prepared.input, context: nativeReviewContext });
+            let replayContext: typeof preparationContext = nativeReviewContext;
+            const originalAuthorization = preparationContext.externalActionExecutionAuthorization;
+            const publication = originalAuthorization?.binding.deploymentCandidatePublication;
+            if (originalAuthorization && publication && (selection === 'compact exact SHA' || selection.startsWith('retained rollback intent'))) {
+                const requestId = 'confirmed-native-review';
+                const rootInput = rollbackSelection ? compactRollbackInput : compactInput;
+                const target = { kind: 'machine' as const, machineId: 'machine-a' };
+                const binding = { ...originalAuthorization.binding, requestId, target };
+                const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({
+                    projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: {
+                        serverIdentityId: homeServerIdentityId, accountId: 'owner', requestId, target,
+                        actionId: preparation.actionId, authentication: { kind: 'account', tokenEpoch: 1 },
+                    }, input: rootInput, material: { type: 'dataKey', machineKey },
+                    randomBytes: length => new Uint8Array(randomBytes(length)),
+                }) : { v: 1 as const, requestId, target, input: rootInput };
+                const { contentArtifactId, contentHeaderVersion, contentBodyVersion } = prepared.input;
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'confirmed-native-root',
+                    binding: { ...binding, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                        deploymentCandidatePublication: { ...publication, reviewed: {
+                            contentArtifactId, contentHeaderVersion, contentBodyVersion,
+                        } },
+                    } });
+                const admitted = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
+                    machineId: 'machine-a', installationId: 'installation-a', installationPrivateKey: keys.secretKey,
+                    serverId: 'home', serverIdentityId: homeServerIdentityId, serverHttpBaseUrl: 'https://home.test', ownCredentials: credentials,
+                    isCurrent: async () => requesterCurrent, createExecutor: () => executor });
+                if (!admitted) throw new Error('Expected confirmed candidate custody');
+                onTestFinished(() => admitted.dispose());
+                replayContext = { ...preparationContext, actionRequestId: requestId,
+                    externalActionExecutionAuthorization: admitted.authorization, originalActionEnvelope: envelope };
+            }
+            const replay = await deps.prepareDeploymentAction({ actionId: preparation.actionId, input: prepared.input, context: replayContext });
             await nativePhase('replay-ready');
             expect(replay).toMatchObject({ input: prepared.input });
+            if (replayContext !== nativeReviewContext) {
+                expect(replay).toMatchObject({ preview: prepared.preview });
+                expect(documents.get(prepared.input.contentArtifactId)).toEqual(candidateDocument);
+                environment.targetLinks[0].targetLink.revision++;
+                await expect(deps.prepareDeploymentAction({ actionId: preparation.actionId, input: prepared.input, context: replayContext }))
+                    .resolves.toMatchObject({ ok: false, errorCode: 'approval_stale' });
+                environment.targetLinks[0].targetLink.revision--;
+            }
             if (selection === 'native tool version changes') {
                 expect(replay).toHaveProperty('preview.environment.id', environment.environment.id);
                 expect(reviewedContent.content).toHaveProperty('ownServer.approvedInputBasis.toolVersion', '2.39.4');

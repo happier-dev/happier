@@ -42,7 +42,8 @@ import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, 
   DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1,
   DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
-  DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, isDeploymentPromoteActionIdV1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+  DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, isDeploymentPromoteActionIdV1, isDeploymentRolloutActionIdV1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DeploymentReviewedCandidateV1Schema } from '../deployments/deploymentCandidatePublicationV1.js';
 import { DeploymentReadAdmissionV1Schema, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
   type DeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
 export { DeploymentReadAdmissionV1Schema, isDeploymentNativeReadActionIdV1, isDeploymentReadActionIdV1, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
@@ -1452,6 +1453,12 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionAccountServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionTerminalServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
 ]).check(z.superRefine((value, context) => {
+  const publication = value.deploymentCandidatePublication;
+  if (publication?.reviewed && (!isDeploymentRolloutActionIdV1(value.actionId)
+    || publication.reviewed.contentArtifactId !== publication.contentArtifactId
+    || (publication.reviewed.destinationContent !== undefined) !== isDeploymentPromoteActionIdV1(value.actionId))) {
+    context.addIssue({ code: 'custom', path: ['deploymentCandidatePublication'], message: 'Reviewed custody binds only the exact rollout candidate.' });
+  }
   const projectDefaults = value.projectSessionDefaultsAdmission;
   if (projectDefaults ? (value.actionId !== PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1
     && value.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 && value.actionId !== BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1)
@@ -1515,7 +1522,7 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   if (value.deploymentLinkAdmission && (value.actionId !== 'deployments.targets.link' || value.target.kind !== 'machine')) {
     context.addIssue({ code: 'custom', path: ['deploymentLinkAdmission'], message: 'Link preparation binds its admitted Environment and owner.' });
   }
-  if (value.deploymentCandidatePublication && (!['deployments.deploy', 'deployments.rollback', 'deployments.promote', 'deployments.teardown'].includes(value.actionId)
+  if (value.deploymentCandidatePublication && (deploymentOperationForRootActionV1(value.actionId) === undefined
     || value.target.kind !== 'machine' || value.target.machineId !== value.machineId
     || (value.deploymentCandidatePublication.environmentContentArtifactId !== undefined) !== (value.actionId === 'deployments.promote'))) {
     context.addIssue({ code: 'custom', path: ['deploymentCandidatePublication'], message: 'Candidate publication binds its exact native root.' });
@@ -1779,6 +1786,7 @@ type ExternalActionExecutionAuthorizationRequestShapeV1 = {
   machineId: typeof ExternalActionTargetIdV1Schema;
   envelope: typeof ExternalActionRequestEnvelopeSchema;
   executionAuthorization: z.ZodMiniOptional<typeof ExternalActionExecutionAuthorizationV1Schema>;
+  deploymentReview: z.ZodMiniOptional<typeof DeploymentReviewReentryV1Schema>;
   nativeCredentialSpawnChild: z.ZodMiniOptional<typeof ExternalActionNativeCredentialSpawnChildV1Schema>;
   sessionActionOrigin: z.ZodMiniOptional<typeof SessionActionRpcOriginV1Schema>;
   sessionActionSource: z.ZodMiniOptional<typeof ExternalActionSessionSourceV1Schema>;
@@ -1795,10 +1803,16 @@ type ExternalActionExecutionAuthorizationRequestShapeV1 = {
   }, z.core.$strict>>;
 };
 
+const DeploymentReviewReentryV1Schema = lazyZodSchema(() => z.strictObject({
+  originalAuthorizationToken: ExternalActionExecutionAuthorizationV1Schema.shape.token,
+  candidate: DeploymentReviewedCandidateV1Schema,
+}));
+
 function externalActionExecutionAuthorizationRequestSchemaV1(actionId?: 'session.board.item.upsert'): z.ZodMiniObject<ExternalActionExecutionAuthorizationRequestShapeV1, z.core.$strict> {
   return z.strictObject({
   v: z.literal(1), machineId: ExternalActionTargetIdV1Schema, envelope: ExternalActionRequestEnvelopeSchema,
   executionAuthorization: z.optional(ExternalActionExecutionAuthorizationV1Schema),
+  deploymentReview: z.optional(DeploymentReviewReentryV1Schema),
   nativeCredentialSpawnChild: z.optional(ExternalActionNativeCredentialSpawnChildV1Schema),
   sessionActionOrigin: z.optional(SessionActionRpcOriginV1Schema),
   sessionActionSource: z.optional(ExternalActionSessionSourceV1Schema),
@@ -1816,7 +1830,7 @@ function externalActionExecutionAuthorizationRequestSchemaV1(actionId?: 'session
   if (value.executionAuthorization && (value.sessionActionOrigin || value.sessionActionSource
     || value.workflowActionOrigin && !value.installationProof || value.installationProof && !value.workflowActionOrigin
     || value.managedContinuation || value.handoffContinuation || value.handoffPreflight
-    || value.nativeCredentialSpawnChild)) {
+    || value.nativeCredentialSpawnChild || value.deploymentReview)) {
     context.addIssue({ code: 'custom', path: ['executionAuthorization'], message: 'An admitted relay cannot author fresh origin or continuation claims' });
   }
   if (value.nativeCredentialSpawnChild && (value.sessionActionOrigin || value.sessionActionSource || value.workflowActionOrigin

@@ -25,6 +25,8 @@ import { SIGNED_ROOT_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, SignedRootActi
 import type { ActionExecuteResult, ActionExecutorContext, ExternalActionResponseEnvelopeV1, ExternalActionTargetV1, PreparedExternalActionResponseEnvelope, ExternalActionEncryptionBindingV2, ExternalActionExecutionAuthorizationV1, ExternalActionServerPrincipalV1, SignedRootActionId } from '@happier-dev/protocol/actions';
 import type { ActionStartDiagnosticV1 } from '@happier-dev/protocol/actions/executor/actionStartDiagnostics';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectDeploymentReviewedCandidateV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import type { HostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { invokeAdmittedReviewedChild } from './managedReviewedChild';
@@ -1109,6 +1111,16 @@ async function executeExternalActionRequest(input: Readonly<{
         error: errorCode,
       }),
     });
+  }
+  const reviewedCandidate = context.externalActionExecutionAuthorization?.binding.deploymentCandidatePublication?.reviewed;
+  if (!internalExecution.ok && reviewedCandidate
+    && (internalExecution.errorCode === 'action_interactive_review_required' || internalExecution.errorCode === 'approval_stale')) {
+    const details = readRecord(internalExecution.details);
+    const current = projectDeploymentReviewedCandidateV1(readRecord(details.review).actionArgs);
+    logger.warn('[deployment.review.refused]', { reasonCode: internalExecution.errorCode,
+      reviewedCandidateId: reviewedCandidate.contentArtifactId, currentCandidateId: current?.contentArtifactId,
+      reviewedDigest: context.presentUserConfirmation?.reviewDigest,
+      currentDigest: typeof details.reviewDigest === 'string' ? details.reviewDigest : undefined });
   }
   if (!internalExecution.ok && internalExecution.errorCode === 'target_unavailable' && !actionRefusalWitnessed) {
     const details = internalExecution.details && typeof internalExecution.details === 'object'

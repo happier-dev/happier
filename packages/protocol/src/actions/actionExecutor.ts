@@ -81,7 +81,8 @@ import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreview
 export { buildApprovalPreviewSummary, projectPreparedActionOperation } from './executor/approvalPreparation.js';
 import { resolveApprovalOriginForRequest, projectActionApprovalOrigin, projectActionObservationContext, resolveApprovalRequestingSessionId, projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1, isApprovalActionId, isApprovalRequestActionReplayAdmitted, isBlockingApprovalRequest } from './executor/approvalOrigins.js';
 import { isPresentUserApprovalDecisionForOrigin, resolveMachineServiceLogsApprovalLifetime } from './executor/approvalOrigins.js';
-import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentRolloutActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { projectDeploymentReviewedCandidateV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import { prepareApprovalReplayAuthorization, resolveRetainedLogsReplayContext } from './executor/approvalReplayAuthorization.js';
 import { observeApprovalReplayOutcome, settleApprovalDecisionFailure } from './executor/approvalDecisionFailure.js';
 import { createConfidentialApprovalContinuation } from './executor/confidentialContinuation.js';
@@ -2802,12 +2803,31 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     let deploymentReview: JsonValue | undefined = retainedDeploymentReview;
     let preparedHostReviewedChildren: HostReviewedChildrenPreparationV1 | undefined;
     let observePendingOperation = existingAdmission?.observePendingOperation;
+    const deploymentAuthorization = ctx.externalActionExecutionAuthorization;
+    const authorizedCandidate = deploymentAuthorization?.binding.deploymentCandidatePublication?.reviewed;
+    const confirmation = ctx.presentUserConfirmation;
+    const compactRollout = confirmation?.reviewDigest !== undefined && readDeploymentRolloutSemanticInput(actionId, semanticInput);
+    let deploymentConfirmation: ReturnType<typeof admitPresentUserConfirmationV1> = null;
+    if (!existingAdmission && (authorizedCandidate !== undefined || confirmation?.reviewedDeploymentInput !== undefined || compactRollout)) {
+      const reviewed = spec.inputSchema.safeParse(confirmation?.reviewedDeploymentInput);
+      const candidate = reviewed.success ? projectDeploymentReviewedCandidateV1(reviewed.data) : undefined;
+      if (!compactRollout || isSharedRequesterActionV1(ctx)
+        || !reviewed.success || !candidate || (deploymentAuthorization && !sameStrictJsonValue(candidate, authorizedCandidate)))
+        return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', effectAttempted: false };
+      if (readRecord(reviewed.data).environmentId !== readRecord(semanticInput).environmentId
+        || readRecord(reviewed.data).serverId !== readRecord(semanticInput).serverId)
+        return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', effectAttempted: false };
+      deploymentConfirmation = admitPresentUserConfirmationV1(actionId, semanticInput, ctx);
+      if (!deploymentConfirmation)
+        return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', effectAttempted: false };
+      admittedInput = reviewed.data;
+    }
     if ((!existingAdmission || actionId === 'deployments.templates.instantiate' && !existingAdmission.executeAdmittedAction) && (actionId === 'machines.setup.apply' && deps.prepareMachineSetupApply
       || actionId === 'deployments.templates.instantiate' && deps.prepareDeploymentTemplateInstantiation && readRecord(admittedInput).mode === 'apply'
       || actionId === 'deployments.environments.create' && deps.prepareDeploymentEnvironmentCreate
       || actionId === 'deployments.backups.restore' && deps.prepareDeploymentRestore
       || actionId === 'deployments.teardown' && deps.prepareDeploymentTeardown
-      || (actionId === 'deployments.deploy' || actionId === 'deployments.rollback' || actionId === 'deployments.promote') && deps.prepareDeploymentAction)) {
+      || isDeploymentRolloutActionIdV1(actionId) && deps.prepareDeploymentAction)) {
       const admittedChildBeforePreparation = isHostAdmittedReviewedChildPolicyV1(
         readHostReviewedChildOperationV1(ctx, actionId, admittedInput), actionId, admittedInput);
       const prepared = await readDeploymentPreparation(deps, actionId, admittedInput, ctx, retainedDeploymentReview,
@@ -3498,7 +3518,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // Confirm binds the admitted intent. Trusted preparation can add resolved
     // revisions/content without asking the person to approve that same intent again.
     const nativeConfirmation = !existingAdmission && !sharedRequesterRequest
-      ? admitPresentUserConfirmationV1(actionId, semanticInput, ctx) : null;
+      ? deploymentConfirmation ?? admitPresentUserConfirmationV1(actionId, semanticInput, ctx) : null;
     // A confirmation answering this host's carried review admits only those consequences (checked below).
     const confirmedReviewDigest = nativeConfirmation ? ctx.presentUserConfirmation?.reviewDigest : undefined;
     if (!existingAdmission) admittedInput = materializeSessionCreationActionInput(actionId,

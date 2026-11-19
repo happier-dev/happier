@@ -903,6 +903,7 @@ export function registerExternalActionRoutes(
                                 ?? (actionId.data === 'machines.managed.acquire' ? readExternalActionManagedAcquireAdmission(body.data.envelope)?.input : undefined)
                             : { environmentId: deploymentMetadataEnvironmentId },
                     deploymentNativeAdmission,
+                    deploymentReview: body.data.deploymentReview,
                     deploymentLinkEnvironmentId,
                     workspaceSyncAdmission: body.data.envelope.v === 2 ? body.data.envelope.workspaceSyncAdmission : undefined,
                     sessionSpawnInputKind: body.data.envelope.v === 1 ? 'public_api' : 'canonical_admission',
@@ -917,6 +918,7 @@ export function registerExternalActionRoutes(
                     if (error.code === 'credential_scope_denied' && error.details !== undefined) {
                         const projected = projectExternalActionHttpError(error.code);
                         return sendExternalActionJson(reply, projected.statusCode, { ...projected.payload,
+                            requestId: body.data.envelope.requestId,
                             details: error.details, ...(error.failureCause ? { failureCause: error.failureCause } : {}) });
                     }
                     return sendExternalActionHttpError(reply, error.code, body.data.envelope.requestId);

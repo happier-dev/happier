@@ -411,6 +411,7 @@ export type ExternalActionGrantEvaluationContext = Readonly<{ input?: unknown;
     deploymentLinkEnvironmentId?: string;
     workspaceSyncAdmission?: WorkspaceSyncAdmissionInputV1;
     deploymentNativeAdmission?: ReturnType<typeof projectDeploymentNativeAdmissionV1>;
+    deploymentReview?: import('@happier-dev/protocol/actions/externalActionApi').ExternalActionExecutionAuthorizationRequestV1['deploymentReview'];
     sessionSpawnInputKind?: 'public_api' | 'canonical_admission';
     resolveCurrentSessionMachine?: (input: Readonly<{ accountId: string; sessionId: string }>) => Promise<string | null>;
 }>;
@@ -712,6 +713,7 @@ class AuthModule {
         const automationId = input.actionId === 'workflow.trigger.run_now' && typeof inputRecord?.automationId === 'string'
             ? inputRecord.automationId : undefined;
         const nativeAdmission = context.deploymentNativeAdmission ?? projectDeploymentNativeAdmissionV1(input.actionId, context.input);
+        if (input.deploymentCandidatePublication !== undefined) throw refuse('deployment_candidate_publication_supplied');
         const domainRoot = isDeploymentDomainChildActionIdV1(input.actionId);
         const ingressUpdateRoot = input.actionId === 'deployments.environments.update'
             && isDeploymentEnvironmentUpdateNativeAdmissionV1(nativeAdmission);
@@ -745,6 +747,25 @@ class AuthModule {
                     failureCause: environment.placement?.failureCause });
             }
             nativeSource = environment.source;
+        }
+        const reviewedCandidate = context.deploymentReview;
+        let reviewedPublication;
+        if (reviewedCandidate) {
+            if (!('authentication' in input) || input.authentication.kind !== 'account'
+                || input.sessionActionOrigin || input.workflowActionOrigin || !nativeAdmission || !nativeSource) {
+                throw refuse('deployment_review_context');
+            }
+            const original = await this.verifyExternalActionExecutionAuthorization(reviewedCandidate.originalAuthorizationToken);
+            const { admitReviewedDeploymentCandidateInTx } = await import('@/app/deployments/deploymentPreparationAuthorization');
+            const admittedCandidate = await inTx(tx => admitReviewedDeploymentCandidateInTx(tx, {
+                request: input, installationId: machine.installationId!, original, candidate: reviewedCandidate.candidate,
+                environmentId: nativeAdmission.environmentId, source: nativeSource,
+            }));
+            if (!admittedCandidate) throw refuse('deployment_review_candidate');
+            if (admittedCandidate === 'stale') throw refuse('deployment_review_stale', 'credential_scope_denied', {
+                details: { deploymentReview: 'stale' },
+            });
+            reviewedPublication = admittedCandidate;
         }
         let metadataEnvironmentId: string | undefined;
         try {
@@ -856,7 +877,8 @@ class AuthModule {
                 || nativeMemberRoot && nativeAdmission && 'kind' in nativeAdmission
                     && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore' || nativeAdmission.kind === 'backup'))
                 ? { deploymentNativeAdmission: nativeAdmission } : {}),
-            ...(nativeAdmission && nativeSource && !domainRoot && !nativeMemberRoot && !ingressUpdateRoot && !configureRoot && !telemetryRoot ? { deploymentCandidatePublication: createDeploymentCandidatePublicationV1({
+            ...(reviewedPublication ? { deploymentCandidatePublication: reviewedPublication }
+                : nativeAdmission && nativeSource && !domainRoot && !nativeMemberRoot && !ingressUpdateRoot && !configureRoot && !telemetryRoot ? { deploymentCandidatePublication: createDeploymentCandidatePublicationV1({
                 ...input, environmentId: nativeAdmission.environmentId, source: nativeSource,
             }) } : {}),
             accountEncryptionMode: accountMode.encryptionMode,

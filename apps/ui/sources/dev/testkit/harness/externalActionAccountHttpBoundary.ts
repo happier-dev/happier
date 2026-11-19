@@ -251,7 +251,14 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                         machineId: machine.id, installationId: machine.installationId!, role: machine.access.role,
                         encryptionMode: machine.access.resourceMode },
                 } : undefined;
-                const deploymentCandidatePublication = params.deploymentSource && native && !deploymentNativeAdmission
+                const originalPublication = request.deploymentReview
+                    ? roots.get(request.deploymentReview.originalAuthorizationToken)?.binding.deploymentCandidatePublication : undefined;
+                if (request.deploymentReview && originalPublication?.contentArtifactId !== request.deploymentReview.candidate.contentArtifactId) {
+                    return Response.json({ error: 'credential_scope_denied' }, { status: 403 });
+                }
+                const deploymentCandidatePublication = request.deploymentReview && originalPublication
+                    ? { ...originalPublication, reviewed: request.deploymentReview.candidate }
+                    : params.deploymentSource && native && (!deploymentNativeAdmission || native.kind === 'promote')
                     ? createDeploymentCandidatePublicationV1({ ...params, requestId: envelope.requestId!, requestEnvelopeDigest,
                         environmentId: native.environmentId, source: params.deploymentSource }) : undefined;
                 const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({

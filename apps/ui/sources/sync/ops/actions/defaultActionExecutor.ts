@@ -237,6 +237,8 @@ import type { ApiTokenDeploymentAuthoringHost } from '@happier-dev/protocol/acti
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { completeUiProjectOpenResult } from './projectOpenResult';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
+import { projectDeploymentReviewedCandidateV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
+import { readDeploymentRolloutSemanticInput } from '@happier-dev/protocol/actions/executor/approvalPreparation';
 import { createUiLanguageIntelligenceApplyAction, createUiWorkspaceFileReplaceAction } from './workspaceFileReplaceAction';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '@/sync/domains/session/spawn/spawnSessionRpcTimeout';
 import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -1098,6 +1100,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   };
   const executeMachineOwnedAction = async (args: Readonly<{
     actionId: string; input: unknown; context: ActionExecutorContext; confirmInFlow?: boolean; reviewDigest?: string;
+    reviewedDeploymentInput?: unknown;
+    deploymentReview?: Parameters<typeof executeOriginalAccountMachineAction>[0]['deploymentReview'];
+    onDeploymentCandidateAuthorized?: (token: string) => void;
   }>) => {
     if (isDeploymentAccountMachineTransportActionIdV1(args.actionId)) {
       if (!deploymentActionDeps?.deploymentAction) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
@@ -1200,7 +1205,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     const machineId = requestedMachineId ?? mountedMachineId;
     if (!accountContext || !machineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
     const addressedContext = { ...args.context, externalActionTarget: args.context.externalActionTarget ?? { kind: 'machine' as const, machineId } };
-    const context = args.confirmInFlow ? bindPresentUserActionConfirmation(ActionIdSchema.parse(args.actionId), args.input, addressedContext, args.reviewDigest) : addressedContext;
+    const context = args.confirmInFlow ? bindPresentUserActionConfirmation(ActionIdSchema.parse(args.actionId), args.input, addressedContext,
+      args.reviewDigest, args.reviewedDeploymentInput) : addressedContext;
     if (isSessionSpawnNewActionIdV1(args.actionId)) {
       const input = SessionSpawnNewActionInputV2Schema.safeParse(args.input);
       if (!input.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
@@ -1235,6 +1241,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       actionCaller: context.actionCaller,
       machineTarget: context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : undefined,
       ...(invocation ? { invocation } : {}),
+      ...(args.deploymentReview ? { deploymentReview: args.deploymentReview } : {}),
+      ...(args.onDeploymentCandidateAuthorized ? { onDeploymentCandidateAuthorized: args.onDeploymentCandidateAuthorized } : {}),
       ...(context.invocationServices?.managedContinuation ? { managedContinuation: context.invocationServices.managedContinuation } : {}),
       ...(args.actionId === 'machines.services.logs.read' && args.context.machineServiceLogsResource
         ? { machineServiceLogsGeneration: { expectedGeneration: args.context.machineServiceLogsResource.expectedGeneration } }
@@ -5217,7 +5225,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if ('errorCode' in home) return home;
       input = home.input;
     }
-    return executeMachineActionAtDaemon(actionId, input, context, async (actionInput, reviewDigest) => {
+    let originalDeploymentAuthorization: string | undefined;
+    return executeMachineActionAtDaemon(actionId, input, context, async (actionInput, reviewDigest, reviewedDeploymentInput) => {
       // The relay's boundary has admitted the caller and parsed authoring input.
       // Settle omissions once; a carried review reuses these same captured facts.
       if (!reviewDigest && isSessionSpawnNewActionIdV1(actionId) && deps.prepareSessionSpawnNewInput) {
@@ -5231,11 +5240,20 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           throw error;
         }
       }
+      if (!reviewDigest) return executeMachineOwnedAction({ actionId, input: actionInput, context, confirmInFlow,
+        ...(readDeploymentRolloutSemanticInput(actionId, actionInput) ? {
+          onDeploymentCandidateAuthorized: token => { originalDeploymentAuthorization = token; },
+        } : {}) });
+      const candidate = reviewedDeploymentInput === undefined ? undefined : projectDeploymentReviewedCandidateV1(reviewedDeploymentInput);
+      if (reviewedDeploymentInput !== undefined && (!candidate || !originalDeploymentAuthorization)) {
+        return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', effectAttempted: false };
+      }
       // A Session draft's attempt ID also identifies its reviewed sandbox acquire.
-      return reviewDigest
-        ? executeMachineOwnedAction({ actionId, input: actionInput, context: isSessionSpawnNewActionIdV1(actionId) ? context : freshRequest(context),
-            confirmInFlow: true, reviewDigest })
-        : executeMachineOwnedAction({ actionId, input: actionInput, context, confirmInFlow });
+      const confirmedContext = isSessionSpawnNewActionIdV1(actionId) ? context : freshRequest(context);
+      return executeMachineOwnedAction({ actionId, input: actionInput, context: confirmedContext, confirmInFlow: true,
+        reviewDigest, reviewedDeploymentInput,
+        ...(candidate && originalDeploymentAuthorization ? { deploymentReview: { candidate,
+          originalAuthorizationToken: originalDeploymentAuthorization } } : {}) });
     }, deps.presentUserActionConfirmation);
   };
 

@@ -19,6 +19,7 @@ import { DeploymentBackupRestoreInputV1Schema, DeploymentBackupRestorePrepareInp
   DeploymentBackupRestoreConfirmInputV1Schema, DeploymentBackupRestoreRecoverInputV1Schema } from './deploymentBackupRestoreV1.js';
 import { DeploymentRestartInputV1Schema } from './deploymentRestartV1.js';
 import { defineStoredReadProjection } from '../json/storedReadSchema.js';
+import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
 
 /** Home needs only this non-content Environment fact from an encrypted native root. */
 export const DeploymentDomainNativeAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
@@ -192,9 +193,20 @@ export function projectDeploymentNativeAdmissionV1(actionId: string, input: unkn
   return DeploymentNativeAdmissionV1Schema.parse({ environmentId: readRecord(input).environmentId });
 }
 
+/** Public pins only. Compact intent and the prepared arguments stay in requester custody. */
+export const DeploymentReviewedCandidateV1Schema = lazyZodSchema(() => z.strictObject({
+  ...DeploymentArtifactContentReferenceV1Schema.shape,
+  destinationContent: z.optional(DeploymentArtifactContentReferenceV1Schema),
+}));
+
+export function projectDeploymentReviewedCandidateV1(input: unknown) {
+  return z.object(DeploymentReviewedCandidateV1Schema.shape).safeParse(input).data;
+}
+
 /** Issued by the shared root mint, never supplied as Artifact ownership evidence. */
 export const DeploymentCandidatePublicationV1Schema = lazyZodSchema(() => z.strictObject({
   environmentId: id, source: z.strictObject({ id, revision }), contentArtifactId: id, environmentContentArtifactId: z.optional(id),
+  reviewed: z.optional(DeploymentReviewedCandidateV1Schema),
 }));
 
 function publicationArtifactId(digest: string): string {

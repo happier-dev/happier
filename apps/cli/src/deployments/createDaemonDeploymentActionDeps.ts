@@ -2087,7 +2087,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             catch (error) { return failure(errorCode(error), error); }
         },
         resolveEnvironmentApprovalScope: storageDeps.resolveEnvironmentApprovalScope,
-        async resolveServiceExportBinding(binding: TcpTunnelServiceExportBindingV1, signal: AbortSignal): Promise<TcpTunnelServiceExportBindingV1 | null> {
+        async resolveServiceExportBinding(binding: TcpTunnelServiceExportBindingV1, signal: AbortSignal) {
             const identity = readInstallationIdentityIfExistsSync();
             if (!identity || !host.acquirePluginRuntimeRegistryLease) return null;
             signal.throwIfAborted();
@@ -2103,7 +2103,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     kind: 'applied', exportKey: binding.exportKey, machineId: host.machineId, installationId: identity.installationId,
                     exports: handle.appliedServiceExports ?? [], row: owner.machineServiceRows.read(handle), signal,
                 });
-                return admission.kind === 'iroh' ? admission.serviceExport : null;
+                return admission.kind === 'iroh' ? { binding: admission.serviceExport, retirementSignal: handle.retirementSignal } : null;
             } catch (error) {
                 signal.throwIfAborted();
                 if (error instanceof Error && 'code' in error && error.code === 'reference_unavailable') return null;
@@ -2142,8 +2142,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         async prepareDeploymentAction(originalRequest: DaemonDeploymentPreparationRequest): Promise<DaemonDeploymentPreparationResult> {
             try {
                 const originalInput = originalRequest.input;
-                const recovery = await recoverInterruptedReceipt(originalRequest.actionId, originalInput, originalRequest.context);
-                if (recovery) return recovery;
+                const reviewedReentry = originalRequest.context.externalActionExecutionAuthorization?.binding.deploymentCandidatePublication?.reviewed;
+                if (!reviewedReentry) {
+                    const recovery = await recoverInterruptedReceipt(originalRequest.actionId, originalInput, originalRequest.context);
+                    if (recovery) return recovery;
+                }
                 const parent = originalRequest.context.hostReviewedChild?.parent;
                 const reviewedCreate = readHostAdmittedReviewedParentV1(originalRequest.context.hostReviewedChild);
                 const forkDeployment = reviewedCreate?.actionId === 'deployments.environments.create'
@@ -2160,6 +2163,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         && parent.input.requestKey === originalInput.requestKey;
                 const replayingDeployment = originalRequest.context.approvedActionReplay && !templateDeployment && !forkDeployment;
                 const authorsCandidate = !('contentArtifactId' in originalInput);
+                if (reviewedReentry && authorsCandidate) return failure('approval_stale');
                 let preparationEnvironment: DeploymentEnvironmentDetailV1 | undefined;
                 let preparationPromotion: Awaited<ReturnType<typeof readStoredPromotionCandidateForHost>> | undefined;
                 let preparedCandidate: Readonly<{ title: string; content: DeploymentContentV1 }> | undefined;
@@ -2272,7 +2276,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const candidate = preparedCandidate ? { ok: true as const, ...preparedCandidate }
                     : readDeploymentReceiptArtifactV1(request.input, await open(request.input.contentArtifactId,
                         request.context, candidateArtifactAuthorization(request.context)));
-                if (!candidate.ok) return failure(candidate.error, candidate);
+                if (!candidate.ok) return reviewedReentry && candidate.error === 'deployment_conflict'
+                    ? failure('approval_stale', candidate) : failure(candidate.error, candidate);
                 const environment = preparationEnvironment ?? await targetHostReaders.readEnvironment({
                     environmentId: request.input.environmentId, context: request.context });
                 if (!authorsCandidate) {
@@ -2290,6 +2295,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 }
                 const metadata = { environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) };
                 const selectedLink = metadata.targetLinks.find(link => link.id === request.input.targetLinkId);
+                if (reviewedReentry && (environment.environment.revision !== request.input.expectedRevision
+                    || selectedLink?.revision !== request.input.expectedTargetLinkRevision)) return failure('approval_stale');
                 if (!selectedLink) return failure('target_mismatch');
                 if (selectedLink.source.kind === 'plugin') {
                     if (request.actionId === 'deployments.deploy' && 'services' in request.input && request.input.services)
@@ -2299,6 +2306,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     return await contributedTarget.prepareAction(request, platform.data, environment);
                 }
                 const nativeCandidate = DeploymentOwnServerContentV1Schema.parse(candidate.content);
+                if (reviewedReentry && !nativeCandidate.ownServer) return failure('approval_stale');
                 if (request.actionId === 'deployments.deploy') {
                     assertReviewedDeploymentSource({ intent: request.input, content: nativeCandidate });
                 }
@@ -2332,8 +2340,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         if (!isDeepStrictEqual(unreviewed, content)) return failure('target_mismatch');
                         if (!isDeepStrictEqual(nativeCandidate.ownServer.imageArchives, sourceImageArchives)) return failure('target_mismatch');
                         const retained = readDeploymentEnvironmentArtifactV1(request.input.destinationContent,
-                            await open(request.input.destinationContent.contentArtifactId, request.context));
-                        if (!retained.ok) return failure('target_mismatch', retained);
+                            await open(request.input.destinationContent.contentArtifactId, request.context,
+                                reviewedReentry ? candidateArtifactAuthorization(request.context) : undefined));
+                        if (!retained.ok) return failure(reviewedReentry && retained.error === 'deployment_conflict'
+                            ? 'approval_stale' : 'target_mismatch', retained);
                         if (!isDeepStrictEqual(retained.content, candidateEnvironmentContent)) return failure('target_mismatch');
                         content = nativeCandidate;
                     } else {

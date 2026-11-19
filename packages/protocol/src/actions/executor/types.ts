@@ -884,6 +884,8 @@ export type ActionExecutorContext = Readonly<{
     inputDigest?: string;
     /** The receiving executor's reviewed consequences this confirmation answered; admitted only while they still match. */
     reviewDigest?: string;
+    /** Prepared rollout operands carried beside the original compact intent. */
+    reviewedDeploymentInput?: import('../../json/strictJsonValue.js').JsonValue;
     requestId?: string;
     accountId?: string;
     /** Canonical Home identity when available; local profile identity otherwise. */

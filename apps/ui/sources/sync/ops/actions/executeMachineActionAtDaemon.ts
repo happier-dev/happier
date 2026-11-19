@@ -7,6 +7,7 @@ import { actionInputValidationFailure } from '@happier-dev/protocol/actions/exec
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readDeploymentRolloutSemanticInput } from '@happier-dev/protocol/actions/executor/approvalPreparation';
 
 export const readUiAdmittedActionId = (actionId: string, input: unknown) =>
     actionId === 'approval.request.create' && input !== null && typeof input === 'object'
@@ -29,7 +30,7 @@ export function isUiMachineOwnedAdmissionAction(actionId: string, input: unknown
 }
 
 /** Runs the Machine-owned Action; a review digest means the person confirmed the review the Machine carried back. */
-type ExecuteAction = (input: unknown, reviewDigest?: string) => Promise<unknown>;
+type ExecuteAction = (input: unknown, reviewDigest?: string, reviewedDeploymentInput?: unknown) => Promise<unknown>;
 
 type ConfirmPresentUserAction = NonNullable<ActionExecutorDeps['presentUserActionConfirmation']>;
 const REVIEW_DIGEST = /^[A-Za-z0-9_-]{43}$/u;
@@ -56,7 +57,7 @@ function readCarriedReview(result: Extract<ActionExecuteResult, { ok: false }>):
  */
 export async function confirmOwnUiRefusal(actionId: ActionId, input: unknown, context: ActionExecutorContext,
     result: ActionExecuteResult, confirm: ConfirmPresentUserAction | undefined,
-    executeConfirmed: (confirmedInput: unknown, reviewDigest: string) => Promise<ActionExecuteResult>): Promise<ActionExecuteResult> {
+    executeConfirmed: (confirmedInput: unknown, reviewDigest: string, reviewedDeploymentInput?: unknown) => Promise<ActionExecuteResult>): Promise<ActionExecuteResult> {
     if (result.ok || result.errorCode !== 'action_interactive_review_required' || !confirm || context.surface !== 'ui'
         || context.interactivePresentation === 'unavailable' || !isPresentUserHostInvocation(context)
         || context.presentUserConfirmation) return result;
@@ -68,10 +69,13 @@ export async function confirmOwnUiRefusal(actionId: ActionId, input: unknown, co
     const liveOnly = spec.approvalInputCustody === 'live_only';
     const parsed = spec.inputSchema.safeParse(!liveOnly && actionId === 'projects.open' ? review.actionArgs : input);
     if (!parsed.success) return result;
-    const confirmed = await confirm({ actionId, input: liveOnly ? review.actionArgs : parsed.data, context, preview: review.preview });
+    const rollout = readDeploymentRolloutSemanticInput(actionId, parsed.data);
+    const confirmed = await confirm({ actionId, input: liveOnly || rollout ? review.actionArgs : parsed.data, context, preview: review.preview });
     if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled', effectAttempted: false };
     if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled', effectAttempted: false };
-    const executed = await executeConfirmed(parsed.data, review.reviewDigest);
+    const executed = rollout
+        ? await executeConfirmed(parsed.data, review.reviewDigest, review.actionArgs)
+        : await executeConfirmed(parsed.data, review.reviewDigest);
     // A first confirmation may precede native destination preparation. Present a
     // changed destination through this same surface; an unchanged refusal stays refused.
     if (actionId === 'projects.open' && !executed.ok && executed.errorCode === 'action_interactive_review_required') {
@@ -100,5 +104,6 @@ export async function executeMachineActionAtDaemon(
     const settle = (result: ActionExecuteResult) => result.ok ? settleActionOutput(actionId, result) : result;
     const result = completeActionResult(await execute(parsed.data));
     return result.ok ? settle(result) : confirmOwnUiRefusal(actionId, parsed.data, context, result, confirm,
-        async (confirmedInput, reviewDigest) => settle(completeActionResult(await execute(confirmedInput, reviewDigest))));
+        async (confirmedInput, reviewDigest, reviewedDeploymentInput) =>
+            settle(completeActionResult(await execute(confirmedInput, reviewDigest, reviewedDeploymentInput))));
 }

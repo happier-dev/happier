@@ -2,6 +2,7 @@ import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.
 import { isMachineSetupNativeCodecActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { deploymentChildEffectActionIdForRootV1 } from '../../deployments/deploymentActionIdsV1.js';
 import { isSessionStopChildRootV1, readSessionStopChildTargetV1 } from '../../actions/sessionSectionArchive.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
@@ -137,6 +138,7 @@ export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.e
     inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
     /** The receiving executor's reviewed consequences the person confirmed (computeActionReviewDigestV1). */
     reviewDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
+    reviewedDeploymentInput: z.optional(StrictJsonValueSchema),
     requestId: z.string().check(z.minLength(1)),
     accountId: z.string().check(z.minLength(1)),
     serverId: z.string().check(z.minLength(1)),

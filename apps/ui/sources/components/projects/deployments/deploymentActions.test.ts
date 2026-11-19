@@ -29,6 +29,7 @@ import type { DeploymentPreviewTemplateV1 } from '@happier-dev/protocol/deployme
 import { createWorkflowAutomationHttpBoundary } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
 import { AutomationStoredWorkflowDefinitionV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 
 const nativeReview = vi.hoisted(() => ({ answer: true,
     shown: [] as Array<Readonly<{ preview: unknown; actionArgs: unknown; title: unknown; summary: unknown }>> }));
@@ -848,7 +849,12 @@ describe('deployment UI Action callbacks', () => {
         let preparations = 0;
         let effects = 0;
         // These are installed controller preparation/storage ports; Protocol policy and consent binding remain real.
+        homes.answer(serverId, `GET ${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`, {
+            body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }),
+        });
+        const { createUiActionAutomationPortV1 } = await import('@/sync/ops/actions/actionAutomations');
         const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+            actionAutomations: createUiActionAutomationPortV1(account),
             resolveEnvironmentApprovalScope: async () => ({ scope: null }),
             deploymentAction: async (_actionId, input) => {
                 if ('mode' in input && input.mode === 'preview') {
@@ -942,13 +948,14 @@ describe('deployment UI Action callbacks', () => {
             targetLinkId: 'target-link', expectedTargetLinkRevision: 1, requestKey: 'controller-prepared-request',
             contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
             contentBodyVersion: environment.contentBodyVersion };
-        const prepared = deploy ? DeploymentDeployInputV1Schema.parse(pins)
+        let prepared = deploy ? DeploymentDeployInputV1Schema.parse(pins)
             : DeploymentPromoteInputV1Schema.parse({ ...pins, sourceEnvironmentId: 'staging',
                 sourceDeploymentId: 'tested-release', artifact: action, destinationContent: {
                     contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
                     contentBodyVersion: environment.contentBodyVersion } });
         const admissions: { authority: string; reviewDigest?: string }[] = [];
         const receivedInputs: unknown[] = [];
+        const receivedReviewedInputs: unknown[] = [];
         const receivedRequestIds: Array<string | undefined> = [];
         const outcomes: { ok: boolean; errorCode?: string }[] = [];
         let effects = 0;
@@ -961,7 +968,12 @@ describe('deployment UI Action callbacks', () => {
         // A deterministic native-port fixture distinguishes raw-intent regeneration from retained reviewed refs.
         // Account capture, Home transport, Protocol policy and digest-bound receiving admission stay real;
         // the CLI deployment-role composition separately exercises the actual daemon preparation factory.
+        homes.answer(serverId, `GET ${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`, {
+            body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }),
+        });
+        const { createUiActionAutomationPortV1 } = await import('@/sync/ops/actions/actionAutomations');
         const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+            actionAutomations: createUiActionAutomationPortV1(account),
             resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: environment.id } }),
             prepareDeploymentAction: async ({ input }) => {
                 // The installed controller authors a new candidate for raw intent. Reviewed refs retain that candidate.
@@ -990,7 +1002,13 @@ describe('deployment UI Action callbacks', () => {
                 return failure.success ? failure.data : null;
             },
             execute: async (input, transport) => {
+                const publication = transport.authorization.binding.deploymentCandidatePublication;
+                if (receivedInputs.length === 0) {
+                    expect(publication).toBeDefined();
+                    prepared = { ...prepared, contentArtifactId: publication!.contentArtifactId };
+                }
                 receivedInputs.push(input);
+                receivedReviewedInputs.push(transport.invocation.presentUserConfirmation?.reviewedDeploymentInput);
                 receivedRequestIds.push(transport.requestId);
                 expect(transport.target).toEqual({ kind: 'machine', machineId: environment.controllerMachineId });
                 if (!('authentication' in transport.authorization.binding)) throw new Error('Expected Home Account admission');
@@ -1027,7 +1045,8 @@ describe('deployment UI Action callbacks', () => {
                     { authority: 'present_user', reviewDigest: expect.any(String) }]);
                 expect(outcomes).toEqual([{ ok: false, errorCode: 'action_interactive_review_required' }, { ok: true }]);
                 expect(effects).toBe(1);
-                expect(receivedInputs[1]).toEqual(prepared);
+                expect(receivedInputs[1]).toEqual(receivedInputs[0]);
+                expect(receivedReviewedInputs).toEqual([undefined, prepared]);
                 expect(preparations).toBe(1);
                 expect(receivedRequestIds[0]).toEqual(expect.any(String));
                 expect(receivedRequestIds[1]).not.toBe(receivedRequestIds[0]);

@@ -71,6 +71,7 @@ import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurpos
     readDeclaredDeploymentPreparationHttpRead, readDeploymentPreparationHttpReadPurpose, readDeploymentReferenceHttpPurpose,
     isDeploymentReferenceServiceListChild, readDeploymentReferenceServiceListInTx,
     isDeploymentCandidatePublicationHttpPurposeInTx,
+    readReviewedDeploymentCandidateArtifactPurpose,
     isDeploymentCandidatePublicationEffect,
     isSetupDeploymentPreparationReadEffect } from '@/app/deployments/deploymentPreparationAuthorization';
 import { isScmRefineInputRpcPurposeV1, verifyScmRefineSavedSessionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -4130,6 +4131,8 @@ export async function verifyExternalActionDomainExecutionRequest(
         && (proof.path === '/v1/artifacts'
             || /^\/v1\/artifacts\/[^/?#]+(?:\/access\/(?:grants|recipients|key-envelopes))?$/u.test(proof.path)
                 && (proof.method.toUpperCase() !== 'GET' || proof.path.includes('/access/')));
+    const reviewedCandidateArtifact = verified.acceptedDeploymentReceipt ? undefined
+        : readReviewedDeploymentCandidateArtifactPurpose(verified.binding, verified.effectActionId, proof);
     const domainPreparation = verified.deploymentChildRouting ? null
         : await readDeploymentDomainPreparationHttpPurpose(db, verified.binding, verified.effectActionId, proof,
         verified.deploymentDomainPurpose?.kind === 'admission' ? verified.deploymentDomainPurpose.input.environmentId : undefined,
@@ -4185,6 +4188,8 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (verified.deploymentDomainPurpose) {
         // The Domain purpose owner admitted these signed bytes; its accepted
         // capture (or prepared-content CAS owner) retains the job relationship.
+    } else if (reviewedCandidateArtifact) {
+        deploymentChildArtifactRead = { content: reviewedCandidateArtifact, requesterAccountId: verified.binding.accountId };
     } else if (nativePublication) {
         if (verified.deploymentChildRouting && verified.deploymentChildRouting.kind !== 'prepare') return refuse('deployment_publication_child_kind');
         if (!await isDeploymentCandidatePublicationHttpPurposeInTx(db, verified.binding, verified.effectActionId, proof)) return refuse('deployment_publication_purpose');

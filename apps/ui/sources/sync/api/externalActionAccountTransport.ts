@@ -20,6 +20,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { parseTokenPayload } from '@/utils/auth/parseToken';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -45,6 +46,10 @@ type MachineCustody = Readonly<{
 }>;
 
 type Material = Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
+type DeploymentReviewTransport = Readonly<{
+    deploymentReview?: ExternalActionExecutionAuthorizationRequestV1['deploymentReview'];
+    onDeploymentCandidateAuthorized?: (token: string) => void;
+}>;
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 
 /** Portable transport placement keeps the prepared Machine selection on the same Home as its target. */
@@ -101,7 +106,7 @@ function readCurrentOwnActionMachine(account: LazyActionAccountContext, machineI
 }
 
 /** Reuses the external Action codecs; caller admission and result schemas stay with their owners. */
-export async function executeOriginalAccountActionTransport(params: Readonly<{
+export async function executeOriginalAccountActionTransport(params: DeploymentReviewTransport & Readonly<{
     account: LazyActionAccountContext;
     binding: ExternalActionEncryptionBindingV2;
     input: unknown;
@@ -185,6 +190,7 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
             method: 'POST', headers,
             body: JSON.stringify(ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1,
                 machineId: binding.target.machineId, envelope,
+                ...(params.deploymentReview ? { deploymentReview: params.deploymentReview } : {}),
                 ...(params.managedContinuation ? { managedContinuation: params.managedContinuation } : {}) })),
             ...(params.signal ? { signal: params.signal } : {}),
         }, { includeAuth: true, retry: 'none' });
@@ -195,7 +201,12 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
             const refusal = ExternalActionHttpErrorSchema.safeParse(minted);
             if (!refusal.success || 'requestId' in refusal.data && refusal.data.requestId !== undefined
                 && refusal.data.requestId !== envelope.requestId) return failure('admission_unavailable');
-            return { ...projectExternalActionHttpFailureV1(refusal.data), effectAttempted: false };
+            const projected = projectExternalActionHttpFailureV1(refusal.data);
+            if (params.deploymentReview && projected.errorCode === 'credential_scope_denied'
+                && readRecord(projected.details).deploymentReview === 'stale') {
+                return { ...failure('approval_stale'), effectAttempted: false };
+            }
+            return { ...projected, effectAttempted: false };
         }
         const authorization = ExternalActionExecutionAuthorizationV1Schema.safeParse(minted);
         if (!authorization.success || binding.target.kind !== 'machine') return failure('admission_unavailable');
@@ -208,6 +219,9 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
             || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId: binding.actionId,
                 machineId: binding.target.machineId, envelope })) return failure('admission_unavailable');
         let executionAuthorization = authorization.data;
+        if (root.deploymentCandidatePublication && !root.deploymentCandidatePublication.reviewed) {
+            params.onDeploymentCandidateAuthorized?.(executionAuthorization.token);
+        }
         const wake = executionAuthorization.managedFiniteWake;
         let controllerPublicKey: Uint8Array | undefined;
         if (wake) {
@@ -313,7 +327,7 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
         ? readExternalActionResponseExecutionV1(parsed) : failure(invalid);
 }
 
-type OriginalAccountMachineActionParams = Readonly<{
+type OriginalAccountMachineActionParams = DeploymentReviewTransport & Readonly<{
     account: LazyActionAccountContext;
     actionId: ExternalActionEncryptionBindingV2['actionId'];
     requestId: string;
@@ -417,6 +431,8 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     const input = sessionInput
         ? projectSessionSpawnHome(sessionInput, { serverId: account.serverIdentityId, machineId: params.machineId }) : params.input;
     return await executeOriginalAccountActionTransport({ account, input, authority: params.authority,
+        ...(params.deploymentReview ? { deploymentReview: params.deploymentReview } : {}),
+        ...(params.onDeploymentCandidateAuthorized ? { onDeploymentCandidateAuthorized: params.onDeploymentCandidateAuthorized } : {}),
         ...(params.onTransportIssued ? { onTransportIssued: params.onTransportIssued } : {}),
         ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
         ...(pluginInvocation ? { pluginInvocation } : {}),

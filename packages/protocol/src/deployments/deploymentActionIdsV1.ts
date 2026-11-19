@@ -56,6 +56,10 @@ export const DEPLOYMENT_PREPARE_ACTION_ID_V1 = 'deployments.prepare';
 export const DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 = 'prepare-session';
 export const DEPLOYMENT_DEPLOY_ACTION_ID_V1 = 'deployments.deploy' as const;
 export const DEPLOYMENT_ROLLBACK_ACTION_ID_V1 = 'deployments.rollback';
+export function isDeploymentRolloutActionIdV1(value: string): value is
+  typeof DEPLOYMENT_DEPLOY_ACTION_ID_V1 | typeof DEPLOYMENT_ROLLBACK_ACTION_ID_V1 | 'deployments.promote' {
+  return value === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || value === DEPLOYMENT_ROLLBACK_ACTION_ID_V1 || isDeploymentPromoteActionIdV1(value);
+}
 export const DEPLOYMENT_TEARDOWN_ACTION_ID_V1 = 'deployments.teardown';
 export const DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 = 'deployments.environments.create';
 export const DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 = 'deployments.environments.update';

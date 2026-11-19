@@ -1333,6 +1333,11 @@ A request still requiring confirmation receives the review-carrying refusal.
 A digest without a readable preview
 keeps the refusal in the UI. This is unreleased 0.3 behavior; no self-approval
 Artifact or caller-asserted presentation marker is required.
+For a compact deployment rollout, the app sends the same intent on confirmation
+and carries the reviewed operands in the private requester invocation. Home
+binds the new request to the first request's signed candidate and exact Artifact
+revisions. The controller opens those revisions and rebuilds the whole review,
+including the compact intent. Changed intent or pins require a fresh review.
 The approval policy owns this disposition for immediate execution, prepared runs,
 native forwarding and contributed Actions. Execution placement does not change a
 person's caller or authority, and preparation does not create a second confirmation

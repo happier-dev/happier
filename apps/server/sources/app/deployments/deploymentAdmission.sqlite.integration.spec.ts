@@ -25,7 +25,8 @@ import { createDeploymentEnvironmentInTx, loadDeploymentEnvironmentInTx, project
     setDeploymentEnvironmentTemplateInTx, setDeploymentEnvironmentBackupInTx } from './deploymentEnvironmentService';
 import { requestCancelDeploymentInTx } from './deploymentService';
 import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol';
-import { isDeploymentPreparationAuthorizedInTx, isDeploymentPreparationHttpPurposeInTx } from './deploymentPreparationAuthorization';
+import { isDeploymentCandidatePublicationHttpPurposeInTx, isDeploymentPreparationAuthorizedInTx, isDeploymentPreparationHttpPurposeInTx } from './deploymentPreparationAuthorization';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ExternalActionExecutionAuthorizationBindingV1Schema, projectDeploymentPreparationAdmissionV1,
     createDeploymentEnvironmentContentArtifactIdV1, isDeploymentEnvironmentUpdateNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readDeploymentEnvironmentInTx, readDeploymentReceiptInTx, readDeploymentEnvironmentAccessInTx } from './deploymentReadService';
@@ -43,11 +44,13 @@ import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/sett
 import { createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { linkDeploymentTargetInTx, projectDeploymentTargetHeader } from './deploymentTargetLinkService';
 import { projectDeploymentHealthAggregateV1 } from '@happier-dev/deployments';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1,
+    DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
+import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResolvedTargetV1,
     signExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
@@ -1485,6 +1488,91 @@ describe('current Source deployment authority', () => {
         const target = { kind: 'machine' as const, machineId: machine.id };
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: deployInput };
         const token = await auth.createToken(manager.id, undefined, { kind: 'account', authority: 'present_user' });
+        if (accessLevel === 'admin') {
+            const mintInput = { accountId: manager.id, serverIdentityId: serverId, machineId: machine.id, target,
+                authentication: { kind: 'account' as const, tokenEpoch: manager.tokenEpoch },
+                actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1, admittedMachineRole: 'manage' as const };
+            const compact = { serverId, environmentId: environment.id, targetLinkId: link.id };
+            const mint = (extra: Partial<typeof mintInput> = {}, deploymentReview?: {
+                originalAuthorizationToken: string;
+                candidate: { contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number };
+            }) => {
+                const request = { ...envelope, requestId: crypto.randomUUID(), input: compact };
+                return auth.mintExternalActionExecutionAuthorization({ ...mintInput, ...extra,
+                    requestId: request.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request),
+                }, { input: compact, ...(deploymentReview ? { deploymentReview } : {}) });
+            };
+            const original = await mint();
+            const differentRequest = await mint();
+            const contentArtifactId = original.binding.deploymentCandidatePublication!.contentArtifactId;
+            const pins = { contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 };
+            const published = await createArtifact({ actorUserId: manager.id, artifactId: contentArtifactId,
+                kind: DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1,
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-receipt.v1', title: 'Reviewed candidate' })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({})),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            expect(published.ok).toBe(true);
+            const carried = { originalAuthorizationToken: original.token, candidate: pins };
+            await expect(mint({}, { ...carried, originalAuthorizationToken: differentRequest.token }))
+                .rejects.toMatchObject({ code: 'credential_scope_denied' });
+            const otherManager = await db.account.create({ data: { encryptionMode: 'plain' } });
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: otherManager.id, role: 'owner' } });
+            const otherActor = { accountId: otherManager.id, authentication: { kind: 'account' as const, tokenEpoch: otherManager.tokenEpoch } };
+            await expect(mint(otherActor)).resolves.toHaveProperty('binding.accountId', otherManager.id);
+            await expect(mint(otherActor, carried)).rejects.toMatchObject({ code: 'credential_scope_denied' });
+            await db.artifact.update({ where: { id: contentArtifactId }, data: { bodyVersion: 2 } });
+            await expect(mint({}, carried)).rejects.toMatchObject({ code: 'credential_scope_denied', details: { deploymentReview: 'stale' } });
+            await db.artifact.update({ where: { id: contentArtifactId }, data: { bodyVersion: 1 } });
+            await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin',
+                createdByAccountId: manager.id }), artifactId: contentArtifactId } });
+            await withAuthenticatedTestApp(app => {
+                registerExternalActionRoutes(app);
+                registerDeploymentRoutes(app);
+                artifactsRoutes(app);
+            }, async app => {
+                const confirmEnvelope = { ...envelope, requestId: crypto.randomUUID(), input: compact };
+                const reply = await app.inject({ method: 'POST', url: '/v1/actions/deployments.deploy/execution-authorization',
+                    headers: { authorization: `Bearer ${token}` },
+                    payload: { v: 1, machineId: machine.id, envelope: confirmEnvelope, deploymentReview: carried } });
+                expect(reply.statusCode, reply.body).toBe(200);
+                const confirmation = ExternalActionExecutionAuthorizationV1Schema.parse(reply.json());
+                const otherConfirmation = await mint({}, carried);
+                expect(confirmation.binding.deploymentCandidatePublication).toMatchObject({ contentArtifactId, reviewed: pins });
+                const candidatePath = `/v1/artifacts/${contentArtifactId}`;
+                const purpose = (method: string, path: string) => inTx(tx => isDeploymentCandidatePublicationHttpPurposeInTx(
+                    tx, confirmation.binding, DEPLOYMENT_DEPLOY_ACTION_ID_V1, { method, path }));
+                expect(await purpose('POST', candidatePath)).toBe(false);
+                expect(await purpose('GET', `/v1/artifacts/${candidate.artifact.id}`)).toBe(false);
+                const signedHeaders = (method: string, path: string, body?: unknown, authorization = confirmation) => ({
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: DEPLOYMENT_DEPLOY_ACTION_ID_V1,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, effectActionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1, target,
+                        installationId: machine.installationId!, requestId: authorization.binding.requestId,
+                        method, path, ...(body === undefined ? {} : { body }), privateKey: keys.secretKey }),
+                });
+                const read = await app.inject({ method: 'GET', url: candidatePath, headers: signedHeaders('GET', candidatePath) });
+                expect(read.statusCode, read.body).toBe(200);
+                expect(read.json()).toMatchObject({ id: contentArtifactId, headerVersion: 1, bodyVersion: 1 });
+                const path = `/v1/deployments/environments/${environment.id}/deploy`;
+                const payload = { ...deployInput, ...pins, requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID() };
+                const executed = await app.inject({ method: 'POST', url: path, payload, headers: signedHeaders('POST', path, payload) });
+                expect(executed.statusCode, executed.body).toBe(200);
+                const receipt = DeploymentReceiptResultV1Schema.parse(executed.json());
+                if (!receipt.ok || !('deploymentId' in receipt)) throw new Error('Expected committed deployment candidate');
+                const duplicate = { ...payload, expectedRevision: receipt.revision, requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID() };
+                const repeated = await app.inject({ method: 'POST', url: path, payload: duplicate,
+                    headers: signedHeaders('POST', path, duplicate, otherConfirmation) });
+                expect(repeated.statusCode, repeated.body).toBe(409);
+                expect(repeated.json()).toMatchObject({ ok: false, error: 'deployment_conflict' });
+                const existing = await db.deployment.findMany({ where: { contentArtifactId } });
+                expect(existing).toHaveLength(1);
+                await db.deployment.update({ where: { id: existing[0].id }, data: { state: 'failed', settledAt: new Date() } });
+                deployInput.expectedRevision = receipt.revision;
+            }, { authentication: 'real' });
+            await expect(mint({}, carried)).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        }
         const authorization = await (async () => {
             let minted: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse> | undefined;
             await withAuthenticatedTestApp(app => registerExternalActionRoutes(app), async app => {

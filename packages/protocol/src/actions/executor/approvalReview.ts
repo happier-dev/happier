@@ -1,6 +1,6 @@
 import { readRecord } from '../../inputs/inputRecords.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
-import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
+import { sameStrictJsonValue, StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { ACTION_INVOKE_ACTION_ID_V1, type ActionId } from '../actionIds.js';
 import type { ActionExecutorContext } from './types.js';
 import { isPresentUserHostInvocation, isHomeAdmittedPresentUserHostInvocation, pluginActionInvokeConfirmationMismatchV1 } from '../invocationAuthority.js';
@@ -11,7 +11,7 @@ import { admitDeploymentHomeInputV1 } from './deploymentHomeAdmission.js';
 
 /** Bind a host's completed Confirm to the captured Account, target and normalized intent. */
 export function bindPresentUserActionConfirmationV1(actionId: ActionId, input: unknown, context: ActionExecutorContext,
-  reviewDigest?: string): ActionExecutorContext {
+  reviewDigest?: string, reviewedDeploymentInput?: unknown): ActionExecutorContext {
   // A supplied marker belongs to its original invocation, including legacy default-only markers.
   if (context.presentUserConfirmation || !isPresentUserHostInvocation(context)
     || !context.runtimeAccountId || !context.actionRequestId || !(context.serverIdentityId ?? context.serverId)) return context;
@@ -20,9 +20,11 @@ export function bindPresentUserActionConfirmationV1(actionId: ActionId, input: u
   const home = isDeploymentActionIdV1(actionId) || isProjectFiniteActionIdV1(actionId)
     ? admitDeploymentHomeInputV1(input, context, undefined) : null;
   const admittedInput = home && 'input' in home ? home.input : input;
+  const reviewed = reviewedDeploymentInput === undefined ? undefined : StrictJsonValueSchema.safeParse(reviewedDeploymentInput).data;
   return { ...context, authority: 'present_user', actionCaller: { kind: 'host' }, presentUserConfirmation: {
     actionId, inputDigest: computeActionInputApprovalDigestV1(actionId, admittedInput, context.sessionTargetsV1),
-    ...(reviewDigest ? { reviewDigest } : {}), requestId: context.actionRequestId,
+    ...(reviewDigest ? { reviewDigest, ...(reviewed === undefined ? {} : { reviewedDeploymentInput: reviewed }) } : {}),
+    requestId: context.actionRequestId,
     accountId: context.runtimeAccountId, serverId: context.serverIdentityId ?? context.serverId!,
     target: target ? target.kind === 'session' ? { kind: 'session', sessionId: target.sessionId }
       : { kind: 'machine', machineId: target.machineId, ...(target.project ? { project: { ...target.project } } : {}) } : null,

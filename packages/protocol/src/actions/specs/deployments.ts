@@ -39,6 +39,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
   const telemetrySet = id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1;
   const backupConfigure = id === deploymentActionIds.DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
   const rolloutReview = id === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || isDeploymentPromoteActionIdV1(id);
+  const rollout = deploymentActionIds.isDeploymentRolloutActionIdV1(id);
   const irreversible = id === deploymentActionIds.DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_DOMAINS_REMOVE_ACTION_ID_V1;
   const preparedContentRequired = id !== deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1
     && id !== deploymentActionIds.DEPLOYMENT_ROLLBACK_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 && !backupConfigure && !telemetrySet && !isDeploymentPromoteActionIdV1(id);
@@ -318,7 +319,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
             ? [{ kind: 'backup' as const, serverId: target.serverId, environmentId: target.environmentId }] : [] };
         } }
         : 'environment' } : {}),
-    executionPlacement: isDeploymentTargetLinkActionIdV1(id) || rolloutReview || dataSize || backup || backupConfigure || telemetrySet || deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) || isDeploymentDomainChildActionIdV1(id) || id === deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1 ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
+    executionPlacement: isDeploymentTargetLinkActionIdV1(id) || rollout || dataSize || backup || backupConfigure || telemetrySet || deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) || isDeploymentDomainChildActionIdV1(id) || id === deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1 ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
     ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 ? {
       approvalScope: { subjectKinds: ['environment'] as const },
       executionPlacements: ['account', 'machine'],
@@ -341,7 +342,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       executionPlacementForInput: (input: unknown): 'account' | 'machine' =>
         readRecord(input).detachKeepRunning === true ? 'account' : 'machine' } : {}),
     ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 || deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) || isDeploymentDomainChildActionIdV1(id)
-      ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : rolloutReview || backup || backupConfigure || telemetrySet || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
+      ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : rollout || backup || backupConfigure || telemetrySet || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
         ? { originalExecution: { daemonIngressSurfaces: ['ui'] as const } } : {}),
     // Machine placement uses the original Action dispatcher, not a standalone RPC method.
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },

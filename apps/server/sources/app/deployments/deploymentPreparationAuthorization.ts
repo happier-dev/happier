@@ -68,6 +68,9 @@ import { resolveMachineAdmissionsInTx } from '@/app/machines/machineAccess';
 import { projectManagedMachine } from '@/app/machines/managed/managedMachineProjection';
 import { redactManagedMachineCredentialReferences, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readExternalActionBindingAuthority } from '@happier-dev/protocol/actions/externalActionBindingAuthority';
+import type { z as Zod } from '@happier-dev/protocol/zodRuntimePolicy';
+import type { DeploymentReviewedCandidateV1Schema } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 
 function readDeclaredPreparationScope(binding: ExternalActionExecutionAuthorizationBindingV1, child?: ReviewedActionChildHttpProofV1, effectActionId?: string) {
     const action = ActionIdSchema.safeParse(binding.actionId);
@@ -612,6 +615,56 @@ export function isDeploymentCandidatePublicationEffect(binding: ExternalActionEx
     return readDeclaredPreparationScope(binding)?.candidateEffects.includes(effectActionId) === true;
 }
 
+/** A new request may read the old candidate only after Home binds its original publication and current pins. */
+export async function admitReviewedDeploymentCandidateInTx(tx: Tx, input: Readonly<{
+    request: Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId' | 'serverIdentityId' | 'machineId' | 'requestId' | 'actionId' | 'target'>;
+    installationId: string;
+    environmentId: string;
+    source: Readonly<{ id: string; revision: number }>;
+    original: ExternalActionExecutionAuthorizationBindingV1 | null;
+    candidate: Zod.infer<typeof DeploymentReviewedCandidateV1Schema>;
+}>) {
+    const { request, original, candidate } = input;
+    const publication = original?.deploymentCandidatePublication;
+    if (!original || !publication || publication.reviewed || !deploymentActionIds.isDeploymentRolloutActionIdV1(request.actionId)
+        || !('authentication' in original) || original.authentication.kind !== 'account'
+        || original.sessionActionOrigin !== undefined || original.workflowActionOrigin !== undefined
+        || readExternalActionBindingAuthority(original) !== 'present_user' || original.requestId === request.requestId
+        || original.accountId !== request.accountId || original.serverIdentityId !== request.serverIdentityId
+        || original.actionId !== request.actionId || original.machineId !== request.machineId
+        || original.installationId !== input.installationId || !sameStrictJsonValue(original.target, request.target)
+        || publication.environmentId !== input.environmentId || publication.source.id !== input.source.id
+        || publication.contentArtifactId !== candidate.contentArtifactId
+        || (publication.environmentContentArtifactId !== undefined) !== (candidate.destinationContent !== undefined)) return null;
+    if (publication.source.revision !== input.source.revision) return 'stale' as const;
+    const receipt = await tx.artifact.findFirst({ where: { id: candidate.contentArtifactId, accountId: request.accountId,
+        kind: DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, deletedAt: null, headerVersion: candidate.contentHeaderVersion,
+        bodyVersion: candidate.contentBodyVersion, deployments: { none: {} } }, select: { id: true } });
+    if (!receipt) return 'stale' as const;
+    const destination = candidate.destinationContent;
+    if (destination) {
+        const revision = { contentArtifactId: destination.contentArtifactId,
+            contentHeaderVersion: destination.contentHeaderVersion, contentBodyVersion: destination.contentBodyVersion };
+        const destinationCurrent = destination.contentArtifactId === publication.environmentContentArtifactId
+            ? await tx.artifact.findFirst({ where: { id: destination.contentArtifactId, accountId: request.accountId,
+                kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, deletedAt: null, headerVersion: destination.contentHeaderVersion,
+                bodyVersion: destination.contentBodyVersion, deploymentEnvironments: { none: {} } }, select: { id: true } })
+            // Contributed targets retain the destination's existing definition.
+            : await tx.deploymentEnvironment.findFirst({ where: { id: input.environmentId, ...revision }, select: { id: true } });
+        if (!destinationCurrent) return 'stale' as const;
+    }
+    return { ...publication, reviewed: candidate };
+}
+
+export function readReviewedDeploymentCandidateArtifactPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
+    effectActionId: string, proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>) {
+    const reviewed = binding.deploymentCandidatePublication?.reviewed;
+    if (!reviewed || binding.actionId !== effectActionId || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return undefined;
+    return [reviewed, reviewed.destinationContent].find(ref => ref
+        && proof.path === `/v1/artifacts/${encodeURIComponent(ref.contentArtifactId)}`
+        && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, { id: ref.contentArtifactId })));
+}
+
 /** Native preparation spends only canonical candidate identities for this signed root. */
 export async function isDeploymentCandidatePublicationHttpPurposeInTx(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string,
@@ -626,6 +679,9 @@ async function readDeploymentCandidatePublicationHttpPurposeInTx(tx: Tx,
 ) {
     if (!isDeploymentCandidatePublicationEffect(binding, effectActionId)) return null;
     const minted = binding.deploymentCandidatePublication;
+    if (minted?.reviewed) {
+        return readReviewedDeploymentCandidateArtifactPurpose(binding, effectActionId, proof) ? { publicationGrants: [] } : null;
+    }
     const allocatedCreate = binding.actionId === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1;
     const environmentId = await readDeploymentPreparationEnvironmentIdInTx(tx, binding);
     if (!environmentId) return null;

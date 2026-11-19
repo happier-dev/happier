@@ -30,6 +30,7 @@ import { deploymentTeardownMembershipAdmissionSchema, haveDeploymentMembershipRo
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { prepareDeploymentAppMachineRevocationInTx } from './deploymentAppRevocation';
 import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { projectDeploymentReviewedCandidateV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 
 type Receipt = NonNullable<Awaited<ReturnType<Tx['deployment']['findUnique']>>>;
 /** Detach and Environment removal retire the association while retaining native resource custody. */
@@ -127,6 +128,8 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
     const rollbackOfDeploymentId = 'deploymentId' in input ? input.deploymentId : null;
     const restoreBackupId = 'restoreBackupId' in input ? input.restoreBackupId ?? null : null;
     const promotedFromDeploymentId = 'sourceDeploymentId' in input ? input.sourceDeploymentId : null;
+    const reviewed = executionBinding?.deploymentCandidatePublication?.reviewed;
+    if (reviewed && !isDeepStrictEqual(projectDeploymentReviewedCandidateV1(input), reviewed)) return deploymentFailure('deployment_conflict');
     const repeated = await tx.deployment.findUnique({ where: { environmentId_requestKey: { environmentId: input.environmentId, requestKey: input.requestKey } } });
     if (repeated) {
         // Artifact identity pins the prepared intent. Its head versions may have
@@ -140,6 +143,9 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
             return deploymentFailure('deployment_conflict');
         }
         return receiptResult(repeated, loaded.row.revision);
+    }
+    if (reviewed && await tx.deployment.findFirst({ where: { contentArtifactId: reviewed.contentArtifactId }, select: { id: true } })) {
+        return deploymentFailure('deployment_conflict');
     }
     const link = await tx.deploymentTargetLink.findFirst({ where: { id: input.targetLinkId, environmentId: input.environmentId },
         include: { machines: { orderBy: { position: 'asc' } } } });
