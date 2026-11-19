@@ -50,6 +50,7 @@ import * as logging from '@/utils/logging/log';
 import { callSocketRpc } from '@happier-dev/sync-client';
 import { createHash } from 'node:crypto';
 import { evaluateAccountStoredContentSocketCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+import { TransactionAcquisitionUnavailableError } from '@/storage/transactionErrors';
 
 type RpcTargetEmitWithAck = (
     event: string,
@@ -3222,6 +3223,25 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             type: "register",
             error: "Forbidden",
         }));
+    });
+
+    it('carries a database admission failure through the SCM evidence acknowledgement', async () => {
+        sessionFindUniqueMock.mockRejectedValueOnce(new TransactionAcquisitionUnavailableError(new Error('private database detail')));
+        const caller = createFakeSocket({ id: 'scm-evidence-caller' });
+        const { io } = createIo();
+        registerSocketRpcHandlers({ userId: 'user-1', socket: caller as unknown as Socket, io });
+        const clientSocket = { connected: true, emit: vi.fn(), emitWithAck: async (event: string, packet: unknown) => {
+            const acknowledge = vi.fn();
+            await triggerSocketHandler(caller, event, packet, acknowledge);
+            return acknowledge.mock.calls[0]?.[0];
+        } };
+
+        await expect(callSocketRpc({ socket: clientSocket, target: { kind: 'machine', id: 'machine-1' },
+            method: RPC_METHODS.SCM_WORK_EVIDENCE_READ, authorization: { kind: 'scm.workEvidence', sessionIds: ['sess_1'] },
+            params: {}, content: { mode: 'plain' },
+        })).rejects.toMatchObject({ message: 'database_connection_unavailable', rpcErrorCode: 'database_connection_unavailable',
+            effectAttempted: false, failureCause: { phase: 'rpc.admission', errorCode: 'database_connection_unavailable', httpStatus: 503 },
+        });
     });
 
     it.each([false, true])("redacts relay exception messages and preserves producer causes (forwarded=%s)", async forwarded => {

@@ -40,6 +40,7 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
     ManagedActivityReadRequestV1Schema, ManagedAdmissionDrainConfirmRequestV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { resolveManagedGuestActivityAdmissionInTx, publishManagedGuestActivityAvailable } from '@/app/machines/managed/managedGuestActivity';
 import { inReadSnapshot } from '@/storage/inTx';
+import { readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { VerifiedEphemeralSessionRunnerPrincipalSchema } from "@happier-dev/protocol/ephemeralRunner/principal";
 import { canCredentialDecideV1 } from "@happier-dev/protocol/actions/decisionAuthority";
 import { computeExternalActionSocketRpcRequestDigestV1, isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -2509,6 +2510,16 @@ export function registerSocketRpcHandlers(params: Readonly<{
             const forwardedCause = ActionFailureCauseV1Schema.safeParse(
                 error && typeof error === 'object' && 'failureCause' in error ? error.failureCause : undefined,
             );
+            // The relay can certify that a failed admission never dispatched.
+            const databaseErrorCode = forwardStartedAt === undefined && !forwardedCause.success
+                ? readDatabaseErrorCode(error) : null;
+            if (databaseErrorCode) {
+                callback?.({
+                    ok: false, error: databaseErrorCode, errorCode: databaseErrorCode, effectAttempted: false,
+                    failureCause: { ...projectActionFailureCauseV1(error, 'rpc.admission'), errorCode: databaseErrorCode, httpStatus: 503 },
+                });
+                return;
+            }
             callback?.({
                 ok: false,
                 error: redactBugReportSensitiveText(error instanceof Error ? error.message : "Internal error"),
