@@ -7,11 +7,14 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { buildNativeAdmissionFixtureEnv } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
 
+const buildScript = `node ${JSON.stringify(fileURLToPath(new URL('./buildTypeScriptPackageDist.mjs', import.meta.url)))} -p tsconfig.json`;
+
 test('consumer diagnostics survive an upstream declaration emission error', async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-declaration-failure-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const files = {
     'package.json': JSON.stringify({ private: true }),
+    'pnpm-lock.yaml': "lockfileVersion: '9.0'\nimporters: {}\n",
     'pnpm-workspace.yaml': 'packages:\n  - apps/*\n  - packages/*\n',
     'apps/ui/package.json': JSON.stringify({ name: '@fixture/ui' }),
     'apps/cli/package.json': JSON.stringify({ name: '@fixture/cli' }),
@@ -19,7 +22,7 @@ test('consumer diagnostics survive an upstream declaration emission error', asyn
     'apps/server/tsconfig.json': JSON.stringify({ compilerOptions: { noEmit: true, strict: true,
       target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', types: [] }, files: ['index.ts'] }),
     'apps/server/index.ts': 'export const ownError: number = "consumer";',
-    'packages/upstream/package.json': JSON.stringify({ name: '@fixture/upstream', type: 'module',
+    'packages/upstream/package.json': JSON.stringify({ name: '@fixture/upstream', type: 'module', scripts: { build: buildScript },
       exports: { '.': { types: './dist/index.d.ts', 'happier-source': './src/index.ts' } } }),
     'packages/upstream/tsconfig.json': JSON.stringify({ compilerOptions: { declaration: true, strict: true,
       target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', types: [], rootDir: 'src', outDir: 'dist' }, files: ['src/index.ts'] }),

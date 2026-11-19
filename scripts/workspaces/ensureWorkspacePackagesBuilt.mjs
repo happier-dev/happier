@@ -69,6 +69,10 @@ function collectPackageOwnedDistFiles(distDir, recordedFiles) {
   return collectPublishedDistFiles(distDir)
     .filter((path) => !foreign.some((owned) => path === owned || path.startsWith(`${owned}/`)));
 }
+function isCompilerDeclarationOutput(path) {
+  return /\.d\.[cm]?ts(?:\.map)?$/u.test(path);
+}
+
 const DEFAULT_MAX_CONCURRENT_WORKSPACE_BUILDS = 2;
 const WORKSPACE_BUILD_EVENT_PREFIX = '[workspace-build-progress] ';
 let bundledPluginUiManifestGenerator;
@@ -132,13 +136,12 @@ export async function hasUsableWorkspaceLastGreen(componentDir, { requiredFiles 
   }
   const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
   if (!monorepoRoot || !existsSync(join(componentDir, 'package.json'))) return false;
-  const { packageDirsByName, packageJsonByDir, closure } = await readWorkspaceComponentDependencyGraph(componentDir, { monorepoRoot });
-  for (const name of closure) {
-    const packageDir = packageDirsByName.get(name);
-    const metadata = packageJsonByDir.get(packageDir);
+  const graph = await readWorkspaceComponentDependencyGraph(componentDir, { monorepoRoot });
+  const plan = planWorkspacePackageBuilds(graph.packageNames, graph, { visitedNames: [graph.componentPackageJson.name] });
+  for (const [name, input] of plan) {
+    const { dir: packageDir, manifest: metadata } = input;
     if (collectExpectedPackageOutputTargets(metadata).length === 0) continue;
-    const dependencyDirs = collectWorkspacePackageFingerprintDependencyNames(metadata, name,
-      new Set(packageDirsByName.keys()), { packageDirsByName }).map(dependency => packageDirsByName.get(dependency));
+    const dependencyDirs = plannedWorkspaceFingerprintDirectories(name, input, graph.packageDirsByName);
     if (!isWorkspacePackageOutputValid(packageDir, { monorepoRoot, dependencyDirs })) return false;
     const record = await readJson(join(packageDir, 'dist', BUILD_INPUT_RECORD));
     const state = await inspectWorkspacePackageOutput(packageDir, metadata, {
@@ -196,17 +199,14 @@ function readQaStalePackage(packageDir, packageName, { monorepoRoot, dependencyD
 export async function inspectWorkspaceQaStalePackages(monorepoPath, packageNames, { includeDevDependencies = false } = {}) {
   const monorepoRoot = coerceHappyMonorepoRootFromPath(monorepoPath);
   if (!monorepoRoot) return [];
-  const { packageDirsByName } = await readWorkspacePackageGraph(monorepoRoot);
-  const closure = await collectWorkspaceDependencyClosure(packageNames, packageDirsByName, { includeDevDependencies });
+  const graph = await readWorkspacePackageGraph(monorepoRoot);
+  const plan = planWorkspacePackageBuilds(packageNames, graph, { includeDevDependencies });
   const stalePackages = [];
-  for (const packageName of [...closure].sort()) {
-    const packageDir = packageDirsByName.get(packageName);
+  for (const [packageName, input] of [...plan].sort(([a], [b]) => a.localeCompare(b))) {
+    const { dir: packageDir } = input;
     const recordPath = join(packageDir, 'dist', BUILD_INPUT_RECORD);
     if (!existsSync(recordPath)) continue;
-    const dependencyDirs = collectWorkspacePackageFingerprintDependencyNames(
-      JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')), packageName,
-      new Set(packageDirsByName.keys()), { packageDirsByName },
-    ).map((name) => packageDirsByName.get(name));
+    const dependencyDirs = plannedWorkspaceFingerprintDirectories(packageName, input, graph.packageDirsByName);
     const stale = readQaStalePackage(packageDir, packageName, { monorepoRoot, dependencyDirs });
     if (stale) stalePackages.push(stale);
   }
@@ -295,6 +295,124 @@ async function collectWorkspaceDependencyClosure(packageNames, packageDirsByName
   return admitted;
 }
 
+/** The verified input view for a warm cycle must agree with its publisher,
+ * even when the next consumer enters that cycle through another member. */
+function planWorkspacePackageBuilds(packageNames, { packageDirsByName, packageJsonByDir }, {
+  includeDevDependencies = true, visitedNames = [],
+} = {}) {
+  const workspacePackageNames = new Set(packageDirsByName.keys());
+  const excluded = new Set(visitedNames);
+  const direct = new Map();
+  const collect = name => {
+    const dir = packageDirsByName.get(name);
+    if (excluded.has(name) || direct.has(name) || !dir) return;
+    const dependencies = collectInternalWorkspaceDependencyNames(packageJsonByDir.get(dir), name, {
+      includeDevDependencies, workspacePackageNames,
+    });
+    direct.set(name, dependencies);
+    for (const dependency of dependencies) collect(dependency);
+  };
+  for (const name of packageNames) collect(name);
+
+  const admittedWorkspacePackageNames = new Set(direct.keys());
+  for (const [name, dependencies] of direct) {
+    const manifest = packageJsonByDir.get(packageDirsByName.get(name));
+    direct.set(name, [...new Set([
+      ...dependencies,
+      ...collectAdmittedInternalWorkspacePeerDependencyNames(manifest, name, {
+        admittedWorkspacePackageNames, workspacePackageNames,
+      }),
+    ])].filter(dependency => direct.has(dependency)));
+  }
+
+  const backEdges = new Set();
+  const order = (roots, onBackEdge = () => {}) => {
+    const active = new Set();
+    const plan = new Map();
+    const visit = name => {
+      if (plan.has(name)) return;
+      const omit = new Set(active);
+      active.add(name);
+      const dependencies = direct.get(name).filter(dependency => {
+        if (!active.has(dependency)) return true;
+        onBackEdge(dependency);
+        return false;
+      });
+      for (const dependency of dependencies) visit(dependency);
+      active.delete(name);
+      const dir = packageDirsByName.get(name);
+      plan.set(name, { dir, manifest: packageJsonByDir.get(dir), dependencies, omit });
+    };
+    for (const name of roots) visit(name);
+    return plan;
+  };
+
+  const plan = order(direct.keys(), name => backEdges.add(name));
+  if (backEdges.size === 0) return plan;
+
+  const reachable = name => {
+    const seen = new Set();
+    const visit = member => {
+      if (seen.has(member)) return;
+      seen.add(member);
+      for (const dependency of direct.get(member)) visit(dependency);
+    };
+    visit(name);
+    return seen;
+  };
+  const preferredRoots = [];
+  const groupsSeen = new Set();
+  for (const target of backEdges) {
+    if (groupsSeen.has(target)) continue;
+    const group = [...reachable(target)].filter(name => reachable(name).has(target));
+    for (const name of group) groupsSeen.add(name);
+
+    // The existing receipt records which dependency outputs were consumed.
+    // Preserve that orientation only when it describes a complete compatible
+    // cycle view. Cold cycles keep the caller's existing dependency order.
+    const root = coerceHappyMonorepoRootFromPath(packageDirsByName.get(target));
+    const packagePaths = new Map(group.map(name =>
+      [name, relative(root, packageDirsByName.get(name)).split(sep).join('/')]));
+    const groupPaths = new Set(packagePaths.values());
+    const recorded = new Map();
+    for (const name of group) {
+      const path = join(packageDirsByName.get(name), 'dist', BUILD_INPUT_RECORD);
+      try {
+        const record = JSON.parse(readFileSync(path, 'utf8'));
+        if (record.version !== 2 || !Array.isArray(record.dependencies)) break;
+        recorded.set(name, new Set(record.dependencies.map(value => value?.packageDir)
+          .filter(path => groupPaths.has(path))));
+      } catch (error) {
+        if (error instanceof SyntaxError || error.code === 'ENOENT') break;
+        throw error;
+      }
+    }
+    if (recorded.size !== group.length) continue;
+
+    const fingerprintPeers = new Map(group.map(name => {
+      const { manifest } = plan.get(name);
+      const peers = collectWorkspacePackageFingerprintDependencyNames(manifest, name, workspacePackageNames,
+        { packageDirsByName }).filter(peer => packagePaths.has(peer));
+      return [name, peers];
+    }));
+    const preferred = group.find(root => {
+      const candidate = order([root]);
+      return group.every(name => {
+        const expected = fingerprintPeers.get(name).filter(peer => !candidate.get(name).omit.has(peer));
+        const actual = recorded.get(name);
+        return expected.length === actual.size && expected.every(peer => actual.has(packagePaths.get(peer)));
+      });
+    });
+    if (preferred) preferredRoots.push(preferred);
+  }
+  return preferredRoots.length === 0 ? plan : order([...preferredRoots, ...direct.keys()]);
+}
+
+function plannedWorkspaceFingerprintDirectories(name, { manifest, omit }, packageDirsByName) {
+  return collectWorkspacePackageFingerprintDependencyNames(manifest, name, new Set(packageDirsByName.keys()),
+    { packageDirsByName }).filter(dependency => !omit.has(dependency)).map(dependency => packageDirsByName.get(dependency));
+}
+
 /** Build admission, retained-output inspection and recovery watches consume
  * the same transitive workspace graph, including compiler dependencies.
  */
@@ -316,33 +434,12 @@ export async function readWorkspaceComponentDependencyGraph(componentDir, {
 export async function findFirstNoncurrentWorkspaceDependency(componentDir, { env = process.env, buildMode = 'strict' } = {}) {
   const graph = await readWorkspaceComponentDependencyGraph(componentDir);
   if (!graph) return null;
-  const { packageDirsByName, packageJsonByDir, packageNames, closure } = graph;
-  const workspacePackageNames = new Set(packageDirsByName.keys());
-  const visited = new Set();
-  const visit = name => {
-    if (visited.has(name)) return null;
-    visited.add(name);
-    const packageDir = packageDirsByName.get(name);
-    if (!packageDir) return null;
-    const metadata = packageJsonByDir.get(packageDir);
-    const dependencies = [
-      ...collectInternalWorkspaceDependencyNames(metadata, name, { workspacePackageNames }),
-      ...collectAdmittedInternalWorkspacePeerDependencyNames(metadata, name, {
-        admittedWorkspacePackageNames: closure, workspacePackageNames,
-      }),
-    ];
-    for (const dependency of dependencies) {
-      const first = visit(dependency);
-      if (first) return first;
-    }
-    if (collectExpectedPackageOutputTargets(metadata).length === 0) return null;
-    const dependencyDirs = collectWorkspacePackageFingerprintDependencyNames(metadata, name,
-      workspacePackageNames, { packageDirsByName }).map(dependency => packageDirsByName.get(dependency));
-    return isWorkspacePackageOutputCurrent(packageDir, { dependencyDirs, env, buildMode }) ? null : name;
-  };
-  for (const name of packageNames) {
-    const first = visit(name);
-    if (first) return first;
+  const plan = planWorkspacePackageBuilds(graph.packageNames, graph, { visitedNames: [graph.componentPackageJson.name] });
+  for (const [name, input] of plan) {
+    const { dir: packageDir, manifest: metadata } = input;
+    if (collectExpectedPackageOutputTargets(metadata).length === 0) continue;
+    const dependencyDirs = plannedWorkspaceFingerprintDirectories(name, input, graph.packageDirsByName);
+    if (!isWorkspacePackageOutputCurrent(packageDir, { dependencyDirs, env, buildMode })) return name;
   }
   return null;
 }
@@ -435,15 +532,14 @@ export async function ensureWorkspacePackagesBuiltForComponents(componentDirs, {
     signal?.throwIfAborted();
     const demand = await readWorkspaceBuildBatchDemand(components, { env, admissionClass });
     const resources = workspaceBuildBatchResources(demand);
-    const workspacePackageNames = new Set(demand.packageDirsByName.keys());
+    const plan = planWorkspacePackageBuilds(demand.packageNames, demand, {
+      visitedNames: demand.consumerOnlyPackageNames,
+    });
     let current = true;
-    for (const name of demand.packageNames) {
+    for (const [name, input] of plan) {
       signal?.throwIfAborted();
-      const packageDir = demand.packageDirsByName.get(name);
-      const packageJson = demand.packageJsonByDir.get(packageDir);
-      const dependencyDirs = collectWorkspacePackageFingerprintDependencyNames(packageJson, name,
-        workspacePackageNames, { packageDirsByName: demand.packageDirsByName })
-        .map(dependency => demand.packageDirsByName.get(dependency));
+      const { dir: packageDir, manifest: packageJson } = input;
+      const dependencyDirs = plannedWorkspaceFingerprintDirectories(name, input, demand.packageDirsByName);
       const state = await inspectWorkspacePackageBuildState(packageDir, packageJson, {
         monorepoRoot: demand.monorepoRoot, dependencyDirs, env,
       });
@@ -846,10 +942,11 @@ function readVerifiedOutputRecord(distDir, inputFingerprint, { requirePruned = f
     // still participate in dependency identity, but are not current compiler
     // output. Persist their stat proof in this same publisher-owned record.
     const recordedPaths = new Set(outputs.map(output => output.path));
+    const retained = collectPackageOwnedDistFiles(distDir, record.files).filter(path => !recordedPaths.has(path));
+    if (retained.some(isCompilerDeclarationOutput)) return false;
     const previousVerification = new Map((Array.isArray(record.outputVerification) ? record.outputVerification : [])
       .map(output => [output.path, output]));
-    const verification = collectPackageOwnedDistFiles(distDir, record.files).flatMap(path => {
-      if (recordedPaths.has(path)) return [];
+    const verification = retained.flatMap(path => {
       const outputPath = join(distDir, path);
       const stat = lstatSync(outputPath, { bigint: true });
       if (!stat.isFile()) return [];
@@ -1441,10 +1538,11 @@ async function consumeWorkspacePackageBuildInputs({
     } else {
       // Both modes publish through the mounted tree: byte-identical emitted
       // files keep their inode and mtime (a no-op compile must not churn dist
-      // for mtime-keyed consumers); artifact publication also prunes stale files.
+      // for mtime-keyed consumers). Live loads may still follow prior runtime
+      // graphs, while compiler declarations must represent only current APIs.
       await buildIntoTempThenReplace(distDir, publishOutputs, {
         preserveDestinationPath: true,
-        pruneStale: publicationMode === 'artifact',
+        pruneStale: publicationMode === 'artifact' || isCompilerDeclarationOutput,
         retainUnstagedPaths: SOURCE_PLUGIN_UI_PUBLISHER_PATHS,
       });
     }
@@ -1687,20 +1785,16 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
   const pluginFailures = [];
   const stalePackages = new Map();
   signal?.throwIfAborted();
-  const visited = new Set(visitedNames);
   const forced = new Set(forcePackageNames);
-  const changedClosures = new Set();
   const closureBuildPromises = new Map();
   // Scheduling shares one graph observation. Admission and publication still
   // read current inputs independently. No observation survives this demand.
   const { packageDirsByName, packageJsonByDir } = workspaceGraphIn
     ? workspaceGraphIn : await readWorkspacePackageGraph(monorepoRoot);
-  const workspacePackageNames = new Set(packageDirsByName.keys());
-  const admittedWorkspacePackageNames = await collectWorkspaceDependencyClosure(
-    packageNames ?? [], packageDirsByName, { includeDevDependencies, packageJsonByDir },
-  );
-  const protocolDir = admittedWorkspacePackageNames.has('@happier-dev/protocol')
-    ? packageDirsByName.get('@happier-dev/protocol') : undefined;
+  const plan = planWorkspacePackageBuilds(packageNames ?? [], { packageDirsByName, packageJsonByDir }, {
+    includeDevDependencies, visitedNames,
+  });
+  const protocolDir = plan.get('@happier-dev/protocol')?.dir;
   const protocolExportGenerator = protocolDir && join(protocolDir, 'scripts/generate-exports.mjs');
   if (protocolExportGenerator && existsSync(protocolExportGenerator)) {
     const { prepareProtocolExports } = await import(pathToFileURL(protocolExportGenerator).href);
@@ -1708,6 +1802,7 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
     // Export publication changes no dependency edges. Capture and graph-drift
     // inspection must consume its resulting manifest, not the earlier map.
     packageJsonByDir.set(protocolDir, protocolManifest);
+    plan.get('@happier-dev/protocol').manifest = protocolManifest;
   }
   const scheduleConcurrentPackageBuild = createAsyncConcurrencyLimiter(maxConcurrentBuilds);
   const scheduleBundledWorkspacePackageBuild = createAsyncConcurrencyLimiter(1);
@@ -1719,52 +1814,15 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
       : scheduleConcurrentPackageBuild(operation)
   );
 
-  const buildWorkspaceClosure = (packageDir, ancestors = new Set()) => {
-    const resolvedPackageDir = resolve(packageDir);
-    if (ancestors.has(resolvedPackageDir)) return Promise.resolve(false);
-
-    const existing = closureBuildPromises.get(resolvedPackageDir);
-    if (existing) return existing;
-
-    const nextAncestors = new Set(ancestors);
-    nextAncestors.add(resolvedPackageDir);
+  for (const [packageName, input] of plan) {
+    const { dir: resolvedPackageDir, manifest: packageJson, dependencies } = input;
     const buildPromise = (async () => {
       const packageJsonPath = join(resolvedPackageDir, 'package.json');
-      if (!existsSync(packageJsonPath)) return false;
-
-      // Wire the closure synchronously from this demand's graph observation.
-      // Yielding before recursion lets separate roots reserve promises that
-      // then await each other across a cycle, outside either ancestor chain.
-      const packageJson = packageJsonByDir.get(resolvedPackageDir);
-      const packageName = typeof packageJson?.name === 'string' ? packageJson.name : '';
-      // Optional compiler failures retain the existing isolation contract;
-      // another package's drift must not retry a genuine failed command.
-      if (pluginFailures.some((failure) => failure.packageName === packageName)) return false;
-      if (packageName && visited.has(packageName)) return changedClosures.has(packageName);
-      if (packageName) visited.add(packageName);
-
-      const dependencyNames = [...new Set([
-        ...collectInternalWorkspaceDependencyNames(
-        packageJson,
-        packageName,
-        { includeDevDependencies, workspacePackageNames },
-        ),
-        ...collectAdmittedInternalWorkspacePeerDependencyNames(
-          packageJson,
-          packageName,
-          { admittedWorkspacePackageNames, workspacePackageNames },
-        ),
-      ])];
-      const dependencyResults = await settleWorkspaceBuilds(dependencyNames.map(async (dependencyName) => {
-        const dependencyDir = packageDirsByName.get(dependencyName);
-        return dependencyDir
-          ? await buildWorkspaceClosure(dependencyDir, nextAncestors)
-          : false;
-      }));
+      await settleWorkspaceBuilds(dependencies.map(name => closureBuildPromises.get(name)));
       if (JSON.stringify(await readJson(packageJsonPath)) !== JSON.stringify(packageJson)) {
         throw new BuildInputDriftError(`[workspace-build] package graph changed: ${resolvedPackageDir}`);
       }
-      const failedDependency = dependencyNames.find((name) => (
+      const failedDependency = dependencies.find((name) => (
         pluginFailures.some((failure) => failure.packageName === name)
       ));
       if (failedDependency) {
@@ -1775,25 +1833,7 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
         }));
         return false;
       }
-      const orderedDependencyNames = dependencyNames.filter((dependencyName) => {
-        const dependencyDir = packageDirsByName.get(dependencyName);
-        // A cycle has no dependency-before-consumer timestamp order. The
-        // recursive owner already stops at this back-edge, so exclude it from
-        // the cross-invocation freshness comparison as well.
-        return dependencyDir && !nextAncestors.has(resolve(dependencyDir));
-      });
-      const dependencyDirs = collectWorkspacePackageFingerprintDependencyNames(
-        packageJson,
-        packageName,
-        workspacePackageNames,
-        { packageDirsByName },
-      )
-        .filter((dependencyName) => {
-          const dependencyDir = packageDirsByName.get(dependencyName);
-          return dependencyDir && !nextAncestors.has(resolve(dependencyDir));
-        })
-        .map((dependencyName) => packageDirsByName.get(dependencyName))
-        .filter(Boolean);
+      const dependencyDirs = plannedWorkspaceFingerprintDirectories(packageName, input, packageDirsByName);
 
       let result;
       const queuedAt = performance.now();
@@ -1834,17 +1874,11 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
       if (result.stalePackage) stalePackages.set(packageName, result.stalePackage);
       else stalePackages.delete(packageName);
       if (result.refreshed && packageName) refreshed.push(packageName);
-      if ((dependencyResults.some(Boolean) || result.built) && packageName) changedClosures.add(packageName);
-      return dependencyResults.some(Boolean) || result.built;
     })();
-    closureBuildPromises.set(resolvedPackageDir, buildPromise);
-    return buildPromise;
-  };
+    closureBuildPromises.set(packageName, buildPromise);
+  }
 
-  await settleWorkspaceBuilds((packageNames ?? []).map(async (packageName) => {
-    const packageDir = packageDirsByName.get(packageName);
-    if (packageDir) await buildWorkspaceClosure(packageDir);
-  }));
+  await settleWorkspaceBuilds([...closureBuildPromises.values()]);
 
   return {
     built: [...new Set(built)].sort((left, right) => left.localeCompare(right)),
@@ -1872,6 +1906,7 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
   buildMode,
   signal,
   inheritedAdmission = false,
+  batchAdmission = true,
   visitedNames = [],
 } = {}) {
   signal?.throwIfAborted();
@@ -1887,7 +1922,7 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
   const resolvedBuildMode = resolveWorkspaceBuildMode({ buildMode, env });
   const batchOptions = { quiet, force, timeoutMs, includeDevDependencies, publicationMode: resolvedPublicationMode,
     buildMode: resolvedBuildMode, maxConcurrentBuilds, isolatePluginFailures, visitedNames };
-  if (!inheritedAdmission && workspaceBuildBoundary.workerModule && requiresTypeScriptAdmission({ env })) {
+  if (batchAdmission && !inheritedAdmission && workspaceBuildBoundary.workerModule && requiresTypeScriptAdmission({ env })) {
     const batch = await withSingleTrailingBuildPass({ run: () => buildWorkspacePackageNamesInOneAdmission(monorepoRoot, normalizedPackageNames, {
       ...batchOptions, env: { ...env, [WORKSPACE_BUILD_MODE_ENV]: resolvedBuildMode }, workspaceBuildBoundary,
       onPackageBuildStart, onPackageBuildDone, onPackageBuildResult, signal }) });
@@ -1924,13 +1959,11 @@ async function buildWorkspacePackageNamesInOneAdmission(monorepoRoot, packageNam
   const { packageDirsByName, packageJsonByDir } = await readWorkspacePackageGraph(monorepoRoot);
   const closure = [...await collectWorkspaceDependencyClosure(packageNames, packageDirsByName, {
     includeDevDependencies: options.includeDevDependencies, packageJsonByDir })].sort();
-  const workspacePackageNames = new Set(packageDirsByName.keys());
+  const plan = planWorkspacePackageBuilds(packageNames, { packageDirsByName, packageJsonByDir }, options);
   let current = !options.force;
-  for (const name of current ? closure : []) {
-    const packageDir = packageDirsByName.get(name);
-    const packageJson = packageJsonByDir.get(packageDir);
-    const dependencyDirs = collectWorkspacePackageFingerprintDependencyNames(packageJson, name,
-      workspacePackageNames, { packageDirsByName }).map(dependency => packageDirsByName.get(dependency));
+  for (const [name, input] of current ? plan : []) {
+    const { dir: packageDir, manifest: packageJson } = input;
+    const dependencyDirs = plannedWorkspaceFingerprintDirectories(name, input, packageDirsByName);
     const state = await inspectWorkspacePackageBuildState(packageDir, packageJson, { monorepoRoot, dependencyDirs, env });
     if (state.expectedTargets.length && !workspacePackageBuildStateCurrent(state)) { current = false; break; }
   }

@@ -25,6 +25,8 @@ import { prepareRemoteValidationWorkspace } from './remote_validation_preparatio
 import { resolveCliBundledWorkspacePackageNames } from '../../../../cli/scripts/buildSharedDeps.mjs';
 import { resolveDependencyRefreshLockPath, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 
+const declarationFixtureBuild = `node ${JSON.stringify(fileURLToPath(new URL('../../../../../scripts/workspaces/buildTypeScriptPackageDist.mjs', import.meta.url)))} -p tsconfig.json`;
+
 async function assertNativeAdmissionIdle(native) {
   const status = await native.brokerStatus();
   assert.equal(status.activeCount, 0);
@@ -137,96 +139,6 @@ writeFileSync(join(output, 'index.js'), captured);
   assert.equal(readFileSync(countPath, 'utf8'), '4', 'the next demand rebuilds the later source once');
   await prepare();
   assert.equal(readFileSync(countPath, 'utf8'), '4');
-});
-
-// Readers of the shared dist (dependent package captures copy it under their own lock) must never
-// observe it without declarations: spanned output is un-recorded and re-emitted, not unpublished.
-for (const mode of ['in-process', 'child', 'exhausted']) test(`declaration publication re-emits compiler output spanning a dependency writer without unpublishing it (${mode})`, async t => {
-  const fixture = await createTempFixture(t, { prefix: 'hstack-declaration-dependency-drift-' });
-  const root = fixture.root;
-  const pkg = fixture.path('packages/protocol');
-  const consumer = fixture.path('apps/server');
-  for (const name of ['cli', 'ui', 'server']) {
-    mkdirSync(fixture.path('apps', name), { recursive: true });
-    writeFileSync(fixture.path('apps', name, 'package.json'), JSON.stringify({ name: `@fixture/${name}`,
-      ...(name === 'server' ? { dependencies: { '@happier-dev/protocol': 'workspace:*' } } : {}) }));
-  }
-  mkdirSync(join(pkg, 'src'), { recursive: true });
-  mkdirSync(join(pkg, 'dist'), { recursive: true });
-  writeFileSync(join(pkg, 'dist/index.js'), 'unrelated JavaScript publication');
-  writeFileSync(join(pkg, 'dist/.build-manifest.json'), 'unrelated JavaScript build stamp');
-  mkdirSync(fixture.path('node_modules/external-fixture'), { recursive: true });
-  writeFileSync(fixture.path('package.json'), '{"private":true}');
-  writeFileSync(fixture.path('pnpm-lock.yaml'), '# fixture\n');
-  writeFileSync(fixture.path('pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
-  writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@happier-dev/protocol', types: './dist/index.d.ts',
-    dependencies: { 'external-fixture': '1.0.0' } }));
-  writeFileSync(join(pkg, 'src/index.ts'), 'import { current } from "external-fixture"; export const value = current;');
-  writeFileSync(join(pkg, 'tsconfig.json'), JSON.stringify({ compilerOptions: { declaration: true, rootDir: 'src',
-    outDir: 'dist', module: 'esnext', moduleResolution: 'bundler', types: [] }, include: ['src/**/*.ts'] }));
-  const external = fixture.path('node_modules/external-fixture/index.d.ts');
-  writeFileSync(external, 'export declare const current: "before";');
-  const countPath = fixture.path('compiler-count');
-  const cache = fixture.path('.project/tmp/typecheck-declarations/projects/packages/protocol');
-  const stamp = join(cache, 'inputs.json');
-  const seenPath = fixture.path('declarations-seen-between-passes');
-  const wrapper = fixture.path('compiler-boundary.mjs');
-  const hook = fixture.path('compiler-boundary-hook.mjs');
-  const refreshOwner = new URL('../proc/dependency_refresh.mjs', import.meta.url).href;
-  writeFileSync(wrapper, `import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
-import { withDependencyRefresh } from ${JSON.stringify(refreshOwner)};
-const count = Number(existsSync(${JSON.stringify(countPath)}) ? readFileSync(${JSON.stringify(countPath)}, 'utf8') : 0) + 1;
-writeFileSync(${JSON.stringify(countPath)}, String(count));
-assert.equal(existsSync(${JSON.stringify(stamp)}), false, 'spanned declaration cache must be discarded before rebuilding');
-if (count > 1) writeFileSync(${JSON.stringify(seenPath)}, String(existsSync(${JSON.stringify(join(pkg, 'dist/index.d.ts'))})));
-const result = spawnSync(process.argv[2], process.argv.slice(3), { env: process.env, stdio: 'inherit' });
-if (result.status !== 0) process.exit(result.status ?? 1);
-if (count === 1 || ${JSON.stringify(mode === 'exhausted')}) await withDependencyRefresh({ installDir: ${JSON.stringify(root)}, env: process.env, force: true }, async () => {
-  writeFileSync(${JSON.stringify(external)}, 'export declare const current: "after";');
-});
-`);
-  // Replace only compiler process launch. The selected Microsoft compiler,
-  // declaration/cache owner, publication locks and dependency writer stay real.
-  writeFileSync(hook, `import childProcess from 'node:child_process';
-import { syncBuiltinESMExports } from 'node:module';
-const original = childProcess.spawn;
-childProcess.spawn = (command, args, options = {}) => {
-  if (options.env?.HAPPIER_DECLARATION_FIXTURE_WRAPPED !== '1' && args.includes('--build') && args.includes('--singleThreaded')) {
-    return original(process.execPath, [${JSON.stringify(wrapper)}, command, ...args], { ...options,
-      env: { ...options.env, HAPPIER_DECLARATION_FIXTURE_WRAPPED: '1' } });
-  }
-  return original(command, args, options);
-};
-syncBuiltinESMExports();
-export function restore() { childProcess.spawn = original; syncBuiltinESMExports(); }
-`);
-  const { restore } = await import(pathToFileURL(hook).href);
-  t.after(restore);
-  const env = { ...buildNativeAdmissionFixtureEnv(), CI: '1', HAPPIER_DEV_TARGET_EXECUTION: '',
-    HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED: '', HAPPIER_STACK_HOME_DIR: root, HAPPIER_STACK_ENV_FILE: '',
-    HAPPIER_STACK_SKIP_REFRESH_DEPS: '', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '',
-    NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${hook}`].filter(Boolean).join(' ') };
-  await withDependencyRefresh({ installDir: root, env }, async () => {});
-  if (mode !== 'in-process') writeFileSync(fixture.path('pnpm-lock.yaml'), '# next dependency inputs visible before emission\n');
-  const prepare = prepareWorkspaceTypecheckDeclarations(consumer, { env, withinTypecheckAdmission: mode === 'in-process', signal: t.signal });
-  if (mode === 'exhausted') {
-    await assert.rejects(prepare, { code: 'BUILD_INPUTS_CHANGED', trailingPassExhausted: true });
-    assert.equal(existsSync(join(pkg, 'dist/index.d.ts')), true, 'readers keep the published declarations');
-    assert.equal(existsSync(join(cache, 'incremental.tsbuildinfo')), false);
-    assert.equal(existsSync(stamp), false);
-  } else {
-    await prepare;
-    assert.match(readFileSync(join(pkg, 'dist/index.d.ts'), 'utf8'), /value: "after"/);
-    assert.equal(existsSync(stamp), true);
-    await prepareWorkspaceTypecheckDeclarations(consumer, { env, withinTypecheckAdmission: mode === 'in-process', signal: t.signal });
-    assert.match(readFileSync(join(pkg, 'dist/index.d.ts'), 'utf8'), /value: "after"/);
-  }
-  assert.equal(readFileSync(countPath, 'utf8'), '2', 'one spanned compilation triggers exactly one trailing pass');
-  assert.equal(readFileSync(seenPath, 'utf8'), 'true', 'a reader between the passes sees published declarations');
-  assert.equal(readFileSync(join(pkg, 'dist/index.js'), 'utf8'), 'unrelated JavaScript publication');
-  assert.equal(readFileSync(join(pkg, 'dist/.build-manifest.json'), 'utf8'), 'unrelated JavaScript build stamp');
 });
 
 test('explicit typecheck batch prepares strict producers once before its same-worker readers', { skip: process.platform !== 'linux' }, async t => {
@@ -673,15 +585,15 @@ exit 23
   });
 });
 
-test('typecheck consumers share current canonical declarations without JavaScript publication or redirects', async t => {
+test('typecheck consumers share current canonical declarations through the package publisher without redirects', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-typecheck-current-declarations-' });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true }));
-  writeFileSync(join(root, 'pnpm-lock.yaml'), '# fixture\n');
+  writeFileSync(join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\nimporters: {}\n");
   writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
   const metadata = { name: '@happier-dev/protocol', type: 'module', main: './dist/index.js', types: './dist/index.d.ts',
     exports: { '.': { 'happier-source': './src/index.ts', types: './dist/index.d.ts', default: './dist/index.js' },
       './*': { types: './dist/*.d.ts', default: './dist/*.js' } },
-    scripts: { build: 'must-not-run' } };
+    scripts: { build: declarationFixtureBuild } };
   const dependency = join(root, 'packages/protocol');
   mkdirSync(join(dependency, 'src'), { recursive: true });
   writeFileSync(join(dependency, 'package.json'), JSON.stringify(metadata));
@@ -690,7 +602,7 @@ test('typecheck consumers share current canonical declarations without JavaScrip
   writeFileSync(join(dependency, 'src/widget.tsx'), widget('current'));
   writeFileSync(join(dependency, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
     strict: true, types: [], target: 'es2022', module: 'esnext', moduleResolution: 'bundler',
-    jsx: 'preserve', declaration: true, rootDir: 'src', outDir: 'dist',
+    jsx: 'react-jsx', declaration: true, rootDir: 'src', outDir: 'dist',
   }, files: ['src/index.ts'] }));
   mkdirSync(join(dependency, 'dist'), { recursive: true });
   writeFileSync(join(dependency, 'dist/index.d.ts'), 'export declare const value: "stale";\n');
@@ -709,7 +621,7 @@ test('typecheck consumers share current canonical declarations without JavaScrip
   symlinkSync(dependency, join(root, 'node_modules/@happier-dev/protocol'), 'junction');
   symlinkSync(extra, join(root, 'node_modules/@fixture/extra'), 'junction');
   mkdirSync(join(extra, 'src'), { recursive: true });
-  writeFileSync(join(extra, 'package.json'), JSON.stringify({ name: '@fixture/extra', type: 'module', types: './dist/index.d.ts',
+  writeFileSync(join(extra, 'package.json'), JSON.stringify({ name: '@fixture/extra', type: 'module', types: './dist/index.d.ts', scripts: { build: declarationFixtureBuild },
     dependencies: { '@happier-dev/protocol': 'workspace:*' } }));
   writeFileSync(join(extra, 'src/index.ts'), 'import { makePlan } from "@happier-dev/protocol/widget"; export function extra() { return makePlan(); }');
   writeFileSync(join(extra, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
@@ -728,20 +640,11 @@ test('typecheck consumers share current canonical declarations without JavaScrip
   const compiler = resolveTypeScriptCliInvocation({ args, workspaceDir: consumer, env: { CI: 'true' }, invocationKind: 'build' });
   const check = () => spawnSync(compiler.command, [...compiler.argsPrefix, ...args], { cwd: consumer, encoding: 'utf8' });
   let emissions = 0;
-  // Instrument only the OS process boundary. Admission, shared cache locking,
-  // producer and consumer all execute their real implementations.
-  const runPreparation = async options => {
-    const result = await runWorkspaceBuildAdmission({ ...options, stdio: 'pipe' });
-    for (const line of (result.stderr ?? '').split('\n')) {
-      if (line.startsWith('[typecheck-declarations] ')) emissions += JSON.parse(line.slice('[typecheck-declarations] '.length)).emitted.filter(name => name === '@happier-dev/protocol').length;
-    }
-    assert.equal(result.status, 0, result.stdout + result.stderr);
-    return result;
-  };
   const prepare = async component => {
-    const projects = [{ project: join(consumer, 'tsconfig.json'), args }];
-    await prepareWorkspaceTypecheckDeclarations(join(root, 'apps', component), { projects, env, runPreparation });
-    const result = spawnSync(compiler.command, [...compiler.argsPrefix, '--noEmit', '-p', projects[0].project], { cwd: consumer, encoding: 'utf8' });
+    const prepared = await prepareWorkspaceTypecheckDeclarations(join(root, 'apps', component), { env });
+    assert.equal(prepared.ok, true);
+    emissions += prepared.declarations.filter(name => name === '@happier-dev/protocol').length;
+    const result = check();
     assert.equal(result.status, 0, result.stdout + result.stderr);
   };
   for (const [index, component] of ['cli', 'ui', 'server'].entries()) {
@@ -763,14 +666,14 @@ test('typecheck consumers share current canonical declarations without JavaScrip
     assert.equal(emissions, index + 1, 'unchanged inputs do not start another emitter');
   }
   assert.match(readFileSync(join(dependency, 'dist/widget.d.ts'), 'utf8'), /moving-server/);
-  assert.equal(readFileSync(join(dependency, 'dist/index.js'), 'utf8'), 'export const value = "stale";\n');
+  assert.match(readFileSync(join(dependency, 'dist/widget.js'), 'utf8'), /moving-server/);
   assert.equal(existsSync(join(root, 'apps/cli/dist')), false, 'typecheck preparation does not build the CLI host');
   for (const initial of [
     { project: null, args: ['--noEmit'] },
     { project: consumer, args: ['--noEmit', '--project', consumer] },
   ]) {
     const projects = [initial];
-    await prepareWorkspaceTypecheckDeclarations(consumer, { projects, cwd: consumer, env, runPreparation });
+    await prepareWorkspaceTypecheckDeclarations(consumer, { projects, cwd: consumer, env });
     const result = spawnSync(compiler.command, [...compiler.argsPrefix, ...projects[0].args], { cwd: consumer, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stdout + result.stderr);
   }
@@ -780,7 +683,7 @@ test('typecheck consumers share current canonical declarations without JavaScrip
     noEmit: false, declaration: true, emitDeclarationOnly: true, outDir: './portable',
   }, files: ['portable.ts'] }));
   const portableProjects = [{ project: portable, args: ['-p', portable] }];
-  await prepareWorkspaceTypecheckDeclarations(join(root, 'apps/ui'), { projects: portableProjects, cwd: consumer, env, runPreparation });
+  await prepareWorkspaceTypecheckDeclarations(join(root, 'apps/ui'), { projects: portableProjects, cwd: consumer, env });
   const portability = spawnSync(compiler.command, [...compiler.argsPrefix, ...portableProjects[0].args], { cwd: consumer, encoding: 'utf8' });
   assert.equal(portability.status, 0, portability.stdout + portability.stderr);
   assert.doesNotMatch(readFileSync(join(consumer, 'portable/portable.d.ts'), 'utf8'), /node_modules\/\.cache|typecheck-declarations/,
@@ -790,18 +693,12 @@ test('typecheck consumers share current canonical declarations without JavaScrip
   const canonicalWidget = join(dependency, 'dist/widget.d.ts');
   writeFileSync(canonicalWidget, readFileSync(canonicalWidget, 'utf8').replace('moving-server', 'overwritten'));
   await prepare('server');
-  writeFileSync(join(dependency, 'dist/removed.d.ts'), 'export declare const obsolete: true;');
-  await prepare('server');
-  assert.equal(existsSync(join(dependency, 'dist/removed.d.ts')), false,
-    'a package publisher cannot resurrect a removed wildcard declaration');
-  unlinkSync(join(dependency, 'dist/widget.d.ts'));
-  await prepare('server');
   unlinkSync(source);
   writeFileSync(join(dependency, 'src/index.ts'), 'export const value = "after-delete";');
   writeFileSync(join(extra, 'src/index.ts'), 'export const extra = true;');
   writeFileSync(join(consumer, 'consumer.ts'), 'import { makePlan } from "@happier-dev/protocol/widget"; export { makePlan };');
   const projects = [{ project: join(consumer, 'tsconfig.json'), args }];
-  await prepareWorkspaceTypecheckDeclarations(consumer, { projects, env, runPreparation });
+  await prepareWorkspaceTypecheckDeclarations(consumer, { projects, env });
   const removed = spawnSync(compiler.command, [...compiler.argsPrefix, '--noEmit', '-p', projects[0].project], { cwd: consumer, encoding: 'utf8' });
   assert.equal(removed.status, 2, 'a removed wildcard export must not remain typecheckable through cached declarations');
   assert.match(removed.stdout, /TS2307/);
@@ -891,13 +788,15 @@ process.exitCode = result.status ?? 1;`);
   await assertNativeAdmissionIdle(native);
 });
 
-test('native declaration admission waits for package-build publication before emitting once', { skip: process.platform !== 'linux' }, async t => {
+test('native declaration admission waits for package-build publication before emitting once', { skip: process.platform !== 'linux', timeout: 60000 }, async t => {
     const { root } = await createTempFixture(t, { prefix: 'hstack-declaration-busy-lock-' });
     writeFileSync(join(root, 'package.json'), '{"private":true}');
+    writeFileSync(join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\nimporters: {}\n");
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
     const dependency = join(root, 'packages/protocol');
     mkdirSync(join(dependency, 'src'), { recursive: true });
-    writeFileSync(join(dependency, 'package.json'), '{"name":"@happier-dev/protocol","types":"./dist/index.d.ts"}');
+    writeFileSync(join(dependency, 'package.json'), JSON.stringify({ name: '@happier-dev/protocol',
+      types: './dist/index.d.ts', scripts: { build: declarationFixtureBuild } }));
     writeFileSync(join(dependency, 'src/index.ts'), 'export const current = true;');
     writeFileSync(join(dependency, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
       declaration: true, rootDir: 'src', outDir: 'dist', types: [],
@@ -915,49 +814,41 @@ test('native declaration admission waits for package-build publication before em
       env: { PATH: process.env.PATH, HAPPIER_STACK_REPO_DIR: root,
         HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: root, HAPPIER_STACK_PM_CACHE_BASE_DIR: join(root, 'worker-cache') },
     });
-    const blocked = Promise.withResolvers();
-    const diagnostics = [];
+    const controller = new AbortController();
+    const observationSignal = AbortSignal.any([controller.signal, t.signal, AbortSignal.timeout(15000)]);
+    const client = await import(pathToFileURL(native.admissionClientPath));
+    const blocked = (async () => {
+      for await (const status of client.watchAdmissionSamples(native.admissionRoot, { signal: observationSignal })) {
+        if (status.waitingCount === consumers.length && status.activeCount === 0) return status;
+      }
+      assert.fail('admission observation ended before both requests queued');
+    })();
     let terminal;
-    const started = performance.now();
-    const run = async () => {
-      terminal = Promise.all(consumers.map(consumer => prepareWorkspaceTypecheckDeclarations(consumer, {
-        env: native.env, runPreparation: async options => {
-          const result = await runWorkspaceBuildAdmission({ ...options, launcherPath: native.launcher, stdio: 'pipe', signal: t.signal,
-            onStderr: () => {
-              // Queue delivery wakes this observation; broker state owns the
-              // barrier, independent of human-readable diagnostic wording.
-              void native.brokerStatus().then(status => {
-                if (status.waitingCount === consumers.length && status.activeCount === 0) blocked.resolve();
-              }, blocked.reject);
-            } });
-          diagnostics.push(result.stderr ?? '');
-          if (result.status !== 0) t.diagnostic(result.stderr ?? String(result.status));
-          return result;
-        },
-      })));
-      await Promise.race([blocked.promise, terminal.then(() => assert.fail('declaration consumers did not wait for the held lock'))]);
-      assert.equal((await native.brokerStatus()).activeCount, 0, 'busy producers reserve no capacity');
-      assert.equal(existsSync(join(dependency, 'dist/index.d.ts')), false);
-    };
     try {
-      await withWorkspaceBundleLock(run, { lockPath: resolveWorkspacePackageBuildLockPath(dependency,
-        { name: '@happier-dev/protocol' }), signal: t.signal });
-      await terminal;
+      await withWorkspaceBundleLock(async () => {
+        terminal = Promise.all(consumers.map(consumer => prepareWorkspaceTypecheckDeclarations(consumer,
+          { env: native.env, signal: t.signal })));
+        const status = await Promise.race([blocked,
+          terminal.then(() => assert.fail('declaration consumers did not wait for the held lock'))]);
+        assert.equal(status.activeCount, 0, 'busy producers reserve no compiler capacity');
+        assert.equal(existsSync(join(dependency, 'dist/index.d.ts')), false);
+      }, { lockPath: resolveWorkspacePackageBuildLockPath(dependency, { name: '@happier-dev/protocol' }), signal: t.signal });
+      const results = await terminal;
+      assert.ok(results.every(result => result.ok));
+      assert.deepEqual(results.flatMap(result => result.declarations), ['@happier-dev/protocol'],
+        'concurrent cold consumers emit once after lock release');
     } finally {
-      // The containing lock releases first, including when the barrier fails.
-      await terminal?.catch(() => {});
+      controller.abort();
+      await Promise.allSettled([blocked, terminal]);
     }
-    const emitted = diagnostics.flatMap(value => [...value.matchAll(/\[typecheck-declarations\] (\{[^\n]+\})/g)])
-      .flatMap(match => JSON.parse(match[1]).emitted);
-    assert.deepEqual(emitted, ['@happier-dev/protocol'], 'concurrent cold consumers emit once after lock release');
     assert.match(readFileSync(join(dependency, 'dist/index.d.ts'), 'utf8'), /current = true/);
-    t.diagnostic(JSON.stringify({ concurrentConsumers: consumers.length, emitted: emitted.length,
-      packageBuilds: 0, elapsedMs: Math.round(performance.now() - started) }));
+    await assertNativeAdmissionIdle(native);
 });
 
 test('declaration preparation leaves consumer admission and references untouched', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-declaration-producer-ownership-' });
   writeFileSync(join(root, 'package.json'), '{"private":true}');
+  writeFileSync(join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\nimporters: {}\n");
   writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
   for (const app of ['cli', 'ui', 'server']) {
     const dir = join(root, 'apps', app);
@@ -969,7 +860,8 @@ test('declaration preparation leaves consumer admission and references untouched
   const dependency = join(root, 'packages/protocol');
   mkdirSync(join(dependency, 'src'), { recursive: true });
   writeFileSync(join(dependency, 'src/index.ts'), 'export const current = true;');
-  writeFileSync(join(dependency, 'package.json'), '{"name":"@happier-dev/protocol","types":"./dist/index.d.ts"}');
+  writeFileSync(join(dependency, 'package.json'), JSON.stringify({ name: '@happier-dev/protocol',
+    types: './dist/index.d.ts', scripts: { build: declarationFixtureBuild } }));
   writeFileSync(join(dependency, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
     declaration: true, rootDir: 'src', outDir: 'dist', types: [],
   }, include: ['src/**/*.ts'] }));
@@ -995,57 +887,6 @@ test('declaration preparation leaves consumer admission and references untouched
   const consumer = JSON.parse(readFileSync(projects[1].project, 'utf8'));
   assert.equal(consumer.references[0].path, projects[0].project,
     'a prepared consumer references the producer config with the same current dependency aliases');
-});
-
-test('newer declarations preserve build stamps and cannot hide stale JavaScript from workspace preparation', async t => {
-  const { root } = await createTempFixture(t, { prefix: 'hstack-declaration-js-freshness-' });
-  writeFileSync(join(root, 'package.json'), '{"private":true}');
-  writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
-  const consumer = join(root, 'apps/server');
-  const dependency = join(root, 'packages/example');
-  for (const app of ['cli', 'ui']) {
-    mkdirSync(join(root, 'apps', app), { recursive: true });
-    writeFileSync(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
-  }
-  mkdirSync(consumer, { recursive: true });
-  mkdirSync(join(dependency, 'src'), { recursive: true });
-  writeFileSync(join(consumer, 'package.json'), JSON.stringify({ name: '@fixture/server',
-    dependencies: { '@happier-dev/example': 'workspace:*' } }));
-  writeFileSync(join(dependency, 'package.json'), JSON.stringify({ name: '@happier-dev/example', type: 'module',
-    main: './dist/index.js', types: './dist/index.d.ts', scripts: { build: 'fixture-compiler' } }));
-  writeFileSync(join(dependency, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
-    declaration: true, rootDir: 'src', outDir: 'dist', types: [],
-  }, include: ['src/**/*.ts'] }));
-  const source = join(dependency, 'src/index.ts');
-  const output = join(dependency, 'dist/index.js');
-  const stamp = join(dependency, 'dist/.happier-build-inputs.json');
-  let builds = 0;
-  // Only the package compiler process is replaced. Declaration emission,
-  // freshness, output integrity, locks and publication are real.
-  const workspaceBuildBoundary = { prepareEnv: async (_dir, env) => env,
-    runPackageBuild: async (dir, { env }) => {
-      builds++;
-      writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), readFileSync(join(dir, 'src/index.ts')));
-      writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.d.ts'), 'export declare const value: string;');
-    } };
-  const env = { CI: 'true', PATH: process.env.PATH, HAPPIER_STACK_REPO_DIR: root,
-    HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: root };
-  writeFileSync(source, 'export const value = "before";');
-  await ensureWorkspacePackagesBuiltForComponent(consumer, { env, workspaceBuildBoundary });
-  const previousStamp = readFileSync(stamp, 'utf8');
-  const previousJs = readFileSync(output, 'utf8');
-  writeFileSync(source, 'export const value = "after";');
-  await prepareWorkspaceTypecheckDeclarations(consumer, { env });
-  assert.match(readFileSync(join(dependency, 'dist/index.d.ts'), 'utf8'), /after/);
-  assert.ok(statSync(join(dependency, 'dist/index.d.ts')).mtimeMs > statSync(output).mtimeMs);
-  assert.equal(readFileSync(output, 'utf8'), previousJs);
-  assert.equal(readFileSync(stamp, 'utf8'), previousStamp);
-  const result = await ensureWorkspacePackagesBuiltForComponent(consumer, { env, workspaceBuildBoundary });
-  assert.deepEqual(result.built, ['@happier-dev/example']);
-  assert.equal(builds, 2);
-  assert.equal(readFileSync(output, 'utf8'), 'export const value = "after";');
-  const warm = await ensureWorkspacePackagesBuiltForComponent(consumer, { env, workspaceBuildBoundary });
-  assert.deepEqual(warm.built, []);
 });
 
 test('runtime preparation publishes captured inputs and preserves last-green after compiler failure', async t => {

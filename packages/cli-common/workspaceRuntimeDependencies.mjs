@@ -424,12 +424,19 @@ function reconcileStagedDirectoryIntoLiveDirectorySync({
   }
 
   if (pruneStale) {
-    for (const liveEntry of readDir(liveDir)) {
-      if (!stagedNames.has(liveEntry.name)
-        && !retainUnstagedPaths?.has(relativeDir ? `${relativeDir}/${liveEntry.name}` : liveEntry.name)) {
-        pendingRemovals.push(resolve(liveDir, liveEntry.name));
+    const collectRetired = (directory, prefix, staged = new Set()) => {
+      for (const entry of readDir(directory)) {
+        const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (staged.has(entry.name) || retainUnstagedPaths.has(relativePath)) continue;
+        const path = resolve(directory, entry.name);
+        if (typeof pruneStale !== 'function' || pruneStale(relativePath, entry)) {
+          pendingRemovals.push(path);
+        } else if (entry.isDirectory()) {
+          collectRetired(path, relativePath);
+        }
       }
-    }
+    };
+    collectRetired(liveDir, relativeDir, stagedNames);
   }
 
   if (ownsDeferredRemovals) {
@@ -459,6 +466,8 @@ function reconcileStagedDirectoryIntoLiveDirectorySync({
 /**
  * `retainUnstagedPaths` names live paths (relative, `/`-separated) another
  * producer owns: pruning leaves them in place when the staged tree lacks them.
+ * A pruneStale predicate selects which un-staged entries are retired; unmatched
+ * directories are walked so a caller can prune their files independently.
  */
 export function publishStagedDirectoryMountedSync({
   stagedDir,

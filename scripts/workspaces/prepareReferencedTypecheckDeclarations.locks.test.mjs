@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { createTempFixture } from '../../apps/stack/scripts/testkit/core/temp_fixture.mjs';
 import { buildNativeAdmissionFixtureEnv } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
@@ -9,6 +10,8 @@ import { withDependencyRefresh } from '../../apps/stack/scripts/utils/proc/depen
 import { tryWorkspaceBuildResources } from '../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs';
 import { prepareWorkspaceTypecheckDeclarations } from './prepareReferencedTypecheckDeclarations.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
+
+const buildScript = `node ${JSON.stringify(fileURLToPath(new URL('./buildTypeScriptPackageDist.mjs', import.meta.url)))} -p tsconfig.json`;
 
 // nl1 2026-11-17: declaration passes took the publication lock of every package in
 // the consumer's closure for the whole emission, so the protocol package-dist
@@ -18,7 +21,7 @@ test('a declaration pass takes the publication locks of only the packages it emi
   const root = fixture.root;
   mkdirSync(fixture.path('node_modules'), { recursive: true });
   writeFileSync(fixture.path('package.json'), '{"private":true}');
-  writeFileSync(fixture.path('pnpm-lock.yaml'), '# fixture\n');
+  writeFileSync(fixture.path('pnpm-lock.yaml'), "lockfileVersion: '9.0'\nimporters: {}\n");
   writeFileSync(fixture.path('pnpm-workspace.yaml'), 'packages:\n  - "apps/*"\n  - "packages/*"\n');
   for (const name of ['cli', 'server', 'ui']) {
     mkdirSync(fixture.path('apps', name), { recursive: true });
@@ -30,6 +33,7 @@ test('a declaration pass takes the publication locks of only the packages it emi
     const dir = fixture.path('packages', name);
     mkdirSync(join(dir, 'src'), { recursive: true });
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `@happier-dev/${name}`, types: './dist/index.d.ts',
+      scripts: { build: buildScript },
       ...(dependency ? { dependencies: { [`@happier-dev/${dependency}`]: 'workspace:*' } } : {}) }));
     writeFileSync(join(dir, 'src/index.ts'), `export const ${name} = ${JSON.stringify(name)};\n`);
     writeFileSync(join(dir, 'tsconfig.json'), JSON.stringify({ compilerOptions: { declaration: true, rootDir: 'src',
