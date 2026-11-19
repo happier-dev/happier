@@ -28,6 +28,7 @@ export type PaneTabDestinationOwner = Readonly<{
     read: () => AppPaneContextValue;
 }>;
 type Props = Readonly<{ address: PaneTabAddress; restoredTabKey?: string;
+    detached?: boolean;
     onReady?: (owner: PaneTabDestinationOwner) => void | (() => void) }>;
 
 function PaneTabMountedOwner(props: React.PropsWithChildren<Props>) {
@@ -83,8 +84,9 @@ function PaneTabContent(props: Readonly<{ address: PaneTabAddress; restoredTabKe
 /** Only the addressed real Details body mounts; parent and sibling content stay in their source realm. */
 export function PaneTabDestination(props: Props) {
     const selection = React.useMemo(() => ({ scopeId: props.address.scopeId,
-        tabKey: isSelectedPaneDestinationTabKey(props.address.tabKey) ? props.address.tabKey : props.restoredTabKey ?? props.address.tabKey }),
-        [props.address.scopeId, props.address.tabKey, props.restoredTabKey]);
+        tabKey: isSelectedPaneDestinationTabKey(props.address.tabKey) ? props.address.tabKey : props.restoredTabKey ?? props.address.tabKey,
+        detached: props.detached }),
+        [props.address.scopeId, props.address.tabKey, props.detached, props.restoredTabKey]);
     return <AppPaneProvider presentedPaneTab={selection}>
         <PaneTabMountedOwner {...props}>
         <PaneTabContent address={props.address} restoredTabKey={props.restoredTabKey} />

@@ -21,6 +21,7 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
+import { readBrowserAppWindowRecord } from '@/desktop/window/appWindowBoot';
 import { resolveWorkspaceOpenModeFromPointer, useWorkspaceOpenActions } from './useWorkspaceOpenActions';
 
 afterEach(() => { standardCleanup(); vi.unstubAllGlobals(); });
@@ -101,6 +102,35 @@ describe('workspace Session window menu', () => {
             expect(screen.root.findByType('menu-probe').props.actions.items.map((item: { id: string }) => item.id))
                 .toEqual(['workspace.open.window']);
         });
+    });
+    it('opens a browser Details tab synchronously without changing the source workspace', async () => {
+        const openPopup = vi.fn();
+        vi.stubGlobal('window', { open: openPopup });
+        const onOpened = vi.fn();
+        function Probe() {
+            return React.createElement('menu-probe', { actions: useWorkspaceOpenActions(null, onOpened, {
+                windowTarget: { kind: 'paneTab', serverId: 'home', accountId: 'account', layoutId: 'main',
+                    scopeId: 'scope', tabKey: 'file: src/hello + world.ts ' },
+            }) });
+        }
+        const screen = await renderScreen(<Probe />);
+        const actions = screen.root.findByType('menu-probe').props.actions;
+        expect(actions.items.map((item: { id: string }) => item.id)).toContain('workspace.open.window');
+        expect(actions.select('workspace.open.window')).toBe(true);
+        expect(openPopup).toHaveBeenCalledOnce();
+        expect(onOpened).not.toHaveBeenCalled();
+        const [href, target, features] = openPopup.mock.calls[0]!;
+        const popup = new URL(href, 'https://happier.example');
+        expect(popup.origin).toBe('https://happier.example');
+        expect(popup.pathname).toBe('/desktop/window');
+        expect(popup.searchParams.get('serverId')).toBe('home');
+        expect(popup.searchParams.get('accountId')).toBe('account');
+        vi.stubGlobal('window', { location: { href: popup.href } });
+        expect(readBrowserAppWindowRecord()?.selectedAddress).toMatchObject({
+            kind: 'paneTab', layoutId: 'main', scopeId: 'scope', tabKey: 'file: src/hello + world.ts ',
+        });
+        expect(target).toBe('_blank');
+        expect(features.split(',')).toEqual(expect.arrayContaining(['popup', 'noopener']));
     });
 });
 

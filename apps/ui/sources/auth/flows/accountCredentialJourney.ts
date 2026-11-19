@@ -4,6 +4,7 @@ import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliary
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
+import { desktopHostKind } from '@/utils/platform/desktopHost';
 
 export type AccountCredentialJourney =
     | Readonly<{ kind: 'account_directory'; request: AuthenticatedAccountEntryRequest }>
@@ -12,7 +13,7 @@ export type AccountCredentialJourney =
 
 /** Decide the realm once, before a form mounts or an external ceremony starts. */
 export function prepareAccountCredentialJourney(journey: AccountCredentialJourney): (() => Promise<void>) | null {
-    if (resolveDesktopWindowContext().role !== 'secondary') return null;
+    if (desktopHostKind() === null || resolveDesktopWindowContext().role !== 'secondary') return null;
     const source = getActiveServerSnapshot();
     return async () => {
         const entry: DesktopCredentialJourney['entry'] = journey.kind === 'account_directory'

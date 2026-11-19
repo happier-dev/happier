@@ -15,6 +15,8 @@ export function useWorkspaceState(input: Readonly<{
     windowId?: string;
     /** Native records need a discoverable local layout even before the first explicit intent. */
     persistInitial?: boolean;
+    /** Browser pop-ups keep their own transient layout. */
+    persistLayout?: boolean;
     admitState?: (state: WorkspaceState, retainedState?: WorkspaceState) => WorkspaceState;
 }>): Readonly<{
     state: WorkspaceState;
@@ -32,7 +34,7 @@ export function useWorkspaceState(input: Readonly<{
     const scopeKey = scope && windowId
         ? workspaceLayoutScopeKey({ serverId: scope.serverId, accountId: scope.accountId, windowId })
         : null;
-    const persistedLayout = usePersistentUiStateValue(workspaceLayoutsState, scopeKey);
+    const persistedLayout = usePersistentUiStateValue(workspaceLayoutsState, input.persistLayout === false ? null : scopeKey);
     const readLayout = () => parseWorkspaceLayout(persistedLayout);
     const canRestore = isDataReady && scopeKey !== null;
     const currentScopeRef = React.useRef(scopeKey);
@@ -76,14 +78,14 @@ export function useWorkspaceState(input: Readonly<{
     }, [input.admitState, isReady, scopeKey]);
 
     const persist = React.useCallback((next: WorkspaceState) => {
-        if (!scopeKey) return;
+        if (!scopeKey || input.persistLayout === false) return;
         try {
             workspaceLayoutsState.set(scopeKey, serializeWorkspaceLayout(next));
         } catch (error) {
             if (!(error instanceof UiStatePersistenceError)) throw error;
             console.warn('[workspace] Layout persistence failed; keeping the current workspace in memory.');
         }
-    }, [scopeKey]);
+    }, [input.persistLayout, scopeKey]);
 
     React.useEffect(() => {
         if (input.persistInitial && isReady && persistedLayout === undefined) persist(stateRef.current);

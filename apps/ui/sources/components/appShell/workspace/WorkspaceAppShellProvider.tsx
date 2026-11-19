@@ -8,9 +8,10 @@ import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliary
 import { AppWindowWorkspace } from '@/desktop/window/AppWindowWorkspace';
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { AppLaunchState } from './AppLaunchState';
+import type { AppWindowRecord } from '@/desktop/window/appWindowBoot';
 
 /** Above the palette and rail so every workspace launcher reaches the same owner. */
-export function WorkspaceAppShellProvider(props: Readonly<{ children: React.ReactNode }>) {
+export function WorkspaceAppShellProvider(props: Readonly<{ children: React.ReactNode; browserWindow?: AppWindowRecord | null }>) {
     const { destinations: catalog, ready, accountLifetime } = useCompactAppDestinationCatalog();
     const presentation = useWorkspacePresentation();
     const accountScope = useActiveServerAccountScope();
@@ -41,7 +42,7 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
     }
     if ((presentation !== 'entry' && ((accountLifetime && !accountLifetime.isCurrent())
         || (!ready && admittedLifetime.current !== null && admittedLifetime.current !== accountLifetime)))) return null;
-    if (resolveDesktopWindowContext().role === 'secondary') return <AppWindowWorkspace catalog={catalog}>{props.children}</AppWindowWorkspace>;
+    if (resolveDesktopWindowContext().role === 'secondary') return <AppWindowWorkspace catalog={catalog} browserRecord={props.browserWindow}>{props.children}</AppWindowWorkspace>;
     return <WorkspaceProvider enabled={presentation === 'shell' && !pendingFirstAccount} phone={presentation === 'phone'}
         entry={presentation === 'entry'} deferred={pendingFirstAccount} catalog={catalog}>
         {props.children}

@@ -105,7 +105,7 @@ export function WorkspaceProvider(props: Readonly<{
     entry?: boolean;
     /** A web shell awaiting onboarding teardown must not lend its editable routes to Expo. */
     deferred?: boolean;
-    appWindow?: Readonly<{ record: AppWindowRecord; initialTarget: DestinationRef; chrome?: 'full' | 'destination' }>;
+    appWindow?: Readonly<{ record: AppWindowRecord; initialTarget: DestinationRef; chrome?: 'full' | 'destination'; browser?: boolean }>;
     catalog: readonly CompactAppDestination[];
     children: React.ReactNode | ((navigation: WorkspaceNavigationContextValue) => React.ReactNode);
 }>): React.ReactNode {
@@ -189,7 +189,7 @@ export function WorkspaceProvider(props: Readonly<{
     const singletonPolicyKey = React.useMemo(() => JSON.stringify([...workspaceSingletonDestinationIds(props.catalog)].sort()), [props.catalog]);
     const admitState = React.useCallback((state: WorkspaceState, retainedState?: WorkspaceState) => admitWorkspaceSingletonState(state, admissionCatalog.current, randomUUID, retainedState), [singletonPolicyKey]);
     const localOwner = useWorkspaceState({ initialTab, admitState, windowId: props.appWindow?.record.layoutId,
-        persistInitial: Boolean(props.appWindow) });
+        persistInitial: Boolean(props.appWindow) && !props.appWindow?.browser, persistLayout: !props.appWindow?.browser });
     const owner = useWorkspaceTabSync({ local: localOwner, catalog: props.catalog,
         enabled: (!props.appWindow || props.appWindow.chrome === 'full') && (props.enabled || phone) });
     const [historyVersion, changed] = React.useReducer((value: number) => value + 1, 0);

@@ -92,7 +92,7 @@ import { installTauriExternalLinkClicks } from '@/utils/url/installTauriExternal
 import { useIsTablet } from '@/utils/platform/responsive';
 import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShellChromeHost';
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
-import { resolveDesktopAppWindowBootCredentials, runDesktopAppWindowBootSequence } from '@/desktop/window/appWindowBoot';
+import { readBrowserAppWindowRecord, resolveDesktopAppWindowBootCredentials, runDesktopAppWindowBootSequence } from '@/desktop/window/appWindowBoot';
 import { ThemePreferenceTransitionHost } from '@/components/settings/appearance/ThemePreferenceTransitionHost';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { useDesktopMainWindowContentReady } from '@/desktop/window/useDesktopMainWindowContentReady';
@@ -107,6 +107,8 @@ import { EmbedBridgeRuntime } from '@/embed/bridge/EmbedBridgeRuntime';
 
 const embedWindowContext = isEmbedWindowContext();
 const desktopWindowContext = resolveDesktopWindowContext();
+const nativeSecondaryWindow = desktopWindowContext.role === 'secondary' && isDesktopHost();
+const browserAppWindow = desktopWindowContext.role === 'secondary' && !nativeSecondaryWindow ? readBrowserAppWindowRecord() : undefined;
 
 // Expo evaluates this root before rendering any workspace route. Publishing
 // its exact context here keeps optional workspace graphs free of the app tree
@@ -752,7 +754,7 @@ function AppBoot() {
 
     React.useEffect(() => {
         let cancelled = false;
-        const runBoot = desktopWindowContext.role === 'secondary' ? runDesktopAppWindowBootSequence : runAppBootSequence;
+        const runBoot = nativeSecondaryWindow ? runDesktopAppWindowBootSequence : runAppBootSequence;
         void runBoot({
             context: isDesktopOverlayWindow ? 'presenter' : 'app',
             onPhase: (phase) => {
@@ -763,9 +765,12 @@ function AppBoot() {
             },
             loadFonts,
             sodiumReady: sodium.ready,
-            resolveCredentials: () => desktopWindowContext.role === 'secondary'
+            resolveCredentials: () => nativeSecondaryWindow
                 ? resolveDesktopAppWindowBootCredentials(Platform.OS)
-                : resolveBootCredentials(Platform.OS),
+                : browserAppWindow === null ? Promise.resolve(null)
+                    : resolveBootCredentials(Platform.OS, browserAppWindow && {
+                        serverId: browserAppWindow.homeId, accountId: browserAppWindow.accountId,
+                    }),
             prepareWarmCache: prepareWarmCacheStorage,
             prepareSessionDrafts: prepareSessionDraftPersistenceStorage,
             prepareTranslations: () => preloadTranslations(),
@@ -874,7 +879,7 @@ function AppBoot() {
                                 <WebServerOverrideGate>
                                 <ConcurrentSessionCacheRuntime>
                                 <SessionCockpitChromeRegistryProvider>
-                                <WorkspaceAppShellProvider>
+                                <WorkspaceAppShellProvider browserWindow={browserAppWindow}>
                                 {primaryRealm ? <RestartBugReportNavigation pending={restartBugReportPending} onDispatched={onRestartBugReportDispatched} /> : null}
                                 <NewSessionShellHostProvider>
                                 <MainAppTabStateProvider>

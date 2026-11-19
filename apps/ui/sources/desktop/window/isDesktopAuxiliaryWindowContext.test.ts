@@ -48,7 +48,7 @@ describe('isDesktopAuxiliaryWindowContext', () => {
         expect(owner.isDesktopAuxiliaryWindowContext()).toBe(false);
     });
 
-    it('keeps a presenter projection-only and ordinary/browser routes primary', async () => {
+    it('recognizes browser destination chrome while leaving native-only presenter routes primary', async () => {
         const owner = await import('./isDesktopAuxiliaryWindowContext');
         isDesktopHostMock.mockReturnValue(true);
         setWindowLocation('http://localhost:8081/desktop/capture');
@@ -57,6 +57,9 @@ describe('isDesktopAuxiliaryWindowContext', () => {
         expect(owner.resolveDesktopWindowContext()).toEqual({ role: 'primary', chrome: 'full' });
         isDesktopHostMock.mockReturnValue(false);
         setWindowLocation('http://localhost:8081/desktop/window');
+        expect(owner.resolveDesktopWindowContext()).toEqual({ role: 'secondary', chrome: 'destination' });
+        expect(owner.isDesktopAuxiliaryWindowContext()).toBe(false);
+        setWindowLocation('http://localhost:8081/desktop/app-window');
         expect(owner.resolveDesktopWindowContext()).toEqual({ role: 'primary', chrome: 'full' });
     });
 

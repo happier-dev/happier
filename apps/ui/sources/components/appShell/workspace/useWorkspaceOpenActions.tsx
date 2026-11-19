@@ -15,6 +15,9 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { executeWorkspaceUiAction } from './workspaceActionRuntime';
 import type { DesktopWindowTarget } from '@happier-dev/protocol/actions/actionSpecs';
 import { useRouter } from './destinationRoute';
+import { canOpenBrowserAppWindow, openBrowserAppWindow } from '@/desktop/window/browserAppWindow';
+import { AppPaneContext } from '../panes/AppPaneContext';
+import { resolvePaneTabWindowTarget } from '../panes/paneTabWindowTransfer';
 
 export const WORKSPACE_OPEN_IN_NEW_TAB_ID = 'workspace.open.newTab';
 export const WORKSPACE_OPEN_TO_RIGHT_ID = 'workspace.open.right';
@@ -89,12 +92,16 @@ export function useWorkspaceOpenActions(href: string | null, onOpened?: () => vo
     const facts = useWorkspaceRouterFacts();
     const router = useRouter();
     const windows = useDesktopHostRoleAvailability('windows');
+    const paneSubscription = React.useContext(AppPaneContext);
     const { theme } = useUnistyles();
     const active = facts?.active === true && href !== null;
     const phone = facts?.hasPhone === true && href !== null;
     const target = React.useMemo(() => href ? resolveDestinationRefFromHref(facts?.catalog ?? [], href) : null, [facts?.catalog, href]);
-    const canOpenWindow = !phone && windows?.kind === 'available'
-        && Boolean(options?.windowTarget || target?.kind === 'session' || (facts?.active && options?.sourceTabId) || (active && target));
+    const browserWindow = Platform.OS === 'web' && canOpenBrowserAppWindow();
+    const canOpenWindow = !facts?.hasPhone && (browserWindow
+        ? Boolean(options?.windowTarget?.kind === 'paneTab' || (facts?.active && (options?.sourceTabId || target)))
+        : windows?.kind === 'available'
+            && Boolean(options?.windowTarget || target?.kind === 'session' || (facts?.active && options?.sourceTabId) || (active && target)));
     const presentationAction = !phone && (target?.kind === 'session' || options?.windowTarget?.kind === 'session') ? options?.presentationAction : undefined;
     const factsRef = React.useRef(facts);
     factsRef.current = facts;
@@ -127,6 +134,24 @@ export function useWorkspaceOpenActions(href: string | null, onOpened?: () => vo
                 if (!canOpenWindow) return false;
                 const tabId = options?.sourceTabId ?? (href ? workspace?.findOpenHref?.(href)?.tabId : undefined);
                 const scope = workspace?.desktopPresentation;
+                if (browserWindow) {
+                    const pane = options?.windowTarget;
+                    if (pane?.kind === 'paneTab') {
+                        const context = paneSubscription?.getSnapshot();
+                        const address = context ? resolvePaneTabWindowTarget(context, pane) : pane;
+                        if (!address) return false;
+                        const { kind, layoutId, scopeId, tabKey, resourceId } = address;
+                        openBrowserAppWindow(pane, { kind, layoutId, scopeId, tabKey, resourceId });
+                        return true;
+                    }
+                    const destination = (tabId ? workspace?.state.tabs[tabId]?.target : null) ?? target;
+                    if (!scope || !destination) return false;
+                    openBrowserAppWindow({
+                        serverId: destination.params.serverId ?? scope.serverId,
+                        accountId: destination.params.accountId ?? scope.accountId,
+                    }, { kind: 'destination', target: { kind: destination.kind, params: { ...destination.params } } });
+                    return true;
+                }
                 const windowTarget = options?.windowTarget ?? (scope && tabId
                     ? { kind: 'workspaceTab' as const, serverId: scope.serverId, accountId: scope.accountId,
                         ...(scope.layoutId ? { layoutId: scope.layoutId } : {}), tabId }
@@ -154,6 +179,6 @@ export function useWorkspaceOpenActions(href: string | null, onOpened?: () => vo
             }
             default: return false;
         }
-    }, [canOpenWindow, href, open, options?.sourceTabId, options?.windowTarget, presentationAction, router, target]);
+    }, [browserWindow, canOpenWindow, href, open, options?.sourceTabId, options?.windowTarget, paneSubscription, presentationAction, router, target]);
     return React.useMemo(() => ({ items: allItems, presentationItems, select, open }), [allItems, open, presentationItems, select]);
 }

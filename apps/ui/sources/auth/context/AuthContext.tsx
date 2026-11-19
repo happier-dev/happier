@@ -465,7 +465,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
             options, activeServer, forgottenScope,
             archiveServerId: targetProfile ? resolveServerProfileScopeId(targetProfile) : activeServerId,
         };
-        if (resolveDesktopWindowContext().role === 'secondary') {
+        if (desktopHostKind() !== null && resolveDesktopWindowContext().role === 'secondary') {
             await requestAdmittedDesktopLogout({
                 activeServer: { serverUrl: activeServerUrl, ...(activeServerId ? { serverId: activeServerId } : {}) },
                 forgottenScope, archiveServerId: admission.archiveServerId,

@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { WorkspaceShell } from '@/components/appShell/workspace/WorkspaceShell';
-import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { useOptionalWorkspaceNavigation, useWorkspaceRouterFacts } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { useWorkspaceFocusedDestinationTitle } from '@/components/appShell/workspace/WorkspaceWindowTitle';
 import { DesktopShellWindowControlsHost } from '@/components/navigation/shell/desktopChrome/DesktopShellWindowControlsHost';
 import { useResolvedDesktopWindowControls } from '@/components/navigation/shell/desktopChrome/useResolvedDesktopWindowControls';
@@ -24,6 +24,7 @@ import { serializeWorkspaceLayout, workspaceLayoutScopeKey } from '@/components/
 import { workspaceLayoutsState } from '@/sync/domains/state/filePaneUiState';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import type { AppWindowRecord } from './appWindowBoot';
 import { failDesktopAppWindow, readyDesktopAppWindow } from './appWindowRuntime';
 import { useDesktopAppWindowRecord } from './AppWindowRecordContext';
@@ -31,6 +32,11 @@ import { DesktopWindowBotRail, openSessionInHappier } from './DesktopWindowBotRa
 
 /** The destination uses the ordinary retained body, with only its own window chrome. */
 export function DesktopDestinationWindow(props: Readonly<{ full?: boolean; children?: React.ReactNode }> = {}) {
+    if (isDesktopHost()) return <NativeAppWindowLifecycle {...props} />;
+    return <DestinationWindowChrome><DestinationWindowBody detached /></DestinationWindowChrome>;
+}
+
+function NativeAppWindowLifecycle(props: Readonly<{ full?: boolean; children?: React.ReactNode }>) {
     const record = useDesktopAppWindowRecord();
     const workspace = useOptionalWorkspaceNavigation();
     const [prepared, setPrepared] = React.useState<AppWindowRecord | null>(null);
@@ -113,12 +119,21 @@ export function DesktopDestinationWindow(props: Readonly<{ full?: boolean; child
         : prepared !== record || released ? <PaneLoadingFallback /> : <>{props.children}</>;
     return <DestinationWindowChrome>
             {failed ? <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />
-                : prepared !== record || released || !workspace?.active || !workspace.catalog ? <PaneLoadingFallback />
-                    : record?.selectedAddress.kind === 'paneTab'
-                        ? <PaneTabDestination address={{ ...record.selectedAddress, serverId: record.homeId, accountId: record.accountId }}
-                            restoredTabKey={record.selectedAddress.resourceId} onReady={onPaneReady} />
-                        : <WorkspaceShell catalog={workspace.catalog} presentation="destination" />}
+                : prepared !== record || released ? <PaneLoadingFallback />
+                    : <DestinationWindowBody onPaneReady={onPaneReady} />}
     </DestinationWindowChrome>;
+}
+
+function DestinationWindowBody(props: Readonly<{ detached?: boolean;
+    onPaneReady?: React.ComponentProps<typeof PaneTabDestination>['onReady'] }>) {
+    const record = useDesktopAppWindowRecord();
+    const workspace = useWorkspaceRouterFacts();
+    if (!workspace?.active) return <PaneLoadingFallback />;
+    if (record?.selectedAddress.kind === 'paneTab') {
+        return <PaneTabDestination address={{ ...record.selectedAddress, serverId: record.homeId, accountId: record.accountId }}
+            restoredTabKey={record.selectedAddress.resourceId} onReady={props.onPaneReady} detached={props.detached} />;
+    }
+    return <WorkspaceShell catalog={workspace.catalog} presentation="destination" />;
 }
 
 function DestinationWindowChrome(props: Readonly<{ children: React.ReactNode }>) {

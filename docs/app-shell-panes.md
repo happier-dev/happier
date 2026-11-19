@@ -132,6 +132,12 @@ retain their existing meaning. Pane addresses are pane membership, not invented
 workspace routes. The shared workspace open-menu builder supplies window,
 overlay and Happier presentation items to tab strips and sidebar rows.
 
+In the browser, **Open in a window** opens the same `/desktop/window` route
+from the click. The URL carries the selected destination or pane address and
+its Home and Account IDs. The recipient reads that Account's credentials from
+the same origin through ordinary boot. It renders the destination chrome with
+its own in-memory layout. The source keeps its tab and pane presentation.
+
 Moving restores the way a relaunch does. The existing pane provider persists
 Details tab state, including file draft text/base hash and view state, before
 the selected body releases; its parent scope and siblings remain in place.

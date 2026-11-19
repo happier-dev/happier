@@ -54,10 +54,11 @@ function initialTarget(record: AppWindowRecord): DestinationRef | null {
     }), value => value))?.tabs[tabId]?.target ?? null;
 }
 
-/** Native metadata precedes local workspace initialization; no tab set is mirrored from main. */
+/** The host address precedes local workspace initialization. */
 export function AppWindowWorkspace(props: Readonly<{
     catalog: readonly CompactAppDestination[];
     children: React.ReactNode;
+    browserRecord?: AppWindowRecord | null;
 }>) {
     const auth = useAuth();
     const authRef = React.useRef(auth);
@@ -67,7 +68,15 @@ export function AppWindowWorkspace(props: Readonly<{
     const record = context?.record ?? null;
     const [failed, setFailed] = React.useState(false);
     const switching = React.useRef(false);
+    const browser = props.browserRecord !== undefined;
     React.useEffect(() => {
+        if (props.browserRecord !== undefined) {
+            const next = props.browserRecord;
+            const target = next && initialTarget(next);
+            if (next && target) setContext({ record: next, target });
+            else setFailed(true);
+            return;
+        }
         let current = true;
         let published = false;
         let stop: (() => void) | undefined;
@@ -99,7 +108,7 @@ export function AppWindowWorkspace(props: Readonly<{
             if (!published) await accept(initial);
         })().catch(() => fail());
         return () => { current = false; stop?.(); };
-    }, []);
+    }, [props.browserRecord]);
     React.useEffect(() => {
         if (!record || record.chrome !== 'full' || !scope || switching.current
             || (record.homeId === scope.serverId && record.accountId === scope.accountId)) return;
@@ -109,8 +118,8 @@ export function AppWindowWorkspace(props: Readonly<{
         }).catch(() => { setFailed(true); }), { tag: 'AppWindowWorkspace.home' });
     }, [record, scope]);
     const chrome = resolveDesktopWindowContext().chrome;
-    const appWindow = React.useMemo(() => context ? { record: context.record, initialTarget: context.target, chrome } : null, [chrome, context]);
-    if (failed) return <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />;
+    const appWindow = React.useMemo(() => context ? { record: context.record, initialTarget: context.target, chrome, browser } : null, [browser, chrome, context]);
+    if (failed || (browser && !auth.isAuthenticated)) return <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />;
     if (!appWindow) return <PaneLoadingFallback />;
     if ((appWindow.record.chrome !== 'full' || auth.isAuthenticated)
         && (scope?.serverId !== appWindow.record.homeId || scope?.accountId !== appWindow.record.accountId)) return <PaneLoadingFallback />;

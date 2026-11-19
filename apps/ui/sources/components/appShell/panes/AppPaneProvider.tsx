@@ -113,7 +113,8 @@ function resolveOverlayFocusClear(
     }
 }
 
-export const AppPaneProvider = React.memo((props: Readonly<{ children: React.ReactNode; presentedPaneTab?: Readonly<{ scopeId: string; tabKey: string }> }>) => {
+export const AppPaneProvider = React.memo((props: Readonly<{ children: React.ReactNode;
+    presentedPaneTab?: Readonly<{ scopeId: string; tabKey: string; detached?: boolean }> }>) => {
     // Restoration belongs to this landing. Resizing a live view preserves its
     // current panes; a fresh phone landing never turns saved columns into sheets.
     const [restoreOpenPanes] = useState(() => getDeviceType() !== 'phone');
@@ -139,6 +140,7 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
     // Reducer intents own persistence. Transient draft/dirty publications must
     // not serialize local settings from a passive effect after every edit.
     const persistScopes = React.useCallback((scopes: AppPaneState['scopes'], options?: Readonly<{ force?: boolean; throwOnFailure?: boolean; selectedPaneTabKey?: string; storedScope?: PaneScopePersistenceRead; retireLegacyApp?: boolean }>) => {
+        if (props.presentedPaneTab?.detached) return true;
         if (persistedScopesRef.current === scopes && !options?.force) return true;
         try {
             // This landing's sheets stay transient through resize and host rebinds.
@@ -222,7 +224,8 @@ export const AppPaneProvider = React.memo((props: Readonly<{ children: React.Rea
             overlayFocusReturnOwner.clear(clear.scopeId, clear.surface);
         }
 
-        const shouldPersist = action.type !== 'mergePersistedScopes' && !('persist' in action && action.persist === false);
+        const shouldPersist = !props.presentedPaneTab?.detached
+            && action.type !== 'mergePersistedScopes' && !('persist' in action && action.persist === false);
         let storedScope: PaneScopePersistenceRead | undefined;
         let previousState = stateRef.current;
         if ('scopeId' in action && action.scopeId !== undefined) {

@@ -10,11 +10,12 @@ const PRIMARY: DesktopWindowContext = { role: 'primary', chrome: 'full' };
 const SECONDARY_FULL: DesktopWindowContext = { role: 'secondary', chrome: 'full' };
 const SECONDARY_DESTINATION: DesktopWindowContext = { role: 'secondary', chrome: 'destination' };
 const PRESENTER: DesktopWindowContext = { role: 'presenter', chrome: 'destination' };
+export const DESTINATION_WINDOW_PATH = '/desktop/window';
 let bootWindow: Window | undefined;
 let bootContext: DesktopWindowContext = PRIMARY;
 
-function desktopWindowPathname(): string | null {
-    if (!isDesktopHost() || typeof window === 'undefined' || typeof window.location?.href !== 'string') return null;
+function windowPathname(): string | null {
+    if (typeof window === 'undefined' || typeof window.location?.href !== 'string') return null;
     try {
         return new URL(window.location.href).pathname.replace(/\/+$/u, '');
     } catch {
@@ -22,18 +23,19 @@ function desktopWindowPathname(): string | null {
     }
 }
 
-/** The boot route owns the realm's data role and chrome; native metadata supplies context only. */
+/** The boot route owns the realm's data role and chrome for both hosts. */
 export function resolveDesktopWindowContext(): DesktopWindowContext {
-    if (!isDesktopHost() || typeof window === 'undefined') return PRIMARY;
+    if (typeof window === 'undefined') return PRIMARY;
     if (bootWindow === window) return bootContext;
     bootWindow = window;
-    bootContext = resolveBootPathnameContext(desktopWindowPathname());
+    const pathname = windowPathname();
+    bootContext = pathname === DESTINATION_WINDOW_PATH ? SECONDARY_DESTINATION
+        : isDesktopHost() ? resolveNativeBootPathnameContext(pathname) : PRIMARY;
     return bootContext;
 }
 
-function resolveBootPathnameContext(pathname: string | null): DesktopWindowContext {
+function resolveNativeBootPathnameContext(pathname: string | null): DesktopWindowContext {
     switch (pathname) {
-        case '/desktop/window': return SECONDARY_DESTINATION;
         case '/desktop/app-window': return SECONDARY_FULL;
         case '/desktop/activity-overlay':
         case '/desktop/pet-overlay':
@@ -53,7 +55,8 @@ export function isDesktopAuxiliaryWindowContext(): boolean {
  * (`GLASS_PANEL_WINDOW_LABELS` in `window_chrome.rs`). The selection layer's dim is not a glass surface.
  */
 export function resolveDesktopGlassPanelLabel(): DesktopGlassPanelLabel | null {
-    switch (desktopWindowPathname()) {
+    if (!isDesktopHost()) return null;
+    switch (windowPathname()) {
         case '/desktop/capture': return 'capture';
         case '/desktop/activity-overlay': return 'activity_overlay';
         default: return null;

@@ -9,6 +9,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { scmComparisonSourceOf } from '@/sync/domains/scm/diffSummary/selection';
 import { runAppBootSequence, type AppBootSequence } from '@/boot/runAppBootSequence';
+import { DESTINATION_WINDOW_PATH } from './isDesktopAuxiliaryWindowContext';
 
 const identifier = z.string().check(z.minLength(1));
 const AppWindowAddressSchema = z.discriminatedUnion('kind', [
@@ -32,6 +33,26 @@ export const AppWindowRecordSchema = z.object({
 
 export type AppWindowAddress = z.infer<typeof AppWindowAddressSchema>;
 export type AppWindowRecord = z.infer<typeof AppWindowRecordSchema>;
+
+/** A browser carries only an address. The ordinary boot owner reads this origin's credentials. */
+export function readBrowserAppWindowRecord(): AppWindowRecord | null {
+    try {
+        const url = new URL(window.location.href);
+        if (url.pathname.replace(/\/+$/u, '') !== DESTINATION_WINDOW_PATH) return null;
+        const address = AppWindowAddressSchema.safeParse(JSON.parse(url.searchParams.get('address') ?? 'null'));
+        if (!address.success || (address.data.kind !== 'destination' && address.data.kind !== 'paneTab')) return null;
+        const record = AppWindowRecordSchema.safeParse({
+            homeId: url.searchParams.get('serverId'),
+            accountId: url.searchParams.get('accountId'),
+            windowId: 'browser-popup',
+            layoutId: 'browser-popup',
+            selectedAddress: address.data,
+        });
+        return record.success ? record.data : null;
+    } catch {
+        return null;
+    }
+}
 
 /** The ordinary route owner has already admitted the destination and its exact scope. */
 export function desktopSessionTargetForDestination(ref: DestinationRef, scope: ServerAccountScope): Extract<DesktopWindowTarget, { kind: 'session' }> | null {
