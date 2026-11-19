@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
-import { resolveCompactAppDestinations, resolveDestinationRefFromHref } from '../destinations/compactAppDestinationCatalog';
+import { hrefForDestinationRef, resolveCompactAppDestinations, resolveDestinationRefFromHref } from '../destinations/compactAppDestinationCatalog';
 import { createWorkspaceNavigationAdapter } from './workspaceNavigationAdapter';
 import { createWorkspaceActionAdapter } from './workspaceActions';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
@@ -10,6 +10,7 @@ import { isWorkspaceActionId } from '@happier-dev/protocol/actions/workspaceActi
 import { EntityDropAdmissionV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { presentPaneDropAdmission } from '../splitCanvas/presentation/paneDropPresentation';
 import { createWorkspaceDropScene } from './workspaceDropScene';
+import { parseWorkspaceLayout, serializeWorkspaceLayout } from './workspacePersistence';
 import { t } from '@/text';
 
 installPanelCommonModuleMocks();
@@ -36,6 +37,31 @@ function harness() {
 }
 
 describe('workspace entity Action admission', () => {
+    it.each([
+        [{ kind: 'artifact', scope, artifactId: 'report' }, '/artifacts/report'],
+        [{ kind: 'session-board-item', scope, address: { serverId: 'home', sessionId: 'other' }, viewId: 'board', itemId: 'status' },
+            '/session/other/details?serverId=home&details=board&boardItemId=status'],
+    ] as const)('opens and restores the exact carried resource as a tab (%j)', (item, href) => {
+        const h = harness();
+        const drop = () => resolveWorkspaceEntityDrop({ ...h, scope, workspaceRefs: [], item,
+            target: { leafId: 'group:1', placement: 'center' } });
+        const decision = drop();
+        expect(decision).toMatchObject({ status: 'allowed', effect: { actionId: 'workspace.tabs.open' } });
+        if (decision.status !== 'allowed' || !isWorkspaceActionId(decision.effect.actionId)) throw new Error('Expected open Action');
+        expect(WORKSPACE_ENTITY_KINDS).toContain(item.kind);
+        expect(h.execute(decision.effect.actionId, decision.effect.input)).toEqual({ ok: true });
+        expect(drop()).toMatchObject({ status: 'allowed', effect: { actionId: 'workspace.tabs.activate' } });
+        const restored = parseWorkspaceLayout(JSON.parse(JSON.stringify(serializeWorkspaceLayout(h.workspace.state))));
+        const tab = Object.values(restored?.tabs ?? {}).find(candidate => candidate.id !== 'anchor');
+        expect(tab && hrefForDestinationRef(h.catalog, tab.target)).toBe(href);
+    });
+
+    it('refuses a carried Board item addressed to a different Home', () => {
+        const h = harness();
+        expect(resolveWorkspaceEntityHref({ kind: 'session-board-item', scope, address: { serverId: 'other', sessionId: 'same' },
+            viewId: 'board', itemId: 'status' }, { ...h, scope, workspaceRefs: [] })).toBeNull();
+    });
+
     it('honors an open-beside Action for an already-open destination', () => {
         const h = harness();
         expect(h.execute('workspace.tabs.open', { href: '/workflows/definition-1' })).toEqual({ ok: true });

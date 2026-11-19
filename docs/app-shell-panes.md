@@ -396,6 +396,11 @@ bottom pane and popovers are isolated from the main scope; outside a scope a hea
 
 ## Openers and Actions
 
+In 0.3 development, dragging an Artifact or Session Board item into the workspace
+uses the same `workspace.tabs.open` Action as other destinations. Artifacts open
+through their Artifact route and Board items use the Session's existing Details
+route focused on that item. Restoring the layout uses those same destinations.
+
 ### Right rail placement
 
 The right-sidebar catalog supplies each tab's default placement. Session essentials lead the rail:

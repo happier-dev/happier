@@ -12,8 +12,12 @@ import { t } from '@/text';
 import type { PaneDropAdmission } from '../splitCanvas/presentation/paneDropPresentation';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { artifactViewRoute } from '@/components/artifacts/artifactViewRoute';
+import { buildSessionDetailsHref } from '@/components/sessions/panes/url/sessionPaneUrlState';
 
-export const WORKSPACE_ENTITY_KINDS: readonly EntityDragKindV1[] = ['workspace-tab', 'session', 'workflow', 'destination', 'repository-file'];
+export const WORKSPACE_ENTITY_KINDS: readonly EntityDragKindV1[] = [
+    'workspace-tab', 'session', 'workflow', 'destination', 'repository-file', 'artifact', 'session-board-item',
+];
 
 function resolveWorkspaceEntityFile(item: EntityDragItemV1, input: Readonly<{
     scope: EntityDragScopeV1;
@@ -41,6 +45,11 @@ export function resolveWorkspaceEntityHref(item: EntityDragItemV1, input: Readon
     });
     if (item.kind === 'workflow') href = hrefForDestinationRef(input.catalog, {
         kind: 'workflow', params: { id: item.workflowId },
+    });
+    if (item.kind === 'artifact') href = artifactViewRoute(item.artifactId);
+    if (item.kind === 'session-board-item') href = buildSessionDetailsHref({
+        ...item.address,
+        details: { kind: 'board', focusTarget: { kind: 'item', itemId: item.itemId } },
     });
     const file = resolveWorkspaceEntityFile(item, input);
     if (file) href = buildWorkspaceFileLink(file);
