@@ -128,6 +128,7 @@ type Copy = Readonly<{
   checkRepository: string;
   readyTitle: string;
   readyDescription: string;
+  readyDraftDescription: string;
   startBuilding: string;
   forgeUnavailable: (p: Readonly<{ forge: string }>) => string;
   /** Deploy an app's Where → Configure → Review steps, hosted in the dialog (journey-deploy D3). */
@@ -347,7 +348,7 @@ export const newAppTranslations: Readonly<
     create: 'Create app',
     creatingTitle: ({ name }) => `Making ${name}`,
     creatingDescription:
-      'This takes under a minute. Then your agent starts building and the project opens.',
+      'This takes under a minute. Then your agent’s first message opens for you to send.',
     failedTitle: 'One step needs another go',
     failedKept: 'The repository is created. Try again to finish; nothing is created twice.',
     failedNothing: 'Nothing was created. Change what you need, then try again.',
@@ -364,6 +365,8 @@ export const newAppTranslations: Readonly<
     readyTitle: 'Project ready',
     readyDescription:
       'Your project is set up. Start your agent with your description when you’re ready.',
+    readyDraftDescription:
+      'Your project is set up. Your agent starts building when you send its first message.',
     startBuilding: 'Start building',
     forgeUnavailable: ({ forge }) =>
       `Couldn’t check ${forge} from this computer.`,
@@ -557,7 +560,7 @@ export const newAppTranslations: Readonly<
     create: 'Crea l’aplicació',
     creatingTitle: ({ name }) => `Creant ${name}`,
     creatingDescription:
-      'Triga menys d’un minut. Després l’agent comença a construir i s’obre el projecte.',
+      'Triga menys d’un minut. Després s’obre el primer missatge per a l’agent, a punt per enviar.',
     failedTitle: 'Un pas s’ha de tornar a provar',
     failedKept: 'El repositori ja està creat. Torna-ho a provar per acabar; res no es crea dues vegades.',
     failedNothing: 'No s’ha creat res. Canvia el que calgui i torna-ho a provar.',
@@ -574,6 +577,8 @@ export const newAppTranslations: Readonly<
     readyTitle: 'Projecte llest',
     readyDescription:
       'El projecte està preparat. Inicia l’agent amb la teva descripció quan vulguis.',
+    readyDraftDescription:
+      'El projecte està preparat. L’agent comença a construir quan envies el seu primer missatge.',
     startBuilding: 'Comença a construir',
     forgeUnavailable: ({ forge }) =>
       `No s’ha pogut comprovar ${forge} des d’aquest ordinador.`,
@@ -767,7 +772,7 @@ export const newAppTranslations: Readonly<
     create: 'App erstellen',
     creatingTitle: ({ name }) => `${name} wird erstellt`,
     creatingDescription:
-      'Das dauert unter einer Minute. Dann beginnt dein Agent zu bauen und das Projekt öffnet sich.',
+      'Das dauert unter einer Minute. Dann öffnet sich die erste Nachricht an deinen Agent zum Senden.',
     failedTitle: 'Ein Schritt braucht einen neuen Versuch',
     failedKept: 'Das Repository ist erstellt. Versuche es erneut, um abzuschließen; nichts wird doppelt erstellt.',
     failedNothing: 'Es wurde nichts erstellt. Ändere, was nötig ist, und versuche es erneut.',
@@ -784,6 +789,8 @@ export const newAppTranslations: Readonly<
     readyTitle: 'Projekt bereit',
     readyDescription:
       'Dein Projekt ist eingerichtet. Starte deinen Agent mit deiner Beschreibung, wenn du bereit bist.',
+    readyDraftDescription:
+      'Dein Projekt ist eingerichtet. Dein Agent beginnt zu bauen, sobald du seine erste Nachricht sendest.',
     startBuilding: 'Mit dem Bauen beginnen',
     forgeUnavailable: ({ forge }) =>
       `${forge} konnte von diesem Computer aus nicht geprüft werden.`,
@@ -977,7 +984,7 @@ export const newAppTranslations: Readonly<
     create: 'Crear app',
     creatingTitle: ({ name }) => `Creando ${name}`,
     creatingDescription:
-      'Tarda menos de un minuto. Después tu agente empieza a construir y se abre el proyecto.',
+      'Tarda menos de un minuto. Después se abre el primer mensaje para tu agente, listo para enviar.',
     failedTitle: 'Un paso necesita otro intento',
     failedKept: 'El repositorio ya está creado. Reintenta para terminar; nada se crea dos veces.',
     failedNothing: 'No se creó nada. Cambia lo que necesites y vuelve a intentarlo.',
@@ -994,6 +1001,8 @@ export const newAppTranslations: Readonly<
     readyTitle: 'Proyecto listo',
     readyDescription:
       'Tu proyecto está preparado. Inicia tu agente con tu descripción cuando quieras.',
+    readyDraftDescription:
+      'Tu proyecto está preparado. Tu agente empieza a construir cuando envías su primer mensaje.',
     startBuilding: 'Empezar a construir',
     forgeUnavailable: ({ forge }) =>
       `No se pudo comprobar ${forge} desde este ordenador.`,
@@ -1187,7 +1196,7 @@ export const newAppTranslations: Readonly<
     create: 'Créer l’app',
     creatingTitle: ({ name }) => `Création de ${name}`,
     creatingDescription:
-      'Cela prend moins d’une minute. Ensuite votre agent commence à construire et le projet s’ouvre.',
+      'Cela prend moins d’une minute. Ensuite le premier message pour votre agent s’ouvre, prêt à envoyer.',
     failedTitle: 'Une étape doit être relancée',
     failedKept: 'Le dépôt est créé. Réessayez pour terminer ; rien n’est créé deux fois.',
     failedNothing: 'Rien n’a été créé. Modifiez ce qu’il faut, puis réessayez.',
@@ -1204,6 +1213,8 @@ export const newAppTranslations: Readonly<
     readyTitle: 'Projet prêt',
     readyDescription:
       'Votre projet est en place. Démarrez votre agent avec votre description quand vous voulez.',
+    readyDraftDescription:
+      'Votre projet est en place. Votre agent commence à construire quand vous envoyez son premier message.',
     startBuilding: 'Commencer à construire',
     forgeUnavailable: ({ forge }) =>
       `Impossible de vérifier ${forge} depuis cet ordinateur.`,
@@ -1397,7 +1408,7 @@ export const newAppTranslations: Readonly<
     create: 'Crea app',
     creatingTitle: ({ name }) => `Creazione di ${name}`,
     creatingDescription:
-      'Ci vuole meno di un minuto. Poi il tuo agente inizia a costruire e il progetto si apre.',
+      'Ci vuole meno di un minuto. Poi si apre il primo messaggio per il tuo agente, pronto da inviare.',
     failedTitle: 'Un passaggio va ritentato',
     failedKept: 'Il repository è stato creato. Riprova per finire; nulla viene creato due volte.',
     failedNothing: 'Non è stato creato nulla. Modifica ciò che serve e riprova.',
@@ -1414,6 +1425,8 @@ export const newAppTranslations: Readonly<
     readyTitle: 'Progetto pronto',
     readyDescription:
       'Il progetto è pronto. Avvia il tuo agente con la tua descrizione quando vuoi.',
+    readyDraftDescription:
+      'Il progetto è pronto. Il tuo agente inizia a costruire quando invii il suo primo messaggio.',
     startBuilding: 'Inizia a costruire',
     forgeUnavailable: ({ forge }) =>
       `Impossibile verificare ${forge} da questo computer.`,
@@ -1607,7 +1620,7 @@ export const newAppTranslations: Readonly<
     create: 'アプリを作成',
     creatingTitle: ({ name }) => `${name} を作成中`,
     creatingDescription:
-      '1分もかかりません。その後エージェントが作り始め、プロジェクトが開きます。',
+      '1分もかかりません。その後、エージェントへの最初のメッセージが開き、送信できます。',
     failedTitle: 'もう一度試す必要がある手順があります',
     failedKept: 'リポジトリは作成済みです。もう一度試すと完了します。二重に作成されることはありません。',
     failedNothing: '何も作成されていません。必要な点を変更してから、もう一度試してください。',
@@ -1624,6 +1637,8 @@ export const newAppTranslations: Readonly<
     readyTitle: 'プロジェクトの準備ができました',
     readyDescription:
       'プロジェクトの準備ができました。準備ができたら説明を添えてエージェントを開始してください。',
+    readyDraftDescription:
+      'プロジェクトの準備ができました。最初のメッセージを送信すると、エージェントが作り始めます。',
     startBuilding: '作り始める',
     forgeUnavailable: ({ forge }) =>
       `このコンピューターから ${forge} を確認できませんでした。`,
@@ -1817,7 +1832,7 @@ export const newAppTranslations: Readonly<
     create: 'Utwórz aplikację',
     creatingTitle: ({ name }) => `Tworzenie: ${name}`,
     creatingDescription:
-      'To trwa krócej niż minutę. Potem agent zaczyna budować i otwiera się projekt.',
+      'To trwa krócej niż minutę. Potem otworzy się pierwsza wiadomość do agenta, gotowa do wysłania.',
     failedTitle: 'Jeden krok trzeba powtórzyć',
     failedKept: 'Repozytorium jest utworzone. Spróbuj ponownie, aby dokończyć; nic nie powstanie dwa razy.',
     failedNothing: 'Nic nie zostało utworzone. Zmień, co trzeba, i spróbuj ponownie.',
@@ -1834,6 +1849,8 @@ export const newAppTranslations: Readonly<
     readyTitle: 'Projekt gotowy',
     readyDescription:
       'Projekt jest gotowy. Uruchom agenta ze swoim opisem, kiedy zechcesz.',
+    readyDraftDescription:
+      'Projekt jest gotowy. Agent zacznie budować, gdy wyślesz jego pierwszą wiadomość.',
     startBuilding: 'Zacznij budować',
     forgeUnavailable: ({ forge }) =>
       `Nie udało się sprawdzić ${forge} z tego komputera.`,
@@ -2027,7 +2044,7 @@ export const newAppTranslations: Readonly<
     create: 'Criar app',
     creatingTitle: ({ name }) => `Criando ${name}`,
     creatingDescription:
-      'Leva menos de um minuto. Depois seu agente começa a construir e o projeto abre.',
+      'Leva menos de um minuto. Depois a primeira mensagem para seu agente abre, pronta para enviar.',
     failedTitle: 'Uma etapa precisa de nova tentativa',
     failedKept: 'O repositório já foi criado. Tente de novo para terminar; nada é criado duas vezes.',
     failedNothing: 'Nada foi criado. Altere o que precisar e tente de novo.',
@@ -2044,6 +2061,8 @@ export const newAppTranslations: Readonly<
     readyTitle: 'Projeto pronto',
     readyDescription:
       'Seu projeto está configurado. Inicie seu agente com sua descrição quando quiser.',
+    readyDraftDescription:
+      'Seu projeto está configurado. Seu agente começa a construir quando você envia a primeira mensagem.',
     startBuilding: 'Começar a construir',
     forgeUnavailable: ({ forge }) =>
       `Não foi possível verificar o ${forge} neste computador.`,
@@ -2237,7 +2256,7 @@ export const newAppTranslations: Readonly<
     create: 'Создать приложение',
     creatingTitle: ({ name }) => `Создаём ${name}`,
     creatingDescription:
-      'Это займёт меньше минуты. Затем агент начнёт работу и откроется проект.',
+      'Это займёт меньше минуты. Затем откроется первое сообщение агенту — останется его отправить.',
     failedTitle: 'Один шаг нужно повторить',
     failedKept: 'Репозиторий создан. Повторите, чтобы завершить, — дважды ничего не создаётся.',
     failedNothing: 'Ничего не создано. Измените нужное и повторите.',
@@ -2254,6 +2273,8 @@ export const newAppTranslations: Readonly<
     readyTitle: 'Проект готов',
     readyDescription:
       'Проект настроен. Запустите агента с вашим описанием, когда будете готовы.',
+    readyDraftDescription:
+      'Проект настроен. Агент начнёт работу, когда вы отправите первое сообщение.',
     startBuilding: 'Начать работу',
     forgeUnavailable: ({ forge }) =>
       `Не удалось проверить ${forge} с этого компьютера.`,
@@ -2445,7 +2466,7 @@ export const newAppTranslations: Readonly<
     reviewNote: '按下“创建应用”之前不会创建任何内容',
     create: '创建应用',
     creatingTitle: ({ name }) => `正在创建 ${name}`,
-    creatingDescription: '不到一分钟。之后智能体开始构建，项目随即打开。',
+    creatingDescription: '不到一分钟。之后会打开发给智能体的第一条消息，由你发送。',
     failedTitle: '有一步需要重试',
     failedKept: '仓库已创建。重试即可完成，不会重复创建。',
     failedNothing: '未创建任何内容。修改需要的地方后再试一次。',
@@ -2460,6 +2481,8 @@ export const newAppTranslations: Readonly<
     checkRepository: '检查仓库',
     readyTitle: '项目已就绪',
     readyDescription: '项目已设置好。准备好后，用你的描述启动智能体。',
+    readyDraftDescription:
+      '项目已设置好。你发送第一条消息后，智能体就会开始构建。',
     startBuilding: '开始构建',
     forgeUnavailable: ({ forge }) =>
       `无法从这台电脑检查 ${forge}。`,
@@ -2651,7 +2674,7 @@ export const newAppTranslations: Readonly<
     reviewNote: '按下「建立應用程式」之前不會建立任何內容',
     create: '建立應用程式',
     creatingTitle: ({ name }) => `正在建立 ${name}`,
-    creatingDescription: '不到一分鐘。之後代理程式開始建構，專案隨即開啟。',
+    creatingDescription: '不到一分鐘。之後會開啟傳給代理程式的第一則訊息，由你傳送。',
     failedTitle: '有一步需要重試',
     failedKept: '儲存庫已建立。重試即可完成，不會重複建立。',
     failedNothing: '未建立任何內容。修改需要的地方後再試一次。',
@@ -2666,6 +2689,8 @@ export const newAppTranslations: Readonly<
     checkRepository: '檢查儲存庫',
     readyTitle: '專案已就緒',
     readyDescription: '專案已設定好。準備好後，用你的描述啟動代理程式。',
+    readyDraftDescription:
+      '專案已設定好。你傳送第一則訊息後，代理程式就會開始建構。',
     startBuilding: '開始建構',
     forgeUnavailable: ({ forge }) =>
       `無法從這台電腦檢查 ${forge}。`,

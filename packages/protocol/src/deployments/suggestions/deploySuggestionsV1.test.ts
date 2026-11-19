@@ -2,7 +2,10 @@ import { it, expect } from 'vitest';
 import { DeploySuggestionCatalogV1Schema, DeploySuggestionInputV1Schema, DeploySuggestionV1Schema, validateDeploySuggestionV1, renderDeployPlanBriefV1 } from './deploySuggestionsV1.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import type { DeploySuggestionRecommendationV1 } from './deploySuggestionsV1.js';
-import { DEPLOYMENT_VALIDATION_RULES_V1 } from '../deploymentValidationV1.js';
+import { DEPLOYMENT_VALIDATION_RULES_V1, DEPLOY_BUILD_PREVIEW_RULES_V1 } from '../deploymentValidationV1.js';
+import { DeploymentEnvironmentCreateActionInputV1Schema } from '../deploymentActionsV1.js';
+import { validateExecutionRunProfileResult } from '../../execution/runs/resultContract.js';
+import { normalizePluginJsonSchema } from '../../plugins/actions/protocolComposableSchema.js';
 const catalog = DeploySuggestionCatalogV1Schema.parse({
     starters: [{ id: 'static', title: 'Static', deploy: { framework: 'html', output: 'static' } }],
     apps: [{ id: 'analytics', title: 'Analytics' }],
@@ -49,6 +52,18 @@ it.each(['starter', 'scratch'] as const)('preserves description bytes and carrie
     expect(brief.split(DEPLOYMENT_VALIDATION_RULES_V1)).toHaveLength(2);
     const repository = { providerKind: 'github' as const, owner: 'alice', name: 'bakery', visibility: 'private' as const };
     expect(renderDeployPlanBriefV1(description, plan, repository)).toContain(JSON.stringify(repository));
+});
+it('shows the build Session a preview Environment create the Action admits (AUTO-LIVE p4: purpose preview, no Project, no definition)', () => {
+    const brief = renderDeployPlanBriefV1('Bakery', { ...recommendation, targetId: 'own' });
+    const shown = brief.split('```json\n').slice(1).map(block => JSON.parse(block.slice(0, block.indexOf('\n```'))) as unknown)
+        .find(block => typeof block === 'object' && block !== null && 'controllerMachineId' in block);
+    expect(shown, brief).toBeDefined();
+    const admitted = DeploymentEnvironmentCreateActionInputV1Schema.safeParse(shown);
+    expect(admitted.error?.issues ?? null).toBeNull();
+    expect(shown).toMatchObject({ protection: 'nonProduction', purpose: 'standard' });
+    // Own server deploys the repository's Compose file; the rule that has the agent author one rides in every brief, once.
+    expect(brief.split(DEPLOY_BUILD_PREVIEW_RULES_V1)).toHaveLength(2);
+    expect(shown).toMatchObject({ definition: { from: 'repository', compose: { path: 'compose.yaml' } } });
 });
 it('routes catalog apps only to a declared Compose host', () => {
     const app = { ...recommendation, source: { kind: 'catalogApp', appId: 'analytics' }, targetId: 'own' };
@@ -100,13 +115,14 @@ it('drops a question the shared schema still refuses, with a typed reason, and k
     expect(validateDeploySuggestionV1({ recommendations: [], questions: { kind: 'questions', questions: 'none' } }, catalog))
         .toMatchObject({ questions: null, droppedQuestions: [{ reason: 'invalid_questions' }] });
 });
-it('offers the model selection bounds only on multiple-choice questions', () => {
-    type Node = { const?: string; anyOf?: Node[]; properties?: Record<string, Node>; items?: Node };
-    const root = zodSchemaToJsonSchemaObject(DeploySuggestionV1Schema, { target: 'draft-7' }) as Node;
-    const arms = (root.properties?.questions?.anyOf ?? []).flatMap(arm => arm.properties?.questions?.items?.anyOf ?? []);
-    const types = (node: Node | undefined): string[] => node?.const ? [node.const] : (node?.anyOf ?? []).flatMap(types);
-    const bounded = (type: string) => arms.filter(arm => types(arm.properties?.type).includes(type))
-        .map(arm => 'minSelections' in (arm.properties ?? {}) || 'maxSelections' in (arm.properties ?? {}));
-    expect(bounded('singleChoice')).toEqual([false]);
-    expect(bounded('multipleChoice')).toEqual([true]);
+it('the run\u2019s result contract admits the live model answer the check normalizes: single choice may restate its bounds, nothing more (AUTO-LIVE p4 invalid_output)', () => {
+    // What suggestDeploySetup sends as resultSchema and the task profile enforces before the check ever sees the answer.
+    const contract = { kind: 'json' as const, schema: normalizePluginJsonSchema(zodSchemaToJsonSchemaObject(DeploySuggestionV1Schema, { target: 'draft-7' })) };
+    expect(validateExecutionRunProfileResult({ recommendations: [recommendation], questions: liveQuestions }, contract))
+        .toMatchObject({ ok: true });
+    const [first, second] = liveQuestions.questions;
+    expect(validateExecutionRunProfileResult({ recommendations: [], questions: { ...liveQuestions,
+        questions: [{ ...first, maxSelections: 2 }, second] } }, contract)).toMatchObject({ ok: false, reason: 'schema_mismatch' });
+    expect(validateExecutionRunProfileResult({ recommendations: [], questions: { ...liveQuestions,
+        questions: [{ ...second, type: 'multipleChoice', minSelections: 1, maxSelections: 3 }] } }, contract)).toMatchObject({ ok: true });
 });

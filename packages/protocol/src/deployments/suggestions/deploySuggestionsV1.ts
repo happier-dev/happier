@@ -1,7 +1,7 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import type { ProjectStarterCreateInputV1 } from '../../projects/starters/createV1.js';
-import { DEPLOYMENT_VALIDATION_RULES_V1 } from '../deploymentValidationV1.js';
+import { DEPLOYMENT_VALIDATION_RULES_V1, DEPLOY_BUILD_PREVIEW_RULES_V1 } from '../deploymentValidationV1.js';
 import { DeployShapeV1Schema, DeployVariableNameV1Schema, deploymentTargetFitFieldsV1 } from '../deployShapeV1.js';
 import {
     InteractionTransientAuthorQuestionV1Schema,
@@ -54,8 +54,9 @@ export const DeploySuggestionRecommendationV1Schema = lazyZodSchema(() => z.stri
 }));
 export type DeploySuggestionRecommendationV1 = z.infer<typeof DeploySuggestionRecommendationV1Schema>;
 /**
- * The answer shape the model is asked for: the shared author questions in their model shape (selection bounds only
- * on multiple choice); the check below still admits the answer through the shared schema itself.
+ * The answer shape the model is asked for, which the run's result contract also enforces: the shared author questions
+ * in their model shape (single choice may only restate its bounds); the check below still admits the answer through
+ * the shared schema itself.
  */
 export const DeploySuggestionV1Schema = lazyZodSchema(() => z.strictObject({
     recommendations: z.array(DeploySuggestionRecommendationV1Schema),
@@ -169,6 +170,7 @@ export function renderDeployPlanBriefV1(description: string, recommendation: Dep
         '```json\n' + JSON.stringify(recommendation) + '\n```',
         ...(repository ? ['Selected code repository:\n```json\n' + JSON.stringify(repository) + '\n```'] : []),
         DEPLOYMENT_VALIDATION_RULES_V1,
+        DEPLOY_BUILD_PREVIEW_RULES_V1,
     ].join('\n\n');
 }
 

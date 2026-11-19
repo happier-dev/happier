@@ -107,10 +107,14 @@ const CREATE_ACTION = 'projects.starters.create' as const;
 type CreateState =
   | Readonly<{ kind: 'running' }>
   | StarterCreateOutcome
-  /** The Project exists; only opening its first Session did not (Plan 60 §3.3 "Project ready"). */
+  /**
+   * The Project exists (Plan 60 §3.3 "Project ready"). With `draftOpened`, its first Session's message is already open in
+   * New session and starts when the person sends it; without, opening it did not happen and Start building retries.
+   */
   | Readonly<{
       kind: 'projectReady';
       created: Extract<StarterCreateOutcome, { kind: 'created' }>;
+      draftOpened?: true;
     }>;
 
 export type NewAppScreenProps = Partial<
@@ -337,6 +341,12 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const stepAside = React.useCallback(() => {
     props.onClose?.();
   }, [props.onClose]);
+  // The build Session's first message opens in New session and waits for the person's Send (session.authoring.open).
+  // A modal host steps aside; a page has nothing to step aside from, so it settles on Project ready and says so.
+  const settleCreated = React.useCallback((created: Extract<StarterCreateOutcome, { kind: 'created' }>, draftOpened: boolean) => {
+    if (draftOpened && props.onClose) props.onClose();
+    else setCreate({ kind: 'projectReady', created, ...(draftOpened ? { draftOpened: true as const } : {}) });
+  }, [props.onClose]);
 
   // Already built and a catalog app continue in this flow's deploy steps, whose draft asks for the Project (journey-deploy
   // imgCfg, catWhere); a catalog app picked here takes the same source as a suggested one. Browse steps aside first.
@@ -472,8 +482,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         catalog: suggestion.catalog, description,
         create: { input: createInput, lifetime, ...(name.trim() ? { sessionName: name.trim() } : {}) } });
       if (applied.kind === 'created') {
-        if (applied.sessionOpened) stepAside();
-        else setCreate({ kind: 'projectReady', created: applied.creation });
+        settleCreated(applied.creation, applied.sessionOpened);
         return;
       }
       const settled = applied.kind === 'failed' && applied.creation
@@ -513,11 +522,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       setStep('describe');
       return;
     }
-    if (outcome.kind === 'created') {
-      if (await startSession(outcome)) stepAside();
-      else setCreate({ kind: 'projectReady', created: outcome });
-    }
-  }, [appliedSuggestion, create, description, forge.markNeedsAccount, input, name, scope, startSession, stepAside]);
+    if (outcome.kind === 'created') settleCreated(outcome, await startSession(outcome));
+  }, [appliedSuggestion, create, description, forge.markNeedsAccount, input, name, scope, settleCreated, startSession]);
 
   // Use this setup (journey-deploy F4): the suggestion owner routes it. A starter continues in this flow's review, which
   // creates through the owner with the plan brief; a catalog app continues in this dialog's Where it runs.
@@ -627,13 +633,13 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             },
             testID: 'newApp.create',
           }
-        : create?.kind === 'projectReady'
+        : create?.kind === 'projectReady' && !create.draftOpened
           ? {
               title: t('newApp.startBuilding'),
               disabled: false,
               onPress: () => {
                 void startSession(create.created).then((ok) => {
-                  if (ok) stepAside();
+                  if (ok) settleCreated(create.created, true);
                 });
               },
               testID: 'newApp.startBuilding',
@@ -1055,7 +1061,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     body = (
       <>
         {create?.kind === 'projectReady'
-          ? header(t('newApp.readyTitle'), t('newApp.readyDescription'))
+          ? header(t('newApp.readyTitle'), t(create.draftOpened ? 'newApp.readyDraftDescription' : 'newApp.readyDescription'))
           : header(
               t('newApp.creatingTitle', { name: appName }),
               // After a stop, the purpose line says what is already done; the card says what stopped.

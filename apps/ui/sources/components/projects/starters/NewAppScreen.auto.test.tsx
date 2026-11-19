@@ -945,3 +945,56 @@ it('a Session suggestion without the person\u2019s words opens with the descript
     await fixture.dispose();
   }
 });
+
+it('as a page, Use this setup settles once the build Session’s first message is open: the page says the agent starts when it is sent (F-MAKING-STUCK)', async () => {
+  suggestionBoundary({ registryActionExecute: async () => ({ pages: [] }),
+    sessionAuthoringOpen: async () => ({ kind: 'opened', draftId: 'draft', destination: 'newSession' }) });
+  // The create Action's own effects (clone, publish, Source, Project) are its tests'; here it answers with its published result.
+  const delegate = execute.getMockImplementation()!;
+  execute.mockImplementation(async (actionId: string, input: unknown, context: unknown) => actionId === 'projects.starters.create'
+    ? { ok: true, result: { kind: 'created', projectId: 'project', sourceId: 'source', repositoryUrl: 'https://github.example.test/alice/bakery',
+        workspace: { serverId: 'home', machineId: 'devbox', workspaceId: 'workspace', rootPath: '/home/alice/src/bakery' },
+        sessionHandoff: { machineId: 'devbox', directory: '/home/alice/src/bakery', initialMessage: (input as { description: string }).description } } }
+    : delegate(actionId as never, input as never, context as never));
+  const { storage } = await import('@/sync/domains/state/storageStore');
+  const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+  const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+  const { machineScmHostingRepositoryDescribePublishTargets: describeTargets } = await import('@/sync/ops/scm/machineScm');
+  const { ScmHostingRepositoryDescribePublishTargetsResponseSchema } = await import('@happier-dev/protocol/scm');
+  vi.mocked(describeTargets).mockImplementation(async () => ScmHostingRepositoryDescribePublishTargetsResponseSchema.parse({
+    success: true, defaultRepositoryName: 'bakery', auth: { state: 'authenticated', profileKind: 'connected_account' },
+    targets: [{ provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.example.test',
+      urlSafety: { allowedSchemes: ['https:'] } }, owner: 'alice', ownerKind: 'user', label: 'alice', isDefault: true,
+      supportedVisibilities: ['private'], supportedRemoteUrlKinds: ['https'] }],
+  }));
+  const catalog: DeploySuggestionCatalogV1 = {
+    starters: [{ id: '["starter","website"]', title: 'Static website', sourceId: 'starter', itemId: 'website',
+      deploy: { framework: 'html', output: 'static' } }],
+    apps: [], targets, machines: [], stores: [], forges: [{ providerKind: 'github', title: 'GitHub' }],
+  };
+  const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://auto-page-host.test',
+    { key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [] } }, 'updated', { handleRequest: async () => null });
+  const scope = storage.getState().settingsScope;
+  if (!scope) throw new Error('Expected admitted Home Account');
+  await publishMachineInventoryForTest(scope, [createMachineFixture({ activeAt: Date.now() })]);
+  // The projects/new-app route renders the screen with no modal host to step aside.
+  const screen = await renderScreen(<NewAppScreen
+    suggestion={{ description: 'A page for my bakery', recommendation: recommendation as never, catalog }} />);
+  try {
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.useSetup')?.props.disabled).toBe(false));
+    await screen.pressByTestIdAsync('newApp.auto.useSetup');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.nameField')).toBeTruthy());
+    await act(async () => screen.changeTextByTestId('newApp.nameField', 'Bakery'));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.create')?.props.disabled).toBe(false));
+    await screen.pressByTestIdAsync('newApp.create');
+    await waitForHomeGovernance(() => expect(calls('session.authoring.open')).toHaveLength(1));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.creating'), 'no spinner once the draft is open').toBeNull());
+    expect(screen.getTextContent()).toContain('Project ready');
+    expect(screen.getTextContent()).toContain('Your agent starts building when you send its first message.');
+    expect(screen.findByTestId('newApp.startBuilding'), 'the open draft is the way on; a second one would start twice').toBeNull();
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});

@@ -372,15 +372,17 @@ export const InteractionTransientQuestionsAuthorRequestV1Schema = lazyZodSchema(
 })));
 /**
  * The author questions request as a shape a model can be given as JSON Schema: selection bounds are offered on
- * multiple choice only, and the cross-field refinements (duplicate ids, bounds) that JSON Schema can't carry are
- * left out. It describes what to answer; admission still goes through InteractionTransientQuestionsAuthorRequestV1Schema.
+ * multiple choice; single choice admits only bounds that restate it (min 0 or 1, max 1), which models emit and the
+ * consumer strips before admission. The cross-field refinements (duplicate ids, bounds) that JSON Schema can't carry
+ * are left out. It describes what to answer; admission still goes through InteractionTransientQuestionsAuthorRequestV1Schema.
  */
 export const InteractionTransientQuestionsAuthorModelShapeV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('questions'),
   title: z.optional(boundedTitleOrLabel('Interaction question titles')),
   questions: z.array(z.union([
     AuthorTextQuestionV1Schema,
-    z.strictObject({ ...authorChoiceQuestionFields(), type: z.literal('singleChoice') }),
+    z.strictObject({ ...authorChoiceQuestionFields(), type: z.literal('singleChoice'),
+      minSelections: z.optional(z.number().check(z.int(), z.gte(0), z.lte(1))), maxSelections: z.optional(z.literal(1)) }),
     z.strictObject({ ...authorChoiceQuestionFields(), type: z.literal('multipleChoice'), ...StructuredQuestionSelectionConstraintsV1Schema.shape }),
   ])).check(z.minLength(1), z.maxLength(MAX_INTERACTION_TRANSIENT_QUESTIONS_V1)),
 }));

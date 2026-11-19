@@ -6,3 +6,20 @@ export const DEPLOYMENT_VALIDATION_RULES_V1 = [
     'For a preview, create or reuse the selected non-production Environment through deployments.environments.create and deploy with deployments.deploy. Follow deployments.receipts.get to completion, then read deployments.health.current for that Environment and target link. Return the preview URL and observed health for the person to review; an accepted deploy is not healthy evidence.',
     'Do not provision, bind secrets, merge, or deploy Production. After reviewed merge, refresh the exact Source revision and return to ordinary Publish/deploy review. Session and Forge own progress and PR state; no waiting-until-merge operation is needed.',
 ].join('\n\n');
+
+/**
+ * How the build Session makes its preview Environment (AUTO-LIVE p4: the agent read "preview" as purpose preview, which
+ * belongs to a pull-request child of a template Environment, and sent no Project or definition). The example is the
+ * Action's own input shape; a test parses it through the Action schema so this guidance cannot drift from it.
+ */
+const DEPLOY_BUILD_PREVIEW_CREATE_EXAMPLE_V1 = {
+    serverId: 'SERVER_ID', requestKey: 'NEW_REQUEST_KEY', projectSourceId: 'PROJECT_SOURCE_ID', name: 'App preview',
+    protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'MACHINE_ID',
+    definition: { from: 'repository', ref: 'PUSHED_BRANCH',
+        compose: { path: 'compose.yaml', profiles: [], services: ['web'], primaryService: 'web' } },
+    firstTargetLink: { machines: [{ machineId: 'MACHINE_ID', installationId: 'MACHINE_INSTALLATION_ID' }] },
+} as const;
+export const DEPLOY_BUILD_PREVIEW_RULES_V1 = [
+    'Create the preview Environment with deployments.environments.create using protection nonProduction and purpose standard; purpose preview is only for a pull-request child of an existing template Environment. Take projectSourceId from projects.sources.list, the Machine id and installationId from machines.list, and the branch you pushed as the definition ref. Own server deploys the repository\'s Compose file: when the repository has none, add a compose.yaml whose web service serves the app with a healthcheck, then commit and push it before the preview. For Own server the input has this shape (read the Action\'s current schema before calling it):',
+    '```json\n' + JSON.stringify(DEPLOY_BUILD_PREVIEW_CREATE_EXAMPLE_V1) + '\n```',
+].join('\n\n');

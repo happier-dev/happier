@@ -110,8 +110,9 @@ can only add more of a known kind, so it does not hold the read up. The wait rea
 the registry-sources record as received and never waits for that record itself;
 the catalog read fetches it.
 The run can return typed questions in the existing transient question shape. The
-result schema given to the model offers selection bounds only on multiple-choice
-questions. The
+result schema given to the model, which the run also enforces before the check,
+offers selection bounds on multiple-choice questions; on single choice it admits
+only bounds that restate it (minimum 0 or 1, maximum 1). The
 dialog renders those questions in its existing form, and an answer starts a new
 round against the retained snapshot. A connect explicitly rebuilds the catalog.
 
@@ -153,8 +154,17 @@ when it is an offered choice, and creates the repository, Source, and Project
 through `projects.starters.create`. That Action receives the description the
 person reviewed in the dialog, byte-for-byte, followed by `renderDeployPlanBriefV1`,
 then the existing
-`sessionHandoff` opens the build Session. The Session runs the project's own
-scripts, creates a preview Environment, deploys the preview, and checks health.
+`sessionHandoff` opens the build Session's first message in New session, where
+the person's Send starts it (`session.authoring.open`). A modal New app steps
+aside; the page settles on Project ready and says the agent starts when that
+message is sent. The Session runs the project's own scripts, creates a preview
+Environment, deploys the preview, and checks health. The brief's preview step
+(`DEPLOY_BUILD_PREVIEW_RULES_V1`, also in `references/create-app.md`) shows the
+own-server `deployments.environments.create` input the Action admits: a
+non-production, standard-purpose Environment with the Project's Source, a
+repository definition naming its Compose file, and the Machine as controller and
+first target. An own server deploys the repository's Compose file, so the agent
+adds `compose.yaml` when the starter has none.
 Review shows the observed preview URL and health. Production remains the
 person's ordinary reviewed step. A catalog-app recommendation and the dialog's
 existing repository, image, and Compose doors are pure deploys and continue to
