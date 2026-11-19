@@ -549,6 +549,8 @@ export type ManagedSessionTargetRequest = Readonly<{
     sessionId: string;
     /** Authoritative Home birth association, supplied after Session commitment. */
     committedSessionId?: string;
+    /** Confirmed native absence ends this placed Session; transport loss and admission revocation do not. */
+    onNativeAbsent?: () => Promise<void>;
     /** The admitted requester; a resource-bound creator uses its Home-committed Session association. */
     requesterAccountId: string;
     /** The tracked Session's lifetime: it ends the authority, the channels and the target's holder custody. */
@@ -629,7 +631,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
     async function openTarget(targetRequest: ManagedSessionTargetRequest | ManagedWorkspaceSyncTargetRequest): Promise<ManagedSessionTarget | ManagedWorkspaceSyncTarget> {
         const sync = 'relationshipId' in targetRequest ? targetRequest : undefined;
         const request = 'sessionId' in targetRequest ? targetRequest : {
-            ...targetRequest, sessionId: undefined, committedSessionId: undefined, operation: undefined,
+            ...targetRequest, sessionId: undefined, committedSessionId: undefined, onNativeAbsent: undefined, operation: undefined,
         };
         if (sync && (sync.workspace.managedId !== sync.managedId || sync.workspace.serverId !== input.homeId
             || sync.workspace.controller.machineId !== input.controller.machineId
@@ -674,17 +676,26 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         const invoke = authority.invoke;
         if (!current.resource) throw new ManagedMachineControllerError('admission_unavailable');
         const correlation = { resource: current.resource };
-        // Pushed row changes (no polling): a hand-over or removal revokes even an idle open channel.
+        // Admission may end on delete intent before native absence is reported. A placed Session
+        // keeps observing that allocation fact until its own lifetime ends, without re-admitting IO.
+        const observationLifetime = request.onNativeAbsent ? request.lifetime : lifetime;
         const unsubscribe = input.subscribeManagedMachineChanges?.(change => {
-            if (lifetime.aborted) return;
+            if (observationLifetime.aborted) return;
             if (change?.kind === 'managed' && !change.managedIds.includes(request.managedId)) return;
             if (change?.kind === 'machines' && !change.machineIds.includes(input.controller.machineId)) return;
-            return readCurrent(request.managedId, lifetime).then(async row => {
+            return readCurrent(request.managedId, observationLifetime).then(async row => {
+                if (observationLifetime.aborted) return;
+                if (request.onNativeAbsent && row?.id === request.managedId && row.allocation === 'confirmed-absent') {
+                    revoked.abort();
+                    await request.onNativeAbsent();
+                    return;
+                }
+                if (lifetime.aborted) return;
                 try { current = await admit(row); authority.assertManagedTargetCurrent(correlation.resource.value); }
                 catch { revoked.abort(); }
             }, () => undefined);
         });
-        if (unsubscribe) lifetime.addEventListener('abort', () => unsubscribe(), { once: true });
+        if (unsubscribe) observationLifetime.addEventListener('abort', () => unsubscribe(), { once: true });
         let io = createManagedNativeBootstrapIO(correlation, invoke);
         let openChannel: ManagedSessionTarget['openChannel'] = (argv, signal) => openManagedNativeChannel(correlation, invoke, { argv, signal });
         let placed: Readonly<{ platform: ManagedGuestPlatform }> & Partial<Pick<ManagedSessionTarget, 'holderPath' | 'helperPath' | 'socketDirectory'>>;
@@ -768,6 +779,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 });
             }
         } catch (error) {
+            unsubscribe?.();
             revoked.abort();
             throw error;
         }

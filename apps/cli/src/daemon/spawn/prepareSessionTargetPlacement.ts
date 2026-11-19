@@ -165,6 +165,7 @@ function sweepEndedSessionsCommand(sessions: string, helperPath: string): string
 type SessionTargetAuthorityRequest = Readonly<{
     request: Readonly<{ managedId: string }>;
     sessionKey: string;
+    committedSessionId?: ManagedSessionTargetRequest['committedSessionId'];
     requesterAccountId: string | null;
     holderVersion: string;
     openManagedSessionTarget?: OpenManagedSessionTarget;
@@ -174,6 +175,7 @@ type SessionTargetAuthorityRequest = Readonly<{
 function openSessionTargetAuthority(input: SessionTargetAuthorityRequest, lifetime: AbortSignal): Promise<ManagedSessionTarget> | null {
     if (!input.openManagedSessionTarget || !input.requesterAccountId) return null;
     return input.openManagedSessionTarget({ managedId: input.request.managedId, sessionId: input.sessionKey,
+        ...(input.committedSessionId ? { committedSessionId: input.committedSessionId } : {}),
         requesterAccountId: input.requesterAccountId, lifetime,
         holder: { version: input.holderVersion, resolveArtifacts: readSessionTargetHolderArtifacts } });
 }

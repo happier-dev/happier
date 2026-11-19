@@ -3118,7 +3118,7 @@ export async function startDaemonSessionControlRuntime(
                 ? attached.metadata?.sessionCreationCorrespondenceV1 : undefined);
               const recipe = parsed.success ? parsed.data.recipe : undefined;
               const origin = recipe?.projectFilesOrigin;
-              return await restoreSessionTargetRelay({ ...request, socketPath,
+              return await restoreSessionTargetRelay({ ...request, committedSessionId: sessionId, socketPath,
                 ...(origin ? { projectFiles: { sessionId, primarySocketPath: held.socketPath, origin,
                   readBaseline: async signal => origin.targetWorkspace.kind === 'managed'
                     ? await params.resolveManagedProjectFilesBaseline?.()?.({ sessionId, targetWorkspace: origin.targetWorkspace, credentials,
@@ -11586,6 +11586,19 @@ export async function startDaemonSessionControlRuntime(
     managedProviderOperationAuthority: params.managedProviderOperationAuthority,
     ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
     subscribeManagedMachineChanges,
+    onSessionTargetNativeAbsent: async ({ sessionId, managedId }) => {
+      const tracked = findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), sessionId);
+      if (!tracked || tracked.spawnOptions?.managedTargetPlacement?.managedId !== managedId) return;
+      await withSessionStopMetadataContext(sessionId, async metadataContext => {
+        const result = await stopSession(sessionId, { metadataContext, expectedTrackedRunner: {
+          tracked, sessionRunnerPid: tracked.sessionRunnerPid, processStartTimeMs: tracked.processStartTimeMs,
+          processCommandHash: tracked.processCommandHash,
+        } }, undefined, undefined, metadataContext.credentials);
+        if (result.status === 'incomplete') {
+          logger.warn('[DAEMON RUN] Confirmed absent Session target Stop remains incomplete', { sessionId, managedId, reason: result.reason });
+        }
+      });
+    },
     ...(params.readManagedMachinePolicyCurrent
       ? { readPolicyCurrent: params.readManagedMachinePolicyCurrent }
       : {}),

@@ -292,10 +292,11 @@ describe('Session placement on a managed target at spawn', () => {
         const targetWorkspace = { v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'actual-native-workspace',
             managedId: 'row-1', controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/guest/project' };
         const baseline = { entries: [] };
-        const release = await restoreSessionTargetRelay({ ...request, socketPath,
+        const release = await restoreSessionTargetRelay({ ...request, committedSessionId: 'reattached-project-files', socketPath,
             projectFiles: { sessionId: 'reattached-project-files', primarySocketPath: '/guest/primary.sock',
                 origin: { sourceWorkspace, targetWorkspace }, readBaseline: async () => baseline } });
         expect(release).toBeTypeOf('function');
+        expect(custody.requests[0]!.committedSessionId).toBe('reattached-project-files');
         expect(resolveSessionTargetWorkspaceTransfer('reattached-project-files')).toMatchObject({
             workspace: { hostRoot: sourceWorkspace.rootPath, targetRoot: targetWorkspace.rootPath }, baseline });
         const reply = await connectSessionTarget({ id: 'managed:row-1', holderPath: '/h', socketDirectory: '/g/run', relaySocketPath: socketPath }).exec('true');

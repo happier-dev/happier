@@ -80,6 +80,7 @@ type ManagedMachineActionAdapterParams = Readonly<{
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
     prepareTeamCredentialNativeSource?: RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
     subscribeManagedMachineChanges?: ApiMachineClient['onManagedMachinePolicyInvalidated'];
+    onSessionTargetNativeAbsent?: (input: Readonly<{ sessionId: string; managedId: string }>) => Promise<void>;
     executeManagedPolicyAction?: <Machine extends ManagedMachineReadSnapshotV1>(machine: Machine, context: ActionExecutorContext,
         runApproved: (context: ActionExecutorContext) => Promise<Machine>, purpose: ManagedPolicyPurposeV1,
         actionOrigin?: ExternalActionExecutionAuthorizationV1) => Promise<Machine>;
@@ -459,7 +460,11 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
         openSessionTarget: (request: import('@/machines/managed/acquire').ManagedSessionTargetRequest) =>
             new Promise<import('@/machines/managed/acquire').ManagedSessionTarget>((resolve, reject) => {
                 void withBoundDriver(params, request.lifetime, async driver => {
-                    resolve(await driver.openSessionTarget(request));
+                    const sessionId = request.committedSessionId;
+                    resolve(await driver.openSessionTarget({ ...request,
+                        ...(sessionId && params.onSessionTargetNativeAbsent ? { onNativeAbsent: () =>
+                            params.onSessionTargetNativeAbsent!({ sessionId, managedId: request.managedId }) } : {}),
+                    }));
                     if (request.lifetime.aborted) return;
                     await new Promise(settle => request.lifetime.addEventListener('abort', settle, { once: true }));
                 }).catch(reject);

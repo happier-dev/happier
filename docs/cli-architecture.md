@@ -7845,6 +7845,14 @@ channels and exits when the holder closes that connection.
     placement's Session-end steps (`onSessionEnd`), then the authority and relay end.
     Each call of the authority is its own provider operation (the Agents' held
     channels stay open next to finite calls).
+    In current 0.3 development source, a committed placed Session retains the
+    managed owner's pushed allocation observation through its runner lifetime,
+    including after delete intent has revoked target IO. Only that row's
+    `confirmed-absent` allocation invokes the daemon's existing Stop owner for
+    the exact tracked placement, using the Session's Account metadata context.
+    Restored relays carry the committed Session id separately from their holder
+    custody key. A dropped channel, unavailable Home read or admission revocation
+    alone does not establish native death; holder reconnect remains recoverable.
   - Workspace path: the launch step fixes the workspace's two names once
     (`SessionTargetLaunch.workspace {hostRoot, targetRoot}`; equal or disjoint, else
     `workspace_root_unsafe`). The Agent is told only the target path: the native

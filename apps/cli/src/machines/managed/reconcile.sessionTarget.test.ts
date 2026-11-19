@@ -1020,6 +1020,81 @@ describe('Session placement on a managed target (driver)', () => {
         expect(reads).toBe(2);
     });
 
+    it('settles only the placed Session on confirmed native absence, after delete intent has revoked its channel', async () => {
+        const h = harness({ holdStream: true, guest: true });
+        const session = new AbortController();
+        onTestFinished(() => session.abort());
+        let row = machine;
+        const survivor = { ...machine, id: 'surviving-target' };
+        const survivingSession = new AbortController();
+        onTestFinished(() => survivingSession.abort());
+        let reads = 0;
+        let unavailable = false;
+        let settlementAvailable = false;
+        const ended: string[] = [];
+        const listeners = new Set<(change?: ManagedMachinePolicyInvalidation) => void | Promise<void>>();
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async id => {
+            reads++;
+            if (unavailable) throw new Error('Home transport disconnected');
+            return id === survivor.id ? survivor : row;
+        }, subscribeManagedMachineChanges: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; } });
+        const target = await driver.openSessionTarget({ managedId: machine.id, sessionId: 'holder-nonce', committedSessionId: 'placed-session',
+            requesterAccountId: 'owner', lifetime: session.signal, holder,
+            onNativeAbsent: async () => {
+                if (!settlementAvailable) throw new Error('Session Stop settlement unavailable');
+                ended.push('placed-session');
+                session.abort();
+            } });
+        const survivingTarget = await driver.openSessionTarget({ managedId: survivor.id, sessionId: 'surviving-holder',
+            committedSessionId: 'surviving-session', requesterAccountId: 'owner', lifetime: survivingSession.signal, holder,
+            onNativeAbsent: async () => { ended.push('surviving-session'); } });
+        const notify = async (managedId = machine.id) => {
+            await Promise.all([...listeners].map(listener => listener({ kind: 'managed', managedIds: [managedId] })));
+        };
+        const channel = target.openChannel(['holder', 'attach'], session.signal);
+        const closed = new Promise(resolve => channel.once('close', resolve));
+        channel.resume();
+        await expect.poll(() => h.calls.includes('stream')).toBe(true);
+        expect(reads).toBe(2);
+        await notify('unrelated-target');
+        expect(reads).toBe(2);
+        unavailable = true;
+        await notify();
+        expect(ended).toEqual([]);
+        expect(target.lifetime.aborted).toBe(false);
+
+        unavailable = false;
+        row = { ...machine, desired: 'delete', intentRevision: machine.intentRevision + 1 };
+        await notify();
+        await closed;
+        expect(target.lifetime.aborted).toBe(true);
+        expect(ended).toEqual([]);
+        expect(session.signal.aborted).toBe(false);
+
+        // The allocation fact arrives later than admission revocation. A different guest's push is irrelevant.
+        row = { ...row, allocation: 'confirmed-absent', resource: undefined,
+            observation: { observedAt: 123, availability: 'absent' } };
+        const beforeUnrelated = reads;
+        await notify('unrelated-target');
+        expect(reads).toBe(beforeUnrelated);
+        await expect(notify()).rejects.toThrow('Session Stop settlement unavailable');
+        expect(ended).toEqual([]);
+        expect(listeners.size).toBe(2);
+        // A reconnect's existing owner notification may complete a failed Stop; no local retry is scheduled.
+        settlementAvailable = true;
+        await notify();
+        expect(ended).toEqual(['placed-session']);
+        const settledReads = reads;
+        await notify();
+        expect(ended).toEqual(['placed-session']);
+        expect(reads).toBe(settledReads);
+        expect(survivingTarget.lifetime.aborted).toBe(false);
+        await expect(survivingTarget.exec('true', survivingSession.signal)).resolves.toMatchObject({ status: 0 });
+        expect(listeners.size).toBe(1);
+        survivingSession.abort();
+        expect(listeners.size).toBe(0);
+    });
+
     it('routes an unscoped workspace request to the live Session after deletion revokes the earlier target at the same root', async () => {
         const h = harness({ guest: true });
         const replacement = { ...machine, id: 'replacement-target' };
