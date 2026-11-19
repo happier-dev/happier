@@ -16,8 +16,15 @@ import type {
 import { teamCredentialResourcesQueryKeyV1, mergeTeamCredentialUsagePages } from '@happier-dev/protocol/teams';
 import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
 import { homeDomainFailureFromSnapshotError } from '@/sync/domains/teams/teamSnapshotFailure';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
+import type { UsagePeriod } from '@/sync/api/account/usagePeriods';
+import {
+    areServerAccountScopesEqual,
+    readServerAccountScopeOwnerLifetime,
+    serverAccountScopedResourceKey,
+    type ServerAccountScope,
+    type ServerAccountScopeLifetime,
+} from '@/sync/domains/scope/serverAccountScope';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import {
     loadMoreTeamCredentialResources,
@@ -42,6 +49,7 @@ import {
     getTeamCredentialResourcesSnapshot,
     readTeamCredentialResource,
     subscribeTeamsSnapshots,
+    teamCredentialUsageObservations,
 } from '@/sync/store/teams/teamsSnapshots';
 
 import { useTeamPagedList, type TeamPagedList } from './useTeamPagedList';
@@ -500,6 +508,7 @@ export type TeamCredentialUsageProjection = Readonly<{
 export function useTeamCredentialUsage(params: Readonly<{
     scope: ServerAccountScope | null;
     input: TeamCredentialUsageQueryInputV1;
+    period: UsagePeriod;
     resourceRevision: number | null;
     enabled: boolean;
 }>): TeamCredentialUsageProjection {
@@ -508,6 +517,7 @@ export function useTeamCredentialUsage(params: Readonly<{
     const [state, setState] = React.useState<Readonly<{
         key: string;
         continuityKey: string;
+        lifetime: ServerAccountScopeLifetime | null;
         /** The query identity `result` actually came from. */
         resultKey: string;
         result: TeamCredentialUsageQueryResultV1 | null;
@@ -516,11 +526,13 @@ export function useTeamCredentialUsage(params: Readonly<{
         nextCursor: string | null;
         loadingMore: boolean;
         error: HomeDomainFailure | null;
-    }>>({ key: '', continuityKey: '', resultKey: '', result: null, status: 'loading', partial: false, nextCursor: null, loadingMore: false, error: null });
+    }>>({ key: '', continuityKey: '', lifetime: null, resultKey: '', result: null, status: 'loading', partial: false, nextCursor: null, loadingMore: false, error: null });
     const scope = params.scope;
     const inputKey = JSON.stringify(params.input);
     const input = React.useMemo(() => params.input, [inputKey]);
     const active = params.enabled && scope !== null;
+    const { binding, resolution } = useServerCredentialAccountScopeBinding(active ? scope.serverId : null);
+    const currentBinding = binding?.isCurrent() && areServerAccountScopesEqual(binding.scope, scope) ? binding : null;
     const key = scope
         ? serverAccountScopedResourceKey(scope, 'team-credential-usage', `${params.resourceRevision ?? -1}:${inputKey}`)
         : '';
@@ -531,56 +543,70 @@ export function useTeamCredentialUsage(params: Readonly<{
             `${params.resourceRevision ?? -1}:${JSON.stringify({ resourceId: params.input.resourceId, subject: params.input.subject })}`,
         )
         : '';
+    // A returning view asks for a new end instant. Only the same selector and
+    // scope may display its previous result, and the old range cannot be exported.
+    const observationKey = scope ? serverAccountScopedResourceKey(scope, 'team-credential-usage-observation', JSON.stringify([
+        params.resourceRevision, params.input.resourceId, params.input.subject, params.period,
+        params.input.granularity, params.input.costMode, params.input.breakdown,
+    ])) : '';
     const stateRef = React.useRef(state);
     stateRef.current = state;
 
     const load = React.useCallback(async (mode: 'reload' | 'more') => {
-        if (!active || !scope) return;
+        if (!currentBinding?.isCurrent()) return;
+        const lifetime = readServerAccountScopeOwnerLifetime(currentBinding);
         const current = stateRef.current;
-        const continuing = mode === 'more' && current.key === key;
+        const continuing = mode === 'more' && current.key === key && current.lifetime?.isCurrent();
         const cursor = continuing ? current.nextCursor : null;
         if (mode === 'more' && (cursor === null || current.loadingMore)) return;
         const epoch = ++requestEpoch.current;
         request.current?.abort();
         const controller = new AbortController();
         request.current = controller;
-        setState((previous) => continuing
-            ? { ...previous, loadingMore: true, error: null }
-            : {
+        setState((previous) => {
+            if (continuing) return { ...previous, loadingMore: true, error: null };
+            const keepPrevious = previous.continuityKey === continuityKey && previous.lifetime?.isCurrent();
+            return {
                 key,
                 continuityKey,
-                resultKey: previous.continuityKey === continuityKey ? previous.resultKey : '',
-                result: previous.continuityKey === continuityKey ? previous.result : null,
+                lifetime,
+                resultKey: keepPrevious ? previous.resultKey : '',
+                result: keepPrevious ? previous.result : teamCredentialUsageObservations.get(observationKey) ?? null,
                 status: 'loading',
                 partial: false,
                 nextCursor: null,
                 loadingMore: false,
                 error: null,
-            });
+            };
+        });
         const outcome = await queryTeamCredentialUsage({
-            scope,
+            scope: currentBinding.scope,
             input: cursor === null ? input : { ...input, cursor },
             signal: controller.signal,
         }).catch(error => {
             if (controller.signal.aborted) return null;
             throw error;
         });
-        if (!outcome || epoch !== requestEpoch.current) return;
+        if (!outcome || epoch !== requestEpoch.current || !currentBinding.isCurrent()) return;
         if (outcome.kind === 'succeeded') {
-            setState((previous) => ({
+            const result = continuing && current.result
+                ? mergeTeamCredentialUsagePages(current.result, outcome.value)
+                : outcome.value;
+            teamCredentialUsageObservations.apply(observationKey, currentBinding, result);
+            setState({
                 key,
                 continuityKey,
+                lifetime,
                 resultKey: key,
-                result: continuing && previous.key === key && previous.result
-                    ? mergeTeamCredentialUsagePages(previous.result, outcome.value)
-                    : outcome.value,
+                result,
                 status: 'ready',
                 partial: false,
                 nextCursor: outcome.value.nextCursor,
                 loadingMore: false,
                 error: null,
-            }));
+            });
         } else {
+            if (!outcome.failure.retryable) teamCredentialUsageObservations.apply(observationKey, currentBinding, null);
             setState((previous) => previous.key !== key
                 ? previous
                 : {
@@ -592,16 +618,19 @@ export function useTeamCredentialUsage(params: Readonly<{
                     error: outcome.failure,
                 });
         }
-    }, [active, continuityKey, input, key, scope]);
+    }, [continuityKey, currentBinding, input, key, observationKey]);
     React.useEffect(() => {
         void load('reload');
         return () => { requestEpoch.current += 1; request.current?.abort(); };
     }, [load]);
     const reload = React.useCallback(() => load('reload'), [load]);
     const loadMore = React.useCallback(() => load('more'), [load]);
-    const current = state.key === key || state.continuityKey === continuityKey
+    const retained = active && (currentBinding !== null || resolution.kind === 'resolving')
+        ? teamCredentialUsageObservations.get(observationKey) ?? null
+        : null;
+    const current = active && state.lifetime?.isCurrent() && (state.key === key || state.continuityKey === continuityKey)
         ? state
-        : { resultKey: '', result: null, status: 'loading' as const, partial: false, nextCursor: null, loadingMore: false, error: null };
+        : { resultKey: '', result: retained, status: 'loading' as const, partial: false, nextCursor: null, loadingMore: false, error: null };
     return React.useMemo(() => Object.freeze({
         result: current.result,
         status: current.status,

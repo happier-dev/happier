@@ -4,6 +4,7 @@ import {
     type TeamMembershipV1,
     type TeamCredentialResourceCatalogEntryV1,
     type TeamCredentialExternalApiKeySummaryV1,
+    type TeamCredentialUsageQueryResultV1,
     type TeamCredentialResourceSummaryV1,
     type TeamCredentialViewerCapabilitiesV1,
     type TeamGroupV1,
@@ -253,6 +254,7 @@ export const teamSharedDiscussionPages = createTeamObservations<TeamPage<Discuss
 export const teamDirectorySourcePages = createTeamObservations<TeamPage<TeamDirectorySourceSummaryV1>>();
 export const teamInvitationPages = createTeamObservations<TeamPage<TeamInvitationRowV1>>();
 export const teamCredentialExternalApiKeyObservations = createTeamObservations<readonly TeamCredentialExternalApiKeySummaryV1[]>();
+export const teamCredentialUsageObservations = createTeamObservations<TeamCredentialUsageQueryResultV1>();
 const retainedTeamObservations = [
     teamSharedMachineObservations,
     teamSharedMachinePoolObservations,
@@ -262,6 +264,7 @@ const retainedTeamObservations = [
     teamDirectorySourcePages,
     teamInvitationPages,
     teamCredentialExternalApiKeyObservations,
+    teamCredentialUsageObservations,
 ];
 const listeners = new Set<() => void>();
 

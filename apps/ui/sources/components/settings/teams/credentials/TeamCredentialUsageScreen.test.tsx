@@ -6,7 +6,7 @@ import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 import { act } from 'react-test-renderer';
 import { serializeUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
 
-import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamGroupFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit';
+import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamGroupFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
@@ -236,6 +236,31 @@ async function chooseCostBasisOption(screen: RenderedUsage, option: string, befo
 }
 
 describe('TeamCredentialUsageScreen', () => {
+    it('shows previously observed usage while the return query refreshes and waits to offer exports', async () => {
+        const serverId = await addHome();
+        const exportId = 'team-credential-usage-export';
+        harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult({ totalTokens: 8400 }) });
+        const first = await renderUsage(serverId);
+        await waitForTestId(first, exportId);
+        expect(first.getTextContent()).toContain('8,400');
+        await first.unmount();
+
+        const observedRequests = harness.requestsFor(USAGE_QUERY_PATH).length;
+        const fresh = createDeferred<void>();
+        harness.answer(serverId, USAGE_QUERY_PATH, {
+            body: usageResult({ totalTokens: 9600 }), respondAfter: fresh.promise,
+        });
+        const returned = await renderUsage(serverId);
+        await vi.waitFor(() => expect(harness.requestsFor(USAGE_QUERY_PATH).length).toBeGreaterThan(observedRequests));
+        expect(returned.getTextContent()).toContain('8,400');
+        expect(returned.findByTestId('team-credential-usage-totals-loading')).toBeNull();
+        expect(returned.findAllByTestId(exportId)[0]?.props.disabled).toBe(true);
+        await act(async () => fresh.resolve());
+        await vi.waitFor(() => expect(returned.getTextContent()).toContain('9,600'));
+        expect(returned.findAllByTestId(exportId)[0]?.props.disabled).toBeFalsy();
+        await returned.unmount();
+    });
+
     it('offers aggregate usage in the Home administration destination owner only for administrators', async () => {
         const { resolveHomeConsoleDestinations } = await import('@/components/settings/home/governance/homeConsoleDestinations');
         const { homeGovernanceProjectionFixture } = await import('@/dev/testkit/fixtures/homeGovernanceFixtures');

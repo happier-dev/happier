@@ -231,6 +231,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
     const usage = useTeamCredentialUsage({
         scope,
         input,
+        period,
         resourceRevision: resource?.revision ?? catalogResource?.resourceRevision ?? null,
         enabled: usageEnabled,
     });
