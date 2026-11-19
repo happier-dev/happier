@@ -101,6 +101,8 @@ export function CollectionColumnsMenuButton(
     columns: readonly CollectionColumnsMenuColumn[];
     /** The shown columns the table's width admits now (`Collection` `onColumnsFit`); omitted: all of them. */
     fittedIds?: readonly string[] | null;
+    label?: string;
+    beforeColumns?: React.ReactNode;
     testID: string;
   }>,
 ) {
@@ -116,7 +118,8 @@ export function CollectionColumnsMenuButton(
     [controller, props.collectionId, scope],
   );
   return (
-    <CollectionColumnsMenuTrigger testID={props.testID}>
+    <CollectionColumnsMenuTrigger testID={props.testID} label={props.label}>
+      {props.beforeColumns}
       <CollectionColumnsMenuView
         columns={props.columns}
         controller={controller}
@@ -134,12 +137,13 @@ export function CollectionColumnsMenuTrigger(
     testID: string;
     children: React.ReactNode;
     initiallyOpen?: boolean;
+    label?: string;
   }>,
 ) {
   const [open, setOpen] = React.useState(props.initiallyOpen === true);
   const anchorRef = React.useRef<View>(null);
   const control = useHeaderControlMetrics(PAGE_HEADER_CONTROL);
-  const label = t('collectionColumns.title');
+  const label = props.label ?? t('collectionColumns.title');
   return (
     <>
       <View ref={anchorRef} collapsable={false}>
