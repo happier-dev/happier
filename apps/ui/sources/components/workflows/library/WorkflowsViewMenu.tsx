@@ -191,7 +191,8 @@ export function WorkflowsViewSheetBody<Group extends string>(props: Readonly<{
     const { rows } = props;
     const resolved = resolveWorkflowRowDetails(rows?.details);
     const lineTabs = React.useMemo(() => LINES.map(lines => ({ id: String(lines), label: String(lines) })), []);
-    return <ItemList presentation="grouped">
+    // A configuration sheet takes the page anatomy: its section labels stand on the cards' edge (acceptance item 5).
+    return <ItemList presentation="page">
         <ItemGroup>
             <Item testID={`${props.testIDPrefix}:filters`} title={t('sessionsList.filterButton')} showChevron onPress={props.onFilters} />
         </ItemGroup>
