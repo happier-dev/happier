@@ -4,7 +4,9 @@ import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
 
 /** Draft text stays on this client; navigation carries only its address. */
 function acquireDrafts(scope: PluginEphemeralSharedScope | null) {
-  return scope?.acquire('tasks/create-draft-handoff/v1', () => {
+  // Action and destination are separate artifacts. Their continuation belongs
+  // to the admitted execution custody, not either artifact's presentation.
+  return scope?.acquireExecutionBound?.('tasks/create-draft-handoff/v1', () => {
     const drafts = new Map<string, TriageTaskDraftV1>();
     return { value: drafts, retainWhenIdle: true, dispose: () => drafts.clear() };
   }) ?? null;

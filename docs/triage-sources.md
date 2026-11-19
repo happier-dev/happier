@@ -952,6 +952,9 @@ no retry-create control or automatic write retry.
 
 Message-to-task drafts retain the admitted message and Session context in the
 same ephemeral handoff as their text; navigation carries only the draft id.
+Task drafts use the existing execution-bound shared scope so the Action and
+destination artifacts share one handoff under the admitted plugin generation,
+or the exact Machine source and occurrence when there is no Account generation.
 Explicit body text wins over quotation. The Session's accepted repository is
 suggestion data, never implicit source or workspace authority. Optional create
 linking delegates to the incumbent `sessions/link-entry-v1` relationship Action

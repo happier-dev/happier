@@ -90,8 +90,8 @@ it.each([
   const writes: string[] = [];
   const sessionReads: string[] = [];
   const shared = createTriageEphemeralSharedScopeOriginFixture();
-  const actionScope = shared.forExecutionOrigin('action');
-  const pageScope = shared.forExecutionOrigin('page');
+  const actionScope = shared.forExecutionOrigin('selected-source');
+  const pageScope = shared.forExecutionOrigin('selected-source');
   const fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-launch', mountNonce: 'launch' },
     authorPlugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
     surface: defineUiSurface(() => null), surfaceContext: createSurfaceContextFixture(),

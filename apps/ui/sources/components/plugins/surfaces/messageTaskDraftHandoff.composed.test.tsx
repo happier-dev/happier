@@ -11,6 +11,8 @@ import { MessageActionAvailableSnapshotV1Schema } from '@happier-dev/protocol/se
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-triage/manifest';
+import { createPluginAccountBundledSelectionV1 } from '@happier-dev/protocol/plugins/availability';
+import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 import { activate } from '@happier-dev/plugins-triage/happier-plugin-ui/triage-mounted-ui-action-native';
 import { renderSurface } from '@happier-dev/plugins-triage/happier-plugin-ui/triage-list-page-native';
 
@@ -18,8 +20,8 @@ import { renderScreen } from '@/dev/testkit';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getPluginUiEphemeralSharedScope, usePluginUiEphemeralSharedScopeBinding } from './pluginUiEphemeralSharedScope';
 
-describe('message Action → Tasks draft through the host shared scope', () => {
-    it('keeps the selected message through a committed destination scope rebind until the person closes it', async () => {
+describe('Action → Tasks draft through the host shared scope', () => {
+    it.each(['Machine source', 'Account'] as const)('keeps the selected %s draft across sibling artifacts and a committed destination rebind until the person closes it', async realm => {
         const retirement = new AbortController();
         const accountLifetime: ActiveServerAccountScopeLifetime = {
             scope: { serverId: 'home', accountId: 'account' },
@@ -29,9 +31,20 @@ describe('message Action → Tasks draft through the host shared scope', () => {
                 return { dispose: () => retirement.signal.removeEventListener('abort', listener) };
             },
         };
-        const occurrenceId = 'message-task-occurrence';
+        // QA-REVIEWS-1 nov19-resume127: the admitted Action is a development
+        // source occurrence, not an Account-selected plugin release.
+        const executionOrigin = { serverIdentityId: 'home', sourceRef: {
+            machineId: 'a2f3ba01-5a2e-4c82-a91d-ccd567c88fb3', pluginId: PLUGIN_MANIFEST.id,
+            sourceCustody: { kind: 'development' as const, registeredRootId: '/qa/triage' },
+        } };
+        const parsedManifest = ingestPluginManifestV2(PLUGIN_MANIFEST);
+        if (!parsedManifest.ok) throw new Error('Invalid Triage manifest');
+        const selection = createPluginAccountBundledSelectionV1({ packageName: '@happier-dev/plugins-triage', manifest: parsedManifest.manifest });
+        const identity = { ...(realm === 'Account' ? { pluginGenerationId: selection.custodyId } : { executionOrigin }) };
+        const occurrenceId = 'happier.triage:81';
         const actionScope = getPluginUiEphemeralSharedScope({ accountLifetime,
-            pluginId: PLUGIN_MANIFEST.id, occurrenceId, isCurrent: () => true });
+            pluginId: PLUGIN_MANIFEST.id, occurrenceId, ...identity,
+            artifactDigest: `sha256:${'a'.repeat(64)}`, isCurrent: () => true });
         const declaration = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === 'tasks/open-create-v1');
         if (declaration?.execution.target !== 'client') throw new Error('Missing Tasks client Action');
         const target = { ...declaration.execution.client, platform: 'web' as const };
@@ -58,7 +71,8 @@ describe('message Action → Tasks draft through the host shared scope', () => {
         const lifetimes = [{ isCurrent: () => true }, { isCurrent: () => true }];
         function Destination({ binding }: Readonly<{ binding: number }>) {
             const shared = usePluginUiEphemeralSharedScopeBinding({ accountLifetime,
-                pluginId: PLUGIN_MANIFEST.id, occurrenceId, mountLifetime: lifetimes[binding]! });
+                pluginId: PLUGIN_MANIFEST.id, occurrenceId, ...identity,
+                artifactDigest: `sha256:${'b'.repeat(64)}`, mountLifetime: lifetimes[binding]! });
             const node = renderSurface({ ...fixture.context, launchInput });
             if (!React.isValidElement(node)) throw new Error('Expected a provider surface');
             // The physical host attaches private bindings to the public surface's returned provider.
@@ -66,15 +80,17 @@ describe('message Action → Tasks draft through the host shared scope', () => {
                 { ephemeralSharedScope: shared });
         }
         try {
-            await expect(handler({}, {
+            await expect(handler(realm === 'Machine source' ? { originReview: {
+                reviewId: 'review-selected', findingIds: ['saved-root-first', 'saved-root-second'],
+            } } : {}, {
                 plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
                 contribution: { id: declaration.id, qualifiedId: `${PLUGIN_MANIFEST.id}/actions/${declaration.id}` },
                 invocationSurface: 'agent', signal: new AbortController().signal,
                 ui: fixture.context.hostApi, ephemeralSharedScope: actionScope,
-                messageAction: MessageActionAvailableSnapshotV1Schema.parse({ sessionId: 'session', messageId: 'message',
+                ...(realm === 'Account' ? { messageAction: MessageActionAvailableSnapshotV1Schema.parse({ sessionId: 'session', messageId: 'message',
                     observedRevision: 'revision', role: 'agent', contentCategory: 'text', seq: 1,
                     visibleText: 'A selected message\nwith its complete draft', structuredPresentationSummary: null,
-                    provenanceCategory: 'owner' }),
+                    provenanceCategory: 'owner' }) } : {}),
             })).resolves.toEqual({ status: 'applied' });
             mounted = await renderScreen(<Destination binding={0} />);
             expect(mounted.getTextContent()).toContain('Where does it belong?');
