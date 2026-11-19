@@ -59,7 +59,7 @@ import { readExternalActionBindingAuthority } from '@happier-dev/protocol/action
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
 import { invokeHostReviewedChildV1, readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { deriveDeploymentPrepareSessionCreationIdentityV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
+import { deriveDeploymentPrepareSessionCreationIdentityV1, type SessionActionChildCreationProofV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { materializeSessionCreationActionInput } from '@happier-dev/protocol/actions/executor/sessionSpawn';
 import { HomeGovernanceGetInputV1Schema } from '@happier-dev/protocol/home/governance/actionsV1';
@@ -81,6 +81,8 @@ import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/ext
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { ExternalActionApprovalReplay } from '@/rpc/handlers/externalAction';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { logger } from '@/ui/logger';
 
 afterEach(() => {
@@ -244,6 +246,7 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
     ...createSessionRecordFixture({ id: 'prepared-session', active: true, encryptionMode: 'plain',
       machineId: workspace.machineId, metadata: JSON.stringify({ machineId: workspace.machineId, path: rootPath }), dataEncryptionKey: null }) };
   const launches: unknown[] = [];
+  const birthProofs: SessionActionChildCreationProofV1[] = [];
   const accepted: ReturnType<typeof UserMessageSchema.parse>[] = [];
   const boundReads: BoundRead[] = [];
   const rpcAdmissions: Array<Readonly<{ method: string; kind: string | null; executionParsed: boolean; envelopeParsed: boolean; rootActionId?: string }>> = [];
@@ -262,6 +265,9 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
     repository: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
       repository: { nameWithOwner: 'prepare/app', cloneUrl: 'https://github.com/prepare/app.git' }, protocol: 'https' } });
   vi.spyOn(axios, 'request').mockImplementation(async config => {
+    if (config.method === 'GET' && new URL(String(config.url)).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+      return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+    }
     if (new URL(String(config.url)).pathname === '/v1/home/governance/get') {
       expect(config.method).toBe('POST');
       expect(new URL(String(config.url)).origin).toBe('https://prepare-home.test');
@@ -321,9 +327,12 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
   let messageOutcome: ReturnType<typeof SessionInputAdmissionResultV1Schema.parse> | undefined;
   let nativeRefusal: Extract<SpawnSessionResult, { type: 'error' }> | undefined;
   const sessionTransport: SessionSpawnDirectTargetTransport = { machineId: workspace.machineId,
+    readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
     prepare: (request, options) => prepareSessionCreationTarget({ request, signal: options?.signal }),
-    spawnedSession: { spawn: async options => {
+    spawnedSession: { spawn: async (options, transport) => {
       launches.push(options);
+      const prepareProof = transport?.creationAuthorization?.prepareRequestProof;
+      if (prepareProof && options.sessionCreationTag) birthProofs.push(await prepareProof({ tag: options.sessionCreationTag }));
       if (loseReply) throw Object.assign(new Error('Native launch acknowledgement lost'), { code: 'outcome_unknown' });
       if (nativeRefusal) return nativeRefusal;
       rawSession = { ...rawSession, metadata: JSON.stringify(buildCommittedLaunchMetadata({ options, directory: rootPath })) };
@@ -399,7 +408,7 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
       externalActionTarget: { kind: 'machine', machineId: workspace.machineId } }));
   };
   const { sessionDraft: _sessionDraft, ...continuationInput } = input;
-  return { input, continuationInput, execute, dispatched, prepareDispatches, prepareInvocations, post, rootPath, environment, targetLink, boundReads, launches, accepted, boundaryErrors, rpcAdmissions,
+  return { input, continuationInput, execute, dispatched, prepareDispatches, prepareInvocations, post, rootPath, environment, targetLink, boundReads, launches, birthProofs, accepted, boundaryErrors, rpcAdmissions,
     targetRefusals: () => log.mock.calls.filter(([message]) => message === '[MachineRPC] exact target refused'),
     phaseRefusals: () => phaseLog.mock.calls.filter(([message]) => message === '[external-action-phase]'),
     executeRoot: (context: ActionExecutorContext) => createActionExecutor(createCliActionDeps({ token,
@@ -468,31 +477,37 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
         } }) });
       const ingress = { machineAdmission, verifyMachineAdmissionCurrent: async () => current };
       return { authorization: carrier, envelope, receiver, ingress, accountSettings: admitted.accountSettingsContext.settings,
-        approveAndReplay: async (retainIngress = true) => {
+        approveAndReplay: async (options: Readonly<{ retainIngress?: boolean; replayAs?: 'differentApproval' | 'differentAccount' }> = {}) => {
           // Artifact persistence and Home HTTP/socket/OS adapters are boundaries.
           // Keep policy, approve/CAS, origin verification, private-port reopening,
           // reviewed-child admission and the native Session adapter real.
-          let stored: ApprovalRequestV2 | undefined;
-          const executor = createActionExecutor({ ...receiver,
-            approvalsCreate: async ({ request }) => {
-              stored = ApprovalRequestV2Schema.parse(structuredClone(request));
-              return { artifactId: 'prepare-review' };
-            },
-            approvalsGet: async () => structuredClone(stored ?? null),
-            approvalsUpdate: async ({ request, expectedStatus }) => {
-              if (!stored) throw new Error('Missing Prepare approval');
-              const parsed = ApprovalRequestV2Schema.parse(request);
-              const transition = decideApprovalRequestTransition(stored, parsed, { expectedStatus });
-              if (!transition.ok) return transition;
-              stored = structuredClone(parsed);
-              return { ok: true };
-            },
-            isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
-              credentials: { token: daemonToken, encryption: null }, machineId: workspace.machineId,
+          const artifacts = new Map<string, ApprovalRequestV2>();
+          const originCurrentness = (credentialsToken: string) =>
+            createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
+              credentials: { token: credentialsToken, encryption: null }, machineId: workspace.machineId,
               serverId: workspace.serverId, serverApiUrl: 'https://prepare-home.test',
               resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: workspace.machineId,
                 serverIdentityId: workspace.serverId }),
-            }),
+            });
+          const approvalDeps = {
+            ...receiver,
+            approvalsCreate: async ({ request }) => {
+              const stored = ApprovalRequestV2Schema.parse(structuredClone(request));
+              artifacts.set('prepare-review', stored);
+              artifacts.set('other-review', structuredClone(stored));
+              return { artifactId: 'prepare-review' };
+            },
+            approvalsGet: async ({ artifactId }) => structuredClone(artifacts.get(artifactId) ?? null),
+            approvalsUpdate: async ({ artifactId, request, expectedStatus }) => {
+              const previous = artifacts.get(artifactId);
+              if (!previous) throw new Error('Missing Prepare approval');
+              const parsed = ApprovalRequestV2Schema.parse(request);
+              const transition = decideApprovalRequestTransition(previous, parsed, { expectedStatus });
+              if (!transition.ok) return transition;
+              artifacts.set(artifactId, structuredClone(parsed));
+              return { ok: true };
+            },
+            isApprovalExecutionOriginCurrent: originCurrentness(daemonToken),
             prepareApprovalExecutionAuthorization: createDaemonApprovalExecutionAuthorizationPreparer({
               machineId: workspace.machineId, serverId: workspace.serverId, serverBaseUrl: 'https://prepare-home.test',
               daemonWorkSignal: new AbortController().signal,
@@ -508,11 +523,23 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
                 createExecutor: () => createActionExecutor(receiver),
               }),
             }),
+          } satisfies ActionExecutorDeps;
+          let replayResult: Awaited<ReturnType<ExternalActionApprovalReplay>> | undefined;
+          const executor = createActionExecutor({ ...approvalDeps,
             approvalRequestApprovedReplay: async ({ artifactId, context }) => {
-              const replay: ExternalActionApprovalReplay = executor.replayApprovedApprovalRequest;
-              return replay({ artifactId, callerAuthority: context.authority,
-                currentAccount: { accountId: 'prepare-account', serverId: workspace.serverId,
-                  serverIdentityId: workspace.serverId } }, retainIngress ? ingress : undefined);
+              const accountId = options.replayAs === 'differentAccount' ? 'other-account' : 'prepare-account';
+              const replayExecutor = options.replayAs === 'differentAccount' ? createActionExecutor({ ...approvalDeps,
+                isApprovalExecutionOriginCurrent: originCurrentness(
+                  `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`),
+              }) : executor;
+              const replayIngress = options.retainIngress !== false
+                ? { ...ingress, machineAdmission: { ...machineAdmission, actorAccountId: accountId } } : undefined;
+              replayResult = await replayExecutor.replayApprovedApprovalRequest({
+                artifactId: options.replayAs === 'differentApproval' ? 'other-review' : artifactId,
+                callerAuthority: context.authority,
+                currentAccount: { accountId, serverId: workspace.serverId, serverIdentityId: workspace.serverId },
+              }, replayIngress);
+              return replayResult;
             },
           });
           const context: ActionExecutorContext = { ...ingress, surface: 'cli', authority: 'account_automation',
@@ -529,7 +556,7 @@ function fixture(options: Readonly<{ isCredentialCurrent?: () => boolean; signal
             expect(launches).toEqual([]);
             const decision = await executor.execute('approval.request.decide', { artifactId: 'prepare-review', decision: 'approve' },
               { ...context, surface: 'ui', authority: 'present_user', actionRequestId: 'prepare-decision' });
-            return { decision, request: ApprovalRequestV2Schema.parse(stored) };
+            return { decision, replayResult, request: ApprovalRequestV2Schema.parse(artifacts.get('prepare-review')) };
           });
         },
         retire() { current = false; }, execute: async () => {
@@ -605,6 +632,11 @@ function sessionCallerRegression() {
     const childInput = SessionSpawnNewActionInputV2Schema.parse(materializeSessionCreationActionInput('session.spawn_new', recipe,
       { actionRequestId: identity.requestId }));
     const spawn = admitSessionSpawnNewActionInputV2(childInput);
+    const unreviewedContext = { ...custody.ingress, runtimeAccountId: 'prepare-account',
+      actionRequestId: identity.requestId, originalActionEnvelope: custody.envelope,
+      externalActionExecutionAuthorization: custody.authorization };
+    expect(createPrepareSessionCreationAuthorization({ context: unreviewedContext, publicInput: spawn,
+      installationId: 'workspace-installation', privateKey: installationKeys.secretKey })).toEqual({ ok: false, reason: 'operands_invalid' });
     let entered = false;
     const result = await invokeHostReviewedChildV1({ parent: { actionId: 'deployments.prepare', input },
       context: { ...custody.ingress, runtimeAccountId: 'prepare-account', actionRequestId: identity.requestId,
@@ -825,7 +857,8 @@ describe('Prepare native workspace to normal Session handoff', () => {
     const f = fixture();
     const input = { ...f.input, sessionDraft: { ...f.input.sessionDraft, permissionMode: 'read-only' as const },
       ...(importTool ? { importFrom: { tool: 'Docker Compose', configurationPaths: ['compose.yaml'] } } : {}) };
-    expect(await (await f.admit(false, input)).execute()).toMatchObject({ kind: 'handedOff',
+    const result = await (await f.admit(false, input)).execute();
+    expect(result, JSON.stringify(f.boundaryErrors)).toMatchObject({ kind: 'handedOff',
       sessionRef: { serverId: 'prepare-home', sessionId: 'prepared-session' } });
     expect(f.launches).toHaveLength(1);
     expect(f.accepted).toHaveLength(1);
@@ -837,19 +870,44 @@ describe('Prepare native workspace to normal Session handoff', () => {
     const f = fixture();
     const input = { ...f.input, sessionDraft: { ...f.input.sessionDraft, permissionMode: 'read-only' as const },
       ...(importTool ? { importFrom: { tool: 'Docker Compose', configurationPaths: ['compose.yaml'] } } : {}) };
-    const result = await (await f.admit(false, input)).approveAndReplay();
+    const custody = await f.admit(false, input);
+    const result = await custody.approveAndReplay();
     expect(result.request.decision).toMatchObject({ kind: 'approve', authority: 'present_user' });
-    expect(result.request.execution, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'handedOff',
+    expect(result.request.execution, JSON.stringify({ result, boundaryErrors: f.boundaryErrors })).toMatchObject({ ok: true, result: { kind: 'handedOff',
       sessionRef: { serverId: 'prepare-home', sessionId: 'prepared-session' } } });
     expect(f.launches).toHaveLength(1);
     expect(f.accepted).toHaveLength(1);
+    const identity = deriveDeploymentPrepareSessionCreationIdentityV1(custody.authorization.binding);
+    if (!identity) throw new Error('Missing signed Prepare child identity');
+    expect(f.birthProofs).toMatchObject([{ sourceExecution: {
+      requestId: identity.requestId, params: { creationKey: identity.creationKey },
+    } }]);
   });
 
   it('retains the native birth refusal cause in the approved Prepare receipt when receiving custody is unavailable', async () => {
     const f = fixture();
-    const result = await (await f.admit()).approveAndReplay(false);
+    const result = await (await f.admit()).approveAndReplay({ retainIngress: false });
     expect(result.request.execution, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'permission_denied',
       effectAttempted: false, failureCause: { phase: 'session.creation.authorization', errorCode: 'permission_denied' } });
+    expect(f.launches).toEqual([]);
+    expect(f.accepted).toEqual([]);
+  });
+
+  it('keeps a different Prepare approval open when the approved artifact is replaced at replay', async () => {
+    const f = fixture();
+    const result = await (await f.admit()).approveAndReplay({ replayAs: 'differentApproval' });
+    expect(result.request.decision).toMatchObject({ kind: 'approve', authority: 'present_user' });
+    expect(result.replayResult).toMatchObject({ ok: true, result: { status: 'open' } });
+    expect(result.request.execution).toBeUndefined();
+    expect(f.launches).toEqual([]);
+    expect(f.accepted).toEqual([]);
+  });
+
+  it('refuses Prepare replay under a different Account before Session birth', async () => {
+    const f = fixture();
+    const result = await (await f.admit()).approveAndReplay({ replayAs: 'differentAccount' });
+    expect(result.request.decision).toMatchObject({ kind: 'approve', authority: 'present_user' });
+    expect(result.request.execution).toMatchObject({ ok: false, errorCode: 'approval_stale', effectAttempted: false });
     expect(f.launches).toEqual([]);
     expect(f.accepted).toEqual([]);
   });

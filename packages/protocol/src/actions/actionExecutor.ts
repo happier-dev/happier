@@ -26,7 +26,7 @@ import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.
 import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3 } from './executor/projects/dispatch.js';
 import { admitPresentUserConfirmationV1, bindPresentUserActionConfirmationV1, recordPresentUserApprovalV1 } from './executor/approvalReview.js';
 import { withScmRefineInputAuthorizationV1, readHostRootInputCredentialActionV1 } from './executor/scmRefineInputPurpose.js';
-import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedParentV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1, readDeploymentRoleRootInputV1, hasHostReviewedChildCredentialScopeAdmissionV1, retainHostReviewedChildAdmissionV1, retainHostReviewedChildOperationContextV1 } from './executor/deploymentRoleChild.js';
+import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildRoleV1, readHostAdmittedReviewedParentV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1, readDeploymentRoleRootInputV1, hasHostReviewedChildCredentialScopeAdmissionV1, retainHostReviewedChildAdmissionV1, retainHostReviewedChildOperationContextV1 } from './executor/deploymentRoleChild.js';
 import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
 export { readHostReviewedChildOperationV1, invokeHostReviewedChildV1, createHostReviewedChildPortV1,
   readHostReviewedChildReceivingAdmissionV1, readHostReviewedParentV1, readHostAdmittedReviewedParentV1, readHostAdmittedReviewedChildPlanV1,
@@ -69,7 +69,7 @@ import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreview
 export { buildApprovalPreviewSummary, projectPreparedActionOperation } from './executor/approvalPreparation.js';
 import { resolveApprovalOriginForRequest, projectActionApprovalOrigin, projectActionObservationContext, resolveApprovalRequestingSessionId, projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1, isApprovalActionId, isApprovalRequestActionReplayAdmitted, isBlockingApprovalRequest } from './executor/approvalOrigins.js';
 import { isPresentUserApprovalDecisionForOrigin, resolveMachineServiceLogsApprovalLifetime } from './executor/approvalOrigins.js';
-import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { prepareApprovalReplayAuthorization, resolveRetainedLogsReplayContext } from './executor/approvalReplayAuthorization.js';
 import { observeApprovalReplayOutcome, settleApprovalDecisionFailure } from './executor/approvalDecisionFailure.js';
 import { createConfidentialApprovalContinuation } from './executor/confidentialContinuation.js';
@@ -2639,7 +2639,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           externalActionTarget: undefined, executionRunTargetMachineId: undefined };
       }
     }
-    if (actionId === 'session.spawn_new' && !existingAdmission && deps.prepareSessionSpawnNewInput) {
+    // Prepare (including Import) already issued the Session recipe from its
+    // admitted root. Preserve it for preflight and creation-key materialization;
+    // the native launch owner still applies runtime defaults.
+    if (actionId === 'session.spawn_new' && !existingAdmission && deps.prepareSessionSpawnNewInput
+      && !(ctx.externalActionExecutionAuthorization?.binding.actionId === DEPLOYMENT_PREPARE_ACTION_ID_V1
+        && readHostAdmittedReviewedChildRoleV1(ctx, actionId, parsed.data) === DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1)) {
       try {
         const prepared = await deps.prepareSessionSpawnNewInput(
           SessionSpawnNewActionInputV2Schema.parse(parsed.data), ctx);
