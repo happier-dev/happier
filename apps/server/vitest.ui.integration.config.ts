@@ -12,7 +12,8 @@ const requireUi = createRequire(new URL('../ui/package.json', import.meta.url));
 // while each first-party import retains its own package's @/ source authority.
 export default defineConfig({
     ...uiConfig,
-    plugins: [serverWorkspacePackageSourcesPlugin, cliWorkspacePackageSourcesPlugin, ...uiConfig.plugins, tsconfigPaths({ projects: [
+    // Give the UI host's authored exports priority over the server's public-barrel fallback.
+    plugins: [...uiConfig.plugins, serverWorkspacePackageSourcesPlugin, cliWorkspacePackageSourcesPlugin, tsconfigPaths({ projects: [
         fileURLToPath(new URL('./tsconfig.vitest.json', import.meta.url)),
         fileURLToPath(new URL('../ui/tsconfig.json', import.meta.url)),
         fileURLToPath(new URL('../cli/tsconfig.json', import.meta.url)),
