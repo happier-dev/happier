@@ -98,7 +98,9 @@ describe('browser presentation portal (UX-6 webview-above-router)', () => {
             expect(placement()).toMatchObject({ width: 50, height: 50 });
             await screen.update(<Harness geometry={geometry} clip={null} />);
             expect(placement()).toMatchObject({ width: 150, height: 100 });
+            // Measured again, the pane's current layout places it (never the explicit frame's last rectangle).
             await screen.update(<Harness />);
+            await act(async () => { invokeTestInstanceHandler(screen.findByTestId('browser-keepalive-placeholder-explicit-placement'), 'onLayout', {}); });
             expect(placement()).toMatchObject({ width: 200, height: 100 });
             expect(webviewMountCount).toBe(1);
         } finally {
@@ -244,7 +246,7 @@ describe('browser presentation portal (UX-6 webview-above-router)', () => {
         } finally { await screen.unmount(); }
     });
 
-    it('keeps the last measured placement while a replacement visible binder awaits nonzero geometry', async () => {
+    it('keeps a replacement binder\'s body at its last size, painting nothing, until it measures nonzero geometry', async () => {
         const store = createRetainedPresentationSlotsStore();
         let measured = { x: 20, y: 30, width: 640, height: 400 };
         function Harness(props: Readonly<{ phone: boolean; shown?: boolean }>) {
@@ -265,14 +267,17 @@ describe('browser presentation portal (UX-6 webview-above-router)', () => {
         try {
             await measure();
             expect(placement()).toMatchObject({ width: 640, height: 400 });
+            expect(placement().opacity).toBeUndefined();
             await screen.update(<Harness phone />);
-            expect(placement()).toMatchObject({ width: 640, height: 400 });
+            // The phone binder has not measured its frame: never paint at the wide layout's rectangle.
+            expect(placement()).toMatchObject({ width: 640, height: 400, opacity: 0 });
             measured = { x: 0, y: 0, width: 0, height: 0 };
             await measure();
-            expect(placement()).toMatchObject({ width: 640, height: 400 });
+            expect(placement()).toMatchObject({ width: 640, height: 400, opacity: 0 });
             measured = { x: 16, y: 120, width: 358, height: 224 };
             await measure();
             expect(placement()).toMatchObject({ width: 358, height: 224 });
+            expect(placement().opacity).toBeUndefined();
             await screen.update(<Harness phone={false} />);
             expect(placement()).toMatchObject({ width: 358, height: 224 });
             await screen.update(<Harness phone={false} shown={false} />);

@@ -18,17 +18,34 @@ export function isUnrenderedLayoutBox(node: unknown, width: number, height: numb
         && !(node as { checkVisibility: () => boolean }).checkVisibility();
 }
 
-/** DOM measurement belongs to the platform boundary, not to the retained source. */
+/** A finite ancestor motion that is still moving or fading the frame (an open, close or settle). */
+function isFrameInMotion(animation: Animation): boolean {
+    // A paused, idle or finished (filled) animation is not moving the frame.
+    if (animation.playState && animation.playState !== 'running') return false;
+    const end = animation.effect?.getComputedTiming?.().endTime;
+    return typeof end !== 'number' || Number.isFinite(end);
+}
+
+/**
+ * DOM measurement belongs to the platform boundary, not to the retained source. `settled` says the frame
+ * the placeholder stands in is drawn where it was measured: fully opaque, with no finite motion running on
+ * it. A frame that is invisible (a parked or entering pane) or mid-motion is not a place to paint the body.
+ */
 export function readWebRetainedPresentationGeometry(node: unknown): Readonly<{
     geometry: RetainedPresentationRect;
     clipGeometry: RetainedPresentationRect;
+    settled: boolean;
 }> | null {
     if (typeof HTMLElement === 'undefined' || !(node instanceof HTMLElement)) return null;
     const rect = node.getBoundingClientRect();
     const geometry = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
     let clipGeometry = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
+    let settled = true;
     for (let parent = node.parentElement; parent; parent = parent.parentElement) {
         const style = window.getComputedStyle(parent);
+        // The same walk reads the frame's paint state; an engine that reports no opacity draws it opaque.
+        if (settled && style.opacity !== undefined && style.opacity !== '' && Number(style.opacity) < 1) settled = false;
+        if (settled && parent.getAnimations?.().some(isFrameInMotion)) settled = false;
         const clipsX = /^(auto|scroll|hidden|clip)$/.test(style.overflowX || style.overflow);
         const clipsY = /^(auto|scroll|hidden|clip)$/.test(style.overflowY || style.overflow);
         if (!clipsX && !clipsY) continue;
@@ -40,7 +57,7 @@ export function readWebRetainedPresentationGeometry(node: unknown): Readonly<{
             height: clipsY ? parent.clientHeight : clipGeometry.height,
         });
     }
-    return { geometry, clipGeometry };
+    return { geometry, clipGeometry, settled };
 }
 
 /**

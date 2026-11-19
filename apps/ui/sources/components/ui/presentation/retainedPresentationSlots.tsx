@@ -138,6 +138,11 @@ export type RetainedPresentationSlotEntry = Readonly<{
     node: React.ReactNode;
     /** Last valid placeholder placement; visibility separately parks the retained body. */
     geometry: RetainedPresentationRect | null;
+    /**
+     * Set by the store: `geometry` is the placement of the current layout. A binder that has not measured
+     * its frame yet, or whose frame is not drawn there yet, leaves the body at its last size, painting nothing.
+     */
+    placed?: boolean;
     clipGeometry?: RetainedPresentationRect | null;
     refreshGeometry?: (target?: EventTarget | null) => void;
     /** Whether the panel placeholder is currently on-screen (hidden ⇒ kept mounted off-screen). */
@@ -184,6 +189,7 @@ function portalEntriesEqual(
     return a.slotId === b.slotId
         && a.node === b.node
         && a.visible === b.visible
+        && a.placed === b.placed
         && a.nativeMotion === b.nativeMotion
         && a.refreshGeometry === b.refreshGeometry
         && (a.inputPassthrough ?? false) === (b.inputPassthrough ?? false)
@@ -237,12 +243,13 @@ export function createRetainedPresentationSlotsStore(): RetainedPresentationSlot
         upsertPortalEntry(entry) {
             const existing = portalBySlot.get(entry.slotId);
             const rect = entry.geometry;
-            // Responsive binders can hand off before the replacement has been measured.
-            // Visibility still parks a retired route; only valid placement replaces placement.
-            const placed = rect && Number.isFinite(rect.x) && Number.isFinite(rect.y)
+            // A binder can present before its frame is measured or drawn where it stands (a handoff, a
+            // reopened pane). The body keeps its last size so it does not reflow, but it is placed, and
+            // painted, only at a valid rectangle of the current layout: never at a previous one.
+            const placed = !!rect && Number.isFinite(rect.x) && Number.isFinite(rect.y)
                 && Number.isFinite(rect.width) && Number.isFinite(rect.height)
                 && rect.width > 0 && rect.height > 0;
-            if (!placed && existing?.geometry) entry = { ...entry, geometry: existing.geometry };
+            entry = { ...entry, placed, geometry: placed ? rect : existing?.geometry ?? null };
             if (existing && portalEntriesEqual(existing, entry)) {
                 return;
             }
@@ -374,6 +381,9 @@ function RetainedPresentationPortalSlot({ entry, origin }: Readonly<{ entry: Ret
         ? intersectRetainedPresentationRects(entry.geometry, entry.clipGeometry) : entry.geometry,
     [entry.geometry, entry.clipGeometry]);
     const visible = entry.visible && !!clipped && clipped.width > 0 && clipped.height > 0;
+    // Awaiting its placement the body stays presented (its reads and streams keep running) but is not
+    // painted and takes no pointer: only the paint waits for the frame.
+    const painted = visible && entry.placed !== false;
     const body = <RetainedPresentationEntryLifetime entry={entry} store={store}>
         <PluginSurfaceFocusEligibilityProvider active={visible}>
             <RetainedPresentationSlotGeometryProvider slotId={entry.slotId} rect={clipped}>
@@ -396,13 +406,13 @@ function RetainedPresentationPortalSlot({ entry, origin }: Readonly<{ entry: Ret
         {...resolvePaneUnderlayAccessibilityProps(!visible, Platform.OS === 'web')}
         {...(Platform.OS === 'web' && entry.accessibilityLabel ? { role: 'region' as const, 'aria-label': entry.accessibilityLabel } : null)}
         style={Platform.OS === 'web' ? resolvePortalSlotStyle(entry, origin) : [resolvePortalSlotStyle(entry, origin), animatedStyle]}
-        pointerEvents={visible && motion?.overlay ? 'box-none' : visible && !entry.inputPassthrough ? 'auto' : 'none'}
+        pointerEvents={painted && motion?.overlay ? 'box-none' : painted && !entry.inputPassthrough ? 'auto' : 'none'}
     >
         <View style={entry.geometry && clipped && entry.clipGeometry ? {
             position: 'absolute', left: entry.geometry.x - clipped.x, top: entry.geometry.y - clipped.y,
             width: entry.geometry.width, height: entry.geometry.height,
-        } : { flex: 1 }} pointerEvents={visible && !entry.inputPassthrough ? 'auto' : 'none'}>{body}</View>
-        {visible ? motion?.overlay : null}
+        } : { flex: 1 }} pointerEvents={painted && !entry.inputPassthrough ? 'auto' : 'none'}>{body}</View>
+        {painted ? motion?.overlay : null}
     </Animated.View>;
 }
 
@@ -418,6 +428,10 @@ function resolvePortalSlotStyle(entry: RetainedPresentationSlotEntry, origin: Re
         ? intersectRetainedPresentationRects(entry.geometry, entry.clipGeometry) : entry.geometry;
     if (!entry.visible || !rect || rect.width <= 0 || rect.height <= 0) {
         return { position: 'absolute', left: -100000, top: 0, width: 1, height: 1, opacity: 0 };
+    }
+    // Presented but not placed for this layout: kept at its last size (no reflow), painting nothing.
+    if (entry.placed === false) {
+        return { ...resolveFloatingFramePlacementStyle({ ...rect, x: rect.x - origin.x, y: rect.y - origin.y }), opacity: 0 };
     }
     return {
         // The frame owner's placement: on web a transform, so the slot and a settling frame travel
@@ -681,7 +695,8 @@ export function RetainedPresentationSlotBinder(props: RetainedPresentationSlotBi
         if (typeof Node !== 'undefined' && node instanceof Node && target instanceof Node && !target.contains(node)) return;
         const web = Platform.OS === 'web' ? readWebRetainedPresentationGeometry(node) : null;
         if (web) {
-            updateGeometry(web.geometry);
+            // A frame still entering (invisible or mid-motion) is not a placement: the body waits for it.
+            updateGeometry(web.settled ? web.geometry : null);
             setClipGeometry(previous => rectsEqual(previous, web.clipGeometry) ? previous : web.clipGeometry);
             return;
         }
@@ -692,6 +707,13 @@ export function RetainedPresentationSlotBinder(props: RetainedPresentationSlotBi
         if (measurement.current) measurement.current.measure(next => setClipGeometry(previous => rectsEqual(previous, next) ? previous : next));
         else setClipGeometry(previous => previous === null ? previous : null);
     }, [updateGeometry]);
+    // A layout observer delivery places the body before the browser paints that layout, so the body never
+    // stands a frame behind its frame. Refreshes (a pane's motion settling, a scroll) may arrive inside a
+    // React commit, where a synchronous flush is refused; they measure and commit as usual.
+    const place = React.useCallback((target?: EventTarget | null) => {
+        if (Platform.OS !== 'web') { measure(target); return; }
+        (requireReactDOM() as { flushSync: (run: () => void) => void }).flushSync(() => measure(target));
+    }, [measure]);
     const onLayout = React.useCallback((_event: LayoutChangeEvent) => {
         // `onLayout` x/y are parent-relative; re-measure in window coordinates for the absolute overlay.
         measure();
@@ -739,8 +761,13 @@ export function RetainedPresentationSlotBinder(props: RetainedPresentationSlotBi
     const measureLayout = props.windowGeometry === undefined && props.visible !== false && layoutActive;
     React.useLayoutEffect(() => {
         if (!portalActive || !measureLayout || Platform.OS !== 'web') return;
-        return observeWebRetainedPresentationLayout(placeholderRef.current, measure);
-    }, [measure, measureLayout, portalActive]);
+        const stop = observeWebRetainedPresentationLayout(placeholderRef.current, place);
+        return () => {
+            stop?.();
+            // The next presentation is a new layout: its frame is measured again before the body shows.
+            updateGeometry(null);
+        };
+    }, [measureLayout, place, portalActive, updateGeometry]);
     const onPortalActiveChange = nativeMotion?.onPortalActiveChange;
     React.useEffect(() => {
         if (!portalActive || !onPortalActiveChange) return;

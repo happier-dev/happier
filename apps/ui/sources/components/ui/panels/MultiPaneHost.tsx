@@ -11,6 +11,7 @@ import {
     useModalPanePresentation,
 } from './ModalPaneBoundary';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useOptionalRetainedPresentationSlotsStore } from '@/components/ui/presentation/retainedPresentationSlots';
 import type { FocusReturnMutableRef } from '@/keyboard/focusReturn';
 import { ESCAPE_LAYER_PRIORITIES } from '@/keyboard/escape';
 import { t } from '@/text';
@@ -138,8 +139,10 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
     const mirrored = props.mirrored === true;
     const mainModalActive = layout.main === 'overlay' && props.mainDrawerOpen === true && hideMain !== true;
     const mainLabel = props.mainAccessibilityLabel ?? t('ui.modalPane.right');
+    // A pane's open motion settling places the retained bodies (Browser, Computer) drawn over it.
+    const onPaneOpened = useOptionalRetainedPresentationSlotsStore()?.refreshPortalGeometry;
     const mainPresence = useModalPanePresentation({ targetOpen: mainModalActive, node: main, overlay: true,
-        onClose: props.onCloseMain ?? NOOP });
+        onClose: props.onCloseMain ?? NOOP, onOpened: onPaneOpened });
     const mainModalBoundary = useModalPaneBoundary({ active: mainModalActive, label: mainLabel,
         focusReturnRef: props.mainOverlayFocusReturnRef,
         discardPendingFocusReturn: hideMain !== true && layout.main !== 'overlay',
@@ -154,12 +157,14 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
         node: detailsPane,
         overlay: layout.details === 'overlay',
         onClose: onCloseDetails,
+        onOpened: onPaneOpened,
     });
     const rightPresence = useModalPanePresentation({
         targetOpen: Boolean(rightPane),
         node: rightPane,
         overlay: layout.right === 'overlay',
         onClose: onCloseRight,
+        onOpened: onPaneOpened,
     });
     const rightInMain = props.rightInMain === true;
     const hasMainSurface = props.rightSurfaces?.some(surface => surface.placement === 'main') === true;

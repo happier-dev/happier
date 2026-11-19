@@ -8,6 +8,8 @@ export function usePaneAnimatedPresence(input: Readonly<{
     node: React.ReactNode | null;
     durationMs: number;
     useNativeDriver: boolean;
+    /** The open motion settled: the pane is drawn where it stands (see `ModalPanePresentationInput.onOpened`). */
+    onOpened?: () => void;
 }>): Readonly<{
     present: boolean;
     node: React.ReactNode | null;
@@ -20,6 +22,8 @@ export function usePaneAnimatedPresence(input: Readonly<{
     presentRef.current = present;
     const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const animationRunIdRef = React.useRef(0);
+    const onOpenedRef = React.useRef(input.onOpened);
+    onOpenedRef.current = input.onOpened;
 
     React.useEffect(() => {
         if (timeoutRef.current) {
@@ -49,10 +53,10 @@ export function usePaneAnimatedPresence(input: Readonly<{
                 useNativeDriver: input.useNativeDriver,
             }).start((result) => {
                 if (result?.finished === false) return;
-                settleProgress(1);
+                settleProgress(1, () => onOpenedRef.current?.());
             });
             timeoutRef.current = setTimeout(() => {
-                settleProgress(1);
+                settleProgress(1, () => onOpenedRef.current?.());
             }, settleDurationMs);
             return;
         }

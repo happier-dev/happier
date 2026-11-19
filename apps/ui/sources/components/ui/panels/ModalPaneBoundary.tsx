@@ -300,6 +300,11 @@ export type ModalPanePresentationInput = Readonly<{
     node: React.ReactNode | null;
     overlay: boolean;
     onClose: () => void;
+    /**
+     * The pane's open motion settled. Its JS-driven fade and slide report no layout or animation event, so
+     * retained bodies placed over it (`refreshPortalGeometry`) measure their now-drawn frame here.
+     */
+    onOpened?: () => void;
 }>;
 
 /**
@@ -331,6 +336,7 @@ export function useModalPanePresentation(input: ModalPanePresentationInput): Rea
         node: input.node,
         durationMs,
         useNativeDriver,
+        onOpened: input.onOpened,
     });
 
     const clearPendingClose = React.useCallback(() => {
