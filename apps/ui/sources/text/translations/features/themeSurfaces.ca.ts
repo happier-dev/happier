@@ -61,6 +61,8 @@ export const themeSurfaces = {
     tryAgain: "Torna a provar-lo",
     useOtherDevices: "Utilitza en altres dispositius…",
     options: "Opcions de tema",
+    try: "Prova",
+    tryingNow: "Provant ara",
   },
   themeLibrary: {
     lightThemes: "Temes clars",

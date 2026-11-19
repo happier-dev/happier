@@ -21,7 +21,13 @@ vi.mock('react-native', async () =>
 vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 );
+const phoneWindow = vi.hoisted(() => ({ on: false }));
+vi.mock('@/utils/platform/responsive', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/utils/platform/responsive')>();
+  return { ...original, useDeviceType: () => (phoneWindow.on ? 'phone' : original.useDeviceType()) };
+});
 
+const { StyleSheet } = await import('react-native');
 const { ThemeActionResultView } = await import('./ThemeActionResultView');
 type Props = import('./themeActionResultViewTypes').ThemeActionResultViewProps;
 
@@ -132,27 +138,49 @@ describe('ThemeActionResultView', () => {
     await screen.unmount();
   });
 
-  it('windows a data-sized set of proposed themes without losing selection or the try operation', async () => {
-    const input = props({ options: Array.from({ length: 200 }, (_, index) => ({
-      key: `choice-${index}`, name: `Choice ${index}`, description: 'Proposal', miniature: MINIATURE,
-    })), currentOptionKey: 'choice-0' });
-    const screen = await renderResultInTranscript(input);
-    await act(async () => {
-      for (const node of screen.tree.findAll(node => typeof node.type === 'string'
-        && node.props.role === 'radiogroup' && typeof node.props.onLayout === 'function')) {
-        node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 960, height: 600 } } });
+  describe.each([
+    { form: 'desktop', width: 960, columns: 3 },
+    { form: 'phone', width: 358, columns: 1 },
+  ] as const)('B3 options on $form', ({ form, width, columns }) => {
+    it('draws each candidate as a card with its own Try, and Try tries that one without choosing for the card', async () => {
+      phoneWindow.on = form === 'phone';
+      const options = (['notebook', 'linen', 'kraft'] as const).map((key) => ({
+        key, name: key, description: `${key} character`, miniature: MINIATURE,
+      }));
+      const input = props({ options, currentOptionKey: 'linen' });
+      const screen = await renderScreen(<ThemeActionResultView {...input} />);
+      try {
+        await act(async () => {
+          for (const node of screen.tree.findAll(node => typeof node.type === 'string'
+            && node.props.role === 'radiogroup' && typeof node.props.onLayout === 'function')) {
+            node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 600 } } });
+          }
+        });
+        // The width the tile takes in its row: its own, or (a phone row with a trailing Try) its frame's.
+        const tileWidth = (key: string) => {
+          let node = screen.tree.findAll(node => typeof node.type === 'string' && node.props.testID === `card:option:${key}`)[0] ?? null;
+          for (; node; node = node.parent) {
+            if (typeof node.type !== 'string') continue;
+            const width = StyleSheet.flatten(typeof node.props.style === 'function' ? node.props.style({ pressed: false }) : node.props.style)?.width;
+            if (typeof width === 'number') return width;
+          }
+          return undefined;
+        };
+        expect(options.map(option => tileWidth(option.key))).toEqual(Array(3).fill(Math.floor((width - 10 * (columns - 1)) / columns)));
+        // Tried candidates carry no Try; the others each try themselves, and nothing is kept or saved.
+        expect(has(screen, 'card:option:linen:try')).toBe(false);
+        const tryKraft = screen.tree.findAll(node => node.props.testID === 'card:option:kraft:try' && typeof node.props.onPress === 'function')[0];
+        expect(tryKraft, 'an untried candidate offers its own Try').toBeDefined();
+        await pressTestInstanceAsync(tryKraft!);
+        expect(input.onTryOption).toHaveBeenCalledTimes(1);
+        expect(input.onTryOption).toHaveBeenCalledWith('kraft');
+        expect(input.onKeep).not.toHaveBeenCalled();
+        if (form === 'desktop') expect(has(screen, 'card:option:notebook:description')).toBe(true);
+      } finally {
+        phoneWindow.on = false;
+        await screen.unmount();
       }
     });
-    const choices = screen.tree.findAll(node => typeof node.type === 'string'
-      && typeof node.props.testID === 'string' && /^card:option:choice-\d+$/.test(node.props.testID));
-    expect(choices.length).toBeGreaterThan(0);
-    expect(choices.length).toBeLessThan(200);
-    console.info('[theme-window-cost] transcript', { source: input.options!.length, mounted: choices.length });
-    const next = screen.tree.findAll(node => node.props.testID === 'card:option:choice-1' && typeof node.props.onPress === 'function')[0];
-    await pressTestInstanceAsync(next!);
-    expect(input.onTryOption).toHaveBeenCalledWith('choice-1');
-    expect(input.onTryOption).toHaveBeenCalledTimes(1);
-    await screen.unmount();
   });
 
   it('shows supported layout changes in B4 even when the palette and radius are unchanged', async () => {

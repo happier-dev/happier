@@ -61,6 +61,8 @@ export const themeSurfaces = {
     tryAgain: "Примерить снова",
     useOtherDevices: "Использовать на других устройствах…",
     options: "Варианты темы",
+    try: "Примерить",
+    tryingNow: "Примеряется",
   },
   themeLibrary: {
     lightThemes: "Светлые темы",

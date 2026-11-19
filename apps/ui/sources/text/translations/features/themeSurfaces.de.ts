@@ -61,6 +61,8 @@ export const themeSurfaces = {
     tryAgain: "Nochmal ausprobieren",
     useOtherDevices: "Auf anderen Geräten verwenden…",
     options: "Theme-Varianten",
+    try: "Ausprobieren",
+    tryingNow: "Wird ausprobiert",
   },
   themeLibrary: {
     lightThemes: "Helle Themes",

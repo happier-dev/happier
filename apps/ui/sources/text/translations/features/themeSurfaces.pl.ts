@@ -61,6 +61,8 @@ export const themeSurfaces = {
     tryAgain: "Przymierz ponownie",
     useOtherDevices: "Użyj na innych urządzeniach…",
     options: "Warianty motywu",
+    try: "Przymierz",
+    tryingNow: "Przymierzasz",
   },
   themeLibrary: {
     lightThemes: "Jasne motywy",

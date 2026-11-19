@@ -195,9 +195,14 @@ type HappierChoiceTilesBaseProps<T extends string, I extends string> = HappierSe
   /**
    * Visual `fill`: the preview's width ÷ height (default a small app window, 2.2). A picture or swatch
    * picker sets its own proportions. A regular card with `descriptionPlacement="below"` uses it for the
-   * preview it leads with (default 1.6).
+   * preview it leads with (default 1.6), and a compact card for the preview beside its text, with `previewWidth`.
    */
   previewAspectRatio?: number;
+  /**
+   * Compact card variant: the width of the preview beside the text (default a small app window, 112 × 70); its height
+   * follows `previewAspectRatio`. A phone option row draws its miniature this way (Themes B3P: 96 square).
+   */
+  previewWidth?: number;
   /**
    * Visual variant only. `hidden` drops the caption under each preview for pickers whose previews
    * speak for themselves (picture thumbnails); every tile is still announced by its title.
@@ -245,6 +250,11 @@ type HappierChoiceTilesBaseProps<T extends string, I extends string> = HappierSe
    */
   descriptionPlacement?: 'beside' | 'below';
   renderOptionFooter?: HappierSelectionTileFooterRenderer<T, I>;
+  /**
+   * Card variant. `below` (default): the footer continues the text column under it. `trailing`: the footer stands at
+   * the tile's end, centred on the row, outside the choice (a phone option row's own Try).
+   */
+  footerPlacement?: 'below' | 'trailing';
   /**
    * Visual variant. A tile's own quiet operations (its "…" menu), drawn over the preview's top-right corner as a
    * sibling of the choice, never inside it. `revealed` is true while the pointer is over the tile or the tile is
@@ -987,6 +997,11 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
         const spans = option.span === 'row' && !sheet;
         const ownWidthStyle = spans ? (width > 0 ? { width } : FILL_TILE_FRAME) : tileWidth ? { width: tileWidth } : fallbackTileWidthStyle;
         const tileTestID = option.testID ?? (props.testIdPrefix ? `${props.testIdPrefix}:${option.id}` : undefined);
+        // A trailing footer shares the tile's line with the choice, which takes the room the footer leaves.
+        const trailing = props.footerPlacement === 'trailing' && !sheet && footer != null && footer !== false;
+        const previewSize = hasPreview && props.previewWidth !== undefined
+          ? { width: props.previewWidth, height: props.previewWidth / (props.previewAspectRatio ?? props.previewWidth / VISUAL_PREVIEW_HEIGHT_PX) }
+          : null;
 
         return (
           <View
@@ -1002,6 +1017,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
               compact ? styles.tileFrameCompact : null,
               ownWidthStyle,
               { borderColor },
+              trailing ? styles.tileTrailing : null,
             ]}
           >
             <SelectionTilePressable
@@ -1033,7 +1049,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                 sheet ? styles.sheetCellPressable : null,
                 // The frame above owns the column's share before measurement; the press target fills it
                 // (a second percentage here would take a share of the share).
-                spans ? ownWidthStyle : tileWidth ? { width: tileWidth } : FILL_TILE_FRAME,
+                trailing ? styles.tilePressableTrailing : spans ? ownWidthStyle : tileWidth ? { width: tileWidth } : FILL_TILE_FRAME,
                 { opacity: pressOpacity(disabled, pressed) },
               ]}
             >
@@ -1042,7 +1058,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                   pointerEvents="none" aria-hidden>{option.preview}</View>
               ) : null}
               <View style={[styles.headerRow, sheet || compact && (!subtitleLine || hasPreview) ? styles.headerRowCentered : null]}>
-                {hasPreview ? <View style={styles.cardPreview} pointerEvents="none" aria-hidden>{option.preview}</View> : null}
+                {hasPreview ? <View style={[styles.cardPreview, previewSize]} pointerEvents="none" aria-hidden>{option.preview}</View> : null}
                 <View style={[styles.titleRow, sheet || compact && (!subtitleLine || hasPreview) ? styles.titleRowCentered : null]}>
                   {option.mark || glyph ? <View style={[styles.iconSlot, compact || below ? styles.iconSlotCompact : null]}>
                     {option.mark ?? (glyph ? props.renderGlyph({ glyph, size: glyphSize, color: glyphColor }) : null)}
@@ -1092,7 +1108,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
               ) : null}
             </SelectionTilePressable>
             {footer != null && footer !== false ? (
-              <View style={[styles.footer, compact ? styles.footerCompact : null, below ? (compact ? styles.footerBelowCompact : styles.footerBelow) : null,
+              <View style={trailing ? [styles.footerTrailing, compact ? styles.footerTrailingCompact : null] : [styles.footer, compact ? styles.footerCompact : null, below ? (compact ? styles.footerBelowCompact : styles.footerBelow) : null,
                 // Beside a preview the text column starts after it: the footer action takes the name's edge.
                 !below && hasPreview ? styles.footerBesidePreview : null]}>
                 {footer}
@@ -1389,6 +1405,21 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
     },
     footerBelowCompact: {
       paddingLeft: 10,
+    },
+    // `footerPlacement="trailing"`: the choice and its operation share one line, the operation centred at the end.
+    tileTrailing: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    tilePressableTrailing: {
+      flex: 1,
+      minWidth: 0,
+    },
+    footerTrailing: {
+      paddingRight: 12,
+    },
+    footerTrailingCompact: {
+      paddingRight: 10,
     },
     titleRow: {
       flexDirection: 'row',

@@ -61,6 +61,8 @@ export const themeSurfaces = {
     tryAgain: "再试一次",
     useOtherDevices: "在其他设备上使用…",
     options: "主题方案",
+    try: "试用",
+    tryingNow: "正在试用",
   },
   themeLibrary: {
     lightThemes: "浅色主题",

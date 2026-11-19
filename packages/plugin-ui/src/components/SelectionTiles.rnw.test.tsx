@@ -399,6 +399,35 @@ describe('SelectionTiles', () => {
     expect(onChange).toHaveBeenLastCalledWith('cozy');
     mount.unmount();
   });
+  it('lays a phone option row out as its square preview, its text, then its own operation at the row end', async () => {
+    // Themes B3P: one option per line, a 96 square miniature, name and description, then Try outside the choice.
+    const onChange = vi.fn();
+    const onTry = vi.fn();
+    const mount = mountThroughReactNativeWeb(<HappierSelectionTiles
+      density="compact" maximumColumns={1} previewWidth={96} previewAspectRatio={1} footerPlacement="trailing"
+      selectionMark="outline" accessibilityLabel="Options" testIdPrefix="opt" value="b" onChange={onChange}
+      options={[{ id: 'a', title: 'Notebook', subtitle: 'Cream page', preview: <span data-testid="pv:a" /> },
+        { id: 'b', title: 'Linen', subtitle: 'Sage', preview: <span data-testid="pv:b" /> }]}
+      renderOptionFooter={({ option }) => <button data-testid={`try:${option.id}`} onClick={() => onTry(option.id)}>Try</button>}
+      colors={TILE_COLORS}
+      renderText={({ text }) => <span>{text}</span>}
+      renderGlyph={() => null}
+    />);
+    try {
+      const row = mount.container.querySelector<HTMLElement>('[data-testid="opt:a"]')!;
+      const frame = mount.container.querySelector<HTMLElement>('[data-testid="pv:a"]')!.parentElement!;
+      expect([getComputedStyle(frame).width, getComputedStyle(frame).height]).toEqual(['96px', '96px']);
+      const tryButton = mount.container.querySelector<HTMLElement>('[data-testid="try:a"]')!;
+      expect(row.contains(tryButton)).toBe(false);
+      const tile = row.parentElement!;
+      expect(getComputedStyle(tile).flexDirection).toBe('row');
+      expect(tile.lastElementChild!.contains(tryButton)).toBe(true);
+      await act(async () => { tryButton.click(); });
+      expect(onTry).toHaveBeenCalledWith('a');
+      expect(onChange).not.toHaveBeenCalled();
+    } finally { mount.unmount(); }
+  });
+
   it('drops picture columns before a filling tile would fall under its minimum width', async () => {
     // A theme listing's faces in a 420 px pane (Themes C2): two large previews per row, never four thumbnails.
     const options = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id, title: id.toUpperCase() }));

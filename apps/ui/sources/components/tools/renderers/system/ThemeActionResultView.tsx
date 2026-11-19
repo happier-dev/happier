@@ -454,31 +454,61 @@ function Actions(props: ThemeActionResultViewProps) {
 
 function noop() {}
 
+/**
+ * B3/B3P: the agent's candidates as option cards on the shared tile owner. Wide, three cards across, each leading with
+ * its window miniature and the description below; on a phone, one row each: a square miniature, the text, then Try.
+ * The tried candidate carries the ring instead of Try. Choosing a card and its Try are the same model operation.
+ */
 function ThemeOptions(props: ThemeActionResultViewProps) {
   const phone = useDeviceType() === 'phone';
+  const { theme: palette } = useUnistyles();
+  const { options, onTryOption, busy, testID } = props;
+  const waiting = busy !== null;
   const tiles = React.useMemo(
     (): SelectionTile<string>[] =>
-      (props.options ?? []).map((option) => ({
+      (options ?? []).map((option) => ({
         id: option.key,
         title: option.name,
         subtitle: option.description,
-        preview: <ThemeMiniaturePreview miniature={option.miniature} />,
+        preview: <ThemeMiniaturePreview miniature={option.miniature} form={phone ? 'phone' : 'window'} />,
       })),
-    [props.options],
+    [options, phone],
+  );
+  const renderFooter = React.useCallback(
+    ({ option, selected }: Readonly<{ option: SelectionTile<string>; selected: boolean }>) => selected ? (
+      <View style={styles.tried}>
+        <Icon name="check" size={ICON_SIZE.xs} color={palette.colors.text.secondary} />
+        {phone ? null : <Text variant="meta" style={styles.fact}>{t('themeCard.tryingNow')}</Text>}
+      </View>
+    ) : (
+      <View style={styles.tryButton}>
+        <RoundButton
+          size="small"
+          display="secondary"
+          title={t('themeCard.try')}
+          onPress={() => onTryOption(option.id)}
+          disabled={waiting}
+          testID={testID ? `${testID}:option:${option.id}:try` : undefined}
+        />
+      </View>
+    ),
+    [onTryOption, palette.colors.text.secondary, phone, testID, waiting],
   );
   return (
     <SelectionTiles
-      variant="visual"
-      scroll="page"
-      tileSizing="fill"
+      variant="card"
+      selectionMark="outline"
       options={tiles}
       value={props.currentOptionKey ?? null}
       onChange={(next) => {
-        if (next) props.onTryOption(next);
+        if (next) onTryOption(next);
       }}
-      maximumColumns={phone ? 2 : 4}
+      renderOptionFooter={renderFooter}
+      {...(phone
+        ? { density: 'compact', maximumColumns: 1, previewWidth: 96, previewAspectRatio: 1, footerPlacement: 'trailing', subtitleLines: 3 } as const
+        : { descriptionPlacement: 'below', maximumColumns: 3, subtitleLines: 2 } as const)}
       accessibilityLabel={t('themeCard.options')}
-      testIdPrefix={props.testID ? `${props.testID}:option` : undefined}
+      testIdPrefix={testID ? `${testID}:option` : undefined}
     />
   );
 }
@@ -581,6 +611,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   webOnlyRule: {
     color: theme.colors.text.tertiary,
+  },
+  tryButton: {
+    alignSelf: 'flex-start',
+  },
+  tried: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s6,
   },
   actions: {
     flexDirection: 'row',

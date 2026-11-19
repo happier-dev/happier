@@ -86,6 +86,8 @@ type SelectionTilesBaseProps<T extends string> = {
     /** Visual `fill`: the preview's width ÷ height (a picture or swatch picker's own proportions); a regular card
      *  with `descriptionPlacement="below"` uses it for the preview it leads with. */
     previewAspectRatio?: number;
+    /** Compact card: the preview's width beside the text; its height follows `previewAspectRatio`. */
+    previewWidth?: number;
     /** Visual only: `hidden` drops the captions of previews that speak for themselves; tiles keep their names. */
     labels?: 'shown' | 'hidden';
     /** Visual only: lines a caption may take before it ellipsizes (default 2); the tile announces its whole name. */
@@ -107,6 +109,8 @@ type SelectionTilesBaseProps<T extends string> = {
     /** Card variant: `below` sets each description, and the footer, under the title row at the card's full width. */
     descriptionPlacement?: 'beside' | 'below';
     renderOptionFooter?: SelectionTileFooterRenderer<T>;
+    /** Card variant: `trailing` stands the footer at the tile's end, outside the choice (a phone option row's Try). */
+    footerPlacement?: 'below' | 'trailing';
     /** Visual only: a tile's own quiet operations (its "…"), over the preview's corner; `revealed` on hover or when chosen. */
     renderOptionAccessory?: (params: Readonly<{ option: SelectionTile<T>; selected: boolean; revealed: boolean }>) => React.ReactNode;
     /** Visual only: `page` draws only the lines of tiles near the page's window (options that scale with the person's data). */
