@@ -19,5 +19,4 @@ export const stepMotionTiming = {
     travel: 0.60,
     stagger: 0.22,
     lift: 45,
-    maxArc: 80,
 } as const;

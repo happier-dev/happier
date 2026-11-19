@@ -222,6 +222,10 @@ function sampleMark(out, grid, layer, time, palette) {
 }
 
 function sampleTravellers(out, layer, time, palette) {
+    if (layer.stepMorphProgress !== undefined) {
+        sampleStepTravellers(out, layer, time, palette);
+        return;
+    }
     const { particles, ink, small } = layer;
     for (let i = 0; i < particles.length; i += 8) {
         const emit = particles[i + 4], duration = particles[i + 5];
@@ -233,6 +237,41 @@ function sampleTravellers(out, layer, time, palette) {
         const tone = particles[i + 7];
         const color = ink === 'sunrise' ? gradient(palette.body, tone, out.ink) : ink;
         writeSprite(out, x * out.dpr, y * out.dpr, digitOf(i, 0, Math.floor(time * 6)) + (small ? 10 : 0), color, (color[3] ?? 255) / 255);
+    }
+}
+
+const criticalDamping = (p) => 1 - (1 + 6.6 * p) * Math.exp(-6.6 * p);
+const criticalEnd = criticalDamping(1);
+
+function writeStepTraveller(out, p, glyph, color, alpha, left, top, dx, dy, bow, lift) {
+    const arc = Math.sin(Math.PI * p);
+    const x = left + dx * p - dy * bow * arc;
+    const y = top + dy * p + (dx * bow - lift) * arc;
+    writeSprite(out, x * out.dpr, y * out.dpr, glyph, color, alpha);
+}
+
+function sampleStepTravellers(out, layer, time, palette) {
+    const { particles, ink, small, stepMorphProgress: progress } = layer;
+    const envelope = clamp(progress / 0.05) * (1 - clamp((progress - 0.82) / 0.15));
+    const tick = Math.floor(time * 6);
+    for (let i = 0; i < particles.length; i += 8) {
+        const start = particles[i + 4], duration = particles[i + 5];
+        const p = criticalDamping(clamp((time - start) / duration)) / criticalEnd;
+        const seed = particles[i + 7];
+        const color = ink === 'sunrise' ? gradient(palette.body, seed, out.ink) : ink;
+        const alpha = (small ? mix(0.95, 0.45, p) : 0.45) * envelope * (0.75 + 0.25 * seed) * (color[3] ?? 255) / 255;
+        if (alpha < 0.01) continue;
+        const left = particles[i], top = particles[i + 1];
+        const dx = particles[i + 2] - left, dy = particles[i + 3] - top;
+        const length = Math.hypot(dx, dy) || 1;
+        const bow = (seed - 0.5) * Math.min(80, length * 0.25) / length;
+        const lift = particles[i + 6];
+        const glyph = digitOf(Math.round(left), Math.round(top), tick) + 10;
+        if (small && p > 0.04 && p < 0.96) {
+            writeStepTraveller(out, Math.max(0, p - 0.07), glyph, color, alpha * 0.45, left, top, dx, dy, bow, lift);
+            writeStepTraveller(out, Math.max(0, p - 0.14), glyph, color, alpha * 0.2, left, top, dx, dy, bow, lift);
+        }
+        writeStepTraveller(out, p, glyph, color, alpha, left, top, dx, dy, bow, lift);
     }
 }
 
@@ -310,7 +349,7 @@ export function createGlyphFrameSampler() {
         const capacity = layers.reduce((sum, layer) => {
             if (layer.kind === 'field') return sum;
             if (layer.kind === 'placed') return sum + layer.cells.length / 7;
-            if (layer.kind === 'traveller') return sum + layer.particles.length / 8;
+            if (layer.kind === 'traveller') return sum + layer.particles.length / 8 * (layer.small && layer.stepMorphProgress !== undefined ? 3 : 1);
             if (layer.kind === 'mark' && layer.cellTimeline) return sum + layer.cellTimeline.length / 4;
             return sum + cols * rows * ((layer.kind === 'front' && layer.cover) || (layer.kind === 'planet' && layer.ring) ? 2 : 1);
         }, 0);

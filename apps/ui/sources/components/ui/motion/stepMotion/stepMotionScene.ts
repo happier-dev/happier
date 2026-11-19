@@ -44,7 +44,7 @@ function makeParticles(source: GlyphRect, target: GlyphRect) {
         const stagger = t.stagger * (0.65 * variation + 0.35 * y) * (small ? 0.6 : 1);
         particles.set([
             left, top, right, bottom, (0.05 + stagger) * t.forwardS, t.travel * t.forwardS,
-            Math.min(t.maxArc, t.lift + Math.hypot(right - left, bottom - top) * 0.08), y,
+            t.lift * (0.6 + 0.4 * variation), variation,
         ], i * 8);
     }
     return { particles, small };
@@ -100,7 +100,8 @@ export function createStepMotionScene(input: Readonly<{
             }));
         }
         if (travellers && p > 0 && p < 0.97) layers.push(travellerGlyphLayer({
-            ...travellers, ink: travellers.small ? input.controlInk ?? ink : ink, presentationTimeS: p * t.forwardS,
+            ...travellers, ink: travellers.small ? input.controlInk ?? ink : ink,
+            presentationTimeS: p * t.forwardS, stepMorphProgress: p,
         }));
         return layers;
     };
