@@ -513,6 +513,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "保存你创建机器时使用的选择。",
         loading: "正在加载机器预设…",
         loadFailed: "无法加载机器预设。请重试。",
+        archiveFailed: "无法归档此预设。",
         ownerPersonal: "你的",
         futureOnly: "修改仅适用于新机器。现有机器保留原有选择。",
         deadlineOmitted: "预设不会保存此截止时间。",

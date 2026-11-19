@@ -513,6 +513,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "マシンの作成に使う選択を保存します。",
         loading: "プリセットを読み込み中…",
         loadFailed: "プリセットを読み込めませんでした。もう一度お試しください。",
+        archiveFailed: "このプリセットをアーカイブできませんでした。",
         ownerPersonal: "自分",
         futureOnly: "変更は新しいマシンに適用されます。既存のマシンは選択を維持します。",
         deadlineOmitted: "この期限はプリセットに保存されません。",

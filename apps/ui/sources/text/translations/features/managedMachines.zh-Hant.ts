@@ -513,6 +513,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "儲存你建立機器時使用的選擇。",
         loading: "正在載入機器預設組合…",
         loadFailed: "無法載入機器預設組合。請再試一次。",
+        archiveFailed: "無法封存此預設組合。",
         ownerPersonal: "你的",
         futureOnly: "修改只適用於新機器。現有機器保留原本的選擇。",
         deadlineOmitted: "預設不會儲存此截止時間。",

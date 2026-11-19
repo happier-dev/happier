@@ -513,6 +513,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "Desa les opcions que fas servir per crear màquines.",
         loading: "S’estan carregant els valors predefinits…",
         loadFailed: "No s’han pogut carregar els valors predefinits. Torna-ho a provar.",
+        archiveFailed: "No s’ha pogut arxivar aquest valor predefinit.",
         ownerPersonal: "Teu",
         futureOnly: "Els canvis s’apliquen a màquines noves. Les existents conserven les seves opcions.",
         deadlineOmitted: "El preajust no desarà aquesta data límit.",

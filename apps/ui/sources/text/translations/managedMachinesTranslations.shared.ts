@@ -519,6 +519,7 @@ export const managedMachinesEn = {
         empty: "Save the choices you use to create machines.",
         loading: "Loading machine presets…",
         loadFailed: "Machine presets couldn’t load. Try again.",
+        archiveFailed: "This preset couldn’t be archived.",
         ownerPersonal: "Yours",
         futureOnly: "Edits apply to new machines. Existing machines keep their choices.",
         deadlineOmitted: "The preset won’t save this deadline.",

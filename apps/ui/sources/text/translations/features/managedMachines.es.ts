@@ -513,6 +513,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "Guarda las opciones que usas para crear máquinas.",
         loading: "Cargando ajustes predefinidos…",
         loadFailed: "No se pudieron cargar los ajustes predefinidos. Inténtalo de nuevo.",
+        archiveFailed: "No se pudo archivar este ajuste predefinido.",
         ownerPersonal: "Tuyo",
         futureOnly: "Los cambios se aplican a máquinas nuevas. Las existentes conservan sus opciones.",
         deadlineOmitted: "El preajuste no guardará este plazo.",

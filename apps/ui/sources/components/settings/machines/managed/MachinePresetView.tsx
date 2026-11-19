@@ -345,7 +345,8 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
             {detail.state.error ? <SurfaceStateCard testID="machine-preset.refresh-error" kind="unavailable" size="line" title={t('machinePresets.loadFailed')}
                 diagnosticCode={detail.state.error} action={{ label: t('common.retry'), onPress: detail.refresh }} /> : null}
             {conflict || mutationError || refusal ? <SurfaceStateCard testID="machine-preset.mutation-error" kind="error" size="line"
-                title={conflict ? t('machinePresets.conflict') : refusal === 'permission_denied' ? t('machinePresets.accessLost') : t('machinePresets.loadFailed')}
+                title={conflict ? t('machinePresets.conflict') : refusal === 'permission_denied' ? t('machinePresets.accessLost')
+                    : revealArchiveFeedback.current ? t('machinePresets.archiveFailed') : t('machinePresets.loadFailed')}
                 diagnosticCode={mutationError ?? refusal ?? undefined} action={{ label: t(conflict ? 'managedMachines.actions.review' : 'common.retry'), onPress: () => { setMutationError(null); detail.refresh(); } }} /> : null}
         </ItemGroup> : null}
         </>

@@ -513,6 +513,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "Speichere die Auswahl, mit der du Rechner erstellst.",
         loading: "Rechnervorlagen werden geladen…",
         loadFailed: "Rechnervorlagen konnten nicht geladen werden. Versuche es erneut.",
+        archiveFailed: "Diese Vorlage konnte nicht archiviert werden.",
         ownerPersonal: "Deine",
         futureOnly: "Änderungen gelten für neue Rechner. Bestehende behalten ihre Auswahl.",
         deadlineOmitted: "Diese Frist wird nicht in der Vorlage gespeichert.",

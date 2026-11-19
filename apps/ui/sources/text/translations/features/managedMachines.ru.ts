@@ -513,6 +513,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "Сохраняйте выбор, по которому создаёте машины.",
         loading: "Загрузка пресетов…",
         loadFailed: "Не удалось загрузить пресеты. Попробуйте ещё раз.",
+        archiveFailed: "Не удалось архивировать этот пресет.",
         ownerPersonal: "Ваш",
         futureOnly: "Изменения применяются к новым машинам. Существующие сохраняют свой выбор.",
         deadlineOmitted: "Этот срок не будет сохранён в шаблоне.",

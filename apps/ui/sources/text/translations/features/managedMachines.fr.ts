@@ -513,6 +513,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "Enregistre les choix que tu utilises pour créer des machines.",
         loading: "Chargement des préréglages…",
         loadFailed: "Impossible de charger les préréglages. Réessaie.",
+        archiveFailed: "Impossible d’archiver ce préréglage.",
         ownerPersonal: "À toi",
         futureOnly: "Les modifications s’appliquent aux nouvelles machines. Les machines existantes gardent leurs choix.",
         deadlineOmitted: "Le préréglage n’enregistrera pas cette échéance.",
