@@ -212,15 +212,7 @@ function RailTab(
       />
     );
   }
-  const selected = openedKey
-    ? (() => {
-        const decoded = decodeWorkbenchSubPath(openedKey);
-        return {
-          mode: decoded.mode,
-          ...(decoded.relation ? { relation: decoded.relation } : {}),
-        };
-      })()
-    : null;
+  const selected = openedKey ? decodeWorkbenchSubPath(openedKey).place : null;
   const pickerHeader = (
     <DatabasePicker
       current={current}
@@ -280,7 +272,7 @@ function DatabaseRailSurface(context: RenderContext) {
     return descriptor
       ? {
           ...emptyLocation(targetKey),
-          ...decodeWorkbenchSubPath(context.subPath),
+          ...decodeWorkbenchSubPath(context.subPath).place,
         }
       : null;
   }, [launch === null, inDetails, targetKey]); // eslint-disable-line react-hooks/exhaustive-deps

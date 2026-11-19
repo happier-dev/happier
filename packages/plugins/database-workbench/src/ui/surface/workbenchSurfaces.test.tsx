@@ -17,14 +17,14 @@ import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automat
 import { type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
+import { computeSha256HexDigest, createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import {
   createPluginUiTestkit,
   createSurfaceContextFixture,
   type PluginUiTestkitExecuteActionInput,
   type PluginUiTestkitHostHandlers,
 } from '@happier-dev/plugin-sdk/testing';
-import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { encodeBase64, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { renderSurface as renderPanel } from './DatabasesPanel.js';
 import { renderSurface as renderPage } from './WorkbenchPage.js';
@@ -69,6 +69,7 @@ const scope =
         throw new Error('fixture is a worktree target');
       })();
 const invoices = { schema: 'public', name: 'invoices' };
+const savedDatabasePath = `target/${encodeBase64(new TextEncoder().encode(createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(descriptor.target))), 'base64url')}`;
 
 /** The mounted Resource transport supplies the selected connection's admitted snapshot. */
 function connectionResourceHandlers() {
@@ -302,6 +303,35 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
+  it('restores the saved database and relation on a cold page and keeps the database in the URL', async () => {
+    const executeAction = daemonAnswers([descriptor], true);
+    const watchResource = vi.fn(connectionResourceHandlers().watchResource);
+    const replacePageLocation = vi.fn(async ({ subPath }: { subPath: string }) => subPath);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'cold-database', mountNonce: 'cold-database' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      subPath: `${savedDatabasePath}/data/public/invoices`,
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ detailsPane: { available: true } }),
+      handlers: { ...connectionResourceHandlers(), executeAction, watchResource, replacePageLocation },
+    });
+    try {
+      await settle(20);
+      expect(await fixture.queryByText('Open a database from Dev servers')).toBeFalsy();
+      const row = await fixture.findByRole('button', { name: '48212' });
+      expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({
+        action: databaseActionLocalIdV1(DATABASE_ROWS_READ_ACTION_ID_V1),
+        input: expect.objectContaining({ target: descriptor.target, relation: invoices }),
+      }));
+      await act(async () => { await fixture.press(row); });
+      await fixture.press(await fixture.findByRole('button', { name: 'Open in customers' }));
+      expect(replacePageLocation).toHaveBeenCalledWith(expect.objectContaining({
+        subPath: `${savedDatabasePath}/data/public/customers`,
+      }));
+      expect(watchResource).toHaveBeenCalledTimes(1);
+    } finally { await fixture.dispose(); }
+  });
+
   it('starts the replacement workbench at the location delivered with its host binding', async () => {
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'page-location', mountNonce: 'page-location' },
@@ -464,7 +494,7 @@ describe('Database workbench surfaces', () => {
   });
   it('lists the checkout’s databases on Dev servers and opens the chosen one in the workbench', async () => {
     const executeAction = daemonAnswers([descriptor]);
-    const openSurface = vi.fn(async () => {});
+    const openSurface = vi.fn<NonNullable<PluginUiTestkitHostHandlers['openSurface']>>(async () => {});
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'panel', mountNonce: 'panel' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' },
@@ -496,11 +526,10 @@ describe('Database workbench surfaces', () => {
       expect(openSurface).toHaveBeenCalledWith(
         expect.objectContaining({
           view: expect.objectContaining({ localId: WORKBENCH_PAGE_VIEW_ID }),
-          input: expect.objectContaining({
-            descriptor: expect.objectContaining({ label: 'billing_dev' }),
-          }),
+          subPath: `~run-on/home/machine/installation/${savedDatabasePath}/overview`,
         }),
       );
+      expect(openSurface.mock.lastCall?.[0]).not.toHaveProperty('input');
     } finally {
       await fixture.dispose();
     }

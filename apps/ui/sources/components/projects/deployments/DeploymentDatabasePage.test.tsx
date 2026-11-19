@@ -38,6 +38,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { decodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
@@ -680,6 +681,17 @@ describe('Environment → Database → Private console', () => {
   });
 });
 
+function expectOpenedDatabaseConsole(view: Awaited<ReturnType<typeof renderDatabase>>) {
+  const [request] = view.opened;
+  expect(request?.destination).toEqual({ pluginId: DATABASE_PLUGIN_ID_V1, localId: 'database-workbench' });
+  expect(request).not.toHaveProperty('input');
+  const [prefix, serverId, machineId, installationId, kind, selector, mode] = request?.subPath?.split('/') ?? [];
+  expect([prefix, serverId, machineId, installationId, kind, mode]).toEqual([
+    '~run-on', view.serverIdentityId, view.machineId, view.descriptor.placement.installationId, 'target', 'console',
+  ]);
+  expect(JSON.parse(new TextDecoder().decode(decodeBase64(selector!, 'base64url')))).toEqual(view.descriptor.target);
+}
+
 describe('Environment → Database → Workbench', () => {
   it('opens the shared workbench for the exact deployment database through environment discovery', async () => {
     const view = await renderDatabase();
@@ -693,9 +705,7 @@ describe('Environment → Database → Workbench', () => {
         expect(view.opened, JSON.stringify({ effects: view.effects, alerts: vi.mocked(Modal.alert).mock.calls,
           operations: [...actionOperationStore.getSnapshot().operationsByKey.values()] })).toHaveLength(1);
       });
-      expect(view.opened[0]).toMatchObject({ destination: { pluginId: DATABASE_PLUGIN_ID_V1, localId: 'database-workbench' },
-        subPath: 'console', input: { scope: view.scope,
-          descriptor: view.descriptor } });
+      expectOpenedDatabaseConsole(view);
       expect(view.effects.filter(effect => effect.actionId === 'action.invoke')).toEqual([
         expect.objectContaining({ input: expect.objectContaining({ input: { scope: {
           kind: 'environment', environment: view.scope.environment } } }) })]);
@@ -722,10 +732,9 @@ describe('Environment → Database → Workbench', () => {
       await view.settle(`${page}.query`);
       await view.screen.pressByTestIdAsync(`${page}.query`);
       await waitForHomeGovernance(async () => { await act(async () => {}); expect(view.opened).toHaveLength(1); });
-      expect(view.opened[0]).toMatchObject({ destination: { pluginId: DATABASE_PLUGIN_ID_V1, localId: 'database-workbench' },
-        subPath: 'console', input: { scope: view.scope } });
-      if (multiple) expect(view.opened[0]?.input).not.toHaveProperty('descriptor');
-      else expect(view.opened[0]?.input).toHaveProperty('descriptor', view.descriptor);
+      if (multiple) expect(view.opened[0]).toMatchObject({ subPath: 'console' });
+      else expectOpenedDatabaseConsole(view);
+      expect(view.opened[0]).not.toHaveProperty('input');
     } finally { await view.dispose(); }
   });
 

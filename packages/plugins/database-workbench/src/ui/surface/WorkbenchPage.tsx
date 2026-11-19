@@ -1,8 +1,11 @@
 import * as React from 'react';
+import type { DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
   EmptyState,
+  ErrorState,
   ListDetailLayout,
+  LoadingState,
   PageHeader,
   Stack,
   defineUiSurface,
@@ -15,7 +18,7 @@ import {
   useWorkbenchInstance,
   useWorkbenchLocation,
 } from '../hooks.js';
-import type { WorkbenchLocation } from '../models.js';
+import type { WorkbenchClient, WorkbenchLocation } from '../models.js';
 import { DatabaseConsole } from './DatabaseConsole.js';
 import { InsightsPane } from './insights/InsightsPane.js';
 import { RelationData } from './RelationData.js';
@@ -29,10 +32,11 @@ import {
   databaseTargetKey,
   readWorkbenchLaunchInput,
   type WorkbenchLaunchInput,
+  useLinkedWorkbench,
   useWorkbenchMount,
   WORKBENCH_DISPLAY_PAGE_ROWS,
 } from './mount.js';
-import { decodeWorkbenchSubPath } from './subPath.js';
+import { decodeWorkbenchSubPath, type WorkbenchPlace } from './subPath.js';
 import { databaseEngineName } from './engines.js';
 
 function OverviewPane(props: Readonly<{ targetKey: string; scope: WorkbenchLaunchInput['scope'] }>) {
@@ -106,8 +110,39 @@ export function WorkbenchMain(props: Readonly<{ targetKey: string; scope: Workbe
 
 /** The workbench page: the rail beside what it opens; on a phone the rail pushes its choice. */
 function WorkbenchPage(context: RenderContext) {
+  const { target, place } = React.useMemo(() => decodeWorkbenchSubPath(context.subPath), [context.subPath]);
+  return target
+    ? <LinkedWorkbenchPage context={context} target={target} place={place} />
+    : <MountedWorkbenchPage context={context} launch={readWorkbenchLaunchInput(context)} place={place} />;
+}
+
+function LinkedWorkbenchPage({ context, target, place }: Readonly<{
+  context: RenderContext;
+  target: DatabaseTargetV1;
+  place: WorkbenchPlace;
+}>) {
   const translate = usePluginTranslation();
-  const launch = readWorkbenchLaunchInput(context);
+  const linked = useLinkedWorkbench(context, target);
+  if (linked.status === 'loading') return <LoadingState layout="line" rows={1} />;
+  if (linked.status === 'unavailable') return (
+    <ErrorState
+      layout="centered"
+      kind="unavailable"
+      title={translate('plugins.database.find.failed', 'Databases could not be read')}
+      details={linked.error instanceof Error ? linked.error.message : undefined}
+    />
+  );
+  return <MountedWorkbenchPage context={context} place={place}
+    launch={readWorkbenchLaunchInput(context, linked.descriptor)} client={linked.client} />;
+}
+
+function MountedWorkbenchPage({ context, launch, place, client }: Readonly<{
+  context: RenderContext;
+  launch: WorkbenchLaunchInput | null;
+  place: WorkbenchPlace;
+  client?: WorkbenchClient;
+}>) {
+  const translate = usePluginTranslation();
   const descriptor = launch?.descriptor;
   const targetKey = descriptor ? databaseTargetKey(descriptor) : null;
   const initial = React.useMemo<WorkbenchLocation | null>(
@@ -115,17 +150,17 @@ function WorkbenchPage(context: RenderContext) {
       targetKey
         ? {
             targetKey,
-            ...decodeWorkbenchSubPath(context.subPath),
+            ...place,
             sort: [],
             columns: [],
             page: { rows: WORKBENCH_DISPLAY_PAGE_ROWS, offset: 0 },
             fkTrail: [],
           }
         : null,
-    [targetKey, context.subPath],
+    [targetKey, place],
   );
   const options = React.useMemo(() => ({ pageLocation: true }), []);
-  const instance = useWorkbenchMount(context, launch, initial, options);
+  const instance = useWorkbenchMount(context, launch, initial, options, client);
   if (!instance || !targetKey || !launch) {
     return (
       <EmptyState
@@ -157,3 +192,4 @@ function WorkbenchLayout(props: Readonly<{ targetKey: string; scope: WorkbenchLa
 }
 
 export const renderSurface = defineUiSurface(WorkbenchPage);
+export { encodeWorkbenchPageSubPath } from './subPath.js';

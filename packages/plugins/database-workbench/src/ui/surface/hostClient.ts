@@ -8,6 +8,7 @@ import {
     type DatabaseDemandSnapshotV1,
 } from '@happier-dev/database-protocol';
 import {
+    type DatabaseDescriptorV1,
     type DatabaseOperationResultV1,
     type DatabaseTargetV1,
     type DatabaseTargetsListResultV1,
@@ -23,6 +24,7 @@ import type { WorkbenchClient } from '../models.js';
 type HostOptions = Readonly<{
   /** Page mounts own a location; the services panel has none, so navigation stays local there. */
   pageLocation: boolean;
+  pageTarget?: DatabaseTargetV1;
 }>;
 
 /**
@@ -32,9 +34,12 @@ type HostOptions = Readonly<{
 export function createHostWorkbenchClient(
   hostApi: PluginUiHostApi,
   options: HostOptions,
-): WorkbenchClient {
+): WorkbenchClient & Readonly<{
+  describe(target: DatabaseTargetV1): Promise<DatabaseDescriptorV1>;
+  dispose(): void;
+}> {
   const listeners = new Set<Parameters<WorkbenchClient['subscribeOwnWrites']>[0]>();
-  const demands = new Map<string, Readonly<{ ready: Promise<void>; subscriptionId(): string; dispose(): void }>>();
+  const demands = new Map<string, Readonly<{ ready: Promise<DatabaseDemandSnapshotV1>; subscriptionId(): string; dispose(): void }>>();
   function demand(target: DatabaseTargetV1) {
     const targetKey = JSON.stringify(target);
     const held = demands.get(targetKey);
@@ -42,9 +47,9 @@ export function createHostWorkbenchClient(
     const input = projectNativeJsonValueForTransport({ operation: 'describe', target });
     let subscriptionId: string;
     let previous: DatabaseDemandSnapshotV1 | undefined;
-    let resolveReady!: () => void;
+    let resolveReady!: (snapshot: DatabaseDemandSnapshotV1) => void;
     let rejectReady!: (error: unknown) => void;
-    const ready = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+    const ready = new Promise<DatabaseDemandSnapshotV1>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
     let admission: ReturnType<PluginUiHostApi['watchResource']>;
     const store = createPluginUiResourceStore({ client: {
       watchResource(resource, listener, requestOptions) {
@@ -76,7 +81,7 @@ export function createHostWorkbenchClient(
       if (!next || next === previous) return;
       const before = previous;
       previous = next;
-      if (subscriptionId) resolveReady();
+      if (subscriptionId) resolveReady(next);
       if (!before) return;
       if (before.ownWriteRevision !== next.ownWriteRevision) {
         for (const listener of listeners) listener({ target });
@@ -99,7 +104,15 @@ export function createHostWorkbenchClient(
     demands.set(targetKey, value);
     return value;
   }
+  function dispose() {
+    for (const held of demands.values()) held.dispose();
+    demands.clear();
+  }
   return {
+    dispose,
+    async describe(target) {
+      return (await demand(target).ready).descriptor;
+    },
     machineDisplayName: (request, options) => hostApi.readMachineDisplayName(request, options),
     async targets(input, signal) {
       const result = await hostApi.executeAction(
@@ -132,13 +145,12 @@ export function createHostWorkbenchClient(
       return () => {
         listeners.delete(listener);
         if (listeners.size) return;
-        for (const held of demands.values()) held.dispose();
-        demands.clear();
+        dispose();
       };
     },
     async navigate(location) {
       if (!options.pageLocation) return;
-      await hostApi.replacePageLocation(encodeWorkbenchSubPath(location), {
+      await hostApi.replacePageLocation(encodeWorkbenchSubPath(location, options.pageTarget), {
         preserveUnsavedChanges: true,
       });
     },

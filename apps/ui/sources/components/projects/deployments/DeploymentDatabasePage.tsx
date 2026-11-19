@@ -95,7 +95,7 @@ import { useDeploymentTargetLinkChoices } from './useDeploymentTargetLinkChoices
 import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { DatabaseTargetsListResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
-import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 
 type Detail = DeploymentEnvironmentReadDetailV1;
 type TemplateData = NonNullable<
@@ -245,9 +245,18 @@ export function DeploymentDatabasePage(
     const matches = listed.targets.filter(({ target }) => database.kind === 'selfHosted'
       ? target.kind === 'deployment_service' && target.serviceId === database.data.service
       : target.kind === 'managed_deployment' && target.targetLinkId === database.link.targetLink.id);
+    const descriptor = matches.length === 1 ? matches[0] : undefined;
+    let subPath = 'console';
+    if (descriptor) {
+      const { encodeWorkbenchPageSubPath } = await import(
+        '@happier-dev/plugins-database-workbench/happier-plugin-ui/database-workbench-native'
+      );
+      const { placement, target } = descriptor;
+      const serverId = resolvePortableServerIdentityForRoutingId(placement.serverId) ?? placement.serverId;
+      subPath = encodeWorkbenchPageSubPath({ target, placement: { ...placement, serverId } }, { mode: 'console' });
+    }
     const opened = await workbenchNavigation.openSurface({
-      destination: { pluginId: DATABASE_PLUGIN_ID_V1, localId: 'database-workbench' }, subPath: 'console',
-      input: projectNativeJsonValueForTransport({ scope, ...(matches.length === 1 ? { descriptor: matches[0] } : {}) }),
+      destination: { pluginId: DATABASE_PLUGIN_ID_V1, localId: 'database-workbench' }, subPath,
     });
     if (!opened.ok) return { ok: false, error: opened.reason };
     return { ok: true };

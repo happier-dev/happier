@@ -14,13 +14,13 @@ import {
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
 import { WorkbenchProvider, useDatabaseTargets, useWorkbenchInstance } from '../hooks.js';
-import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { WorkbenchTarget } from '../models.js';
 import {
   readWorkbenchLaunchInput,
   useWorkbenchMount,
   type WorkbenchLaunchInput,
 } from './mount.js';
+import { encodeWorkbenchPageSubPath } from './subPath.js';
 import { WORKBENCH_PAGE_VIEW_ID } from './views.js';
 
 const PANEL_LOCATION = Object.freeze({
@@ -99,12 +99,11 @@ function DatabaseRows(
   );
   const open = React.useCallback(
     (target: WorkbenchTarget) => {
-      void props.context.hostApi.openSurface(WORKBENCH_PAGE_VIEW_ID, projectNativeJsonValueForTransport({
-        scope: props.launch.scope,
-        descriptor: instance.target(target.targetKey),
-      }));
+      void props.context.hostApi.openSurface(WORKBENCH_PAGE_VIEW_ID, undefined, {
+        subPath: encodeWorkbenchPageSubPath(instance.target(target.targetKey), { mode: 'overview' }),
+      });
     },
-    [instance, props.context.hostApi, props.launch.scope],
+    [instance, props.context.hostApi],
   );
   if (status === 'loading' && targets.length === 0)
     return <LoadingState layout="line" rows={1} />;
