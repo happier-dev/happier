@@ -7,6 +7,7 @@ import { isNativeSecretFillAction } from '../actions/executor/confidentialInputs
 import { isDeploymentChildRootActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 import { HostReviewedChildrenPlanV1Schema } from '../actions/executor/hostReviewedChildrenV1.js';
 import { isManagedRetainedControlInvocation } from '../machines/managed/actionsV1.js';
+import { isMachinePresetFiniteOperationActionIdV1 } from '../machines/managed/machinePresetActionIdsV1.js';
 import { isDeploymentEnvironmentUpdateNativeAdmissionV1, projectDeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import { isPresentUserHostInvocation } from '../actions/invocationAuthority.js';
 import type { ActionExecutionPlacement } from '../actions/metadata.js';
@@ -86,7 +87,7 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
     : actionId === 'discussion.invite' && origin.caller.kind === 'workflowRun'
       && origin.caller.discussionModelReservation
       ? 'machine' : resolveActionExecutionPlacementForInput(spec, input.data, origin.caller, origin.surface);
-  // Native deployment roots and retained managed controls return to their controller, including
+  // Native deployment roots, retained controls and finite preset operations return to their controller, including
   // public read projections that omit private replay authorization. The daemon
   // reads that custody from the original Artifact; location grants no authority.
   // Ordinary Account proposals keep their app executor.
@@ -94,7 +95,8 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
       || actionId === 'deployments.environments.update'
         && isDeploymentEnvironmentUpdateNativeAdmissionV1(projectDeploymentNativeAdmissionV1(actionId, input.data))
       || actionId === 'deployments.targets.link' && !('contentArtifactId' in readRecord(input.data))
-      || isManagedRetainedControlInvocation(actionId, input.data))
+      || isManagedRetainedControlInvocation(actionId, input.data)
+      || isMachinePresetFiniteOperationActionIdV1(actionId))
     && origin.target?.kind === 'machine') return { kind: 'daemon', machineId: origin.target.machineId };
   if (placement === 'account' && origin.target?.kind === 'machine') {
     // An effect prepared through required daemon ingress retains that signer

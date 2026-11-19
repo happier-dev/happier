@@ -222,6 +222,43 @@ describe('resolveApprovalExecutor', () => {
       .toEqual({ kind: 'daemon', machineId: 'retained-controller' });
   });
 
+  it.each(['cli', 'ui'] as const)('retains an admitted preset Archive host through deferred %s approval and public reads', surface => {
+    const actionId = 'machines.presets.archive';
+    const input = { homeId: 'home', id: 'preset', expectedRevision: 3 };
+    const context = { surface, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
+      serverId: 'home', serverIdentityId: 'stable-home', runtimeAccountId: 'account',
+      actionRequestId: 'request', defaultSessionMachineId: 'original-host' };
+    const preview = { hostReviewedChildren: { children: [
+      { action: { pluginId: 'happier.machine.lima', localId: 'prepare-inspect' }, role: 'preparationInspect' },
+      { action: { pluginId: 'happier.machine.lima', localId: 'prepare-destroy' }, role: 'preparationDestroy' },
+    ] } };
+    // Metadata has no children; Account-target cloud cleanup has the same
+    // qualified roles as native cleanup, but selects no Machine target.
+    const cloudPreview = { hostReviewedChildren: { children: preview.hostReviewedChildren.children.map(child => ({
+      ...child, action: { ...child.action, pluginId: 'compute.example' },
+    })) } };
+    for (const entry of [
+      { target: undefined, preview: undefined },
+      { target: undefined, preview: cloudPreview },
+      { target: { kind: 'machine' as const, machineId: 'original-host' }, preview },
+    ]) {
+      const origin = buildApprovalExecutionOriginV1({ actionId, input, targetSessionId: null,
+        context: { ...context, ...(entry.target ? { externalActionTarget: entry.target } : {}) } });
+      const request = ApprovalRequestV2Schema.parse({ ...requestFor(actionId, input, surface),
+        executionOriginV1: origin, ...(entry.preview ? { preview: entry.preview } : {}) });
+      expect(request.executionOriginV1.target).toEqual(entry.target);
+      const expected = entry.target ? { kind: 'daemon', machineId: entry.target.machineId } : { kind: 'app', placement: 'account' };
+      expect(resolveApprovalExecutor(request)).toEqual(expected);
+      expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(request))))
+        .toEqual(expected);
+    }
+    const prepareId = 'machines.presets.prepare';
+    const prepareInput = { ...input, machineId: 'original-host' };
+    const prepareOrigin = buildApprovalExecutionOriginV1({ actionId: prepareId, input: prepareInput, targetSessionId: null, context });
+    const prepare = ApprovalRequestV2Schema.parse({ ...requestFor(prepareId, prepareInput, surface), executionOriginV1: prepareOrigin });
+    expect(resolveApprovalExecutor(prepare)).toEqual({ kind: 'daemon', machineId: 'original-host' });
+  });
+
   it.each(['cli', 'ui'] as const)('returns immediate and deferred retained controls to their controller across %s approval replay', surface => {
     for (const actionId of ['machines.managed.delete', 'machines.managed.power.set'] as const) {
       const request = requestFor(actionId, {

@@ -21,6 +21,7 @@ import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../../j
 import { MachineServiceLogsReadInputV1Schema } from '../../local/services/nativeLogsV1.js';
 import { isPresentUserHostInvocation } from '../invocationAuthority.js';
 import { isDaemonIndependentSessionRead } from '../originalExecution.js';
+import { isMachinePresetFiniteOperationActionIdV1 } from '../../machines/managed/machinePresetActionIdsV1.js';
 
 /** A signed reviewer may use the same Account reads as the local deciding person. */
 export function isPresentUserApprovalDecisionForOrigin(input: Readonly<{
@@ -283,7 +284,12 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
   const originalHomeSessionRead = isDaemonIndependentSessionRead(getActionSpec(params.actionId))
     && !externalAuthorization && !externalCredential && !externalTarget && caller.kind === 'host'
     && (surface === 'cli' || surface === 'mcp');
-  const machineId = originalAccountStop || originalHomeSessionRead ? '' : settingsTarget?.kind === 'daemon'
+  const placement = resolveActionExecutionPlacementForInput(getActionSpec(params.actionId), params.admittedInput ?? params.input, caller, surface);
+  // A finite Account preset operation reaches its native host through an
+  // explicitly selected target. An ambient default is not that admission.
+  const originalAccountPresetOperation = isMachinePresetFiniteOperationActionIdV1(params.actionId)
+    && placement === 'account' && !externalTarget && !externalAuthorization;
+  const machineId = originalAccountStop || originalHomeSessionRead || originalAccountPresetOperation ? '' : settingsTarget?.kind === 'daemon'
     ? settingsTarget.machineId
     : settingsTarget?.kind === 'account' && !externalAuthorization && caller.kind === 'host'
       && externalTarget?.kind !== 'machine'
@@ -292,7 +298,7 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
     || normalizeId(params.context.executionRunTargetMachineId)
     || externalAuthorization?.binding.machineId
     // Placement parses the admitted payload; durable approval input may omit live-only values.
-    || (resolveActionExecutionPlacementForInput(getActionSpec(params.actionId), params.admittedInput ?? params.input, caller, surface) === 'machine'
+    || (placement === 'machine'
       ? normalizeId(inputRecord.machineId) : '')
     || readLocalServiceControlActionRequest(params.actionId, params.input)?.target.machineId
     || normalizeId(params.context.defaultSessionMachineId)
