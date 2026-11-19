@@ -295,7 +295,7 @@ import {
 import {
     resolveSessionActivityComposerTranslate,
     resolveSessionActivityStatusBadgePresentation,
-    shouldRetainSessionActivityStatusBadge,
+    shouldDismissSessionActivityStatusBadge,
 } from '@/components/sessions/workState/sessionActivityPresentation';
 import { isSessionGoalEditingAvailable } from '@/components/sessions/workState/sessionGoalEditingAvailability';
 import { SessionWorkStatePopover } from '@/components/sessions/workState/SessionWorkStatePopover';
@@ -3736,13 +3736,14 @@ function SessionViewLoaded({
         // the question the chip above already answers, and on a run whose named agents have all
         // finished the two disagreed — this effect closed the open work-state popover while the chip
         // stayed on screen naming the workflow (FIX-F1).
-        if (shouldRetainSessionActivityStatusBadge({
+        if (shouldDismissSessionActivityStatusBadge({
             activeStatusBadgeKey,
             hasPrimaryWorkStateItem: Boolean(primaryWorkStateItem),
             canShowEmptyGoalControls: canEditSessionGoals,
             agentActivityCounts,
-        })) return;
-        setActiveStatusBadgeKey(null);
+        })) {
+            setActiveStatusBadgeKey(null);
+        }
     }, [activeStatusBadgeKey, agentActivityCounts, canEditSessionGoals, primaryWorkStateItem]);
     const isVoiceConversationSession = isVoiceConversationSystemSessionMetadata(session.metadata ?? null);
     const isHiddenSystemSessionSession = isHiddenSystemSession({ metadata: session.metadata ?? null });

@@ -86,17 +86,17 @@ export type SessionActivityStatusBadgePresentation = Readonly<{
  * the chip it belongs to stayed on screen. Handing this seam the raw tally leaves no room for a
  * second derivation to reappear at a call site.
  */
-export function shouldRetainSessionActivityStatusBadge(input: Readonly<{
+export function shouldDismissSessionActivityStatusBadge(input: Readonly<{
     activeStatusBadgeKey: string | null;
     hasPrimaryWorkStateItem: boolean;
     canShowEmptyGoalControls: boolean;
     /** The ONE agent-activity tally — the same object the chip's label is composed from. */
     agentActivityCounts: AgentActivityCounts;
 }>): boolean {
-    if (input.activeStatusBadgeKey !== SESSION_WORK_STATE_STATUS_BADGE_KEY) return false;
-    return input.hasPrimaryWorkStateItem
-        || input.canShowEmptyGoalControls
-        || hasLiveAgentActivity(input.agentActivityCounts);
+    return input.activeStatusBadgeKey === SESSION_WORK_STATE_STATUS_BADGE_KEY
+        && !input.hasPrimaryWorkStateItem
+        && !input.canShowEmptyGoalControls
+        && !hasLiveAgentActivity(input.agentActivityCounts);
 }
 
 /**
