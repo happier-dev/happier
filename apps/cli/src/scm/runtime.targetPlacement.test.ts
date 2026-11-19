@@ -15,6 +15,9 @@ import { runWithScmCommandOperation } from '@/scm/commandOperation';
 
 import { createHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
 import { runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { resolveGitCheckpointBackendContext } from '@/scm/checkpoints/gitCheckpointAdapter';
+import { buildRepositoryCheckpointRefs } from '@/scm/checkpoints/refs';
+import { runRepositoryCheckpointPhase } from '@/scm/checkpoints/repositoryCheckpointPhase';
 import { startGitSmartHttpFixture } from '@/testkit/scm/gitSmartHttpFixture';
 import { materializeManagedProjectClone, runScmRepositoryCloneRoute } from '@/scm/rpc/repositoryProvisioningDispatch';
 import { createScmBackendRegistry } from '@/scm/registry';
@@ -64,6 +67,50 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         holder?.detach();
         await agent?.terminateGroup({ graceMs: 100 });
         await rm(directory, { recursive: true, force: true });
+    });
+
+    it('captures a copied dirty workspace checkpoint through disjoint holder paths', async () => {
+        const repository = join(root, 'checkpoint-copy');
+        const addressedRoot = join(directory, 'controller-checkpoints');
+        const addressedRepository = join(addressedRoot, 'checkpoint-copy');
+        await mkdir(repository);
+        await mkdir(addressedRepository, { recursive: true });
+        const git = (...args: string[]) => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
+        git('init', '-q');
+        git('config', 'user.email', 'test@example.com');
+        git('config', 'user.name', 'Test');
+        await writeFile(join(repository, 'README.md'), 'committed\n');
+        git('add', 'README.md');
+        git('commit', '-qm', 'baseline');
+        await writeFile(join(repository, 'README.md'), 'dirty tracked snapshot\n');
+        await writeFile(join(repository, 'host-sentinel.txt'), 'copied untracked snapshot\n');
+        await writeFile(join(addressedRepository, 'README.md'), 'controller unchanged\n');
+        const indexBefore = await readFile(join(repository, '.git/index'));
+        const source = createHolderWorkspaceSource({ id: 'checkpoint-copy', rootPath: addressedRoot,
+            guestRootPath: root, holder, helperPath: helperExecutable! });
+        await runWithWorkspaceSource(source, async () => {
+            const context = await resolveGitCheckpointBackendContext({ cwd: addressedRepository });
+            expect(context?.detection.rootPath).toBe(addressedRepository);
+            if (!context?.checkpointGitPaths) throw new Error('Checkpoint repository paths unavailable');
+            const refs = buildRepositoryCheckpointRefs({ scopeId: 'placed-copy', messageId: 'message', turnId: 'turn' });
+            if (!refs.messageStart || !refs.turnFinal) throw new Error('Checkpoint refs unavailable');
+            const request = { cwd: context.cwd, projectKey: context.projectKey,
+                rootPath: context.detection.rootPath!, checkpointGitPaths: context.checkpointGitPaths };
+            const baseline = await runRepositoryCheckpointPhase({ repository: request, checkpointRef: refs.messageStart }, {});
+            expect(baseline.captured).toMatchObject({ success: true });
+            if (!baseline.captured.success) throw new Error('Checkpoint baseline unavailable');
+            await writeFile(join(repository, 'muse-output.txt'), 'MACH_WAVE_176_A_MUSE_WRITE\n');
+            const final = await runRepositoryCheckpointPhase({ repository: request, checkpointRef: refs.turnFinal,
+                diff: { baseRef: refs.messageStart, baseRefSource: 'message_start', baseCommitSha: baseline.captured.commitSha } }, {});
+            expect(final.captured).toMatchObject({ success: true });
+            expect(final.diff).toMatchObject({ success: true, contentConfidence: 'exact', files: [
+                expect.objectContaining({ filePath: 'muse-output.txt', changeKind: 'added', source: 'scm_checkpoint' }),
+            ] });
+        });
+        expect(await readFile(join(repository, '.git/index'))).toEqual(indexBefore);
+        expect(await readFile(join(addressedRepository, 'README.md'), 'utf8')).toBe('controller unchanged\n');
+        await expect(readFile(join(addressedRepository, 'muse-output.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(readFile(join(addressedRepository, '.git/index'))).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
     it('prepares and publishes the selected branch through the target filesystem', async () => {
