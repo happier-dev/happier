@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
 import {
+    readTriageActionLaunchModeV1,
     TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
     TRIAGE_DEFAULT_ACTIONS_V1,
 } from '../settings/actions.js';
@@ -28,6 +29,29 @@ import type { TriageDataActionContext } from './dataContext.js';
 const NO_AGENT_ACTIONS = { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [] }), dispose: () => {} }) };
 
 describe('the configured-action Actions', () => {
+    it('keeps the explicit code review target and pull-request workspace when renamed', async () => {
+        const testkit = createTestkitAccountKv();
+        const deps = { catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'inspect-pr' };
+        const configured = {
+            enabled: true, appliesTo: ['pullRequest'], profileId: null, workspaceMode: 'pull_request',
+            target: { kind: 'reviewStart', promptInvocationId: 'pr-review-prompt' },
+        };
+        const write = (input: unknown) => administerTriageAction(TriageAdministerActionInputV1Schema.parse(input), deps);
+        const created = await write({ v: 1, kind: 'create', expectedRevision: 'absent', label: 'Run a code review', ...configured });
+        if (created.status !== 'applied' || created.revision === undefined) throw new Error('Review configuration was not saved');
+        expect(await write({ v: 1, kind: 'update', actionId: 'inspect-pr', expectedRevision: created.revision,
+            label: 'Inspect this change', ...configured })).toMatchObject({ status: 'applied' });
+
+        const catalog = TriageReadActionsResultV1Schema.parse(await readTriageActionsForSurface({ v: 1 }, deps));
+        const explicitReview = catalog.actions.find(action => action.actionId === 'inspect-pr');
+        const defaultReview = catalog.actions.find(action => action.actionId === 'review');
+        expect(explicitReview).toMatchObject({ label: 'Inspect this change', ...configured });
+        expect(defaultReview).toMatchObject({ label: 'Review', target: { kind: 'agent', delivery: 'compose' } });
+        if (!explicitReview || !defaultReview) throw new Error('Expected both saved and default actions');
+        expect(readTriageActionLaunchModeV1(explicitReview)).toBe('start');
+        expect(readTriageActionLaunchModeV1(defaultReview)).toBe('review');
+    });
+
     it('offers the Workflows owner record only for Workflow Runs through the shared catalog', async () => {
         const testkit = createTestkitAccountKv();
         const context = { signal: new AbortController().signal,
