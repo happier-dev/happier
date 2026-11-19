@@ -47,7 +47,7 @@ import {
   usePlanText,
   UsagePlanDisclosure,
 } from './plans/UsagePlanParts';
-import { readUsagePoolFirstResetAtMs, readUsagePoolMembers, UsagePoolQueue, UsagePoolSteps } from './plans/UsagePoolOrder';
+import { readUsagePoolAccount, readUsagePoolMembers, readUsagePoolNextQuotaRetry, UsagePoolQueue, UsagePoolSteps } from './plans/UsagePoolOrder';
 import { formatMoment } from '@/utils/datetime/formatMoment';
 
 /**
@@ -156,11 +156,28 @@ function readNextLimitsAccount(
     const state = selections.get(pool.key);
     if (!state || typeof state === 'string' || 'status' in state || !state.selection.selected) continue;
     const { profileId } = state.selection.selected;
-    const picked = accounts.find(account => pool.accountKeys.includes(account.key) && account.accountId === profileId);
+    const picked = readUsagePoolAccount(pool, accounts, profileId);
     if (picked) return picked;
   }
   const solo = accounts.length === 1 ? accounts[0] : undefined;
   return solo && !pools.some(pool => pool.accountKeys.includes(solo.key)) && (solo.headline?.remainingFraction ?? 0) > 0 ? solo : null;
+}
+
+function readNextLimitsQuotaRetry(
+  pools: readonly UsagePlanPool[],
+  selections: ReadonlyMap<string, UsagePoolSelectionState>,
+  accounts: readonly UsagePlanAccount[],
+  nowMs: number,
+): Readonly<{ account: UsagePlanAccount; retryAtMs: number }> | null {
+  for (const pool of pools) {
+    const state = selections.get(pool.key);
+    if (!state || typeof state === 'string' || 'status' in state) continue;
+    const retry = readUsagePoolNextQuotaRetry(state.selection, nowMs);
+    if (!retry) continue;
+    const account = readUsagePoolAccount(pool, accounts, retry.profileId);
+    if (account) return { account, retryAtMs: retry.retryAtMs };
+  }
+  return null;
 }
 
 /** A run's identity as a list key: an account can belong to several pools, so the account's own key alone repeats across runs. */
@@ -212,29 +229,19 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
     [projection.accounts, nameOf],
   );
   const next = readNextLimitsAccount(selectionPools, selections, projection.accounts);
-  const selectedResets = selectionPools.map(pool => {
-    const state = selections.get(pool.key);
-    return state && typeof state === 'object' && !('status' in state) && state.memberStatus === 'all_excluded'
-      ? readUsagePoolFirstResetAtMs(state.selection, nowMs) : null;
-  });
-  // A pool whose every member is used up has no next account; its useful headline is when the first one comes back
-  // (acceptance 11-18 #3), the selector's own earliest witnessed return.
-  const spentPoolIndex = selectedResets.findIndex(time => time !== null);
-  const spentPool = spentPoolIndex >= 0 ? { pool: selectionPools[spentPoolIndex]!, atMs: selectedResets[spentPoolIndex]! } : null;
-  const firstPoolReset = selectedResets.length > 0 && selectedResets.every(time => time !== null)
-    && projection.accounts.every(account => selectionPools.some(pool => pool.accountKeys.includes(account.key)))
-    ? Math.min(...selectedResets) : null;
   // Until the selector answers, which account leads is not known: the headline's room is held and no caption is said,
   // so the tightest standing in never turns into the next account after arrival (acceptance 11-13 #2).
   const deciding = next === null && [...selections.values()].some(state => state === 'loading');
-  const spentReturn = next === null && !deciding ? spentPool : null;
+  const spentRetry = next === null && !deciding
+    ? readNextLimitsQuotaRetry(selectionPools, selections, projection.accounts, nowMs)
+    : null;
   // Beside other widgets the headline account is one figure and one meter and the rest one line: the next account
   // always, the tightest standing in when the pooled bar has no room for a label per segment. Listing them instead
   // grew the column ~240 px past the Daily chart beside it (R6 N12); their figures are Plans' to compare.
   const compact = pooled && (next !== null || deciding
     || width !== null && width / Math.max(1, drawn.length) < POOLED_COLUMN_LABEL_MIN_WIDTH_PX);
   // The caption says what the headline is: the next session's account, or the tightest of every plan standing in.
-  useWidgetFrameBodyCaption(deciding ? null : t(next !== null || spentReturn !== null ? 'usage.board.plans.limitsCaption' : 'usage.board.plans.capacityCaption'));
+  useWidgetFrameBodyCaption(deciding ? null : t(next !== null || spentRetry !== null ? 'usage.board.plans.limitsCaption' : 'usage.board.plans.capacityCaption'));
   const nextWindow = next?.headline ?? null;
   const tightest = deciding ? null : next === null ? projection.tightest
     : nextWindow !== null && nextWindow.remainingFraction !== null
@@ -296,7 +303,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
     : next !== null && (pooled || !lone) ? t('usage.board.plans.limitsNextUnit', { name: tightestName.title })
     : lone ? t('usage.board.plans.capacityLoneUnit')
     : t('usage.board.plans.capacityTightestUnit', { name: tightestName.title });
-  const shownReset = firstPoolReset ?? tightest?.window.resetAtMs ?? null;
+  const shownReset = tightest?.window.resetAtMs ?? null;
   // Equal cells while they fit; a narrow frame (a phone) lists them a row each rather than shrinking them.
   const listed = !pooled && width !== null && width / Math.max(1, cellCount) < CELL_MIN_WIDTH_PX;
   const renderCells = (run: Run) => run.cells.map((cell) => (
@@ -318,20 +325,19 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         burst={!tile}
         testID={`${props.testID}.resetBurst`}
       />
-      {spentReturn !== null ? (
+      {spentRetry !== null ? (
         <View style={styles.hero} testID={`${props.testID}.firstBack`}>
           <View style={styles.heroLine}>
             <HappierDataMetric testID={`${props.testID}.firstBack.time`} theme={chartTheme} size="hero"
-              label={t('usage.board.plans.capacityFirstBack')} value={formatMoment(spentReturn.atMs, nowMs)} />
-            <Text style={[styles.heroUnit, text.title]} numberOfLines={2}>
-              {spentReturn.pool.name
-                ? t('usage.board.plans.capacityFirstBackIn', { pool: spentReturn.pool.name })
-                : t('usage.board.plans.capacityFirstBack')}
-            </Text>
+              label={t('usage.widgets.usage_capacity')}
+              value={t('usage.board.plans.capacityNextKnownRetry', {
+                account: nameOf(spentRetry.account).title,
+                time: formatMoment(spentRetry.retryAtMs, nowMs),
+              })} />
           </View>
           <Text style={[styles.subline, text.detail]}>
             {[
-              formatPlanCountdown(spentReturn.atMs, nowMs),
+              formatPlanCountdown(spentRetry.retryAtMs, nowMs),
               compact ? null : t('usage.board.plans.capacityAccounts', { count: projection.readAccountCount }),
               oldestReadMs !== null ? t('usage.board.plans.cellStale', { time: formatMoment(oldestReadMs, nowMs) }) : null,
             ].filter(Boolean).join(' · ')}
@@ -389,7 +395,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         </View>
       ) : null}
       {compact ? (
-        tightest !== null && spentReturn === null ? <View style={styles.nextMeter} testID={`${props.testID}.nextMeter`}>
+        tightest !== null && spentRetry === null ? <View style={styles.nextMeter} testID={`${props.testID}.nextMeter`}>
           <MeterBar height={8} tone={tightest.window.tone !== 'success' ? tightest.window.tone : 'neutral'}
             fillFraction={tightest.window.remainingFraction ?? 0} {...(tightest.account.stale ? { fillOpacity: 0.45 } : {})} />
         </View> : null

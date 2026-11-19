@@ -63,6 +63,14 @@ export type UsagePoolMember = Readonly<{
   exclusion: Selection['excluded'][number] | null;
 }>;
 
+export function readUsagePoolAccount(
+  pool: UsagePlanPool,
+  accounts: readonly UsagePlanAccount[],
+  accountId: string,
+): UsagePlanAccount | null {
+  return accounts.find(account => pool.accountKeys.includes(account.key) && account.accountId === accountId) ?? null;
+}
+
 /**
  * The selector's own answer, row by row: its eligible order first, then the members it left out in the
  * order its trace lists them. This reads the trace; it never compares two members.
@@ -74,12 +82,6 @@ export function readUsagePoolMembers(
   activeAccountRef: Extract<UsagePoolSelectionState, { selection: Selection }>['activeAccountRef'],
 ): UsagePoolMember[] {
   const trace = selection.decisionTrace;
-  const accountOf = (accountId: string) =>
-    accounts.find(
-      (account) =>
-        pool.accountKeys.includes(account.key) &&
-        account.accountId === accountId,
-    ) ?? null;
   const selectedId = activeAccountRef?.accountId ?? null;
   const ordered = trace.orderedEligibleCandidates.map(
     (candidate) => candidate.profileId,
@@ -92,21 +94,17 @@ export function readUsagePoolMembers(
   );
   return [...ordered, ...rest].map((accountId, index) => {
     const exclusion = selection.excluded.find((entry) => entry.profileId === accountId) ?? null;
-    return { accountId, account: accountOf(accountId), rank: index < ordered.length ? index + 1 : null,
+    return { accountId, account: readUsagePoolAccount(pool, accounts, accountId), rank: index < ordered.length ? index + 1 : null,
       selected: accountId === selectedId && exclusion === null,
       candidate: trace.orderedEligibleCandidates[index] ?? null,
       evidence: trace.candidates.find((entry) => entry.profileId === accountId) ?? null, exclusion };
   });
 }
 
-/** Earliest witnessed retry when the selector says the pool is blocked by exhaustion. */
-export function readUsagePoolFirstResetAtMs(selection: Selection, nowMs: number): number | null {
-  if (selection.reason !== 'no_eligible_members' || selection.excluded.some(entry => entry.reason !== 'quota_exhausted')) return null;
-  let first: number | null = null;
-  for (const { retryAtMs } of selection.excluded) {
-    if (retryAtMs != null && retryAtMs > nowMs) first = Math.min(first ?? retryAtMs, retryAtMs);
-  }
-  return first;
+/** A retained deadline only describes an upcoming retry while it is in the future. */
+export function readUsagePoolNextQuotaRetry(selection: Selection, nowMs: number): Selection['nextQuotaRetry'] {
+  const retry = selection.nextQuotaRetry;
+  return retry && retry.retryAtMs > nowMs ? retry : undefined;
 }
 
 const BASIS_KEYS = {
@@ -358,7 +356,7 @@ function PoolQueue(
       />
       {/* Every member used up: there is no order to follow until one comes back, and the pool above already says when
           each returns, so the list is one line; Why keeps every member's reason (acceptance 11-18 #3, #7). */}
-      {state.memberStatus === 'all_excluded' && readUsagePoolFirstResetAtMs(selection, props.nowMs) !== null ? (
+      {readUsagePoolNextQuotaRetry(selection, props.nowMs) ? (
         <Text testID={`${props.testID}.allUsedUp`} style={[styles.quiet, text.detail]}>{t('usage.board.plans.queueAllUsedUp')}</Text>
       ) : <>
       <Text style={[styles.quiet, text.detail]}>{strategy.description}</Text>
@@ -499,7 +497,7 @@ export function UsagePoolSteps(props: PoolOrderProps) {
         if (state.memberStatus === 'none_known') {
           return <UsagePlanSectionHead key={pool.key} title={label} meta={!sharedCause && state.refreshError ? unreadText(state.refreshError) : null} />;
         }
-        if (state.memberStatus === 'all_excluded' && readUsagePoolFirstResetAtMs(state.selection, props.nowMs) !== null) {
+        if (readUsagePoolNextQuotaRetry(state.selection, props.nowMs)) {
           // No step to take until one comes back; each member's return is in the rows above (acceptance 11-18 #7).
           return (
             <View key={pool.key} testID={`${props.testID}.${pool.groupId}`} style={styles.pool}>

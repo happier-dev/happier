@@ -3,7 +3,7 @@ import * as React from 'react';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { renderScreen as renderScreenAtHost, standardCleanup } from '@/dev/testkit';
+import { collectNodeText, renderScreen as renderScreenAtHost, standardCleanup } from '@/dev/testkit';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { OverlayPortalProvider, OverlayPortalHost } from '@/components/ui/popover/OverlayPortal';
 import { installRealActionExecutorModuleLoader, serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -11,7 +11,7 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import { PENDING_INPUT_PROTOCOL_VERSION_V4 } from '@happier-dev/protocol/clientCompatibility/primitives';
 import { PendingRequestedActionV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { ConnectedServicePoolSelectionGetRequestV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
+import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { getPreferredLanguage, preloadTranslationsForSettings, setPreferredLanguageFromSettings, t } from '@/text';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { ModalProvider } from '@/modal';
@@ -1186,26 +1186,41 @@ it('gives a pool the selector lists no member for one quiet line, not a strategy
   expect(screen.getTextContent()).toContain(t('usage.board.plans.whyNone'));
 });
 
-it('heads a wholly used-up pool with when its first account comes back, and keeps its order to one line (acceptance 11-18 #3, #7)', async () => {
+it('shows the known retry from the selector for a wholly used-up pool and keeps its order to one line', async () => {
   const now = Date.now();
-  const weekly: Meter = { meterId: 'weekly', label: 'Weekly', usedPct: 100, resetAtMs: now + 2 * DAY, windowDurationMs: 7 * DAY };
+  const weekly: Meter = { meterId: 'weekly', label: 'Weekly', usedPct: 100, resetAtMs: now + 4 * DAY, windowDurationMs: 7 * DAY };
   const group = { service, groupId: 'spent' };
-  const candidates = ['a', 'b'].map(profileId => ({ profileId }));
-  const selection = { selected: null, reason: 'no_eligible_members' as const,
-    excluded: [{ profileId: 'a', reason: 'quota_exhausted' as const, retryAtMs: now + 2 * DAY },
-      { profileId: 'b', reason: 'quota_exhausted' as const, retryAtMs: now + DAY }],
-    decisionTrace: { activeProfileId: null, reason: 'no_eligible_members' as const, strategy: 'expiry_first' as const,
-      selectionBasis: 'no_eligible_members' as const, sticky: false, orderedEligibleCandidates: [], candidates } };
-  const props = bodyProps(['a', 'b'].map((id) => quotaRead(id, now, [weekly])), [{ query, value: [{ group,
-    memberAccountIds: ['a', 'b'], activeAccountId: null,
-    selection: { status: 'available', machineId: 'witnessed-selector', value: { group, observedAtMs: now, selection } } }] }]);
+  const selection: ConnectedServicePoolSelectionV1 = { selected: null, reason: 'no_eligible_members',
+    excluded: [{ profileId: 'a', reason: 'quota_exhausted', retryAtMs: now + 2 * DAY },
+      { profileId: 'b', reason: 'quota_exhausted', retryAtMs: now + DAY }],
+    decisionTrace: { activeProfileId: null, reason: 'no_eligible_members', strategy: 'expiry_first',
+      selectionBasis: 'no_eligible_members', sticky: false, orderedEligibleCandidates: [],
+      candidates: ['a', 'b'].map(profileId => ({
+        profileId, decision: 'excluded', exclusionReason: 'quota_exhausted', quotaEvidence: { status: 'fresh', exhausted: true },
+      })) } };
+  const accountLabel = 'Work account';
+  const reads = [
+    quotaRead('a', now, [weekly], {}, { accountLabel }),
+    quotaRead('b', now, [weekly], {}, { accountLabel: 'Personal account' }),
+  ];
+  const nextQuotaRetry = { profileId: 'a', retryAtMs: now + 3 * DAY };
+  const propsFor = (poolSelection: ConnectedServicePoolSelectionV1) => bodyProps(reads, [{ query, value: [{
+    group, memberAccountIds: ['a', 'b'], activeAccountId: null,
+    selection: { status: 'available', machineId: 'witnessed-selector', value: { group, observedAtMs: now, selection: poolSelection } },
+  }] }]);
   const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
-  const screen = await renderScreen(wrap(<UsageCapacityWidget {...props} id="usage_capacity" testID="cap" />));
-  expect(screen.findByTestId('cap.firstBack')).toBeTruthy();
-  expect(screen.getTextContent()).toContain(formatMoment(now + DAY, now));
+  const screen = await renderScreen(wrap(<UsageCapacityWidget {...propsFor({ ...selection, nextQuotaRetry })} id="usage_capacity" testID="cap" />));
+  const headline = screen.findHostByTestId('cap.firstBack');
+  const headlineText = headline?.findAllByType('Text').flatMap(collectNodeText).join(' ');
+  expect.soft(headlineText).toContain(accountLabel);
+  expect.soft(headlineText?.replace(/\s/g, ' ')).toContain(formatMoment(nextQuotaRetry.retryAtMs, now).replace(/\s/g, ' '));
   expect(screen.findByTestId('cap.tightest')).toBeFalsy();
   expect(screen.findByTestId('cap.usedFirst.spent.allUsedUp')).toBeTruthy();
   expect(screen.findByTestId('cap.usedFirst.spent.a')).toBeFalsy();
+
+  await screen.update(wrap(<UsageCapacityWidget {...propsFor(selection)} id="usage_capacity" testID="cap" />));
+  expect.soft(screen.findByTestId('cap.firstBack')).toBeNull();
+  expect(screen.findHostByTestId('cap.tightest')?.props.accessibilityLabel).toContain('0%');
 });
 
 it('states one unreadable-order cause once under every pool that shares it (H30)', async () => {
