@@ -15,6 +15,7 @@ import { inspectBuiltinTailscaleAccessProvider } from '../../../../packages/cli-
 import { projectMachineReachabilityObservation } from '@/machines/reachability/readMachineReachability';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { CORE_MACHINE_ROLE_IDS_V1, DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, MachineRolesGetResultV1Schema,
     projectPublishedMachineRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { MachineAccessGrantsListResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -74,6 +75,21 @@ import {
 const { execFile } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
 const execute = promisify(execFile);
 type Invoke = (name: string, input: unknown) => Promise<ActionExecuteResult>;
+function createInvoke(
+    executor: ReturnType<typeof createCliActionExecutorFromCredentials>,
+    serverId: string,
+    target?: Readonly<{ kind: 'machine'; machineId: string }>,
+): Invoke {
+    return (name, input) => {
+        const action = parseQualifiedPluginActionId(name);
+        const actionId = action ? 'action.invoke' : ActionIdSchema.parse(name);
+        return executor.execute(actionId, action ? { action, input } : input, {
+            surface: 'cli', serverId, ...(target ? { externalActionTarget: target } : {}),
+            actionRequestId: randomUUID(), authority: 'present_user', presentUserConfirmation: { actionId },
+        });
+    };
+}
+
 type DeploymentSocketHomeFixture = Awaited<ReturnType<typeof createDeploymentSocketHome>>;
 type EnvironmentDetail = Extract<z.infer<typeof DeploymentEnvironmentGetResultV1Schema>, { ok: true }>;
 type TelemetryJourneyActor = Readonly<{
@@ -278,11 +294,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
                     externalActionClient: true, machineId: home.machineId, serverId: home.serverId,
                     serverIdentityId: home.serverId, serverApiUrl: home.baseUrl });
-                const invoke: Invoke = (name, input) => {
-                    const actionId = ActionIdSchema.parse(name);
-                    return executor.execute(actionId, input, { surface: 'cli', serverId: home.serverId,
-                        actionRequestId: randomUUID(), authority: 'present_user', presentUserConfirmation: { actionId } });
-                };
+                const invoke = createInvoke(executor, home.serverId);
                 const accepted = async (name: string, input: unknown) => {
                     const result = await support.settlePublicApproval(invoke, await invoke(name, input));
                     let nativeDiagnostic: ActionExecuteResult | undefined;
@@ -311,11 +323,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     const readerExecutor = createCliActionExecutorFromCredentials({ credentials: readerCredentials,
                         readCredentials: async () => readerCredentials, externalActionClient: true,
                         serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl });
-                    const invokeReader: Invoke = (name, input) => {
-                        const actionId = ActionIdSchema.parse(name);
-                        return readerExecutor.execute(actionId, input, { surface: 'cli', serverId: home.serverId,
-                            actionRequestId: randomUUID(), authority: 'present_user', presentUserConfirmation: { actionId } });
-                    };
+                    const invokeReader = createInvoke(readerExecutor, home.serverId);
                     const acceptedReader = async (name: string, input: unknown) => {
                         const result = await support.settlePublicApproval(invokeReader, await invokeReader(name, input));
                         expect(result.ok, JSON.stringify(result.ok ? { name, state: 'accepted' }
@@ -421,7 +429,17 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                         const containers = await execute('docker', ['ps', '--all', '--filter', filter, '--quiet']);
                         for (const id of containers.stdout.trim().split('\n').filter(Boolean)) await execute('docker', ['rm', '--force', '--volumes', id]);
                         const networks = await execute('docker', ['network', 'ls', '--filter', filter, '--quiet']);
-                        for (const id of networks.stdout.trim().split('\n').filter(Boolean)) await execute('docker', ['network', 'rm', id]);
+                        for (const id of networks.stdout.trim().split('\n').filter(Boolean)) {
+                            // The private relay has no Compose label. Clean up remaining
+                            // endpoints by exact ID on this isolated fixture network.
+                            const network = await execute('docker', ['network', 'inspect', '--format', '{{json .Containers}}', id]);
+                            const endpoints = z.record(z.string().regex(/^[a-f0-9]{64}$/u), z.unknown())
+                                .nullable().parse(JSON.parse(network.stdout));
+                            for (const endpoint of Object.keys(endpoints ?? {})) {
+                                await execute('docker', ['rm', '--force', '--volumes', endpoint]);
+                            }
+                            await execute('docker', ['network', 'rm', id]);
+                        }
                     });
                     return environmentId;
                 };
@@ -753,12 +771,9 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 expect(movedQueries.some(query => queries.items.some(previous => previous.id === query.id))).toBe(false);
                 if (process.env.HAPPIER_RUN_DBW_METRICS_F15 === '1' || process.env.HAPPIER_RUN_DBW_COSTS_F17 === '1'
                     || process.env.HAPPIER_RUN_DBW_EXCEPTIONS_F18A === '1') {
-                    const invokeOnCollector: Invoke = (name, input) => {
-                        const actionId = ActionIdSchema.parse(name);
-                        return executor.execute(actionId, input, { surface: 'cli', serverId: home.serverId,
-                            externalActionTarget: { kind: 'machine', machineId: secondCollector.machineId },
-                            actionRequestId: randomUUID(), authority: 'present_user', presentUserConfirmation: { actionId } });
-                    };
+                    const invokeOnCollector = createInvoke(executor, home.serverId, {
+                        kind: 'machine', machineId: secondCollector.machineId,
+                    });
                     const acceptedOnCollector = async (name: string, input: unknown) => {
                         const result = await support.settlePublicApproval(invokeOnCollector, await invokeOnCollector(name, input));
                         expect(result.ok, JSON.stringify(result)).toBe(true);
