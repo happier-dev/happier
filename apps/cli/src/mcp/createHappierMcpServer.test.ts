@@ -1183,6 +1183,115 @@ describe('createHappierMcpServer real host admission', () => {
     } finally { await authority.close(); await daemon.close(); await plugin?.dispose(); }
   });
 
+  it.each(['Musee 1.2', 'unknown model', ''] as const)(
+    'keeps the Voice carrier model lookup and child creation aligned over native MCP (%s)',
+    async query => {
+      const sessionId = 'c666666666666666666666671';
+      const childId = 'c666666666666666666666672';
+      const agentTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
+      const agentTargetKey = 'agent:happier.agent.codex/codex';
+      const executionTarget = { serverId: 'test-home', machineId: 'worker' };
+      const implementationIdentity = { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' };
+      const application = { agentTargetKey, implementationIdentity, endpointTemplateId: 'responses', protocol: 'openai-responses' };
+      const { source, ...teamSelection } = { source: 'team_resource', teamId: 'team-1', resourceId: 'muse',
+        expectedResourceRevision: 2, deliveryMode: 'brokered', agentTargetKey, modelId: 'muse-spark-1.2' } as const;
+      const modelRef = { source, ...teamSelection };
+      const resource = { id: 'muse', teamId: 'team-1', resourceRevision: 2,
+        displayName: { content: { t: 'plain', v: 'Engineering' }, recipientEnvelope: null },
+        sourceOwnerDisplayName: null, readiness: { kind: 'available' }, recoveryAction: null,
+        mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
+        connectedServiceSelections: [], sourcePresentation: { kind: 'connected_service',
+          service: { pluginId: 'happier.agent.muse', localId: 'muse-account' } },
+        providerModels: [{ selection: { kind: 'team_credential_provider_model', ...teamSelection },
+          descriptor: { id: teamSelection.modelId, name: 'Muse 1.2' }, application, sourceRevision: 'rev-2', availability: 'available' }],
+      };
+      const { createActionExecutor, NO_TEAM_CAPABILITIES_V1 } = await import('@happier-dev/protocol');
+      const { buildCommittedLaunchMetadata } = await import('@/agent/runtime/createSessionMetadata');
+      const { SessionModelSelectionV2Schema, sessionModelSelectionV2TeamBindingIntent } = await import('@happier-dev/protocol/providers/selection/v2');
+      const persisted = new Map<string, { metadata: unknown; bindings: unknown }>();
+      type MachineProjection = NonNullable<Awaited<ReturnType<NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['machinePluginProjectionRead']>>>>;
+      const executor = createActionExecutor({
+        agentsModelsList: async () => ({ items: [{ id: 'native', name: 'Native' }], source: 'dynamic' }),
+        resolveSessionSpawnAgentInventorySelection: async () => ({ backendTargetKey: agentTargetKey }),
+        machinePluginProjectionRead: async () => ({
+          agentsById: { codex: { identity: agentTarget.identity, providerRequirements: { acceptsProtocols: ['openai-responses'] } } },
+          familiesById: { providers: { entriesById: { broker: { id: 'happier.provider.cliproxyapi/cliproxyapi', provenance: 'first_party',
+            definition: { endpointTemplates: [{ id: 'responses', protocol: 'openai-responses' }], managedRuntime: { endpointTemplateIds: ['responses'] } },
+          } } } },
+        }) as unknown as MachineProjection,
+        homeDomainAction: async ({ actionId }) => actionId === 'teams.list'
+          ? { items: [{ id: 'team-1', name: 'Engineering', description: null, logo: null, archivedAt: null, recovery: null,
+            viewerRole: 'member', capabilities: NO_TEAM_CAPABILITIES_V1, counts: null,
+            admission: { historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' } },
+            policy: { v: 1, sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed',
+              defaultSessionHistoryAccess: 'from_membership', admissionMode: 'invite_only', authenticationPolicy: null },
+          }], nextCursor: null }
+          : { resources: [resource], failures: [], nextCursor: null },
+        providerActionExecute: async () => ({ ok: true, result: { status: 'success', agentTargetKey, groups: [], teamCredentialResources: [resource] } }),
+        sessionSpawnNew: async args => {
+          // The launch transport and Home store are fixture boundaries. Project the real committed
+          // metadata and binding from the exact selection admitted by the Action.
+          const selection = args.modelSelection?.v === 2 ? args.modelSelection : undefined;
+          const metadata = buildCommittedLaunchMetadata({ directory: '/repo', options: { modelSelection: args.modelSelection } });
+          persisted.set(childId, { metadata, bindings: selection ? [sessionModelSelectionV2TeamBindingIntent(selection)] : undefined });
+          return { type: 'success', disposition: 'created', sessionId: childId, executionTarget,
+            organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
+        },
+      });
+      const { projectRequesterAgentStartPolicyV1 } = await import('@/daemon/sessionEncryption/requesterAgentStartPolicy');
+      const authority = await createSessionDaemonAuthorityFixture({ sessionId,
+        agentStartPolicy: projectRequesterAgentStartPolicyV1(accountSettingsParse({})),
+        // The admitted Voice occurrence selects this invocation at the daemon boundary.
+        execute: operation => executor.execute(ActionIdSchema.parse(operation.actionId), operation.input, {
+          surface: 'voice', authority: 'present_user', actionCaller: { kind: 'host' },
+          serverId: executionTarget.serverId, defaultSessionMachineId: executionTarget.machineId,
+          actionRequestId: operation.requestId,
+        }) });
+      const runtime = createHappierMcpServer(hostClient(sessionId, {
+        getRunActionInvocation: () => ({ surface: 'voice', authority: 'present_user', caller: { kind: 'host' } }),
+        getActiveTurnAdmissionWitness: () => ({ turnId: 'catalog-turn', inputId: 'catalog-input', userMessageSeq: 1, userMessageSeqs: [1],
+          causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' } }),
+        getCurrentSessionLocation: () => ({ machineId: executionTarget.machineId, path: '/repo' }),
+      }));
+      try {
+        await withMcpClient(runtime, async client => {
+          const call = async (name: string, args: Record<string, unknown>) => {
+            const reply = CallToolResultSchema.parse(await client.callTool({ name, arguments: args }));
+            const content = reply.content.find(item => item.type === 'text');
+            if (content?.type !== 'text') throw new Error('Missing native MCP result');
+            return { isError: reply.isError, payload: JSON.parse(content.text) };
+          };
+          let modelSelection;
+          if (query) {
+            const lookup = await call('action_options_resolve', { actionId: 'session.spawn_new', fieldPath: 'modelSelection',
+              query, draftInput: { agentTarget, executionTarget } });
+            if (query === 'unknown model') {
+              expect(lookup).toMatchObject({ isError: true, payload: { errorCode: 'provider_model_not_found',
+                details: { candidates: expect.arrayContaining([expect.objectContaining({ value: modelRef })]) } } });
+              expect(persisted.size).toBe(0);
+              return;
+            }
+            expect(lookup).toMatchObject({ payload: { options: [{ value: modelRef }] } });
+            modelSelection = SessionModelSelectionV2Schema.parse({ v: 2, ref: lookup.payload.options[0].value, updatedAt: 1 });
+          }
+          const spawn = await call('action_execute', { actionId: 'session.spawn_new', input: {
+            agentTarget, executionTarget, directory: { kind: 'path', path: '/repo' }, ...(modelSelection ? { modelSelection } : {}),
+          } });
+          expect(spawn).toMatchObject({ payload: { sessionId: childId } });
+          expect(persisted.get(childId)).toMatchObject({ bindings: modelSelection ? [
+            { slot: { kind: 'provider_model' }, teamId: 'team-1', resourceId: 'muse', expectedResourceRevision: 2,
+              deliveryMode: 'brokered', providerModelSelection: { agentTargetKey, modelId: 'muse-spark-1.2' } },
+          ] : undefined });
+          if (modelSelection) {
+            expect(persisted.get(childId)?.metadata).toMatchObject({ modelSelectionIntentV2: modelSelection });
+          } else {
+            expect(persisted.get(childId)?.metadata).not.toHaveProperty('modelSelectionIntentV2');
+          }
+        });
+      } finally { await authority.close(); }
+    },
+  );
+
   it.each(['workflow.run.start', 'workflow.validate'] as const)('discovers recursive Workflow block shapes for %s over native MCP', async id => {
     const sessionId = 'c666666666666666666666670';
     const daemon = await installAccountCatalogDaemonTransport({ sessionId, readMetadata: () => createTestMetadata() });

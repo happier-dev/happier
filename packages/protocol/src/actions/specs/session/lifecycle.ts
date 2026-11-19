@@ -758,7 +758,7 @@ function createSessionSpawnActionSpecs(): readonly [SessionSpawnActionSpec] {
       return snapshot.state === 'cancelled' ? 'replay' : 'refuse';
     },
     title: 'Create session',
-    description: 'Create a new Session on the requested Machine using the selected Agent. In Voice, use this Action when the person asks to start a separate coding Session. Continue work in the bound coding Session with session.message.send. Creation and initialInput admission are receipts. Read session.status.get for the coding Session’s turn outcome. Pass directory {kind:"path",path} for a folder or {kind:"managed"} for a private folder.',
+    description: 'Create a new Session on the requested Machine using the selected Agent. In Voice, use this Action for a separate coding Session and session.message.send for work in the bound Session. Resolve an explicitly named model with action.options.resolve on modelSelection, using the chosen Agent and Machine as draftInput and the spoken name as query. Copy the returned model choice into modelSelection. Ask the person if the choice is ambiguous or provider_model_not_found returns candidates. Omit the model fields when the person names no model. Creation and initialInput admission are receipts. Read session.status.get for the coding Session’s turn outcome. Pass directory {kind:"path",path} for a folder or {kind:"managed"} for a private folder.',
     prompting: { voiceHotPath: true },
     sideEffectClass: 'write',
     safety: 'safe',
@@ -773,7 +773,9 @@ function createSessionSpawnActionSpecs(): readonly [SessionSpawnActionSpec] {
         inputSchema: SessionSpawnNewActionVoiceInputV2Schema,
         inputHints: { ...SessionSpawnNewInputHints, fields: [...SessionSpawnNewInputHints.fields.map(field => field.path === 'agentTarget'
           ? { ...field, required: false, description: `${field.description} Omit agentTarget to use the configured default Agent; the host resolves its exact catalog target.` }
-          : field),
+          : field.path === 'modelSelection'
+            ? { ...field, description: `${field.description} For a Team option (source: team_resource), copy option.value as ref in {v:2,ref,updatedAt}. For an Account Provider ref, use v:1. The launch owner derives the Team credential binding from the ref.` }
+            : field),
           { path: 'modelSelectionInput', title: 'Model choice by ID', widget: 'json',
             description: 'Supply modelId, providerConnectionId when applicable, and updatedAt when using a catalog choice without a structured model ref.' },
           { path: 'connectedServicesAuthIntent', title: 'Connected Account choice', widget: 'json',

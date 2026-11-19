@@ -1,5 +1,5 @@
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actions/actionExecutionResult.js';
-import type { ActionId } from '../actions/actionIds.js';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1, type ActionId } from '../actions/actionIds.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from '../actions/executor/types.js';
 import { DaemonProviderModelProjectionResponseV1Schema } from '../rpc/providers.js';
 import { TeamsPageV1Schema } from '../teams/projections.js';
@@ -103,9 +103,12 @@ export async function resolveTeamCredentialModelOptionsV1(params: Readonly<{
   return { ok: true, result: openedResources.flatMap(({ resource, displayName }) => resource.providerModels
     .filter(model => model.selection.agentTargetKey === agentTargetKey)
     .map((model): InputOption => {
+      // Spawn admission attaches the Machine's current native delivery witness.
+      const { kind: _kind, nativeDelivery: _nativeDelivery, ...ref } = model.selection;
       const description = model.availability === 'available' ? displayName
         : [displayName, AVAILABILITY_DESCRIPTIONS[model.availability]].filter(Boolean).join(' · ');
-      return { value: JSON.stringify(model.selection), label: model.descriptor.name,
+      return { value: params.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 ? { source: 'team_resource', ...ref } : JSON.stringify(model.selection),
+        label: model.descriptor.name,
         ...(description === null ? {} : { description }),
         ...(model.availability === 'available' ? {} : { disabled: true }) };
     })) };

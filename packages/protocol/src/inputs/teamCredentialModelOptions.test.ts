@@ -47,6 +47,34 @@ describe('teams.credential_models.available', () => {
       .toEqual({ requirements: null, applications: [], connectedServiceKeys: null });
   });
 
+  it.each([
+    ['Musee model', true],
+    ['unrelated model', false],
+  ] as const)('resolves spoken spawn model %s from a single field', async (query, matches) => {
+    const muse = resource('muse', { pluginId: 'happier.agent.muse', localId: 'muse-account' });
+    const ref = { source: 'team_resource', teamId: 'team-1', resourceId: 'muse', expectedResourceRevision: 1,
+      deliveryMode: 'brokered', agentTargetKey: CODEX, modelId: 'muse-model' };
+    const result = await createActionExecutor({
+      agentsModelsList: async () => ({ items: [{ id: 'native', name: 'Native' }], source: 'dynamic' }),
+      resolveSessionSpawnAgentInventorySelection: async () => ({ backendTargetKey: CODEX }),
+      machinePluginProjectionRead: async () => projection,
+      homeDomainAction: async ({ actionId }) => actionId === 'teams.list'
+        ? { items: [TEAM], nextCursor: null } : { resources: [muse], nextCursor: null, failures: [] },
+      providerActionExecute: async () => ({ ok: true, result: { status: 'success', agentTargetKey: CODEX, groups: [],
+        teamCredentialResources: [muse] } }),
+    }).execute('action.options.resolve', {
+      actionId: 'session.spawn_new', fieldPath: 'modelSelection', query,
+      draftInput: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        executionTarget: { serverId: 'home', machineId: 'm1' } },
+    }, { surface: 'voice', authority: 'present_user', serverId: 'home' });
+    if (matches) {
+      expect(result).toMatchObject({ ok: true, result: { options: [{ value: ref }] } });
+    } else {
+      expect(result).toMatchObject({ ok: false, errorCode: 'provider_model_not_found',
+        details: { candidates: expect.arrayContaining([expect.objectContaining({ value: ref })]) } });
+    }
+  });
+
   it('offers the Team credential models the Session Machine can run for the selected Agent', async () => {
     const homeCalls: unknown[] = [];
     const homeDomainAction = vi.fn(async ({ actionId, input }: { actionId: string; input: unknown }) => {

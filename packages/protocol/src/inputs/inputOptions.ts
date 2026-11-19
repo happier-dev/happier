@@ -10,6 +10,7 @@ import { AgentInventoryProbeInputSchema } from '../actions/actionSpecs.js';
 import { parseWorkflowDefinitionRefV1, formatWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionRefV1.js';
 import { isWorkflowSavedDefinitionActionId } from '../actions/workflowSavedDefinitionActionIds.js';
 import { DaemonProviderModelProjectionResponseV1Schema, getConnectedAccountModelObservationConfidence, isProviderSourceModelCatalogConfidenceUsable } from '../rpc/providers.js';
+import { resolveTeamCredentialModelOptionsV1 } from './teamCredentialModelOptions.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { BackendTargetKeyV2InputSchema } from '../backends/targets/backendTargetRefV2.js';
 import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
@@ -756,7 +757,8 @@ export async function resolveInputOptions(params: Readonly<{
       ...modelInventorySelection,
       ...(machineId === undefined ? {} : { machineId }),
       ...(serverId === undefined ? {} : { serverId }),
-      ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
+      ...(typeof input.limit === 'number' && !(ctx.surface === 'voice' && params.includeSpawnModelCatalog && params.query?.query?.trim())
+        ? { limit: input.limit } : {}),
       ...(params.includeSpawnModelCatalog ? { includeProviderProjection: true as const } : {}),
       ...(machineId ? { probe: probe.data } : {}),
       ...(ctx.signal ? { signal: ctx.signal } : {}),
@@ -771,11 +773,36 @@ export async function resolveInputOptions(params: Readonly<{
       ? [] : normalizeResolvedOptions(result);
     if (!params.includeSpawnModelCatalog) return { ok: true, result: options };
     const projection = DaemonProviderModelProjectionResponseV1Schema.safeParse(readRecord(result).providerProjection);
+    const providerProjection = projection.success && projection.data.status === 'success' ? projection.data : null;
+    if (ctx.surface === 'voice') {
+      const providerOptions = providerProjection?.groups.flatMap(group => group.rows
+        .filter(row => row.visibility === 'visible')
+        .map(row => ({ value: row.ref, label: row.descriptor.name, description: group.connectionName }))) ?? [];
+      // The Team catalog belongs to the admitted Home. Never query it for a
+      // Machine with the same local id on another Home.
+      const teamOptions = machineId && selectionArgs.backendTargetKey && deps.machinePluginProjectionRead
+        && deps.homeDomainAction && (!serverId || !ctx.serverId || sameHome(serverId, ctx.serverId))
+        ? await resolveTeamCredentialModelOptionsV1({ deps, ctx, actionId,
+          machineId, agentTargetKey: selectionArgs.backendTargetKey,
+          executeOwnerAction: params.executeOwnerAction, readFailure: params.readFailure })
+        : null;
+      if (teamOptions?.ok === false) return teamOptions;
+      return { ok: true, result: [...options, ...providerOptions, ...(teamOptions?.result ?? [])] };
+    }
     return { ok: true, result: options, modelCatalog: {
       nativeModels: options.map(({ value, label, description }) => ({ value, label,
         ...(description === undefined ? {} : { description }) })),
-      providerProjection: projection.success && projection.data.status === 'success' ? projection.data : null,
+      providerProjection,
     } };
+  }
+
+  if (optionsSourceId === 'teams.credential_models.available') {
+    const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId, input });
+    if ('ok' in selectionArgs) return selectionArgs;
+    return await resolveTeamCredentialModelOptionsV1({ deps, ctx, actionId,
+      machineId: machineId ?? ctx.defaultSessionMachineId ?? undefined,
+      agentTargetKey: selectionArgs.backendTargetKey,
+      executeOwnerAction: params.executeOwnerAction, readFailure: params.readFailure });
   }
 
   if (optionsSourceId === 'agents.session_modes.available') {
@@ -947,4 +974,49 @@ export async function resolveInputOptions(params: Readonly<{
   }
 
   return { ok: false, errorCode: 'options_source_not_supported', error: 'options_source_not_supported' };
+}
+
+function modelWords(text: string): readonly string[] {
+  // Keep version components distinct. Only alphabetic words can match approximately.
+  return text.normalize('NFKC').toLowerCase().match(/[\p{L}\p{M}]+|\p{N}+/gu) ?? [];
+}
+
+function oneLetterApart(left: string, right: string): boolean {
+  if (!/^\p{L}+$/u.test(left) || !/^\p{L}+$/u.test(right)) return false;
+  if (left.length > right.length) return oneLetterApart(right, left);
+  if (right.length - left.length > 1) return false;
+  let mismatch = 0;
+  while (mismatch < left.length && left[mismatch] === right[mismatch]) mismatch++;
+  if (mismatch === left.length) return right.length === left.length + 1;
+  return left.slice(mismatch + (left.length === right.length ? 1 : 0)) === right.slice(mismatch + 1);
+}
+
+export function matchSpokenSpawnModelOptions(options: readonly InputOption[], query: string): readonly InputOption[] {
+  const requested = modelWords(query);
+  if (requested.length === 0) return [];
+  const levels: InputOption[][] = [[], [], []];
+  for (const option of options) {
+    if (option.disabled) continue;
+    const id = typeof option.value === 'string' ? option.value : readRecord(option.value).modelId;
+    const names = [option.label, ...(typeof id === 'string' ? [id] : [])];
+    let best = levels.length;
+    for (const name of names) {
+      const words = modelWords(name);
+      for (let start = 0; start <= words.length - requested.length; start++) {
+        const mismatches = requested.flatMap((word, index) => {
+          const candidate = words[start + index];
+          return candidate === undefined || word === candidate ? [] : [{ word, candidate }];
+        });
+        if (mismatches.length === 0) {
+          best = Math.min(best, words.length === requested.length ? 0 : 1);
+        } else if (mismatches.length === 1 && oneLetterApart(mismatches[0].word, mismatches[0].candidate)) {
+          best = Math.min(best, 2);
+        }
+      }
+    }
+    levels[best]?.push(option);
+  }
+  // Return all equally ranked choices, even if a caller asks for limit 1.
+  // A single result must never hide an equally plausible credential or model.
+  return levels.find(matches => matches.length > 0) ?? [];
 }

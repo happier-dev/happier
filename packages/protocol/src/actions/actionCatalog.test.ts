@@ -80,6 +80,18 @@ describe('actionCatalog action-definition adapter', () => {
     });
   });
 
+  it('publishes the Voice spawn model hint through the strict Action summary schema', async () => {
+    const id = 'session.spawn_new';
+    const context = { surface: 'voice' as const, authority: 'present_user' as const };
+    const result = await createActionExecutor({}).execute('action.spec.search', { query: id }, context);
+    expect(result).toMatchObject({ ok: true, result: { actionSpecs: expect.arrayContaining([expect.objectContaining({ id })]) } });
+    const spawn = ActionDiscoveryDefinitionSummaryV1Schema.parse(projectActionDefinitionSummaryForExternalDiscovery(
+      actionSpecToActionDefinitionV1(getActionSpec(id), { surface: 'voice', includeOutputSchema: false }),
+    ));
+    expect(spawn.inputHints?.fields.filter(field => field.path === 'modelSelection' || field.path.startsWith('modelSelection.')))
+      .toMatchObject([{ path: 'modelSelection', optionsSourceId: 'agents.models.available' }]);
+  });
+
   it('validates the primary subject pair at the strict discovery boundary', () => {
     const summary = serializeActionSpec(getActionSpec('session.stop'), { includeOutputSchema: false });
     const read = (primarySubject: unknown) => ActionDiscoveryDefinitionSummaryV1Schema.safeParse({

@@ -160,7 +160,7 @@ import { isApprovalArtifactKindV1 } from '../approvals/approvalArtifactKindV1.js
 import { ScmDiffSummaryModelSelectorSchema } from '../scm/diffSummary.js';
 import * as z from '../zodRuntimePolicy.js';
 import { actionStartTargetUnavailableV1 } from './executor/actionStartDiagnostics.js';
-import { resolveInputOptions, resolveTypedInputFieldOptions, normalizeResolvedOptions, tryNormalizeExecutionBackendOptionValue, readReviewNarratorOptions, buildAgentInventorySelectionArgs } from '../inputs/inputOptions.js';
+import { matchSpokenSpawnModelOptions, resolveInputOptions, resolveTypedInputFieldOptions, normalizeResolvedOptions, tryNormalizeExecutionBackendOptionValue, readReviewNarratorOptions, buildAgentInventorySelectionArgs } from '../inputs/inputOptions.js';
 import { ProjectPagesListInputV1Schema } from './projectActionFamily.js';
 import { PluginExecutionOriginActionIdSchema, PluginExecutionOriginActionInputSchemas } from './pluginExecutionOriginActionFamily.js';
 import { NpmRegistryProfileActionIdV1Schema, NpmRegistryProfileActionInputSchemasV1 } from './npmRegistryProfileActionFamily.js';
@@ -404,7 +404,7 @@ import {
   resolveActionSurfaceAvailability,
   type ActionSurfaceAvailability,
 } from './actionSurfaceAvailability.js';
-import { isPluginDevLoopActionIdV1, isRuntimeActionIdV1, isSessionAccessActionId, isSessionListActionId, ActionIdSchema, type ActionId, WorkflowActionIdV1Schema } from './actionIds.js';
+import { isPluginDevLoopActionIdV1, isRuntimeActionIdV1, isSessionAccessActionId, isSessionListActionId, SESSION_SPAWN_NEW_ACTION_ID_V1, ActionIdSchema, type ActionId, WorkflowActionIdV1Schema } from './actionIds.js';
 import { WorkflowActionInputSchemasV1 } from '../workflows/actionsV1.js';
 import { executeWorkflowDiscussionRoundProjectV1 } from './executor/workflowDiscussionRound.js';
 import { ArtifactAccessActionIdV1Schema, ArtifactAccessActionInputSchemasV1, ArtifactAccessActionOutputSchemasV1 } from '../artifacts/artifactAccessV1.js';
@@ -6278,9 +6278,18 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               ...(typeof data.cursor === 'string' ? { cursor: data.cursor } : {}) },
             consumer: optionsConsumer,
             ...(optionValues ? { values: optionValues } : {}),
-            includeSpawnModelCatalog: actionIdRaw === 'session.spawn_new' && fieldPath === 'modelSelection',
+            includeSpawnModelCatalog: actionIdRaw === SESSION_SPAWN_NEW_ACTION_ID_V1 && fieldPath === 'modelSelection',
           });
           if (!dynamic.ok) return dynamic;
+          const modelQuery = ctx.surface === 'voice' && actionIdRaw === SESSION_SPAWN_NEW_ACTION_ID_V1 && fieldPath === 'modelSelection'
+            && typeof data.query === 'string' ? data.query.trim() : '';
+          const modelCandidates = modelQuery ? filterResolvedActionOptions(dynamic.result, { values: optionValues }) : null;
+          const options = modelCandidates ? matchSpokenSpawnModelOptions(modelCandidates, modelQuery)
+            : filterResolvedActionOptions(dynamic.result, data);
+          if (modelCandidates && options.length === 0) {
+            return { ok: false, errorCode: 'provider_model_not_found', error: 'provider_model_not_found',
+              details: { candidates: filterResolvedActionOptions(modelCandidates, { limit: typeof data.limit === 'number' ? data.limit : null }) } };
+          }
 
           return {
             ok: true,
@@ -6288,10 +6297,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               actionId: actionIdRaw || null,
               fieldPath: fieldPath || null,
               optionsSourceId: dynamic.optionsSourceId === null ? null : optionsSourceId,
-              options: filterResolvedActionOptions(
-                dynamic.result,
-                data,
-              ),
+              options,
               ...(dynamic.nextCursor === undefined ? {} : { nextCursor: dynamic.nextCursor }),
               ...(dynamic.modelCatalog ? { modelCatalog: dynamic.modelCatalog } : {}),
               ...(dynamic.machineRecipeDetails === undefined ? {} : { machineRecipeDetails: dynamic.machineRecipeDetails }),

@@ -200,14 +200,14 @@ describe('voiceAgentPrompt', () => {
       digest: createHash('sha256').update(rendered, 'utf8').digest('hex'),
     }).toEqual({
       id: 'happier.global_voice_agent',
-      revision: 12,
+      revision: 13,
       blockIds: [
         'voice.global_agent.identity',
         'voice.global_agent.authority',
         'voice.global_agent.custody',
         'voice.global_agent.results',
       ],
-      digest: 'e4223bcd3f08f07a3c32d25a02c359c92f0c24fd395b9262215718208425a566',
+      digest: 'c8ba6cb40e03e798f3c10507a4fb6907db3b6324d31ac82606bcb261c1fa3bd7',
     });
 
     expect(rendered).toContain("Happier's global Voice agent");
