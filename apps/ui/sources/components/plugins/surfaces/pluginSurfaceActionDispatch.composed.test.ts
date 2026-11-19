@@ -6325,13 +6325,14 @@ describe('plugin-surface action branch selection', () => {
     it('reaches the canonical catalog transport from the real configured browser handler', async () => {
         const { createTriageRunConfiguredActionHandler } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRun');
         const { createTriageReadActionsActionHandler } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalog');
-        const { TriageReadActionsActionInputV1Schema } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalogProtocol');
+        const { TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1, TriageReadActionsActionInputV1Schema } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalogProtocol');
         const { createTestkitAccountKv } = await import('../../../../../../packages/plugins/triage/src/settings/testkit/accountKv.test-support');
         const { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } = await import('../../../../../../packages/plugins/triage/src/settings/actions');
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
         const { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol');
         const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
         const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
         const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
         await prepareSessionDraftPersistenceStorage();
         const lifetime = clientAccountLifetime();
@@ -6363,8 +6364,7 @@ describe('plugin-surface action branch selection', () => {
                 return await createTriageReadActionsActionHandler()(TriageReadActionsActionInputV1Schema.parse(request.input), catalogContext);
             } });
         const machine = createMachineFixture({ id: boundary.machine.id, activeAt: Date.now(), access: boundary.machine.access });
-        getStorage().setState({ machines: { [machine.id]: machine }, machineListByServerId: { [lifetime.scope.serverId]: [machine] },
-            machineListStatusByServerId: { [lifetime.scope.serverId]: 'idle' } });
+        await publishMachineInventoryForTest(lifetime.scope, [machine]);
         network.setHttpResponder(async (url, init) => await boundary.handle(new URL(String(url)), init)
             ?? createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init));
         const activation = createClientActionActivation({ pluginId: PLUGIN_MANIFEST.id, localId: declaration.id,
@@ -6377,11 +6377,22 @@ describe('plugin-surface action branch selection', () => {
                 files: CLIENT_ACTION_ARTIFACT_GRAPH.files.map(file => ({ ...file, relativePath: 'react-native/triage-account-runtime/entry.cjs.bundle' })),
             }),
             accountManifest: { ...admitted.manifest, contributes: { actions: admitted.manifest.contributes.actions.filter(action =>
-                action.id === declaration.id || action.id === 'actions/read-v1') } },
+                action.id === declaration.id || action.id === TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1) } },
             accountActivate: api => {
                 api.actions.register(declaration.id, createTriageRunConfiguredActionHandler());
-                api.actions.register('actions/read-v1', createTriageReadActionsActionHandler());
+                api.actions.register(TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1, createTriageReadActionsActionHandler());
             } });
+        const catalogId = buildQualifiedPluginContributionKey({ pluginId: PLUGIN_MANIFEST.id, localId: TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1 });
+        const { hostAccountOrigin: _origin, accountActionDeclaration: _declaration, ...receiverAction } = activation.projection.actionsById[catalogId]!;
+        const receiverProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            actionsById: { [catalogId]: receiverAction },
+        });
+        daemonRpc.mockImplementation(async (request: { method: string; payload: unknown }) => {
+            if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                return { protocolVersion: 1, projection: receiverProjection };
+            }
+            return answerActionSchemasRead(request);
+        });
         newSessionNavigation.mockClear();
         accountBrowserRelay.enabled = true;
         await activation.composition.unload();
@@ -6441,7 +6452,12 @@ describe('plugin-surface action branch selection', () => {
         } finally {
             accountBrowserRelay.enabled = false;
             await activation.composition.unload(); lifetime.retire();
-            getStorage().setState({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
+            getStorage().setState({ profileScope: previous.profileScope,
+                machineRecordsByServerId: previous.machineRecordsByServerId,
+                machineDisplayById: previous.machineDisplayById,
+                machinePresenceById: previous.machinePresenceById, machinePresenceByServerId: previous.machinePresenceByServerId,
+                sessionListIndexByServerId: previous.sessionListIndexByServerId,
+                machines: previous.machines, machineListByServerId: previous.machineListByServerId,
                 machineListStatusByServerId: previous.machineListStatusByServerId });
         }
     });
