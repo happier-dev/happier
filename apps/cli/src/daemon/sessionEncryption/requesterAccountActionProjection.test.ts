@@ -2378,11 +2378,15 @@ describe('admitted requester Action projection', () => {
     const session = { ...createSessionNotificationContextFixture(sessionId), encryptionMode: 'plain',
       metadata: JSON.stringify(createTestMetadata({ machineId: 'machine', path: '/workspace' })) };
     let live = true;
+    let homeUnavailable = false;
     const reads = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
         mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
       } };
-      if (new URL(url).pathname === `/v2/sessions/${sessionId}`) return { status: 200, data: { session } };
+      if (new URL(url).pathname === `/v2/sessions/${sessionId}`) {
+        if (homeUnavailable) throw new axios.AxiosError('Home unavailable', 'ECONNRESET');
+        return { status: 200, data: { session } };
+      }
       if (url.endsWith('/v1/account/encryption')) {
         live = false;
         return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
@@ -2399,6 +2403,9 @@ describe('admitted requester Action projection', () => {
     const before = reads.mock.calls.length;
     expect(await reader.readOwnSessionWorkspace({ ...request, signal: cancelled.signal })).toBeNull();
     expect(reads.mock.calls).toHaveLength(before);
+    homeUnavailable = true;
+    await expect(reader.readOwnSessionWorkspace(request)).rejects.toMatchObject({ code: 'project_requester_home_unavailable' });
+    homeUnavailable = false;
     expect(await reader.readOwnSessionWorkspace(request)).toEqual({ rootPath: '/workspace' });
     const sessionReads = () => reads.mock.calls.filter(([url]) => new URL(String(url)).pathname === `/v2/sessions/${sessionId}`);
     const admittedReads = sessionReads().length;
@@ -2410,6 +2417,7 @@ describe('admitted requester Action projection', () => {
     const artifactId = '11111111-1111-4111-8111-111111111111';
     let live = true;
     let loseAdmissionDuringRead = false;
+    let homeUnavailable = false;
     const header = { kind: 'prompt_doc.v2', title: 'Bob private doc' };
     const reads = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
@@ -2417,6 +2425,7 @@ describe('admitted requester Action projection', () => {
       } };
       if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (url.endsWith('/access/grants')) return { status: 200, data: { artifactId, ownerAccountId: 'bob', access: 'owner', grants: [] } };
+      if (homeUnavailable) throw new axios.AxiosError('Home unavailable', 'ECONNRESET');
       if (loseAdmissionDuringRead) live = false;
       return { status: 200, data: { id: artifactId, ownerAccountId: 'bob', access: 'owner', encryptionMode: 'plain',
         header: encodePlainArtifactStoredContent(header), body: encodePlainArtifactStoredContent({ body: 'private body' }),
@@ -2432,6 +2441,10 @@ describe('admitted requester Action projection', () => {
     expect(opened).not.toHaveProperty('document');
     expect(reads.mock.calls.every(([url, config]) => String(url).startsWith('https://requester-home.test/')
       && config?.headers?.Authorization === 'Bearer bob-ordinary')).toBe(true);
+    homeUnavailable = true;
+    await expect(projected.requesterAccountProjection.readArtifact(ref))
+      .rejects.toMatchObject({ code: 'project_requester_home_unavailable' });
+    homeUnavailable = false;
     loseAdmissionDuringRead = true;
     expect(await projected.requesterAccountProjection.readArtifact(ref)).toMatchObject({ artifactId, header });
     const artifactReads = () => reads.mock.calls.filter(([url]) => new URL(String(url)).pathname.startsWith('/v1/artifacts/'));

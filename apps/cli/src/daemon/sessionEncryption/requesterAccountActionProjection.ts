@@ -349,7 +349,7 @@ async function projectAdmittedAccountCustody(
           const { readOwnSessionMachineWorkspace } = await import('@/session/machineControlLocality');
           return await readOwnSessionMachineWorkspace({ ...request, credentials: bootstrap.credentials,
             serverHttpBaseUrl: bootstrap.serverHttpBaseUrl });
-        } catch (error) { refuseExternalActionPhase('requester_workspace_read', stamp.machineId, error); return null; }
+        } catch (error) { refuseExternalActionPhase('requester_workspace_read', stamp.machineId, error); rethrowRequesterHomeReadFailure(error); return null; }
       },
       readArtifact: async (ref, options) => {
         if (!await isServerProfileHomeIdentity(stamp.serverId, ref.serverId) || options?.signal?.aborted || !await isCurrent()) return null;
@@ -388,7 +388,7 @@ async function projectAdmittedAccountCustody(
             ...(signedDocument ? { document: { artifactId: artifact.artifactId, header: artifact.header,
               body: artifact.body, revision: artifact.revision } } : {}),
             ...(promptLibraryArtifact ? { promptLibraryArtifact } : {}) };
-        } catch (error) { refuseExternalActionPhase('requester_artifact_read', stamp.machineId, error); return null; }
+        } catch (error) { refuseExternalActionPhase('requester_artifact_read', stamp.machineId, error); rethrowRequesterHomeReadFailure(error); return null; }
       },
     };
     // Session custody already owns this material. Keep it host-private, just
