@@ -17,7 +17,8 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { hrefForDestinationRef, isProjectDestinationKnownGone, readDestinationInstanceTitle, resolveCurrentAppDestination, resolveDestinationRefFromHref, type CompactAppDestination, type DestinationRef } from '../destinations/compactAppDestinationCatalog';
 import { desktopSessionTargetForDestination, type AppWindowRecord } from '@/desktop/window/appWindowBoot';
 import { registerDesktopAppWindowWorkspace, getDesktopAppWindowWorkspaceLayouts, getDesktopAppWindowTabPresentations,
-    getDesktopAppWindows, focusDesktopAppWindow, focusDesktopAppWindowTab, returnDesktopAppWindowTab, closeDesktopAppWindowTab, moveDesktopAppWindowTab, openDesktopAppWindow } from '@/desktop/window/appWindowRuntime';
+    getDesktopAppWindows, getDesktopAppWindowPlacedTabs, getDesktopAppWindowTransfers, focusDesktopAppWindow,
+    focusDesktopAppWindowTab, returnDesktopAppWindowTab, closeDesktopAppWindowTab, moveDesktopAppWindowTab, openDesktopAppWindow } from '@/desktop/window/appWindowRuntime';
 import { isDesktopHost, useDesktopHostRoleAvailability } from '@/utils/platform/desktopHost';
 import { createWorkspaceNavigationAdapter, sameDestinationRef, type WorkspaceOpenOptions } from './workspaceNavigationAdapter';
 import { bindWorkspaceBrowserHistory, createWorkspaceBrowserTransport, installWorkspaceBrowserHistory } from './workspaceBrowserTransport';
@@ -30,7 +31,7 @@ import type { SplitCanvasHostControls } from '../splitCanvas/components/SplitCan
 import { createWorkspaceActionAdapter, selectWorkspaceTabsToClose, workspaceActionFailure, type WorkspaceActionOutcome } from './workspaceActions';
 import { executeWorkspaceUiAction, registerMountedWorkspaceAction } from './workspaceActionRuntime';
 import { admitWorkspaceSingletonState, workspaceSingletonDestinationIds } from './workspaceDestinationPolicy';
-import { selectWorkspaceClosableTabIds, selectWorkspaceTabsForGoneDestinations, type WorkspaceAction, type WorkspaceState } from './workspaceState';
+import { selectWorkspaceClosableTabIds, selectWorkspaceTabsForGoneDestinations, selectWorkspaceVisibleGroup, type WorkspaceAction, type WorkspaceState } from './workspaceState';
 import { readRegisteredStorageState, subscribeRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { resolvePhoneWorkspaceTabHref } from './workspacePhoneProjection';
 import { useWorkspaceKeyboardShortcuts } from './useWorkspaceKeyboardShortcuts';
@@ -764,11 +765,25 @@ export function WorkspaceProvider(props: Readonly<{
             activateTab(action.groupId, action.tabId);
             return;
         }
-        if (action.type === 'focusGroup' && latest.current.owner.getState().focusedGroupId === action.groupId) return;
-        if (action.type === 'focusGroup' || action.type === 'openTab'
+        if (action.type === 'focusGroup') {
+            const { owner, scope } = latest.current;
+            const state = owner.getState();
+            const group = state.groups[action.groupId];
+            // Focus can return to a leaf before it renders the tab just selected.
+            if (!group || group.id === state.focusedGroupId) return;
+            const { activeTabId } = selectWorkspaceVisibleGroup(state, group, {
+                scope: scope ?? undefined,
+                windowId: props.appWindow?.record.windowId ?? 'main',
+                placedTabs: getDesktopAppWindowPlacedTabs(),
+                transferringTabIds: getDesktopAppWindowTransfers(),
+            });
+            if (activeTabId) activateTab(group.id, activeTabId);
+            return;
+        }
+        if (action.type === 'openTab'
             || action.type === 'moveTab' || action.type === 'splitTab' || action.type === 'reopenTab') runUiNavigation(() => runtime.adapter.dispatch(action));
         else runtime.adapter.dispatch(action);
-    }, [activateTab, isCurrentUiOwner, runUiNavigation, runtime]);
+    }, [activateTab, isCurrentUiOwner, props.appWindow?.record.windowId, runUiNavigation, runtime]);
     const back = React.useCallback(() => {
         if (!isCurrentUiOwner()) return;
         if (runtime.browser) runtime.adapter.step(-1);

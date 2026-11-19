@@ -316,7 +316,7 @@ async function installDelayedDraftRecordBoundary() {
 }
 
 describe('consumed workspace navigation owner', () => {
-    it('delivers an app-scope page open above the workspace after its Expo mirror stops at the root', async () => {
+    it.each([false, true])('delivers an app-scope page open through the workspace (phone=%s)', async phone => {
         const { activateStorageAccountScope } = await import('@/dev/testkit/runtime/storageRuntime');
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
         const previousState = storage.getState();
@@ -328,14 +328,21 @@ describe('consumed workspace navigation owner', () => {
             if (!lifetime) throw new Error('Expected admitted Account');
             storage.setState({ isDataReady: true });
             boundary.platform = 'web';
-            boundary.pathname = '/plugins/acme.notes/notes';
-            boundary.params = { pluginId: 'acme.notes', localId: 'notes' };
-            boundary.segments = ['plugins', '[pluginId]', '[localId]'];
+            boundary.pathname = phone ? '/' : '/plugins/acme.notes/notes';
+            boundary.params = phone ? {} : { pluginId: 'acme.notes', localId: 'notes' };
+            boundary.segments = phone ? ['index'] : ['plugins', '[pluginId]', '[localId]'];
             const location = { pathname: boundary.pathname, search: '', hash: '' };
+            let restoreSearchOpenerFocus: (() => void) | undefined;
             const show = (_state: unknown, _unused: string, href?: string | URL | null) => {
-                if (href) location.pathname = new URL(href, 'https://workspace.test').pathname;
+                if (!href) return;
+                location.pathname = new URL(href, 'https://workspace.test').pathname;
+                if (location.pathname === '/plugins/acme.notes/notes' && restoreSearchOpenerFocus) {
+                    const restoreFocus = restoreSearchOpenerFocus;
+                    restoreSearchOpenerFocus = undefined;
+                    restoreFocus();
+                }
             };
-            installBrowserBoundary({ location, history: { state: null, pushState: show, replaceState: show, go() {} },
+            installBrowserBoundary({ innerWidth: phone ? 390 : 1440, location, history: { state: null, pushState: show, replaceState: show, go() {} },
                 sessionStorage: { getItem: () => 'main' } });
             const declaration = normalizePluginUiDestinationBindingV1({ pluginId: 'acme.notes', destinationId: 'notes',
                 rendererId: 'notes-renderer', container: 'appPage', target: { kind: 'app' } });
@@ -363,13 +370,49 @@ describe('consumed workspace navigation owner', () => {
             } });
             // The real app registers this owner above WorkspaceProvider. Its router
             // must reach the mounted workspace rather than the unchanged Expo root.
-            const screen = await renderScreen(<><AppPageOwner /><WorkspaceProvider enabled catalog={catalog}>
-                {navigation => React.createElement('WorkspaceOwner', { navigation })}
-            </WorkspaceProvider></>);
+            const leafHosts = new Map<string, EventTarget>();
+            const screen = await renderScreen(<><AppPageOwner /><WorkspaceProvider enabled={!phone} phone={phone} catalog={catalog}>
+                {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}
+                    {phone ? <WorkspaceShell catalog={catalog} /> : null}</>}
+            </WorkspaceProvider></>, {
+                createNodeMock: element => {
+                    const testId = (element.props as { testID?: string }).testID;
+                    if (!testId?.startsWith('split-canvas-leaf-frame-')) return null;
+                    const node = new EventTarget();
+                    leafHosts.set(testId, node);
+                    return node;
+                },
+            });
             unmountScreen = () => screen.unmount();
             const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
             const state = navigation().state;
             const tabId = state.groups[state.focusedGroupId].activeTabId;
+            if (phone) {
+                const { dispatchPluginResolvedSemanticCommand } = await import('@/components/plugins/surfaces/dispatchPluginResolvedSemanticCommand');
+                const { runUniversalSearchActivation } = await import('../search/runUniversalSearchActivation');
+                const dismiss = vi.fn();
+                const presentFailure = vi.fn();
+                const openerLeaf = leafHosts.get(`split-canvas-leaf-frame-${state.focusedGroupId}`);
+                if (!openerLeaf) throw new Error('Expected the Sessions canvas leaf');
+                // Closing Search returns DOM focus to its opener while the new route is
+                // already selected by WorkspaceProvider but the previous leaf is still rendered.
+                restoreSearchOpenerFocus = () => openerLeaf.dispatchEvent(new Event('focusin'));
+                await act(async () => {
+                    await runUniversalSearchActivation({ dismiss, presentFailure, activate: async () => (
+                        await dispatchPluginResolvedSemanticCommand({
+                            callerPluginId: 'acme.notes', projection: EMPTY_PLUGIN_UI_PROJECTION, accountLifetime: lifetime,
+                            command: { kind: 'openSurface', destination: { pluginId: 'acme.notes', localId: 'notes' } },
+                            scopedLaunchFacts: { serverId: 'home-a', machineId: null, interactionEnabled: true },
+                            openSurface: binding.openSurface,
+                        })
+                    ).ok });
+                });
+                expect(dismiss).toHaveBeenCalled();
+                expect(presentFailure).not.toHaveBeenCalled();
+                expect(location.pathname).toBe('/plugins/acme.notes/notes');
+                expect(restoreSearchOpenerFocus).toBeUndefined();
+                return;
+            }
             await act(async () => { navigation().navigationForTab(tabId).replace('/plugins/acme.notes/notes/entry/a'); });
             expect(location.pathname).toBe('/plugins/acme.notes/notes/entry/a');
             expect(boundary.pathname).toBe('/plugins/acme.notes/notes');

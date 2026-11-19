@@ -109,10 +109,7 @@ function WorkspaceCanvas(props: Readonly<{
     const dispatchCanvas = React.useCallback((action: SplitCanvasAction<GroupPayload>) => {
         switch (action.type) {
             case 'focusLeaf':
-                if (action.leafId) {
-                    const group = visibleGroups[action.leafId];
-                    if (group?.activeTabId) workspace.activateTab(group.id, group.activeTabId);
-                }
+                if (action.leafId) workspace.dispatch({ type: 'focusGroup', groupId: action.leafId });
                 break;
             case 'closeLeaf': {
                 const lifetime = captureActiveServerAccountScopeCurrentness();
