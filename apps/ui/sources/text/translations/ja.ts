@@ -11583,10 +11583,6 @@ localTailscale: {
               dismissed: "却下済み",
             },
             directWriteGrant: {
-              title: "レビューコメントの直接書き込み",
-              body: ({ pluginId }: { pluginId: string }) => `${pluginId} がレビューコメントを直接書き込む権限をリクエストしています。`,
-              grant: "直接書き込みを許可",
-              cancel: "今はしない",
               revoke: "取り消す",
             },
           },

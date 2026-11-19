@@ -15,7 +15,7 @@ import { normalizeExecutionRunWaitTimeoutMs, waitForExecutionRunTerminal } from 
 import { ProviderErrorCodeV1Schema, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { ScmDiffSummaryErrorCodeSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import type { ActionExecutorDeps, ActionExecutorContext, ActionExecuteResult, PluginPermissionGrantRequestActionInputV1, RuntimeActionIdV1, SessionInputCausalPermissionAuthorityV1, RequiredSessionTeamCredentialV1 } from '@happier-dev/protocol';
+import type { ActionExecutorDeps, ActionExecutorContext, ActionExecuteResult, RuntimeActionIdV1, SessionInputCausalPermissionAuthorityV1, RequiredSessionTeamCredentialV1 } from '@happier-dev/protocol';
 import { isRuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { isAgentStartActionV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { AGENT_START_REFUSAL_CODES_V1 } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
@@ -90,9 +90,6 @@ export type ExecutionRunRpcApprovalDeps = Pick<
   executionRunHostActionCurrentIntent?: (
     subject: ExecutionRunHostActionCurrentIntentSubject,
   ) => Promise<ExecutionRunHostActionCurrentIntentResult>;
-  pluginPermissionGrantRequest?: (
-    input: PluginPermissionGrantRequestActionInputV1 & Readonly<{ serverId?: string }>,
-  ) => Promise<unknown>;
 }>;
 
 type ExecutionRunRpcFailure = Readonly<{

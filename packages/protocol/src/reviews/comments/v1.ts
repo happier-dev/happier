@@ -34,6 +34,7 @@ export function validateReviewCommentScopeV1(
   }
 }
 
+/** Legacy stored grant identifier; review comments do not require this grant. */
 export const REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1 = 'reviews.comments.write.direct' as const;
 
 export const ReviewCommentStateV1Schema = lazyZodSchema(() => z.enum([

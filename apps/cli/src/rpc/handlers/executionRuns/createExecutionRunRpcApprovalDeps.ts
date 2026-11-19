@@ -7,7 +7,6 @@ import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtim
 import type { ReviewCommentPrincipalHeaderV1 } from '@happier-dev/protocol';
 import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
 import { createExecutionRunHostActionCurrentIntentAdapter } from '@/session/actions/approvals/executionRunHostActionCurrentIntent';
-import { requestReviewCommentDirectWriteGrant } from '@/agent/executionRuns/profiles/review/directWriteGrantRequester';
 import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 
@@ -100,15 +99,6 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
       return await execute(actionId, input, {
         ...(reviewCommentPrincipal ? { principal: reviewCommentPrincipal } : {}),
       });
-    },
-    pluginPermissionGrantRequest: async ({ serverId: _serverId, caller: _caller, ...input }) => {
-      const credentials = await params.readCredentials();
-      if (!credentials) throw new Error('plugin_permission_grant_credentials_unavailable');
-      // The exact current materialization provenance is host-resolved here so
-      // the server can bind the grant request to the proven caller; a
-      // caller-string alone is never admitted.
-      const caller = (await resolveReviewHostPluginAuthority(input.pluginId))?.caller;
-      return await requestReviewCommentDirectWriteGrant({ credentials, input: { ...input, ...(caller ? { caller } : {}) } });
     },
     approvalsList: async (args) => {
       const store = await resolveStore();

@@ -9125,10 +9125,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     dismissed: '已忽略',
                 },
                 directWriteGrant: {
-                    title: '直接寫入審查評論',
-                    body: ({ pluginId }: { pluginId: string }) => `${pluginId} 正在請求直接寫入審查評論的權限。`,
-                    grant: '授予直接寫入',
-                    cancel: '暫不',
                     revoke: '撤銷',
                 },
             },

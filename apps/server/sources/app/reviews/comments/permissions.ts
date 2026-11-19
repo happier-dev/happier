@@ -1,4 +1,4 @@
-import { REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1, type ReviewCommentActorRefV1, type ReviewCommentStateV1, type ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import { type ReviewCommentActorRefV1, type ReviewCommentStateV1, type ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { type ReviewCommentCurrentIntentV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import { isWorkflowSessionScopeTargetV1, type ReviewCommentPrincipalHeaderV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import { type ReviewCommentStoredSourceV1, reviewCommentActorsEqualV1 } from '@happier-dev/protocol/reviews/comments/mutation';
@@ -12,7 +12,6 @@ export type ReviewCommentPrincipal = Readonly<{
     accountId: string;
     reviewAccess?: ReviewAccessCapability;
     actor: ReviewCommentActorRefV1;
-    grants?: readonly string[];
     currentIntent?: ReviewCommentCurrentIntentV1;
     storageMode?: "plain" | "e2ee";
     accountVersion?: number;
@@ -55,19 +54,6 @@ export function assertReviewCommentSessionScope(principal: Pick<ReviewCommentPri
     if (ownSessionId && ownSessionId !== sessionId
         && !(principal.actor.kind === "agent" && sessionId && principal.ledSubtreeSessionIds?.includes(sessionId))) {
         throw new ReviewCommentOperationError("review_comment_permission_denied", "Review comment is outside the principal Session scope");
-    }
-}
-
-export function hasReviewCommentDirectWriteGrant(params: ReviewCommentPrincipal): boolean {
-    return params.grants?.includes(REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1) === true;
-}
-
-export function assertReviewCommentDirectWriteGrant(params: ReviewCommentPrincipal): void {
-    if (!hasReviewCommentDirectWriteGrant(params)) {
-        throw new ReviewCommentOperationError(
-            "review_comment_direct_write_permission_required",
-            "reviews.comments.write.direct is required for direct review-comment writes",
-        );
     }
 }
 

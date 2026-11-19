@@ -1,11 +1,9 @@
 import { createHash } from 'node:crypto';
 
-import { GENERAL_PLUGIN_PERMISSION_SUBJECT_V1 } from '@happier-dev/protocol/plugins/permissions/grants';
 import { evaluatePluginFinalPolicy } from '@happier-dev/protocol/plugins/actions/policy';
 import { ReviewCommentProposalsV1Schema } from '@happier-dev/protocol/reviews/comments/proposals';
-import { REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
-import type { ActionExecuteResult, ActionExecutorContext, PluginPermissionGrantRequestActionInputV1, PluginSourceCustodyV1, ReviewCommentCreateRequestV1, ReviewCommentProposalV1, ReviewCommentSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionExecuteResult, ActionExecutorContext, PluginSourceCustodyV1, ReviewCommentCreateRequestV1, ReviewCommentProposalV1, ReviewCommentSnapshotV1 } from '@happier-dev/protocol';
 
 import {
   resolvePluginFinalPolicyAuthorizationFacts,
@@ -69,10 +67,6 @@ type ReviewCommentHostActionSubject = ReviewCommentHostActionBase & Readonly<{
 type CurrentIntentResult =
   | Readonly<{ status: 'approved'; fingerprint: string }>
   | Readonly<{ status: 'rejected' | 'unavailable'; code: string }>;
-
-export type ReviewCommentDirectWriteGrantRequest = PluginPermissionGrantRequestActionInputV1 & Readonly<{
-  serverId: string;
-}>;
 
 export type ReviewCommentHostActionMaterializationResult =
   | Readonly<{ ok: false; errorCode: string; error: string }>
@@ -245,7 +239,6 @@ export function createReviewCommentHostActionMaterializer(deps: Readonly<{
   readCurrentPluginAuthority: (pluginId: string) => Promise<ReviewCommentHostPluginAuthority | null>;
   resolveWorkspace: () => Promise<ReviewCommentHostWorkspace | null>;
   requestCurrentIntent: (subject: ReviewCommentHostActionSubject) => Promise<CurrentIntentResult>;
-  requestDirectWriteGrant?: (input: ReviewCommentDirectWriteGrantRequest) => Promise<unknown>;
   executeHostAction: (
     actionId: 'reviews.comments.create',
     input: ReviewCommentCreateRequestV1,
@@ -332,33 +325,6 @@ export function createReviewCommentHostActionMaterializer(deps: Readonly<{
         continue;
       }
       if (!result.ok) {
-        if (result.errorCode === 'review_comment_direct_write_permission_required') {
-          try {
-            await deps.requestDirectWriteGrant?.({
-              pluginId: approved.pluginId,
-              capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-              targetScope: { kind: 'project', projectId: approved.projectId },
-              subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
-              requester: {
-                kind: 'plugin',
-                pluginId: approved.pluginId,
-                sessionId: approved.sessionId,
-                requestId: approved.callId,
-              },
-              reason: 'Write approved review comments directly.',
-              serverId: approved.serverId,
-            });
-          } catch {
-            // The effect remains denied. A request transport failure must never replay it.
-          }
-          for (const remaining of prepared.slice(itemIndex)) {
-            failures.push({
-              ...(remaining.proposal.findingId ? { findingId: remaining.proposal.findingId } : {}),
-              errorCode: result.errorCode.slice(0, 512),
-            });
-          }
-          break;
-        }
         failures.push({
           ...(item.proposal.findingId ? { findingId: item.proposal.findingId } : {}),
           errorCode: result.errorCode.slice(0, 512),

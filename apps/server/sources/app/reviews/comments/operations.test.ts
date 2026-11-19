@@ -8,7 +8,7 @@ import type {
     ReviewCommentSnapshotV1,
 } from "@happier-dev/protocol";
 
-import { REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1, stringifyReviewCommentPrincipalCanonicalJsonV1 } from "@happier-dev/protocol";
+import { stringifyReviewCommentPrincipalCanonicalJsonV1 } from "@happier-dev/protocol";
 import { buildReviewCommentTextSnapshotHashes } from "./snapshots";
 import { createInMemoryReviewCommentStore } from "./store";
 import { createReviewCommentOperations } from "./operations";
@@ -66,7 +66,7 @@ function directWriteCreate(input: ReviewCommentCreateRequestV1 & { projectId: st
     };
     return {
         actor: reviewAgentActor,
-        grants: [REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1],
+
         currentIntent: {
             v: 1 as const,
             kind: "execution_run_host_action" as const,
@@ -378,7 +378,7 @@ describe("review comment operations", () => {
         const firstComment = await operations.create({
             accountId: "account-1",
             actor: { kind: "user", userId: "user-1" },
-            grants: [],
+
             input: {
                 projectId: "project-1",
                 anchor: { kind: "line", filePath: "src/example.ts", line: 3 },
@@ -391,7 +391,7 @@ describe("review comment operations", () => {
         const secondComment = await operations.create({
             accountId: "account-1",
             actor: { kind: "user", userId: "user-1" },
-            grants: [],
+
             input: {
                 projectId: "project-1",
                 anchor: { kind: "range", filePath: "src/example.ts", startLine: 8, endLine: 10 },
@@ -513,7 +513,7 @@ describe("review comment operations", () => {
         const created = await operations.create({
             accountId: "account-1",
             actor: { kind: "user", userId: "user-1" },
-            grants: [],
+
             input: {
                 projectId: "project-1",
                 anchor: { kind: "line", filePath: "src/example.ts", line: 3 },
@@ -593,7 +593,7 @@ describe("review comment operations", () => {
         const created = await operations.create({
             accountId: "account-1",
             actor: { kind: "user", userId: "user-1" },
-            grants: [],
+
             input: {
                 projectId: "project-1",
                 anchor: { kind: "line", filePath: "src/example.ts", line: 3 },
@@ -761,7 +761,7 @@ describe("review comment operations", () => {
         const params = {
             accountId: "account-1",
             actor: { kind: "user", userId: "user-1" } as const,
-            grants: [],
+
             input: {
                 projectId: "project-1",
                 anchor: { kind: "line", filePath: "src/example.ts", line: 3 } as const,
@@ -786,7 +786,7 @@ describe("review comment operations", () => {
         const common = {
             accountId: "account-1",
             actor: { kind: "user", userId: "user-1" } as const,
-            grants: [],
+
             input: {
                 projectId: "project-1",
                 anchor: { kind: "file", filePath: "src/example.ts" } as const,
@@ -810,7 +810,7 @@ describe("review comment operations", () => {
         const common = {
             accountId: "account-1",
             actor: { kind: "user", userId: "user-1" } as const,
-            grants: [],
+
             input: {
                 projectId: "project-1",
                 anchor: { kind: "file", filePath: "src/example.ts" } as const,
@@ -837,7 +837,7 @@ describe("review comment operations", () => {
         const base = {
             accountId: "account-1",
             actor: { kind: "user", userId: "user-1" } as const,
-            grants: [],
+
             input: {
                 projectId: "project-1",
                 anchor: { kind: "file", filePath: "src/example.ts" } as const,
@@ -860,7 +860,7 @@ describe("review comment operations", () => {
         const { operations } = createHarness();
         const common = {
             accountId: "account-1",
-            grants: [],
+
             input: {
                 projectId: "project-1",
                 anchor: { kind: "file", filePath: "src/example.ts" } as const,
@@ -915,7 +915,7 @@ describe("review comment operations", () => {
         const result = await operations.create({
             accountId: "account-1",
             actor: pluginActor,
-            grants: [],
+
             input: {
                 projectId: "project-1",
                 runId: "run-1",
@@ -942,61 +942,29 @@ describe("review comment operations", () => {
             ]);
     });
 
-    it("requires the direct write grant before creating open comments", async () => {
+    it("allows the Account's trusted plugin host action to create open comments without a grant", async () => {
         const { operations } = createHarness();
-
-        await expect(operations.create({
-            accountId: "account-1",
-            ...directWriteCreate({
-                projectId: "project-1",
+        const result = await operations.create({ accountId: "account-1",
+            ...directWriteCreate({ projectId: "project-1",
                 anchor: { kind: "file", filePath: "src/config.ts" },
-                snapshot: textSnapshot(["secret = readEnv();"]),
-                body: "Investigate secret handling.",
-                authorIntent: "open",
-                clientMutationId: "mutation-1",
-            }),
-            grants: [],
-        })).rejects.toMatchObject({ code: "review_comment_direct_write_permission_required" });
-
-        const result = await operations.create({
-            accountId: "account-1",
-            ...directWriteCreate({
-                projectId: "project-1",
-                anchor: { kind: "file", filePath: "src/config.ts" },
-                snapshot: textSnapshot(["secret = readEnv();"]),
-                body: "Investigate secret handling.",
-                authorIntent: "open",
-                clientMutationId: "mutation-2",
-            }),
+                snapshot: textSnapshot(["secret = readEnv();"]), body: "Investigate secret handling.",
+                authorIntent: "open", clientMutationId: "mutation-plugin-no-grant" }),
         });
-        expect(result.comment.state).toBe("open");
+        expect(result.comment).toMatchObject({ state: "open", author: reviewAgentActor });
     });
 
-    it("requires the durable host-action grant for agent-authored proposed comments", async () => {
+    it("allows an admitted agent host action to propose comments without a grant", async () => {
         const { operations } = createHarness();
-        const create = directWriteCreate({
-            projectId: "project-1",
-            anchor: { kind: "file", filePath: "src/config.ts" },
-            snapshot: textSnapshot(["secret = readEnv();"]),
-            body: "Investigate secret handling.",
-            authorIntent: "propose",
-            clientMutationId: "mutation-agent-proposal",
-        });
-
-        await expect(operations.create({
-            accountId: "account-1",
-            ...create,
-            grants: [],
-        })).rejects.toMatchObject({ code: "review_comment_direct_write_permission_required" });
-
         const result = await operations.create({
             accountId: "account-1",
-            ...create,
+            ...directWriteCreate({ projectId: "project-1",
+                anchor: { kind: "file", filePath: "src/config.ts" },
+                snapshot: textSnapshot(["secret = readEnv();"]),
+                body: "Investigate secret handling.", authorIntent: "propose",
+                clientMutationId: "mutation-agent-no-grant" }),
+
         });
-        expect(result.comment).toMatchObject({
-            state: "proposed",
-            author: reviewAgentActor,
-        });
+        expect(result.comment).toMatchObject({ state: "proposed", author: reviewAgentActor });
     });
 
     it("allows user principals to create open comments without plugin direct-write grants", async () => {
@@ -1005,7 +973,7 @@ describe("review comment operations", () => {
         const result = await operations.create({
             accountId: "account-1",
             actor: { kind: "user", userId: "user-1" },
-            grants: [],
+
             input: {
                 projectId: "project-1",
                 anchor: { kind: "file", filePath: "src/config.ts" },
@@ -1034,7 +1002,7 @@ describe("review comment operations", () => {
         await expect(operations.create({
             accountId: "account-1",
             actor: { kind: "user", userId: "user-1" },
-            grants: [],
+
             input: {
                 projectId: "project-1",
                 anchor: { kind: "file", filePath: "src/config.ts" },

@@ -10925,10 +10925,6 @@ export const zhHans: TranslationStructure = {
               dismissed: "已忽略",
             },
             directWriteGrant: {
-              title: "直接写入审查评论",
-              body: ({ pluginId }: { pluginId: string }) => `${pluginId} 正在请求直接写入审查评论的权限。`,
-              grant: "授予直接写入",
-              cancel: "暂不",
               revoke: "撤销",
             },
           },

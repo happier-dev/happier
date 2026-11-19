@@ -2,17 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 
 import {
-  GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
-  PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
-  PluginPermissionGrantDismissRequestActionOutputV1Schema,
-  PluginPermissionGrantGrantActionOutputV1Schema,
-  PluginPermissionGrantListActionOutputV1Schema,
-  PluginPermissionGrantRequestActionInputV1Schema,
-  PluginPermissionGrantRequestActionOutputV1Schema,
-  PluginPermissionGrantRevokeActionOutputV1Schema,
   ReviewCommentListResponseV1Schema,
   type ExecutionRunHostActionApprovalRequestV1,
 } from '@happier-dev/protocol';
@@ -24,7 +15,6 @@ import {
   type ReviewCommentHostPluginAuthority,
 } from '../../../../../apps/cli/src/agent/executionRuns/profiles/review/hostActionMaterializer';
 import { createCliReviewCommentActionExecutorFromCredentials } from '../../../../../apps/cli/src/agent/reviews/comments/executor';
-import { signPluginInstallationPublisherHeader } from '../../../../../apps/cli/src/plugins/installations/publisherProof';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { createExecutionRunHostActionCurrentIntentAdapter } from '../../../../../apps/cli/src/session/actions/approvals/executionRunHostActionCurrentIntent';
 import { createTestAuth } from '../auth';
@@ -37,7 +27,6 @@ import {
 import { startServerLight } from '../process/serverLight';
 
 const PLUGIN_ID = 'happier.review.coderabbit';
-const DIRECT_WRITE_CAPABILITY = 'reviews.comments.write.direct';
 
 type AuthenticatedAccount = Readonly<{
   token: string;
@@ -75,113 +64,6 @@ async function createAccountWithMachine(baseUrl: string): Promise<AuthenticatedA
     machineId: registered.machineId,
     installation,
   };
-}
-
-async function requestSignedDirectWrite(params: Readonly<{
-  baseUrl: string;
-  account: AuthenticatedAccount;
-  input: unknown;
-}>): Promise<ReturnType<typeof PluginPermissionGrantRequestActionOutputV1Schema.parse>> {
-  const path = '/v1/plugins/permissions/grants/request';
-  const input = PluginPermissionGrantRequestActionInputV1Schema.parse(params.input);
-  const publisherHeader = signPluginInstallationPublisherHeader({
-    identity: {
-      version: 1,
-      installationId: params.account.installation.installationId,
-      createdAt: 0,
-      publicKey: params.account.installation.publicKeyBase64,
-      privateKey: params.account.installation.privateKeyBase64,
-    },
-    machineId: params.account.machineId,
-    path,
-    body: input,
-  });
-  const requestedResponse = await fetchJson(`${params.baseUrl}/v1/plugins/permissions/grants/request`, {
-    method: 'POST',
-    headers: {
-      ...authorizationHeaders(params.account.token),
-      [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: publisherHeader,
-    },
-    body: JSON.stringify(input),
-  });
-  expect(requestedResponse.status).toBe(200);
-  return PluginPermissionGrantRequestActionOutputV1Schema.parse(requestedResponse.data);
-}
-
-async function requestProjectDirectWrite(params: Readonly<{
-  baseUrl: string;
-  account: AuthenticatedAccount;
-  projectId: string;
-  sessionId: string;
-  requestId?: string;
-}>): Promise<string> {
-  const requested = await requestSignedDirectWrite({
-    baseUrl: params.baseUrl,
-    account: params.account,
-    input: {
-      pluginId: PLUGIN_ID,
-      capability: DIRECT_WRITE_CAPABILITY,
-      targetScope: { kind: 'project', projectId: params.projectId },
-      subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
-      requester: {
-        kind: 'plugin',
-        pluginId: PLUGIN_ID,
-        sessionId: params.sessionId,
-        ...(params.requestId ? { requestId: params.requestId } : {}),
-      },
-      reason: 'Materialize an approved execution-run review proposal.',
-    },
-  });
-  expect(requested.pendingRequest.authoritySource).toEqual({
-    kind: 'machine_installation',
-    machineId: params.account.machineId,
-    installationId: params.account.installation.installationId,
-  });
-  return requested.pendingRequest.id;
-}
-
-async function grantDirectWriteRequest(params: Readonly<{
-  baseUrl: string;
-  token: string;
-  requestId: string;
-}>): Promise<string> {
-  const grantedResponse = await fetchJson(`${params.baseUrl}/v1/plugins/permissions/grants/grant`, {
-    method: 'POST',
-    headers: authorizationHeaders(params.token),
-    body: JSON.stringify({ requestId: params.requestId }),
-  });
-  expect(grantedResponse.status).toBe(200);
-  const granted = PluginPermissionGrantGrantActionOutputV1Schema.parse(grantedResponse.data);
-  return granted.grant.id;
-}
-
-async function grantProjectDirectWrite(params: Readonly<{
-  baseUrl: string;
-  account: AuthenticatedAccount;
-  projectId: string;
-  sessionId: string;
-}>): Promise<Readonly<{ requestId: string; grantId: string }>> {
-  const requestId = await requestProjectDirectWrite(params);
-  const grantId = await grantDirectWriteRequest({
-    baseUrl: params.baseUrl,
-    token: params.account.token,
-    requestId,
-  });
-  return { requestId, grantId };
-}
-
-async function revokeDirectWrite(params: Readonly<{
-  baseUrl: string;
-  token: string;
-  grantId: string;
-}>): Promise<void> {
-  const response = await fetchJson(`${params.baseUrl}/v1/plugins/permissions/grants/revoke`, {
-    method: 'POST',
-    headers: authorizationHeaders(params.token),
-    body: JSON.stringify({ grantId: params.grantId, reason: 'Exercise revocation before host dispatch.' }),
-  });
-  expect(response.status).toBe(200);
-  expect(PluginPermissionGrantRevokeActionOutputV1Schema.parse(response.data).grant.status).toBe('revoked');
 }
 
 function createAutoApprovedCurrentIntent(): ReturnType<typeof createExecutionRunHostActionCurrentIntentAdapter> {
@@ -239,7 +121,7 @@ function candidate(params: Readonly<{
 }
 
 describe('authenticated execution-run review host action', () => {
-  it('reaches the real server effect with current authority and fails closed across grant, scope, revocation, and encryption boundaries', async () => {
+  it('reaches the real server effect with current authority and writes without a plugin grant and preserves the encryption boundary', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-review-host-action-'));
     const cwd = join(testDir, 'workspace');
     await mkdir(join(cwd, 'src'), { recursive: true });
@@ -306,13 +188,6 @@ describe('authenticated execution-run review host action', () => {
             serverId: 'server-under-test',
           }),
           requestCurrentIntent: createAutoApprovedCurrentIntent(),
-          requestDirectWriteGrant: async ({ serverId: _serverId, ...input }) => {
-            return await requestSignedDirectWrite({
-              baseUrl: server.baseUrl,
-              account: params.account,
-              input,
-            });
-          },
           executeHostAction: async (actionId, input, context) => {
             const principal = context.reviewCommentPrincipal;
             if (!principal) {
@@ -338,74 +213,6 @@ describe('authenticated execution-run review host action', () => {
       };
 
       const account = await createAccountWithMachine(server.baseUrl);
-      const missingGrant = await createMaterializer({
-        account,
-        projectId: 'project-authorized',
-        sessionId: 'session-main',
-        runId: 'run-missing-grant',
-        callId: 'call-missing-grant',
-        body: 'This proposal must not bypass the durable grant.',
-      })();
-      expect(missingGrant).toMatchObject({
-        ok: true,
-        result: {
-          status: 'failed',
-          comments: [],
-          failures: [{ errorCode: 'review_comment_direct_write_permission_required' }],
-        },
-      });
-
-      const pendingResponse = await fetchJson(
-        `${server.baseUrl}/v1/plugins/permissions/grants/list`,
-        {
-          method: 'POST',
-          headers: authorizationHeaders(account.token),
-          body: JSON.stringify({
-            capability: DIRECT_WRITE_CAPABILITY,
-            targetScope: { kind: 'project', projectId: 'project-authorized' },
-            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
-          }),
-        },
-      );
-      expect(pendingResponse.status).toBe(200);
-      const pending = PluginPermissionGrantListActionOutputV1Schema.parse(pendingResponse.data);
-      expect(pending.grants).toHaveLength(0);
-      expect(pending.pendingRequests).toHaveLength(1);
-      expect(pending.pendingRequests[0]).toMatchObject({
-        pluginId: PLUGIN_ID,
-        capability: DIRECT_WRITE_CAPABILITY,
-        targetScope: { kind: 'project', projectId: 'project-authorized' },
-        requester: {
-          kind: 'plugin',
-          pluginId: PLUGIN_ID,
-          sessionId: 'session-main',
-          requestId: 'call-missing-grant',
-        },
-        authoritySource: {
-          kind: 'machine_installation',
-          machineId: account.machineId,
-          installationId: account.installation.installationId,
-        },
-      });
-      const requestId = pending.pendingRequests[0]!.id;
-      const grantId = await grantDirectWriteRequest({ baseUrl: server.baseUrl, token: account.token, requestId });
-      const granted = { requestId, grantId };
-      const wrongScope = await createMaterializer({
-        account,
-        projectId: 'project-wrong-scope',
-        sessionId: 'session-main',
-        runId: 'run-wrong-scope',
-        callId: 'call-wrong-scope',
-        body: 'A grant for a sibling project must not authorize this proposal.',
-      })();
-      expect(wrongScope).toMatchObject({
-        ok: true,
-        result: {
-          status: 'failed',
-          failures: [{ errorCode: 'review_comment_direct_write_permission_required' }],
-        },
-      });
-
       const materializeAuthorized = createMaterializer({
         account,
         projectId: 'project-authorized',
@@ -446,83 +253,7 @@ describe('authenticated execution-run review host action', () => {
         author: { kind: 'agent', agentId: 'claude', sessionId: 'session-main' },
       });
 
-      await revokeDirectWrite({ baseUrl: server.baseUrl, token: account.token, grantId: granted.grantId });
-      const revoked = await createMaterializer({
-        account,
-        projectId: 'project-authorized',
-        sessionId: 'session-main',
-        runId: 'run-revoked',
-        callId: 'call-revoked',
-        body: 'Revocation must take effect before this dispatch.',
-      })();
-      expect(revoked).toMatchObject({
-        ok: true,
-        result: {
-          status: 'failed',
-          failures: [{ errorCode: 'review_comment_direct_write_permission_required' }],
-        },
-      });
-      const revokedRetry = await createMaterializer({
-        account,
-        projectId: 'project-authorized',
-        sessionId: 'session-main',
-        runId: 'run-revoked-retry',
-        callId: 'call-revoked-retry',
-        body: 'A later explicit retry must reuse the pending request without writing.',
-      })();
-      expect(revokedRetry).toMatchObject({
-        ok: true,
-        result: {
-          status: 'failed',
-          failures: [{ errorCode: 'review_comment_direct_write_permission_required' }],
-        },
-      });
-      const reopenedResponse = await fetchJson(
-        `${server.baseUrl}/v1/plugins/permissions/grants/list`,
-        {
-          method: 'POST',
-          headers: authorizationHeaders(account.token),
-          body: JSON.stringify({
-            capability: DIRECT_WRITE_CAPABILITY,
-            targetScope: { kind: 'project', projectId: 'project-authorized' },
-            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
-          }),
-        },
-      );
-      const reopened = PluginPermissionGrantListActionOutputV1Schema.parse(reopenedResponse.data);
-      expect(reopened.pendingRequests).toHaveLength(1);
-      const reopenedRequestId = reopened.pendingRequests[0]!.id;
-      const dismissedResponse = await fetchJson(
-        `${server.baseUrl}/v1/plugins/permissions/grants/dismissRequest`,
-        {
-          method: 'POST',
-          headers: authorizationHeaders(account.token),
-          body: JSON.stringify({
-            requestId: reopenedRequestId,
-            reason: 'User dismissed the renewed request after revocation.',
-          }),
-        },
-      );
-      expect(dismissedResponse.status).toBe(200);
-      expect(PluginPermissionGrantDismissRequestActionOutputV1Schema.parse(
-        dismissedResponse.data,
-      ).pendingRequest).toMatchObject({
-        id: reopenedRequestId,
-        status: 'dismissed',
-        authoritySource: {
-          kind: 'machine_installation',
-          machineId: account.machineId,
-          installationId: account.installation.installationId,
-        },
-      });
-
       const encryptedAccount = await createAccountWithMachine(server.baseUrl);
-      await grantProjectDirectWrite({
-        baseUrl: server.baseUrl,
-        account: encryptedAccount,
-        projectId: 'project-encrypted',
-        sessionId: 'session-encrypted',
-      });
       const encryptionUpdate = await fetchJson(`${server.baseUrl}/v1/account/encryption`, {
         method: 'PATCH',
         headers: authorizationHeaders(encryptedAccount.token),
@@ -545,78 +276,6 @@ describe('authenticated execution-run review host action', () => {
         },
       });
 
-      const auditDb = new DatabaseSync(join(server.dataDir, 'happier-server-light.sqlite'), { readOnly: true });
-      try {
-        const auditRows = auditDb.prepare(`
-          SELECT account_id, event_kind, plugin_id, capability, scope_kind, scope_project_id,
-                 authority_kind, authority_machine_id, authority_installation_id,
-                 actor_json, request_id, grant_id
-          FROM plugin_permission_grant_events
-          WHERE request_id = ? OR grant_id = ?
-          ORDER BY created_at ASC, event_kind ASC
-        `).all(granted.requestId, granted.grantId) as Array<Record<string, unknown>>;
-        expect(auditRows.map((row) => row.event_kind).sort()).toEqual(['granted', 'requested', 'revoked']);
-        for (const row of auditRows) {
-          expect(row).toMatchObject({
-            account_id: account.accountId,
-            plugin_id: PLUGIN_ID,
-            capability: DIRECT_WRITE_CAPABILITY,
-            scope_kind: 'project',
-            scope_project_id: 'project-authorized',
-            authority_kind: 'machine_installation',
-            authority_machine_id: account.machineId,
-            authority_installation_id: account.installation.installationId,
-            request_id: granted.requestId,
-          });
-        }
-        expect(JSON.parse(String(auditRows.find((row) => row.event_kind === 'requested')?.actor_json))).toEqual({
-          kind: 'plugin',
-          pluginId: PLUGIN_ID,
-          sessionId: 'session-main',
-          requestId: 'call-missing-grant',
-        });
-        for (const eventKind of ['granted', 'revoked']) {
-          const row = auditRows.find((candidate) => candidate.event_kind === eventKind);
-          expect(row?.grant_id).toBe(granted.grantId);
-          expect(JSON.parse(String(row?.actor_json))).toEqual({
-            kind: 'user',
-            userId: account.accountId,
-          });
-        }
-        const reopenedAudit = auditDb.prepare(`
-          SELECT account_id, event_kind, plugin_id, capability, scope_kind, scope_project_id,
-                 authority_kind, authority_machine_id, authority_installation_id, actor_json, request_id
-          FROM plugin_permission_grant_events
-          WHERE request_id = ?
-          ORDER BY created_at ASC, event_kind ASC
-        `).all(reopenedRequestId) as Array<Record<string, unknown>>;
-        expect(reopenedAudit.map((row) => row.event_kind).sort()).toEqual(['dismissed', 'requested']);
-        for (const row of reopenedAudit) {
-          expect(row).toMatchObject({
-            account_id: account.accountId,
-            plugin_id: PLUGIN_ID,
-            capability: DIRECT_WRITE_CAPABILITY,
-            scope_kind: 'project',
-            scope_project_id: 'project-authorized',
-            authority_kind: 'machine_installation',
-            authority_machine_id: account.machineId,
-            authority_installation_id: account.installation.installationId,
-            request_id: reopenedRequestId,
-          });
-        }
-        expect(JSON.parse(String(reopenedAudit.find((row) => row.event_kind === 'requested')?.actor_json))).toEqual({
-          kind: 'plugin',
-          pluginId: PLUGIN_ID,
-          sessionId: 'session-main',
-          requestId: 'call-revoked',
-        });
-        expect(JSON.parse(String(reopenedAudit.find((row) => row.event_kind === 'dismissed')?.actor_json))).toEqual({
-          kind: 'user',
-          userId: account.accountId,
-        });
-      } finally {
-        auditDb.close();
-      }
     } finally {
       if (previousServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
       else process.env.HAPPIER_SERVER_URL = previousServerUrl;

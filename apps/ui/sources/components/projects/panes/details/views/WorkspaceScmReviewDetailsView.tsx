@@ -20,18 +20,7 @@ import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { CheckoutUnreachableState, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
-import { createPluginPermissionGrantActions } from '@/sync/domains/plugins/permissions/actions';
-import { usePluginPermissionGrants } from '@/sync/domains/plugins/permissions/usePluginPermissionGrants';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import {
-    selectPluginPermissionPendingRequests,
-} from '@/sync/domains/plugins/permissions/store';
-import {
-    REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
-    pluginPermissionGrantScopeKey,
-    type PluginPermissionGrantListInput,
-    type PluginPermissionGrantTargetScope,
-} from '@/sync/domains/plugins/permissions/types';
 import { selectScmChangedFileCount, type ScmFileStatus } from '@/scm/scmStatusFiles';
 import type { SessionAttributedFile } from '@/scm/scmAttribution';
 import { SCM_COMMIT_STRATEGIES, type ScmCommitStrategy } from '@/scm/settings/commitStrategy';
@@ -237,8 +226,6 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
             return executeValue(...args);
         });
     }, [bound.isCurrent, executeValue]);
-    const pluginPermissionGrantActions = React.useMemo(
-        () => createPluginPermissionGrantActions({ execute: frontDoorActionExecutor }), [frontDoorActionExecutor]);
     const capture = useCapturedScmComparison({ host: props.host, machine: bound.machine,
         indexPageSize,
         identity: { machineId: props.machineId, basePath: props.rootPath }, serverId: props.serverId, comparison,
@@ -327,32 +314,6 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
     const commitSelectionPatches = useWorkspaceScmCommitSelectionPatches(scope);
     const workspaceRefs = useWorkspaceRefs();
     const checkoutRef = React.useMemo(() => findWorkspaceRefByScope(workspaceRefs, scope), [workspaceRefs, scope]);
-    const directWriteGrantScope = React.useMemo<PluginPermissionGrantTargetScope | null>(() => checkoutRef ? ({
-        kind: 'project', projectId: checkoutRef.id,
-    }) : null, [checkoutRef?.id]);
-    const pluginPermissionGrantListInput = React.useMemo<PluginPermissionGrantListInput | null>(() => directWriteGrantScope ? ({
-        capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
-        targetScope: directWriteGrantScope,
-    }) : null, [directWriteGrantScope]);
-    const pluginPermissionGrants = usePluginPermissionGrants({
-        scope: bound.scope,
-        actions: pluginPermissionGrantActions,
-        enabled: reviewCommentsEnabled && Boolean(pluginPermissionGrantListInput) && Boolean(bound.scope),
-        listInput: pluginPermissionGrantListInput,
-    });
-    const directWriteGrants = React.useMemo(() => pluginPermissionGrants.state.grantIds
-        .map((id) => pluginPermissionGrants.state.grantsById[id])
-        .filter((grant): grant is NonNullable<typeof grant> => (
-            Boolean(grant)
-            && grant?.capability === REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY
-            && pluginPermissionGrantScopeKey(grant.targetScope) === pluginPermissionGrantScopeKey(directWriteGrantScope)
-        )), [pluginPermissionGrants.state.grantIds, pluginPermissionGrants.state.grantsById, directWriteGrantScope]);
-    const pendingDirectWriteGrantRequests = React.useMemo(() => directWriteGrantScope ? selectPluginPermissionPendingRequests(pluginPermissionGrants.state, {
-        capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
-        targetScope: directWriteGrantScope,
-    }) : [], [pluginPermissionGrants.state.pendingRequestIds, pluginPermissionGrants.state.pendingRequestsById, directWriteGrantScope]);
-    const onRefreshPermissionGrants = useEventCallback(() => { void pluginPermissionGrants.refresh(); });
-
     const changedFiles = React.useMemo(() => buildWorkspaceChangedFilesData({ scmSnapshot: snapshot }), [snapshot]);
     const fetchUnifiedDiffForPath = React.useCallback<ScmReviewUnifiedDiffFetcher>(async (input) => {
         return await fetchWorkspaceUnifiedDiffForPath({
@@ -408,23 +369,22 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
             workspaceId={checkoutRef?.id}
             workspace={{ machineId: props.machineId, path: props.rootPath }}
             execute={frontDoorActionExecutor}
-            directWriteGrants={directWriteGrants}
-            pendingDirectWriteGrantRequests={pendingDirectWriteGrantRequests}
-            onGrantDirectWrite={pluginPermissionGrants.grant}
-            onCancelDirectWriteGrant={pluginPermissionGrants.dismissRequest}
-            onRevokeDirectWrite={pluginPermissionGrants.revoke}
-            permissionGrantStatus={pluginPermissionGrants.state.status}
-            permissionGrantError={pluginPermissionGrants.state.error}
-            onRefreshPermissionGrants={onRefreshPermissionGrants}
+
+
+
+
+
+
+
+
             header="external"
             open={view === 'files' && commentsOpen}
             onUnresolvedCountChange={setCommentsCount}
             testID="workspace-review-comments"
                 />
     ) : null, [reviewCommentsEnabled, bound.scope, checkoutRef?.id, props.machineId, props.rootPath,
-        frontDoorActionExecutor, directWriteGrants, pendingDirectWriteGrantRequests,
-        pluginPermissionGrants.grant, pluginPermissionGrants.dismissRequest, pluginPermissionGrants.revoke,
-        pluginPermissionGrants.state.status, pluginPermissionGrants.state.error, onRefreshPermissionGrants, view, commentsOpen]);
+        frontDoorActionExecutor,
+        view, commentsOpen]);
     const barActions = React.useMemo(() => reviewCommentsEnabled && (commentsOpen || (commentsCount ?? 0) > 0)
         ? <ReviewCommentsHeaderButton compact labels={commentsLabels} unresolvedCount={commentsCount}
             expanded={commentsOpen} onPress={toggleComments} testID="workspace-review-comments-trigger" /> : null,

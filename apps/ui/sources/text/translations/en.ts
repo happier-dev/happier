@@ -12986,11 +12986,6 @@ const enFiles = {
         dismissed: 'Dismissed',
       },
       directWriteGrant: {
-        title: 'Direct review-comment writes',
-        body: ({ pluginId }: { pluginId: string }) =>
-          `${pluginId} is requesting permission to write review comments directly.`,
-        grant: 'Grant direct write',
-        cancel: 'Not now',
         revoke: 'Revoke',
       },
     },

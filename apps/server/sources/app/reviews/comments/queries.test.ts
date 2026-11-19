@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-    REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
     type ReviewCommentActorRefV1,
     type ReviewCommentSnapshotV1,
 } from "@happier-dev/protocol";
@@ -153,7 +152,7 @@ describe("review comment list queries", () => {
         const matching = await operations.create({
             accountId: "account-1",
             actor: pluginActor,
-            grants: [REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1],
+
             input: {
                 projectId: "project-1",
                 workspaceId: "workspace-1",
@@ -171,7 +170,7 @@ describe("review comment list queries", () => {
         await operations.create({
             accountId: "account-1",
             actor: pluginActor,
-            grants: [REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1],
+
             input: {
                 projectId: "project-1",
                 workspaceId: "workspace-1",

@@ -9,10 +9,6 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { buildReviewCommentFixture, flushHookEffects, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { commitPreferredLanguage, getPreferredLanguage } from '@/text/preferredLanguage';
-import type {
-    PluginPermissionGrant,
-    PluginPermissionPendingGrantRequest,
-} from '@/sync/domains/plugins/permissions/types';
 
 import {
     decideReviewRunFinding,
@@ -44,7 +40,6 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string, params?: Record<string, unknown>) => {
         if (getPreferredLanguage() === 'fr') return `fr:${key}`;
         if (key === 'files.reviewComments.durable.count') return String(params?.count ?? '');
-        if (key === 'files.reviewComments.durable.directWriteGrant.body') return String(params?.pluginId ?? '');
         if (key === 'files.reviewComments.durable.bulkFailure') return `${String(params?.commentId ?? '')}:${String(params?.errorCode ?? '')}`;
         return key;
     } });
@@ -657,177 +652,6 @@ describe('ReviewCommentsSessionSurface', () => {
         expect(screen.getTextContent()).not.toContain('Proposed finding.');
         expect(screen.getTextContent()).not.toContain('Resolved finding.');
         expect(screen.getTextContent()).toContain('2');
-    });
-
-    it('projects exact plugin grant rows and routes grant, dismiss, and revoke by durable identity', async () => {
-        const onGrantDirectWrite = vi.fn();
-        const onCancelDirectWriteGrant = vi.fn();
-        const onRevokeDirectWrite = vi.fn();
-        const pendingDirectWriteGrantRequest: PluginPermissionPendingGrantRequest = {
-            v: 1,
-            id: 'request-1',
-            accountId: 'account-1',
-            pluginId: 'review-coderabbit',
-            pluginName: 'CodeRabbit',
-            capability: 'reviews.comments.write.direct',
-            targetScope: { kind: 'project', projectId: 'project-1' },
-            subject: { kind: 'general' },
-            requester: { kind: 'plugin', pluginId: 'review-coderabbit', sessionId: 'session-1' },
-            authoritySource: { kind: 'bundled' },
-            reason: 'Write approved review comments without another prompt.',
-            status: 'pending',
-            createdAt: 1,
-            updatedAt: 1,
-        };
-        const activeDirectWriteGrant: PluginPermissionGrant = {
-            v: 1,
-            id: 'grant-1',
-            accountId: 'account-1',
-            pluginId: 'review-deepsec',
-            capability: 'reviews.comments.write.direct',
-            targetScope: { kind: 'project', projectId: 'project-1' },
-            subject: { kind: 'general' },
-            authoritySource: { kind: 'bundled' },
-            status: 'active',
-            requestId: 'request-deepsec',
-            grantedByUserId: 'user-1',
-            grantedAt: 1,
-            createdAt: 1,
-            updatedAt: 1,
-        };
-        const secondPendingRequest: PluginPermissionPendingGrantRequest = {
-            ...pendingDirectWriteGrantRequest,
-            id: 'request-2',
-            pluginId: 'review-second',
-            pluginName: 'Second reviewer',
-            requester: { kind: 'plugin', pluginId: 'review-second', sessionId: 'session-1' },
-            createdAt: 2,
-            updatedAt: 2,
-        };
-        const screen = await renderScreen(
-            <ReviewCommentsSessionSurface scope={RUN.scope}
-                projectId="project-1"
-                sessionId="session-1"
-                execute={async () => ({ items: [], cursor: null })}
-                directWriteGrants={[activeDirectWriteGrant]}
-                pendingDirectWriteGrantRequests={[pendingDirectWriteGrantRequest, secondPendingRequest]}
-                permissionGrantActions={{
-                    grant: onGrantDirectWrite,
-                    dismissRequest: onCancelDirectWriteGrant,
-                    revoke: onRevokeDirectWrite,
-                }}
-                onGrantDirectWrite={onGrantDirectWrite}
-                onCancelDirectWriteGrant={onCancelDirectWriteGrant}
-                onRevokeDirectWrite={onRevokeDirectWrite}
-                testID="review-comments-session"
-            />,
-        );
-        await flushHookEffects();
-
-        expect(screen.getTextContent()).toContain('CodeRabbit');
-        expect(screen.getTextContent()).toContain('review-coderabbit');
-        expect(screen.getTextContent()).toContain('reviews.comments.write.direct');
-        expect(screen.getTextContent()).toContain('project:project-1');
-        expect(screen.getTextContent()).toContain('Write approved review comments without another prompt.');
-        expect(screen.getTextContent()).toContain('review-deepsec');
-        expect(screen.findByTestId('review-comments-session-direct-write-grant-grant-1-scope')?.props.children).toBe('project:project-1');
-        expect(screen.findByTestId('review-comments-session-direct-write-grant-grant-1-actor')?.props.children).toBe('user-1');
-        expect(screen.findByTestId('review-comments-session-direct-write-grant-grant-1-authority')?.props.children).toBe('bundled');
-        expect(screen.findByTestId('review-comments-session-direct-write-grant-grant-1-created')?.props.children).toBe('1970-01-01T00:00:00.001Z');
-        expect(screen.getTextContent()).toContain('Second reviewer');
-        expect(screen.findByTestId('review-comments-session-direct-write-request-request-2')).not.toBeNull();
-        expect(screen.getTextContent()).not.toContain('Direct write enabled');
-        expect(onGrantDirectWrite).not.toHaveBeenCalled();
-
-        const grantButton = screen.findByTestId('review-comments-session-direct-write-request-request-1-grant');
-        await pressTestInstanceAsync(grantButton, 'review-comments-session-direct-write-request-request-1-grant');
-
-        expect(onGrantDirectWrite).toHaveBeenCalledWith({ requestId: 'request-1' });
-        expect(onGrantDirectWrite).toHaveBeenCalledTimes(1);
-
-        const cancelButton = screen.findByTestId('review-comments-session-direct-write-request-request-1-dismiss');
-        await pressTestInstanceAsync(cancelButton, 'review-comments-session-direct-write-request-request-1-dismiss');
-
-        expect(onCancelDirectWriteGrant).toHaveBeenCalledWith({ requestId: 'request-1' });
-        expect(onCancelDirectWriteGrant).toHaveBeenCalledTimes(1);
-
-        const revokeButton = screen.findByTestId('review-comments-session-direct-write-grant-grant-1-revoke');
-        await pressTestInstanceAsync(revokeButton, 'review-comments-session-direct-write-grant-grant-1-revoke');
-        expect(onRevokeDirectWrite).toHaveBeenCalledWith({ grantId: 'grant-1' });
-        expect(onRevokeDirectWrite).toHaveBeenCalledTimes(1);
-    });
-
-    it('keeps projected grants visible offline and exposes an explicit reconnect refresh', async () => {
-        const onRefreshPermissionGrants = vi.fn();
-        const screen = await renderScreen(
-            <ReviewCommentsSessionSurface scope={RUN.scope}
-                projectId="project-1"
-                sessionId="session-1"
-                execute={async () => ({ items: [], cursor: null })}
-                directWriteGrants={[{
-                    v: 1,
-                    id: 'grant-1',
-                    accountId: 'account-1',
-                    pluginId: 'review-deepsec',
-                    capability: 'reviews.comments.write.direct',
-                    targetScope: { kind: 'project', projectId: 'project-1' },
-                    subject: { kind: 'general' },
-                    authoritySource: { kind: 'bundled' },
-                    status: 'active',
-                    grantedByUserId: 'user-1',
-                    grantedAt: 1,
-                    createdAt: 1,
-                    updatedAt: 1,
-                }]}
-                pendingDirectWriteGrantRequests={[]}
-                permissionGrantStatus="error"
-                permissionGrantError="offline"
-                onRefreshPermissionGrants={onRefreshPermissionGrants}
-                testID="review-comments-session"
-            />,
-        );
-        await flushHookEffects();
-
-        expect(screen.findByTestId('review-comments-session-permission-grants-error')?.props.accessibilityLiveRegion).toBe('polite');
-        expect(screen.getTextContent()).toContain('offline');
-        expect(screen.getTextContent()).toContain('review-deepsec');
-        await pressTestInstanceAsync(
-            screen.findByTestId('review-comments-session-permission-grants-refresh'),
-            'review-comments-session-permission-grants-refresh',
-        );
-        expect(onRefreshPermissionGrants).toHaveBeenCalledTimes(1);
-    });
-
-    it('ignores pending grants for capabilities outside review-comment direct writes', async () => {
-        const screen = await renderScreen(
-            <ReviewCommentsSessionSurface scope={RUN.scope}
-                projectId="project-1"
-                sessionId="session-1"
-                execute={async () => ({ items: [], cursor: null })}
-                directWriteGrants={[]}
-                pendingDirectWriteGrantRequests={[{
-                    v: 1,
-                    id: 'request-1',
-                    accountId: 'account-1',
-                    pluginId: 'credential-plugin',
-                    pluginName: 'Credential Plugin',
-                    capability: 'credentials.materialize.raw',
-                    targetScope: { kind: 'project', projectId: 'project-1' },
-                    subject: { kind: 'general' },
-                    requester: { kind: 'plugin', pluginId: 'credential-plugin', sessionId: 'session-1' },
-                    authoritySource: { kind: 'bundled' },
-                    reason: 'Materialize raw credentials.',
-                    status: 'pending',
-                    createdAt: 1,
-                    updatedAt: 1,
-                }]}
-                testID="review-comments-session"
-            />,
-        );
-        await flushHookEffects();
-
-        expect(screen.findByTestId('review-comments-session-direct-write-request-request-1')).toBeNull();
-        expect(screen.getTextContent()).not.toContain('credentials.materialize.raw');
     });
 
     it('wires edit reply transition redact and bulk actions through durable review actions', async () => {

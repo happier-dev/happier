@@ -1390,7 +1390,6 @@
     "sources/components/projects/workers/useObservedWorkerSetting.ts",
     "sources/components/projects/workers/useWorkerDestinationLabel.ts",
     "sources/components/reviews/ReviewCommentCard.tsx",
-    "sources/components/reviews/ReviewCommentDirectWriteGrantSheet.tsx",
     "sources/components/reviews/ReviewCommentFilters.tsx",
     "sources/components/reviews/ReviewCommentSnapshotView.tsx",
     "sources/components/reviews/ReviewCommentThread.tsx",

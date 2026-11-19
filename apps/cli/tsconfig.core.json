@@ -79,7 +79,6 @@
     "src/agent/executionRuns/profiles/memoryHints/MemoryHintsProfile.ts",
     "src/agent/executionRuns/profiles/plan/PlanProfile.ts",
     "src/agent/executionRuns/profiles/review/ReviewProfile.ts",
-    "src/agent/executionRuns/profiles/review/directWriteGrantRequester.ts",
     "src/agent/executionRuns/profiles/review/hostActionMaterializer.ts",
     "src/agent/executionRuns/profiles/review/pluginAuthority.ts",
     "src/agent/executionRuns/profiles/review/reviewComments.ts",

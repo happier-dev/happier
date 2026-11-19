@@ -99,18 +99,9 @@ import {
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { findWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
-import { createPluginPermissionGrantActions } from '@/sync/domains/plugins/permissions/actions';
-import { usePluginPermissionGrants } from '@/sync/domains/plugins/permissions/usePluginPermissionGrants';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
-import { selectPluginPermissionPendingRequests } from '@/sync/domains/plugins/permissions/store';
-import {
-  REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
-  pluginPermissionGrantScopeKey,
-  type PluginPermissionGrantListInput,
-  type PluginPermissionGrantTargetScope,
-} from '@/sync/domains/plugins/permissions/types';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { ScmCommitSelectionToggleButton } from '@/components/sessions/sourceControl/commitSelection/ScmCommitSelectionToggleButton';
 import {
@@ -274,54 +265,6 @@ const SessionWorkingScmReviewDetailsView = React.memo(
     ]);
     const accountScope = [...accountBindings.values()][0]?.scope;
     const { executeValue: frontDoorActionExecutor } = useMountedActionExecution(accountScope);
-    const pluginPermissionGrantActions = React.useMemo(
-      () =>
-        createPluginPermissionGrantActions({
-          execute: frontDoorActionExecutor,
-        }),
-      [frontDoorActionExecutor],
-    );
-    const directWriteGrantScope =
-      React.useMemo<PluginPermissionGrantTargetScope | null>(() => {
-        if (!reviewWorkspaceRef) return null;
-        return {
-          kind: 'project',
-          projectId: reviewWorkspaceRef.id,
-        };
-      }, [reviewWorkspaceRef?.id]);
-    const pluginPermissionGrantListInput =
-      React.useMemo<PluginPermissionGrantListInput | null>(
-        () =>
-          directWriteGrantScope
-            ? {
-                capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
-                targetScope: directWriteGrantScope,
-              }
-            : null,
-        [directWriteGrantScope],
-      );
-    const pluginPermissionGrants = usePluginPermissionGrants({
-      scope: accountScope ?? null,
-      actions: pluginPermissionGrantActions,
-      enabled: reviewCommentsEnabled && Boolean(pluginPermissionGrantListInput),
-      listInput: pluginPermissionGrantListInput,
-    });
-    const directWriteGrants = pluginPermissionGrants.state.grantIds
-      .map((id) => pluginPermissionGrants.state.grantsById[id])
-      .filter(
-        (grant): grant is NonNullable<typeof grant> =>
-          Boolean(grant) &&
-          grant?.capability ===
-            REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY &&
-          pluginPermissionGrantScopeKey(grant.targetScope) ===
-            pluginPermissionGrantScopeKey(directWriteGrantScope),
-      );
-    const pendingDirectWriteGrantRequests = directWriteGrantScope
-      ? selectPluginPermissionPendingRequests(pluginPermissionGrants.state, {
-          capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
-          targetScope: directWriteGrantScope,
-        })
-      : [];
     const [diffRefreshToken, setDiffRefreshToken] = React.useState(0);
 
     useScmDiffCacheLimits(scmDiffCache);
@@ -807,16 +750,6 @@ const SessionWorkingScmReviewDetailsView = React.memo(
         }}
         sessionId={props.sessionId}
         execute={frontDoorActionExecutor}
-        directWriteGrants={directWriteGrants}
-        pendingDirectWriteGrantRequests={pendingDirectWriteGrantRequests}
-        onGrantDirectWrite={pluginPermissionGrants.grant}
-        onCancelDirectWriteGrant={pluginPermissionGrants.dismissRequest}
-        onRevokeDirectWrite={pluginPermissionGrants.revoke}
-        permissionGrantStatus={pluginPermissionGrants.state.status}
-        permissionGrantError={pluginPermissionGrants.state.error}
-        onRefreshPermissionGrants={() => {
-          void pluginPermissionGrants.refresh();
-        }}
         header="external"
         open={commentsOpen}
         onUnresolvedCountChange={setCommentsCount}

@@ -11,7 +11,7 @@ import { encryptString, decryptString } from "@/modules/encrypt";
 import type { ReviewCommentStore } from "./store";
 import { ReviewCommentOperationError } from "./errors";
 import { assertReviewCommentCurrentIntent } from "./operations";
-import { assertReviewCommentSessionScope, assertReviewCommentDirectWriteGrant,
+import { assertReviewCommentSessionScope,
     assertReviewCommentRedactionActorAllowed, assertReviewCommentTransitionActorAllowed,
     assertReviewCommentUserOrOriginalAuthor,
     assertReviewCommentOrdinarySourceAdmission,
@@ -65,9 +65,6 @@ export function createReviewCommentCanonicalMutations(store: ReviewCommentStore,
         if (mutation.actionId === "reviews.comments.create") {
             if (mutation.input.reviewId !== principal.reviewAccess?.reviewId) throw new ReviewCommentOperationError("review_comment_permission_denied", "Review comment requires its admitted Review capability");
             if (principal.actor.kind === "workflow" && principal.currentIntent?.kind !== "review_findings_materialization") throw new ReviewCommentOperationError("review_comment_permission_denied", "Workflow principals cannot create review comments");
-            if (principal.actor.kind !== "user" && (mutation.input.authorIntent === "open" || principal.actor.kind === "agent" || principal.actor.kind === "workflow")) {
-                if (principal.currentIntent?.kind !== "review_findings_materialization") assertReviewCommentDirectWriteGrant(principal);
-            }
             if (principal.actor.kind === "agent" || (principal.actor.kind === "workflow" && mutation.input.sessionId !== undefined)) {
                 assertReviewCommentSessionScope(principal, mutation.input.sessionId);
             }

@@ -1,3 +1,4 @@
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { reviewReviewersForEngineIdsV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import * as React from 'react';
 import tweetnacl from 'tweetnacl';
@@ -484,14 +485,13 @@ describe('WorkspaceScmReviewDetailsView', () => {
         ]);
         expect(fixture.requests.filter(request => request.method === 'scm.diffSummary.generate' || request.targetId === 's1')).toEqual([]);
     });
-    it('uses the exact checkout row for grants, never the Project anchor or another Home', async () => {
+    it('uses the exact checkout row for comments without requesting plugin grants', async () => {
         const { screen, grants, scope } = await mountWithRows('exact');
-        expect(grants).toContainEqual(expect.objectContaining({ capability: 'reviews.comments.write.direct',
-            targetScope: { kind: 'project', projectId: 'exact-checkout' } }));
-        expect(grants.every(value => JSON.stringify(value).includes('exact-checkout'))).toBe(true);
+        expect(grants).toEqual([]);
         const { ReviewCommentsSessionSurface } = await import('@/components/reviews/ReviewCommentsSessionSurface');
         expect(screen.tree.root.findByType(ReviewCommentsSessionSurface).props).toMatchObject({
-            workspaceId: 'exact-checkout', workspace: { machineId: 'm1', path: '/repo' }, scope,
+            workspaceId: 'exact-checkout', workspace: { machineId: 'm1', path: '/repo' },
+            scope: { ...scope, serverId: resolveServerProfileScopeIdForIdentifier(scope.serverId) },
         });
     });
 

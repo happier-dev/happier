@@ -3,9 +3,8 @@ import type { Fastify } from "@/app/api/types";
 import type { ReviewCommentActorRefV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import type { ReviewCommentPrincipalHeaderV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import type { z } from "zod/mini";
-import { GENERAL_PLUGIN_PERMISSION_SUBJECT_V1 } from '@happier-dev/protocol/plugins/permissions/grants';
 import { createReviewCommentPrincipalSigningInputV1, isWorkflowSessionScopeTargetV1, readWorkflowActionInvocationV1, REVIEW_COMMENT_PRINCIPAL_HEADER_V1, ReviewCommentBulkTransitionRequestV1Schema, ReviewCommentGetRequestV1Schema, ReviewCommentListRequestV1Schema, ReviewCommentPrincipalHeaderV1Schema, stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
-import { REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1, ReviewCommentAttachEvidenceRequestV1Schema, ReviewCommentCreateRequestV1Schema, ReviewCommentEditRequestV1Schema, ReviewCommentRedactRequestV1Schema, ReviewCommentReplyRequestV1Schema, ReviewCommentSetDispositionRequestV1Schema, ReviewCommentTransitionRequestV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
+import { ReviewCommentAttachEvidenceRequestV1Schema, ReviewCommentCreateRequestV1Schema, ReviewCommentEditRequestV1Schema, ReviewCommentRedactRequestV1Schema, ReviewCommentReplyRequestV1Schema, ReviewCommentSetDispositionRequestV1Schema, ReviewCommentTransitionRequestV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewCommentPublicationTransportRequestV1Schema } from '@happier-dev/protocol/reviews/comments/publicationTransport';
 import { ReviewCommentPrepareMutationRequestV1Schema, ReviewCommentCommitMutationRequestV1Schema } from '@happier-dev/protocol/reviews/comments/mutation';
 import { readReviewCommentPreparationReceipt } from "./mutations";
@@ -23,7 +22,6 @@ import { ReviewCommentOperationError } from "./errors";
 import type { ReviewAccessCapability, ReviewCommentPrincipal } from "./permissions";
 import { createSqlReviewCommentStore, readReviewCommentReviewIds } from "./store";
 import { resolveReviewAccessInTx } from '../reviewAccess';
-import { resolveTrustedPluginPermissionGrants } from "@/app/plugins/permissions/resolve";
 import { workflowRunIdentityWhere } from "@/app/workflows/workflowRunService";
 import { resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
@@ -386,21 +384,6 @@ async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePri
             }
         }
     }
-    const grantPluginId = actor.kind === "plugin"
-        ? actor.pluginId
-        : verifiedHeaderPrincipal?.currentIntent?.kind === "execution_run_host_action"
-            ? verifiedHeaderPrincipal.currentIntent.pluginId : undefined;
-    const trustedGrants = grantPluginId && !commitReceipt
-        ? await resolveTrustedPluginPermissionGrants({
-            accountId: request.userId,
-            machineId: verifiedHeaderPrincipal?.machineId,
-            installationId: verifiedHeaderPrincipal?.installationId,
-            pluginId: grantPluginId,
-            capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-            targetScope: readReviewCommentCreateTargetScope(createBody),
-            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
-        })
-        : [];
     return {
         accountId: request.userId,
         actor,
@@ -408,7 +391,6 @@ async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePri
         ...(actor.kind === "workflow" && scopeSessionId ? { workflowOriginSessionId: scopeSessionId } : {}),
         ...(actor.kind === "workflow" && workflowScope ? { workflowScope } : {}),
         ...(ledSubtreeSessionIds ? { ledSubtreeSessionIds } : {}),
-        grants: trustedGrants.map((grant) => grant.capability),
         ...(verifiedHeaderPrincipal?.currentIntent ? { currentIntent: verifiedHeaderPrincipal.currentIntent } : {}),
         storageMode: reviewAccess?.encryptionMode ?? (mode?.status === "ready" ? mode.mode : undefined),
         accountVersion: account.seq,
@@ -435,13 +417,6 @@ async function resolveRequestReviewAccess(request: Parameters<ReviewCommentRoute
     if (!access) throw new ReviewCommentOperationError("review_comment_not_found", "Review not found");
     if (!access.encryptionMode) throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Review encryption state is unavailable");
     return access;
-}
-
-function readReviewCommentCreateTargetScope(body: unknown): { kind: "project"; projectId: string } | null {
-    if (!body || typeof body !== "object") return null;
-    const projectId = (body as { projectId?: unknown }).projectId;
-    if (typeof projectId !== "string" || projectId.trim().length === 0) return null;
-    return { kind: "project", projectId: projectId.trim() };
 }
 
 function encodeReviewCommentPathSegment(value: string): string {

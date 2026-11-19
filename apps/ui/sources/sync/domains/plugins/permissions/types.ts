@@ -26,6 +26,7 @@ export const PLUGIN_PERMISSION_GRANT_ACTION_IDS = Object.freeze({
     dismissRequest: 'plugins.permissions.grants.dismissRequest',
 } as const);
 
+/** Legacy grant identifier, retained for persisted-row consumers only. */
 export const REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY = 'reviews.comments.write.direct' satisfies PluginPermissionCapabilityV1;
 
 export type PluginPermissionGrantActionId = PluginPermissionGrantActionIdV1;

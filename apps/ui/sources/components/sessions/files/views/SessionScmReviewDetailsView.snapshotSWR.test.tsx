@@ -1,3 +1,4 @@
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -117,7 +118,7 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         expect(response).toMatchObject({ comment: { body: 'Visible from the Project host.' } });
         expect(response).not.toHaveProperty('comment.projectId');
         const projectPanel = await fixture.render(<ReviewCommentsSessionSurface
-            workspaceId="wr_stable" workspace={surfaceProps.workspace} execute={surfaceProps.execute}
+            scope={surfaceProps.scope} workspaceId="wr_stable" workspace={surfaceProps.workspace} execute={surfaceProps.execute}
         />);
         expect(projectPanel.getTextContent()).toContain('Visible from the Project host.');
         const listRequest = homeRequests.filter(request => request.path === '/v1/reviews/comments' && request.method === 'GET').at(-1);
@@ -143,58 +144,6 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         expect(response).toMatchObject({ comment: { body: 'Persist this reversible comment directly.' } });
         expect(homeRequests.filter(request => request.path === '/v1/reviews/comments' && request.method === 'POST')).toHaveLength(1);
         expect(servedReviewComments).toEqual([expect.objectContaining({ body: 'Persist this reversible comment directly.' })]);
-    });
-
-    it('finds a Project grant after counter reassignment and refuses another checkout or a missing ref', async () => {
-        enableReviewComments();
-        const sessionMetadata = fixture.session.metadata;
-        if (!sessionMetadata) throw new Error('Expected the fixture Session workspace metadata');
-        const { projectManager } = await import('@/sync/runtime/orchestration/projectManager');
-        const workspaceRef: WorkspaceRefV1 = {
-            id: 'wr_stable', serverId: fixture.home.id, machineId: 'm1', rootPath: '/tmp/repo',
-            label: null, createdAtMs: 1, lastOpenedAtMs: null,
-        };
-        applyProjectAccountRowsFixture(fixture.storage, { workspaceRefs: [workspaceRef] });
-        servedGrants = [{
-            v: 1, id: 'grant-project', accountId: 'alice', grantedByUserId: 'alice',
-            pluginId: 'review-coderabbit', capability: 'reviews.comments.write.direct',
-            targetScope: { kind: 'project', projectId: workspaceRef.id }, authoritySource: { kind: 'bundled' },
-            subject: { kind: 'general' }, status: 'active', grantedAt: 1, createdAt: 1, updatedAt: 1,
-        }];
-        const firstCounter = projectManager.getProjectForSession('s1')?.id;
-        const { ReviewCommentsSessionSurface } = await import('@/components/reviews/ReviewCommentsSessionSurface');
-        const screen = await render();
-        expect(screen.tree.root.findByType(ReviewCommentsSessionSurface).props.permissionGrantError).toBeNull();
-        // With nothing unresolved, review comments are a row of the Files menu: no band above the bar, no bar action.
-        expect(screen.findHostByTestId('review-comments-session-header')).toBeNull();
-        expect(screen.findHostByTestId('review-comments-session-trigger')).toBeNull();
-        const commentsRow = (await reviewProps(screen)).comparisonChrome?.menuSections?.find((section) => section.id === 'review-comments');
-        expect(commentsRow?.items.map((item) => item.testID)).toEqual(['review-comments-session-menu']);
-        await act(async () => { commentsRow?.onSelect('toggle'); });
-        await screen.update(0);
-        // Open, the bar carries the disclosure so the panel can be closed where it was opened from.
-        expect(screen.findHostByTestId('review-comments-session-trigger')).not.toBeNull();
-        expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).not.toBeNull();
-        expect(homeRequests.find(request => request.path === '/v1/plugins/permissions/grants/list')?.body).toMatchObject({
-            targetScope: { kind: 'project', projectId: 'wr_stable' },
-        });
-        projectManager.clear();
-        projectManager.addSession({ ...fixture.session, id: 'other', metadata: { ...sessionMetadata, path: '/tmp/other' } }, { serverId: fixture.home.id });
-        projectManager.addSession(fixture.session, { serverId: fixture.home.id });
-        expect(projectManager.getProjectForSession('s1')?.id).not.toBe(firstCounter);
-        await screen.update(1);
-        expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).not.toBeNull();
-        const otherRef = { ...workspaceRef, id: 'wr_other', rootPath: '/tmp/other' };
-        applyProjectAccountRowsFixture(fixture.storage, { workspaceRefs: [workspaceRef, otherRef] });
-        const otherCheckoutSession = { ...fixture.session, metadata: { ...sessionMetadata, path: '/tmp/other' } };
-        await act(async () => { fixture.storage.getState().applySessions([otherCheckoutSession]); });
-        await screen.update(2);
-        expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).toBeNull();
-        applyProjectAccountRowsFixture(fixture.storage, { workspaceRefs: [] });
-        const requestCount = homeRequests.filter(request => request.path === '/v1/plugins/permissions/grants/list').length;
-        await screen.update(3);
-        expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).toBeNull();
-        expect(homeRequests.filter(request => request.path === '/v1/plugins/permissions/grants/list')).toHaveLength(requestCount);
     });
 
     it('registers the mounted review surface as a realtime SCM transcript consumer', async () => {
@@ -253,8 +202,8 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         const project = fixture.storage.getState().getProjectForSession('s1', fixture.home.id);
         expect(Boolean(project)).toBe(hasProject);
         expect(surface).not.toHaveProperty('projectId');
-        expect(surface).toEqual(expect.objectContaining({ scope: { serverId: fixture.home.id, accountId: 'alice' }, workspace: { machineId: 'm1', path: '/tmp/repo' }, sessionId: 's1',
-            directWriteGrants: [], pendingDirectWriteGrantRequests: [], header: 'external', open: false, testID: 'review-comments-session', execute: expect.any(Function) }));
+        expect(surface).toEqual(expect.objectContaining({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(fixture.home.id), accountId: 'alice' }, workspace: { machineId: 'm1', path: '/tmp/repo' }, sessionId: 's1',
+            header: 'external', open: false, testID: 'review-comments-session', execute: expect.any(Function) }));
         expect(screen.getTextContent()).not.toContain('Durable session review comment.');
         await expect(surface.execute('reviews.comments.list', { workspace: surface.workspace, includeHistory: true })).resolves.toEqual({
             items: [expect.objectContaining({ body: 'Durable session review comment.' })], cursor: null,

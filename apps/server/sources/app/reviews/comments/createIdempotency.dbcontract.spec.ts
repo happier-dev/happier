@@ -78,7 +78,6 @@ describe("review comment create idempotency DB contract", () => {
         const params = {
             accountId,
             actor: { kind: "user", userId: accountId } as const,
-            grants: [],
             input: {
                 projectId: "project-1",
                 anchor: { kind: "line", filePath: "src/example.ts", line: 2 } as const,

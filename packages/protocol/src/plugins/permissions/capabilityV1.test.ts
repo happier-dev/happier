@@ -8,7 +8,6 @@ import {
 describe('enforced plugin permission capabilities', () => {
   it('advertises only capabilities with a grant reader and enforcer', () => {
     expect(PLUGIN_ENFORCED_PERMISSION_CAPABILITIES_V1).toEqual([
-      'reviews.comments.write.direct',
       'credentials.materialize.raw',
     ]);
     expect(PluginPermissionCapabilityV1Schema.safeParse('filesystem.read').success).toBe(false);

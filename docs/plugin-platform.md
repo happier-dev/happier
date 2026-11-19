@@ -1452,6 +1452,12 @@ returns only a shared reference and resource revision. Saving does not write
 Environment bindings. Plain mode remains keyless; unmet E2EE custody refuses
 with `secret_save_client_required` before creation.
 
+In unreleased 0.3, Review Comment writes from a trusted plugin's admitted host
+Action require no plugin direct-write grant. Current intent, Review access and
+Session access remain authoritative. The old `reviews.comments.write.direct`
+capability stays parseable for stored grant rows and carries no write authority;
+Review panels no longer request or display these grants.
+
 Linking or selecting one's own Saved Secret for a plugin or Setting is the
 approval for that plugin's `credentials.materialize.raw` use. The materializer
 reads the link and lists no permission grant, so built-in and external plugins

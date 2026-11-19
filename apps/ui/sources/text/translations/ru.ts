@@ -11136,10 +11136,6 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
               dismissed: "Отклонено",
             },
             directWriteGrant: {
-              title: "Прямая запись комментариев ревью",
-              body: ({ pluginId }: { pluginId: string }) => `${pluginId} запрашивает разрешение напрямую записывать комментарии ревью.`,
-              grant: "Разрешить прямую запись",
-              cancel: "Не сейчас",
               revoke: "Отозвать",
             },
           },

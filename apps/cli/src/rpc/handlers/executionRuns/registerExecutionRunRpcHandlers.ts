@@ -253,9 +253,6 @@ export function registerExecutionRunRpcHandlers(
             : null;
         },
         requestCurrentIntent,
-        ...(ctx.actionApprovalDeps?.pluginPermissionGrantRequest
-          ? { requestDirectWriteGrant: ctx.actionApprovalDeps.pluginPermissionGrantRequest }
-          : {}),
         executeHostAction: async (actionId, input, context) => {
           if (!canonicalActionExecutor) {
             return { ok: false, errorCode: 'execution_run_host_action_unavailable', error: 'Canonical action executor is unavailable' };

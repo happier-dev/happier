@@ -7,7 +7,6 @@ import * as privacyKit from "privacy-kit";
 
 import { createFakeRouteApp, createReplyStub, getRouteEntry, getRouteHandler } from "@/app/api/testkit/routeHarness";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
-import { registerApiRoutes } from "@/app/api/api";
 import { createPluginAvailabilityOperations } from "@/app/plugins/availability/operations";
 import { updateAccountEncryptionMode } from "@/app/api/routes/account/updateAccountEncryptionMode";
 import {
@@ -18,7 +17,6 @@ import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import {
-    createSignedPluginInstallationPublisherHeader,
     createTrustedMachineInstallation,
 } from "@/testkit/pluginInstallationPublisherTestkit";
 import {
@@ -26,13 +24,10 @@ import {
     bindReviewCommentEventSensitiveEnvelopeV1,
     buildReviewCommentEventRequestBindingV1,
     sealReviewCommentEventSensitiveEnvelopeV1,
-    GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
     buildReviewCommentPublicationTransportRequestV1,
     openReviewCommentPublicationTransportResponseV1,
     PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
-    PluginPermissionGrantRequestActionOutputV1Schema,
     createReviewCommentPrincipalSigningInputV1,
-    REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
     REVIEW_COMMENT_PRINCIPAL_HEADER_V1,
     ReviewCommentCreateResponseV1Schema,
     ReviewCommentGetResponseV1Schema,
@@ -138,12 +133,6 @@ function pauseNextDatabaseTransaction() {
 function registerDefaultRoutes() {
     const app = createFakeRouteApp();
     registerReviewCommentRoutes(app as any);
-    return app;
-}
-
-function registerAllRoutes() {
-    const app = createFakeRouteApp();
-    registerApiRoutes(app as any);
     return app;
 }
 
@@ -1876,7 +1865,25 @@ describe("review comment durable storage", () => {
         expect(listed.items.map((comment) => comment.id)).toEqual([created.comment.id]);
     });
 
-    it("requires matching current intent in addition to a signed principal and durable direct-write grant", async () => {
+    it("refuses another Account creating a comment on an unshared Review", async () => {
+        const owner = await db.account.create({ data: { encryptionMode: "plain" } });
+        const outsider = await db.account.create({ data: { encryptionMode: "plain" } });
+        const review = await db.artifact.create({ data: { id: "grant-removal-review", accountId: owner.id,
+            header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array(),
+            reviewMetadata: { create: { subjectKind: "repository", sourceKind: "direct", state: "completed",
+                currentRoundOrdinal: 1, startedAt: new Date(1), finishedAt: new Date(2) } } } });
+        const create = getRouteHandler(registerDefaultRoutes(), "POST", "/v1/reviews/comments");
+        const reply = createReplyStub();
+        const result = await create({ userId: outsider.id, authAuthority: "present_user", body: {
+            reviewId: review.id, projectId: "project-1", anchor: { kind: "file", filePath: "a.ts" },
+            snapshot: { kind: "none", capturedAt: 1 }, body: "Unauthorized finding", authorIntent: "open",
+            clientMutationId: "outsider-no-grant",
+        } }, reply);
+        expect(result).toMatchObject({ error: "review_comment_not_found" });
+        expect(await db.reviewComment.count({ where: { reviewId: review.id } })).toBe(0);
+    });
+
+    it("requires matching current intent for a signed plugin host action without a grant", async () => {
         const installationKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
         const account = await db.account.create({
             data: {
@@ -1892,63 +1899,15 @@ describe("review comment durable storage", () => {
             installationId: "installation-review-comments-trusted-grant",
             keyPair: installationKeyPair,
         });
-        const permissionMaterializationId = "materialization-review-comments-trusted-grant";
-        await seedCurrentPermissionCaller({
-            accountId: account.id,
-            machineId: "machine-review-comments-trusted-grant",
-            materializationId: permissionMaterializationId,
-            pluginId: CODERABBIT_PLUGIN_ID,
-        });
-        const app = registerAllRoutes();
-        expect(app.routes.has("POST /v1/plugins/permissions/grants/request")).toBe(true);
-
-        const requestGrant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/request");
-        const grant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/grant");
-        const create = getRouteHandler(app, "POST", "/v1/reviews/comments");
-
-        const requestGrantBody = {
-            pluginId: CODERABBIT_PLUGIN_ID,
-            capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-            targetScope: { kind: "project" as const, projectId: "project-1" },
-            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
-            reason: "Publish approved review comments directly.",
-            requester: { kind: "plugin" as const, pluginId: CODERABBIT_PLUGIN_ID, sessionId: "session-1" },
-            caller: {
-                machineId: "machine-review-comments-trusted-grant",
-                materializationId: permissionMaterializationId,
-                pluginId: CODERABBIT_PLUGIN_ID,
-            },
-        };
-        const requestReply = createReplyStub();
-        const requested = PluginPermissionGrantRequestActionOutputV1Schema.parse(await requestGrant({
-            userId: account.id,
-            method: "POST",
-            url: "/v1/plugins/permissions/grants/request",
-            headers: {
-                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
-                    keyPair: installationKeyPair,
-                    machineId: "machine-review-comments-trusted-grant",
-                    installationId: "installation-review-comments-trusted-grant",
-                    path: "/v1/plugins/permissions/grants/request",
-                    body: requestGrantBody,
-                }),
-            },
-            body: requestGrantBody,
-        }, requestReply));
-        expect(requested).toMatchObject({ pendingRequest: { pluginId: CODERABBIT_PLUGIN_ID } });
-        expect(requestReply.statusCode).toBe(200);
-        await grant({
-            userId: account.id,
-            authAuthority: "present_user",
-            authTokenKind: "account",
-            body: { requestId: requested.pendingRequest.id },
-        }, createReplyStub());
+        await seedCurrentPermissionCaller({ accountId: account.id, machineId: "machine-review-comments-trusted-grant",
+            materializationId: "materialization-machine-review-comments-trusted-grant", pluginId: CODERABBIT_PLUGIN_ID });
+        const create = getRouteHandler(registerDefaultRoutes(), "POST", "/v1/reviews/comments");
 
         const missingIntentBody = {
             projectId: "project-1",
             anchor: { kind: "line" as const, filePath: "src/example.ts", line: 3 },
             snapshot: textSnapshot(),
-            body: "This direct write has a durable grant but no current intent.",
+            body: "This direct write has no current intent.",
             authorIntent: "open" as const,
             clientMutationId: "mutation-plugin-open-missing-current-intent",
         };
@@ -2097,11 +2056,11 @@ describe("review comment durable storage", () => {
             body: mismatchBody,
         }, mismatchReply);
 
-        expect(mismatchReply.statusCode).toBe(400);
-        expect(mismatch).toMatchObject({ error: "review_comment_direct_write_permission_required" });
+        expect(mismatchReply.statusCode).toBe(200);
+        expect(ReviewCommentCreateResponseV1Schema.parse(mismatch).comment.state).toBe("open");
     });
 
-    it("stops trusting external direct-write grants after the exact machine installation is revoked", async () => {
+    it("refuses signed plugin host actions after the exact machine installation is revoked", async () => {
         const installationKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
         const account = await db.account.create({
             data: {
@@ -2117,53 +2076,9 @@ describe("review comment durable storage", () => {
             installationId: "installation-review-comments-external-grant-projection",
             keyPair: installationKeyPair,
         });
-        const permissionMaterializationId = "materialization-review-comments-external-grant-projection";
-        await seedCurrentPermissionCaller({
-            accountId: account.id,
-            machineId: "machine-review-comments-external-grant-projection",
-            materializationId: permissionMaterializationId,
-            pluginId: EXTERNAL_PLUGIN_ID,
-        });
-        const app = registerAllRoutes();
-        const requestGrant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/request");
-        const grant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/grant");
-        const create = getRouteHandler(app, "POST", "/v1/reviews/comments");
-
-        const requestGrantBody = {
-            pluginId: EXTERNAL_PLUGIN_ID,
-            capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-            targetScope: { kind: "project", projectId: "project-1" },
-            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
-            reason: "Publish approved review comments directly.",
-            requester: { kind: "plugin" as const, pluginId: EXTERNAL_PLUGIN_ID, sessionId: "session-1" },
-            caller: {
-                machineId: "machine-review-comments-external-grant-projection",
-                materializationId: permissionMaterializationId,
-                pluginId: EXTERNAL_PLUGIN_ID,
-            },
-        };
-        const requested = PluginPermissionGrantRequestActionOutputV1Schema.parse(await requestGrant({
-            userId: account.id,
-            method: "POST",
-            url: "/v1/plugins/permissions/grants/request",
-            headers: {
-                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
-                    keyPair: installationKeyPair,
-                    machineId: "machine-review-comments-external-grant-projection",
-                    installationId: "installation-review-comments-external-grant-projection",
-                    path: "/v1/plugins/permissions/grants/request",
-                    body: requestGrantBody,
-                    nonce: "nonce-review-comments-external-grant-projection-request",
-                }),
-            },
-            body: requestGrantBody,
-        }, createReplyStub()));
-        await grant({
-            userId: account.id,
-            authAuthority: "present_user",
-            authTokenKind: "account",
-            body: { requestId: requested.pendingRequest.id },
-        }, createReplyStub());
+        await seedCurrentPermissionCaller({ accountId: account.id, machineId: "machine-review-comments-external-grant-projection",
+            materializationId: "materialization-machine-review-comments-external-grant-projection", pluginId: EXTERNAL_PLUGIN_ID });
+        const create = getRouteHandler(registerDefaultRoutes(), "POST", "/v1/reviews/comments");
 
         const firstBody = {
             projectId: "project-1",
@@ -2228,108 +2143,6 @@ describe("review comment durable storage", () => {
         }, deniedReply);
         expect(deniedReply.statusCode).toBe(400);
         expect(denied).toMatchObject({ error: "review_comment_permission_denied" });
-    });
-
-    it("requires external direct-write authority to come from the same trusted machine grant as the plugin principal proof", async () => {
-        const projectionKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(10));
-        const callerKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(11));
-        const account = await db.account.create({
-            data: {
-                id: "account-review-comments-external-machine-bound",
-                publicKey: "pk-review-comments-external-machine-bound",
-                encryptionMode: "plain",
-            },
-            select: { id: true },
-        });
-        await createTrustedMachineInstallation({
-            accountId: account.id,
-            machineId: "machine-review-comments-projection-owner",
-            installationId: "installation-review-comments-projection-owner",
-            keyPair: projectionKeyPair,
-        });
-        await createTrustedMachineInstallation({
-            accountId: account.id,
-            machineId: "machine-review-comments-wrong-grant-caller",
-            installationId: "installation-review-comments-wrong-grant-caller",
-            keyPair: callerKeyPair,
-        });
-        const permissionMaterializationId = "materialization-review-comments-projection-owner";
-        await seedCurrentPermissionCaller({
-            accountId: account.id,
-            machineId: "machine-review-comments-projection-owner",
-            materializationId: permissionMaterializationId,
-            pluginId: EXTERNAL_PLUGIN_ID,
-        });
-        const app = registerAllRoutes();
-        const requestGrant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/request");
-        const grant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/grant");
-        const create = getRouteHandler(app, "POST", "/v1/reviews/comments");
-
-        const requestGrantBody = {
-            pluginId: EXTERNAL_PLUGIN_ID,
-            capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-            targetScope: { kind: "project" as const, projectId: "project-1" },
-            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
-            reason: "Publish approved review comments directly.",
-            requester: { kind: "plugin" as const, pluginId: EXTERNAL_PLUGIN_ID, sessionId: "session-1" },
-            caller: {
-                machineId: "machine-review-comments-projection-owner",
-                materializationId: permissionMaterializationId,
-                pluginId: EXTERNAL_PLUGIN_ID,
-            },
-        };
-        const requested = PluginPermissionGrantRequestActionOutputV1Schema.parse(await requestGrant({
-            userId: account.id,
-            method: "POST",
-            url: "/v1/plugins/permissions/grants/request",
-            headers: {
-                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
-                    keyPair: projectionKeyPair,
-                    machineId: "machine-review-comments-projection-owner",
-                    installationId: "installation-review-comments-projection-owner",
-                    path: "/v1/plugins/permissions/grants/request",
-                    body: requestGrantBody,
-                }),
-            },
-            body: requestGrantBody,
-        }, createReplyStub()));
-        await grant({
-            userId: account.id,
-            authAuthority: "present_user",
-            authTokenKind: "account",
-            body: { requestId: requested.pendingRequest.id },
-        }, createReplyStub());
-        const createBody = {
-            projectId: "project-1",
-            workspaceId: "workspace-1",
-            sessionId: "session-1",
-            runId: "run-1",
-            engineId: EXTERNAL_PLUGIN_ID,
-            anchor: { kind: "line", filePath: "src/example.ts", line: 3 },
-            snapshot: textSnapshot(),
-            body: "This differently granted machine should not direct-write.",
-            authorIntent: "open",
-            clientMutationId: "mutation-plugin-open-external-wrong-machine",
-        };
-        const principalHeader = createSignedPrincipalHeader({
-            actor: { kind: "agent", agentId: "claude", sessionId: "session-1" },
-            currentIntent: createCurrentIntent({ pluginId: EXTERNAL_PLUGIN_ID, body: createBody, fingerprintCharacter: "e" }),
-            keyPair: callerKeyPair,
-            machineId: "machine-review-comments-wrong-grant-caller",
-            installationId: "installation-review-comments-wrong-grant-caller",
-            body: createBody,
-        });
-        const reply = createReplyStub();
-
-        const denied = await create({
-            userId: account.id,
-            authAuthority: "present_user",
-            headers: { [REVIEW_COMMENT_PRINCIPAL_HEADER_V1]: principalHeader },
-            body: createBody,
-        }, reply);
-
-        expect(reply.statusCode).toBe(400);
-        expect(denied).toMatchObject({ error: "review_comment_direct_write_permission_required" });
     });
 
     it("rejects obsolete split-cipher CRUD instead of retaining a second encrypted writer", async () => {

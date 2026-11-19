@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { pressTestInstanceAsync, renderScreen, reviewCommentLabelsFixture } from '@/dev/testkit';
 
-import { ReviewCommentDirectWriteGrantSheet } from './ReviewCommentDirectWriteGrantSheet';
 import { ReviewCommentsHeaderButton } from './ReviewCommentsHeaderButton';
 import { ReviewCommentsHistoryView } from './ReviewCommentsHistoryView';
 import { ReviewCommentsPanel } from './ReviewCommentsPanel';
@@ -99,40 +98,6 @@ describe('review comments panel components', () => {
         expect(unread.getTextContent()).toContain('Review comments');
         expect(unread.getTextContent()).not.toMatch(/\d/);
 
-        const onGrant = vi.fn();
-        const onCancel = vi.fn();
-        const grant = await renderScreen(
-            <ReviewCommentDirectWriteGrantSheet
-                pendingRequest={{
-                    v: 1,
-                    id: 'request-1',
-                    accountId: 'account-1',
-                    pluginId: 'review-coderabbit',
-                    pluginName: 'CodeRabbit',
-                    capability: 'reviews.comments.write.direct',
-                    targetScope: { kind: 'workspace', workspaceId: 'workspace-1' },
-                    subject: { kind: 'general' },
-                    requester: { kind: 'plugin', pluginId: 'review-coderabbit', sessionId: 'session-1' },
-                    authoritySource: { kind: 'bundled' },
-                    reason: 'Write approved comments.',
-                    status: 'pending',
-                    createdAt: 1,
-                    updatedAt: 1,
-                }}
-                labels={{
-                    title: 'Direct write',
-                    body: ({ pluginName, pluginId }) => `${pluginName}:${pluginId}`,
-                    grant: 'Grant',
-                    cancel: 'Cancel',
-                }}
-                onGrant={onGrant}
-                onCancel={onCancel}
-            />,
-        );
-        expect(grant.getTextContent()).toContain('review-coderabbit');
-        expect(grant.getTextContent()).toContain('Grant');
-        expect(onGrant).not.toHaveBeenCalled();
-        expect(onCancel).not.toHaveBeenCalled();
     });
 
     it('shows deterministic partial failures for bulk transitions', async () => {

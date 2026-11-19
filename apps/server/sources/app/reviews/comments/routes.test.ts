@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import type { ReviewCommentActorRefV1 } from "@happier-dev/protocol";
 import {
-    REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
     ReviewCommentCreateResponseV1Schema,
 } from "@happier-dev/protocol";
 
@@ -27,7 +26,7 @@ function createHarness() {
         resolvePrincipal: async () => ({
             accountId: "account-1",
             actor,
-            grants: [REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1],
+
         }),
     });
     return { app };

@@ -54,13 +54,3 @@ export function buildReviewCommentsHeaderLabels() {
         count: ({ count }: Readonly<{ count: number }>) => t('files.reviewComments.durable.count', { count }),
     };
 }
-
-export function buildReviewCommentDirectWriteGrantLabels() {
-    return {
-        title: t('files.reviewComments.durable.directWriteGrant.title'),
-        body: ({ pluginId }: Readonly<{ pluginName: string; pluginId: string }>) =>
-            t('files.reviewComments.durable.directWriteGrant.body', { pluginId }),
-        grant: t('files.reviewComments.durable.directWriteGrant.grant'),
-        cancel: t('files.reviewComments.durable.directWriteGrant.cancel'),
-    };
-}
