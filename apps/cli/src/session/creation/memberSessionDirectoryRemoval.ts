@@ -105,20 +105,21 @@ export async function executeMemberSessionDirectoryRemoval(effect: MemberSession
 
 /** Shared native allocation preparation; requester admission remains with the containing Action. */
 export async function prepareManagedSessionDirectoryRemovalAsMember(input: Readonly<{
-    nativeOperationRuntime: Pick<ApiMachineClient, 'prepareNativeOperation' | 'readMemberFolderOwner'>;
+    nativeOperationRuntime?: Pick<ApiMachineClient, 'prepareNativeOperation' | 'readMemberFolderOwner'>;
     ingress: RpcHandlerContext; operation: ProjectSetupOperationContext; directory: string;
     prepareRemoval(reads: MemberWorkspaceReadServices,
         runtime: Pick<ProjectFiniteActionRuntime, 'requesterIdentity' | 'agentIsolation'>): Promise<void>;
 }>): Promise<PreparedMemberSessionDirectoryRemoval> {
-    const identity = await input.nativeOperationRuntime.readMemberFolderOwner(input.directory);
-    if (!identity) throw Object.assign(new Error('agent_isolation_unavailable'), { code: 'agent_isolation_unavailable' });
+    const runtime = input.nativeOperationRuntime;
+    const identity = await runtime?.readMemberFolderOwner(input.directory);
+    if (!runtime || !identity) throw unavailable('agent_isolation_unavailable');
     const material = Object.freeze({ materializationKey: input.operation.operationAcceptance?.operationId
         ?? input.operation.actionRequestId ?? input.directory,
         environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
-    const native = await input.nativeOperationRuntime.prepareNativeOperation({ requesterIdentity: identity,
+    const native = await runtime.prepareNativeOperation({ requesterIdentity: identity,
         ingress: input.ingress, signal: input.operation.signal, readMaterial: () => material, allowMemberPreparation: false });
     try {
-        if (!native.memberIdentity) throw Object.assign(new Error('agent_isolation_unavailable'), { code: 'agent_isolation_unavailable' });
+        if (!native.memberIdentity) throw unavailable('agent_isolation_unavailable');
         const retained = await prepareSessionDirectoryRemovalAsMember({ agentIsolation: native.agentIsolation, requesterIdentity: identity,
             workspaceRoot: native.memberIdentity.workspaceRoot, directory: input.directory, signal: input.operation.signal,
             prepareRemoval: reads => input.prepareRemoval(reads, { requesterIdentity: identity, agentIsolation: native.agentIsolation }) });

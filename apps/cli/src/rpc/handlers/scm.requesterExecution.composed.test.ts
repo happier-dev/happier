@@ -140,6 +140,7 @@ async function repository(parent: string, name: string): Promise<string> {
 }
 
 async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
+  sourceRuntimeIsolation?: 'disabled' | 'required';
   resolveProjectRuntime?: NonNullable<Parameters<typeof registerScmHandlers>[2]>['resolveProjectRuntime'] }> = {}) {
   const plugins = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
     runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
@@ -153,7 +154,12 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
   const machineId = 'separate-users-machine';
   const installationId = 'separate-users-installation';
   const home = configuration.activeServerId;
-  const daemonIsolation: HostAgentIsolationLaunchSnapshot = {
+  const daemonIsolation: HostAgentIsolationLaunchSnapshot = options.sourceRuntimeIsolation ? {
+    enabled: options.sourceRuntimeIsolation === 'required',
+    status: options.sourceRuntimeIsolation === 'required' ? { kind: 'unavailable', code: 'provisioning_unavailable' }
+      : { kind: 'disabled' },
+    workspaceRoots: [ownerRepository],
+  } : {
     enabled: true, memberProvisioning: 'linuxUsersV1',
     status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' },
     workspaceRoots: [ownerRepository],
@@ -174,7 +180,11 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
   const backend = createRegisteredScmBackendAdapter({
     definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
     executableDefinition: registration.runtime!, registration,
-    scmCommandRunner: createHostScmCommandRunner({ isCurrent: () => true, agentIsolation: { read: () => daemonIsolation } }),
+    scmCommandRunner: createHostScmCommandRunner({ isCurrent: () => true, agentIsolation: { read: () => daemonIsolation,
+      // A generic runtime fallback has no custody for this particular Session.
+      ...(options.sourceRuntimeIsolation ? { resolveRequesterIdentity: async () =>
+        ({ kind: 'unknown' as const, reason: 'requester_authority_unavailable' as const }) } : {}),
+    } }),
   });
   const manager = createRpcHandlerManager({
     scopePrefix: machineId, scopeKind: 'machine', localMachineId: machineId,
@@ -183,6 +193,7 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
       machineId,
       resolveCustodianAccountId: async () => 'owner-account',
       resolveInstallationId: () => installationId,
+      readAgentIsolation: () => daemonIsolation,
       resolveHomeServerIdentityId: async () => home,
       // Authentication/currentness are the Home network boundary.
       verifyMachineAdmission: async () => true,
@@ -206,9 +217,10 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
         requester: { serverId: home, accountId: 'member-account', machineId, installationId } } : null },
   });
   const invoke = (method: string, params: unknown, accountId: string, role: 'manage' | 'use', signal?: AbortSignal,
-    localActionContext?: RpcHandlerContext['localActionContext']) =>
+    localActionContext?: RpcHandlerContext['localActionContext'], sessionActionOrigin?: RpcHandlerContext['sessionActionOrigin']) =>
     manager.invokeLocal(method, params, { ...(localActionContext ? { localActionContext } : {}), rpcContext: {
       callerAuthority: 'present_user',
+      ...(sessionActionOrigin ? { sessionActionOrigin } : {}),
       verifyMachineAdmissionCurrent: async () => true,
       ...(signal ? { signal } : {}),
       machineAdmission: { actorAccountId: accountId, custodianAccountId: 'owner-account', machineId, installationId,
@@ -311,6 +323,28 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     // Manage is full control of the Machine (owner ruling 2026-10-31): unisolated, as the daemon user.
     expect(gitLaunches().length).toBeGreaterThan(0);
     expect(gitLaunches().every(launch => launch.uid === process.getuid?.() && !launch.member)).toBe(true);
+    expect(os.runAs).toEqual([]);
+  });
+
+  it.each(['disabled', 'required'] as const)('uses the owner Session placement for Push commits without a managed CLI (%s)', async policy => {
+    const f = await fixture({ sourceRuntimeIsolation: policy });
+    const remote = join(f.directory, 'owner-remote.git');
+    execFileSync('git', ['init', '-q', '--bare', remote]);
+    git(f.ownerRepository, 'remote', 'add', 'origin', remote);
+    const services = { resolveScmHostingProviderRegistry: async () => ({
+      detectRemote: () => ({ kind: 'unresolved' }), buildCompareUrl: () => ({ kind: 'unresolved' }) }) };
+    const pushed = await runWithHostingProviderRuntimeServices(services as unknown as Parameters<typeof runWithHostingProviderRuntimeServices>[0],
+      () => f.invoke(RPC_METHODS.SCM_REMOTE_PUSH, { cwd: f.ownerRepository, remote: 'origin', branch: 'main' }, 'owner-account', 'manage',
+        undefined, undefined, { v: 1, caller: { kind: 'session', sessionId: 'build-session', starterDepth: 0, turnDepth: 0 },
+          sourceTurnId: 'build-turn', callerPermissionMode: 'default', workspaceWrites: 'allow', requestId: 'approved-push' }));
+    if (policy === 'required') {
+      expect(pushed).toMatchObject({ errorCode: 'agent_isolation_unavailable', effectAttempted: false });
+      expect(gitLaunches()).toEqual([]);
+      return;
+    }
+    expect(pushed, JSON.stringify(pushed)).toMatchObject({ success: true });
+    expect(execFileSync('git', ['--git-dir', remote, 'rev-parse', 'main'], { encoding: 'utf8' }).trim())
+      .toBe(git(f.ownerRepository, 'rev-parse', 'main').trim());
     expect(os.runAs).toEqual([]);
   });
 

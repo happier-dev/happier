@@ -24,7 +24,12 @@ export type FilesystemEffectFailure = Readonly<{
   details: FilesystemEffectFailureDetailsV1;
 }>;
 
-export type FilesystemEffectRequester = Readonly<{ identity: HostRequesterExecutionIdentity; dispose(): Promise<void> }>;
+export type FilesystemEffectRequester = Readonly<{
+  identity: HostRequesterExecutionIdentity;
+  /** Demand-only projection of the host's Workspace execution policy. */
+  canExecuteWorkspaceOnDaemon?: boolean;
+  dispose(): Promise<void>;
+}>;
 
 /** The Session facts an admitted RPC or Action request carries. */
 export type FilesystemEffectSessionContext = Readonly<{
@@ -116,14 +121,16 @@ export function createFilesystemEffectAdmission(params: Readonly<{
       const bootstrap = context?.requesterSessionBootstrap ?? retained?.bootstrap;
       if (origin && bootstrap && bootstrap.getBoundSessionId() !== origin.caller.sessionId)
         return { identity: { kind: 'unknown', reason: 'session_requester_unavailable' }, dispose };
-      const identity = (await import('@/daemon/agentIsolation/agentIsolationLaunchPolicy'))
-        .selectHostRequesterExecutionIdentity({ ...input, hostHomeServerIdentityId,
+      const policy = await import('@/daemon/agentIsolation/agentIsolationLaunchPolicy');
+      const identity = policy.selectHostRequesterExecutionIdentity({ ...input, hostHomeServerIdentityId,
         ...(bootstrap ? { sessionRequester: bootstrap.attribution,
           sessionRequesterHomeServerIdentityId: bootstrap.homeServerIdentityId,
           sessionCustodianAccountId: host?.custodianAccountId } : {}),
         ...(params.resolveHostIdentity ? { hostCustodianAccountId: host?.custodianAccountId ?? null,
           ...(host ? { hostExecutionTarget: { machineId: host.machineId, installationId: host.installationId } } : {}) } : {}) });
-      return { identity, dispose };
+      return { identity, dispose, get canExecuteWorkspaceOnDaemon() {
+        return policy.canExecuteRequesterWorkspaceOnDaemonForHost(identity, params.readAgentIsolation);
+      } };
     } catch (error) { await dispose(); throw error; }
   };
   /**

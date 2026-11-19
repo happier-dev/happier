@@ -225,13 +225,16 @@ export function registerScmHandlers(
     // Ingress admits anyone else only to a local repository read; closed host calls keep their runner.
     const runAsAdmittedRequester = async (context: RpcHandlerContext | undefined, method: string,
         projectRoot: string | undefined, input: unknown, selected: WorkspaceSource, run: () => unknown): Promise<unknown> => {
-        if (!deps?.resolveRequester || !context) return await run();
-        const requester = await deps.resolveRequester(context);
+        if (!context) return await run();
+        const directRequester = context.directScmWorkspaceRequester;
+        const requester = directRequester ? undefined : await deps?.resolveRequester?.(context);
+        const identity = directRequester ?? requester?.identity;
+        if (!identity) return await run();
         try {
-            const identity = requester.identity;
             const comparisons = method.startsWith('scm.diffSummary.') || method === RPC_METHODS.SCM_DIFF_FILE
                 && input !== null && typeof input === 'object' && Reflect.get(input, 'captured') !== undefined;
-            if (isHostRequesterUnrestrictedOwner(identity)) {
+            const unrestricted = isHostRequesterUnrestrictedOwner(identity);
+            if (identity.kind !== 'unknown' && (unrestricted || (selected.kind === 'local' && directRequester))) {
                 // Manage keeps full access to a member folder, but daemon Git never runs a member
                 // repository's config or hooks (F-A ruling, MEMBER-CHILD-READS-1115): its repository
                 // reads and writes (F-B) run in that member's own child, as that member. Happier never
@@ -240,11 +243,12 @@ export function registerScmHandlers(
                 // check ownership of a directory that does not yet exist. It protects no other person
                 // and is not a credential or security boundary (SEC-FORKC-1116B subtraction note).
                 const target = readRequestCwd(input, projectRoot);
-                const readOwner = deps.nativeOperationRuntime?.readMemberFolderOwner;
+                const readOwner = deps?.nativeOperationRuntime?.readMemberFolderOwner;
                 const hosting = isScmHostingCredentialRpcMethod(method);
                 const member = readOwner && target !== undefined && (hosting || comparisons || isScmLocalRepositoryRpcMethod(method))
                     ? await readOwner(target).catch(() => 'unavailable' as const) : null;
                 if (member === 'unavailable') return refuseRequesterPlacement(method, 'scm.requester.member_folder', undefined, false);
+                if (member && !unrestricted) return refuseRequesterPlacement(method, 'scm.requester.member_folder', undefined, false);
                 if (member && hosting) return refused('credential_scope_denied');
                 // A member's placed Session already selected its target source: Git runs there, never
                 // on this Machine as the member (SEC1116H §4b).
@@ -264,7 +268,7 @@ export function registerScmHandlers(
                     && owner.requester.accountId === identity.requester.accountId) return await run();
             }
             return await runAsMember(context, identity, method, projectRoot, input, comparisons ? run : undefined, identity.requester.accountId);
-        } finally { await requester.dispose(); }
+        } finally { await requester?.dispose(); }
     };
     const selectSource = (request: unknown, context: RpcHandlerContext | undefined): WorkspaceSource => {
         const targeted = request && typeof request === 'object' && 'kind' in request && request.kind === 'targeted_action_rpc'

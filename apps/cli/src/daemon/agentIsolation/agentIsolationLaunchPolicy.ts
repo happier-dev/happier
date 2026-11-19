@@ -320,6 +320,21 @@ export function resolveHostRequesterAgentPlacementForHost(input: Readonly<{
         platform: input.platform ?? process.platform });
 }
 
+/**
+ * Ordinary host Workspace effects may also run directly for verified custodian
+ * Agent work when the held Machine policy disables isolation. This placement
+ * conveys no Manage, credential or person break-glass authority.
+ */
+export function canExecuteRequesterWorkspaceOnDaemonForHost(
+    identity: HostRequesterExecutionIdentity,
+    readPolicy?: () => Pick<HostAgentIsolationLaunchSnapshot, 'enabled' | 'memberProvisioning'> | undefined,
+): boolean {
+    if (isHostRequesterUnrestrictedOwner(identity)) return true;
+    if (identity.kind !== 'isolated' || identity.separationRequired) return false;
+    const snapshot = readPolicy?.();
+    return snapshot !== undefined && resolveHostRequesterAgentPlacementForHost({ identity, snapshot }) === 'daemon';
+}
+
 function assertHostIsolationLaunchKindSupported(
     launchKind: HostAgentIsolationLaunchKind | undefined,
     refuse: (reason: 'unsupported_platform' | 'agent_launch_kind_unavailable') => never,
@@ -413,8 +428,8 @@ export type HostAgentIsolationLaunchContext = Readonly<{
         /** This attempt needed the existing native setup owner. */
         repaired?: true;
     }>>;
-    /** Failed launch only: repair through prepareMember; true requires a visible retry. */
-    onNativeLaunchFailure?(): Promise<boolean>;
+    /** Failed native launch only: return the typed refusal when a visible retry is needed. */
+    onNativeLaunchFailure?(): Promise<'agent_isolation_unavailable' | undefined>;
     /** Identity custody also exists when the optional Machine policy/transport
      * port is absent. Absence is not a disabled or effective policy snapshot. */
     read(): HostAgentIsolationLaunchSnapshot | undefined;

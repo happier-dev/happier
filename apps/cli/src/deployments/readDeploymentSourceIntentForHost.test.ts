@@ -196,7 +196,12 @@ it('uses the stored Compose definition for a Use redeploy without acquiring the 
     expect(sourceReads).not.toHaveBeenCalled();
 });
 
-it.each(['owner', 'use-grantee'] as const)('acquires requester workspace source only for the physical Machine owner (%s)', async actorAccountId => {
+it.each([
+    { actorAccountId: 'owner', session: false, enabled: true, direct: true },
+    { actorAccountId: 'owner', session: true, enabled: false, direct: true },
+    { actorAccountId: 'owner', session: true, enabled: true, direct: false },
+    { actorAccountId: 'use-grantee', session: false, enabled: false, direct: false },
+])('acquires requester workspace only for admitted direct placement ($actorAccountId, session=$session, isolation=$enabled)', async ({ actorAccountId, session, enabled, direct }) => {
     await withTempDir('deployment-source-requester-', async directory => {
         const repository = join(directory, 'repository');
         await mkdir(repository);
@@ -217,17 +222,21 @@ it.each(['owner', 'use-grantee'] as const)('acquires requester workspace source 
                     id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' }, repository: {
                     nameWithOwner: 'example/app', cloneUrl: 'https://github.com/example/app.git' } } } }) });
         const context = { authority: 'present_user' as const, signal: new AbortController().signal,
+            ...(session ? { actionCaller: { kind: 'session' as const, sessionId: 'build-session', starterDepth: 0, turnDepth: 0 } } : {}),
             machineAdmission: { actorAccountId, custodianAccountId: 'owner', machineId: 'controller',
                 installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const },
             verifyMachineAdmissionCurrent: async () => true };
         // The existing identity owner consumes held physical receiver facts and admitted ingress.
         const identityOwner = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home',
+            readAgentIsolation: () => ({ enabled, workspaceRoots: [], status: enabled
+                ? { kind: 'unavailable', code: 'provisioning_unavailable' } : { kind: 'disabled' } }),
             resolveHostIdentity: async () => ({ machineId: 'controller', installationId: 'installation', custodianAccountId: 'owner' }) });
         const host = { credentials: { token: 'fixture', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
             machineId: 'controller', async assertAuthority() { context.signal.throwIfAborted(); },
             async resolveRequesterIdentity(current: import('@happier-dev/protocol').ActionExecutorContext) {
                 const requester = await identityOwner.resolveActionRequester!(current);
-                try { return requester.identity; } finally { await requester.dispose(); }
+                try { return { ...requester.identity, canExecuteWorkspaceOnDaemon: requester.canExecuteWorkspaceOnDaemon }; }
+                finally { await requester.dispose(); }
             } };
         const phases: string[] = [];
         const port = createDeploymentSourceMaterializationPort({ registry: createDeploymentGitRegistry(),
@@ -239,7 +248,7 @@ it.each(['owner', 'use-grantee'] as const)('acquires requester workspace source 
                     sourcePath: selected.workspace!.rootPath, commitSha: sourceIntent.sha, assertCurrent: host.assertAuthority };
             } });
         const operation = port.materialize({ environmentId: environment.environment.id, deploymentId: receipt.deployment.id });
-        if (actorAccountId === 'owner') {
+        if (direct) {
             const source = await operation;
             expect(await readFile(join(source.rootPath, 'compose.yaml'), 'utf8')).toBe('services: {}');
             expect(phases).toEqual(['export', 'materialize']);

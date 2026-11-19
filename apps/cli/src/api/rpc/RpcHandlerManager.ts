@@ -1031,6 +1031,7 @@ export class RpcHandlerManager {
                     signal: controller.signal,
             });
             let workspaceSyncPrivateExecution: RpcHandlerContext['workspaceSyncPrivateExecution'];
+            let directScmWorkspaceRequester: RpcHandlerContext['directScmWorkspaceRequester'];
             if (this.authorizeRequest) {
                 nextPhase('authorize_request');
                 diagnostic.callerClass = 'unadmitted';
@@ -1055,6 +1056,7 @@ export class RpcHandlerManager {
                     });
                 }
                 workspaceSyncPrivateExecution = authorization.workspaceSyncPrivateExecution;
+                directScmWorkspaceRequester = authorization.directScmWorkspaceRequester;
             }
             nextPhase('input_binding');
             // Session handlers validate the relay's actor themselves and need
@@ -1275,6 +1277,7 @@ export class RpcHandlerManager {
             const handlerContext: RpcHandlerContext = Object.freeze({
                 ...(localActionContext ? { localActionContext } : {}),
                 ...(workspaceSyncPrivateExecution ? { workspaceSyncPrivateExecution } : {}),
+                ...(directScmWorkspaceRequester ? { directScmWorkspaceRequester } : {}),
                 // The same codec choice as encodeResponse for this call, fixed at admission.
                 contentMode: this.isServerOriginRequest(request) || this.isContentFreeManagedActivityRequest(request)
                     ? 'plain' : source === 'local_session_channel' ? admittedContent.mode : rpcContent.mode,
@@ -1440,6 +1443,7 @@ export class RpcHandlerManager {
                 || options?.localActionContext?.authority === 'account_automation'
                 || options?.localActionContext?.actionCaller?.kind === 'session'
                 || options?.verifiedPeerAuthority === 'account_automation';
+            let directScmWorkspaceRequester = options?.admissionResult?.directScmWorkspaceRequester;
             if ((localRequester || this.scopeKind === 'session')
                 && resolveMachineRpcRoutePolicy(method).requesterExecutionIsolationRequired === true) {
                 // A fresh Action's local delegation is not an owner-person default.
@@ -1471,6 +1475,7 @@ export class RpcHandlerManager {
                 if (!authorization.ok) return { error: authorization.error,
                     ...(authorization.errorCode ? { errorCode: authorization.errorCode } : {}),
                     ...(authorization.failureCause ? { failureCause: authorization.failureCause } : {}), effectAttempted: false };
+                directScmWorkspaceRequester = authorization.directScmWorkspaceRequester;
             }
             let countedInFlight = !this.pausedRequestAdmission.has(method);
             if (countedInFlight) this.beginInFlightRequest(method);
@@ -1493,6 +1498,7 @@ export class RpcHandlerManager {
                 handlerExecutionId = this.beginHandlerExecution(method);
                 return await handler(params, Object.freeze({
                     ...(options?.admissionResult?.admittedHostWorkflowRequester ? { admittedHostWorkflowRequester: true } : {}),
+                    ...(directScmWorkspaceRequester ? { directScmWorkspaceRequester } : {}),
                     ...(options?.admissionResult?.workspaceSyncPrivateExecution
                         ? { workspaceSyncPrivateExecution: options.admissionResult.workspaceSyncPrivateExecution } : {}),
                     ...(options?.rpcContext ? {

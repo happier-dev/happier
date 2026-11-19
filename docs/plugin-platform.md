@@ -1338,10 +1338,11 @@ caught retirement path. Provider upload behavior is established by each adapter,
 separately from this host capability. See the [author example](../apps/docs/content/docs/plugins/services/exec.mdx#deployment-environment-custody-03-development-source).
 
 For checkout-backed acquisition, the shared deployment source reader consumes
-the physical host's existing `isHostRequesterUnrestrictedOwner` decision. Verified
-host automation retains its admitted requester identity through reviewed children
-and durable approval replay. Genuine Agent/Session execution retains its own
-requester identity. A requester that fails that decision refuses with
+the physical host's Workspace execution decision. Verified host automation
+retains its admitted requester identity through reviewed children and durable
+approval replay. Agent/Session work for the Machine's own Account can use its
+daemon Workspace when the held Machine policy disables isolation. A requester
+whose admitted placement cannot use that Workspace refuses with
 `agent_isolation_unavailable` before workspace or Git effects. The typed
 `deployment_source_admission` diagnostic records the reason, required fact and
 remedy in the Action result and the receipt's `sourceAdmission` failure detail;

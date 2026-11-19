@@ -455,7 +455,7 @@ export type HostAuthorizedPluginExecLaunch = Readonly<{
     detachDeploymentEnvironmentForObservation?(): HostAuthorizedPluginExecLaunch;
     /** Recheck opaque input custody after asynchronous admission, before spawn. */
     recheckInputs?(): Promise<void>;
-    /** Host-only failed launch recovery; true requires the person to retry. */
+    /** Host-only failed native launch recovery and its typed refusal. */
     onNativeLaunchFailure?: HostAgentIsolationLaunchContext['onNativeLaunchFailure'];
     release(): void | Promise<void>;
 }>;
@@ -579,10 +579,11 @@ export function spawnAuthorizedHostExecLaunchForHost(
                 || observed.kind === 'exit' && observed.exitCode === 0) return termination;
             // Exec has no payload-accepted marker. Qualify only a failed native
             // result; a healthy member preserves the payload's original failure.
-            if (!await recoverFailedNativeLaunch()) return termination;
+            const code = await recoverFailedNativeLaunch();
+            if (!code) return termination;
             return Object.freeze({ ...termination,
                 observed: Object.freeze({ kind: 'failed' as const, diagnostic: Object.freeze({
-                    code: 'agent_isolation_unavailable', severity: 'error' as const,
+                    code, severity: 'error' as const,
                     message: 'Native execution was unavailable; retry the command',
                 }) }),
             });

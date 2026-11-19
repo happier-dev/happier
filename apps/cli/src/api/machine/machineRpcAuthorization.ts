@@ -14,6 +14,7 @@ import {
   readSessionAgentReadinessChildActionV1,
 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import {
+  canExecuteRequesterWorkspaceOnDaemonForHost,
   isHostRequesterUnrestrictedOwner,
   selectHostRequesterExecutionIdentity,
 } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
@@ -44,7 +45,7 @@ import {
 } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ScmWorkEvidenceAdmissionSchema } from '@happier-dev/protocol/scm';
-import { getScmRpcSideEffectClass, isScmLocalRepositoryReadRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { getScmRpcSideEffectClass, isScmLocalRepositoryReadRpcMethod, isScmLocalRepositoryRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import {
   PreparedTransferRpcRequestV1Schema,
   resolvePreparedTransferRpcPhaseV1,
@@ -517,6 +518,7 @@ export type MachineRpcAdmissionBoundary = Readonly<{
   ) => Promise<string | null>;
   resolveCustodianAccountId: (signal?: AbortSignal) => Promise<string | null>;
   resolveInstallationId: () => string | null;
+  readAgentIsolation?: Parameters<typeof canExecuteRequesterWorkspaceOnDaemonForHost>[1];
   /** Cheap exact active-operation lookup; never selects a requester or re-evaluates permissions. */
   resolvePrivateWorkspaceSyncTargetExecution?: (input: PrivateWorkspaceSyncTargetAdmission) => PrivateWorkspaceSyncTargetExecutionResolution;
   verifyMachineAdmission: (
@@ -1950,7 +1952,13 @@ export async function authorizeMachineRpcRequest(
         // runs the whole read in their member process, only inside their own folder.
         const personLocalRepositoryRead = identity.kind === 'isolated' && (identity.presentPerson || identity.accountAutomation)
           && isScmLocalRepositoryReadRpcMethod(rpcMethod);
-        if (!receivingManager && !isHostRequesterUnrestrictedOwner(identity) && !personLocalRepositoryRead) {
+        const unrestricted = isHostRequesterUnrestrictedOwner(identity);
+        if (!unrestricted && identity.kind === 'isolated' && context.role === 'manage'
+          && isScmLocalRepositoryRpcMethod(rpcMethod)
+          && canExecuteRequesterWorkspaceOnDaemonForHost(identity, machine.readAgentIsolation)) {
+          return { ok: true, directScmWorkspaceRequester: identity };
+        }
+        if (!receivingManager && !unrestricted && !personLocalRepositoryRead) {
           const refuseExecution = (errorCode: string, error: string): RpcAuthorizationResult => ({
             ok: false, errorCode, error,
             failureCause: projectActionFailureCauseV1({ code: errorCode }, 'rpc.admission.requester_execution_isolation',

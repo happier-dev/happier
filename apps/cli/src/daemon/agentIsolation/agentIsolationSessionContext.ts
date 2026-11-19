@@ -25,14 +25,14 @@ function memberLaunchFailureRecovery(input: Readonly<{
   const prepareMember = input.machine.prepareMember;
   if (!prepareMember) return undefined;
   return async () => {
-    if (input.signal?.aborted || input.rpcContext?.signal.aborted) return false;
+    if (input.signal?.aborted || input.rpcContext?.signal.aborted) return;
     try {
       const result = await prepareMember({ requesterIdentity: input.requesterIdentity,
         rpcContext: input.rpcContext, signal: input.signal });
-      return result.repaired === true;
+      return result.repaired === true ? 'agent_isolation_unavailable' : undefined;
     } catch {
       // Failed repair never turns the failed command into a success or replays it.
-      return !input.signal?.aborted && !input.rpcContext?.signal.aborted;
+      if (!input.signal?.aborted && !input.rpcContext?.signal.aborted) return 'agent_isolation_unavailable';
     }
   };
 }

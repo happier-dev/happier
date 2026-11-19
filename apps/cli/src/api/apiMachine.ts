@@ -1107,12 +1107,15 @@ export class ApiMachineClient {
     }
 
     /** Source acquisition consumes the incumbent physical filesystem requester owner. */
-    async resolveDeploymentSourceRequesterIdentity(context: import('@happier-dev/protocol').ActionExecutorContext): Promise<HostRequesterExecutionIdentity> {
+    async resolveDeploymentSourceRequesterIdentity(context: import('@happier-dev/protocol').ActionExecutorContext):
+        ReturnType<import('@/deployments/readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver> {
         if (!this.filesystemEffectAdmission.resolveActionRequester) {
             throw Object.assign(new Error('agent_isolation_unavailable'), { code: 'agent_isolation_unavailable' });
         }
         const requester = await this.filesystemEffectAdmission.resolveActionRequester(context);
-        try { return requester.identity; } finally { await requester.dispose(); }
+        try {
+            return { ...requester.identity, canExecuteWorkspaceOnDaemon: requester.canExecuteWorkspaceOnDaemon };
+        } finally { await requester.dispose(); }
     }
 
     /** Session preparation retains the exact requester/native fact selected at
@@ -1678,6 +1681,7 @@ export class ApiMachineClient {
         });
         this.machineRpcAdmissionBoundary = {
             machineId: this.machine.id,
+            readAgentIsolation: () => this.getAgentIsolationSnapshot(),
             resolvePrivateWorkspaceSyncTargetExecution: input => {
                 const adapter = this.lifecycleDependencies.workspaceSyncHandoffAdapter;
                 return resolvePrivateWorkspaceSyncTargetExecution({

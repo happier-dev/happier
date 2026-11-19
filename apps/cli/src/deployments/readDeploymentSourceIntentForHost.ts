@@ -19,9 +19,11 @@ import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourc
 import { readProjectAccountRowsObservation } from '@/workspaces/projectAccountRows';
 import { fetchWorkspaceCommitRef, resolveWorkspaceCommitRef } from '@/scm/workspace/workspaceCommitExport';
 import { admitDeploymentSourceIntent } from './deploymentSourceAdmission';
-import { isHostRequesterUnrestrictedOwner, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { canExecuteRequesterWorkspaceOnDaemonForHost, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
-export type DeploymentSourceRequesterIdentityResolver = (context: ActionExecutorContext) => Promise<HostRequesterExecutionIdentity>;
+export type DeploymentSourceRequesterIdentityResolver = (context: ActionExecutorContext) => Promise<
+    HostRequesterExecutionIdentity & Readonly<{ canExecuteWorkspaceOnDaemon?: boolean }>
+>;
 
 type DeploymentSourceRequest = Readonly<{
     environment: Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'>;
@@ -65,7 +67,7 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
     const needsWorkspace = repository && request.requireWorkspace !== false;
     if (needsWorkspace) {
         const requester = await host.resolveRequesterIdentity(request.context);
-        if (!isHostRequesterUnrestrictedOwner(requester)) {
+        if (!(requester.canExecuteWorkspaceOnDaemon ?? canExecuteRequesterWorkspaceOnDaemonForHost(requester))) {
             const details: DeploymentSourceAdmissionFailureV1 = requester.kind === 'unknown'
                 ? { phase: 'deployment_source_admission', reason: requester.reason,
                     requiredFact: 'verified_root_requester', remedy: 'retry_original_request' }

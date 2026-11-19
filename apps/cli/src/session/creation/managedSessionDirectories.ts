@@ -375,7 +375,8 @@ export function createManagedSessionDirectories(input: Readonly<{
   const prepareBoundRemoval = async (directory: string, placement: ManagedSessionDirectoryPayloadPlacement | undefined,
     removalContext: StorageWorktreeRemovalContext) => {
     if (!placement) return { removal: await prepareRemoval(directory, removalContext), member: undefined };
-    if (!input.nativeOperationRuntime) throw Object.assign(new Error('agent_isolation_unavailable'), { code: 'agent_isolation_unavailable' });
+    // The retained allocation already selected member execution. Its native
+    // owner handles an unavailable binding without falling back to daemon IO.
     let removal: ProjectCheckoutRemoval | undefined;
     const member = await prepareManagedSessionDirectoryRemovalAsMember({ nativeOperationRuntime: input.nativeOperationRuntime,
       ingress: removalContext.ingress, operation: removalContext.operation, directory, prepareRemoval: async (reads, nativeRuntime) => {

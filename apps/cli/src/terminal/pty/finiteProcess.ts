@@ -50,9 +50,9 @@ export async function executeHostFiniteTerminalProcess(input: Readonly<{
   if (!terminal.ok) {
     // Native PTY startup already distinguishes failure before its accepted
     // marker. An accepted payload's ordinary nonzero exit needs no new probe.
-    const isolationUnavailable = terminal.errorCode === 'terminal_spawn_failed' && !signal.aborted
-      && await input.authorizedNativeLaunch?.onNativeLaunchFailure?.();
-    return failure('no_launch', isolationUnavailable ? 'agent_isolation_unavailable' : terminal.errorCode);
+    const nativeRefusal = terminal.errorCode === 'terminal_spawn_failed' && !signal.aborted
+      ? await input.authorizedNativeLaunch?.onNativeLaunchFailure?.() : undefined;
+    return failure('no_launch', nativeRefusal ?? terminal.errorCode);
   }
   input.operation.operationOwnerUpdate?.update({ state: 'running', progress: input.progress,
     domainRef: input.attachment({ terminalId: terminal.terminalId }) });
