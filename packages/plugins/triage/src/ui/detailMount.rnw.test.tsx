@@ -2487,9 +2487,18 @@ describe('opening a row into the source detail', () => {
         await expect(invoke()).resolves.toEqual({ status: 'unavailable' });
     });
 
+    // Start on the selected detail. The row-opening suite covers the full list route;
+    // these cases exercise the mounted detail's Session controls.
+    const linkedSessionDetailSubPath = buildTriageRouteSubPathV1({
+        ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+        selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
+    });
+
     it('gives the Session tab the pushed page: the task properties step aside while it is open', async () => {
-        const shell = await mountShell({ linkedSessionCount: 1, activeSurface: true, taskEdit: true });
-        await openTheRow(shell);
+        const shell = await mountShell({
+            subPath: linkedSessionDetailSubPath, noScannedEntries: true,
+            linkedSessionCount: 1, activeSurface: true, taskEdit: true,
+        });
         const properties = () => document.querySelector(`[data-testid="${TRIAGE_TASK_PROPERTIES_TEST_ID_V1}"]`);
         await vi.waitFor(() => expect(properties()).not.toBeNull());
         await act(async () => { await shell.press(await shell.getByRole('tab', { name: 'Session' })); });
@@ -2499,9 +2508,12 @@ describe('opening a row into the source detail', () => {
     });
 
     it('rereads the relationship after unlink and stops presenting the removed Session', async () => {
-        const shell = await mountShell({ linkedSessionCount: 2, activeSurface: true });
-        await openTheRow(shell);
-        await act(async () => { await shell.press(await shell.getByRole('tab', { name: 'Session' })); });
+        const shell = await mountShell({
+            subPath: linkedSessionDetailSubPath, noScannedEntries: true,
+            linkedSessionCount: 2, activeSurface: true,
+        });
+        const sessionTab = await shell.findByRole('tab', { name: 'Session' });
+        await act(async () => { await shell.press(sessionTab); });
         const picker = (await shell.getAllByRole('button')).find(button => button.name?.startsWith('Linked session:'));
         if (!picker) throw new Error('Missing linked Session picker');
         await act(async () => { await shell.press(picker); });
