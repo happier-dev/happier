@@ -3498,8 +3498,9 @@ describe('managed Machine detail', () => {
                 || request.method === ACTION_OPERATION_RPC_METHODS_V2.get)).toHaveLength(0);
         } finally { await screen.unmount(); installationBoundary.dispose(); }
     });
-    it.each(['ssh.trustHost', 'ssh.replaceHostKey', 'daemon.replaceRemoteBackgroundServices'] as const)(
+    it.each(['ssh.trustHost', 'ssh.replaceHostKey', 'daemon.replaceRemoteBackgroundServices', 'auth.approveRemoteProvisioning'] as const)(
         'renders the managed %s question and delivers both decisions through the real respond Action', async kind => {
+        const enrollmentRetry = kind === 'auth.approveRemoteProvisioning';
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-trust.test', scope: 'tab' });
         const homeId = 'srv_managed_trust';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
@@ -3512,21 +3513,26 @@ describe('managed Machine detail', () => {
         const machine: ManagedMachineFullV1 = { id: 'trust-managed', homeId, custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Design sandbox', choices: {} },
             controller, allocation: 'bound', creationState: 'active',
+            ...(enrollmentRetry ? { enrollmentAccountId: 'owner',
+                observation: { availability: 'unavailable', reason: 'bootstrap.incomplete', observedAt: 1 } } : {}),
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'existing' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
         const prompt = kind === 'ssh.trustHost' || kind === 'ssh.replaceHostKey'
             ? { kind, message: 'Review this installation question', host: 'design-sandbox.example', keyType: 'ssh-ed25519',
                 fingerprint: 'SHA256:design-sandbox', existingFingerprint: kind === 'ssh.replaceHostKey' ? 'SHA256:previous-key' : null }
-            : { kind, message: 'Review this installation question' };
+            : { kind, message: enrollmentRetry ? 'Sign this managed machine into your Account for Account-wide automation?'
+                : 'Review this installation question' };
         const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'trust-operation', revision: 1,
-            actionId: 'machines.managed.acquire', state: 'running', scope: { accountId: 'owner', machineId: controller.machineId },
+            actionId: enrollmentRetry ? 'machines.managed.bootstrap.retry' : 'machines.managed.acquire', state: 'running', scope: { accountId: 'owner', machineId: controller.machineId },
             title: 'Create Design sandbox', createdAt: 1, startedAt: 2, cancellation: 'supported',
-            progress: { kind: 'phase', phase: 'ssh.trust', label: 'Verifying SSH host trust' },
+            ...(!enrollmentRetry ? { progress: { kind: 'phase', phase: 'ssh.trust', label: 'Verifying SSH host trust' } } : {}),
             domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller,
                 bootstrapTask: { id: 'trust-task', taskKind: 'remote.ssh.bootstrapMachine.v1', prompt } } };
         const answers: unknown[] = [];
+        const retries: unknown[] = [];
+        const listOperations = () => ({ items: !enrollmentRetry || retries.length > 0 ? [operation] : [], nextCursor: null });
         operationRpcBoundary.handler = request => {
-            if (request.method === ACTION_OPERATION_RPC_METHODS_V2.list) return { items: [operation], nextCursor: null };
+            if (request.method === ACTION_OPERATION_RPC_METHODS_V2.list) return listOperations();
             if (request.method === ACTION_OPERATION_RPC_METHODS_V2.get) return { kind: 'found', operation };
             if (request.method === RPC_METHODS.CAPABILITIES_INVOKE) { answers.push(request.payload); return { ok: true, result: {} }; }
             return undefined;
@@ -3543,8 +3549,11 @@ describe('managed Machine detail', () => {
             if (url.pathname.startsWith('/v1/actions/')) {
                 const actionId = url.pathname.slice('/v1/actions/'.length);
                 const request = readNativeControllerRequest(init);
+                if (actionId === 'machines.managed.bootstrap.retry') retries.push(request.input);
                 return Response.json({ v: 1, requestId: request.requestId, actionId, execution: { ok: true,
                     result: actionId === 'machines.provisioners.list' ? { provisioners: [] }
+                        : actionId === 'machines.managed.bootstrap.retry' ? { managedId: machine.id, operation: { operationId: operation.operationId } }
+                        : actionId === 'action.operations.list' ? listOperations()
                         : actionId === 'machines.managed.get' ? machine : { machines: [machine] } } });
             }
             return Response.json({ error: 'not_found' }, { status: 404 });
@@ -3556,6 +3565,18 @@ describe('managed Machine detail', () => {
             executeAction={createFrontDoorActionExecute(createDefaultActionExecutor())} />);
         const hostKey = 'host' in prompt;
         try {
+            if (enrollmentRetry) {
+                // Recover the bound resource from its detail page, without mounting a creation continuation.
+                await waitForHomeGovernance(async () => {
+                    await flushHookEffects();
+                    expect(screen.findByTestId('managed-machine.installation-retry'), screen.getTextContent()).not.toBeNull();
+                });
+                await screen.pressByTestIdAsync('managed-machine.installation-retry');
+                await waitForHomeGovernance(() => {
+                    expect(retries).toEqual([{ homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision }]);
+                    expect(screen.getTextContent()).toContain(prompt.message);
+                });
+            }
             await waitForHomeGovernance(async () => {
                 await flushHookEffects();
                 expect(screen.findByTestId(`managed-machine.installation-prompt-${hostKey ? 'review' : 'approve'}`), screen.getTextContent()).not.toBeNull();

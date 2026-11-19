@@ -774,8 +774,10 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     } : undefined;
     const installationOperation = currentManagedCreationOperation(machine, operation);
     const installationPrompt = readManagedInstallationPrompt(installationOperation);
+    // The creator observer carries the consent from delegated Create. Controller-local enrollment asks here.
+    const answersEnrollmentAutomatically = creatorScoped && installationPrompt?.kind === 'auth.approveRemoteProvisioning';
     const answerPrompt = canRecoverCreation && (currentControllerAvailable || creatorScoped) && installationPrompt
-        && installationPrompt.kind !== 'auth.approveRemoteProvisioning' && installationOperation ? (approved: boolean) => {
+        && !answersEnrollmentAutomatically && installationOperation ? (approved: boolean) => {
         const { taskId, ...prompt } = installationPrompt;
         const correlation = { ...target, serverId: props.serverId, operationId: installationOperation.snapshot.operationId, taskId };
         if (prompt.kind === 'administrator.establish') {
