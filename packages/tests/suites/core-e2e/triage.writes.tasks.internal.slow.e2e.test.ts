@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import {
   InternalTaskListOutputSchema,
   InternalTaskMutationOutputSchema,
@@ -93,7 +94,7 @@ describe('Triage writes: internal Tasks through the Account Action boundary', ()
     };
   }
 
-  async function invoke(actionId: string, input: unknown) {
+  async function invoke(actionId: ActionId, input: unknown) {
     if (!client) throw new Error('Triage Action client unavailable');
     const result = await client.executeConfirmed(actionId, input, actionContext());
     expect(result).toMatchObject({ ok: true });
