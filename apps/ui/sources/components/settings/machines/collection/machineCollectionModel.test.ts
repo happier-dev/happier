@@ -9,6 +9,7 @@ import { t } from '@/text';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { captureMachinePresenceObservation, clearMachineRequestReachabilityForTest, recordMachineRequestFailed } from '@/sync/domains/machines/reachability/machineReachability';
+import * as sandboxInventory from '../managed/hostMachineSandboxes';
 
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
 import {
@@ -61,6 +62,27 @@ it('keeps an explicit Home when the cloud entry opens outside the Machines colle
 });
 
 describe('machine collection rail partition', () => {
+    it('counts only current preset allocations, scoped to the exact sandbox host installation', () => {
+        const controller = { machineId: 'controller', installationId: 'installation' };
+        const preset = { id: 'preset-a', revision: 1, contentEncryptionMode: 'plain' } as const;
+        const stopped = { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' } as const;
+        const running = { ...stopped, power: 'running' } as const;
+        const rows = [
+            managed('cloud', { preset, observation: stopped }),
+            managed('canceled', { preset, creationState: 'canceled' }),
+            managed('archived', { preset, archivedAt: 1 }),
+            managed('removed', { preset, allocation: 'confirmed-absent', resource: undefined }),
+            managed('running', { preset, acquisitionMode: 'resource-bound', controller, observation: running }),
+            managed('kept', { preset, acquisitionMode: 'resource-bound', controller, observation: stopped }),
+            managed('unobserved', { preset, acquisitionMode: 'resource-bound', controller }),
+            managed('old-host', { preset, acquisitionMode: 'resource-bound',
+                controller: { ...controller, installationId: 'previous' }, observation: running }),
+        ];
+        expect(sandboxInventory.projectManagedPresetAllocationCounts(rows).get(preset.id))
+            .toEqual({ allocated: 1, running: 0, powerUnknown: false });
+        expect(sandboxInventory.projectManagedPresetAllocationCounts(rows, controller).get(preset.id))
+            .toEqual({ allocated: 3, running: 1, powerUnknown: true });
+    });
     it('keeps policy sandboxes under their host rather than in the fleet regardless of retention or enrollment', () => {
         const sandbox = { ...managed('kept-sandbox'), acquisitionMode: 'resource-bound' as const };
         const scoped = { ...managed('session-sandbox', { creationScopeRetention: { effect: 'delete' }, enrolledMachineId: 'session-enrollment' }),

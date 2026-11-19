@@ -16,6 +16,25 @@ export function readSyncedMachineIsolationPolicy(machine: MachineIsolationPolicy
     return readMachineIsolationSnapshotFromMetadataV1({ metadata: machine.metadata, metadataVersion: machine.metadataVersion });
 }
 
+/** Count each visible host once per configured preset, including its synced offline policy. */
+export function projectSandboxPresetHostCounts(machines: readonly MachineIsolationPolicySource[]): Readonly<{
+    counts: ReadonlyMap<string, number>;
+    complete: boolean;
+}> {
+    const counts = new Map<string, number>();
+    let complete = true;
+    for (const machine of machines) {
+        const snapshot = readSyncedMachineIsolationPolicy(machine);
+        if (snapshot.status !== 'ready') {
+            complete = false;
+            continue;
+        }
+        const presets = new Set(Object.values(snapshot.policy.configuredSandboxes).map(entry => entry.presetId));
+        for (const presetId of presets) counts.set(presetId, (counts.get(presetId) ?? 0) + 1);
+    }
+    return { counts, complete };
+}
+
 /** Description of a stored Machine policy, not admission, native readiness or other placement defaults. */
 export function proposeMachineIsolationOutcome(snapshot: MachineIsolationGetResultV1,
     workKind: keyof MachineIsolationPolicyV1['workKinds'], override?: 'directly') {

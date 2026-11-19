@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { machineIsolationMetadataFieldV1, readMachineIsolationSnapshotFromMetadataV1 } from '@happier-dev/protocol/machines/machineIsolationPolicyV1';
-import { proposeMachineIsolationOutcome } from './machineIsolationPolicy';
+import { proposeMachineIsolationOutcome, projectSandboxPresetHostCounts } from './machineIsolationPolicy';
 import { renderHook } from '@/dev/testkit';
 import { useMachineIsolationProposedOutcome } from '@/hooks/machine/useMachineIsolationPolicy';
 
 describe('New Session Machine policy proposal', () => {
+    it('counts a preset once per readable host, including last-known configuration, and flags unreadable policies', () => {
+        const entry = { provisioner: { pluginId: 'example.local', localId: 'container' }, presetId: 'preset-a' };
+        const policy = { ...machineIsolationMetadataFieldV1.defaultValue(), configuredSandboxes: { one: entry, two: entry } };
+        const readable = { metadata: { isolationPolicyV1: policy }, metadataVersion: 1 };
+        const result = projectSandboxPresetHostCounts([readable, readable, { metadata: null, metadataVersion: 1 }]);
+        expect([...result.counts]).toEqual([['preset-a', 2]]);
+        expect(result.complete).toBe(false);
+        expect(projectSandboxPresetHostCounts([readable]).complete).toBe(true);
+    });
     it('updates the mounted authoring proposal from its synced snapshot and draft choice', async () => {
         const policy = machineIsolationMetadataFieldV1.defaultValue();
         const snapshot = readMachineIsolationSnapshotFromMetadataV1({ metadata: { isolationPolicyV1: policy }, metadataVersion: 1 });
