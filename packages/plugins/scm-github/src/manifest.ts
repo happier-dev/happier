@@ -226,6 +226,12 @@ export {
   GITHUB_TRIAGE_SETTINGS_RENDERER_ID_V1,
 };
 
+const githubEntryReviewFields = [
+  { path: 'routingToken', title: 'Repository' },
+  { path: 'instance.locator.displayLabel', title: 'Connected Account' },
+  { path: 'localRef.entryId', title: 'Item' },
+] as const;
+
 const sources = TriageSourcesContributionProtocolV1;
 
 /**
@@ -810,7 +816,18 @@ function createGithubPlugin(): GithubPlugin {
       placementBindings: ['detailsPanel'],
       approvalScope: 'environment',
       dangerLevel: 'writesRemote',
-      confirmation: { title: 'Publish preview status?' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Publish preview status?',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'deploymentId', title: 'Deployment' },
+          { path: 'expectedHeadSha', title: 'Expected head' },
+          { path: 'sourceConfig.repository', title: 'Repository' },
+          { path: 'status', title: 'Status' },
+          { path: 'targetUrl', title: 'Preview URL' },
+        ],
+      },
       confirmationWhen: { presentUserUi: false },
       inputSchema: GithubPullRequestPreviewStatusActionInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestPreviewStatusResultV1Schema.jsonSchema,
@@ -861,7 +878,18 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
       operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
-      confirmation: { title: 'Prepare GitHub review workspace', confirmLabel: 'Prepare workspace' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Prepare GitHub review workspace',
+        confirmLabel: 'Prepare workspace',
+        inputFields: [
+          { path: 'lastKnownLocator.routingToken', title: 'Repository' },
+          { path: 'instance.locator.displayLabel', title: 'Connected Account' },
+          { path: 'entryRef.entryId', title: 'Item' },
+          { path: 'observed.headSha', title: 'Reviewed head' },
+          { path: 'workspace.rootPath', title: 'Workspace path' },
+        ],
+      },
       // The person's own press is the consent for the checkout they asked for;
       // agents, MCP and a saved Ask keep the writes-local default.
       confirmationWhen: { presentUserUi: false },
@@ -896,7 +924,17 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.dismissDependabot]: {
       title: 'Dismiss this Dependabot alert', description: 'Dismisses the selected finding with the native reason and optional comment.',
       surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Dismiss this Dependabot alert?', body: 'The finding is hidden on GitHub. Dismissal does not fix the vulnerability.', confirmLabel: 'Dismiss' }, confirmationWhen: { presentUserUi: false },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Dismiss this Dependabot alert?',
+        body: 'The finding is hidden on GitHub. Dismissal does not fix the vulnerability.',
+        confirmLabel: 'Dismiss',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'reason', title: 'Reason' },
+          { path: 'comment', title: 'Comment' },
+        ],
+      }, confirmationWhen: { presentUserUi: false },
       inputSchema: GithubDependabotDismissInputV1Schema.jsonSchema, resultSchema: GithubSecurityAlertMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/securityAlerts/mutations.js')).dismissGithubDependabotAlert(input, context),
@@ -904,7 +942,15 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.reopenDependabot]: {
       title: 'Reopen this Dependabot alert', description: 'Reopens a dismissed Dependabot finding when its native state permits it.',
       surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Reopen this Dependabot alert?', body: 'The finding becomes open again on GitHub.', confirmLabel: 'Reopen' }, confirmationWhen: { presentUserUi: false },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Reopen this Dependabot alert?',
+        body: 'The finding becomes open again on GitHub.',
+        confirmLabel: 'Reopen',
+        inputFields: [
+          ...githubEntryReviewFields,
+        ],
+      }, confirmationWhen: { presentUserUi: false },
       inputSchema: GithubDependabotReopenInputV1Schema.jsonSchema, resultSchema: GithubSecurityAlertMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/securityAlerts/mutations.js')).reopenGithubDependabotAlert(input, context),
@@ -912,7 +958,17 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.dismissCodeScanning]: {
       title: 'Dismiss this code scanning alert', description: 'Dismisses the selected code scanning finding with its native reason and optional comment.',
       surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Dismiss this code scanning alert?', body: 'The finding is hidden on GitHub. Dismissal does not fix the code.', confirmLabel: 'Dismiss' }, confirmationWhen: { presentUserUi: false },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Dismiss this code scanning alert?',
+        body: 'The finding is hidden on GitHub. Dismissal does not fix the code.',
+        confirmLabel: 'Dismiss',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'reason', title: 'Reason' },
+          { path: 'comment', title: 'Comment' },
+        ],
+      }, confirmationWhen: { presentUserUi: false },
       inputSchema: GithubCodeScanningDismissInputV1Schema.jsonSchema, resultSchema: GithubSecurityAlertMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/securityAlerts/mutations.js')).dismissGithubCodeScanningAlert(input, context),
@@ -920,7 +976,15 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.reopenCodeScanning]: {
       title: 'Reopen this code scanning alert', description: 'Reopens a dismissed code scanning finding when its native state permits it.',
       surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Reopen this code scanning alert?', body: 'The finding becomes open again on GitHub.', confirmLabel: 'Reopen' }, confirmationWhen: { presentUserUi: false },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Reopen this code scanning alert?',
+        body: 'The finding becomes open again on GitHub.',
+        confirmLabel: 'Reopen',
+        inputFields: [
+          ...githubEntryReviewFields,
+        ],
+      }, confirmationWhen: { presentUserUi: false },
       inputSchema: GithubCodeScanningReopenInputV1Schema.jsonSchema, resultSchema: GithubSecurityAlertMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/securityAlerts/mutations.js')).reopenGithubCodeScanningAlert(input, context),
@@ -933,7 +997,17 @@ function createGithubPlugin(): GithubPlugin {
       // Strict boolean input makes the default predicate always false; the
       // Action policy still honors a user's explicit Ask override.
       confirmationWhen: { default: { op: 'eq', path: 'viewed', value: null }, presentUserUi: false },
-      confirmation: { title: 'Change your Viewed state?', body: 'This changes your private viewed state for this file on GitHub.', confirmLabel: 'Change Viewed' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Change your Viewed state?',
+        body: 'This changes your private viewed state for this file on GitHub.',
+        confirmLabel: 'Change Viewed',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'path', title: 'File' },
+          { path: 'viewed', title: 'Viewed' },
+        ],
+      },
       inputSchema: GithubFileViewedSetInputV1Schema, resultSchema: ScmFileViewedSetResultV1Schema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/fileViewed.js')).setGithubFileViewed(input, context),
@@ -948,7 +1022,17 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.closingReferenceAdd]: {
       title: 'Link closing pull request', description: 'Links one exact pull request as a manual closing reference on one issue; accepts either detail as the primary entry.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Link closing reference?', body: 'The selected pull request will be linked to close this issue when merged.', confirmLabel: 'Link' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Link closing reference?',
+        body: 'The selected pull request will be linked to close this issue when merged.',
+        confirmLabel: 'Link',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'related.routingToken', title: 'Related item repository' },
+          { path: 'related.localRef.entryId', title: 'Related item number' },
+        ],
+      },
       inputSchema: GithubRelatedEntryInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).addGithubClosingReferenceAction(input, context),
@@ -956,7 +1040,17 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.closingReferenceRemove]: {
       title: 'Unlink closing pull request', description: 'Removes one manual closing reference. Body-keyword references require editing the pull request description.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Unlink closing reference?', body: 'This removes the selected manual link. References from description keywords remain.', confirmLabel: 'Unlink' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Unlink closing reference?',
+        body: 'This removes the selected manual link. References from description keywords remain.',
+        confirmLabel: 'Unlink',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'related.routingToken', title: 'Related item repository' },
+          { path: 'related.localRef.entryId', title: 'Related item number' },
+        ],
+      },
       inputSchema: GithubRelatedEntryInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).removeGithubClosingReferenceAction(input, context),
@@ -964,7 +1058,18 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.subIssueAdd]: {
       title: 'Add sub-issue', description: 'Adds one exact issue under this parent. Moving it from an existing parent requires an explicit replaceParent choice.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Add sub-issue?', body: 'This links the selected issue under this parent. If replaceParent is selected, it moves from its current parent.', confirmLabel: 'Add sub-issue' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Add sub-issue?',
+        body: 'This links the selected issue under this parent. If replaceParent is selected, it moves from its current parent.',
+        confirmLabel: 'Add sub-issue',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'related.routingToken', title: 'Related item repository' },
+          { path: 'related.localRef.entryId', title: 'Related item number' },
+          { path: 'replaceParent', title: 'Replace existing parent' },
+        ],
+      },
       inputSchema: GithubSubIssueAddInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).addGithubSubIssueAction(input, context),
@@ -972,7 +1077,17 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.subIssueRemove]: {
       title: 'Remove sub-issue', description: 'Removes this exact parent/sub-issue relationship without deleting either issue.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Remove sub-issue?', body: 'This removes the selected issue from this parent.', confirmLabel: 'Remove' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Remove sub-issue?',
+        body: 'This removes the selected issue from this parent.',
+        confirmLabel: 'Remove',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'related.routingToken', title: 'Related item repository' },
+          { path: 'related.localRef.entryId', title: 'Related item number' },
+        ],
+      },
       inputSchema: GithubRelatedEntryInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).removeGithubSubIssueAction(input, context),
@@ -980,7 +1095,21 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.subIssueReprioritize]: {
       title: 'Move sub-issue', description: 'Moves one sub-issue before or after one exact sibling without replacing the parent list.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Move sub-issue?', body: 'This changes the selected sub-issue’s position in its parent list.', confirmLabel: 'Move' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Move sub-issue?',
+        body: 'This changes the selected sub-issue’s position in its parent list.',
+        confirmLabel: 'Move',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'related.routingToken', title: 'Related item repository' },
+          { path: 'related.localRef.entryId', title: 'Related item number' },
+          { path: 'before.routingToken', title: 'Before repository' },
+          { path: 'before.localRef.entryId', title: 'Before number' },
+          { path: 'after.routingToken', title: 'After repository' },
+          { path: 'after.localRef.entryId', title: 'After number' },
+        ],
+      },
       inputSchema: GithubSubIssueReprioritizeInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).reprioritizeGithubSubIssueAction(input, context),
@@ -988,7 +1117,17 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.blockedByAdd]: {
       title: 'Add blocker', description: 'Marks this issue as blocked by one exact related issue.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Add blocker?', body: 'This issue will be marked as blocked by the selected issue.', confirmLabel: 'Add blocker' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Add blocker?',
+        body: 'This issue will be marked as blocked by the selected issue.',
+        confirmLabel: 'Add blocker',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'related.routingToken', title: 'Related item repository' },
+          { path: 'related.localRef.entryId', title: 'Related item number' },
+        ],
+      },
       inputSchema: GithubRelatedEntryInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).addGithubBlockedByAction(input, context),
@@ -996,7 +1135,17 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.blockedByRemove]: {
       title: 'Remove blocker', description: 'Removes one exact blocked-by relationship.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Remove blocker?', body: 'This issue will no longer be marked as blocked by the selected issue.', confirmLabel: 'Remove blocker' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Remove blocker?',
+        body: 'This issue will no longer be marked as blocked by the selected issue.',
+        confirmLabel: 'Remove blocker',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'related.routingToken', title: 'Related item repository' },
+          { path: 'related.localRef.entryId', title: 'Related item number' },
+        ],
+      },
       inputSchema: GithubRelatedEntryInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).removeGithubBlockedByAction(input, context),
@@ -1004,7 +1153,17 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.blockingAdd]: {
       title: 'Add blocked issue', description: 'Marks one exact related issue as blocked by this issue.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Add blocked issue?', body: 'The selected issue will be marked as blocked by this issue.', confirmLabel: 'Add blocked issue' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Add blocked issue?',
+        body: 'The selected issue will be marked as blocked by this issue.',
+        confirmLabel: 'Add blocked issue',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'related.routingToken', title: 'Related item repository' },
+          { path: 'related.localRef.entryId', title: 'Related item number' },
+        ],
+      },
       inputSchema: GithubRelatedEntryInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).addGithubBlockingAction(input, context),
@@ -1012,7 +1171,17 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.blockingRemove]: {
       title: 'Remove blocked issue', description: 'Removes the exact relationship where this issue blocks the related issue.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Remove blocked issue?', body: 'The selected issue will no longer be marked as blocked by this issue.', confirmLabel: 'Remove' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Remove blocked issue?',
+        body: 'The selected issue will no longer be marked as blocked by this issue.',
+        confirmLabel: 'Remove',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'related.routingToken', title: 'Related item repository' },
+          { path: 'related.localRef.entryId', title: 'Related item number' },
+        ],
+      },
       inputSchema: GithubRelatedEntryInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).removeGithubBlockingAction(input, context),
@@ -1020,7 +1189,16 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.projectItemAdd]: {
       title: 'Add to GitHub Project', description: 'Adds this exact issue or pull request to one selected GitHub Project.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Add to Project?', body: 'This adds the selected entry to the selected GitHub Project.', confirmLabel: 'Add' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Add to Project?',
+        body: 'This adds the selected entry to the selected GitHub Project.',
+        confirmLabel: 'Add',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'projectId', title: 'Project' },
+        ],
+      },
       inputSchema: GithubProjectItemAddInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).addGithubProjectItemAction(input, context),
@@ -1028,7 +1206,17 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.projectItemRemove]: {
       title: 'Remove from GitHub Project', description: 'Removes the exact Project item belonging to this issue or pull request.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Remove from Project?', body: 'This removes the selected entry from the selected GitHub Project.', confirmLabel: 'Remove' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Remove from Project?',
+        body: 'This removes the selected entry from the selected GitHub Project.',
+        confirmLabel: 'Remove',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'projectId', title: 'Project' },
+          { path: 'itemId', title: 'Item' },
+        ],
+      },
       inputSchema: GithubProjectItemRemoveInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).removeGithubProjectItemAction(input, context),
@@ -1036,7 +1224,19 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.projectFieldSet]: {
       title: 'Edit GitHub Project field', description: 'Sets one exact Project item field: text, number, date, single-select, multi-select or iteration.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Save Project field?', body: 'This updates one field on the selected GitHub Project item.', confirmLabel: 'Save' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Save Project field?',
+        body: 'This updates one field on the selected GitHub Project item.',
+        confirmLabel: 'Save',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'projectId', title: 'Project' },
+          { path: 'itemId', title: 'Item' },
+          { path: 'fieldId', title: 'Field' },
+          { path: 'value', title: 'Value' },
+        ],
+      },
       inputSchema: GithubProjectFieldSetInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).setGithubProjectFieldAction(input, context),
@@ -1044,7 +1244,18 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.projectFieldClear]: {
       title: 'Clear GitHub Project field', description: 'Clears one exact field on the selected Project item.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Clear Project field?', body: 'This clears the selected field on the selected GitHub Project item.', confirmLabel: 'Clear' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Clear Project field?',
+        body: 'This clears the selected field on the selected GitHub Project item.',
+        confirmLabel: 'Clear',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'projectId', title: 'Project' },
+          { path: 'itemId', title: 'Item' },
+          { path: 'fieldId', title: 'Field' },
+        ],
+      },
       inputSchema: GithubProjectFieldClearInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).clearGithubProjectFieldAction(input, context),
@@ -1053,7 +1264,17 @@ function createGithubPlugin(): GithubPlugin {
       title: 'Edit pull request title or description',
       description: 'Updates only the title and description fields you supply on this GitHub pull request.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Save pull request changes?', body: 'This updates the selected title or description on GitHub.', confirmLabel: 'Save changes' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Save pull request changes?',
+        body: 'This updates the selected title or description on GitHub.',
+        confirmLabel: 'Save changes',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'title', title: 'Title' },
+          { path: 'body', title: 'Description' },
+        ],
+      },
       inputSchema: GithubPullRequestEditInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
@@ -1062,7 +1283,16 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryMilestoneSet]: {
       title: 'Set or clear milestone', description: 'Sets the chosen milestone on this GitHub issue or pull request, or clears it with null.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Change milestone?', body: 'This changes the milestone on GitHub.', confirmLabel: 'Save milestone' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Change milestone?',
+        body: 'This changes the milestone on GitHub.',
+        confirmLabel: 'Save milestone',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'milestone', title: 'Milestone' },
+        ],
+      },
       inputSchema: GithubEntryMilestoneSetInputV1Schema.jsonSchema, resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).setGithubEntryMilestoneAction(input, context),
@@ -1070,7 +1300,16 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueTypeSet]: {
       title: 'Set or clear issue type', description: 'Changes the issue type using GitHub’s native type name, or clears it with null.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Change issue type?', body: 'This changes the selected issue’s type on GitHub.', confirmLabel: 'Save type' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Change issue type?',
+        body: 'This changes the selected issue’s type on GitHub.',
+        confirmLabel: 'Save type',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'issueType', title: 'Issue type' },
+        ],
+      },
       inputSchema: GithubIssueTypeSetInputV1Schema.jsonSchema, resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).setGithubIssueTypeAction(input, context),
@@ -1078,7 +1317,16 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryLock]: {
       title: 'Lock conversation', description: 'Locks this issue or pull request’s conversation with an optional native lock reason.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Lock conversation?', body: 'This restricts new comments according to GitHub’s repository permissions.', confirmLabel: 'Lock' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Lock conversation?',
+        body: 'This restricts new comments according to GitHub’s repository permissions.',
+        confirmLabel: 'Lock',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'reason', title: 'Reason' },
+        ],
+      },
       inputSchema: GithubEntryLockInputV1Schema.jsonSchema, resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).lockGithubEntryAction(input, context),
@@ -1086,7 +1334,15 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryUnlock]: {
       title: 'Unlock conversation', description: 'Unlocks this GitHub issue or pull request’s conversation.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Unlock conversation?', body: 'This allows comments again under the repository’s ordinary permissions.', confirmLabel: 'Unlock' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Unlock conversation?',
+        body: 'This allows comments again under the repository’s ordinary permissions.',
+        confirmLabel: 'Unlock',
+        inputFields: [
+          ...githubEntryReviewFields,
+        ],
+      },
       inputSchema: GithubEntryUnlockInputV1Schema.jsonSchema, resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).unlockGithubEntryAction(input, context),
@@ -1095,7 +1351,16 @@ function createGithubPlugin(): GithubPlugin {
       title: 'Change pull request base',
       description: 'Changes the base branch of this pull request within its current GitHub repository.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Change base branch?', body: 'This changes the target branch and the comparison shown on GitHub.', confirmLabel: 'Change base' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Change base branch?',
+        body: 'This changes the target branch and the comparison shown on GitHub.',
+        confirmLabel: 'Change base',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'baseBranch', title: 'Base branch' },
+        ],
+      },
       inputSchema: GithubPullRequestChangeBaseInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
@@ -1104,7 +1369,16 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestHeadBranchDelete]: {
       title: 'Delete pull request head branch', description: 'Deletes the source branch only when its current tip still matches the head you selected.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Delete source branch?', body: 'This deletes the pull request’s source branch on GitHub, not its base branch.', confirmLabel: 'Delete branch' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Delete source branch?',
+        body: 'This deletes the pull request’s source branch on GitHub, not its base branch.',
+        confirmLabel: 'Delete branch',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'headRevision', title: 'Head revision' },
+        ],
+      },
       inputSchema: GithubPullRequestHeadBranchDeleteInputV1Schema.jsonSchema, resultSchema: GithubPullRequestHeadBranchDeleteResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).deleteGithubPullRequestHeadBranchAction(input, context),
@@ -1112,7 +1386,16 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestHeadBranchRestore]: {
       title: 'Restore pull request head branch', description: 'Recreates the source branch at the head you selected, without overwriting an existing branch.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Restore source branch?', body: 'This recreates the deleted source branch at the selected commit.', confirmLabel: 'Restore branch' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Restore source branch?',
+        body: 'This recreates the deleted source branch at the selected commit.',
+        confirmLabel: 'Restore branch',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'headRevision', title: 'Head revision' },
+        ],
+      },
       inputSchema: GithubPullRequestHeadBranchRestoreInputV1Schema.jsonSchema, resultSchema: GithubPullRequestHeadBranchRestoreResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).restoreGithubPullRequestHeadBranchAction(input, context),
@@ -1120,7 +1403,18 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestRevert]: {
       title: 'Revert pull request', description: 'Creates a new GitHub pull request reverting this merged pull request.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'externalSideEffect',
-      confirmation: { title: 'Create revert pull request?', body: 'This creates a new pull request on GitHub; the merged original stays unchanged.', confirmLabel: 'Create revert' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Create revert pull request?',
+        body: 'This creates a new pull request on GitHub; the merged original stays unchanged.',
+        confirmLabel: 'Create revert',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'title', title: 'Title' },
+          { path: 'body', title: 'Description' },
+          { path: 'draft', title: 'Draft' },
+        ],
+      },
       inputSchema: GithubPullRequestRevertInputV1Schema.jsonSchema, resultSchema: GithubEntryAdministrationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).revertGithubPullRequestAction(input, context),
@@ -1128,7 +1422,17 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueTransfer]: {
       title: 'Transfer issue', description: 'Moves this issue to the chosen owner/repository through the existing repository reader.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Transfer issue?', body: 'This moves the issue and its conversation to the chosen GitHub repository.', confirmLabel: 'Transfer issue' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Transfer issue?',
+        body: 'This moves the issue and its conversation to the chosen GitHub repository.',
+        confirmLabel: 'Transfer issue',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'destinationRepository', title: 'Destination repository' },
+          { path: 'createLabelsIfMissing', title: 'Create missing labels' },
+        ],
+      },
       inputSchema: GithubIssueTransferInputV1Schema.jsonSchema, resultSchema: GithubEntryAdministrationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).transferGithubIssueAction(input, context),
@@ -1136,7 +1440,15 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueDelete]: {
       title: 'Delete issue', description: 'Deletes this issue and its conversation on GitHub.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'destructive',
-      confirmation: { title: 'Delete issue?', body: 'This permanently deletes the issue and its comments on GitHub.', confirmLabel: 'Delete issue' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Delete issue?',
+        body: 'This permanently deletes the issue and its comments on GitHub.',
+        confirmLabel: 'Delete issue',
+        inputFields: [
+          ...githubEntryReviewFields,
+        ],
+      },
       inputSchema: GithubEntryAdministrationInputV1Schema.jsonSchema, resultSchema: GithubEntryAdministrationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).deleteGithubIssueAction(input, context),
@@ -1144,7 +1456,15 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issuePin]: {
       title: 'Pin issue', description: 'Pins this issue to the repository issue list.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Pin issue?', body: 'This pins the selected issue on GitHub.', confirmLabel: 'Pin issue' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Pin issue?',
+        body: 'This pins the selected issue on GitHub.',
+        confirmLabel: 'Pin issue',
+        inputFields: [
+          ...githubEntryReviewFields,
+        ],
+      },
       inputSchema: GithubEntryAdministrationInputV1Schema.jsonSchema, resultSchema: GithubEntryAdministrationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).pinGithubIssueAction(input, context),
@@ -1152,7 +1472,15 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueUnpin]: {
       title: 'Unpin issue', description: 'Unpins this issue from the repository issue list.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Unpin issue?', body: 'This unpins the selected issue on GitHub.', confirmLabel: 'Unpin issue' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Unpin issue?',
+        body: 'This unpins the selected issue on GitHub.',
+        confirmLabel: 'Unpin issue',
+        inputFields: [
+          ...githubEntryReviewFields,
+        ],
+      },
       inputSchema: GithubEntryAdministrationInputV1Schema.jsonSchema, resultSchema: GithubEntryAdministrationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).unpinGithubIssueAction(input, context),
@@ -1160,7 +1488,15 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entrySubscribe]: {
       title: 'Subscribe to conversation', description: 'Subscribes the acting GitHub user to this issue or pull request.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Subscribe?', body: 'GitHub will notify you about this conversation.', confirmLabel: 'Subscribe' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Subscribe?',
+        body: 'GitHub will notify you about this conversation.',
+        confirmLabel: 'Subscribe',
+        inputFields: [
+          ...githubEntryReviewFields,
+        ],
+      },
       inputSchema: GithubEntryAdministrationInputV1Schema.jsonSchema, resultSchema: GithubEntryAdministrationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).subscribeGithubEntryAction(input, context),
@@ -1168,7 +1504,15 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryUnsubscribe]: {
       title: 'Unsubscribe from conversation', description: 'Restores ordinary participation and mention notifications for this issue or pull request.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Unsubscribe?', body: 'GitHub will notify you only when participating or mentioned.', confirmLabel: 'Unsubscribe' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Unsubscribe?',
+        body: 'GitHub will notify you only when participating or mentioned.',
+        confirmLabel: 'Unsubscribe',
+        inputFields: [
+          ...githubEntryReviewFields,
+        ],
+      },
       inputSchema: GithubEntryAdministrationInputV1Schema.jsonSchema, resultSchema: GithubEntryAdministrationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).unsubscribeGithubEntryAction(input, context),
@@ -1176,7 +1520,17 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewCreate]: {
       title: 'Start a pending review', description: 'Creates a GitHub-hosted pending review at the chosen commit.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Save pending review?', body: 'This saves a review draft on GitHub without submitting it.', confirmLabel: 'Save draft' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Save pending review?',
+        body: 'This saves a review draft on GitHub without submitting it.',
+        confirmLabel: 'Save draft',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'headRevision', title: 'Head revision' },
+          { path: 'body', title: 'Comment' },
+        ],
+      },
       inputSchema: GithubPullRequestPendingReviewCreateInputV1Schema.jsonSchema, resultSchema: GithubPullRequestReviewMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).createGithubPendingReviewAction(input, context),
@@ -1184,7 +1538,19 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewSubmit]: {
       title: 'Submit a pending review', description: 'Submits the selected native GitHub review as Approve, Request changes or Comment.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'externalSideEffect',
-      confirmation: { title: 'Submit pending review?', body: 'This publishes the saved review and its verdict on GitHub.', confirmLabel: 'Submit review' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Submit pending review?',
+        body: 'This publishes the saved review and its verdict on GitHub.',
+        confirmLabel: 'Submit review',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'reviewId', title: 'Review' },
+          { path: 'headRevision', title: 'Head revision' },
+          { path: 'verdict', title: 'Verdict' },
+          { path: 'body', title: 'Comment' },
+        ],
+      },
       inputSchema: GithubPullRequestPendingReviewSubmitInputV1Schema.jsonSchema, resultSchema: GithubPullRequestReviewMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).submitGithubPendingReviewAction(input, context),
@@ -1192,7 +1558,16 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewDelete]: {
       title: 'Delete a pending review', description: 'Deletes the selected unsubmitted review on GitHub.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'destructive',
-      confirmation: { title: 'Delete pending review?', body: 'This deletes the review draft and its pending comments on GitHub.', confirmLabel: 'Delete review' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Delete pending review?',
+        body: 'This deletes the review draft and its pending comments on GitHub.',
+        confirmLabel: 'Delete review',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'reviewId', title: 'Review' },
+        ],
+      },
       inputSchema: GithubPullRequestPendingReviewDeleteInputV1Schema.jsonSchema, resultSchema: GithubPullRequestReviewMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).deleteGithubPendingReviewAction(input, context),
@@ -1200,7 +1575,17 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.reviewDismiss]: {
       title: 'Dismiss a review', description: 'Dismisses the selected submitted GitHub review with the supplied reason.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Dismiss review?', body: 'This withdraws the review’s approval or request for changes on GitHub.', confirmLabel: 'Dismiss review' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Dismiss review?',
+        body: 'This withdraws the review’s approval or request for changes on GitHub.',
+        confirmLabel: 'Dismiss review',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'reviewId', title: 'Review' },
+          { path: 'message', title: 'Message' },
+        ],
+      },
       inputSchema: GithubPullRequestReviewDismissInputV1Schema.jsonSchema, resultSchema: GithubPullRequestReviewMutationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).dismissGithubReviewAction(input, context),
@@ -1209,7 +1594,15 @@ function createGithubPlugin(): GithubPlugin {
       title: 'Convert pull request to draft',
       description: 'Returns one open GitHub pull request to draft status.',
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
-      confirmation: { title: 'Convert to draft?', body: 'This pull request will no longer be marked ready for review.', confirmLabel: 'Convert to draft' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Convert to draft?',
+        body: 'This pull request will no longer be marked ready for review.',
+        confirmLabel: 'Convert to draft',
+        inputFields: [
+          ...githubEntryReviewFields,
+        ],
+      },
       inputSchema: GithubPullRequestConvertToDraftInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
@@ -1222,6 +1615,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'destructive',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.merge.confirmation.title',
@@ -1237,6 +1631,9 @@ function createGithubPlugin(): GithubPlugin {
           fallback: 'Merge',
         },
         inputFields: [
+          { path: 'instance.locator.displayLabel', title: 'Connected Account' },
+          { path: 'commitTitle', title: 'Commit title' },
+          { path: 'commitMessage', title: 'Commit message' },
           { path: 'routingToken', title: { key: 'plugins.github.ui.field.repository', fallback: 'Repository' } },
           { path: 'localRef.entryId', title: { key: 'plugins.github.ui.field.number', fallback: 'Number' } },
           { path: 'headRevision', title: { key: 'plugins.github.ui.atHead', fallback: 'At this head' } },
@@ -1258,7 +1655,15 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
-      confirmation: { title: 'Add to merge queue?', body: 'GitHub will merge this pull request when its queue requirements are satisfied.' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Add to merge queue?',
+        body: 'GitHub will merge this pull request when its queue requirements are satisfied.',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'expectedHeadSha', title: 'Expected head' },
+        ],
+      },
       confirmationWhen: { presentUserUi: false },
       inputSchema: GithubPullRequestEnqueueInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestNativeMergeActionResultV1Schema.jsonSchema,
@@ -1272,7 +1677,13 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
-      confirmation: { title: 'Remove from merge queue?' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Remove from merge queue?',
+        inputFields: [
+          ...githubEntryReviewFields,
+        ],
+      },
       confirmationWhen: { presentUserUi: false },
       inputSchema: GithubPullRequestDequeueInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestNativeMergeActionResultV1Schema.jsonSchema,
@@ -1286,7 +1697,18 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'destructive',
-      confirmation: { title: 'Merge when ready?', body: 'GitHub may merge this pull request immediately. This cannot be undone.', confirmLabel: 'Enable auto-merge' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Merge when ready?',
+        body: 'GitHub may merge this pull request immediately. This cannot be undone.',
+        confirmLabel: 'Enable auto-merge',
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'expectedHeadSha', title: 'Expected head' },
+          { path: 'enabled', title: 'Enabled' },
+          { path: 'mergeMethod', title: 'Merge method' },
+        ],
+      },
       confirmationWhen: { presentUserUi: { op: 'eq', path: 'enabled', value: true } },
       inputSchema: GithubPullRequestAutoMergeSetInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestNativeMergeActionResultV1Schema.jsonSchema,
@@ -1301,6 +1723,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.close.confirmation.title',
@@ -1314,6 +1737,9 @@ function createGithubPlugin(): GithubPlugin {
           key: 'plugins.github.mutations.close.confirmation.confirmLabel',
           fallback: 'Close',
         },
+        inputFields: [
+          ...githubEntryReviewFields,
+        ],
       },
       inputSchema: GithubPullRequestCloseInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
@@ -1327,6 +1753,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.reopen.confirmation.title',
@@ -1340,6 +1767,9 @@ function createGithubPlugin(): GithubPlugin {
           key: 'plugins.github.mutations.reopen.confirmation.confirmLabel',
           fallback: 'Reopen',
         },
+        inputFields: [
+          ...githubEntryReviewFields,
+        ],
       },
       inputSchema: GithubPullRequestReopenInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
@@ -1358,6 +1788,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.markReady.confirmation.title',
@@ -1372,6 +1803,10 @@ function createGithubPlugin(): GithubPlugin {
           key: 'plugins.github.mutations.markReady.confirmation.confirmLabel',
           fallback: 'Mark ready',
         },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'headRevision', title: 'Head revision' },
+        ],
       },
       inputSchema: GithubPullRequestMarkReadyInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestMarkReadyActionResultV1Schema.jsonSchema,
@@ -1385,6 +1820,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.review.confirmation.title',
@@ -1398,6 +1834,13 @@ function createGithubPlugin(): GithubPlugin {
           key: 'plugins.github.ui.mutations.review.submit',
           fallback: 'Submit review',
         },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'publicationPlan.headRevision', title: 'Reviewed head' },
+          { path: 'publicationPlan.entries.[].body', title: 'Comments' },
+          { path: 'publicationPlan.verdict.kind', title: 'Verdict' },
+          { path: 'publicationPlan.verdict.body', title: 'Review summary' },
+        ],
       },
       inputSchema: GithubPullRequestReviewPublicationInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestReviewPublicationResultV1Schema.jsonSchema,
@@ -1411,10 +1854,16 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.github.mutations.reviewCommentCreate.confirmation.title', fallback: 'Publish this review comment?' },
         body: { key: 'plugins.github.mutations.reviewCommentCreate.confirmation.body', fallback: 'This posts the selected comment on GitHub at the exact pull request comparison you reviewed.' },
         confirmLabel: { key: 'plugins.github.mutations.reviewCommentCreate.confirmation.confirmLabel', fallback: 'Publish comment' },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'publicationPlan.headRevision', title: 'Reviewed head' },
+          { path: 'publicationPlan.entries.[].body', title: 'Comments' },
+        ],
       },
       inputSchema: GithubPullRequestReviewCommentCreateInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestReviewCommentCreateResultV1Schema.jsonSchema,
@@ -1428,10 +1877,17 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.github.mutations.threadReply.confirmation.title', fallback: 'Post this thread reply?' },
         body: { key: 'plugins.github.mutations.threadReply.confirmation.body', fallback: 'This reply becomes visible in the selected GitHub review conversation.' },
         confirmLabel: { key: 'plugins.github.mutations.threadReply.confirmation.confirmLabel', fallback: 'Post reply' },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'publicationPlan.headRevision', title: 'Reviewed head' },
+          { path: 'publicationPlan.entries.[].body', title: 'Comments' },
+          { path: 'threadId', title: 'Thread' },
+        ],
       },
       inputSchema: GithubPullRequestThreadReplyInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestThreadReplyResultV1Schema.jsonSchema,
@@ -1445,10 +1901,16 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.github.mutations.issueComment.confirmation.title', fallback: 'Post this issue comment?' },
         body: { key: 'plugins.github.mutations.issueComment.confirmation.body', fallback: 'This comment becomes visible in the selected GitHub issue conversation.' },
         confirmLabel: { key: 'plugins.github.mutations.issueComment.confirmation.confirmLabel', fallback: 'Post comment' },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'publicationPlan.headRevision', title: 'Reviewed head' },
+          { path: 'publicationPlan.entries.[].body', title: 'Comments' },
+        ],
       },
       inputSchema: GithubIssueCommentInputV1Schema.jsonSchema,
       resultSchema: GithubIssueCommentResultV1Schema.jsonSchema,
@@ -1463,6 +1925,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.updateBranch.confirmation.title',
@@ -1478,6 +1941,10 @@ function createGithubPlugin(): GithubPlugin {
           key: 'plugins.github.mutations.updateBranch.confirmation.confirmLabel',
           fallback: 'Update branch',
         },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'headRevision', title: 'Head revision' },
+        ],
       },
       inputSchema: GithubPullRequestUpdateBranchInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestUpdateBranchResultV1Schema.jsonSchema,
@@ -1492,6 +1959,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.addReviewers.confirmation.title',
@@ -1506,6 +1974,11 @@ function createGithubPlugin(): GithubPlugin {
           key: 'plugins.github.mutations.addReviewers.confirmation.confirmLabel',
           fallback: 'Request review',
         },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'users', title: 'Reviewers' },
+          { path: 'teams', title: 'Review teams' },
+        ],
       },
       inputSchema: GithubPullRequestAddReviewersInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestReviewersResultV1Schema.jsonSchema,
@@ -1520,6 +1993,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.removeReviewers.confirmation.title',
@@ -1534,6 +2008,11 @@ function createGithubPlugin(): GithubPlugin {
           key: 'plugins.github.mutations.removeReviewers.confirmation.confirmLabel',
           fallback: 'Withdraw',
         },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'users', title: 'Reviewers' },
+          { path: 'teams', title: 'Review teams' },
+        ],
       },
       inputSchema: GithubPullRequestRemoveReviewersInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestReviewersResultV1Schema.jsonSchema,
@@ -1560,6 +2039,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.threadResolution.confirmation.title',
@@ -1575,6 +2055,11 @@ function createGithubPlugin(): GithubPlugin {
           key: 'plugins.github.mutations.threadResolution.confirmation.confirmLabel',
           fallback: 'Continue',
         },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'threadId', title: 'Thread' },
+          { path: 'resolved', title: 'Resolved' },
+        ],
       },
       inputSchema: GithubPullRequestThreadResolutionInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestThreadResolutionResultV1Schema.jsonSchema,
@@ -1591,6 +2076,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.github.mutations.commentEdit.confirmation.title', fallback: 'Save this edit?' },
         body: {
@@ -1599,6 +2085,12 @@ function createGithubPlugin(): GithubPlugin {
             + ' GitHub keeps the earlier text in the comment\'s edit history.',
         },
         confirmLabel: { key: 'plugins.github.mutations.commentEdit.confirmation.confirmLabel', fallback: 'Save edit' },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'target.kind', title: 'Comment type' },
+          { path: 'target.id', title: 'Comment' },
+          { path: 'body', title: 'Comment' },
+        ],
       },
       inputSchema: GithubCommentEditInputV1Schema.jsonSchema,
       resultSchema: GithubCommentEditResultV1Schema.jsonSchema,
@@ -1614,6 +2106,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.github.mutations.commentCreate.confirmation.title', fallback: 'Post this comment?' },
         body: {
@@ -1621,6 +2114,10 @@ function createGithubPlugin(): GithubPlugin {
           fallback: 'Your comment is added to this conversation on GitHub for everyone who can see it.',
         },
         confirmLabel: { key: 'plugins.github.mutations.commentCreate.confirmation.confirmLabel', fallback: 'Post comment' },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'body', title: 'Comment' },
+        ],
       },
       inputSchema: GithubCommentCreateInputV1Schema.jsonSchema,
       resultSchema: GithubCommentCreateResultV1Schema.jsonSchema,
@@ -1638,10 +2135,19 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: sources.operations.create.declaration.surfaces,
       placementBindings: [],
       dangerLevel: sources.operations.create.declaration.dangerLevel,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.github.mutations.issueCreate.confirmation.title', fallback: 'Create this issue?' },
         body: { key: 'plugins.github.mutations.issueCreate.confirmation.body', fallback: 'This creates a new issue on GitHub in the repository you selected.' },
         confirmLabel: { key: 'plugins.github.mutations.issueCreate.confirmation.confirmLabel', fallback: 'Create' },
+        inputFields: [
+          { path: 'fields.scopeId', title: 'Repository' },
+          { path: 'instance.locator.displayLabel', title: 'Connected Account' },
+          { path: 'fields.title', title: 'Title' },
+          { path: 'fields.body', title: 'Description' },
+          { path: 'fields.assigneeIds', title: 'Assignees' },
+          { path: 'fields.labelIds', title: 'Labels' },
+        ],
       },
       inputSchema: TriageSourceCredentialInputsV1.create.jsonSchema,
       resultSchema: TriageTaskWriteResultV1Schema.jsonSchema,
@@ -1655,10 +2161,20 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: sources.operations.edit.declaration.surfaces,
       placementBindings: [],
       dangerLevel: sources.operations.edit.declaration.dangerLevel,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.github.mutations.issueEdit.confirmation.title', fallback: 'Save these issue changes?' },
         body: { key: 'plugins.github.mutations.issueEdit.confirmation.body', fallback: 'This updates the selected issue on GitHub with the fields you chose.' },
         confirmLabel: { key: 'plugins.github.mutations.issueEdit.confirmation.confirmLabel', fallback: 'Save changes' },
+        inputFields: [
+          { path: 'lastKnownLocator.routingToken', title: 'Repository' },
+          { path: 'instance.locator.displayLabel', title: 'Connected Account' },
+          { path: 'localRef.entryId', title: 'Item' },
+          { path: 'fields.title', title: 'Title' },
+          { path: 'fields.body', title: 'Description' },
+          { path: 'fields.assigneeIds', title: 'Assignees' },
+          { path: 'fields.labelIds', title: 'Labels' },
+        ],
       },
       inputSchema: TriageSourceCredentialInputsV1.edit.jsonSchema,
       resultSchema: TriageTaskWriteResultV1Schema.jsonSchema,
@@ -1672,10 +2188,17 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: sources.operations.transition.declaration.surfaces,
       placementBindings: [],
       dangerLevel: sources.operations.transition.declaration.dangerLevel,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.github.mutations.issueTransition.confirmation.title', fallback: 'Change this issue status?' },
         body: { key: 'plugins.github.mutations.issueTransition.confirmation.body', fallback: 'This changes the issue status on GitHub using the transition you selected.' },
         confirmLabel: { key: 'plugins.github.mutations.issueTransition.confirmation.confirmLabel', fallback: 'Change status' },
+        inputFields: [
+          { path: 'lastKnownLocator.routingToken', title: 'Repository' },
+          { path: 'instance.locator.displayLabel', title: 'Connected Account' },
+          { path: 'localRef.entryId', title: 'Item' },
+          { path: 'transitionId', title: 'New status' },
+        ],
       },
       inputSchema: TriageSourceCredentialInputsV1.transition.jsonSchema,
       resultSchema: TriageTaskWriteResultV1Schema.jsonSchema,
@@ -1689,6 +2212,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.issueClose.confirmation.title',
@@ -1702,6 +2226,10 @@ function createGithubPlugin(): GithubPlugin {
           key: 'plugins.github.mutations.issueClose.confirmation.confirmLabel',
           fallback: 'Close',
         },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'stateReason', title: 'Close reason' },
+        ],
       },
       inputSchema: GithubIssueCloseInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
@@ -1715,6 +2243,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.issueReopen.confirmation.title',
@@ -1728,6 +2257,9 @@ function createGithubPlugin(): GithubPlugin {
           key: 'plugins.github.mutations.issueReopen.confirmation.confirmLabel',
           fallback: 'Reopen',
         },
+        inputFields: [
+          ...githubEntryReviewFields,
+        ],
       },
       inputSchema: GithubIssueReopenInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
@@ -1741,6 +2273,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.issueAssigneeAdd.confirmation.title',
@@ -1754,6 +2287,10 @@ function createGithubPlugin(): GithubPlugin {
           key: 'plugins.github.mutations.issueAssigneeAdd.confirmation.confirmLabel',
           fallback: 'Assign',
         },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'usernames', title: 'Assignees' },
+        ],
       },
       inputSchema: GithubIssueAssigneeAddInputV1Schema.jsonSchema,
       resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
@@ -1767,6 +2304,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.issueAssigneeRemove.confirmation.title',
@@ -1780,6 +2318,10 @@ function createGithubPlugin(): GithubPlugin {
           key: 'plugins.github.mutations.issueAssigneeRemove.confirmation.confirmLabel',
           fallback: 'Unassign',
         },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'usernames', title: 'Assignees' },
+        ],
       },
       inputSchema: GithubIssueAssigneeRemoveInputV1Schema.jsonSchema,
       resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
@@ -1793,6 +2335,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.issueLabelAdd.confirmation.title',
@@ -1806,6 +2349,10 @@ function createGithubPlugin(): GithubPlugin {
           key: 'plugins.github.mutations.issueLabelAdd.confirmation.confirmLabel',
           fallback: 'Add labels',
         },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'labels', title: 'Labels' },
+        ],
       },
       inputSchema: GithubIssueLabelAddInputV1Schema.jsonSchema,
       resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
@@ -1819,6 +2366,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.github.mutations.issueLabelRemove.confirmation.title',
@@ -1832,6 +2380,10 @@ function createGithubPlugin(): GithubPlugin {
           key: 'plugins.github.mutations.issueLabelRemove.confirmation.confirmLabel',
           fallback: 'Remove label',
         },
+        inputFields: [
+          ...githubEntryReviewFields,
+          { path: 'label', title: 'Label' },
+        ],
       },
       inputSchema: GithubIssueLabelRemoveInputV1Schema.jsonSchema,
       resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,

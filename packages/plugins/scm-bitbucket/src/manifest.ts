@@ -233,7 +233,18 @@ export const BITBUCKET_PLUGIN = definePlugin({
       surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
       operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
-      confirmation: { title: 'Prepare Bitbucket review workspace', confirmLabel: 'Prepare workspace' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Prepare Bitbucket review workspace',
+        confirmLabel: 'Prepare workspace',
+        inputFields: [
+          { path: 'lastKnownLocator.routingToken', title: 'Repository' },
+          { path: 'instance.locator.displayLabel', title: 'Source' },
+          { path: 'entryRef.entryId', title: 'Item' },
+          { path: 'observed.headSha', title: 'Reviewed head' },
+          { path: 'workspace.rootPath', title: 'Workspace path' },
+        ],
+      },
       // The person's own press is the consent for the checkout they asked for;
       // agents, MCP and a saved Ask keep the writes-local default.
       confirmationWhen: { presentUserUi: false },

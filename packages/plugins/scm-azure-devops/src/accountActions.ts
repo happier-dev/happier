@@ -21,6 +21,12 @@ export const INSTANCE_ACCOUNT_BINDINGS = [{
 
 const ACCOUNT_EXECUTION = { target: 'account', account: { artifactId: 'azure-devops-account-runtime', exportName: 'activate' } } as const;
 
+const azureEntryReviewFields = [
+  { path: 'routingToken', title: 'Repository' },
+  { path: 'instance.locator.displayLabel', title: 'Source' },
+  { path: 'localRef.entryId', title: 'Item' },
+] as const;
+
 export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
     [AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances]: {
       title: 'Discover Azure DevOps organizations',
@@ -132,6 +138,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'destructive',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.complete.confirm.title', fallback: 'Complete this pull request?' },
         body: {
@@ -142,6 +149,11 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
             + ' nothing is completed and you are asked again.',
         },
         confirmLabel: { key: 'plugins.azureDevops.actions.complete.confirm.label', fallback: 'Complete' },
+        inputFields: [
+          ...azureEntryReviewFields,
+          { path: 'observedSourceCommitId', title: 'Reviewed source commit' },
+          { path: 'deleteSourceBranch', title: 'Delete source branch' },
+        ],
       },
       inputSchema: AzureCompleteInputV1Schema.jsonSchema,
       resultSchema: AzureMutationResultV1Schema.jsonSchema,
@@ -157,6 +169,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.abandon.confirm.title', fallback: 'Abandon this pull request?' },
         body: {
@@ -165,6 +178,9 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
             + ' reactivate it later, so this is not permanent.',
         },
         confirmLabel: { key: 'plugins.azureDevops.actions.abandon.confirm.label', fallback: 'Abandon' },
+        inputFields: [
+          ...azureEntryReviewFields,
+        ],
       },
       inputSchema: AzureAbandonInputV1Schema.jsonSchema,
       resultSchema: AzureMutationResultV1Schema.jsonSchema,
@@ -180,6 +196,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.reactivate.confirm.title', fallback: 'Reactivate this pull request?' },
         body: {
@@ -188,6 +205,9 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
             + ' again. You can abandon it once more afterwards.',
         },
         confirmLabel: { key: 'plugins.azureDevops.actions.reactivate.confirm.label', fallback: 'Reactivate' },
+        inputFields: [
+          ...azureEntryReviewFields,
+        ],
       },
       inputSchema: AzureReactivateInputV1Schema.jsonSchema,
       resultSchema: AzureMutationResultV1Schema.jsonSchema,
@@ -203,6 +223,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.requestReview.confirm.title', fallback: 'Request review from these people?' },
         body: {
@@ -211,6 +232,11 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
             + ' no existing vote is changed.',
         },
         confirmLabel: { key: 'plugins.azureDevops.actions.requestReview.confirm.label', fallback: 'Request review' },
+        inputFields: [
+          ...azureEntryReviewFields,
+          { path: 'observedSourceCommitId', title: 'Reviewed source commit' },
+          { path: 'reviewerIds', title: 'Reviewers' },
+        ],
       },
       inputSchema: AzureRequestReviewInputV1Schema.jsonSchema,
       resultSchema: AzureMutationResultV1Schema.jsonSchema,
@@ -226,6 +252,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.threadStatus.confirm.title', fallback: 'Change this thread’s status?' },
         body: {
@@ -234,6 +261,11 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
             + ' changed, and you can set the status again afterwards.',
         },
         confirmLabel: { key: 'plugins.azureDevops.actions.threadStatus.confirm.label', fallback: 'Set status' },
+        inputFields: [
+          ...azureEntryReviewFields,
+          { path: 'threadId', title: 'Thread' },
+          { path: 'status', title: 'Status' },
+        ],
       },
       inputSchema: AzureThreadStatusInputV1Schema.jsonSchema,
       resultSchema: AzureThreadStatusResultV1Schema.jsonSchema,
@@ -249,10 +281,18 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.submitReview.confirm.title', fallback: 'Submit this review?' },
         body: { key: 'plugins.azureDevops.actions.submitReview.confirm.body', fallback: 'Selected comments are published in order, then the verdict is submitted. If the pull request comparison moved, nothing is written.' },
         confirmLabel: { key: 'plugins.azureDevops.actions.submitReview.confirm.label', fallback: 'Submit review' },
+        inputFields: [
+          ...azureEntryReviewFields,
+          { path: 'publicationPlan.headRevision', title: 'Reviewed head' },
+          { path: 'publicationPlan.entries.[].body', title: 'Comments' },
+          { path: 'publicationPlan.verdict.kind', title: 'Verdict' },
+          { path: 'publicationPlan.verdict.body', title: 'Review summary' },
+        ],
       },
       inputSchema: AzureSubmitReviewInputV1Schema.jsonSchema,
       resultSchema: AzureReviewPublicationResultV1Schema.jsonSchema,
@@ -268,10 +308,16 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.threadCommentCreate.confirm.title', fallback: 'Publish this review comment?' },
         body: { key: 'plugins.azureDevops.actions.threadCommentCreate.confirm.body', fallback: 'This comment becomes visible as a new Azure DevOps review thread at the comparison you reviewed.' },
         confirmLabel: { key: 'plugins.azureDevops.actions.threadCommentCreate.confirm.label', fallback: 'Publish comment' },
+        inputFields: [
+          ...azureEntryReviewFields,
+          { path: 'publicationPlan.headRevision', title: 'Reviewed head' },
+          { path: 'publicationPlan.entries.[].body', title: 'Comments' },
+        ],
       },
       inputSchema: AzureThreadCommentCreateInputV1Schema.jsonSchema,
       resultSchema: AzureReviewPublicationResultV1Schema.jsonSchema,
@@ -287,10 +333,18 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.threadReply.confirm.title', fallback: 'Post this thread reply?' },
         body: { key: 'plugins.azureDevops.actions.threadReply.confirm.body', fallback: 'This reply becomes visible in the selected Azure DevOps review conversation.' },
         confirmLabel: { key: 'plugins.azureDevops.actions.threadReply.confirm.label', fallback: 'Post reply' },
+        inputFields: [
+          ...azureEntryReviewFields,
+          { path: 'publicationPlan.headRevision', title: 'Reviewed head' },
+          { path: 'publicationPlan.entries.[].body', title: 'Comments' },
+          { path: 'threadId', title: 'Thread' },
+          { path: 'parentCommentId', title: 'Parent comment' },
+        ],
       },
       inputSchema: AzureThreadReplyInputV1Schema.jsonSchema,
       resultSchema: AzureReviewPublicationResultV1Schema.jsonSchema,

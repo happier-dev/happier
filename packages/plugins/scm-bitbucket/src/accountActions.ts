@@ -19,6 +19,12 @@ export const INSTANCE_ACCOUNT_BINDINGS = [{
 
 export const BITBUCKET_ACCOUNT_EXECUTION = { target: 'account', account: { artifactId: 'bitbucket-account-runtime', exportName: 'activate' } } as const;
 
+const bitbucketEntryReviewFields = [
+  { path: 'lastKnownLocator.routingToken', title: 'Repository' },
+  { path: 'instance.locator.displayLabel', title: 'Source' },
+  { path: 'localRef.entryId', title: 'Item' },
+] as const;
+
 export const BITBUCKET_ACCOUNT_ACTIONS = {
     [BITBUCKET_TRIAGE_ACTION_IDS.listInstances]: {
       title: 'Discover Bitbucket Cloud workspaces',
@@ -127,6 +133,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'destructive',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.bitbucket.ui.mutations.merge.button',
@@ -141,6 +148,13 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
           key: 'plugins.bitbucket.ui.mutations.merge.button',
           fallback: 'Merge',
         },
+        inputFields: [
+          ...bitbucketEntryReviewFields,
+          { path: 'observedHeadCommit', title: 'Reviewed head' },
+          { path: 'closeSourceBranch', title: 'Close source branch' },
+          { path: 'mergeStrategy', title: 'Merge strategy' },
+          { path: 'message', title: 'Message' },
+        ],
       },
       inputSchema: BitbucketMergeInputV1Schema.jsonSchema,
       resultSchema: BitbucketMutationResultV1Schema.jsonSchema,
@@ -156,6 +170,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.bitbucket.ui.mutations.decline.button',
@@ -169,6 +184,9 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
           key: 'plugins.bitbucket.ui.mutations.decline.button',
           fallback: 'Decline',
         },
+        inputFields: [
+          ...bitbucketEntryReviewFields,
+        ],
       },
       inputSchema: BitbucketDeclineInputV1Schema.jsonSchema,
       resultSchema: BitbucketMutationResultV1Schema.jsonSchema,
@@ -184,6 +202,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.bitbucket.ui.mutations.comment.resolve',
@@ -197,6 +216,10 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
           key: 'plugins.bitbucket.ui.mutations.comment.resolve',
           fallback: 'Resolve',
         },
+        inputFields: [
+          ...bitbucketEntryReviewFields,
+          { path: 'commentId', title: 'Comment' },
+        ],
       },
       inputSchema: BitbucketCommentResolutionInputV1Schema.jsonSchema,
       resultSchema: BitbucketCommentResolutionResultV1Schema.jsonSchema,
@@ -212,6 +235,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.bitbucket.ui.mutations.comment.reopen',
@@ -225,6 +249,10 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
           key: 'plugins.bitbucket.ui.mutations.comment.reopen',
           fallback: 'Reopen',
         },
+        inputFields: [
+          ...bitbucketEntryReviewFields,
+          { path: 'commentId', title: 'Comment' },
+        ],
       },
       inputSchema: BitbucketCommentResolutionInputV1Schema.jsonSchema,
       resultSchema: BitbucketCommentResolutionResultV1Schema.jsonSchema,
@@ -239,6 +267,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.bitbucket.ui.mutations.review.confirmation.title',
@@ -252,6 +281,13 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
           key: 'plugins.bitbucket.ui.mutations.review.submit',
           fallback: 'Submit review',
         },
+        inputFields: [
+          ...bitbucketEntryReviewFields,
+          { path: 'publicationPlan.headRevision', title: 'Reviewed head' },
+          { path: 'publicationPlan.entries.[].body', title: 'Comments' },
+          { path: 'publicationPlan.verdict.kind', title: 'Verdict' },
+          { path: 'publicationPlan.verdict.body', title: 'Review summary' },
+        ],
       },
       inputSchema: BitbucketReviewPublicationInputV1Schema.jsonSchema,
       resultSchema: BitbucketReviewPublicationResultV1Schema.jsonSchema,
@@ -266,10 +302,16 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'externalSideEffect',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.bitbucket.ui.mutations.reviewComment.confirmation.title', fallback: 'Publish this review comment?' },
         body: { key: 'plugins.bitbucket.ui.mutations.reviewComment.confirmation.body', fallback: 'This posts the selected comment on Bitbucket at the exact pull request comparison you reviewed.' },
         confirmLabel: { key: 'plugins.bitbucket.ui.mutations.reviewComment.publish', fallback: 'Publish comment' },
+        inputFields: [
+          ...bitbucketEntryReviewFields,
+          { path: 'publicationPlan.headRevision', title: 'Reviewed head' },
+          { path: 'publicationPlan.entries.[].body', title: 'Comments' },
+        ],
       },
       inputSchema: BitbucketReviewCommentCreateInputV1Schema.jsonSchema,
       resultSchema: BitbucketReviewPublicationResultV1Schema.jsonSchema,
@@ -284,10 +326,17 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.bitbucket.ui.mutations.reviewReply.confirmation.title', fallback: 'Post this reply?' },
         body: { key: 'plugins.bitbucket.ui.mutations.reviewReply.confirmation.body', fallback: 'This reply becomes visible beneath the selected Bitbucket pull-request comment.' },
         confirmLabel: { key: 'plugins.bitbucket.ui.mutations.reviewReply.publish', fallback: 'Post reply' },
+        inputFields: [
+          ...bitbucketEntryReviewFields,
+          { path: 'publicationPlan.headRevision', title: 'Reviewed head' },
+          { path: 'publicationPlan.entries.[].body', title: 'Comments' },
+          { path: 'parentCommentId', title: 'Parent comment' },
+        ],
       },
       inputSchema: BitbucketReviewCommentReplyInputV1Schema.jsonSchema,
       resultSchema: BitbucketReviewPublicationResultV1Schema.jsonSchema,

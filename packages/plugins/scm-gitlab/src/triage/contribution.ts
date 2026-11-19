@@ -16,7 +16,7 @@ import { gitlabDetailTabDeclaration } from '../ui/detail/tabDeclarations.js';
  */
 
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-import type { PluginActionInvocationSurfaceV2 } from '@happier-dev/plugin-sdk/actions';
+import type { ActionConfirmationInputField, ActionContribution, PluginActionInvocationSurfaceV2 } from '@happier-dev/plugin-sdk/actions';
 import {
   TriageSourceDescriptorV1Schema,
   TriageSourcesContributionProtocolV1,
@@ -294,7 +294,8 @@ type TriageActionDeclaration = Readonly<{
   execution: typeof GITLAB_ACCOUNT_EXECUTION | Readonly<{ target: 'daemon' }>;
   dangerLevel: 'safe' | 'writesLocal';
   operation?: typeof TRIAGE_REVIEW_WORKSPACE_OPERATION_V1;
-  confirmation?: Readonly<{ title: string; confirmLabel: string }>;
+  confirmation?: Readonly<{ title: string; confirmLabel: string; inputFields: readonly ActionConfirmationInputField[] }>;
+  secretInputPaths?: ActionContribution['secretInputPaths'];
   confirmationWhen?: Readonly<{ presentUserUi: false }>;
   inputSchema: PluginJsonSchema;
   resultSchema: PluginJsonSchema;
@@ -321,7 +322,9 @@ type GitlabMutationActionDeclaration = Readonly<{
     title: Readonly<{ key: string; fallback: string }>;
     body: Readonly<{ key: string; fallback: string }>;
     confirmLabel: Readonly<{ key: string; fallback: string }>;
+    inputFields: readonly ActionConfirmationInputField[];
   }>;
+  secretInputPaths: NonNullable<ActionContribution['secretInputPaths']>;
   inputSchema: PluginJsonSchema;
   resultSchema: PluginJsonSchema;
   hostAccess: readonly string[];
@@ -355,7 +358,18 @@ function declareOperationAction(input: Readonly<{
     ...(input.role === 'prepareReviewWorkspace' || input.role === 'verifyReviewWorkspace'
       ? { operation: TRIAGE_REVIEW_WORKSPACE_OPERATION_V1 } : {}),
     ...(input.role === 'prepareReviewWorkspace' ? {
-      confirmation: { title: 'Prepare GitLab review workspace', confirmLabel: 'Prepare workspace' },
+      secretInputPaths: ['instance.configuration.token'],
+      confirmation: {
+        title: 'Prepare GitLab review workspace',
+        confirmLabel: 'Prepare workspace',
+        inputFields: [
+          { path: 'lastKnownLocator.routingToken', title: 'Repository' },
+          { path: 'instance.locator.displayLabel', title: 'Source' },
+          { path: 'entryRef.entryId', title: 'Item' },
+          { path: 'observed.headSha', title: 'Reviewed head' },
+          { path: 'workspace.rootPath', title: 'Workspace path' },
+        ],
+      },
       confirmationWhen: { presentUserUi: false as const },
     } : {}),
     inputSchema: TriageSourceConnectedAccountInputsV1[input.role].jsonSchema,
@@ -510,6 +524,12 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS: readonly TriageActionDecl
     connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
   })));
 
+const gitlabEntryReviewFields = [
+  { path: 'routingToken', title: 'Project' },
+  { path: 'instance.locator.displayLabel', title: 'Source' },
+  { path: 'localRef.entryId', title: 'Item' },
+] as const;
+
 /**
  * The mutation Action declarations.
  *
@@ -538,6 +558,7 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       description: 'Merges one merge request at the exact commit the user observed, and reports'
         + ' whether GitLab merged it or scheduled it.',
       dangerLevel: 'destructive' as const,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.gitlab.actions.mergeRequestMerge.confirm.title',
@@ -551,6 +572,10 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
           key: 'plugins.gitlab.actions.mergeRequestMerge.confirm.label',
           fallback: 'Merge',
         },
+        inputFields: [
+          ...gitlabEntryReviewFields,
+          { path: 'observedHeadSha', title: 'Reviewed head' },
+        ],
       },
       inputSchema: GitlabMergeRequestMergeInputV1Schema.jsonSchema,
       resultSchema: GitlabMergeRequestMergeResultV1Schema.jsonSchema,
@@ -561,6 +586,7 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       description: 'Clears the draft flag of one merge request through GitLab’s own draft'
         + ' transition, which notifies every named reviewer.',
       dangerLevel: 'externalSideEffect' as const,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.gitlab.actions.mergeRequestMarkReady.confirm.title',
@@ -574,6 +600,10 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
           key: 'plugins.gitlab.actions.mergeRequestMarkReady.confirm.label',
           fallback: 'Mark ready',
         },
+        inputFields: [
+          ...gitlabEntryReviewFields,
+          { path: 'observedHeadSha', title: 'Reviewed head' },
+        ],
       },
       inputSchema: GitlabMergeRequestMarkReadyInputV1Schema.jsonSchema,
       resultSchema: GitlabMergeRequestMarkReadyResultV1Schema.jsonSchema,
@@ -584,6 +614,7 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       description: 'Closes one open merge request through GitLab’s own state transition and'
         + ' proves the new state with a fresh read.',
       dangerLevel: 'writesRemote' as const,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.gitlab.actions.mergeRequestClose.confirm.title',
@@ -597,6 +628,9 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
           key: 'plugins.gitlab.actions.mergeRequestClose.confirm.label',
           fallback: 'Close',
         },
+        inputFields: [
+          ...gitlabEntryReviewFields,
+        ],
       },
       inputSchema: GitlabMergeRequestCloseInputV1Schema.jsonSchema,
       resultSchema: GitlabMergeRequestCloseResultV1Schema.jsonSchema,
@@ -607,6 +641,7 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       description: 'Reopens one closed merge request through GitLab\u2019s own state transition'
         + ' and proves the new state with a fresh read.',
       dangerLevel: 'writesRemote' as const,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.gitlab.actions.mergeRequestReopen.confirm.title',
@@ -620,6 +655,9 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
           key: 'plugins.gitlab.actions.mergeRequestReopen.confirm.label',
           fallback: 'Reopen',
         },
+        inputFields: [
+          ...gitlabEntryReviewFields,
+        ],
       },
       inputSchema: GitlabMergeRequestReopenInputV1Schema.jsonSchema,
       resultSchema: GitlabMergeRequestReopenResultV1Schema.jsonSchema,
@@ -631,6 +669,7 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
         + ' nothing that could overwrite a concurrent edit, and proves the new state with a'
         + ' fresh read.',
       dangerLevel: 'writesRemote' as const,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.gitlab.actions.issueClose.confirm.title',
@@ -644,6 +683,10 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
           key: 'plugins.gitlab.actions.issueClose.confirm.label',
           fallback: 'Close',
         },
+        inputFields: [
+          ...gitlabEntryReviewFields,
+          { path: 'observedRevision', title: 'Observed revision' },
+        ],
       },
       inputSchema: GitlabIssueCloseInputV1Schema.jsonSchema,
       resultSchema: GitlabIssueCloseResultV1Schema.jsonSchema,
@@ -654,6 +697,7 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       description: 'Reopens one closed issue through GitLab\u2019s own state transition and'
         + ' proves the new state with a fresh read.',
       dangerLevel: 'writesRemote' as const,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: {
           key: 'plugins.gitlab.actions.issueReopen.confirm.title',
@@ -667,6 +711,10 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
           key: 'plugins.gitlab.actions.issueReopen.confirm.label',
           fallback: 'Reopen',
         },
+        inputFields: [
+          ...gitlabEntryReviewFields,
+          { path: 'observedRevision', title: 'Observed revision' },
+        ],
       },
       inputSchema: GitlabIssueReopenInputV1Schema.jsonSchema,
       resultSchema: GitlabIssueReopenResultV1Schema.jsonSchema,
@@ -676,10 +724,17 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       title: 'Change GitLab merge request reviewers',
       description: 'Adds or removes only the selected reviewers through GitLab’s native delta operation.',
       dangerLevel: 'writesRemote' as const,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.gitlab.actions.reviewerChange.confirm.title', fallback: 'Change reviewers?' },
         body: { key: 'plugins.gitlab.actions.reviewerChange.confirm.body', fallback: 'GitLab adds or removes only the selected reviewers.' },
         confirmLabel: { key: 'plugins.gitlab.actions.reviewerChange.confirm.label', fallback: 'Change reviewers' },
+        inputFields: [
+          ...gitlabEntryReviewFields,
+          { path: 'observedHeadSha', title: 'Reviewed head' },
+          { path: 'operation', title: 'Change' },
+          { path: 'reviewerUsernames', title: 'Reviewers' },
+        ],
       },
       inputSchema: GitlabMergeRequestReviewerChangeInputV1Schema.jsonSchema,
       resultSchema: GitlabMergeRequestReviewerChangeResultV1Schema.jsonSchema,
@@ -689,10 +744,17 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       title: 'Resolve or reopen a GitLab discussion',
       description: 'Changes the resolved state of one exact merge request discussion.',
       dangerLevel: 'writesRemote' as const,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.gitlab.actions.discussionResolution.confirm.title', fallback: 'Change discussion state?' },
         body: { key: 'plugins.gitlab.actions.discussionResolution.confirm.body', fallback: 'GitLab changes this discussion’s resolved state.' },
         confirmLabel: { key: 'plugins.gitlab.actions.discussionResolution.confirm.label', fallback: 'Change state' },
+        inputFields: [
+          ...gitlabEntryReviewFields,
+          { path: 'observedHeadSha', title: 'Reviewed head' },
+          { path: 'discussionId', title: 'Discussion' },
+          { path: 'resolved', title: 'Resolved' },
+        ],
       },
       inputSchema: GitlabMergeRequestDiscussionResolutionInputV1Schema.jsonSchema,
       resultSchema: GitlabMergeRequestDiscussionResolutionResultV1Schema.jsonSchema,
@@ -702,10 +764,17 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       title: 'Change GitLab issue assignees',
       description: 'Adds or removes only the selected assignees through GitLab’s native delta operation.',
       dangerLevel: 'writesRemote' as const,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.gitlab.actions.issueAssign.confirm.title', fallback: 'Change assignees?' },
         body: { key: 'plugins.gitlab.actions.issueAssign.confirm.body', fallback: 'GitLab adds or removes only the selected assignees.' },
         confirmLabel: { key: 'plugins.gitlab.actions.issueAssign.confirm.label', fallback: 'Change assignees' },
+        inputFields: [
+          ...gitlabEntryReviewFields,
+          { path: 'observedRevision', title: 'Observed revision' },
+          { path: 'operation', title: 'Change' },
+          { path: 'assigneeUsernames', title: 'Assignees' },
+        ],
       },
       inputSchema: GitlabIssueAssignInputV1Schema.jsonSchema,
       resultSchema: GitlabIssueAssignResultV1Schema.jsonSchema,
@@ -715,10 +784,17 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       title: 'Change GitLab issue labels',
       description: 'Adds or removes only the selected labels through GitLab’s native delta fields.',
       dangerLevel: 'writesRemote' as const,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.gitlab.actions.issueLabel.confirm.title', fallback: 'Change labels?' },
         body: { key: 'plugins.gitlab.actions.issueLabel.confirm.body', fallback: 'GitLab adds or removes only the selected labels.' },
         confirmLabel: { key: 'plugins.gitlab.actions.issueLabel.confirm.label', fallback: 'Change labels' },
+        inputFields: [
+          ...gitlabEntryReviewFields,
+          { path: 'observedRevision', title: 'Observed revision' },
+          { path: 'operation', title: 'Change' },
+          { path: 'labelNames', title: 'Labels' },
+        ],
       },
       inputSchema: GitlabIssueLabelInputV1Schema.jsonSchema,
       resultSchema: GitlabIssueLabelResultV1Schema.jsonSchema,
@@ -728,10 +804,19 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       title: 'Publish a GitLab merge request review',
       description: 'Publishes the selected review comments in order, then the selected review summary and approval.',
       dangerLevel: 'externalSideEffect' as const,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.gitlab.actions.submitReview.confirm.title', fallback: 'Publish this review?' },
         body: { key: 'plugins.gitlab.actions.submitReview.confirm.body', fallback: 'GitLab publishes these comments and notifies review participants.' },
         confirmLabel: { key: 'plugins.gitlab.actions.submitReview.confirm.label', fallback: 'Publish review' },
+        inputFields: [
+          ...gitlabEntryReviewFields,
+          { path: 'publicationPlan.headRevision', title: 'Reviewed head' },
+          { path: 'publicationPlan.entries.[].body', title: 'Comments' },
+          { path: 'publicationPlan.verdict.kind', title: 'Verdict' },
+          { path: 'publicationPlan.verdict.body', title: 'Review summary' },
+          { path: 'acknowledgedPreexistingDraftIds', title: 'Acknowledged drafts' },
+        ],
       },
       inputSchema: GitlabMergeRequestReviewPublicationInputV1Schema.jsonSchema,
       resultSchema: GitlabReviewPublicationResultV1Schema.jsonSchema,
@@ -741,10 +826,16 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       title: 'Publish a GitLab review comment',
       description: 'Publishes one revision-pinned inline merge request comment.',
       dangerLevel: 'externalSideEffect' as const,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.gitlab.actions.reviewCommentCreate.confirm.title', fallback: 'Publish this review comment?' },
         body: { key: 'plugins.gitlab.actions.reviewCommentCreate.confirm.body', fallback: 'GitLab publishes the comment and may notify review participants.' },
         confirmLabel: { key: 'plugins.gitlab.actions.reviewCommentCreate.confirm.label', fallback: 'Publish comment' },
+        inputFields: [
+          ...gitlabEntryReviewFields,
+          { path: 'publicationPlan.headRevision', title: 'Reviewed head' },
+          { path: 'publicationPlan.entries.[].body', title: 'Comments' },
+        ],
       },
       inputSchema: GitlabMergeRequestReviewCommentCreateInputV1Schema.jsonSchema,
       resultSchema: GitlabReviewPublicationResultV1Schema.jsonSchema,
@@ -754,10 +845,17 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       title: 'Reply to a GitLab review thread',
       description: 'Publishes one reply into the exact selected merge request discussion.',
       dangerLevel: 'writesRemote' as const,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.gitlab.actions.threadReply.confirm.title', fallback: 'Publish this reply?' },
         body: { key: 'plugins.gitlab.actions.threadReply.confirm.body', fallback: 'GitLab adds the reply to this discussion.' },
         confirmLabel: { key: 'plugins.gitlab.actions.threadReply.confirm.label', fallback: 'Publish reply' },
+        inputFields: [
+          ...gitlabEntryReviewFields,
+          { path: 'discussionId', title: 'Discussion' },
+          { path: 'publicationPlan.headRevision', title: 'Reviewed head' },
+          { path: 'publicationPlan.entries.[].body', title: 'Comments' },
+        ],
       },
       inputSchema: GitlabMergeRequestThreadReplyInputV1Schema.jsonSchema,
       resultSchema: GitlabReviewPublicationResultV1Schema.jsonSchema,
@@ -767,10 +865,16 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       title: 'Comment on a GitLab issue',
       description: 'Publishes one canonical comment on the selected issue.',
       dangerLevel: 'externalSideEffect' as const,
+      secretInputPaths: ['instance.configuration.token'],
       confirmation: {
         title: { key: 'plugins.gitlab.actions.issueComment.confirm.title', fallback: 'Publish this issue comment?' },
         body: { key: 'plugins.gitlab.actions.issueComment.confirm.body', fallback: 'GitLab publishes the comment and may notify issue participants.' },
         confirmLabel: { key: 'plugins.gitlab.actions.issueComment.confirm.label', fallback: 'Publish comment' },
+        inputFields: [
+          ...gitlabEntryReviewFields,
+          { path: 'publicationPlan.headRevision', title: 'Reviewed head' },
+          { path: 'publicationPlan.entries.[].body', title: 'Comments' },
+        ],
       },
       inputSchema: GitlabIssueCommentInputV1Schema.jsonSchema,
       resultSchema: GitlabReviewPublicationResultV1Schema.jsonSchema,
