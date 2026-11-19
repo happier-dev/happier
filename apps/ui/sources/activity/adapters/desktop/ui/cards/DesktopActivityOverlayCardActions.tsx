@@ -80,11 +80,11 @@ export function DesktopActivityOverlayCardActions(props: Readonly<{
     const { state, update } = useDesktopActivityOverlayCardActionState(props.stateKey);
     const { answer, failure } = state;
     const answerWith = React.useCallback(async (action: DesktopActivityOverlayActionDescriptor, label: string) => {
-        update({ failure: null });
+        if (failure) update({ failure: null });
         const outcome = await props.onAction?.(action);
         if (outcome?.ok) update({ answer: label, failure: null });
         else if (outcome) update({ failure: { action, label, errorCode: outcome.errorCode } });
-    }, [props.onAction, update]);
+    }, [failure, props.onAction, update]);
     if (props.actions.length === 0) {
         return null;
     }
