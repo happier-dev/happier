@@ -4,6 +4,7 @@ export { PluginActionInvocationBindingV1Schema, type PluginActionInvocationBindi
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { InputOptionValueSchema } from '../../inputs/inputFields.js';
+import { connectedAccountActionFormSelectionV1JsonSchema } from '../../connect/connectedAccountPurposeBindings.js';
 import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 
 import {
@@ -297,9 +298,15 @@ function declaredInputLeavesAgree(leaves: readonly PluginJsonSchemaV2[]): boolea
   return rest.every((leaf) => canonicalDeclaredSchemaJson(leaf) === canonicalFirst);
 }
 
-function isExactQualifiedConnectedAccountRefInputLeaf(
+let teamCapableSelectionSchemaKey: string | undefined;
+
+function isExactConnectedAccountSelectionInputLeaf(
   inputLeaf: PluginJsonSchemaV2,
 ): boolean {
+  if (inputLeaf.anyOf !== undefined) {
+    teamCapableSelectionSchemaKey ??= canonicalDeclaredSchemaJson(connectedAccountActionFormSelectionV1JsonSchema());
+    if (canonicalDeclaredSchemaJson(inputLeaf) === teamCapableSelectionSchemaKey) return true;
+  }
   if (
     inputLeaf.type !== 'object'
     || inputLeaf.additionalProperties !== false
@@ -337,16 +344,16 @@ function isExactQualifiedServiceInputLeaf(service: PluginJsonSchemaV2): boolean 
   ));
 }
 
-function isExactOrNullableQualifiedConnectedAccountRefInputLeaf(
+function isExactOrNullableConnectedAccountSelectionInputLeaf(
   inputLeaf: PluginJsonSchemaV2,
 ): boolean {
-  if (isExactQualifiedConnectedAccountRefInputLeaf(inputLeaf)) return true;
+  if (isExactConnectedAccountSelectionInputLeaf(inputLeaf)) return true;
   const alternatives = inputLeaf.oneOf ?? inputLeaf.anyOf;
   return alternatives?.length === 2
     && alternatives.some((alternative) => (
       alternative.type === 'null'
     ))
-    && alternatives.some(isExactQualifiedConnectedAccountRefInputLeaf) === true;
+    && alternatives.some(isExactConnectedAccountSelectionInputLeaf) === true;
 }
 
 /** Paths sharing an object traverse its union arms together, never independently. */
@@ -383,7 +390,7 @@ function hasValidPurposeBindingInputLeaves(
 ): boolean {
   if (!binding.nativeServicePath && !binding.alternativePaths?.length) {
     const leaves = resolveDeclaredInputLeaves(inputSchema, binding.path);
-    return leaves !== null && leaves.every(isExactOrNullableQualifiedConnectedAccountRefInputLeaf)
+    return leaves !== null && leaves.every(isExactOrNullableConnectedAccountSelectionInputLeaf)
       && declaredInputLeavesAgree(leaves);
   }
   const accountPaths = [binding.path, ...(binding.alternativePaths ?? [])];
@@ -393,7 +400,7 @@ function hasValidPurposeBindingInputLeaves(
     const selected = leaves.flatMap((leaf, index) => leaf === undefined ? [] : [{ leaf, index }]);
     if (selected.length !== 1) return false;
     const selection = selected[0]!;
-    return selection.index < accountPaths.length ? isExactQualifiedConnectedAccountRefInputLeaf(selection.leaf)
+    return selection.index < accountPaths.length ? isExactConnectedAccountSelectionInputLeaf(selection.leaf)
       : isExactQualifiedServiceInputLeaf(selection.leaf);
   })) return false;
   const accounts = selections.flatMap(leaves => leaves.slice(0, accountPaths.length).flatMap(leaf => leaf ? [leaf] : []));
@@ -424,8 +431,8 @@ function purposeBindingIdentityIssues(bindings: readonly PluginActionConnectedAc
 
 /**
  * Verifies the bounded, exact declaration shared by Action inputs and
- * Automation Event source configs. Every representable arm proves an account
- * ref or an explicitly declared native service. Consumers never infer
+ * Automation Event source configs. Every representable arm proves an exact
+ * credential selection or an explicitly declared native service. Consumers never infer
  * credential authority from field names or value shapes.
  */
 export function hasValidPluginConnectedAccountPurposeBindingsV2(
@@ -450,8 +457,8 @@ function widgetMatchesInputLeaf(
   inputLeaf: PluginJsonSchemaV2,
 ): boolean {
   if (field.connectedAccountOptions === true) {
-    // A nullable exact reference lets an optional setup field mean "no Account".
-    return field.widget === 'select' && isExactOrNullableQualifiedConnectedAccountRefInputLeaf(inputLeaf);
+    // A nullable credential selection preserves optional setup inputs.
+    return field.widget === 'select' && isExactOrNullableConnectedAccountSelectionInputLeaf(inputLeaf);
   }
   // Typed choices carry schema-admitted JSON, not only the incumbent string dialect.
   // The target's pre-dispatch input admission also enforces the resolved type schema.
@@ -686,7 +693,7 @@ export const PluginActionContributionV2Schema = lazyZodSchema(() => z.strictObje
         ctx.addIssue({
           code: "custom",
           path: ['connectedAccountPurposeBindings', index, 'path'],
-          message: 'Connected Account purpose bindings must target one exact qualified account ref or declared native service in every input arm.',
+          message: 'Connected Account purpose bindings must target one exact credential selection or declared native service in every input arm.',
         });
       }
     });

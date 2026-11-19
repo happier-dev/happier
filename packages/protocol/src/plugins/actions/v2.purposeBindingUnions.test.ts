@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import { PluginActionContributionV2Schema, PluginActionInputHintsV2Schema } from './v2.js';
 import type { PluginJsonSchemaV2 } from '../contributions/publicTypes.js';
+import { PluginEventAutomationDeclarationV1Schema } from '../../automations/automationEventDeclarationV1.js';
+import { connectedAccountActionFormSelectionV1JsonSchema } from '../../connect/connectedAccountPurposeBindings.js';
 import { QualifiedConnectedAccountRefJsonSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 
 const localized = { key: 'plugin.title', fallback: 'Title' };
+
+const teamCapableAccountRef = connectedAccountActionFormSelectionV1JsonSchema();
 
 const qualifiedAccountRef: PluginJsonSchemaV2 = QualifiedConnectedAccountRefJsonSchema;
 
@@ -172,6 +176,53 @@ describe('Connected Account purpose bindings across union-shaped Action inputs',
       ...action,
       inputSchema: { type: 'object', properties: { binding: { type: 'object', properties: { account: qualifiedAccountRef, service: serviceRef }, required: ['account', 'service'], additionalProperties: false } }, required: ['binding'], additionalProperties: false },
     }).success).toBe(false);
+  });
+
+  it('admits a Team-capable credential declaration with the exact selection form', () => {
+    const parse = (account: PluginJsonSchemaV2) => PluginActionContributionV2Schema.safeParse({
+      ...scanAction(scanInputSchema(account)),
+      inputHints: { fields: [{
+        path: 'instance.binding.account', title: localized, widget: 'select', connectedAccountOptions: true,
+      }] },
+    }).success;
+    expect(parse(qualifiedAccountRef)).toBe(true);
+    expect(parse({ anyOf: [qualifiedAccountRef, { type: 'string' }] })).toBe(false);
+    expect(parse(teamCapableAccountRef)).toBe(true);
+  });
+
+  it('admits the Team-capable operand in the exact Account or native-service alternatives', () => {
+    const native = qualifiedAccountRef.properties?.service;
+    if (!native) throw new Error('expected qualified service schema');
+    const arm = (path: string, leaf: PluginJsonSchemaV2): PluginJsonSchemaV2 => ({
+      type: 'object', properties: { [path]: leaf }, required: [path], additionalProperties: false,
+    });
+    const action = (account: PluginJsonSchemaV2) => ({
+      ...scanAction({ anyOf: [arm('account', account), arm('native', native)] }),
+      connectedAccountPurposeBindings: [{ path: 'account', nativeServicePath: 'native', purpose: 'account-use' }],
+    });
+    expect(PluginActionContributionV2Schema.safeParse(action(teamCapableAccountRef)).success).toBe(true);
+    expect(PluginActionContributionV2Schema.safeParse(action({ anyOf: [teamCapableAccountRef, { type: 'null' }] })).success).toBe(false);
+  });
+
+  it('admits the same Team-capable reference in retained Event source declarations', () => {
+    const parse = (credentialRef: PluginJsonSchemaV2) => PluginEventAutomationDeclarationV1Schema.safeParse({
+      v: 1,
+      eligible: true,
+      source: {
+        sourceContractVersion: 1,
+        supportedObservationTransports: ['checkpointedPull'],
+        setupActionRef: { pluginId: 'com.acme.github', localId: 'setup' },
+        historyGapResetActionRef: { pluginId: 'com.acme.github', localId: 'baseline' },
+        sourceConfigSchema: {
+          type: 'object', properties: { credentialRef }, required: ['credentialRef'], additionalProperties: false,
+        },
+        connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'account-use' }],
+      },
+    }).success;
+    expect(parse(qualifiedAccountRef)).toBe(true);
+    expect(parse({ anyOf: [teamCapableAccountRef, { type: 'object', additionalProperties: true }] })).toBe(false);
+    expect(parse(teamCapableAccountRef)).toBe(true);
+    expect(parse({ anyOf: [teamCapableAccountRef, { type: 'null' }] })).toBe(true);
   });
 
   it('accepts a bound credential-ref path declared identically in every union arm', () => {

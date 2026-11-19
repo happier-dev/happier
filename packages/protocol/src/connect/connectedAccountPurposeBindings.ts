@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
+import { PluginJsonSchemaV2Schema } from '../plugins/contributions/jsonSchema.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
@@ -60,6 +61,12 @@ export const ConnectedAccountActionFormSelectionV1Schema = lazyZodSchema(() => z
   asProtocolZod(QualifiedConnectedAccountRefSchema), ConnectedAccountActionFormTeamSelectionV1Schema,
 ]));
 export type ConnectedAccountActionFormSelectionV1 = z.infer<typeof ConnectedAccountActionFormSelectionV1Schema>;
+
+/** Portable declaration for the same exact selection the Action host reads. */
+export function connectedAccountActionFormSelectionV1JsonSchema() {
+  const { $schema: _dialect, ...schema } = z.toJSONSchema(ConnectedAccountActionFormSelectionV1Schema, { target: 'draft-7', io: 'input' });
+  return PluginJsonSchemaV2Schema.parse(schema);
+}
 
 /**
  * Forward read of a Team purpose default an earlier 0.3 build persisted as a

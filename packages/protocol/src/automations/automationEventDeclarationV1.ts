@@ -141,7 +141,7 @@ return z.strictObject({
     context.addIssue({
       code: "custom",
       path: ['source', 'connectedAccountPurposeBindings'],
-      message: 'Connected Account source bindings must target one exact qualified credential-ref source-config leaf in every declared input arm.',
+      message: 'Connected Account source bindings must target one exact credential selection in the source config in every declared input arm.',
     });
   }
 }));
