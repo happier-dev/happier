@@ -656,7 +656,7 @@ it('shows the ports and names the App declares in the person’s install review 
   }
 });
 
-it('exposes the exact App listing payload pin and leaves an absent licence absent', async () => {
+it('renders the exact catalog pin in Versions for an App without a release version', async () => {
   const { StoreAppListing } = await import('./StoreAppListing');
   const fixture = await createFixture();
   const captured: { listing?: ReturnType<typeof useStoreAppListing> } = {};
@@ -674,8 +674,11 @@ it('exposes the exact App listing payload pin and leaves an absent licence absen
     await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.listing:primary')).toBeTruthy());
     const { listing } = captured;
     if (listing?.kind !== 'ready') throw new Error('Expected the selected App listing');
-    expect(listing.templateRef.ref).toMatchObject({ kind: 'content', digest: /^sha256:[0-9a-f]{64}$/ });
+    const ref = listing.templateRef.ref;
+    if (ref.kind !== 'content') throw new Error('Expected the catalog content digest');
     expect(listing).toMatchObject({ catalogRef: listing.templateRef.ref, license: null });
+    expect(screen.findHostByTestId('store.app.listing.versions')).toBeTruthy();
+    expect(screen.getTextContent()).toContain(ref.digest);
   } finally {
     await screen.unmount();
     await fixture.dispose();

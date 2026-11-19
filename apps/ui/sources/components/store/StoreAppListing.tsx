@@ -125,7 +125,7 @@ export function StoreAppListing(
   const { theme } = useUnistyles();
   const { state, lifetime } = props;
   const initialMachine = useStoreMachineScope();
-  const { item } = state;
+  const { item, catalogRef } = state;
   const summary = item.summary;
   const app = state.kind === 'ready' ? state.app : null;
   const name = catalogText(app?.title) ?? summary.title;
@@ -196,11 +196,14 @@ export function StoreAppListing(
     return list;
   }, [app, state.license]);
 
-  // A catalog App's summary version pins its template catalog's content, not the App's own release: Versions shows
-  // only a real release, never the content digest.
   const catalogSource = useRegistrySourceDescriptor(summary.sourceId, presented);
   const catalogFacts = appListingCatalogFacts({ version: summary.version, appVersion: app?.data?.version,
     repository: summary.links?.repository, catalog: catalogSource });
+  const refValue = (catalogRef.kind === 'gitTree' ? catalogRef.commit
+    : catalogRef.kind === 'version' ? catalogRef.version : catalogRef.digest).trim();
+  const exactPin = refValue === '0.0.0' ? null : refValue || null;
+  const release = catalogFacts.version?.trim();
+  const appVersion = release === '0.0.0' ? null : release || null;
   const prose = appListingProse({ summary: summary.description, about: catalogText(app?.description) });
   const website = summary.links?.website ?? app?.documentationUrl;
   const glyph = (icon: IconName) => (
@@ -359,8 +362,8 @@ export function StoreAppListing(
         <CapabilityListingSections
           testID="store.app.listing"
           facts={{
-            version: catalogFacts.version,
-            versionNote: null,
+            version: appVersion ?? exactPin,
+            versionNote: appVersion && exactPin !== appVersion ? exactPin : null,
             license: state.license,
             sourceTitle: catalogFacts.sourceTitle,
             links: {
