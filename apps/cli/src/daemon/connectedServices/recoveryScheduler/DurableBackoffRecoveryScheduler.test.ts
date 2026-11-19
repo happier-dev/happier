@@ -6,6 +6,13 @@ import { tmpdir } from 'node:os';
 import { createRecoveryIntentFileStore } from './recoveryIntentFileStore';
 import type { DurableBackoffRecoveryStore } from './DurableBackoffRecoveryScheduler';
 
+// The scheduler uses Node timers directly. Forward that OS boundary to the test clock.
+vi.mock('node:timers', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:timers')>(),
+  setTimeout: (callback: () => void, delay: number) => globalThis.setTimeout(callback, delay),
+  clearTimeout: (timer: ReturnType<typeof globalThis.setTimeout>) => globalThis.clearTimeout(timer),
+}));
+
 type TestStatus = 'waiting' | 'checking' | 'cancelled' | 'exhausted';
 
 type TestIntent = Readonly<{
