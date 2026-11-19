@@ -941,6 +941,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   machineAdmissionTransport?: CliActionMachineAdmissionTransport;
   /** Late-bound plugin-runtime Composer attachments for declared Session input. */
   resolveComposerAttachmentSendPreparation?: () => ComposerAttachmentSendPreparationRegistryV1 | null;
+  /** Account runtimes qualify declarations locally and prepare through the target Session. */
+  composerAttachmentPreparationTarget?: 'session';
   sessionLogAccess?: Readonly<{
     workingDirectory: string;
     accessPolicy: FilesystemAccessPolicy;
@@ -1538,6 +1540,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(machineAdmissionTransport
         ? { machineAdmissionTransport }
         : {}),
+      ...(params.composerAttachmentPreparationTarget
+        ? { composerAttachmentPreparationTarget: params.composerAttachmentPreparationTarget } : {}),
       ...(params.resolveComposerAttachmentSendPreparation
         ? {
             resolveComposerAttachmentSendPreparation:

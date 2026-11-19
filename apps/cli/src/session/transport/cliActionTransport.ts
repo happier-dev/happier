@@ -52,7 +52,7 @@ export type CliSessionActionTransport = Readonly<{
     approvedNewDirectoryCreation?: boolean;
     resumeRequest?: SessionResumeRequestV1;
   }>) => Promise<InactiveSessionResumeResult>;
-  callSessionRpcForTransport: (transport: ResolvedSessionTransport, methodSuffix: string, request: unknown, signal?: AbortSignal, timeoutMs?: number | null) => Promise<unknown>;
+  callSessionRpcForTransport: (transport: ResolvedSessionTransport, methodSuffix: string, request: unknown, signal?: AbortSignal, timeoutMs?: number | null, authorityCeiling?: 'account_automation') => Promise<unknown>;
   readSessionActionRpcOrigin: (method: string, context: ActionExecutorContext) => SessionActionRpcOriginV1;
   callSessionActionRpc: (transport: ResolvedSessionTransport, method: string, input: unknown, context: ActionExecutorContext) => Promise<unknown>;
   dispatchSessionLifecycleHookEvent: (event: Readonly<{
@@ -241,6 +241,7 @@ export function createCliSessionActionTransport(
     request: unknown,
     signal?: AbortSignal,
     timeoutMs?: number | null,
+    authorityCeiling?: 'account_automation',
   ): Promise<unknown> => {
     if (!params.credentials) {
       return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -256,6 +257,7 @@ export function createCliSessionActionTransport(
         request,
         ...(signal ? { signal } : {}),
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        ...(authorityCeiling ? { authorityCeiling } : {}),
       });
     } catch (error) {
       const errorCode = readRpcErrorCode(error) ?? 'session_rpc_failed';

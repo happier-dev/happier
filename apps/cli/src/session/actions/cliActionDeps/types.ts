@@ -339,6 +339,8 @@ export type CliActionDepsParams = Readonly<{
    * rather than dropped.
    */
   resolveComposerAttachmentSendPreparation?: () => ComposerAttachmentSendPreparationRegistryV1 | null;
+  /** Account runtimes qualify declarations locally and prepare through the target Session. */
+  composerAttachmentPreparationTarget?: 'session';
   /** Reads the daemon's already-retained snapshot for this exact Home. */
   resolveServerFeaturesSnapshot?: () =>
     | CliServerFeaturesSnapshot

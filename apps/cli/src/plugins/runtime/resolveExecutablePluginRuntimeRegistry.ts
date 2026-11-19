@@ -3582,6 +3582,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             // Composer attachment target is built below, and a plugin
             // `SessionHandle.send` reaches it only while executing an Action.
             resolveComposerAttachmentSendPreparation: () => composerAttachments,
+            ...(params?.accountExecution ? { composerAttachmentPreparationTarget: 'session' as const } : {}),
         })
         : null;
     const resolveCurrentComposerExecutionTarget = () => {

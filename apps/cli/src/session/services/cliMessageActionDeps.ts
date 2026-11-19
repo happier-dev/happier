@@ -71,7 +71,7 @@ export function createCliMessageActionDeps(
   { assertProjectRequesterCurrent, callSessionActionRpc, callSessionRpcForTransport, dispatchSessionLifecycleHookEvent, projectAccountAdmission, readServerFeaturesSnapshot, resolveServerRequestHeaders, resolveTransportForSession, withProjectHome }: Readonly<{
     assertProjectRequesterCurrent: (context?: ActionExecutorContext) => Promise<void>;
     callSessionActionRpc: (transport: ResolvedSessionTransport, method: string, input: unknown, context: ActionExecutorContext) => Promise<unknown>;
-    callSessionRpcForTransport: (transport: ResolvedSessionTransport, methodSuffix: string, request: unknown, signal?: AbortSignal, timeoutMs?: number | null) => Promise<unknown>;
+    callSessionRpcForTransport: (transport: ResolvedSessionTransport, methodSuffix: string, request: unknown, signal?: AbortSignal, timeoutMs?: number | null, authorityCeiling?: 'account_automation') => Promise<unknown>;
     dispatchSessionLifecycleHookEvent: (event: Readonly<{
     eventId: SessionBridgeLifecycleHookEventIdV1;
     happySessionId: string;
@@ -294,6 +294,8 @@ export function createCliMessageActionDeps(
         };
       };
       const composerAttachmentRegistry = params.resolveComposerAttachmentSendPreparation?.() ?? null;
+      const prepareAttachmentsOnSession = params.composerAttachmentPreparationTarget === 'session';
+      let notifySessionAttachmentAcceptance: (() => Promise<unknown>) | undefined;
       if (attachments && attachments.length > 0) {
         if (!pluginCaller || !pluginLocalId) {
           return {
@@ -304,23 +306,20 @@ export function createCliMessageActionDeps(
         const transport = await prepareAttachmentTransport();
         if ('status' in transport) return transport;
         const { buildPluginSessionInputAttachmentDraftsV1 } = await import("@/session/composer/admitPluginSessionInputAttachmentsV1");
-        let rawAttachmentMeta: Record<string, unknown>;
+        let attachmentDrafts: ReturnType<typeof buildPluginSessionInputAttachmentDraftsV1>;
         try {
-          rawAttachmentMeta = {
-            [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: {
-              v: 1 as const,
-              composerAttachments: buildPluginSessionInputAttachmentDraftsV1({
-                caller: pluginCaller,
-                attachments: composerAttachmentRegistry,
-                messageLocalId: pluginLocalId,
-                authored: attachments,
-              }),
-            },
-          };
+          attachmentDrafts = buildPluginSessionInputAttachmentDraftsV1({
+            caller: pluginCaller,
+            attachments: composerAttachmentRegistry,
+            messageLocalId: pluginLocalId,
+            authored: attachments,
+          });
         } catch {
           return { status: 'rejected' as const,
             code: composerAttachmentRegistry ? 'session_input_invalid' as const : 'session_input_target_unavailable' as const };
         }
+        const structuredInput = { v: 1 as const, composerAttachments: attachmentDrafts };
+        const rawAttachmentMeta = { [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: structuredInput };
         let persisted: Awaited<ReturnType<typeof findPersistedSessionUserMessageAdmission>>;
         try {
           const { findPersistedSessionUserMessageAdmission } = await import("@/api/session/client/transcript/sessionUserMessageAdmissionRejoin");
@@ -364,6 +363,51 @@ export function createCliMessageActionDeps(
           admittedMessageText = persisted.text;
           rejoinedMessageMeta = persisted.meta;
           admittedComposerAttachments = persisted.composerAttachments;
+        } else if (prepareAttachmentsOnSession) {
+          const rawResponse = await callSessionRpcForTransport(transport,
+            SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_PREPARE_V1,
+            { localId: pluginLocalId, text: authoredMessageText, structuredInput }, signal, null, 'account_automation');
+          const response = SessionPendingMessageComposerAdmissionPrepareResponseV1Schema.safeParse(rawResponse);
+          if (!response.success || !response.data.ok) {
+            const code = response.success && !response.data.ok ? response.data.errorCode : readRpcErrorCode(rawResponse);
+            if (code === 'composer_attachment_admission_failed') {
+              return { status: 'rejected' as const, code: 'session_input_invalid' as const };
+            }
+            return {
+              status: 'rejected' as const,
+              code: code === 'not_authenticated'
+                ? 'session_input_unauthorized' as const : 'session_input_target_unavailable' as const,
+            };
+          }
+          const prepared = response.data;
+          try {
+            const { admitSessionStructuredInputV1 } = await import("@/session/services/admitSessionStructuredInputV1");
+            // Check the Session's response against the qualified drafts at the transport boundary.
+            // The Session's daemon has already run the plugin callback.
+            const admitted = admitSessionStructuredInputV1({
+              text: prepared.text,
+              meta: {
+                [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: {
+                  ...prepared.structuredInput, composerAttachments: attachmentDrafts,
+                },
+                ...(prepared.sessionMediaMetadata
+                  ? { [prepared.sessionMediaMetadata.key]: prepared.sessionMediaMetadata.envelope } : {}),
+              },
+              preparedComposerAttachments: prepared.structuredInput.composerAttachments ?? [],
+            });
+            admittedMessageText = admitted.text;
+            admittedAttachmentMeta = admitted.meta;
+          } catch {
+            return { status: 'rejected' as const, code: 'session_input_invalid' as const };
+          }
+          notifySessionAttachmentAcceptance = () => callSessionRpcForTransport(transport,
+            SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ACCEPTED_V1, {
+              sessionId: transport.sessionId, localId: pluginLocalId,
+              structuredInput: prepared.structuredInput, stagedMediaHandles: prepared.stagedMediaHandles,
+              ...(prepared.stagedMediaReleaseIntents
+                ? { stagedMediaReleaseIntents: prepared.stagedMediaReleaseIntents } : {}),
+              ...(prepared.sessionMediaMetadata ? { sessionMediaMetadata: prepared.sessionMediaMetadata } : {}),
+            }, undefined, undefined, 'account_automation');
         } else {
           const { admitPluginSessionInputAttachmentsV1 } = await import("@/session/composer/admitPluginSessionInputAttachmentsV1");
           const attachmentAdmission = await admitPluginSessionInputAttachmentsV1({
@@ -638,6 +682,7 @@ export function createCliMessageActionDeps(
           : sessionId;
         if (
           composerAttachmentRegistry
+          && !prepareAttachmentsOnSession
           && (admissionResult.status === 'accepted' || admissionResult.status === 'alreadyAccepted')
         ) {
           const { notifyComposerAttachmentsAfterMessageAccepted } = await import("@/session/composer/notifyComposerAttachmentsAfterMessageAccepted");
@@ -654,6 +699,9 @@ export function createCliMessageActionDeps(
             ),
             signal: signal ?? new AbortController().signal,
           });
+        }
+        if (admissionResult.status === 'accepted' || admissionResult.status === 'alreadyAccepted') {
+          void notifySessionAttachmentAcceptance?.().catch(() => undefined);
         }
         await dispatchMessageHook(canonicalSessionId, pluginCaller ? 'plugin' : 'user');
         return settleCanonicalReply(protectedResult, admissionResult);
