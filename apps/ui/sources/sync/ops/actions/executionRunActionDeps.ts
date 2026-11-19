@@ -1,3 +1,4 @@
+import { isReviewRunStartActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { ExecutionRunGetRequestSchema, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -125,7 +126,7 @@ export function createUiExecutionRunActionDeps(scope?: ServerAccountScope, accou
             ...(request.signal ? { signal: request.signal } : {}) }),
     }) : null;
     const requesterRunAction = async (
-        actionId: 'execution.run.start' | 'execution.run.send' | 'execution.run.ensure',
+        actionId: 'execution.run.start' | 'execution.run.send' | 'execution.run.ensure' | 'execution.run.action',
         input: unknown,
         opts: NonNullable<ExecutionRunOptions>,
     ) => {
@@ -229,7 +230,9 @@ export function createUiExecutionRunActionDeps(scope?: ServerAccountScope, accou
             : await sessionExecutionRunEnsure(sessionId, request, { serverId: opts?.serverId, ...(scope ? { scope } : {}),
                 ...(opts?.signal ? { signal: opts.signal } : {}) })),
         executionRunAction: (sessionId, request, options) => withRunRequestSignal(options, async opts => sessionId === null
-            ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, request, opts)
+            ? isReviewRunStartActionIdV1(request.actionId)
+                ? await requesterRunAction('execution.run.action', { ...request, sessionId }, opts)
+                : await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, request, opts)
             : await sessionExecutionRunAction(sessionId, request, { serverId: opts?.serverId, ...(scope ? { scope } : {}),
                 ...(opts?.signal ? { signal: opts.signal } : {}) })),
         executionRunPermissionRespond: async (request, context) => {

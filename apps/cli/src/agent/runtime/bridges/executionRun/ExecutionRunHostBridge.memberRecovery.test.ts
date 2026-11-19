@@ -39,12 +39,18 @@ import type { ResolvedRolesSnapshotV1 } from '@happier-dev/protocol';
 import { ExecutionRunActionResponseSchema } from '@happier-dev/protocol/execution/runs/index';
 import type { RoleArtifactV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { registerExecutionRunActionRpcHandlers } from '@/rpc/handlers/executionRuns/actionRpcRegistration';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
+import nacl from 'tweetnacl';
 
 it.each([
-  { ambientAccountId: undefined, machineIngress: false },
-  { ambientAccountId: 'custodian', machineIngress: false },
-  { ambientAccountId: 'custodian', machineIngress: true },
-])('starts a new Review round with retained requester and authored Role under ambient Account $ambientAccountId (Machine ingress $machineIngress)', async ({ ambientAccountId, machineIngress }) => {
+  { ambientAccountId: undefined, machineIngress: false, cliIngress: false },
+  { ambientAccountId: 'custodian', machineIngress: false, cliIngress: false },
+  { ambientAccountId: 'custodian', machineIngress: true, cliIngress: false },
+  { ambientAccountId: 'custodian', machineIngress: true, cliIngress: true },
+])('starts a new Review round with retained requester and authored Role under ambient Account $ambientAccountId (Machine ingress $machineIngress, CLI $cliIngress)', async ({ ambientAccountId, machineIngress, cliIngress }) => {
   const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-review-round-account-' });
   const records = createInMemoryReviewRecordPortV1();
   const comments = createReviewRunCommentService({ cwd: repository.rootPath,
@@ -95,14 +101,37 @@ it.each([
         serverId: requester.serverId, serverIdentityId: 'fixture-home', serverHttpBaseUrl: fixture.serverHttpBaseUrl,
         isCurrent: async () => true }) : null;
       if (machineIngress && !custody) throw new Error('Requester Account custody was not admitted');
+      let restoreTransport: (() => void) | undefined;
       try {
         const machineActions = createExecutionRunRpcActionExecutor({ manager: fixture.bridge!, policy: resolveExecutionRunPolicy(),
           isExecutionRunsEnabled: () => true, context: { sessionId: null, cwd: repository.rootPath, serverId: requester.serverId,
             resolveAgentStartContext: createMachineExecutionRunAgentStartContextResolver({ machineId: requester.machineId, cwd: repository.rootPath }) } });
         const request = { runId: started.runId, actionId: 'review.new_round', input: { fresh: true } };
+        const rpc = new RpcHandlerManager({ scopePrefix: requester.machineId, localMachineId: requester.machineId, encryptionMode: 'plain' });
+        registerExecutionRunActionRpcHandlers(rpc, { executor: machineActions, defaultSessionId: null,
+          machineId: requester.machineId, serverId: requester.serverId });
+        const cli = cliIngress ? createCliActionDeps({ token: fixture.credentials.token, credentials: fixture.credentials,
+          sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: requester.serverId,
+          serverHttpBaseUrl: fixture.serverHttpBaseUrl, serverIdentityId: 'fixture-home',
+          externalActionMachineInstallationId: requester.installationId,
+          externalActionMachineRequestPrivateKey: nacl.sign.keyPair().secretKey }) : null;
+        // Machine RPC is the OS/network boundary. Only the real caller's signed
+        // requester context reaches the registered receiver; bare RPC has none.
+        const transport = cliIngress ? vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(async input => await rpc.invokeLocal(input.method, input.request, {
+          rpcContext: { callerAuthority: 'present_user',
+            ...(input.externalAction?.context.externalActionExecutionAuthorization
+              ? { callerInputAuthorization: input.externalAction.context.externalActionExecutionAuthorization } : {}) },
+          localActionContext: { surface: 'rpc' },
+        })) : null;
+        restoreTransport = () => transport?.mockRestore();
         // The real RPC adapter continues the admitted root and projects its
         // private requester into the public executor's ordinary authorization.
-        const startRound = async () => machineIngress ? await machineActions.execute('execution.run.action', request, {
+        const startRound = async () => cliIngress ? await cli!.executionRunAction!(null, request, {
+          surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: 'next-round',
+          serverId: requester.serverId, exactMachineId: requester.machineId, runtimeAccountId: requester.accountId,
+          externalActionExecutionAuthorization: custody!.authorization,
+          externalActionTarget: { kind: 'machine', machineId: requester.machineId },
+        }) : machineIngress ? await machineActions.execute('execution.run.action', request, {
           ...buildActionExecutorContextForRpc({ actionId: 'execution.run.action', serverId: requester.serverId,
             callerAuthority: 'present_user', callerInputAuthorization: custody!.authorization,
             localActionContext: { surface: 'rpc' } }),
@@ -115,7 +144,7 @@ it.each([
         });
         const executeRound = async () => {
           const result = await (ambientAccountId ? runWithScmAccountScope(ambientAccountId, startRound) : startRound());
-          if (machineIngress && result && typeof result === 'object' && 'ok' in result && result.ok && 'result' in result) return result.result;
+          if (machineIngress && !cliIngress && result && typeof result === 'object' && 'ok' in result && result.ok && 'result' in result) return result.result;
           return result;
         };
         const next = ExecutionRunActionResponseSchema.parse(await executeRound());
@@ -146,6 +175,7 @@ it.each([
         roleAvailable = false;
         expect(await executeRound()).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
       } finally {
+        restoreTransport?.();
         await custody?.dispose();
       }
     } });

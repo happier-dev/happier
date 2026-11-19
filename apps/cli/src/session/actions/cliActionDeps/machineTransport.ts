@@ -17,7 +17,7 @@ import type { RpcLocalActionContext } from '@/api/rpc/types';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/socketRpc';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
@@ -99,7 +99,7 @@ export function createCliMachineActionServerScopeCurrent(
 }
 
 export function createCliMachineActionTransport(
-  params: Pick<CliActionDepsParams, 'credentials' | 'serverId' | 'serverIdentityId' | 'serverHttpBaseUrl' | 'machineActionDirectTargetTransport' | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId'>,
+  params: Pick<CliActionDepsParams, 'credentials' | 'serverId' | 'serverIdentityId' | 'serverHttpBaseUrl' | 'machineActionDirectTargetTransport' | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId' | 'onRequesterSessionCredentialDisclosure'>,
 ): Readonly<{ callMachineAction: CliMachineActionCall; isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent }> {
   const isMachineActionServerScopeCurrent = createCliMachineActionServerScopeCurrent(params);
   // Resource handlers require current Machine admission even on this daemon.
@@ -173,7 +173,10 @@ export function createCliMachineActionTransport(
       throw new RpcError('server_scope_mismatch', 'server_scope_mismatch');
     }
     const originalContext = input.context;
-    if (params.credentials && originalContext && isLocalServiceStopActionIdV1(input.effectActionId)
+    const originalAccountAction = isLocalServiceStopActionIdV1(input.effectActionId)
+      || input.effectActionId === 'execution.run.action'
+        && doesExternalActionConsumeRequesterAccountContentV1({ actionId: input.effectActionId, input: input.request });
+    if (params.credentials && originalContext && originalAccountAction
       && !originalContext.externalActionExecutionAuthorization && !originalContext.externalActionCredential
       && !originalContext.rpcSessionAuthorization && !originalContext.causalPermissionAuthority
       && (!originalContext.actionCaller || originalContext.actionCaller.kind === 'host')) {
@@ -196,6 +199,8 @@ export function createCliMachineActionTransport(
         input: wrapped.success ? wrapped.data.input : input.request, requestId: originalContext.actionRequestId, target,
         credentials: params.credentials, serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
         ...(serverIdentityId ? { serverIdentityId } : {}), authority: invocation.authority, invocation,
+        ...(params.onRequesterSessionCredentialDisclosure
+          ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
         ...(input.signal ? { signal: input.signal } : {}) });
       if (!execution.ok) throw Object.assign(new RpcError(execution.error, execution.errorCode), execution);
       return execution.result;

@@ -30,7 +30,8 @@ installDisconnectedServerSocketBoundary(socket => {
         machineMethods.push(payload.method);
         // The detached native host cannot prepare a launch from a plain RPC
         // without admitted requester custody (the READY55 failure boundary).
-        if (payload.method === 'machine:execution.run.send' || payload.method === 'machine:execution.run.ensure') {
+        if (payload.method === 'machine:execution.run.send' || payload.method === 'machine:execution.run.ensure'
+            || payload.method === 'machine:execution.run.action') {
             const request = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, payload.params, payload.method);
             return { ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, {
                 ok: false, errorCode: 'plugin_exec_native_launch_unavailable', error: 'Native launch preparation unavailable',
@@ -329,6 +330,37 @@ it.each((['send', 'ensure'] as const).flatMap(operation =>
         : scenario === 'uncertain' ? 'outcome_unknown' : 'project_requester_credentials_unavailable' });
     expect(homes.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(scenario === 'foreign-root' ? 0 : 1);
     expect(machineMethods).toEqual(['machine:capabilities.describe']);
+});
+
+it.each(['review.new_round', 'review.follow_up'] as const)('starts %s with the signed requester Account instead of bare Machine custody', async childActionId => {
+    const serverUrl = 'https://detached-review-child.test';
+    const serverId = await homes.addHome({ name: 'Detached Review child', serverUrl,
+        serverIdentityId: 'srv_review_child', accountId: 'requester', currentAccount: true });
+    const next = { runId: 'next-review-run', callId: 'next-call', sidechainId: 'next-sidechain',
+        reviewRound: { reviewId: 'retained-review', roundOrdinal: 2 } };
+    const boundary = await answerExternalActionAccountForHome(homes, serverId, {
+        machineId: 'machine', actionId: 'execution.run.action', tokenEpoch: 0,
+        execute(input, context) {
+            expect(getActionSpec('execution.run.action').inputSchema.parse(input)).toMatchObject({
+                sessionId: null, runId: 'retained-review-run', actionId: childActionId,
+            });
+            expect(context.requesterAccountContext.token).toBeTruthy();
+            expect(context.invocation).toMatchObject({ caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' });
+            expect(context.authorization.binding).toMatchObject({ accountId: 'requester',
+                machineId: 'machine', actionId: 'execution.run.action' });
+            return { ok: true, result: next };
+        },
+    });
+    homes.answer(serverId, 'GET /v1/machines', { body: [boundary.machine] });
+    const execute = createFrontDoorActionExecute(createDefaultActionExecutor());
+    const context = { surface: 'ui' as const, serverId, expectedAccountId: 'requester', executionRunTargetMachineId: 'machine' };
+    const result = childActionId === 'review.new_round'
+        ? await execute('review.new_round', { runId: 'retained-review-run', target: { kind: 'detached' } }, context)
+        : await execute('execution.run.action', { sessionId: null, runId: 'retained-review-run',
+            actionId: childActionId, input: { instructions: 'Inspect the follow-up.' } }, context);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: childActionId === 'review.new_round' ? next : { ok: true, result: next } });
+    expect(homes.requestsFor('/v1/actions/execution.run.action')).toHaveLength(1);
+    expect(machineMethods).not.toContain('machine:execution.run.action');
 });
 
 it('refuses non-JSON detached input before issuing an Action and reports no Run created', async () => {

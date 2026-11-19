@@ -2,7 +2,7 @@ import type { ExecutionRunActionTransportOptions } from './types';
 import type { CliActionDepsParams, CurrentMachineControlIdentity, ExecutionRunProtocolV2Requirement, ResolvedSessionTransport } from './types';
 import { executionRunAuthorityCeiling } from './machineTransport';
 import { resolveLocalSessionRpcRoute, type LocalSessionRpcActionContext } from '@/session/transport/rpc/localSessionRpcChannel';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { isReviewRunStartActionIdV1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { randomUUID } from 'node:crypto';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { withExecutionRunStartFailureDetails, ExecutionRunGetResponseSchema, ExecutionRunGetRequestSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -17,7 +17,7 @@ import type { callExactMachineRpc, callMachineRpc, readMachineRpcRequestDisposit
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { describeExecutionRunProtocolV2 } from './preflight';
-import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { readActionFailureEnvelope, readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 
 import type { CliMachineActionCall, CliMachineActionServerScopeCurrent } from './machineTransport';
 
@@ -215,6 +215,15 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
           ...(opts?.workflowRunId ? { executionRunWorkflowRunId: opts.workflowRunId } : {}),
           ...(opts?.workflowScope ? { executionRunWorkflowScope: opts.workflowScope } : {}),
         });
+      } else if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ACTION
+        && request !== null && typeof request === 'object' && 'actionId' in request
+        && typeof request.actionId === 'string' && isReviewRunStartActionIdV1(request.actionId)) {
+        result = await callMachineAction({ machineId: target.machineId, method,
+          request: { ...request, sessionId }, effectActionId: 'execution.run.action',
+          context: { ...opts, surface: opts?.surface ?? 'cli', callerPermissionMode: opts?.effectiveCallerPermissionMode },
+          authority: opts?.authority, serverId: opts?.serverId, timeoutMs: null,
+          ...(opts?.signal ? { signal: opts.signal } : {}),
+        });
       } else {
         const getRequest = method === SESSION_RPC_METHODS.EXECUTION_RUN_GET
           ? ExecutionRunGetRequestSchema.safeParse(request)
@@ -236,6 +245,8 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
         });
       }
     } catch (error) {
+      const refusal = readActionFailureEnvelope(error);
+      if (refusal) return refusal;
       const { readMachineRpcRequestDisposition } = await import("@/session/transport/rpc/machineRpc");
       const requestDisposition = readMachineRpcRequestDisposition(error);
       const runCreation = requestDisposition === 'notSent'

@@ -1,4 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { isReviewRunStartActionIdV1 } from '../actionIds.js';
 import { selectTeamCredentialSourcesForApproval } from './teamCredentialApproval.js';
 import type { ActionSpecSurfaceBindings, PreNormalizedActionSpec } from './definition.js';
 import { EXECUTION_RUN_INTENT_OPTIONS, EXECUTION_RUN_INTENT_POLICY_MATRIX } from '../../execution/runs/intentPolicyMatrix.js';
@@ -756,6 +757,10 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'execution.run.action', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
+    requesterAccountContentDemandForInput: input => {
+      const action = ExecutionRunActionInputSchema.safeParse(input);
+      return action.success && action.data.sessionId === null && isReviewRunStartActionIdV1(action.data.actionId);
+    },
     title: 'Apply execution run action',
     description: `Apply an action to one execution run in the selected scope. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',

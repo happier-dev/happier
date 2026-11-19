@@ -625,6 +625,33 @@ it('projects a runtime plugin caller into private custody without losing admitte
   expect(readExternalActionRequesterInvocation({ surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } }))
     .toEqual({ surface: 'cli', authority: 'present_user', caller: { kind: 'host' } });
 });
+it.each([{ refused: false, shared: false }, { refused: true, shared: false }, { refused: false, shared: true }])('keeps detached Review child requester custody and typed Role refusal through ordinary CLI admission (refused: $refused, shared: $shared)', async ({ refused, shared }) => {
+  const events: string[] = [];
+  const next = { runId: 'next-review-run', callId: 'next-call', sidechainId: 'next-sidechain' };
+  const failure = { ok: false as const, errorCode: 'target_unavailable', error: 'Selected Role is unavailable' };
+  const target = await home('plain', events, { originalOwnAction: 'execution.run.action', custodianAccountId: shared ? 'alice' : 'bob', machineRole: shared ? 'use' : 'manage',
+    ownExecution: refused ? failure : { ok: true, result: { ok: true, result: next } } });
+  const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+  const disclose = vi.fn(async () => true);
+  const genericRpc = vi.spyOn(machineRpc, 'callMachineRpc').mockRejectedValue(new Error('Bare Machine custody cannot prepare this Role'));
+  try {
+    const deps = createCliActionDeps({ token: credentials.token, credentials, serverId: 'home',
+      serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, sessionId: '', mode: 'plain', ctx: null,
+      onRequesterSessionCredentialDisclosure: disclose });
+    const result = await deps.executionRunAction!(null, { runId: 'retained-review-run', actionId: 'review.new_round', input: { fresh: true } }, {
+      surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: 'request-1',
+      serverId: 'home', exactMachineId: 'alice-machine', runtimeAccountId: 'bob',
+    });
+    expect(result, JSON.stringify({ result, events, received: Boolean(target.readReceived()) })).toMatchObject(refused ? failure : { ok: true, result: next });
+    const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+    expect(openExternalActionRequesterAccountContextV1({ authorization: received.executionAuthorization,
+      purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
+      serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey, includeInvocation: true }))
+      .toMatchObject({ credentials: { token: credentials.token }, invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' } });
+    expect(genericRpc).not.toHaveBeenCalled();
+    expect(disclose).toHaveBeenCalledTimes(shared ? 1 : 0);
+  } finally { genericRpc.mockRestore(); }
+});
 afterEach(async () => {
   terminal.interactive = true; terminal.answer = 'no'; terminal.prompts = []; terminal.onPrompt = null; process.exitCode = undefined;
   await Promise.all(controlApps.splice(0).map(app => app.close()));
