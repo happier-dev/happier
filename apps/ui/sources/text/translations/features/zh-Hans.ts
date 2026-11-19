@@ -12786,6 +12786,8 @@ const zhHans: ReviewWalkthroughTranslations = {
         tabChanges: '更改',
         tabRuns: '运行',
         tabActivity: '动态',
+        historyEarlierRuns: ({ count }) => `也出现在之前的 ${count} 次运行中`,
+        historyEmpty: '没有可显示的先前发现',
         round: ({ round }) => `第 ${round} 轮`,
         rounds: '轮次',
         failedTitle: '无法打开此审查',

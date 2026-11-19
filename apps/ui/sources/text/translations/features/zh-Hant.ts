@@ -12786,6 +12786,8 @@ const zhHant: ReviewWalkthroughTranslations = {
         tabChanges: '變更',
         tabRuns: '執行',
         tabActivity: '動態',
+        historyEarlierRuns: ({ count }) => `也出現在先前的 ${count} 次執行中`,
+        historyEmpty: '沒有可顯示的先前發現',
         round: ({ round }) => `第 ${round} 輪`,
         rounds: '輪次',
         failedTitle: '無法開啟此審查',

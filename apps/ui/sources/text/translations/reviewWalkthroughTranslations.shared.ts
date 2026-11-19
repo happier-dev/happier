@@ -126,6 +126,8 @@ export type ReviewWalkthroughTranslations = {
         tabChanges: string;
         tabRuns: string;
         tabActivity: string;
+        historyEarlierRuns: (params: Count) => string;
+        historyEmpty: string;
         round: (params: Readonly<{ round: number }>) => string;
         rounds: string;
         failedTitle: string;
@@ -322,6 +324,8 @@ export const en: ReviewWalkthroughTranslations = {
         tabChanges: 'Changes',
         tabRuns: 'Runs',
         tabActivity: 'Activity',
+        historyEarlierRuns: ({ count }) => count === 1 ? 'Also in 1 earlier run' : `Also in ${count} earlier runs`,
+        historyEmpty: 'No earlier findings to show',
         round: ({ round }) => `Round ${round}`,
         rounds: 'Rounds',
         failedTitle: 'This review didn’t open',

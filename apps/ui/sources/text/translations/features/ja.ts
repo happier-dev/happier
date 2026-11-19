@@ -12846,6 +12846,8 @@ const ja: ReviewWalkthroughTranslations = {
         tabChanges: '変更',
         tabRuns: '実行',
         tabActivity: 'アクティビティ',
+        historyEarlierRuns: ({ count }) => `過去の ${count} 回の実行にも出現`,
+        historyEmpty: '表示する過去の指摘はありません',
         round: ({ round }) => `ラウンド${round}`,
         rounds: 'ラウンド',
         failedTitle: 'このレビューを開けませんでした',

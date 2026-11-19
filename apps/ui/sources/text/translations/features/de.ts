@@ -12899,6 +12899,8 @@ const de: ReviewWalkthroughTranslations = {
         tabChanges: 'Änderungen',
         tabRuns: 'Läufe',
         tabActivity: 'Aktivität',
+        historyEarlierRuns: ({ count }) => `Auch in ${count} früheren Läufen`,
+        historyEmpty: 'Keine früheren Befunde vorhanden',
         round: ({ round }) => `Runde ${round}`,
         rounds: 'Runden',
         failedTitle: 'Diese Überprüfung ließ sich nicht öffnen',

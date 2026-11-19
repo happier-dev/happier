@@ -76,6 +76,7 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
     rowId: string;
     finding: ReviewFinding;
     currentBodyMarkdown?: string;
+    reviewContext?: React.ComponentProps<typeof ReviewFindingBody>['reviewContext'];
     /** Who found it, when the review has several reviewers ("Sonnet 5", "Both"); `null` for one. */
     attribution: Readonly<{ label: string; backendIds: readonly string[] }> | null;
     /** Every reviewer that reported it, first reporter first: the opened finding's conversation names them. */
@@ -315,6 +316,7 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
                         rowId={rowId}
                         finding={finding}
                         currentBodyMarkdown={props.currentBodyMarkdown}
+                        reviewContext={props.reviewContext}
                         reviewers={props.reviewers}
                         notice={(
                             <>

@@ -12889,6 +12889,8 @@ const pt: ReviewWalkthroughTranslations = {
         tabChanges: 'Alterações',
         tabRuns: 'Execuções',
         tabActivity: 'Atividade',
+        historyEarlierRuns: ({ count }) => `Também em ${count} execuções anteriores`,
+        historyEmpty: 'Não há resultados anteriores para mostrar',
         round: ({ round }) => `Rodada ${round}`,
         rounds: 'Rodadas',
         failedTitle: 'Esta revisão não abriu',

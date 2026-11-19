@@ -190,6 +190,8 @@ export function ReviewCommentCard(props: ReviewCommentCardProps) {
             {finding ? <Text selectable style={styles.title}>{finding.title}</Text>
                 : parts?.title ? <Text selectable style={styles.title}>{parts.title}</Text> : null}
             {finding ? <ReviewFindingBody rowId={props.comment.id} finding={finding} currentBodyMarkdown={readable}
+                reviewContext={props.serverId && props.comment.reviewId
+                    ? { reviewId: props.comment.reviewId, commentId: props.comment.id, serverId: props.serverId } : undefined}
                 reviewers={engine ? [{ label: resolveAgentCatalogTitle(engine), backendId: engine }] : []} conversation={null} /> : parts ? (
                 <>
                     {parts.lead ? <MarkdownView markdown={parts.lead} textStyle={styles.body} renderCacheKey={`review-comment:${props.comment.id}:${props.comment.bodyVersion}:lead`} /> : null}

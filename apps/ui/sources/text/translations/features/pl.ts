@@ -12923,6 +12923,8 @@ const pl: ReviewWalkthroughTranslations = {
         tabChanges: 'Zmiany',
         tabRuns: 'Uruchomienia',
         tabActivity: 'Aktywność',
+        historyEarlierRuns: ({ count }) => `Także w ${count} wcześniejszych uruchomieniach`,
+        historyEmpty: 'Brak wcześniejszych ustaleń do wyświetlenia',
         round: ({ round }) => `Runda ${round}`,
         rounds: 'Rundy',
         failedTitle: 'Nie udało się otworzyć tego przeglądu',

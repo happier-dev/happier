@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createDeferred, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createArtifactStoreBoundary, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { getStorage } from '@/sync/domains/state/storage';
@@ -24,9 +24,21 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import type { CodeEditorProps } from '@/components/ui/code/editor/codeEditorTypes';
 import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, flattenWidgetLayoutWidgetsV1, projectOverviewPresetV1, WidgetLayoutItemsV1Schema } from '@happier-dev/protocol/widgets';
 import { createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { buildReviewCommentFixture, storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createMachineFixture, createPlainMachineRowFixture, createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { loadPendingOutboxForSession } from '@/sync/domains/state/pendingOutboxPersistence';
+import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
+import { openStoredReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/content';
+import { deriveReviewCommentStructuralMutationV1, ReviewCommentPrepareMutationRequestV1Schema,
+    ReviewCommentPrepareMutationResponseV1Schema, ReviewCommentCommitMutationRequestV1Schema,
+    type ReviewCommentPrepareMutationResponseV1 } from '@happier-dev/protocol/reviews/comments/mutation';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
 import { Modal } from '@/modal';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useArtifactNetworkEditor } from './useArtifactNetworkEditor';
 
 vi.mock('expo-router', async () => {
@@ -41,6 +53,9 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock();
 });
+// IndexedDB is device-local storage; the real composer/outbox owners remain in this journey.
+vi.mock('@/sync/domains/state/browserRecordStorage', async () =>
+    (await import('@/dev/testkit/mocks/browserRecordStorage')).createBrowserRecordStorageModuleMock());
 // Monaco/WebView is a platform boundary. Keep the real route, editor draft and
 // hydration path; this Node renderer observes the source field's admitted value.
 vi.mock('@/components/ui/code/editor/CodeEditor', async () => {
@@ -61,6 +76,7 @@ const platform = Platform.OS;
 let disposeHome: (() => Promise<void>) | undefined;
 afterEach(async () => {
     await act(async () => {
+        sync?.disconnectServer();
         await disposeHome?.();
         disposeHome = undefined;
         retireActiveServerAccountScopeLifetime();
@@ -94,13 +110,15 @@ async function setup(kind: 'image' | 'html' | 'file' | 'document', delayBlob?: P
         dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER };
     const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
     artifacts.replaceStoredRow(head);
-    const served = await serveActionHomes({ homes: [{ key: 'owner', serverUrl: 'https://view.test', accountId: 'owner' }], route: request => {
+    const served = await serveActionHomes({ homes: [{ key: 'owner', serverUrl: `https://view-${setupSequence}.test`, accountId: 'owner' }], route: request => {
         const overridden = override?.(request);
         if (overridden !== undefined) return overridden;
         if (request.path === '/v1/artifacts/document') return Response.json(head);
         if (request.path === '/v1/artifacts/document/access/grants') return artifacts.handle(request.path, { method: request.method }) ?? undefined;
         if (request.path.includes('/blobs/')) return delayBlob ?? Response.json({ blobId: reference.blobId, content: { t: 'plain', v: encodeBase64(bytes) } });
         if (request.path.endsWith('/html-preview')) return Response.json({ error: 'artifact_html_isolation_unavailable' }, { status: 503 });
+        return createEmptyAccountBootstrapHttpResponse(request.url.pathname + request.url.search, { method: request.method,
+            ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }) ?? undefined;
     } });
     disposeHome = served.dispose;
     await loadSyncSingletonForTests();
@@ -431,6 +449,7 @@ describe('Artifact composed view reads', () => {
         await screen.unmount();
     });
     it('opens a Review as its Review page, never its stored rounds as a document', async () => {
+        await setup('document');
         const rounds = [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: ['s0:r0', 's0:r1'],
             runs: [{ kind: 'execution', runId: 'run-claude', machineId: 'machine-1', sessionId: 'session-1' }] }];
         const row: DecryptedArtifact = { id: 'review-1', title: 'Fix settings modal remount', isDecrypted: true,
@@ -441,8 +460,288 @@ describe('Artifact composed view reads', () => {
         expect(screen.findByTestId('review-detail')).not.toBeNull();
         expect(screen.findByTestId('artifact:body') === null).toBe(true);
         expect(screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.title).toBe('Fix settings modal remount');
-        // The round's run opens its own result, where its findings are decided.
+        expect(screen.findByTestId('review-detail:run:run-claude')).toBeNull();
+        await screen.pressByTestIdAsync('review-detail:tab:runs');
+        // The Runs tab opens the round's original result.
         expect(screen.findByTestId('review-detail:run:run-claude')).not.toBeNull();
+        await screen.unmount();
+    });
+    it.each([
+        { state: 'completed', total: 7, needsDecision: 2, sentence: 'reviewWalkthrough.detail.glanceToDecide(count=2)', countFact: true },
+        { state: 'completed', total: 7, needsDecision: 0, sentence: 'reviewWalkthrough.detail.glanceAllDecided', countFact: true },
+        { state: 'completed', total: 0, needsDecision: 0, sentence: 'reviewWalkthrough.detail.glanceNoFindings', countFact: false },
+        { state: 'running', total: 7, needsDecision: 2, sentence: 'reviewWalkthrough.detail.glanceRunning', countFact: false },
+        { state: 'failed', total: 7, needsDecision: 2, sentence: 'reviewWalkthrough.detail.glanceFailed', countFact: false },
+        { state: 'completed', total: null, needsDecision: 0, sentence: 'Stored round summary', countFact: false },
+    ] as const)('renders the Review owner count verdict for $state ($total findings, $needsDecision undecided)', async testCase => {
+        const reviewId = `review-counts-${testCase.state}-${testCase.total}-${testCase.needsDecision}`;
+        await setup('document', undefined, false, request => request.path === '/v1/reviews/get'
+            ? testCase.total === null ? Response.json({ error: 'temporarily_unavailable' }, { status: 503 })
+                : Response.json({ review: { reviewId, projectSourceId: null, workflowId: null,
+                    subjectKind: 'repository', sourceKind: 'direct', state: testCase.state, currentRoundOrdinal: 2,
+                    startedAt: 1, finishedAt: testCase.state === 'running' ? null : 2, createdAt: 1, updatedAt: 2,
+                    counts: { total: testCase.total, needsDecision: testCase.needsDecision } },
+                    human: { reviewId, roundOrdinal: 2, requests: [], verdicts: [], needsYou: {
+                        reviewId, roundOrdinal: 2, reason: 'review_needs_you', needsYou: testCase.needsDecision > 0,
+                        requestedVerdict: false, pendingDecisions: testCase.needsDecision > 0, canSubmitVerdict: false } } }) : undefined);
+        const scope = captureActiveServerAccountScopeLifetime()?.scope;
+        if (!scope) throw new Error('The test Home must be applied');
+        const row: DecryptedArtifact = { id: reviewId, sourceServerId: scope.serverId, title: 'Counted Review', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId, title: 'Counted Review' },
+            body: JSON.stringify({ v: 1, rounds: [
+                { ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: ['first'], runs: [] },
+                { ordinal: 2, state: testCase.state, startedAt: 3, finishedAt: testCase.state === 'running' ? null : 4,
+                    reviewerIds: ['second'], runs: [], summary: 'Stored round summary' },
+            ] }), ownerAccountId: 'owner', access: 'owner', storageMode: 'plain',
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        const screen = await renderScreen(<ArtifactView artifactId={row.id} artifact={row} presentation="page" />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-detail:glance')?.findAll(node =>
+                typeof node.type === 'string' && node.children.includes(testCase.sentence)).length).toBeGreaterThan(0));
+            const facts = screen.tree.root.findByProps({ testID: 'review-detail:facts' }).props.facts;
+            expect(facts.includes(`reviewWalkthrough.detail.findingsCount(count=${testCase.total})`)).toBe(testCase.countFact);
+            if (testCase.state === 'completed' && testCase.total !== null) expect(facts).toContain('Stored round summary');
+        } finally {
+            await screen.unmount();
+        }
+    });
+    it('opens native Review findings, continues their durable window and decides the root without a Session', async () => {
+        const reviewId = 'review-native-findings';
+        const makeComment = (id: string, title: string, identity: string) => buildReviewCommentFixture({ id,
+            accountId: 'owner', reviewId, roundOrdinal: 1, findingIdentity: identity.repeat(64),
+            body: `Sealed explanation ${id}`,
+            appearances: [{ roundOrdinal: 1, reviewerId: 'reviewer', runId: 'run-native' }],
+            finding: { id: `finding-${id}`, title, summary: `Sealed explanation ${id}`, category: 'correctness', severity: 'high',
+                evidence: 'Verified against the captured code.', patch: '--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new' } });
+        let first = makeComment('native-first', 'First durable finding', 'a');
+        const second = makeComment('native-second', 'Later durable finding', 'b');
+        const cursors: (string | null)[] = [];
+        const transitions: Record<string, unknown>[] = [];
+        // Shared editable Sessions use the real Account-pending transport; owned Sessions dispatch to their Machine.
+        const fixSession = createSessionFixture({ id: 'native-fix-session', accessLevel: 'edit', active: true, pendingVersion: 2 });
+        const sessionHttp = createSessionMetadataHttpBoundary(() => ({ [fixSession.id]: fixSession }));
+        const fixMachine = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now() });
+        let preparation: ReviewCommentPrepareMutationResponseV1 | undefined;
+        const record: DecryptedArtifact = { id: reviewId, title: 'Native Review', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId, title: 'Native Review' },
+            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2,
+                reviewerIds: ['reviewer'], runs: [] }] }), ownerAccountId: 'owner', access: 'owner', storageMode: 'plain',
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        const { served } = await setup('document', undefined, false, request => {
+            if (request.path.endsWith('/pending') && request.method === 'POST') throw new TypeError('Network unavailable');
+            const sessionResponse = sessionHttp.handle(request.url, { method: request.method,
+                ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
+            if (sessionResponse) return sessionResponse;
+            if (request.path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: fixMachine.id, accountId: 'owner', machine: fixMachine })]);
+            const machineResponse = createPlainMachineReadHttpResponseFixture(request.path, { method: request.method,
+                ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }, 'owner', fixMachine);
+            if (machineResponse) return machineResponse;
+            if (request.path === `/v1/artifacts/${reviewId}`) return Response.json(createPlainArtifactHttpFixture(record, 'owner'));
+            if (request.path === '/v1/reviews/get') return Response.json({ review: {
+                reviewId, projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
+                state: 'completed', currentRoundOrdinal: 1, startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2,
+                counts: { total: 2, needsDecision: 2 } }, human: { reviewId, roundOrdinal: 1, requests: [], verdicts: [],
+                needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: true,
+                    requestedVerdict: false, pendingDecisions: true, canSubmitVerdict: false } } });
+            if (request.path === '/v1/reviews/comments' && request.method === 'GET') {
+                const cursor = request.url.searchParams.get('cursor'); cursors.push(cursor);
+                return Response.json(cursor ? { items: [storePlainReviewCommentFixture(second)], cursor: null }
+                    : { items: [storePlainReviewCommentFixture(first)], cursor: 'native-next' });
+            }
+            if (request.path === '/v1/reviews/comments/mutations/prepare') {
+                const input = ReviewCommentPrepareMutationRequestV1Schema.parse(request.body);
+                const prior = storePlainReviewCommentFixture(first);
+                const derived = deriveReviewCommentStructuralMutationV1({ mutation: input.mutation, accountId: 'owner',
+                    actor: { kind: 'user', userId: 'owner' }, current: [prior.structural],
+                    runtime: { now: () => 3, createId: prefix => `${prefix}-native-decision` } });
+                transitions.push(input.mutation.input);
+                preparation = ReviewCommentPrepareMutationResponseV1Schema.parse({ v: 1, request: input, receipt: 'native-decision',
+                    replayed: false, ...derived, records: derived.records.map(item => ({ ...item,
+                        previous: { structural: prior.structural, source: { v: 1, layout: 'canonical_v1', envelope: prior.sensitiveEnvelope } } })) });
+                return Response.json(preparation);
+            }
+            if (request.path === '/v1/reviews/comments/mutations/commit') {
+                const input = ReviewCommentCommitMutationRequestV1Schema.parse(request.body);
+                const structural = preparation?.records[0]?.structural;
+                if (!structural || input.receipt !== preparation?.receipt || !input.records[0]) throw new Error('Missing admitted comment mutation');
+                const stored = { v: 1 as const, structural, sensitiveEnvelope: input.records[0].sensitiveEnvelope };
+                const opened = openStoredReviewCommentV1({ stored, mode: 'plain' });
+                if (opened.status !== 'available') throw new Error('The committed plain fixture must open');
+                first = opened.comment;
+                return Response.json({ v: 1, comments: [stored], replayed: false, failed: [] });
+            }
+        });
+        const scope = captureActiveServerAccountScopeLifetime()?.scope;
+        if (!scope) throw new Error('The test Home must be applied');
+        await prepareSessionDraftPersistenceStorage();
+        getStorage().getState().applySessions([{ ...fixSession, serverId: scope.serverId }]);
+        const row = { ...record, sourceServerId: scope.serverId };
+        const screen = await renderScreen(<ArtifactView artifactId={row.id} artifact={row} presentation="page" focusThreadId="native-second" />);
+        try {
+            expect(screen.findByTestId('review-detail:tab:findings')).not.toBeNull();
+            await screen.pressByTestIdAsync('review-detail:tab:findings');
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-finding-toggle:native-first')).not.toBeNull());
+            expect(screen.findByTestId('review-finding-toggle:native-second')).toBeNull();
+            await screen.pressByTestIdAsync('review-findings-load-more-comments');
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-finding-toggle:native-second')).not.toBeNull());
+            expect(cursors).toEqual([null, 'native-next']);
+            expect(screen.findByTestId('review-finding-body:native-second')).not.toBeNull();
+            await screen.pressByTestIdAsync('review-finding-toggle:native-first');
+            expect(JSON.stringify(screen.tree.toJSON())).toContain('Sealed explanation native-first');
+            await screen.pressByTestIdAsync('review-finding-triage:native-first:accept');
+            await waitForHomeGovernance(() => expect(transitions).toHaveLength(1));
+            expect(transitions[0]).toMatchObject({ reviewId, expectedServerRevision: 1, reviewTriageStatus: 'accept' });
+            expect(served.requests.filter(request => request.path.includes('/execution-runs'))).toHaveLength(0);
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-detail:implement')?.props.disabled).toBe(false));
+            vi.mocked(Modal.show).mockReturnValue('native-fix-destination');
+            await screen.pressByTestIdAsync('review-detail:implement');
+            const chooser = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+            const chooserProps = chooser?.props;
+            if (!chooserProps || !('onResolve' in chooserProps) || typeof chooserProps.onResolve !== 'function') throw new Error('Missing Session chooser');
+            const resolveDestination = chooserProps.onResolve;
+            await act(async () => resolveDestination({ kind: 'existingSession', serverId: scope.serverId, sessionId: 'native-fix-session' }));
+            await waitForHomeGovernance(async () => expect(await loadPendingOutboxForSession('native-fix-session', scope),
+                `${screen.getTextContent()}\n${JSON.stringify(served.requests.map(request => ({ path: request.path, method: request.method })))}`).toEqual([
+                    expect.objectContaining({ text: expect.stringContaining('native-first'), operation: 'enqueue' }),
+                ]));
+            expect(await loadPendingOutboxForSession('run-native', scope)).toEqual([]);
+        } finally { await screen.unmount(); }
+    });
+    it('reads native Review questions only for presented findings from their retained Machine and Home', async () => {
+        const reviewId = 'native-review-questions';
+        const run = ExecutionRunPublicStateSchema.parse({ runId: 'question-run', callId: 'question-call', sidechainId: 'sidechain',
+            intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, display: { title: 'Retained reviewer' },
+            permissionMode: 'default', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+            status: 'succeeded', startedAtMs: 1, finishedAtMs: 2 });
+        const record: DecryptedArtifact = { id: reviewId, title: 'Questions', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId, title: 'Questions' },
+            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2,
+                reviewerIds: ['opaque-participant'], runs: [{ kind: 'execution', runId: run.runId, machineId: 'question-machine' }] }] }),
+            ownerAccountId: 'owner', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        let http: Awaited<ReturnType<typeof createScmRunActionHttpBoundary>> | undefined;
+        const reads: unknown[] = [];
+        const { served } = await setup('document', undefined, false, request => {
+            if (request.path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {
+                execution: { runs: { enabled: true } }, encryption: { plaintextStorage: { enabled: true }, accountOptOut: { enabled: true } } },
+                capabilities: { serverIdentity: { serverIdentityId: 'question-home' } } }));
+            if (http && (request.path.startsWith('/v1/actions/') || request.path.startsWith('/v1/machines')))
+                return http.handle(request.url, { method: request.method, headers: request.headers,
+                    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }).then(response => {
+                    if (!response) throw new Error(`Unserved question boundary: ${request.path}`);
+                    return response;
+                });
+            if (request.path === '/v1/reviews/comments') return Response.json({ items: [], cursor: null });
+        });
+        await setServerProfileIdentityForUrl(served.homes.owner!.serverUrl, 'question-home');
+        http = await createScmRunActionHttpBoundary({ serverUrl: served.homes.owner!.serverUrl, serverIdentityId: 'question-home',
+            accountId: 'owner', machineId: 'question-machine', actionIds: ['execution.run.get'], execute(_actionId, input) {
+                reads.push(input);
+                return { run, structuredMeta: { kind: 'review_narration.v1', payload: {} }, reviewFindings: {
+                    runRef: { runId: run.runId, callId: run.callId, backendId: 'claude', backendTarget: run.backendTarget, retentionPolicy: 'resumable' },
+                    summary: 'A question remains', overviewMarkdown: 'A question remains', findings: [], assumptions: [], generatedAtMs: 2,
+                    questions: [{ id: 'retained-question', text: 'Which Account owns this data?', status: 'open', findingIds: [] }],
+                } };
+            } });
+        const scope = captureActiveServerAccountScopeLifetime()!.scope;
+        const page = (active: boolean) => <PluginSurfaceFocusEligibilityProvider active={active} presentationActive={active}>
+            <ArtifactView artifactId={reviewId} artifact={{ ...record, sourceServerId: scope.serverId }} presentation="page" />
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(page(false));
+        try {
+            await flushHookEffects();
+            expect(reads).toEqual([]);
+            await act(async () => { screen.update(page(true)); });
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-question:retained-question')).not.toBeNull());
+            expect(screen.getTextContent()).toContain('Which Account owns this data?');
+            expect(reads).toEqual([{ sessionId: null, runId: 'question-run', includeStructured: true, includeLatestToolResult: false }]);
+            expect(screen.findByTestId('review-question-answer:retained-question')).toBeNull();
+            expect(screen.findByTestId('review-findings-follow-up-unavailable')).not.toBeNull();
+            await screen.pressByTestIdAsync('review-detail:tab:activity');
+            await flushHookEffects();
+            expect(reads).toHaveLength(1);
+        } finally { await screen.unmount(); }
+    });
+    it('keeps an unreadable durable finding visible as unavailable rather than a clean Review', async () => {
+        const reviewId = 'review-unreadable-finding';
+        const root = buildReviewCommentFixture({ id: 'unreadable-root', reviewId, roundOrdinal: 1,
+            findingIdentity: 'c'.repeat(64), body: '' });
+        const record: DecryptedArtifact = { id: reviewId, title: 'Review', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId, title: 'Review' },
+            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2,
+                reviewerIds: ['reviewer'], runs: [] }] }), ownerAccountId: 'owner', access: 'owner', storageMode: 'plain',
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        await setup('document', undefined, false, request => {
+            if (request.path === `/v1/artifacts/${reviewId}`) return Response.json(createPlainArtifactHttpFixture(record, 'owner'));
+            if (request.path === '/v1/reviews/comments' && request.method === 'GET') return Response.json({ items: [storePlainReviewCommentFixture(root)], cursor: null });
+        });
+        const scope = captureActiveServerAccountScopeLifetime()!.scope;
+        const screen = await renderScreen(<ArtifactView artifactId={reviewId} artifact={{ ...record, sourceServerId: scope.serverId }} presentation="page" />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-detail:unavailable-finding:unreadable-root')).not.toBeNull());
+            expect(screen.findByTestId('review-findings:empty')).toBeNull();
+            expect(screen.findByTestId('review-finding-triage:unreadable-root:accept')).toBeNull();
+        } finally { await screen.unmount(); }
+    });
+    it('opens workflow finding history only from the Review Activity tab and makes no history read for a direct Review', async () => {
+        const { served } = await setup('document', undefined, false, request => {
+            if (request.path === '/v1/reviews/get') {
+                const reviewId = (request.body as { reviewId: string }).reviewId;
+                return Response.json({ review: { reviewId, projectSourceId: null,
+                    workflowId: reviewId === 'workflow-review-history' ? 'repository-hunt' : null,
+                    subjectKind: 'repository', sourceKind: reviewId === 'workflow-review-history' ? 'workflow' : 'direct',
+                    state: 'completed', currentRoundOrdinal: 1, startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2,
+                    counts: { total: 0, needsDecision: 0 } },
+                    human: { reviewId, roundOrdinal: 1, requests: [], verdicts: [], needsYou: {
+                        reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+                        requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } } });
+            }
+            if (request.path === '/v1/reviews/history/list') return Response.json({ previousReviewId: 'earlier-review', items: [{
+                findingIdentity: 'f'.repeat(64), priorReviewCount: 2, priorRunCount: 4, firstObservedAt: 1,
+                inCurrentReview: true, inPreviousReview: true, currentAppearances: [], previousAppearances: [],
+                newSincePrevious: false, openReviewCount: 1,
+            }] });
+        });
+        const scope = captureActiveServerAccountScopeLifetime()!.scope;
+        const review = (id: string): DecryptedArtifact => ({ id, sourceServerId: scope.serverId, title: 'Repository Review', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId: id, title: 'Repository Review' },
+            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] }] }),
+            ownerAccountId: 'owner', access: 'view', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+        const screen = await renderScreen(<ArtifactView artifactId="workflow-review-history" artifact={review('workflow-review-history')} presentation="page" />);
+        try {
+            await waitForHomeGovernance(() => expect(served.requests.filter(request => request.path === '/v1/reviews/get')).toHaveLength(1));
+            expect(served.requests.filter(request => request.path === '/v1/reviews/history/list')).toHaveLength(0);
+            await screen.pressByTestIdAsync('review-detail:tab:activity');
+            await waitForHomeGovernance(() => expect(screen.findByTestId(`review-history:finding:${'f'.repeat(64)}`)).not.toBeNull());
+            expect(served.requests.filter(request => request.path === '/v1/reviews/history/list')).toMatchObject([
+                { accountId: 'owner', body: { workflowId: 'repository-hunt', reviewId: 'workflow-review-history' } },
+            ]);
+            await screen.update(<ArtifactView artifactId="direct-review-history" artifact={review('direct-review-history')} presentation="page" />);
+            await waitForHomeGovernance(() => expect(served.requests.filter(request => request.path === '/v1/reviews/get')).toHaveLength(2));
+            await flushHookEffects();
+            expect(served.requests.filter(request => request.path === '/v1/reviews/history/list')).toHaveLength(1);
+            expect(screen.findByTestId(`review-history:finding:${'f'.repeat(64)}`)).toBeNull();
+        } finally { await screen.unmount(); }
+    });
+    it('demands Review metadata only in the opened Artifact Home', async () => {
+        const { served } = await setup('document', undefined, false, request => request.path === '/v1/reviews/get'
+            ? Response.json({ review: { reviewId: 'review-scope', projectSourceId: null, workflowId: null,
+                subjectKind: 'repository', sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 1,
+                startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 0, needsDecision: 0 } },
+                human: { reviewId: 'review-scope', roundOrdinal: 1, requests: [], verdicts: [], needsYou: {
+                    reviewId: 'review-scope', roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+                    requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } } }) : undefined);
+        const scope = captureActiveServerAccountScopeLifetime()?.scope;
+        expect(scope).not.toBeNull();
+        const row: DecryptedArtifact = { id: 'review-scope', sourceServerId: scope!.serverId, title: 'Scoped Review', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId: 'review-scope', title: 'Scoped Review' },
+            body: JSON.stringify({ v: 1, rounds: [] }), ownerAccountId: 'another-person', access: 'view', storageMode: 'plain',
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        const screen = await renderScreen(<ArtifactView artifactId={row.id} artifact={row} presentation="page" />);
+        await waitForHomeGovernance(() => expect(served.requests.filter(request => request.path === '/v1/reviews/get')).toHaveLength(1));
+        await screen.update(<ArtifactView artifactId="review-other-home" artifact={{ ...row, id: 'review-other-home',
+            sourceServerId: 'a-different-home', header: { ...row.header!, reviewId: 'review-other-home' } }} presentation="page" />);
+        await flushHookEffects({ cycles: 20 });
+        expect(served.requests.filter(request => request.path === '/v1/reviews/get')).toHaveLength(1);
         await screen.unmount();
     });
     it.each([{ kind: 'image', warm: false }, { kind: 'html', warm: false }, { kind: 'image', warm: true }, { kind: 'html', warm: true }] as const)(

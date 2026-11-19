@@ -12914,6 +12914,8 @@ const fr: ReviewWalkthroughTranslations = {
         tabChanges: 'Modifications',
         tabRuns: 'Exécutions',
         tabActivity: 'Activité',
+        historyEarlierRuns: ({ count }) => `Également dans ${count} exécutions précédentes`,
+        historyEmpty: 'Aucun résultat antérieur à afficher',
         round: ({ round }) => `Tour ${round}`,
         rounds: 'Tours',
         failedTitle: 'Cette revue ne s’est pas ouverte',

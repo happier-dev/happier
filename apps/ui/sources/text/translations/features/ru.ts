@@ -12923,6 +12923,8 @@ const ru: ReviewWalkthroughTranslations = {
         tabChanges: 'Изменения',
         tabRuns: 'Запуски',
         tabActivity: 'Активность',
+        historyEarlierRuns: ({ count }) => `Также в предыдущих запусках: ${count}`,
+        historyEmpty: 'Нет предыдущих замечаний для показа',
         round: ({ round }) => `Раунд ${round}`,
         rounds: 'Раунды',
         failedTitle: 'Не удалось открыть этот обзор',

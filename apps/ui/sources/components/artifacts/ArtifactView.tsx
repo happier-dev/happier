@@ -38,6 +38,7 @@ import { ArtifactBody } from './ArtifactBody';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useDocCollaboration, type DocCollaboration } from './useDocCollaboration';
 import { isReviewArtifact, ReviewDetailHost } from '@/components/reviews/detail/ReviewDetailHost';
+import type { PluginReviewPageSelection } from '@/components/plugins/pages/pluginPageRoute';
 import { ArtifactPassageThreadCardPlaceholder } from './ArtifactPassageThreadCard';
 import { clearDocReturn, peekDocReturn, trackDocScroll } from './docThreadReturn';
 import { HomeReachabilityGate, useActiveHomeUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
@@ -58,6 +59,7 @@ export function ArtifactView(props: Readonly<{
     onDeleted?: () => void;
     /** Opened at this passage thread (`artifactViewRoute(…, { thread })`): its passage is marked and its card brought beside it. */
     focusThreadId?: string;
+    pluginPageSelection?: PluginReviewPageSelection | null;
 }>): React.ReactElement {
     // Retained browser selections can bypass the click-time destination check.
     // Delegate before mounting any Document reader, including for a cached body.
@@ -75,7 +77,8 @@ function ArtifactKindView(props: React.ComponentProps<typeof ArtifactView>): Rea
     const body = useArtifactBody(props.artifactId, props.artifact);
     const artifact = body.result?.artifact ?? props.artifact;
     if (artifact && artifact.isDecrypted !== false && isReviewArtifact(artifact)) {
-        return <ReviewDetailHost artifact={artifact} bodyState={body.state} onRetry={body.retry} />;
+        return <ReviewDetailHost artifact={artifact} bodyState={body.state} onRetry={body.retry}
+            focusThreadId={props.focusThreadId} pluginPageSelection={props.pluginPageSelection} />;
     }
     return <ArtifactDocumentView {...props} body={body} />;
 }

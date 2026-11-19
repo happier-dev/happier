@@ -12895,6 +12895,8 @@ const ca: ReviewWalkthroughTranslations = {
         tabChanges: 'Canvis',
         tabRuns: 'Execucions',
         tabActivity: 'Activitat',
+        historyEarlierRuns: ({ count }) => `També en ${count} execucions anteriors`,
+        historyEmpty: 'No hi ha troballes anteriors per mostrar',
         round: ({ round }) => `Ronda ${round}`,
         rounds: 'Rondes',
         failedTitle: 'Aquesta revisió no s’ha obert',

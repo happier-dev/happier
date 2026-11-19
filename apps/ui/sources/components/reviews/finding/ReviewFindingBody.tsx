@@ -7,6 +7,7 @@ import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding'
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
+import { ReviewFindingPluginContent } from '@/components/reviews/plugins/ReviewPluginContent';
 import { CodeBlockViewFrame } from '@/components/ui/code/blocks/CodeBlockViewFrame';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -34,6 +35,7 @@ export function ReviewFindingBody(
     finding: ReviewFinding;
     /** The canonical comment's current explanation; finding evidence remains its original snapshot. */
     currentBodyMarkdown?: string;
+    reviewContext?: Readonly<{ reviewId: string; commentId: string; serverId: string }>;
     reviewers: readonly ReviewFindingReviewer[];
     /** A line between the cause and the code ("Updated after your question", why a decision can't be saved). */
     notice?: React.ReactNode;
@@ -76,6 +78,9 @@ export function ReviewFindingBody(
           </Text>
           <MarkdownView markdown={finding.evidence} textStyle={styles.prose} />
         </View>
+      ) : null}
+      {props.reviewContext && finding.extensions ? (
+        <ReviewFindingPluginContent {...props.reviewContext} extensions={finding.extensions} />
       ) : null}
       <View
         testID={`review-finding-conversation:${props.rowId}`}
