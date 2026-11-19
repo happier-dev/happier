@@ -767,8 +767,7 @@ it('uses a binding-only Team model for the editable step prompt', async () => {
     const next = harness.setWorkflowStepExecutionField(draft, 'analyze', 'teamCredentialBindings', [{
         ...binding, providerModelSelection: { ...binding.providerModelSelection, modelId: nextModelId },
     }]);
-    const editorProps: React.ComponentProps<typeof harness.WorkflowBlockListEditor> =
-        screen.findByType(harness.WorkflowBlockListEditor).props;
+    const editorProps = screen.findByType<typeof harness.WorkflowBlockListEditor>(harness.WorkflowBlockListEditor).props;
     await screen.update(<harness.WorkflowBlockListEditor {...editorProps} draft={next} blocks={next.blocks}
         validation={harness.validateWorkflowEditorDraft(next)} />);
 
