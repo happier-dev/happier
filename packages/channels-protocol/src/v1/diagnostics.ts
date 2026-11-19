@@ -1,24 +1,14 @@
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 
 import {
+    ConversationProviderDiagnosticV1ProtocolSchema,
+    ConversationProviderFailureV1ProtocolSchema,
     defineProtocolLiteral,
-    defineProtocolNumber,
     defineProtocolObject,
     defineProtocolUnion,
-    defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
 
-import {
-    CONVERSATION_CONNECTION_HISTORY_GAP_REASONS_V1,
-    CONVERSATION_PROVIDER_FAILURE_REASONS_V1,
-    MAX_CONVERSATION_PROVIDER_DIAGNOSTIC_UTF8_BYTES,
-} from './bounds.js';
-
-/** @internal Relative-only input for composed Channels protocol schemas. */
-export const ConversationProviderDiagnosticV1ProtocolSchema = defineProtocolUtf8String({
-    maxUtf8Bytes: MAX_CONVERSATION_PROVIDER_DIAGNOSTIC_UTF8_BYTES,
-    minLength: 1,
-});
+import { CONVERSATION_CONNECTION_HISTORY_GAP_REASONS_V1 } from './bounds.js';
 
 /** Bounded nonsecret provider detail safe for the Channels owner to disclose. */
 export const ConversationProviderDiagnosticV1Schema = ConversationProviderDiagnosticV1ProtocolSchema;
@@ -26,28 +16,6 @@ export type ConversationProviderDiagnosticV1 = ReturnType<
     typeof ConversationProviderDiagnosticV1Schema.parse
 >;
 export const ConversationProviderDiagnosticV1JsonSchema: PluginJsonSchema = /* @__PURE__ */ (() => ConversationProviderDiagnosticV1Schema.jsonSchema)();
-
-const conversationProviderFailureReasonV1 = defineProtocolUnion([
-    defineProtocolLiteral(CONVERSATION_PROVIDER_FAILURE_REASONS_V1[0]),
-    defineProtocolLiteral(CONVERSATION_PROVIDER_FAILURE_REASONS_V1[1]),
-    defineProtocolLiteral(CONVERSATION_PROVIDER_FAILURE_REASONS_V1[2]),
-    defineProtocolLiteral(CONVERSATION_PROVIDER_FAILURE_REASONS_V1[3]),
-    defineProtocolLiteral(CONVERSATION_PROVIDER_FAILURE_REASONS_V1[4]),
-    defineProtocolLiteral(CONVERSATION_PROVIDER_FAILURE_REASONS_V1[5]),
-    defineProtocolLiteral(CONVERSATION_PROVIDER_FAILURE_REASONS_V1[6]),
-]);
-
-/** @internal Relative-only input for composed Channels protocol schemas. */
-export const ConversationProviderFailureV1ProtocolSchema = defineProtocolObject({
-    kind: defineProtocolLiteral('notReady'),
-    reason: conversationProviderFailureReasonV1,
-    retryAfterMs: defineProtocolNumber({
-        integer: true,
-        minimum: 0,
-        maximum: Number.MAX_SAFE_INTEGER,
-    }).optional(),
-    diagnostic: ConversationProviderDiagnosticV1ProtocolSchema.optional(),
-}, { policy: 'closed' });
 
 /** Closed transient outcome for independently valid provider unavailability. */
 export const ConversationProviderFailureV1Schema = ConversationProviderFailureV1ProtocolSchema;
@@ -88,3 +56,5 @@ export type ConversationConnectionHistoryGapFactV1 = ReturnType<
 >;
 export const ConversationConnectionHistoryGapFactV1JsonSchema: PluginJsonSchema =
     /* @__PURE__ */ (() => ConversationConnectionHistoryGapFactV1Schema.jsonSchema)();
+
+export { ConversationProviderDiagnosticV1ProtocolSchema, ConversationProviderFailureV1ProtocolSchema };

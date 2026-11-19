@@ -6,10 +6,10 @@ contribution declarations, and conformance fixtures. Keep host runtime,
 provider implementation, registry, UI, credential materialization, polling, and
 persistence outside this package.
 
-`src/v1/ci` owns the shared CI identity, state, annotation and failure-summary
-schemas used by bound PR updates. Triage re-exports these exact public V1
-values. Build them with the public SDK protocol algebra, without private
-Protocol imports or another CI parser.
+Channels owns the shared V1 CI, pull request Watch and delivery contracts. Their
+portable schemas live in the SDK's `/protocol` entry. Channels preserves its V1
+exports and composes those same values into bound PR updates and provider
+contributions.
 
 The only public exports are the explicit root V1 barrel, `/v1`, and
 `/testing/v1`; do not add default, current, latest, legacy, or compatibility

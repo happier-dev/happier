@@ -1,7 +1,8 @@
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 
 import {
-    defineProtocolArray,
+    ConversationDeliveryResultV1ProtocolSchema,
+    ConversationProviderMessageIdV1ProtocolSchema,
     defineProtocolLiteral,
     defineProtocolNumber,
     defineProtocolObject,
@@ -11,23 +12,14 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 
 import {
-    CONVERSATION_DELIVERY_ARCHIVE_RECOVERY_KINDS_V1,
     CONVERSATION_DELIVERY_LINK_PREVIEW_POLICIES_V1,
-
-    CONVERSATION_DELIVERY_RETRY_KINDS_V1,
-    MAX_CONVERSATION_PROVIDER_MESSAGE_ID_UTF8_BYTES,
     MAX_CONVERSATION_SESSION_IDEMPOTENCY_KEY_UTF8_BYTES,
 } from '../bounds.js';
 import { ConversationProviderConnectionInputV1Fields } from './connection.js';
 import { ConversationResolvedEndpointV1ProtocolSchema } from './resolution.js';
 import { ConversationAllowedPrincipalIdsV1Schema } from '../management/targets.js';
-import { ConversationProviderFailureV1ProtocolSchema } from '../diagnostics.js';
 
-/** @internal Relative-only input for composed Channels protocol schemas. */
-export const ConversationProviderMessageIdV1ProtocolSchema = defineProtocolUtf8String({
-    maxUtf8Bytes: MAX_CONVERSATION_PROVIDER_MESSAGE_ID_UTF8_BYTES,
-    minLength: 1,
-});
+export { ConversationProviderMessageIdV1ProtocolSchema };
 
 const conversationDeliveryReplyToMessageV1 = defineProtocolObject({
     replyToMessageId: ConversationProviderMessageIdV1ProtocolSchema,
@@ -117,64 +109,6 @@ export type ConversationDeliveryReconcileInputV1 = ReturnType<
 >;
 export const ConversationDeliveryReconcileInputV1JsonSchema: PluginJsonSchema =
     /* @__PURE__ */ (() => ConversationDeliveryReconcileInputV1Schema.jsonSchema)();
-
-const conversationProviderMessageIdsV1 = defineProtocolArray(
-    ConversationProviderMessageIdV1ProtocolSchema,
-);
-
-const conversationDeliveredV1 = defineProtocolObject({
-    kind: defineProtocolLiteral('delivered'),
-    providerMessageIds: conversationProviderMessageIdsV1,
-    endpoint: ConversationResolvedEndpointV1ProtocolSchema.optional(),
-}, { policy: 'closed' });
-
-const conversationPartialDeliveryV1 = defineProtocolObject({
-    kind: defineProtocolLiteral('partial'),
-    providerMessageIds: conversationProviderMessageIdsV1,
-    failedChunk: defineProtocolNumber({
-        integer: true,
-        minimum: 0,
-        maximum: Number.MAX_SAFE_INTEGER,
-    }),
-}, { policy: 'closed' });
-
-const conversationNotDeliveredV1 = defineProtocolObject({
-    kind: defineProtocolLiteral('notDelivered'),
-    retry: defineProtocolUnion([
-        defineProtocolLiteral(CONVERSATION_DELIVERY_RETRY_KINDS_V1[0]),
-        defineProtocolLiteral(CONVERSATION_DELIVERY_RETRY_KINDS_V1[1]),
-        defineProtocolLiteral(CONVERSATION_DELIVERY_RETRY_KINDS_V1[2]),
-    ]),
-    retryAfterMs: defineProtocolNumber({
-        integer: true,
-        minimum: 0,
-        maximum: Number.MAX_SAFE_INTEGER,
-    }).optional(),
-}, { policy: 'closed' });
-
-const conversationEndpointArchivedV1 = defineProtocolObject({
-    kind: defineProtocolLiteral('endpointArchived'),
-    recovery: defineProtocolUnion([
-        defineProtocolLiteral(CONVERSATION_DELIVERY_ARCHIVE_RECOVERY_KINDS_V1[0]),
-        defineProtocolLiteral(CONVERSATION_DELIVERY_ARCHIVE_RECOVERY_KINDS_V1[1]),
-    ]),
-}, { policy: 'closed' });
-
-const conversationOutcomeUnknownV1 = defineProtocolObject({
-    kind: defineProtocolLiteral('outcomeUnknown'),
-    providerMessageIds: conversationProviderMessageIdsV1.optional(),
-    endpoint: ConversationResolvedEndpointV1ProtocolSchema.optional(),
-}, { policy: 'closed' });
-
-/** @internal Relative-only input for composed Channels protocol schemas. */
-export const ConversationDeliveryResultV1ProtocolSchema = defineProtocolUnion([
-    ConversationProviderFailureV1ProtocolSchema,
-    conversationDeliveredV1,
-    conversationPartialDeliveryV1,
-    conversationNotDeliveredV1,
-    conversationEndpointArchivedV1,
-    conversationOutcomeUnknownV1,
-]);
 
 /** Provider delivery effect evidence; delivery/reconciliation inputs remain EU24-held. */
 export const ConversationDeliveryResultV1Schema = ConversationDeliveryResultV1ProtocolSchema;

@@ -11529,6 +11529,12 @@ names providers from the admitted descriptor, with plugin branding as a fallback
 when the surface has no descriptor. This evolves the undeployed V1 in place and
 adds no provider registry or compatibility adapter.
 
+The SDK's `/protocol` entry exposes the Channels V1 provider outcomes, forge CI
+facts and pull request Watch binding metadata. The Channels V1 entry exports the
+same schemas. Email Transports composes the provider outcomes and Triage can
+compose CI and Watch metadata through the SDK. The shared schemas retain the
+existing closed V1 payloads.
+
 ### Project-native definitions (0.3 development source)
 
 `definePlugin({ projectNativeAdapters: { localId: { declaration, runtime } } })`

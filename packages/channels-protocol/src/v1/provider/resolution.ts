@@ -1,95 +1,35 @@
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-import { ConversationPullRequestV1Schema, ConversationPullRequestStateV1Schema } from '../management/sessionPullRequestBindings.js';
 
 import {
+    ConversationEndpointAudienceV1ProtocolSchema,
+    ConversationEndpointDisplayLabelV1ProtocolSchema,
+    ConversationEndpointStableIdV1ProtocolSchema,
+    ConversationResolvedEndpointV1ProtocolSchema,
     defineProtocolLiteral,
     defineProtocolObject,
-    defineProtocolString,
     defineProtocolUnion,
     defineProtocolUtf8String,
     defineProtocolUniqueArray,
 } from '@happier-dev/plugin-sdk/protocol';
 
 import {
-    CONVERSATION_ENDPOINT_AUDIENCES_V1,
     CONVERSATION_ENDPOINT_KINDS_V1,
-    MAX_CONVERSATION_ENDPOINT_DISPLAY_LABEL_CODE_POINTS,
     MAX_CONVERSATION_ENDPOINT_RESOLUTION_INPUT_UTF8_BYTES,
-    MAX_CONVERSATION_ENDPOINT_STABLE_ID_UTF8_BYTES,
     MAX_CONVERSATION_RESOLUTION_CANDIDATES,
 } from '../bounds.js';
 import { ConversationProviderFailureV1ProtocolSchema } from '../diagnostics.js';
 import { ConversationProviderConnectionInputV1Fields } from './connection.js';
 
-/** @internal Relative-only input for composed Channels protocol schemas. */
-export const ConversationEndpointStableIdV1ProtocolSchema = defineProtocolUtf8String({
-    maxUtf8Bytes: MAX_CONVERSATION_ENDPOINT_STABLE_ID_UTF8_BYTES,
-    minLength: 1,
-});
-
-/** @internal Relative-only input for composed Channels protocol schemas. */
-export const ConversationEndpointDisplayLabelV1ProtocolSchema = defineProtocolString({
-    minLength: 1,
-    maxLength: MAX_CONVERSATION_ENDPOINT_DISPLAY_LABEL_CODE_POINTS,
-});
-
-const endpointAudienceV1 = defineProtocolUnion([
-    defineProtocolLiteral(CONVERSATION_ENDPOINT_AUDIENCES_V1[0]),
-    defineProtocolLiteral(CONVERSATION_ENDPOINT_AUDIENCES_V1[1]),
-]);
-
-const endpointFields = {
-    id: ConversationEndpointStableIdV1ProtocolSchema,
-    parentId: ConversationEndpointStableIdV1ProtocolSchema.optional(),
-    label: ConversationEndpointDisplayLabelV1ProtocolSchema.optional(),
-    parentLabel: ConversationEndpointDisplayLabelV1ProtocolSchema.optional(),
+export {
+    ConversationEndpointStableIdV1ProtocolSchema,
+    ConversationEndpointDisplayLabelV1ProtocolSchema,
+    ConversationResolvedEndpointV1ProtocolSchema,
 };
 
 const endpointIdentityFields = {
     id: ConversationEndpointStableIdV1ProtocolSchema,
     parentId: ConversationEndpointStableIdV1ProtocolSchema.optional(),
 };
-
-const conversationResolvedDirectEndpointV1 = defineProtocolObject({
-    kind: defineProtocolLiteral('direct'),
-    audience: defineProtocolLiteral('direct'),
-    ...endpointFields,
-}, { policy: 'closed' });
-
-const conversationResolvedSharedEndpointV1 = defineProtocolObject({
-    kind: defineProtocolLiteral('shared'),
-    audience: defineProtocolLiteral('shared'),
-    ...endpointFields,
-}, { policy: 'closed' });
-
-const conversationResolvedThreadEndpointV1 = defineProtocolObject({
-    kind: defineProtocolLiteral('thread'),
-    audience: endpointAudienceV1,
-    ...endpointFields,
-}, { policy: 'closed' });
-
-const conversationResolvedGithubIssueEndpointV1 = defineProtocolObject({
-    kind: defineProtocolLiteral('githubIssue'),
-    audience: defineProtocolLiteral('shared'),
-    ...endpointFields,
-}, { policy: 'closed' });
-
-const conversationResolvedGithubPullRequestEndpointV1 = defineProtocolObject({
-    kind: defineProtocolLiteral('githubPullRequest'),
-    audience: defineProtocolLiteral('shared'),
-    ...endpointFields,
-    pullRequest: ConversationPullRequestV1Schema.optional(),
-    pullRequestState: ConversationPullRequestStateV1Schema.optional(),
-}, { policy: 'closed' });
-
-/** @internal Relative-only input for composed Channels protocol schemas. */
-export const ConversationResolvedEndpointV1ProtocolSchema = defineProtocolUnion([
-    conversationResolvedDirectEndpointV1,
-    conversationResolvedSharedEndpointV1,
-    conversationResolvedThreadEndpointV1,
-    conversationResolvedGithubIssueEndpointV1,
-    conversationResolvedGithubPullRequestEndpointV1,
-]);
 
 /** The bounded provider-authenticated endpoint shape used across Channels V1. */
 export const ConversationResolvedEndpointV1Schema = ConversationResolvedEndpointV1ProtocolSchema;
@@ -110,7 +50,7 @@ const conversationEndpointIdentitySharedV1 = defineProtocolObject({
 
 const conversationEndpointIdentityThreadV1 = defineProtocolObject({
     kind: defineProtocolLiteral('thread'),
-    audience: endpointAudienceV1,
+    audience: ConversationEndpointAudienceV1ProtocolSchema,
     ...endpointIdentityFields,
 }, { policy: 'closed' });
 

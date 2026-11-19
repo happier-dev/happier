@@ -3,12 +3,14 @@ import { forgeCiRepositoryIdentityV1Schema } from '../ci/identity.js';
 import {
     defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject,
     defineProtocolString, defineProtocolUnion, defineProtocolUtf8String,
-    PluginUiResourceIntentV1Schema,
+    PluginUiResourceIntentV1Schema, SessionPullRequestUpdateEventKindV1Schema,
 } from '@happier-dev/plugin-sdk/protocol';
 import { SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
 import { ConversationBindingIdV1Schema } from '../identity.js';
 import { MAX_CONVERSATION_OCCURRENCE_ID_UTF8_BYTES } from '../bounds.js';
 import { ConversationPullRequestV1Schema } from './sessionPullRequestBindings.js';
+
+export { SessionPullRequestUpdateEventKindV1Schema };
 
 const closed = { policy: 'closed' } as const;
 const text = defineProtocolString({ minLength: 1 });
@@ -25,12 +27,6 @@ const eventFields = { id: text, revision: text, occurredAt: time, url: text.opti
 export const SessionPullRequestHeadV1Schema = defineProtocolObject({
     sha: text, ref: text, repository: forgeCiRepositoryIdentityV1Schema.optional(),
 }, closed);
-export const SessionPullRequestUpdateEventKindV1Schema = defineProtocolUnion([
-    defineProtocolLiteral('comment'), defineProtocolLiteral('inlineComment'), defineProtocolLiteral('review'),
-    defineProtocolLiteral('check'), defineProtocolLiteral('conflict'), defineProtocolLiteral('push'),
-    defineProtocolLiteral('merged'), defineProtocolLiteral('closed'),
-]);
-
 /** Original provider evidence. No event can select a mode or grant execution authority. */
 export const SessionPullRequestUpdateEventV1Schema = defineProtocolUnion([
     defineProtocolObject({ ...eventFields, kind: defineProtocolLiteral('comment'), body }, closed),

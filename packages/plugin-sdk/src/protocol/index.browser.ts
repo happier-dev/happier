@@ -1,6 +1,88 @@
 export type { ActionOperationGetV1Response } from './projectExecution.js';
 export { ActionOperationGetV1ResponseProtocolSchema } from './projectExecution.js';
 export { CURRENT_UI_CONTEXT_ATTACHMENT_IDENTITY_V1 } from './currentUiContext.js';
+export {
+    CONVERSATION_DELIVERY_ARCHIVE_RECOVERY_KINDS_V1,
+    CONVERSATION_DELIVERY_RETRY_KINDS_V1,
+    CONVERSATION_ENDPOINT_AUDIENCES_V1,
+    CONVERSATION_PROVIDER_FAILURE_REASONS_V1,
+    ConversationDeliveryResultV1ProtocolSchema,
+    ConversationEndpointAudienceV1ProtocolSchema,
+    ConversationEndpointDisplayLabelV1ProtocolSchema,
+    ConversationEndpointStableIdV1ProtocolSchema,
+    ConversationProviderDiagnosticV1ProtocolSchema,
+    ConversationProviderFailureV1ProtocolSchema,
+    ConversationProviderMessageIdV1ProtocolSchema,
+    ConversationPullRequestFixResolutionV1Schema,
+    ConversationPullRequestStateV1Fields,
+    ConversationPullRequestStateV1Schema,
+    ConversationPullRequestV1Fields,
+    ConversationPullRequestV1Schema,
+    ConversationResolvedEndpointV1ProtocolSchema,
+    MAX_CONVERSATION_ENDPOINT_DISPLAY_LABEL_CODE_POINTS,
+    MAX_CONVERSATION_ENDPOINT_STABLE_ID_UTF8_BYTES,
+    MAX_CONVERSATION_PROVIDER_DIAGNOSTIC_UTF8_BYTES,
+    MAX_CONVERSATION_PROVIDER_MESSAGE_ID_UTF8_BYTES,
+} from './conversationDelivery.js';
+export {
+    ForgeCiAnnotationV1JsonSchema,
+    ForgeCiAnnotationV1Schema,
+    ForgeCiAttemptRefV1JsonSchema,
+    ForgeCiAttemptRefV1Schema,
+    ForgeCiFailureExcerptV1JsonSchema,
+    ForgeCiFailureExcerptV1Schema,
+    ForgeCiFailureSummaryV1JsonSchema,
+    ForgeCiFailureSummaryV1Schema,
+    ForgeCiIdV1JsonSchema,
+    ForgeCiIdV1Schema,
+    ForgeCiJobRefV1JsonSchema,
+    ForgeCiJobRefV1Schema,
+    ForgeCiRunRefV1JsonSchema,
+    ForgeCiRunRefV1Schema,
+    ForgeCiSelectionV1JsonSchema,
+    ForgeCiSelectionV1Schema,
+    ForgeCiStateV1JsonSchema,
+    ForgeCiStateV1Schema,
+    ForgeCiStepRefV1JsonSchema,
+    ForgeCiStepRefV1Schema,
+    forgeCiRepositoryIdentityV1Schema,
+} from './channelsForgeCi.js';
+export type {
+    ForgeCiAnnotationV1,
+    ForgeCiAttemptRefV1,
+    ForgeCiFailureExcerptV1,
+    ForgeCiFailureSummaryV1,
+    ForgeCiJobRefV1,
+    ForgeCiRunRefV1,
+    ForgeCiSelectionV1,
+    ForgeCiStateV1,
+    ForgeCiStepRefV1,
+} from './channelsForgeCi.js';
+export {
+    CONVERSATION_CHANNEL_RELATION_ID_PRINTABLE_ASCII_PATTERN_V1,
+    ConversationChannelRelationIdV1ProtocolSchema,
+    ConversationCollectionRowRevisionV1ProtocolSchema,
+    MAX_CONVERSATION_CHANNEL_RELATION_ID_ASCII_BYTES,
+    SessionPullRequestBindingMetadataFieldsV1,
+    SessionPullRequestFixAttemptLimitV1Schema,
+    SessionPullRequestFixProgressV1Schema,
+    SessionPullRequestFixSubjectV1Schema,
+    SessionPullRequestLatestUpdateV1Schema,
+    SessionPullRequestLinkV1Schema,
+    SessionPullRequestUpdateEventKindV1Schema,
+    SessionPullRequestWatchBindingReadV1Schema,
+    SessionPullRequestWatchBindingV1Schema,
+    SessionPullRequestWatchModeV1Schema,
+    SessionPullRequestWatchPolicyV1Schema,
+    SessionPullRequestWatchStateV1Schema,
+} from './channelsPullRequestWatch.js';
+export type {
+    SessionPullRequestFixProgressV1,
+    SessionPullRequestFixSubjectV1,
+    SessionPullRequestWatchModeV1,
+    SessionPullRequestWatchPolicyV1,
+    SessionPullRequestWatchStateV1,
+} from './channelsPullRequestWatch.js';
 export { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from './protocolFacade.js';
 export { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from './deployment.js';
 export { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from './deployment.js';

@@ -6,14 +6,24 @@ import { ConversationBindingIdV1ProtocolSchema, ConversationCollectionRowRevisio
 import type { ConversationBindingV1 } from './targets.js';
 import type { ConversationProviderDescriptorV1 } from '../provider/descriptor.js';
 import { formatConversationPullRequestUrlV1 } from '../provider/pullRequestUrls.js';
-import { ScmHostingProviderKindProtocolSchema } from '@happier-dev/plugin-sdk/scm';
+
+import {
+    ConversationPullRequestV1Fields,
+    ConversationPullRequestV1Schema,
+    ConversationPullRequestFixResolutionV1Schema,
+    ConversationPullRequestStateV1Fields,
+    ConversationPullRequestStateV1Schema,
+    SessionPullRequestLinkV1Schema,
+} from '@happier-dev/plugin-sdk/protocol';
+
+export {
+    ConversationPullRequestV1Schema,
+    ConversationPullRequestFixResolutionV1Schema,
+    ConversationPullRequestStateV1Schema,
+    SessionPullRequestLinkV1Schema,
+};
 
 export const SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1 = 'session-pull-request-binding-v1';
-const conversationPullRequestFieldsV1 = {
-  repository: defineProtocolString({ minLength: 1, pattern: '^[^\\s/]+/[^\\s/]+$' }),
-  number: defineProtocolNumber({ integer: true, minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
-};
-export const ConversationPullRequestV1Schema = defineProtocolObject(conversationPullRequestFieldsV1, { policy: 'closed' });
 export const ConversationPullRequestV1JsonSchema = /* @__PURE__ */ (() => ConversationPullRequestV1Schema.jsonSchema)();
 
 /** Shared URL ingress for the GitHub provider and the Session link owner. */
@@ -31,21 +41,9 @@ export function parseGithubConversationUrlV1(value: string): Readonly<{
       repository: `${match[1]}/${match[2]}`, number };
   } catch { return null; }
 }
-/** Current-head source evidence; unknown or incomplete evidence cannot end a fix sequence. */
-export const ConversationPullRequestFixResolutionV1Schema = defineProtocolObject({
-  headRevision: defineProtocolString({ minLength: 1 }),
-  resolved: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]),
-  incomplete: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]),
-}, { policy: 'closed' });
 export const ConversationPullRequestFixResolutionV1JsonSchema = /* @__PURE__ */ (() => ConversationPullRequestFixResolutionV1Schema.jsonSchema)();
 export type ConversationPullRequestFixResolutionV1 = ReturnType<typeof ConversationPullRequestFixResolutionV1Schema.parse>;
 
-const conversationPullRequestStateFieldsV1 = {
-  state: defineProtocolUnion([defineProtocolLiteral('open'), defineProtocolLiteral('merged'), defineProtocolLiteral('closed'), defineProtocolLiteral('unknown')]),
-  observedAt: defineProtocolNumber({ integer: true, minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
-  fixResolution: ConversationPullRequestFixResolutionV1Schema.optional(),
-};
-export const ConversationPullRequestStateV1Schema = defineProtocolObject(conversationPullRequestStateFieldsV1, { policy: 'closed' });
 export const ConversationPullRequestStateV1JsonSchema = /* @__PURE__ */ (() => ConversationPullRequestStateV1Schema.jsonSchema)();
 export const ConversationScopedPullRequestTriggerV1Schema = defineProtocolObject({
   sessionId: SessionIdSchema,
@@ -87,7 +85,7 @@ export const SessionPullRequestBindingInputV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('readRelations'),
     credentialRef: ConversationQualifiedConnectedAccountRefV1ProtocolSchema.nullable(), sessionId: SessionTargetV1Schema.optional(),
     pullRequest: defineProtocolObject({ repositoryId: defineProtocolString({ pattern: '^[1-9][0-9]*$' }),
-      number: conversationPullRequestFieldsV1.number }, { policy: 'closed' }).optional(),
+      number: ConversationPullRequestV1Fields.number }, { policy: 'closed' }).optional(),
   }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('unlink'), sessionId: SessionTargetV1Schema,
     bindingId: ConversationBindingIdV1ProtocolSchema,
@@ -100,19 +98,12 @@ export const SessionPullRequestBindingInputV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }), { minItems: 1 }),
   }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('unlink'), sessionId: SessionTargetV1Schema,
-    states: defineProtocolArray(conversationPullRequestStateFieldsV1.state, { minItems: 1 }),
+    states: defineProtocolArray(ConversationPullRequestStateV1Fields.state, { minItems: 1 }),
   }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('removeTrigger'), sessionId: SessionTargetV1Schema, triggerId: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }),
 ]);
 export type SessionPullRequestBindingInputV1 = ReturnType<typeof SessionPullRequestBindingInputV1Schema.parse>;
 export const SessionPullRequestBindingInputV1JsonSchema = /* @__PURE__ */ (() => SessionPullRequestBindingInputV1Schema.jsonSchema)();
-export const SessionPullRequestLinkV1Schema = defineProtocolObject({
-    provider: ScmHostingProviderKindProtocolSchema,
-    ...conversationPullRequestFieldsV1,
-    url: defineProtocolString({ minLength: 1 }),
-    state: conversationPullRequestStateFieldsV1.state.optional(),
-    observedAt: conversationPullRequestStateFieldsV1.observedAt.optional(),
-  }, { policy: 'closed' });
 export const SessionPullRequestLinkV1JsonSchema = /* @__PURE__ */ (() => SessionPullRequestLinkV1Schema.jsonSchema)();
 const sessionPullRequestLinksFieldsV1 = {
   sessionId: SessionIdSchema,
