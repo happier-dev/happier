@@ -6,7 +6,7 @@ import tweetnacl from 'tweetnacl';
 
 import { createReviewCommentPrincipalSigningInputV1, REVIEW_COMMENT_PRINCIPAL_HEADER_V1, ReviewCommentActionIdV1Schema, ReviewCommentActionInputSchemasV1, ReviewCommentActionOutputSchemasV1, ReviewCommentPrincipalHeaderV1Schema, stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import { buildReviewCommentPlainMutationTransportInputV1, ReviewCommentMutationActionIdV1Schema, REVIEW_COMMENT_RESOURCE_COMMITMENT_DOMAIN_V1 } from '@happier-dev/protocol/reviews/comments/content';
-import { executeReviewCommentTransportV1 } from '@happier-dev/protocol/reviews/comments/transport';
+import { executeReviewCommentTransportV1, type ReviewCommentTransportContextV1, type ReviewCommentTransportRequestV1 } from '@happier-dev/protocol/reviews/comments/transport';
 import { buildReviewCommentPublicationTransportRequestV1, openReviewCommentPublicationTransportResponseV1 } from '@happier-dev/protocol/reviews/comments/publicationTransport';
 import type { ReviewCommentPublicationCryptoContextV1, ReviewCommentClaimPublicationDispatchRequestV1, ReviewCommentPrincipalHeaderV1, ReviewCommentActionIdV1, ReviewCommentMutationActionIdV1, ReviewCommentPublicationPlanV1, ReviewCommentPrincipalProofV1, AccountScopedCryptoMaterial } from '@happier-dev/protocol';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -344,9 +344,8 @@ export function createCliReviewCommentActionExecutorFromCredentials(
         const parsedInput = asRecord(ReviewCommentActionInputSchemasV1[parsedActionId].parse(input));
         if (parsedActionId === 'reviews.comments.get' || parsedActionId === 'reviews.comments.list'
             || isReviewCommentMutationAction(parsedActionId)) {
-            const reviewId = typeof parsedInput.reviewId === 'string' ? parsedInput.reviewId : undefined;
-            let resource: ReviewCommentResourceCryptoV1 | undefined;
-            if (reviewId) {
+            const originalPrincipal = options?.principal;
+            const readResource = async (reviewId: string): Promise<ReviewCommentResourceCryptoV1> => {
                 const held = await createCredentialedAccountArtifactStore(params.credentials).readForUpdate(reviewId,
                     { prepareRecipients: false, includeSharedAudience: false,
                         ...(options?.signal ? { signal: options.signal } : {}) });
@@ -354,45 +353,64 @@ export function createCliReviewCommentActionExecutorFromCredentials(
                     code: 'review_comment_encryption_material_unavailable',
                 });
                 const binding = { artifactId: reviewId, expectedRevision: held.artifact.revision };
-                resource = { reviewId, mode: held.storageMode,
+                return { reviewId, mode: held.storageMode,
                     open: async content => held.openAssociatedContent({ ...binding, content }),
                     seal: async value => held.sealAssociatedContent({ ...binding, value }),
                     commitment: (purpose, canonicalInput) => held.associatedContentCommitment(
                         REVIEW_COMMENT_RESOURCE_COMMITMENT_DOMAIN_V1, [purpose, canonicalInput]),
                 };
+            };
+            const assertLogicalIntent = (context: Pick<ReviewCommentTransportContextV1, 'resource' | 'mode'>) => {
+                if ((context.resource || context.mode === 'e2ee') && originalPrincipal?.currentIntent
+                    && originalPrincipal.currentIntent.effectBodySha256Base64Url !== createReviewCommentPrincipalBodyHash(omitKeys(parsedInput, ['eventEnvelope']))) {
+                    throw Object.assign(new Error('review_comment_permission_denied'), { code: 'review_comment_permission_denied' });
+                }
+            };
+            const requestTransport = async (request: ReviewCommentTransportRequestV1, writeMode?: 'plain' | 'e2ee') => {
+                const principal = originalPrincipal?.currentIntent && request.contentCommitment
+                    ? { ...originalPrincipal, currentIntent: { ...originalPrincipal.currentIntent,
+                        effectBodySha256Base64Url: request.contentCommitment } }
+                    : originalPrincipal;
+                const principalHeader = principal ? await encodeReviewCommentPrincipalHeader({
+                    principal, request,
+                    ...(params.resolvePrincipalSigningContext ? { resolvePrincipalSigningContext: params.resolvePrincipalSigningContext } : {}),
+                    assertPrincipalCurrent: async () => { if (originalPrincipal) await params.assertPrincipalCurrent?.(originalPrincipal); },
+                }) : undefined;
+                if (originalPrincipal) await params.assertPrincipalCurrent?.(originalPrincipal);
+                if (writeMode) await assertWriteMode(writeMode, options?.signal);
+                return executeReviewCommentHttpRequest({ credentials: params.credentials, request,
+                    ...(principalHeader ? { principalHeader } : {}), ...(options?.signal ? { signal: options.signal } : {}) });
+            };
+            const reviewId = typeof parsedInput.reviewId === 'string' ? parsedInput.reviewId : undefined;
+            if (parsedActionId === 'reviews.comments.get' && !reviewId) {
+                return executeReviewCommentTransportV1({ actionId: parsedActionId, input: parsedInput,
+                    randomBytes: params.randomBytes ?? ((length) => nodeRandomBytes(length)), request: requestTransport,
+                    resolveContext: async boundReviewId => {
+                        const resource = boundReviewId ? await readResource(boundReviewId) : undefined;
+                        const mode = resource?.mode ?? await readMode({ usage: 'identity', ...(options?.signal ? { signal: options.signal } : {}) });
+                        if (mode === 'unknown') throw new Error('review_comment_encryption_mode_unavailable');
+                        const accountId = (params.resolveAccountId ?? resolveAccountIdFromToken)(params.credentials.token);
+                        const context = resource ? { accountId, mode, material: null, resource }
+                            : { accountId, mode, material: mode === 'plain' ? null : resolveAccountScopedMaterial(params.credentials) };
+                        assertLogicalIntent(context);
+                        return context;
+                    },
+                });
             }
+            const resource = reviewId ? await readResource(reviewId) : undefined;
             const mode = resource?.mode ?? await readMode({ usage: 'identity', ...(options?.signal ? { signal: options.signal } : {}) });
             if (mode === 'unknown') throw new Error('review_comment_encryption_mode_unavailable');
             if (resource || mode === 'e2ee' || parsedActionId === 'reviews.comments.get' || parsedActionId === 'reviews.comments.list') {
                 const accountId = (params.resolveAccountId ?? resolveAccountIdFromToken)(params.credentials.token);
-                const originalPrincipal = options?.principal;
-                if ((resource || mode === 'e2ee') && originalPrincipal?.currentIntent
-                    && originalPrincipal.currentIntent.effectBodySha256Base64Url !== createReviewCommentPrincipalBodyHash(omitKeys(parsedInput, ['eventEnvelope']))) {
-                    throw Object.assign(new Error('review_comment_permission_denied'), { code: 'review_comment_permission_denied' });
-                }
+                assertLogicalIntent({ resource, mode });
                 return executeReviewCommentTransportV1({
                     actionId: parsedActionId, input: parsedInput,
                     context: resource ? { accountId, mode, material: null, resource }
                         : { accountId, mode, material: mode === 'plain' ? null : resolveAccountScopedMaterial(params.credentials) },
                     actor: originalPrincipal?.actor ?? { kind: 'user', userId: accountId },
                     randomBytes: params.randomBytes ?? ((length) => nodeRandomBytes(length)),
-                    request: async (request) => {
-                        const principal = originalPrincipal?.currentIntent && request.contentCommitment
-                            ? { ...originalPrincipal, currentIntent: { ...originalPrincipal.currentIntent,
-                                effectBodySha256Base64Url: request.contentCommitment } }
-                            : originalPrincipal;
-                        const principalHeader = principal ? await encodeReviewCommentPrincipalHeader({
-                            principal, request,
-                            ...(params.resolvePrincipalSigningContext ? { resolvePrincipalSigningContext: params.resolvePrincipalSigningContext } : {}),
-                            assertPrincipalCurrent: async () => { if (originalPrincipal) await params.assertPrincipalCurrent?.(originalPrincipal); },
-                        }) : undefined;
-                        if (originalPrincipal) await params.assertPrincipalCurrent?.(originalPrincipal);
-                        if (!resource && request.path === '/v1/reviews/comments/mutations/commit') {
-                            await assertWriteMode(mode, options?.signal);
-                        }
-                        return executeReviewCommentHttpRequest({ credentials: params.credentials, request,
-                            ...(principalHeader ? { principalHeader } : {}), ...(options?.signal ? { signal: options.signal } : {}) });
-                    },
+                    request: request => requestTransport(request,
+                        !resource && request.path === '/v1/reviews/comments/mutations/commit' ? mode : undefined),
                 });
             }
         }

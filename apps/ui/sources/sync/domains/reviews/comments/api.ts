@@ -1,7 +1,7 @@
 import { getActionSpec } from '@happier-dev/protocol/actions';
 import { buildReviewCommentPlainMutationTransportInputV1, type ReviewCommentResourceCryptoV1 } from '@happier-dev/protocol/reviews/comments/content';
 import { buildReviewCommentPublicationTransportRequestV1, openReviewCommentPublicationTransportResponseV1 } from '@happier-dev/protocol/reviews/comments/publicationTransport';
-import { executeReviewCommentTransportV1 } from '@happier-dev/protocol/reviews/comments/transport';
+import { executeReviewCommentTransportV1, type ReviewCommentTransportRequestV1 } from '@happier-dev/protocol/reviews/comments/transport';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { ReviewCommentActionIdV1, ReviewCommentBulkTransitionRequestV1, ReviewCommentClaimPublicationDispatchRequestV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import type { ReviewCommentAttachEvidenceRequestV1, ReviewCommentCreateRequestV1, ReviewCommentEditRequestV1, ReviewCommentRedactRequestV1, ReviewCommentReplyRequestV1, ReviewCommentSetDispositionRequestV1, ReviewCommentTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/v1';
@@ -99,6 +99,15 @@ async function requestReviewCommentJson(
     return await readReviewCommentJsonResponse(response);
 }
 
+function requestReviewCommentTransport(request: ServerFetch, transport: ReviewCommentTransportRequestV1, signal?: AbortSignal): Promise<unknown> {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(transport.query ?? {})) appendQueryValue(search, key, value);
+    const suffix = search.toString();
+    return requestReviewCommentJson(request, suffix ? `${transport.path}?${suffix}` : transport.path,
+        { ...(transport.body === undefined ? { method: transport.method.toUpperCase() } : withJsonBody(transport.body)),
+            ...(signal ? { signal } : {}) });
+}
+
 function parseReviewCommentInput<TInput>(
     actionId: ReviewCommentActionIdV1,
     input: unknown,
@@ -142,24 +151,33 @@ export function createReviewCommentsHttpActionExecutor(
     const request = params.request ?? serverFetch;
     const resolveEventStorageContext = params.resolveEventStorageContext ?? resolveDefaultEventStorageContext;
     const randomBytes = params.randomBytes ?? getRandomBytes;
+    const readResourceContext = async (reviewId: string, signal?: AbortSignal) => {
+        if (!params.resolveReviewResourceContext) throw Object.assign(new Error('review_comment_encryption_material_unavailable'), {
+            code: 'review_comment_encryption_material_unavailable',
+        });
+        const { accountId, resource } = await params.resolveReviewResourceContext(reviewId, signal);
+        return { accountId, mode: resource.mode, material: null, resource };
+    };
     return async (actionId, input, options) => {
         const logicalInput = parseReviewCommentInput<Record<string, unknown>>(actionId, input);
-        if (typeof logicalInput.reviewId === 'string' && actionId !== 'reviews.comments.claimPublicationDispatch') {
-            if (!params.resolveReviewResourceContext) throw Object.assign(new Error('review_comment_encryption_material_unavailable'), {
-                code: 'review_comment_encryption_material_unavailable',
-            });
-            const { accountId, resource } = await params.resolveReviewResourceContext(logicalInput.reviewId, options?.signal);
-            return executeReviewCommentTransportV1({ actionId, input: logicalInput,
-                context: { accountId, mode: resource.mode, material: null, resource },
-                actor: { kind: 'user', userId: accountId }, randomBytes,
-                request: async ({ method, path, query, body }) => {
-                    const search = new URLSearchParams();
-                    for (const [key, value] of Object.entries(query ?? {})) appendQueryValue(search, key, value);
-                    const suffix = search.toString();
-                    return requestReviewCommentJson(request, suffix ? `${path}?${suffix}` : path,
-                        { ...(body === undefined ? { method: method.toUpperCase() } : withJsonBody(body)),
-                            ...(options?.signal ? { signal: options.signal } : {}) });
+        if (actionId === 'reviews.comments.get' && typeof logicalInput.reviewId !== 'string') {
+            return executeReviewCommentTransportV1({ actionId, input: logicalInput, randomBytes,
+                resolveContext: async reviewId => {
+                    if (reviewId) return readResourceContext(reviewId, options?.signal);
+                    const storage = await resolveEventStorageContext('identity');
+                    return { ...storage, material: storage.mode === 'plain' ? null : storage.material ?? null };
                 },
+                request: transport => {
+                    options?.signal?.throwIfAborted();
+                    return requestReviewCommentTransport(request, transport, options?.signal);
+                },
+            });
+        }
+        if (typeof logicalInput.reviewId === 'string' && actionId !== 'reviews.comments.claimPublicationDispatch') {
+            const context = await readResourceContext(logicalInput.reviewId, options?.signal);
+            return executeReviewCommentTransportV1({ actionId, input: logicalInput, context,
+                actor: { kind: 'user', userId: context.accountId }, randomBytes,
+                request: transport => requestReviewCommentTransport(request, transport, options?.signal),
             });
         }
         const storage = await resolveEventStorageContext('identity');
@@ -196,16 +214,7 @@ export function createReviewCommentsHttpActionExecutor(
                 context,
                 actor: { kind: 'user', userId: storage.accountId },
                 randomBytes,
-                request: async ({ method, path, query, body }) => {
-                    const search = new URLSearchParams();
-                    for (const [key, value] of Object.entries(query ?? {})) appendQueryValue(search, key, value);
-                    const suffix = search.toString();
-                    return requestReviewCommentJson(
-                        actionRequest,
-                        suffix ? `${path}?${suffix}` : path,
-                        body === undefined ? { method: method.toUpperCase() } : withJsonBody(body),
-                    );
-                },
+                request: transport => requestReviewCommentTransport(actionRequest, transport),
             });
         }
         switch (actionId) {

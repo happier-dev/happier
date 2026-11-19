@@ -61,6 +61,33 @@ describe('Review resource content binding', () => {
     await expect(execute('another-review')).rejects.toMatchObject({ code: 'review_comment_content_binding_mismatch' });
   });
 
+  it('discovers the Review codec from an authorized ID-only stored read without an Account key', async () => {
+    const split = splitReviewCommentV1(comment);
+    const plain = sealReviewCommentSensitiveEnvelopeV1({ ...split, mode: 'plain' });
+    if (plain.t !== 'plain') throw new Error('Expected logical payload');
+    const resource = resourceCodec();
+    const stored = { v: 1, structural: split.structural, sensitiveEnvelope: await resource.seal(plain.v) };
+    const resolved: (string | undefined)[] = [];
+    let reads = 0;
+    const request = {
+      actionId: 'reviews.comments.get' as const, input: { commentId: comment.id },
+      context: { accountId: 'recipient-account', mode: 'plain' as const, material: null },
+      actor: { kind: 'user' as const, userId: 'recipient-account' }, randomBytes,
+      resolveContext: async (reviewId?: string) => {
+        resolved.push(reviewId);
+        return { accountId: 'recipient-account', mode: resource.mode, material: null, resource };
+      },
+      request: async () => { reads++; return { comment: stored }; },
+    };
+    await expect(executeReviewCommentTransportV1(request)).resolves.toEqual({ comment });
+    expect(resolved).toEqual([comment.reviewId]);
+    expect(reads).toBe(1);
+    resolved.length = 0;
+    const refusal = Object.assign(new Error('review_comment_not_found'), { code: 'review_comment_not_found' });
+    await expect(executeReviewCommentTransportV1({ ...request, request: async () => { throw refusal; } })).rejects.toBe(refusal);
+    expect(resolved).toEqual([]);
+  });
+
   it('seals new records and events under the same Review key through prepare and commit', async () => {
     const resource = resourceCodec();
     const input = { reviewId: 'review-1', roundOrdinal: 2, workspace, anchor: comment.anchor, snapshot: comment.snapshot,

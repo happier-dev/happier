@@ -136,7 +136,7 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         vi.clearAllMocks();
     });
 
-    it('reads shared Review content through the admitted Artifact codec without a recipient census', async () => {
+    it.each([true, false])('reads shared Review content through the admitted Artifact codec (explicit Review scope: %s)', async scoped => {
         const credentials = { token: 'recipient-token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(19) } };
         const resource = await createResourceDataKey({ credentials, mode: 'e2ee' });
         if (resource.mode !== 'e2ee') throw new Error('Expected encrypted resource fixture');
@@ -165,8 +165,11 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         try {
             const execute = createCliReviewCommentActionExecutorFromCredentials({ credentials, resolveAccountId: () => 'recipient',
                 resolveAccountEncryptionMode: async () => { throw new Error('Comment reads use the admitted resource mode'); } });
-            await expect(execute('reviews.comments.get', { commentId: source.id, reviewId: source.reviewId })).resolves.toEqual({ comment: source });
-            expect(reads).toEqual([`/v1/artifacts/${source.reviewId}`, `/v1/reviews/comments/${source.id}`]);
+            await expect(execute('reviews.comments.get', { commentId: source.id, ...(scoped ? { reviewId: source.reviewId } : {}) }))
+                .resolves.toEqual({ comment: source });
+            expect(reads).toEqual(scoped
+                ? [`/v1/artifacts/${source.reviewId}`, `/v1/reviews/comments/${source.id}`]
+                : [`/v1/reviews/comments/${source.id}`, `/v1/artifacts/${source.reviewId}`]);
         } finally { vi.mocked(axios.get).mockReset(); }
     });
 

@@ -234,7 +234,7 @@ describe('review comments HTTP action executor', () => {
         serverFetchSpy.mockReset();
     });
 
-    it('opens another author’s Review-key content without acquiring an Account key', async () => {
+    it.each([true, false])('opens another author’s Review-key content without an Account key (explicit Review scope: %s)', async scoped => {
         const dataKey = new Uint8Array(32).fill(31);
         const codec = new ArtifactEncryption(dataKey);
         const durable = comment({ reviewId: 'review-resource', accountId: 'another-author', body: 'PRIVATE-shared-comment' });
@@ -252,8 +252,9 @@ describe('review comments HTTP action executor', () => {
                 commitment: (purpose, value) => computeCanonicalDomainSeparatedKeyedDigest(dataKey, 'review-test', [reviewId, purpose, value]),
             } }),
         });
-        await expect(execute('reviews.comments.get', { commentId: durable.id, reviewId: durable.reviewId }))
+        await expect(execute('reviews.comments.get', { commentId: durable.id, ...(scoped ? { reviewId: durable.reviewId } : {}) }))
             .resolves.toEqual({ comment: durable });
+        expect(serverFetchSpy).toHaveBeenCalledTimes(1);
         expect(JSON.stringify(stored)).not.toContain(durable.body);
     });
 

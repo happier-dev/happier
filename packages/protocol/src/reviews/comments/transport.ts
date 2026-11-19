@@ -98,25 +98,39 @@ function decodeCursor(cursor: string | undefined, filters: string): string | und
 }
 /** One client owner for canonical record opening, private-filter paging, and encrypted mutation sealing. */
 export async function executeReviewCommentTransportV1(params: Readonly<{
-    actionId: Exclude<ReviewCommentActionIdV1, 'reviews.comments.claimPublicationDispatch'>;
     input: Record<string, unknown>;
-    context: ReviewCommentTransportContextV1;
-    actor: ReviewCommentActorRefV1;
     request: (request: ReviewCommentTransportRequestV1) => Promise<unknown>;
     randomBytes: (length: number) => Uint8Array;
-}>): Promise<unknown> {
-    assertContext(params.context);
+}> & (Readonly<{
+    actionId: Exclude<ReviewCommentActionIdV1, 'reviews.comments.claimPublicationDispatch'>;
+    context: ReviewCommentTransportContextV1;
+    actor: ReviewCommentActorRefV1;
+}> | Readonly<{
+    actionId: 'reviews.comments.get';
+    /** Resolve an ID-only read from its authorized stored binding, before opening private content. */
+    resolveContext: (reviewId: string | undefined) => Promise<ReviewCommentTransportContextV1>;
+}>)): Promise<unknown> {
     const input = ReviewCommentActionInputSchemasV1[params.actionId].parse(params.input);
     const reviewId = 'reviewId' in input ? input.reviewId : undefined;
-    if (params.context.resource ? reviewId !== params.context.resource.reviewId : reviewId !== undefined) {
-        fail('review_comment_content_binding_mismatch');
+    if (!('resolveContext' in params)) {
+        assertContext(params.context);
+        if (params.context.resource ? reviewId !== params.context.resource.reviewId : reviewId !== undefined) {
+            fail('review_comment_content_binding_mismatch');
+        }
     }
     if (params.actionId === 'reviews.comments.get') {
         const parsed = ReviewCommentActionInputSchemasV1['reviews.comments.get'].parse(input);
         const result = parseClassic(z.strictObject({ comment: sourceSchema }), await params.request({ method: 'get',
             path: `/v1/reviews/comments/${encodeURIComponent(parsed.commentId)}`, query: { stored: true, includeHistory: parsed.includeHistory,
                 ...(parsed.reviewId ? { reviewId: parsed.reviewId } : {}) } }));
-        const comment = await open(result.comment, params.context);
+        const context = 'resolveContext' in params
+            ? await params.resolveContext(parsed.reviewId ?? result.comment.structural.reviewId) : params.context;
+        if ('resolveContext' in params) {
+            assertContext(context);
+            if (parsed.reviewId !== undefined && context.resource?.reviewId !== parsed.reviewId)
+                fail('review_comment_content_binding_mismatch');
+        }
+        const comment = await open(result.comment, context);
         if (comment.id !== parsed.commentId)
             fail('review_comment_content_binding_mismatch');
         return ReviewCommentActionOutputSchemasV1[params.actionId].parse({ comment });
