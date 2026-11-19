@@ -485,24 +485,20 @@ export function createTriageRouteWriteQueueV1(
   hostSubPath?: string,
 ): TriageRouteWriteQueueV1 {
   let pending: PendingTriageRouteWriteV1 | null = null;
-  let running = false;
   let disposed = false;
-  type ActiveWrite = Readonly<{ controller: AbortController; lens: TriageRouteLensV1 }>;
-  let activeWrite: ActiveWrite | null = null;
-  /** The in-flight write an outside move overtook; it finishes, but no longer speaks for this mount. */
-  let retiredWrite: ActiveWrite | null = null;
+  let active: Readonly<{ controller: AbortController; subPath: string }> | null = null;
   let settlers: Array<() => void> = [];
   /**
    * The locations this queue asked the host for, oldest first, since the host last moved on its own. The host can
    * publish one after its write has finished, so an active-write check alone mistakes a late echo of an older
    * choice for an outside move (QB-82). Each echo trims the list to the oldest request it answers.
    */
-  let issued: string[] = [];
+  const issued: string[] = [];
   /** Where the host is, as far as this queue last heard: a write of it publishes nothing to echo. */
   let hostAt = hostSubPath;
 
   const settleWaiters = () => {
-    if (running || pending !== null) return;
+    if (active !== null || pending !== null) return;
     const current = settlers;
     settlers = [];
     for (const settle of current) settle();
@@ -516,28 +512,31 @@ export function createTriageRouteWriteQueueV1(
   };
 
   const drain = async (): Promise<void> => {
-    if (running || disposed) return;
-    running = true;
+    if (active !== null || disposed) return;
     try {
       while (!disposed && pending !== null) {
         const intent = pending;
         pending = null;
         const controller = new AbortController();
-        activeWrite = { controller, lens: intent.lens };
         const issuedSubPath = buildTriageRouteSubPathV1(intent.lens);
-        if (issuedSubPath !== hostAt && issued.at(-1) !== issuedSubPath) issued.push(issuedSubPath);
+        active = { controller, subPath: issuedSubPath };
+        const expectsPublication = issuedSubPath !== hostAt && issued.at(-1) !== issuedSubPath;
+        if (expectsPublication) issued.push(issuedSubPath);
         const result = await writeTriageRouteLensV1(hostApi, intent.lens, { signal: controller.signal });
-        if (result.kind === 'settled') hostAt = result.subPath;
-        if (activeWrite?.controller === controller) activeWrite = null;
+        const retired = controller.signal.aborted;
+        if (!retired) {
+          if (result.kind === 'settled') hostAt = result.subPath;
+          if (expectsPublication && (result.kind === 'refused' || result.subPath !== issuedSubPath)
+            && issued.at(-1) === issuedSubPath) issued.pop();
+        }
         intent.onSettled?.({
           requested: intent.lens,
-          result: disposed ? null : result,
-          superseded: disposed || pending !== null,
+          result: retired ? null : result,
+          superseded: retired || pending !== null,
         });
       }
     } finally {
-      activeWrite = null;
-      running = false;
+      active = null;
       settleWaiters();
     }
   };
@@ -552,41 +551,41 @@ export function createTriageRouteWriteQueueV1(
       void drain();
     },
     adoptHostLocation(subPath) {
+      const echo = issued.indexOf(subPath);
       // The host can publish where it ends up rather than each step. Once every request is answered, the newest
       // one's echo answers the earlier ones too and the list empties (QB-82).
-      if (activeWrite === null && pending === null && issued.at(-1) === subPath) {
+      if (pending === null && issued.at(-1) === subPath && (active === null || echo === issued.length - 1)) {
         hostAt = subPath;
-        issued = [];
-        return false;
+        issued.length = 0;
+        return active !== null;
       }
       // An older request's late echo: a newer one has already moved the host on, so it does not say where the host
       // is. The host publishes in the order it was asked, so it answers the oldest matching request.
-      const echo = issued.indexOf(subPath);
       if (echo !== -1) {
-        issued = issued.slice(echo);
+        issued.splice(0, echo + 1);
         return true;
       }
       hostAt = subPath;
-      issued = [];
+      issued.length = 0;
       // Back/navigation has superseded the local successor, not queued a new
       // host write. Let the issued operation finish without draining old intent.
-      retiredWrite = activeWrite;
+      active?.controller.abort();
       supersedePending(null);
       return false;
     },
     headingElsewhere: (subPath) => (pending !== null && buildTriageRouteSubPathV1(pending.lens) !== subPath)
-      || (activeWrite !== null && activeWrite !== retiredWrite && buildTriageRouteSubPathV1(activeWrite.lens) !== subPath)
+      || (active !== null && !active.controller.signal.aborted && active.subPath !== subPath)
       // A late echo of an older choice can name this location while the host already answered a newer one.
       || (hostAt !== undefined && hostAt !== subPath),
     whenSettled() {
-      if (!running && pending === null) return Promise.resolve();
+      if (active === null && pending === null) return Promise.resolve();
       return new Promise<void>((resolve) => { settlers.push(resolve); });
     },
     dispose() {
       if (disposed) return;
       disposed = true;
       supersedePending(null);
-      activeWrite?.controller.abort();
+      active?.controller.abort();
       settleWaiters();
     },
   });

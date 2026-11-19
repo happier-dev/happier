@@ -7,7 +7,7 @@ import type { CorpusExplicitOpenSelectionV1 } from '../../corpus/selection/selec
 import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
 import { triageEntryRowKey } from '../../projection/listWindow.js';
 import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
-import { buildTriageRouteSubPathV1, parseTriageRouteSubPathV1, readTriageRouteLensV1, type TriageRouteWriteQueueV1 } from '../navigation/location.js';
+import { buildTriageRouteSubPathV1, parseTriageRouteSubPathV1, readTriageRouteLensV1 } from '../navigation/location.js';
 import { sameTriageEntryRefV1, type TriageSurfaceActionV1, type TriageSurfaceStateV1 } from '../state/surface.js';
 
 /** The effective canonical spelling of a host-settled page location. */
@@ -111,36 +111,9 @@ export function applyTriageSettledSubPathV1(input: Readonly<{
  *   `core/COMPOSER.md` §7 require it to select behind the honest
  *   not-yet-materialized header rather than to produce nothing at all.
  *
- * Every selection this hook makes goes through the shell's one `applyLensEdit`,
- * so the complete resulting route is measured BEFORE the reducer moves, exactly
- * as it is for a press. Two consequences are deliberate. An adoption whose route
- * would not fit is REFUSED and shown, rather than opening a detail the URL
- * cannot name; so the route owner writes the result of every adoption it
- * accepts, and there is no accepted selection it did not write. And an adoption
- * that is refused is not adopted, so the launch stays pending — the honest state
- * for an open that did not happen.
- *
- * It never writes a location of its own, and the rules are deliberately not
- * symmetric.
- *
- * Neither rule may read a **stale** location, and the prop is stale for exactly
- * as long as a write this mount asked for is in flight. Dismissal has always
- * required the incoming location to have actually **changed** for that reason:
- * a rule that read the stale value would clear the selection the reader just
- * made. Adoption needs the same guard and used to lack it, which was invisible
- * only while the location the mount was leaving named no OTHER entry. It does
- * as soon as one selection replaces another — a launch opening B over a page
- * standing on A, or the reader closing a deep-linked detail — and the stale
- * location would pull them straight back to the entry they left. So the
- * location is read as current only when the host has just handed it over, or
- * when this mount has produced no lens intent of its own yet.
- *
- * A launch is adopted at most once, and it outranks the location while it is
- * unadopted: it is the entry the page was OPENED at, and the location it is
- * standing on has already been asked to move. The host retires a delivered open
- * when the page's location moves, so the value normally disappears on its own
- * the moment that write settles — but the reader can close the detail before
- * that, and a launch re-read after they did would reopen it behind them.
+ * The shell supplies the current route and preflights every resulting edit.
+ * An unanswered launch takes priority over that route. A consumed launch can
+ * no longer reopen the detail if the reader closes it before the prop clears.
  */
 export function useTriageSettledLocation(input: Readonly<{
   subPath: string | undefined;
@@ -161,99 +134,39 @@ export function useTriageSettledLocation(input: Readonly<{
   windowSettled: boolean;
   /** The shell's one preflighted lens-edit path; see `applyLensEdit`. */
   applyLensEdit: (action: TriageSurfaceActionV1, refusal: 'selection' | 'lens') => void;
-  dispatch: React.Dispatch<TriageSurfaceActionV1>;
-  readerChangedLens: React.RefObject<boolean>;
-  settledRoute: React.RefObject<TriageSettledRouteV1>;
-  latestRouteIntent: React.RefObject<TriageSettledRouteV1>;
-  queue: TriageRouteWriteQueueV1;
-  onRouteWriteFailure: (failure: 'unavailable' | 'rejected' | null) => void;
+  observeRoute: (
+    subPath: string | undefined, pendingOpen: boolean, visible: TriageSurfaceStateV1,
+  ) => string | undefined;
 }>): void {
   const {
     applyLensEdit,
-    dispatch,
     launch,
     pageLaunch,
     readEntryActivation,
     configuredSources,
     targetedContributions,
-    latestRouteIntent,
-    queue,
-    readerChangedLens,
+    observeRoute,
     rowsByKey,
-    settledRoute,
     subPath,
     surface,
     windowSettled,
-    onRouteWriteFailure,
   } = input;
   const selection = surface.selection;
-  /** The last location the host actually handed this mount. */
-  const observedSubPath = React.useRef(subPath);
-  /** The delivered open this mount has already turned into a selection. */
+  /** A refused routed entry has already received its answer at this location. */
+  const refusedLocation = React.useRef<string | undefined>(undefined);
   const adoptedLaunch = React.useRef<TriageEntryDetailLaunchInputV1 | RenderContext['launch']>(undefined);
 
   React.useEffect(() => {
-    const changed = observedSubPath.current !== subPath;
-    observedSubPath.current = subPath;
-
     const open = launch ?? pageLaunch;
     const pendingOpen = open !== undefined && adoptedLaunch.current !== open ? open : null;
     const pendingLaunch = pendingOpen !== null && 'entryRef' in pendingOpen ? pendingOpen : null;
-    const canonicalSubPath = canonicalTriageSubPathV1(subPath);
-    if (changed) {
-      const previous = settledRoute.current;
-      const state = applyTriageSettledSubPathV1({
-        // Host location publication may precede the write acknowledgement.
-        // A settle-before-commit operation has not rendered its selection yet.
-        // Preserve its admitted connection only for the exact requested route;
-        // a different host location must still qualify on its own authority.
-        candidate: latestRouteIntent.current.subPath === canonicalSubPath
-          ? latestRouteIntent.current.state : surface,
-        previous: previous.state,
-        subPath: canonicalSubPath,
-        rowsByKey,
-      });
-      settledRoute.current = { subPath: canonicalSubPath, state };
-      // The host can publish the issued A while B is waiting for A's ack.
-      // Retain A as the rollback base, not as a new external reader intent.
-      if (pendingOpen === null && queue.adoptHostLocation(canonicalSubPath)) return;
-      latestRouteIntent.current = settledRoute.current;
-      onRouteWriteFailure(null);
-      // A delivered launch outranks the location it arrived over. The new
-      // location is still the rollback base, but only an ordinary host move is
-      // rendered immediately.
-      if (pendingOpen === null) {
-        dispatch({ kind: 'settledRouteApplied', state });
-        return;
-      }
-    }
-    // The location speaks for the host only while it is one the host has just
-    // handed over, or while this mount has produced no intent of its own yet.
-    // In between — a selection accepted and its replacement still in flight —
-    // the prop names the location the mount is LEAVING, and reading it as
-    // current would pull the reader back to the entry they left.
-    if (pendingOpen === null
-      && !changed
-      && readerChangedLens.current
-      && (canonicalSubPath !== settledRoute.current.subPath
-        || canonicalSubPath !== latestRouteIntent.current.subPath)) return;
-    const located = pendingLaunch === null
-      ? parseTriageRouteSubPathV1(subPath).selection
-      : pendingLaunch.entryRef;
-
-    if (located === null) {
-      if (selection === null || !changed) return;
-      // The settled location no longer names an entry — the host walked its own
-      // Back step — so the selection it named is gone with it.
-      dispatch({
-        kind: 'detailDismissed',
-        visibleOrder: [...rowsByKey.values()].map((hit) => ({
-          sectionId: hit.sectionId,
-          entryRef: hit.row.entryRef,
-        })),
-      });
-      return;
-    }
+    const currentSubPath = observeRoute(subPath, pendingOpen !== null, surface);
+    if (currentSubPath !== undefined && currentSubPath !== refusedLocation.current) refusedLocation.current = undefined;
+    const located = pendingLaunch?.entryRef ?? (
+      currentSubPath === undefined || currentSubPath === refusedLocation.current
+        ? null : parseTriageRouteSubPathV1(currentSubPath).selection
+    );
+    if (located === null) return;
 
     // A launch or qualified route names ONE exact connection, used by every
     // branch below selects with. The launch-input parser already refused a pair
@@ -324,6 +237,7 @@ export function useTriageSettledLocation(input: Readonly<{
         // filtered/partial window does not. Keep every valid lens field and
         // retire only the entry no active configured connection can observe.
         if (action.reason === 'noActiveInstance') {
+          refusedLocation.current = currentSubPath;
           applyLensEdit({ kind: 'settledRouteApplied', state: { ...surface, selection: null } }, 'selection');
         }
       } else if (action !== null) applyLensEdit(action, 'selection');
@@ -342,20 +256,15 @@ export function useTriageSettledLocation(input: Readonly<{
     }, 'selection');
   }, [
     applyLensEdit,
-    dispatch,
     launch,
     pageLaunch,
     readEntryActivation,
     configuredSources,
     targetedContributions,
-    latestRouteIntent,
-    queue,
-    readerChangedLens,
+    observeRoute,
     rowsByKey,
-    selection,
-    settledRoute,
+    surface,
     subPath,
     windowSettled,
-    onRouteWriteFailure,
   ]);
 }

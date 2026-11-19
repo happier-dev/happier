@@ -215,6 +215,24 @@ describe('PRs & Issues route owner', () => {
     ]);
   });
 
+  it('supersedes the active request and its successor when Back arrives before acknowledgment', async () => {
+    let finish!: (value: { subPath: string }) => void;
+    const hostWrite = new Promise<{ subPath: string }>((resolve) => { finish = resolve; });
+    const replace = vi.fn<PluginUiHostApi['replacePageLocation']>(() => hostWrite);
+    const queue = createTriageRouteWriteQueueV1(hostApiWith({ methods: ['replacePageLocation'], replace }), '');
+    const active = vi.fn();
+    const successor = vi.fn();
+    queue.write(lens({ query: 'first' }), active);
+    queue.write(lens({ query: 'next' }), successor);
+    expect(queue.adoptHostLocation('q,back')).toBe(false);
+    finish({ subPath: 'q,first' });
+    await queue.whenSettled();
+
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(active).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ result: null, superseded: true }));
+    expect(successor).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ result: null, superseded: true }));
+  });
+
   it('round-trips a complete lens through one canonical location', () => {
     const value = lens({
       order: 'oldest',

@@ -69,8 +69,8 @@ export function sameTriageFilterSelectionV1(
  * looked at the list by date has still changed the view.
  */
 export function sameTriageSavedViewLensV1(
-  left: TriageSavedViewLensV1,
-  right: TriageSavedViewLensV1,
+  left: Omit<TriageSavedViewLensV1, 'view'>,
+  right: Omit<TriageSavedViewLensV1, 'view'>,
 ): boolean {
   return left.sort?.field === right.sort?.field
     && left.sort?.direction === right.sort?.direction

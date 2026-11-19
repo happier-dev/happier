@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, cloneElement, isValidElement, Profiler, type ReactNode } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -18,6 +18,7 @@ import {
     type TriageAdmittedSourceV1,
 } from '../actions/listEntries.js';
 import { TriageListEntriesInputV1Schema } from '../actions/listEntriesProtocol.js';
+import { TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
 import { listTriagePinnedEntries } from '../actions/userMarks.js';
 import {
     TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1,
@@ -37,6 +38,7 @@ import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralShare
 import { filterFacetOption } from './shell/toolbarMenus.test-support.js';
 import { buildTriageRouteSubPathV1, parseTriageRouteSubPathV1, TRIAGE_ROUTE_DEFAULT_LENS_V1 } from './navigation/location.js';
 import { renderSurface as renderShellSurface } from './surface.js';
+import { invokeTriageMountedUiAction } from './mountedActions.js';
 
 /**
  * The lens controls a reader can actually reach.
@@ -137,31 +139,41 @@ function createHarness() {
 
 const mounted: PluginUiTestkit[] = [];
 
-async function mountShell(subPath?: string): Promise<Readonly<{
+async function mountShell(subPath?: string, onCommit?: () => void, retainLocation?: string): Promise<Readonly<{
     shell: PluginUiTestkit;
     locations: readonly string[];
     views: readonly (string | undefined)[];
+    chooseTasks: () => ReturnType<typeof invokeTriageMountedUiAction>;
 }>> {
     const harness = createHarness();
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     const locations: string[] = [];
     const views: (string | undefined)[] = [];
+    let tasks: ReturnType<typeof TriageMountedUiInputV1Schema.parse> | undefined;
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
             identity: { instanceId: 'fixture-instance-177', mountNonce: 'fixture-mount-177' },
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
-            surface: renderShellSurface,
+            surface: onCommit === undefined ? renderShellSurface : context => {
+                const entry = renderShellSurface({ ...context, activity: { active: true } });
+                if (!isValidElement<{ children: ReactNode }>(entry)) throw new Error('Missing surface entry');
+                // Keep the host entry outermost so the adapter can install its real shared scope.
+                return cloneElement(entry, {}, <Profiler id="triage" onRender={onCommit}>{entry.props.children}</Profiler>);
+            },
             surfaceContext: createSurfaceContextFixture(),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, overlays: true }),
             ...(subPath === undefined ? {} : { subPath }),
             handlers: {
-                publishCurrentUiContext: () => undefined,
+                publishCurrentUiContext: ({ enrichment }) => {
+                    const command = enrichment?.commands?.find(entry => entry.title === 'Tasks')?.command;
+                    if (command?.kind === 'executeAction') tasks = TriageMountedUiInputV1Schema.parse(command.input);
+                },
                 executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
                 replacePageLocation: ({ subPath: written, view }) => {
                     locations.push(written);
                     views.push(view);
-                    return written;
+                    return written === '' ? retainLocation ?? written : written;
                 },
             },
         });
@@ -170,7 +182,10 @@ async function mountShell(subPath?: string): Promise<Readonly<{
     await act(async () => {
         await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
     });
-    return { shell: fixture, locations, views };
+    return { shell: fixture, locations, views, chooseTasks: () => {
+        if (tasks === undefined) throw new Error('Missing mounted Tasks command');
+        return invokeTriageMountedUiAction(ephemeralSharedScope, tasks.mountId, tasks.operation, new AbortController().signal);
+    } };
 }
 
 afterEach(async () => {
@@ -188,6 +203,7 @@ describe('the page view under a slow host location write', () => {
         ['echoes all late', 'T a P a T a P a e e e e'],
         ['acks and echoes all late', 'T P T P a e a e a e a e'],
         ['older echo arrives after a newer press is acked', 'T a e P a T a e P e a e'],
+        ['A → B → A is followed by browser Back', 'T a e P T P a e a e b'],
     ])('settles the last view chosen when the host answers %s (QB-82)', async (_name, schedule) => {
         const harness = createHarness();
         const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
@@ -227,6 +243,12 @@ describe('the page view under a slow host location write', () => {
             if (token === 'T' || token === 'P') {
                 last = token === 'T' ? 'Tasks' : 'PRs & Issues';
                 await act(async () => { await fixture.press(await fixture.getByRole('radio', { name: last })); });
+            } else if (token === 'b') {
+                await expect(fixture.getByRole('radio', { name: last, state: { checked: true } })).resolves.toBeTruthy();
+                expect(hostAt).toBe('');
+                last = 'Tasks';
+                hostAt = 'tasks,mine';
+                await act(async () => { await fixture.updatePageLocation(hostAt); });
             } else if (token === 'a') {
                 await act(async () => { acks.shift()?.settle(); for (let turn = 0; turn < 4; turn += 1) await Promise.resolve(); });
             } else {
@@ -286,6 +308,38 @@ describe('the page view under a slow host location write', () => {
 });
 
 describe('the PRs & Issues lens controls', () => {
+    it('does no extra render or host write for ten requests for the selected view', async () => {
+        let commits = 0;
+        const { shell, chooseTasks, locations } = await mountShell('', () => { commits += 1; });
+        const initialCommits = commits;
+        await act(async () => { await expect(chooseTasks()).resolves.toEqual({ status: 'applied' }); });
+        await expect(shell.getByRole('radio', { name: 'Tasks', state: { checked: true } })).resolves.toBeDefined();
+        expect(commits).toBeGreaterThan(initialCommits);
+        const before = commits;
+        const writes = locations.length;
+        expect(writes).toBe(2);
+        for (let press = 0; press < 10; press += 1) {
+            await act(async () => { await expect(chooseTasks()).resolves.toEqual({ status: 'applied' }); });
+        }
+        expect(commits - before).toBe(0);
+        expect(locations).toHaveLength(writes);
+    });
+
+    it('answers an unavailable routed open once even if the host keeps its URL', async () => {
+        const subPath = buildTriageRouteSubPathV1({
+            ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+            selection: { source: { pluginId: 'qa.unconfigured', localId: 'source' },
+                kindId: 'pull-request', collisionScope: SCOPE, entryId: '17' },
+        });
+        const { shell, locations } = await mountShell(subPath, undefined, subPath);
+        await expect.poll(() => locations).toEqual([subPath, '']);
+        for (const textScale of [1.25, 1]) {
+            await act(async () => { await shell.updateSurface(createSurfaceContextFixture({ textScale })); });
+        }
+        expect(locations).toEqual([subPath, '']);
+        await expect(shell.queryByRole('group', { name: 'Details pane' })).resolves.toBeUndefined();
+    });
+
     it('clears and restores Type without dropping Source, Scope, State or Attention', async () => {
         const filters = {
             sources: [{ source: SOURCE }],

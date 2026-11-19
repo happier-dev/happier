@@ -139,8 +139,6 @@ import {
   preflightTriageRouteLensV1,
   readTriageRouteLensV1,
   type TriageRouteLensV1,
-  type TriageRouteQueueSettlementV1,
-  type TriageRouteWriteQueueV1,
 } from '../navigation/location.js';
 import { TriageActionsEditor } from '../actions/ActionsEditor.js';
 import { TriageCreateTaskFields } from '../detail/taskFields.js';
@@ -158,7 +156,7 @@ import { TriageFirstRun, TriageTasksFirstRun } from './firstRun.js';
 import { useTriageActions } from '../actions/useTriageActions.js';
 import { useTriageConfiguredSources } from '../configuration/useTriageConfiguredSources.js';
 import { useTriageViewsControl } from '../views/control.js';
-import { readTriageSavedViewLensStatusV1 } from '../views/divergence.js';
+import { readTriageSavedViewLensStatusV1, sameTriageSavedViewLensV1 } from '../views/divergence.js';
 import {
   triageCreateSavedViewInputV1,
   triageDeleteSavedViewInputV1,
@@ -260,17 +258,8 @@ function seedFromLocation(subPath: string | undefined): TriageSurfaceStateV1 {
 
 type TriageSettledLensEditV1 = Readonly<{
   previous: TriageSurfaceStateV1;
-  next: TriageSurfaceStateV1;
-  subPath: string;
+  accepted: TriageSettledRouteV1;
 }>;
-
-function settleQueuedTriageRouteV1(
-  queue: TriageRouteWriteQueueV1,
-  lens: TriageRouteLensV1,
-): Promise<TriageRouteQueueSettlementV1> {
-  return new Promise((resolve) => { queue.write(lens, resolve); });
-}
-
 
 /** A stable empty set, so an unread saved-view answer changes no memo identity. */
 const NO_SAVED_VIEWS: readonly CorpusSavedViewV1[] = Object.freeze([]);
@@ -516,25 +505,27 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const sessionActivityUnavailable = sessionActivity.unavailable
     || (taskAudience === 'agents' && sessionActivity.linksStatus === 'unavailable');
   const pageTitle = taskAudience === undefined ? TRIAGE_DISPLAY_NAME : text('plugins.triage.tasks.title', 'Tasks');
-  const settledRoute = React.useRef<TriageSettledRouteV1>({
-    subPath: canonicalTriageSubPathV1(props.subPath),
-    state: surface,
-  });
-  /** Latest accepted local intent, published synchronously before React commits it. */
-  // Retain the qualified candidate while the host publishes its identity-only
-  // location, which can arrive before the replacement acknowledgement.
-  const latestRouteIntent = React.useRef(settledRoute.current);
+  const routeRef = React.useRef<{
+    observed: string | undefined;
+    settled: TriageSettledRouteV1;
+    intent: TriageSettledRouteV1;
+  } | null>(null);
+  if (routeRef.current === null) {
+    const initial = { subPath: canonicalTriageSubPathV1(props.subPath), state: surface };
+    routeRef.current = { observed: props.subPath, settled: initial, intent: initial };
+  }
+  const route = routeRef.current;
   // Seeded with the location at mount; later host moves reach the queue as adoptions.
-  const routeQueue = React.useMemo(() => createTriageRouteWriteQueueV1(hostApi, settledRoute.current.subPath), [hostApi]);
+  const routeQueue = React.useMemo(() => createTriageRouteWriteQueueV1(hostApi, route.settled.subPath), [hostApi, route]);
   React.useEffect(() => {
     // Publish the opening view through the same writer, retaining any entry
     // the route names before the window can qualify the reducer's selection.
     routeQueue.write({
-      ...parseTriageRouteSubPathV1(settledRoute.current.subPath),
-      filters: settledRoute.current.state.filters,
+      ...parseTriageRouteSubPathV1(route.settled.subPath),
+      filters: route.settled.state.filters,
     });
     return () => { routeQueue.dispose(); };
-  }, [routeQueue]);
+  }, [route, routeQueue]);
   const [listFocusRequest, setListFocusRequest] = React.useState<Readonly<{ key: string }> | undefined>();
   // A manual read is one pass, and the list's linked-Session join follows each pass once (`passes`); the Session
   // states themselves are watched live. Asking the join to re-read here as well scanned the links twice per press.
@@ -710,8 +701,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       : []),
     [rowsByKey, state],
   );
-  /** Whether the reader has changed the lens yet; see `useTriageRouteBinding`. */
-  const readerChangedLens = React.useRef(false);
   const rowsByKeyRef = React.useRef<TriageRouteRowIndexV1>(rowsByKey);
   rowsByKeyRef.current = rowsByKey;
   /**
@@ -744,146 +733,133 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   });
 
   /**
-   * The ONE path every reader-originated lens edit takes.
-   *
-   * `core/SURFACE.md` §3.2 requires the complete resulting route to be measured
-   * *before* the reducer moves, and the only honest way to know what a route
-   * will be is to ask the reducer what the state will be. So the action is
-   * reduced here first, the resulting location is preflighted, and only then is
-   * the same action dispatched. The reducer stays the single decision-maker for
-   * what an edit means — this function never edits state itself — and there is
-   * exactly one preflight site for row activation, order, the Smart precedence
-   * and every facet.
-   *
-   * Row activation has TWO producers — the reader's own press and the adoption
-   * of a settled location or a delivered launch — and both reach the reducer
-   * through here. They used to disagree: the adoption dispatched raw, so the
-   * same entry that was visibly refused when pressed opened silently when
-   * launched, on a page whose URL then no longer named what was on screen.
-   *
-   * On refusal nothing at all happens: no dispatch, no write, and the prior
-   * effective lens is what the reader keeps looking at.
+   * The one submission and settlement path for an optimistic press, a mounted
+   * command that awaits the host, or a saved-view rollback.
    */
-  const applyLensEdit = React.useCallback((
+  const submitRoute = React.useCallback((
+    intent: TriageSettledRouteV1,
+    lens: TriageRouteLensV1,
+    applyOnSettle: TriageSurfaceActionV1 | null,
+  ): Promise<TriageSettledRouteV1 | null> => {
+    route.intent = intent;
+    if (intent.subPath === route.settled.subPath && !routeQueue.headingElsewhere(intent.subPath)) {
+      route.settled = intent;
+      if (applyOnSettle !== null) dispatch(applyOnSettle);
+      return Promise.resolve(intent);
+    }
+    return new Promise(resolve => {
+      routeQueue.write(lens, ({ result, superseded }) => {
+        const previous = route.settled;
+        if (result?.kind === 'settled') {
+          const subPath = canonicalTriageSubPathV1(result.subPath);
+          const answer = subPath === intent.subPath ? intent : {
+            subPath,
+            state: applyTriageSettledSubPathV1({
+              candidate: intent.state, previous: previous.state, subPath, rowsByKey: rowsByKeyRef.current,
+            }),
+          };
+          // A coalesced predecessor is still the rollback base. A host move
+          // retires the request entirely, so its callback supplies no result.
+          route.settled = answer;
+          if (!superseded) {
+            route.intent = answer;
+            if (answer !== intent) {
+              dispatch({ kind: 'settledRouteApplied', state: answer.state });
+            } else if (applyOnSettle !== null) {
+              dispatch(applyOnSettle);
+            }
+            resolve(answer === intent ? answer : null);
+            return;
+          }
+        } else if (result?.kind === 'refused' && !superseded) {
+          route.intent = previous;
+          setRouteWriteFailure(result.reason === 'unavailable' ? 'unavailable' : 'rejected');
+          if (applyOnSettle === null) dispatch({ kind: 'settledRouteApplied', state: previous.state });
+        }
+        resolve(null);
+      });
+    });
+  }, [route, routeQueue]);
+
+  const requestLensEdit = React.useCallback((
     action: TriageSurfaceActionV1,
     refusal: 'selection' | 'lens',
-  ) => {
-    const currentRoute = preflightTriageRouteLensV1(readTriageRouteLensV1(surface));
-    if (currentRoute.kind === 'accepted'
-      && currentRoute.subPath === settledRoute.current.subPath) {
-      // Section and focus are not carried in the path. Capture them when
-      // this render is still the host-settled route so a later refusal restores
-      // the whole visible state rather than only its serializable lens.
-      settledRoute.current = { subPath: currentRoute.subPath, state: surface };
-    }
+    optimistic: boolean,
+  ): Promise<TriageSettledRouteV1 | null> | null => {
     const next = reduceSurface(surface, action);
-    if (next === surface) return;
-    const preflight = preflightTriageRouteLensV1(readTriageRouteLensV1(next));
-    if (preflight.kind === 'refused') {
-      setRouteRefused(refusal);
-      return;
-    }
-    setRouteRefused(null);
-    setRouteWriteFailure(null);
-    latestRouteIntent.current = { subPath: preflight.subPath, state: next };
-    if (preflight.subPath === settledRoute.current.subPath) {
-      // This location was already settled by the host. The edit only supplies
-      // local section/focus facts, so no redundant write is needed.
-      settledRoute.current = { subPath: preflight.subPath, state: next };
-    }
-    readerChangedLens.current = true;
-    // Admit the reader's lens and reducer edit in the same input turn. An effect
-    // would first render/publish the predecessor rows under the new query.
-    window.setLens(readTriageWindowLensV1(next));
-    dispatch(action);
-  }, [reduceSurface, surface, window.setLens]);
+    const lens = readTriageRouteLensV1(next);
+    const unchanged = next === surface || (action.kind === 'savedViewApplied'
+      && surface.selectedViewId === next.selectedViewId && surface.search.composing === next.search.composing
+      && sameTriageSavedViewLensV1(readTriageRouteLensV1(surface), lens));
+    if (unchanged && route.intent === route.settled) return Promise.resolve(route.settled);
 
-  /**
-   * Saved-view selection is durable preference, so its complete route settles
-   * before the Account KV selection write. Other lens edits remain optimistic
-   * and are reconciled by the same queue in `useTriageRouteBinding`.
-   */
+    const preflight = preflightTriageRouteLensV1(lens);
+    if (preflight.kind === 'refused') {
+      if (routeRefused !== refusal) setRouteRefused(refusal);
+      return null;
+    }
+    if (routeRefused !== null) setRouteRefused(null);
+    if (routeWriteFailure !== null) setRouteWriteFailure(null);
+    if (route.intent === route.settled
+      && buildTriageRouteSubPathV1(readTriageRouteLensV1(surface)) === route.settled.subPath) {
+      // Keep local section/focus facts for rollback when the host's lens agrees.
+      route.settled = { subPath: route.settled.subPath, state: surface };
+    }
+    if (optimistic && !unchanged) {
+      window.setLens(readTriageWindowLensV1(next));
+      dispatch(action);
+    }
+    return submitRoute({ subPath: preflight.subPath, state: unchanged ? surface : next },
+      lens, optimistic || unchanged ? null : action);
+  }, [reduceSurface, route, routeRefused, routeWriteFailure, submitRoute, surface, window.setLens]);
+
+  const applyLensEdit = React.useCallback((action: TriageSurfaceActionV1, refusal: 'selection' | 'lens') => {
+    void requestLensEdit(action, refusal, true);
+  }, [requestLensEdit]);
+
   const settleLensEditBeforeDurable = React.useCallback(async (
     action: TriageSurfaceActionV1,
   ): Promise<TriageSettledLensEditV1 | null> => {
-    const previous = surface;
-    const next = reduceSurface(previous, action);
-    if (next === previous) {
-      const existing = preflightTriageRouteLensV1(readTriageRouteLensV1(previous));
-      return existing.kind === 'accepted'
-        ? { previous, next, subPath: existing.subPath }
-        : null;
-    }
-    const preflight = preflightTriageRouteLensV1(readTriageRouteLensV1(next));
-    if (preflight.kind === 'refused') {
-      setRouteRefused('lens');
-      return null;
-    }
-    setRouteRefused(null);
-    setRouteWriteFailure(null);
-    readerChangedLens.current = true;
-    latestRouteIntent.current = { subPath: preflight.subPath, state: next };
-    const settlement = await settleQueuedTriageRouteV1(routeQueue, readTriageRouteLensV1(next));
-    const superseded = settlement.superseded
-      || latestRouteIntent.current.subPath !== preflight.subPath;
-    if (superseded) return null;
-    const result = settlement.result;
-    if (result === null) return null;
-    if (result.kind === 'refused') {
-      latestRouteIntent.current = settledRoute.current;
-      setRouteWriteFailure(result.reason === 'unavailable' ? 'unavailable' : 'rejected');
-      return null;
-    }
-    const settledSubPath = canonicalTriageSubPathV1(result.subPath);
-    if (settledSubPath !== preflight.subPath) {
-      const settledState = applyTriageSettledSubPathV1({
-        candidate: next,
-        previous,
-        subPath: settledSubPath,
-        rowsByKey: rowsByKeyRef.current,
-      });
-      settledRoute.current = { subPath: settledSubPath, state: settledState };
-      latestRouteIntent.current = settledRoute.current;
-      dispatch({ kind: 'settledRouteApplied', state: settledState });
-      return null;
-    }
-    settledRoute.current = { subPath: settledSubPath, state: next };
-    latestRouteIntent.current = settledRoute.current;
-    dispatch(action);
-    return { previous, next, subPath: settledSubPath };
-  }, [reduceSurface, routeQueue, surface]);
+    const accepted = await requestLensEdit(action, 'lens', false);
+    return accepted === null || route.intent !== accepted ? null : { previous: surface, accepted };
+  }, [requestLensEdit, route, surface]);
 
   const rollbackSettledLensEdit = React.useCallback(async (
     edit: TriageSettledLensEditV1,
   ): Promise<void> => {
-    // A newer reader intent owns the page. Never roll it back for an older
-    // durable refusal.
-    if (latestRouteIntent.current.subPath !== edit.subPath) return;
-    const previousLens = readTriageRouteLensV1(edit.previous);
-    const previousPreflight = preflightTriageRouteLensV1(previousLens);
-    if (previousPreflight.kind === 'refused') return;
-    latestRouteIntent.current = { subPath: previousPreflight.subPath, state: edit.previous };
-    const settlement = await settleQueuedTriageRouteV1(routeQueue, previousLens);
-    if (settlement.superseded) return;
-    const result = settlement.result;
-    if (result === null) return;
-    if (result.kind === 'refused') {
-      setRouteWriteFailure(result.reason === 'unavailable' ? 'unavailable' : 'rejected');
-      return;
+    if (route.intent !== edit.accepted) return;
+    const lens = readTriageRouteLensV1(edit.previous);
+    const preflight = preflightTriageRouteLensV1(lens);
+    if (preflight.kind === 'accepted') {
+      await submitRoute({ subPath: preflight.subPath, state: edit.previous }, lens,
+        { kind: 'settledRouteApplied', state: edit.previous });
     }
-    const subPath = canonicalTriageSubPathV1(result.subPath);
-    const state = subPath === previousPreflight.subPath
-      ? edit.previous
-      : applyTriageSettledSubPathV1({
-          candidate: edit.previous,
-          previous: edit.next,
-          subPath,
-          rowsByKey: rowsByKeyRef.current,
-        });
-    settledRoute.current = { subPath, state };
-    latestRouteIntent.current = settledRoute.current;
+  }, [route, submitRoute]);
+
+  const observeRoute = React.useCallback((
+    observed: string | undefined,
+    pendingOpen: boolean,
+    visible: TriageSurfaceStateV1,
+  ): string | undefined => {
+    if (route.observed === observed) {
+      return route.intent === route.settled ? route.settled.subPath : undefined;
+    }
+    route.observed = observed;
+    const subPath = canonicalTriageSubPathV1(observed);
+    if (routeQueue.adoptHostLocation(subPath)) return pendingOpen ? subPath : undefined;
+    const previous = route.settled;
+    if (subPath === previous.subPath && route.intent === previous) return subPath;
+    const state = applyTriageSettledSubPathV1({
+      candidate: visible, previous: previous.state, subPath, rowsByKey: rowsByKeyRef.current,
+    });
+    const answer = { subPath, state };
+    route.settled = answer;
+    route.intent = answer;
+    if (routeWriteFailure !== null) setRouteWriteFailure(null);
+    if (pendingOpen) return subPath;
     dispatch({ kind: 'settledRouteApplied', state });
-  }, [routeQueue]);
+    return undefined;
+  }, [route, routeQueue, routeWriteFailure]);
 
   /**
    * The one activation path. The shared `List` reports pointer, touch and
@@ -2004,23 +1980,13 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     },
   }), [itemAnatomy, routeLens]);
 
-  useTriageRouteBinding({
-    queue: routeQueue,
-    surface,
-    readerChangedLens,
-    settledRoute,
-    latestRouteIntent,
-    rowsByKeyRef,
-    dispatch,
-    onFailure: setRouteWriteFailure,
-  });
   useTriageSavedViewBinding({
     saved: savedViews.saved,
     selectedViewId: surface.selectedViewId,
     applyLensEdit,
   });
   useTriageSettledLocation({
-    queue: routeQueue,
+    observeRoute,
     subPath: props.subPath,
     launch: props.launch,
     pageLaunch: props.pageLaunch,
@@ -2037,11 +2003,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     windowSettled: window.snapshot.pending !== 'initial'
       && (state.kind === 'window' || state.kind === 'configureSources'),
     applyLensEdit,
-    dispatch,
-    readerChangedLens,
-    settledRoute,
-    latestRouteIntent,
-    onRouteWriteFailure: setRouteWriteFailure,
   });
 
   /**
@@ -3100,109 +3061,6 @@ function useTriageSavedViewBinding(input: Readonly<{
     applyLensEdit,
     saved,
     selectedViewId,
-  ]);
-}
-
-/**
- * Write the reducer's lens back to the host, once per settled reader change.
- *
- * The host owns history and settlement, so nothing here mirrors the location
- * locally or pushes its own entry. A host that publishes no same-page
- * replacement is a refusal the route owner already reports, and the page keeps
- * working without a shareable URL rather than failing to mount.
- *
- * The queue's mount effect publishes the opening route and its view. Subsequent
- * writes wait for a lens change. The initial publication retains the route's
- * entry rather than the reducer's selection, which needs the qualified instance
- * only the window can supply.
- */
-function useTriageRouteBinding(input: Readonly<{
-  queue: TriageRouteWriteQueueV1;
-  surface: TriageSurfaceStateV1;
-  readerChangedLens: React.RefObject<boolean>;
-  settledRoute: React.RefObject<TriageSettledRouteV1>;
-  latestRouteIntent: React.RefObject<TriageSettledRouteV1>;
-  rowsByKeyRef: React.RefObject<TriageRouteRowIndexV1>;
-  dispatch: React.Dispatch<TriageSurfaceActionV1>;
-  onFailure: (failure: 'unavailable' | 'rejected' | null) => void;
-}>): void {
-  const {
-    dispatch,
-    latestRouteIntent,
-    onFailure,
-    readerChangedLens,
-    rowsByKeyRef,
-    settledRoute,
-    surface,
-    queue,
-  } = input;
-  React.useEffect(() => {
-    if (!readerChangedLens.current) return undefined;
-    const requested = readTriageRouteLensV1(surface);
-    const requestedSubPath = buildTriageRouteSubPathV1(requested);
-    // A host move can publish an entry before its connection is qualified.
-    // That intermediate reducer state is not a local navigation intent: writing
-    // its empty selection would replace the very route we are adopting.
-    if (requestedSubPath !== latestRouteIntent.current.subPath) return undefined;
-    // Back on the settled location needs no write only while nothing else is heading to the host: with another
-    // choice still in flight or queued, this one must be written after it or the older choice lands last (QB-82).
-    if (requestedSubPath === settledRoute.current.subPath && !queue.headingElsewhere(requestedSubPath)) {
-      settledRoute.current = { subPath: requestedSubPath, state: surface };
-      return undefined;
-    }
-    queue.write(requested, (settlement) => {
-      const previous = settledRoute.current;
-      const superseded = settlement.superseded
-        || requestedSubPath !== latestRouteIntent.current.subPath;
-      const result = settlement.result;
-      if (result === null) return;
-      if (result.kind === 'settled') {
-        // A newer host navigation already settled the current reader intent.
-        // Its rollback base outranks this earlier write's delayed ack too.
-        if (superseded && latestRouteIntent.current.subPath === previous.subPath) return;
-        const subPath = canonicalTriageSubPathV1(result.subPath);
-        if (subPath === requestedSubPath) {
-          // The optimistic state already is the host's exact answer. Recording
-          // it as settled is sufficient; dispatching a whole-state clone here
-          // would restart entry-scoped reads for no visible location change.
-          settledRoute.current = { subPath, state: surface };
-          if (!superseded) {
-            latestRouteIntent.current = settledRoute.current;
-            onFailure(null);
-          }
-          return;
-        }
-        const state = applyTriageSettledSubPathV1({
-          candidate: surface,
-          previous: previous.state,
-          subPath,
-          rowsByKey: rowsByKeyRef.current,
-        });
-        // Even a superseded acknowledgement is now the host's actual base. It
-        // is retained for a successor rejection, but only the newest intent is
-        // allowed to repaint the mounted page.
-        settledRoute.current = { subPath, state };
-        if (superseded) return;
-        latestRouteIntent.current = settledRoute.current;
-        onFailure(null);
-        dispatch({ kind: 'settledRouteApplied', state });
-        return;
-      }
-      if (superseded) return;
-      latestRouteIntent.current = previous;
-      onFailure(result.reason === 'unavailable' ? 'unavailable' : 'rejected');
-      dispatch({ kind: 'settledRouteApplied', state: previous.state });
-    });
-    return undefined;
-  }, [
-    dispatch,
-    latestRouteIntent,
-    onFailure,
-    queue,
-    readerChangedLens,
-    rowsByKeyRef,
-    settledRoute,
-    surface,
   ]);
 }
 
