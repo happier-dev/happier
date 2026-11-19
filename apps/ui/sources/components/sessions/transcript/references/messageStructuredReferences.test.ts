@@ -72,13 +72,15 @@ describe('resolveMessageStructuredReferences', () => {
     it('keeps authored bindings and Find coordinates after an earlier nickname expands into a token', () => {
         const ref = buildMentionRefForKindV1(MENTION_KIND_V1.session, 'linked');
         const token = formatInlineReferenceTokenV1({ label: 'Already linked', ref });
-        const text = `Scout then ${token} and needle.`;
+        const text = `Scout then ${token}, Scout and needle.`;
         const result = resolveMessageStructuredReferences({
             text,
             meta: metaWithMentions([sessionMention('linked', token)]),
             nicknameTargets: new Map([['Scout', { kind: 'session', sessionId: 'scout' }]]),
         });
         expect([...result.inline.get(ref)!.tokenStarts!]).toEqual([result.markdown!.indexOf(token)]);
+        const nickname = [...result.inline.values()].find(reference => reference.label === 'Scout')!;
+        expect([...nickname.tokenStarts!]).toEqual([0, result.markdown!.lastIndexOf(nickname.token!)]);
         const start = text.indexOf('needle');
         const projected = result.projectFindRange!({ start, end: start + 'needle'.length, current: true });
         expect(result.markdown!.slice(projected.start, projected.end)).toBe('needle');

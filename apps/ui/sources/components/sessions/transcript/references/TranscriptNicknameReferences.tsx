@@ -121,7 +121,8 @@ function TranscriptNicknameProjection({ source, navigate, children }: Readonly<{
     navigate: SessionTranscriptSource['navigate'];
     children: React.ReactNode;
 }>) {
-    const activeServerId = useActiveServerSnapshot(Boolean(navigate && !source.serverId)).serverId;
+    // Legacy carriers have no Home ID. Their owner qualifies them against the applied Home.
+    const activeServerId = useActiveServerSnapshot(Boolean(navigate)).serverId;
     const serverId = source.serverId ?? activeServerId;
     const [available, agentId, rootThreadId] = getStorage()(useShallow(state => {
         const session = navigate ? selectHomeQualifiedSession(state, source.sessionId, serverId, activeServerId) : null;

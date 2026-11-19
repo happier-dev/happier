@@ -279,37 +279,40 @@ export function resolveMessageStructuredReferences(input: MessageReferenceInput)
     const hasAuthoredInline = inline.size > 0;
     const display: string[] = [];
     let addedLength = 0;
-    const displayEdits = nicknames.map(({ start, end, token }) => {
-        const displayStart = start + addedLength;
-        const displayEnd = displayStart + token.length;
-        addedLength = displayEnd - end;
-        return { start, end, displayStart, displayEnd };
+    const displayEdits = nicknames.map(edit => {
+        const displayStart = edit.start + addedLength;
+        const displayEnd = displayStart + edit.token.length;
+        addedLength = displayEnd - edit.end;
+        return { ...edit, displayStart, displayEnd };
     });
     const projectOffset = (offset: number, isEnd = false): number => {
-        let shift = 0;
-        for (const { start, end, displayStart, displayEnd } of displayEdits) {
-            if (offset <= start) break;
-            if (offset < end) return isEnd ? displayEnd : displayStart;
-            shift = displayEnd - end;
+        let first = 0;
+        let last = displayEdits.length;
+        while (first < last) {
+            const middle = Math.floor((first + last) / 2);
+            if (displayEdits[middle]!.start < offset) first = middle + 1;
+            else last = middle;
         }
-        return offset + shift;
+        const edit = displayEdits[first - 1];
+        if (!edit) return offset;
+        return offset < edit.end ? (isEnd ? edit.displayEnd : edit.displayStart) : offset + edit.displayEnd - edit.end;
     };
     for (const reference of inline.values()) {
         const originalStarts = [...reference.tokenStarts];
         reference.tokenStarts.clear();
         for (const start of originalStarts) reference.tokenStarts.add(projectOffset(start));
     }
-    for (const { ref, token, label, start, end, target } of nicknames) {
+    for (const { ref, token, label, start, end, target, displayStart } of displayEdits) {
         display.push(input.text.slice(cursor, start), token);
         cursor = end;
         const previous = inline.get(ref);
         if (previous) {
-            previous.tokenStarts.add(projectOffset(start));
+            previous.tokenStarts.add(displayStart);
             continue;
         }
         inline.set(ref, {
             ref, token, label, marker: label, kind: MENTION_KIND_V1.session, glyph: 'conversations',
-            sessionTarget: target, tokenStarts: new Set([projectOffset(start)]),
+            sessionTarget: target, tokenStarts: new Set([displayStart]),
             ...(target.kind === 'session' ? { sessionId: target.sessionId } : { agentId: target.agentId }),
         });
     }
