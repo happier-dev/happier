@@ -30,7 +30,8 @@ export function buildRecoveryIntentFromUsageLimitIssue(params: RecoveryIntentOpt
     defaultNativeServiceId: params.defaultNativeServiceId,
     connectedServices: params.connectedServices ?? null }) ?? { kind: 'native' as const };
   const timing = deriveUsageLimitRecoveryTiming({ occurredAtMs: issue.occurredAt,
-    resetAtMs: issue.usageLimit.resetAtMs, retryAfterMs: issue.usageLimit.retryAfterMs });
+    resetAtMs: issue.usageLimit.resetAtMs, retryAfterMs: issue.usageLimit.retryAfterMs,
+    allWindows: issue.usageLimit.allWindows });
   return { v: 1, status: 'waiting', resumePromptMode: params.resumePromptMode ?? 'standard',
     issueFingerprint: params.issueFingerprint ?? buildUsageLimitIssueFingerprint(issue, params.providerId),
     armedAtMs: issue.occurredAt, resetAtMs: timing.resetAtMs, nextCheckAtMs: timing.nextCheckAtMs,

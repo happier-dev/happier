@@ -3628,10 +3628,11 @@ In 0.3 development source, every represented WorkerUpdate enters durable transcr
 
 The shared Session usage-limit controller owns ordinary waits, including
 foreground CLI sessions without a daemon. It uses the common recovery scheduler
-and control router; optional native quota probes supply evidence rather than a
-second continuation owner. A reported reset time can drive continuation without
-a provider-specific probe. Missing timing uses the existing recovery backoff,
-and transient probe failures retain the authorized wait. Inactive waits are
+and control router. At a scheduled reset the router uses a native quota probe
+when available. A reported reset can drive continuation for a provider without
+a probe. Codex readiness and Claude wait timing use the latest reset across
+exhausted windows. If an exhausted window has no known reset, the wait uses
+the existing recovery backoff. Transient probe failures retain the authorized wait. Inactive waits are
 restored after machine-control registration and wake through fresh session
 resolution. Native quota and credential failures without a Connected Account selection do not enter
 Connected Account authentication recovery.

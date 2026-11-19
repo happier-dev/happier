@@ -561,10 +561,7 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
   const adapterAgentId = resolveAgentIdFromFlavor(params.request?.agentId)
     ?? resolveAgentIdFromSessionMetadata(adapterMetadata);
   const adapter = liveProbeResult ? null : await (params.resolveAdapter ?? resolveInactiveSessionUsageLimitRecoveryControls)(adapterAgentId);
-  const recovery = parseRecoveryIntent(adapterMetadata, params.rawSession);
-  const dueAtMs = recovery?.nextCheckAtMs;
-  const timedAdapter = operation === 'check_now' && (!adapter?.checkNow
-    || (typeof dueAtMs === 'number' && dueAtMs <= Date.now()))
+  const timedAdapter = operation === 'check_now' && !adapter?.checkNow
     ? createBackoffSessionUsageLimitRecoveryControlAdapter({
       providerId: adapterAgentId ?? readLatestUsageLimitFailureIssue(params.rawSession)?.agentId ?? 'unknown',
     }) : null;
@@ -583,26 +580,33 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
 
   // Normalize the plugin boundary before inspecting status or applying effects.
   const normalizedProbe = normalizeUsageLimitRecoveryOperationResult(probeResult, { sessionId: params.sessionId });
-  const probeMetadata = readMetadataResult(probeResult) ?? adapterMetadata;
+  const resultMetadataFromProbe = readMetadataResult(probeResult);
+  const probeMetadata = resultMetadataFromProbe ?? adapterMetadata;
   const probeRecovery = parseRecoveryIntent(probeMetadata) ?? intendedIntent
     ?? buildRecoveryIntentFromLatestUsageLimitIssue({ rawSession: params.rawSession,
       connectedServices: probeMetadata.connectedServices, resumePromptMode });
   const retryAfterMs = normalizedProbe.ok && 'retryAfterMs' in normalizedProbe
     && typeof normalizedProbe.retryAfterMs === 'number' && Number.isFinite(normalizedProbe.retryAfterMs)
     && normalizedProbe.retryAfterMs >= 0 ? normalizedProbe.retryAfterMs : null;
+  // Native probes return fresh evidence without metadata. An omitted delay
+  // supersedes the previous schedule, just as a new explicit delay does.
+  const waitingForProvider = operation === 'check_now' && normalizedProbe.ok && normalizedProbe.status === 'waiting'
+    && resultMetadataFromProbe === null;
+  const nowMs = Date.now();
+  const retryAtMs = retryAfterMs === null ? null : nowMs + retryAfterMs;
   const preparedResult = normalizedProbe.ok && probeRecovery
     && (normalizedProbe.status === 'ready' || normalizedProbe.status === 'waiting')
     ? { ...normalizedProbe, metadata: { ...probeMetadata,
       [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: { ...probeRecovery, resumePromptMode,
         status: normalizedProbe.status === 'ready' && resumePromptMode === 'off' ? 'paused' : 'waiting',
-        resetAtMs: normalizedProbe.status === 'waiting' && retryAfterMs !== null && probeRecovery.resetAtMs === null
-          ? Date.now() + retryAfterMs : probeRecovery.resetAtMs,
+        resetAtMs: waitingForProvider ? retryAtMs
+          : normalizedProbe.status === 'waiting' && probeRecovery.resetAtMs === null ? retryAtMs
+          : probeRecovery.resetAtMs,
         nextCheckAtMs: normalizedProbe.status === 'ready'
-          ? resumePromptMode === 'off' ? null : Date.now()
-          : retryAfterMs !== null ? Date.now() + retryAfterMs
-            : probeRecovery.nextCheckAtMs,
+          ? resumePromptMode === 'off' ? null : nowMs
+          : waitingForProvider ? retryAtMs : retryAtMs ?? probeRecovery.nextCheckAtMs,
       } } }
-    : { ...normalizedProbe, ...(readMetadataResult(probeResult) ? { metadata: readMetadataResult(probeResult) } : {}) };
+    : { ...normalizedProbe, ...(resultMetadataFromProbe ? { metadata: resultMetadataFromProbe } : {}) };
   const result = await applyAdapterMetadataResult(params, preparedResult);
   const resultMetadata = readMetadataResult(result);
   const normalizedResult = normalizeUsageLimitRecoveryOperationResult(result, { sessionId: params.sessionId });

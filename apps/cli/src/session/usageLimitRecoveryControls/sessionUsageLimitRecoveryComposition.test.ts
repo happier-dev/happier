@@ -105,7 +105,7 @@ describe('native usage-limit recovery composition', () => {
     } finally { recovery.dispose(); vi.useRealTimers(); }
   });
 
-  it('settles an admitted wait at its real reset without polling feature configuration again', async () => {
+  it.each([false, true])('wakes at the known reset without re-admission (native probe: %s)', async hasProbe => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     const sessionId = 'admitted-quota-wait';
@@ -122,6 +122,7 @@ describe('native usage-limit recovery composition', () => {
       readContext: async () => ({ credentials, rawSession: raw, metadata, mode: 'plain', ctx: null }),
       runRequest: async operation => await operation(),
       isFeatureEnabled: async () => ++featureAdmissions === 1,
+      ...(hasProbe ? { readNativeReadiness: async () => ({ status: 'waiting' }) } : {}),
       nowMs: () => Date.now(),
       getAccountSettings: () => accountSettingsParse({ usageLimitRecoverySettingsV1: {
         v: 1, mode: 'auto_wait', resumePromptMode: 'off',
@@ -132,7 +133,9 @@ describe('native usage-limit recovery composition', () => {
       expect(metadata.sessionUsageLimitRecoveryV1).toMatchObject({ status: 'waiting', nextCheckAtMs: 2_000 });
       expect(vi.getTimerCount()).toBe(1);
       await vi.advanceTimersByTimeAsync(1_000);
-      expect(metadata.sessionUsageLimitRecoveryV1).toMatchObject({ status: 'paused', nextCheckAtMs: null });
+      expect(metadata.sessionUsageLimitRecoveryV1).toMatchObject(hasProbe
+        ? { status: 'waiting', resetAtMs: null, nextCheckAtMs: null }
+        : { status: 'paused', nextCheckAtMs: null });
       expect(featureAdmissions).toBe(1);
       expect(vi.getTimerCount()).toBe(0);
     } finally { recovery.dispose(); vi.useRealTimers(); }

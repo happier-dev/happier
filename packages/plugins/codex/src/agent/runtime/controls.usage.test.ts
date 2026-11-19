@@ -52,6 +52,31 @@ describe('Codex Session usage checks', () => {
     });
   });
 
+  it.each([
+    [20, 120_000],
+    [100, 120_000],
+    [100, null],
+  ])('reports the blocking reset through the inactive control (%s%% used, %s ms)', async (usedPercent, retryAfterMs) => {
+    const now = 1_768_600_000_000;
+    await withCodexNativeAttachFixture(async fixture => {
+      const context = {
+        signal: new AbortController().signal, services: { exec: fixture.exec },
+        session: { id: 'inactive-target', cwd: fixture.directory, activity: 'inactive', connectedAccounts: [],
+          launchEnvironment: fixture.launchEnvironment },
+      } as unknown as AgentSessionControlContext;
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+      try {
+        const result = await createCodexNativeSessionControls().usageLimitRecovery.execute({ kind: 'checkNow' }, context);
+        expect(result).toEqual(retryAfterMs === null ? { status: 'waiting' } : { status: 'waiting', retryAfterMs });
+      } finally {
+        clock.mockRestore();
+      }
+    }, { rateLimitsRead: () => ({ rateLimits: {
+      primary: { usedPercent, ...(retryAfterMs === null ? {} : { resetsAt: now / 1_000 + 60 }) },
+      secondary: { usedPercent: 100, resetsAt: now / 1_000 + 120 },
+    } }) });
+  });
+
   it('uses one short-lived client in the admitted inactive target scope', async () => {
     const launches: Array<Readonly<{ argv: readonly string[]; env?: Readonly<Record<string, string | undefined>> }>> = [];
     await withCodexNativeAttachFixture(async fixture => {

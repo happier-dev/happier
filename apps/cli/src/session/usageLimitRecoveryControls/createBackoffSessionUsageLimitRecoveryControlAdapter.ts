@@ -195,12 +195,14 @@ export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Se
             && requestedRetryAfterMs >= 0
             ? Math.trunc(requestedRetryAfterMs)
             : null;
+          const nextCheckAtMs = retryAfterMs === null ? null : nowMs() + retryAfterMs;
           next = {
             adapterStatus: 'waiting',
             intent: {
               ...next.intent,
               status: 'waiting',
-              nextCheckAtMs: retryAfterMs === null ? null : now + retryAfterMs,
+              resetAtMs: probe.status === 'waiting' ? nextCheckAtMs : next.intent.resetAtMs,
+              nextCheckAtMs,
               lastProbeError: probe.status === 'unavailable'
                 ? probe.errorCode
                 : null,

@@ -99,14 +99,12 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
       return await routeSessionUsageLimitRecoveryCheckNow({ ...context,
         request: { sessionId: deps.sessionId },
         readCurrentUsageLimitRecovery: () => read(),
-        callLiveSessionRpc: async () => {
-          const dueAtMs = intent.nextCheckAtMs;
-          return typeof dueAtMs === 'number' && dueAtMs <= nowMs()
-            ? { ok: false, errorCode: 'unsupported_session_runtime_method' }
-            : deps.readNativeReadiness
-              ? await deps.readNativeReadiness({ sessionId: deps.sessionId })
-              : { ok: false, errorCode: 'unsupported_session_runtime_method' };
-        },
+        callLiveSessionRpc: async () => deps.readNativeReadiness
+          ? await deps.readNativeReadiness({ sessionId: deps.sessionId })
+          : { ok: false, errorCode: 'unsupported_session_runtime_method' },
+        // This attached Session owns its native probe. It must not launch an
+        // inactive provider client when the active runtime has no such control.
+        ...(context.rawSession.active ? { resolveAdapter: async () => null } : {}),
         resumeInactiveSessionWhenReady: async ({ rawSession, metadata, readiness }) => {
           const parsed = storedUsageLimitRecoverySchema.safeParse(metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
           if (!parsed.success) return false;
@@ -141,8 +139,7 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
     if (request.rememberPreference) await updateAccountSettingsV2WithRetry({ credentials: context.credentials,
       prepareMutation: (raw) => AccountSettingMutationV1Schema.parse({ operations: [{ op: 'set', key: 'usageLimitRecoverySettingsV1',
         value: { ...accountSettingsParse(raw).usageLimitRecoverySettingsV1, v: 1, mode: 'auto_wait' } }] }) });
-    return await arm(intent, probeUnknownTiming && intent.resetAtMs === null
-      && readLatestUsageLimitFailureIssue(context.rawSession)?.usageLimit?.retryAfterMs == null);
+    return await arm(intent, probeUnknownTiming && intent.nextCheckAtMs === null);
     });
   }
 
@@ -227,7 +224,7 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
         accountSettings: deps.getAccountSettings() });
       const intent = buildRecoveryIntentFromUsageLimitIssue({ issue, resumePromptMode,
         connectedServices: deps.getMetadata()?.connectedServices });
-      if (intent) await arm(intent, intent.resetAtMs === null && issue.usageLimit.retryAfterMs == null);
+      if (intent) await arm(intent, intent.nextCheckAtMs === null);
     },
     observeSupersession: async () => {
       acceptedFailure = null;

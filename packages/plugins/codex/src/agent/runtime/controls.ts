@@ -25,8 +25,7 @@ import {
   type CodexGoalProjection,
 } from './appServer/work/goalProjection.js';
 import {
-  isCodexRateLimitSnapshotExhausted,
-  readEarliestCodexRateLimitResetAtMs,
+  readCodexRateLimitReadiness,
 } from '../auth/services/quota/rateLimitSnapshot.js';
 import { readCodexRuntimeRateLimitsSnapshot } from '../auth/services/quota/runtimeRateLimits.js';
 
@@ -202,8 +201,9 @@ export function createCodexUsageLimitRecoveryControl(
             request: (method, params) => client.request(method, params, { signal: context.signal }),
           })
         ).rawSnapshot);
-        if (!isCodexRateLimitSnapshotExhausted(snapshot)) return { status: 'ready' };
-        const resetAtMs = readEarliestCodexRateLimitResetAtMs(snapshot);
+        const readiness = readCodexRateLimitReadiness(snapshot);
+        if (readiness.status === 'ready') return readiness;
+        const { resetAtMs } = readiness;
         return {
           status: 'waiting',
           ...(resetAtMs === null ? {} : { retryAfterMs: Math.max(0, resetAtMs - Date.now()) }),

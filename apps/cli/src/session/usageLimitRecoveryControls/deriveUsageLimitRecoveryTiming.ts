@@ -1,7 +1,10 @@
+import type { SessionRuntimeUsageLimitDetailsV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+
 export type UsageLimitRecoveryTimingInput = Readonly<{
   occurredAtMs: number | null | undefined;
   resetAtMs: number | null | undefined;
   retryAfterMs: number | null | undefined;
+  allWindows?: SessionRuntimeUsageLimitDetailsV1['allWindows'];
 }>;
 
 export type UsageLimitRecoveryTiming = Readonly<{
@@ -14,7 +17,13 @@ function normalizeNonNegativeInteger(value: number | null | undefined): number |
 }
 
 export function deriveUsageLimitRecoveryTiming(input: UsageLimitRecoveryTimingInput): UsageLimitRecoveryTiming {
-  const resetAtMs = normalizeNonNegativeInteger(input.resetAtMs);
+  let resetAtMs = normalizeNonNegativeInteger(input.resetAtMs);
+  for (const window of input.allWindows ?? []) {
+    if (window.remainingPct !== 0) continue;
+    const windowResetAtMs = normalizeNonNegativeInteger(window.resetAtMs);
+    if (windowResetAtMs === null) return { resetAtMs: null, nextCheckAtMs: null };
+    resetAtMs = resetAtMs === null ? windowResetAtMs : Math.max(resetAtMs, windowResetAtMs);
+  }
   if (resetAtMs !== null) {
     return { resetAtMs, nextCheckAtMs: resetAtMs };
   }

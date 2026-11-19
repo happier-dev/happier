@@ -313,17 +313,19 @@ export function mapCodexRateLimitSnapshotToUsageMeters(
  * Usage-limit recovery readiness after the provider itself reported a limit: included windows
  * only, because that provider verdict stays authoritative over credit headroom.
  */
-export function isCodexRateLimitSnapshotExhausted(rawSnapshot: unknown): boolean {
-  return mapCodexRateLimitSnapshotToUsageMeters(rawSnapshot).some((meter) => meter.unit !== 'credits' && (
+export function readCodexRateLimitReadiness(rawSnapshot: unknown):
+  | Readonly<{ status: 'ready' }>
+  | Readonly<{ status: 'waiting'; resetAtMs: number | null }> {
+  const exhausted = mapCodexRateLimitSnapshotToUsageMeters(rawSnapshot).filter((meter) => meter.unit !== 'credits' && (
     meter.isExhausted === true || (meter.utilizationPct !== null && meter.utilizationPct >= 100)
   ));
-}
-
-export function readEarliestCodexRateLimitResetAtMs(rawSnapshot: unknown): number | null {
-  const resets = mapCodexRateLimitSnapshotToUsageMeters(rawSnapshot)
-    .map((meter) => meter.resetsAt)
-    .filter((value): value is number => value !== null);
-  return resets.length > 0 ? Math.min(...resets) : null;
+  if (exhausted.length === 0) return { status: 'ready' };
+  let resetAtMs = 0;
+  for (const meter of exhausted) {
+    if (meter.resetsAt === null) return { status: 'waiting', resetAtMs: null };
+    resetAtMs = Math.max(resetAtMs, meter.resetsAt);
+  }
+  return { status: 'waiting', resetAtMs };
 }
 
 export function readCodexRateLimitPlanType(rawSnapshot: unknown): string | null {

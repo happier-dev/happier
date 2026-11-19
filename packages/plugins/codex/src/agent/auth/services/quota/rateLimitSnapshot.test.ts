@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { CodexUsageSubjectRef } from '../usage/identity.js';
 import { mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot } from '../usage/snapshot.js';
 import {
-  isCodexRateLimitSnapshotExhausted,
+  readCodexRateLimitReadiness,
   mapCodexRateLimitSnapshotToUsageMeters,
   readCodexRateLimitSnapshotPlanLabel,
 } from './rateLimitSnapshot.js';
@@ -485,9 +485,9 @@ describe('Codex provider credits', () => {
       rate_limit: { primary_window: spentWindow },
       credits: { has_credits: false, unlimited: false, overage_limit_reached: false, balance: '0' },
     }))).toBeNull();
-    expect(isCodexRateLimitSnapshotExhausted({
+    expect(readCodexRateLimitReadiness({
       rate_limit: { primary_window: { used_percent: 20 } },
       credits: { has_credits: true, unlimited: false, overage_limit_reached: true, balance: '0' },
-    })).toBe(false);
+    })).toEqual({ status: 'ready' });
   });
 });
