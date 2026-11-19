@@ -637,9 +637,9 @@ export async function attestCurrentRunnerAgentSessionOpen(
   ) {
     return response.result;
   }
-  throw createNativeAgentSessionEffectBoundaryError(
-    'authority_unavailable_before_effect',
-  );
+  throw Object.assign(createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect'), {
+    ...(!response.ok ? { failureCause: projectDaemonServiceRefusalCause(response.error) } : {}),
+  });
 }
 
 export async function dispatchCurrentRunnerDaemonPluginService(

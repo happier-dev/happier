@@ -71,6 +71,35 @@ afterEach(async () => {
 
 describe('current Agent runtime daemon service authority client', () => {
 
+  it('preserves a typed Session-open refusal through the native startup boundary without upstream prose', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-open-attestation-refusal-'));
+    roots.push(happyHomeDir);
+    const command = 'node /probe/.runner-snapshots/runner-a/index.mjs';
+    const runner = { pid: process.pid, processStartTimeMs: 1_717_171_717_000,
+      processCommandHash: hashProcessCommand(command), snapshotIdentity: 'snapshot:runner-a' };
+    processIdentityMock.mockResolvedValue({ pid: process.pid, processStartTimeMs: runner.processStartTimeMs, command });
+    const { resolveSessionRunnerEntrypointIdentityFromProcessCommand } = await vi.importActual<
+      typeof import('@/daemon/sessionRunnerRuntime/resolveRunnerEntrypointIdentity')
+    >('@/daemon/sessionRunnerRuntime/resolveRunnerEntrypointIdentity');
+    runnerIdentityMock.mockImplementation(resolveSessionRunnerEntrypointIdentityFromProcessCommand);
+    const authority = await createTestAuthority({ happyHomeDir, runner });
+    await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: 31_001, capability: 'A'.repeat(43) });
+    // Substitute OS observation and daemon HTTP; retain real runner parsing, authority and error projection.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      ok: false, error: { code: 'agent_runtime_daemon_service_session_open_attestation_unavailable',
+        message: 'PRIVATE_DAEMON_RESPONSE_BODY' },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    const failure = await attestCurrentRunnerAgentSessionOpen({ authority, requestId: 'attest-refused',
+      phase: 'prepare', request: { kind: 'create', sessionId: authority.sessionId, cwd: '/workspace' },
+      providerSessionId: null,
+    }).then(() => null, (error: unknown) => sanitizeNativeAgentSessionBoundaryError(error, true));
+    expect(failure).toMatchObject({ code: 'native_agent_privileged_effect_authority_unavailable',
+      failureCause: { phase: 'turn_start', actionCause: {
+        phase: 'agent_runtime.daemon_result', errorClass: 'Error',
+        errorCode: 'agent_runtime_daemon_service_session_open_attestation_unavailable', httpStatus: null } } });
+    expect(JSON.stringify(failure)).not.toContain('PRIVATE_DAEMON_RESPONSE_BODY');
+  });
+
   it.each([
     ['connected_service_credential_reconnect_required', 'team_credential'],
     ['provider_compatibility_unverified', 'agent_session_error'],
