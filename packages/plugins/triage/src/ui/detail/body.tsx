@@ -11,7 +11,7 @@ import {
 } from '@happier-dev/plugin-ui';
 import type { PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/plugin-sdk/ui';
 import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
-import { TriageDetailPageScrollProvider, TriageDetailPanelNavigationProvider, triageDetailPanelOwnsScrollerV1, type TriageDetailPanelNavigationV1, type TriageDetailFixPullRequestNavigationV1 } from '@happier-dev/triage-sources/ui';
+import { TriageDetailPageScrollProvider, TriageDetailPanelNavigationProvider, TriageEvidenceDisclosureProvider, triageDetailPanelOwnsScrollerV1, useTriageEvidenceDisclosure, type TriageDetailPanelNavigationV1, type TriageDetailFixPullRequestNavigationV1 } from '@happier-dev/triage-sources/ui';
 
 import { readTriageDetailTabSummaryV1, type TriageDetailTabV1 } from './tabs.js';
 import { buildTriageDetailSurfaceInputV1 } from './input.js';
@@ -197,6 +197,13 @@ export function TriageDetailTabbedBody(props: Readonly<{
   const [fixFilesCount, setFixFilesCount] = React.useState<FilesCount>(null);
   const entryKey = props.entry.instanceKey;
   const fixKey = props.fixPullRequest?.instanceKey;
+  // The header's write and facts belong to this entry. A linked fix's own Files and Checks still read and disclose,
+  // but its Merge and status never reach the issue's header: the fix PR is drawn once, by its own story step.
+  const disclosure = useTriageEvidenceDisclosure();
+  const fixDisclosure = React.useMemo(() => {
+    const { primaryWrite: _entryOnly, ...rest } = disclosure;
+    return rest;
+  }, [disclosure]);
   const publishEntryPanels = React.useCallback((panels: readonly string[] | null) => {
     setEntryPanels(panels === null ? null : { instanceKey: entryKey, panels });
   }, [entryKey]);
@@ -291,6 +298,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
                       })}
                       numberOfLines={1}
                     />
+                    <TriageEvidenceDisclosureProvider disclosure={fixDisclosure}>
                     <SourceDetailInstance
                       key={props.fixPullRequest.instanceKey}
                       mount={props.fixPullRequest}
@@ -302,6 +310,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
                       publishFilesCount={publishFixFilesCount}
                       pageScroll={props.pushed === true}
                     />
+                    </TriageEvidenceDisclosureProvider>
                   </Stack>
                 )}
               </Tabs.Item>

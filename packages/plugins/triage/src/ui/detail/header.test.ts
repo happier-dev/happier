@@ -15,7 +15,7 @@ import {
 import type { TriagePullRequestStatusV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { TriageListLaneV1, TriageListRowV1 } from '../../projection/listWindow.js';
-import { projectTriageDetailHeaderV1, readTriageDetailContextLineV1 } from './header.js';
+import { projectTriageDetailHeaderV1, readTriageDetailAttentionBadgeV1, readTriageDetailContextLineV1 } from './header.js';
 
 /**
  * The common header's own boundary.
@@ -106,7 +106,7 @@ describe('projectTriageDetailHeaderV1', () => {
             linkedSessions: [],
             linkedSessionsHasMore: false,
         });
-        expect(projected.attention).toEqual({ level: 'required', reasonLabel: 'Review requested', icon: 'review', danger: false });
+        expect(projected.attention).toEqual({ level: 'required', reasonLabel: 'Review requested', icon: 'review', danger: false, reviewRequested: true });
     });
 
     it('names the source and this entry\'s kind in the source\'s own words', () => {
@@ -203,7 +203,7 @@ describe('the detail header line (lab meta: where the entry lives, then who open
         expect(lineFor({})).toBe('example/repository #17 · Mara Oduya opened 42 minutes ago');
     });
 
-    it('leaves a pull request\'s branch pair to the facts row, where its diff size stands beside it', () => {
+    it('leaves a pull request\'s branch pair to the story\'s What changed, beside its diff', () => {
         const outcome = testkitPresentOutcome({
             locator: testkitLocator(),
             snapshot: testkitSnapshot({ title: 'Fix the parser', createdAtMs: CREATED, authorLabel: 'Mara Oduya',
@@ -234,12 +234,13 @@ describe('the detail header line (lab meta: where the entry lives, then who open
 });
 
 /**
- * The change request's facts the header reads at a glance: its diff size, one checks outcome and who reviewed it.
+ * A change request's glance cells (status, checks, review), read through the one PR facts owner.
  *
- * Each comes from the source's own live status read, so the failure this guards is the header inventing a fact the
- * source never stated (a zero diff, "no checks") or showing a stale shape for a source that states nothing.
+ * The failures this guards: an issue drawing a pull request's cells (a linked fix PR is drawn once, in its own step),
+ * cells that appear only once the status read lands (pushing the actions down), and the reader's own requested review
+ * said twice, as a cell and as a badge.
  */
-describe('the change request facts (diff size, checks outcome, reviewers)', () => {
+describe('the change request cells', () => {
     function status(overrides: Partial<TriagePullRequestStatusV1> = {}): TriagePullRequestStatusV1 {
         return {
             kind: 'status', observedAtMs: 1_000, facts: [],
@@ -247,8 +248,6 @@ describe('the change request facts (diff size, checks outcome, reviewers)', () =
             review: { decision: 'changesRequested', incomplete: false, reviewers: [
                 { id: 'u1', name: 'Mika Tanaka', verb: 'approved' },
                 { id: 'u2', name: 'Sam Okafor', verb: 'changesRequested' },
-                { id: 'u3', name: 'Ada Brook', verb: 'pending' },
-                { id: 'u4', name: 'Old Reviewer', verb: 'dismissed' },
             ] },
             merge: null,
             branch: { head: 'leeroy/server-rounding', base: 'main', additions: 28, deletions: 3 },
@@ -256,53 +255,50 @@ describe('the change request facts (diff size, checks outcome, reviewers)', () =
         };
     }
 
-    const facts = (pullRequestStatus: TriagePullRequestStatusV1 | null | undefined) => projectTriageDetailHeaderV1({
-        row: row(), lanes: [HEALTHY_LANE], connectionLabel: null, sourceDescriptor: DESCRIPTOR,
-        linkedSessions: [], linkedSessionsHasMore: false,
-        ...(pullRequestStatus === undefined ? {} : { pullRequestStatus }),
-    }).changeFacts;
+    const REVIEW_REQUESTED = { level: 'required', fromSourceInstanceId: INSTANCE, reasonId: 'involvement/review-requested', reasonLabel: 'Review requested' } as const;
 
-    it('states nothing for a source that reads no change-request status (an issue, an error group)', () => {
-        expect(facts(undefined)).toBeNull();
-        expect(facts(null)).toBeNull();
+    const project = (input: Readonly<{ kindId?: string; pullRequestStatus?: TriagePullRequestStatusV1 | null;
+        presentation?: 'active' | 'resolved' | 'closed'; attention?: TriageListRowV1['attention'] }>) => {
+        const base = row();
+        const outcome = testkitPresentOutcome({
+            locator: testkitLocator(),
+            snapshot: testkitSnapshot({ title: 'Fix the parser',
+                state: { presentation: input.presentation ?? 'active', nativeLabel: input.presentation === 'resolved' ? 'Merged' : 'Open' } }),
+            viewer: testkitViewer(),
+        });
+        return projectTriageDetailHeaderV1({
+            row: { ...base, entryRef: { ...base.entryRef, kindId: input.kindId ?? 'pull-request' },
+                content: { sourceInstanceId: INSTANCE, observedAtMs: 1_000, outcome },
+                observations: [{ sourceInstanceId: INSTANCE, observedAtMs: 1_000, outcome }],
+                attention: input.attention ?? null },
+            lanes: [HEALTHY_LANE], connectionLabel: null, sourceDescriptor: DESCRIPTOR,
+            linkedSessions: [], linkedSessionsHasMore: false,
+            ...(input.pullRequestStatus === undefined ? {} : { pullRequestStatus: input.pullRequestStatus }),
+        });
+    };
+
+    it('draws no cells for an issue, even when a status is offered beside it (a linked fix PR)', () => {
+        expect(project({ kindId: 'issue' }).pullRequestFacts).toBeNull();
+        expect(project({ kindId: 'issue', pullRequestStatus: status() }).pullRequestFacts).toBeNull();
     });
 
-    it('carries the diff size the source counted, and none when it did not count it', () => {
-        expect(facts(status())?.diff).toEqual({ additions: 28, deletions: 3 });
-        expect(facts(status({ branch: { head: 'a', base: 'b' } }))?.diff).toBeNull();
-        expect(facts(status({ branch: null }))?.diff).toBeNull();
+    it('holds a pull request\'s cells from first paint, unknown until its status read lands', () => {
+        expect(project({}).pullRequestFacts).toEqual({ branch: null, checks: { kind: 'unknown' }, review: { kind: 'unknown' }, merge: { kind: 'unknown' } });
     });
 
-    it('carries one checks rollup from the source\'s counts, never a verdict over checks nobody read', () => {
-        expect(facts(status())?.checks).toEqual({ failingCount: 0, runningCount: 0, passingCount: 5 });
-        expect(facts(status({ checks: { state: 'incomplete', passed: null, failed: 2, pending: 1, total: null, rows: [], incomplete: true } }))?.checks)
-            .toEqual({ incomplete: true, failingCount: 2, runningCount: 1 });
-        // No checks configured, or counts the source could not establish: nothing to say.
-        expect(facts(status({ checks: { state: 'none', passed: 0, failed: 0, pending: 0, total: 0, rows: [], incomplete: false } }))?.checks).toBeNull();
-        expect(facts(status({ checks: { state: 'complete', passed: null, failed: null, pending: null, total: null, rows: [], incomplete: false } }))?.checks).toBeNull();
-        expect(facts(status({ checks: null }))?.checks).toBeNull();
+    it('fills them from the PR facts owner once the status read lands', () => {
+        const facts = project({ pullRequestStatus: status() }).pullRequestFacts;
+        expect(facts?.checks).toEqual({ kind: 'passed', count: 5, cancelled: 0 });
+        expect(facts?.review).toEqual({ kind: 'changesRequested', people: ['Sam Okafor'] });
     });
 
-    it('groups reviewers by where their review stands, most consequential first, leaving dismissed reviews out', () => {
-        expect(facts(status())?.reviewers).toEqual([
-            { verb: 'changesRequested', names: ['Sam Okafor'] },
-            { verb: 'approved', names: ['Mika Tanaka'] },
-            { verb: 'pending', names: ['Ada Brook'] },
-        ]);
-        expect(facts(status({ review: null }))?.reviewers).toEqual([]);
+    it('says a merged pull request is merged, from its own lifecycle', () => {
+        expect(project({ presentation: 'resolved', pullRequestStatus: status() }).pullRequestFacts?.merge).toEqual({ kind: 'merged' });
     });
 
-    it('names the branch pair from the status read when the entry\'s own snapshot did not carry it', () => {
-        const projected = (pullRequestStatus: TriagePullRequestStatusV1 | null) => projectTriageDetailHeaderV1({
-            row: row(), lanes: [HEALTHY_LANE], connectionLabel: null, sourceDescriptor: DESCRIPTOR,
-            linkedSessions: [], linkedSessionsHasMore: false, pullRequestStatus,
-        }).branches;
-        expect(projected(status())).toEqual({ head: 'leeroy/server-rounding', base: 'main' });
-        expect(projected(status({ branch: { head: 'leeroy/server-rounding' } }))).toBeNull();
-        expect(projected(null)).toBeNull();
-    });
-
-    it('states nothing when the status read carries none of the three facts', () => {
-        expect(facts(status({ checks: null, review: null, branch: null }))).toBeNull();
+    it('lets the Reviewers cell say the reader\'s own requested review, so the badge does not say it again', () => {
+        expect(readTriageDetailAttentionBadgeV1(project({ attention: REVIEW_REQUESTED }))).toBeNull();
+        // An issue has no Reviewers cell: its badge stays.
+        expect(readTriageDetailAttentionBadgeV1(project({ kindId: 'issue', attention: REVIEW_REQUESTED }))?.reasonLabel).toBe('Review requested');
     });
 });

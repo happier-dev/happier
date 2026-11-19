@@ -453,7 +453,6 @@
   "plugins.triage.surface.detail.openedAt": "Otwarto {age}",
   "plugins.triage.surface.detail.openedBy": "{author} otworzył(a) {age}",
   "plugins.triage.surface.detail.via": "przez {name}",
-  "plugins.triage.surface.detail.branches": "{head} → {base}",
   "plugins.triage.surface.detail.facts.status": "Status",
   "plugins.triage.surface.detail.facts.checks": "Testy",
   "plugins.triage.surface.detail.facts.reviewers": "Recenzenci",

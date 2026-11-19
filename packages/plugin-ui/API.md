@@ -288,6 +288,8 @@ Declaration: `dist/index.d.ts`
 - type `ExecutableParticipantPickerSection` from `dist/index.d.ts`
 - type `ExecutableParticipantPickerSelection` from `dist/index.d.ts`
 - type `ExtensionSelectionV1` from `dist/index.d.ts`
+- value `FactStrip` from `dist/index.d.ts`
+- type `FactStripProps` from `dist/index.d.ts`
 - value `Field` from `dist/index.d.ts`
 - type `FieldProps` from `dist/index.d.ts`
 - type `FindCapabilities` from `dist/index.d.ts`
@@ -613,6 +615,10 @@ Declaration: `dist/index.d.ts`
 - type `HappierEmptySlotProps` from `dist/index.d.ts`
 - value `HappierFactLine` from `dist/index.d.ts`
 - type `HappierFactLineProps` from `dist/index.d.ts`
+- value `HappierFactStrip` from `dist/index.d.ts`
+- type `HappierFactStripFact` from `dist/index.d.ts`
+- type `HappierFactStripProps` from `dist/index.d.ts`
+- type `HappierFactStripTextProps` from `dist/index.d.ts`
 - value `HappierField` from `dist/index.d.ts`
 - value `HappierFieldBoxChevron` from `dist/index.d.ts`
 - type `HappierFieldBoxColors` from `dist/index.d.ts`
@@ -2300,6 +2306,8 @@ Declaration: `dist/components/index.d.ts`
 - type `ExecutableParticipantPickerSection` from `dist/components/index.d.ts`
 - type `ExecutableParticipantPickerSelection` from `dist/components/index.d.ts`
 - type `ExtensionSelectionV1` from `dist/components/index.d.ts`
+- value `FactStrip` from `dist/components/index.d.ts`
+- type `FactStripProps` from `dist/components/index.d.ts`
 - value `Field` from `dist/components/index.d.ts`
 - type `FieldProps` from `dist/components/index.d.ts`
 - type `FindCapabilities` from `dist/components/index.d.ts`
@@ -2625,6 +2633,10 @@ Declaration: `dist/components/index.d.ts`
 - type `HappierEmptySlotProps` from `dist/components/index.d.ts`
 - value `HappierFactLine` from `dist/components/index.d.ts`
 - type `HappierFactLineProps` from `dist/components/index.d.ts`
+- value `HappierFactStrip` from `dist/components/index.d.ts`
+- type `HappierFactStripFact` from `dist/components/index.d.ts`
+- type `HappierFactStripProps` from `dist/components/index.d.ts`
+- type `HappierFactStripTextProps` from `dist/components/index.d.ts`
 - value `HappierField` from `dist/components/index.d.ts`
 - value `HappierFieldBoxChevron` from `dist/components/index.d.ts`
 - type `HappierFieldBoxColors` from `dist/components/index.d.ts`

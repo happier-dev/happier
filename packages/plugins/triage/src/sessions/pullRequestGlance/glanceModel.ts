@@ -142,7 +142,12 @@ function projectReview(review: Status['review']): PullRequestGlanceReviewV1 {
     return { kind: 'approved', people: by('approved') };
   if (review.decision === 'reviewRequired')
     return { kind: 'reviewRequired', people: by('pending') };
-  return review.reviewers.length === 0 ? { kind: 'none' } : { kind: 'unknown' };
+  // No overall decision (a repository that requires none): the reviews that were read still say where it stands,
+  // the most consequential first. Comments alone are no verdict.
+  if (by('changesRequested').length > 0) return { kind: 'changesRequested', people: by('changesRequested') };
+  if (by('approved').length > 0) return { kind: 'approved', people: by('approved') };
+  if (by('pending').length > 0) return { kind: 'reviewRequired', people: by('pending') };
+  return { kind: 'none' };
 }
 
 function projectMerge(

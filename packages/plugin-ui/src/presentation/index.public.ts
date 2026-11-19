@@ -723,6 +723,12 @@ export {
   type HappierRowActionRevealSlotProps,
 } from './collection/RowActionRevealSlot.js';
 export {
+  HappierFactStrip,
+  type HappierFactStripFact,
+  type HappierFactStripProps,
+  type HappierFactStripTextProps,
+} from './data/FactStrip.js';
+export {
   HappierDiffStat,
   formatHappierDiffStat,
   type HappierDiffStatKind,

@@ -453,7 +453,6 @@
   "plugins.triage.surface.detail.openedAt": "Obert {age}",
   "plugins.triage.surface.detail.openedBy": "{author} ho va obrir {age}",
   "plugins.triage.surface.detail.via": "via {name}",
-  "plugins.triage.surface.detail.branches": "{head} → {base}",
   "plugins.triage.surface.detail.facts.status": "Estat",
   "plugins.triage.surface.detail.facts.checks": "Comprovacions",
   "plugins.triage.surface.detail.facts.reviewers": "Revisors",

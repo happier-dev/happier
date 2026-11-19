@@ -453,7 +453,6 @@
   "plugins.triage.surface.detail.openedAt": "Открыто {age}",
   "plugins.triage.surface.detail.openedBy": "{author} открыл(а) {age}",
   "plugins.triage.surface.detail.via": "через {name}",
-  "plugins.triage.surface.detail.branches": "{head} → {base}",
   "plugins.triage.surface.detail.facts.status": "Статус",
   "plugins.triage.surface.detail.facts.checks": "Проверки",
   "plugins.triage.surface.detail.facts.reviewers": "Рецензенты",

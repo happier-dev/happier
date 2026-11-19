@@ -453,7 +453,6 @@
   "plugins.triage.surface.detail.openedAt": "{age}に作成",
   "plugins.triage.surface.detail.openedBy": "{author}が{age}に作成",
   "plugins.triage.surface.detail.via": "{name} 経由",
-  "plugins.triage.surface.detail.branches": "{head} → {base}",
   "plugins.triage.surface.detail.facts.status": "ステータス",
   "plugins.triage.surface.detail.facts.checks": "チェック",
   "plugins.triage.surface.detail.facts.reviewers": "レビュアー",

@@ -45,6 +45,23 @@ const binding = (
 });
 
 describe('PR glance projection', () => {
+  it('reads where reviews stand when the forge states no overall decision, never "not read yet"', () => {
+    // GitHub sends no review decision for a repository that requires none; the reviews it read still stand.
+    const review = (reviewers: NonNullable<TriagePullRequestStatusV1['review']>['reviewers']) =>
+      projectPullRequestStatusFactsV1(status({ review: { decision: null, incomplete: false, reviewers } })).review;
+    expect(review([
+      { id: 'c', name: 'coderabbitai', verb: 'approved' },
+      { id: 'h', name: 'happier-bot', verb: 'commented' },
+    ])).toEqual({ kind: 'approved', people: ['coderabbitai'] });
+    expect(review([
+      { id: 'a', name: 'Ada', verb: 'approved' },
+      { id: 'm', name: 'Mara', verb: 'changesRequested' },
+    ])).toEqual({ kind: 'changesRequested', people: ['Mara'] });
+    expect(review([{ id: 'l', name: 'leeroy', verb: 'pending' }])).toEqual({ kind: 'reviewRequired', people: ['leeroy'] });
+    expect(review([{ id: 'h', name: 'happier-bot', verb: 'commented' }])).toEqual({ kind: 'none' });
+    expect(review([])).toEqual({ kind: 'none' });
+  });
+
   it.each([
     { state: 'passed' as const, expected: 'unknown' },
     { state: 'failed' as const, expected: 'failing' },

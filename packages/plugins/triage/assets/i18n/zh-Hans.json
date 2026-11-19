@@ -453,7 +453,6 @@
   "plugins.triage.surface.detail.openedAt": "{age}打开",
   "plugins.triage.surface.detail.openedBy": "{author} {age}打开",
   "plugins.triage.surface.detail.via": "通过 {name}",
-  "plugins.triage.surface.detail.branches": "{head} → {base}",
   "plugins.triage.surface.detail.facts.status": "状态",
   "plugins.triage.surface.detail.facts.checks": "检查",
   "plugins.triage.surface.detail.facts.reviewers": "审阅者",

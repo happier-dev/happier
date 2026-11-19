@@ -88,7 +88,7 @@ import { TriagePullRequestReviewChooser } from '../header/PullRequestReviewChoos
 import type { TriageActionTargetV1 } from '../state/actionTarget.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import { presentInternalTaskReadFailure } from '../../internalTasks/readFailure.js';
-import { projectTriageDetailHeaderV1, readTriageDetailContextSegmentsV1, type TriageDetailHeaderV1 } from './header.js';
+import { projectTriageDetailHeaderV1, readTriageDetailAttentionBadgeV1, readTriageDetailContextSegmentsV1, type TriageDetailHeaderV1 } from './header.js';
 import { TriageDetailHeaderFacts } from './headerFacts.js';
 import {
   readTriageSourceDetailContributionV1,
@@ -268,6 +268,8 @@ export type TriageDetailHeaderViewProps = Readonly<{
   lastKnown?: boolean;
   /** The entry action row carries the attention reason at its far end, so the header does not repeat it. */
   attentionInActions?: boolean;
+  /** The detail is the page on a phone: the facts cells go two to a row. */
+  narrow?: boolean;
   /** Visible direct Pin/Unpin for the selected entry. */
   pin?: TriageDetailPinActionV1;
   linkedSessionsPageState?: 'idle' | 'loading' | 'failed';
@@ -637,6 +639,7 @@ export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): Reac
   const text = usePluginTranslation();
   const surfaceContext = useSurfaceContext();
   const header = props.header;
+  const attentionBadge = readTriageDetailAttentionBadgeV1(header);
   const identity = renderTriageDetailHeaderV1({ header, text, locale: surfaceContext.locale, nowMs: Date.now(), pin: props.pin });
   const presenceCopy = header.presence === 'present'
     ? null
@@ -677,9 +680,9 @@ export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): Reac
           <Stack grow><Text variant="micro" tone="secondary" value={typeof identity.subtitle === 'string' ? identity.subtitle : identity.subtitle.join(' · ')} numberOfLines={1} /></Stack>
         </Row>
       )}
-      <TriageDetailHeaderFacts header={header} />
+      <TriageDetailHeaderFacts header={header} narrow={props.narrow === true} />
       {props.lastKnown === true ? <Status tone="muted" labelKey="plugins.triage.surface.detail.lastKnown" label="These are the last facts this page held for this entry, and they may be out of date." /> : null}
-      {header.attention === null || props.attentionInActions === true ? null : <TriageAttentionBadge attention={header.attention} />}
+      {attentionBadge === null || props.attentionInActions === true ? null : <TriageAttentionBadge attention={attentionBadge} />}
       {presenceCopy === null ? null : <Status tone="warning" label={presenceCopy} />}
       {props.showLinkedSessions === false ? null : <TriageLinkedSessions key={props.instanceKey} sessions={header.linkedSessions} hasMore={header.linkedSessionsHasMore} pageState={props.linkedSessionsPageState} onLoadMore={props.onLoadMoreLinkedSessions} onSelect={props.onSelectLinkedSession} />}
     </>
@@ -1029,8 +1032,9 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   // A pushed phone detail on its Session tab gives the chat the page: the entry's facts step aside (the host band's
   // identity and the pinned actions stay), and return with any other tab.
   const sessionFocus = props.pushed === true && tabSelection.value === 'session';
-  const attention = header.attention === null || pinned ? undefined : (
-    <TriageAttentionBadge attention={header.attention} />
+  const attentionBadge = readTriageDetailAttentionBadgeV1(header);
+  const attention = attentionBadge === null || pinned ? undefined : (
+    <TriageAttentionBadge attention={attentionBadge} />
   );
   // A task's Overview is one numbered story around the source's own detail (lab t1): Notes, Blocked by, Sub-tasks,
   // then the agent's work, which the header's Session list therefore leaves to it.
@@ -1278,6 +1282,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
         onClose={props.onClose}
         showLinkedSessions={composition.kind === 'whole' && !isTask}
         attentionInActions={actionRegionShown && !pinned}
+        narrow={props.pushed === true}
         onSelectLinkedSession={selectInlineSession}
         {...(detail?.kind === 'ready' ? {
           linkedSessionsPageState: detail.linkedSessionsPageState,

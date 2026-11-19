@@ -26,7 +26,7 @@ import {
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
-import { TriageDetailPanel, useTriageDetailFilesCount, useTriageDetailPanelOpener, useTriageDetailFixPullRequestNavigation, type TriageDetailFixPullRequestNavigationV1 } from '@happier-dev/triage-sources/ui';
+import { TriageDetailPanel, TriageEvidenceDisclosureProvider, useTriageDetailFilesCount, useTriageDetailPanelOpener, useTriageDetailFixPullRequestNavigation, useTriageEvidenceDisclosure, type TriageDetailFixPullRequestNavigationV1, type TriageEvidenceDisclosureV1 } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { TriageDetailPageLeadProvider, TriageDetailTabbedBody } from './body.js';
@@ -178,15 +178,18 @@ let session: React.ReactNode;
 let fixNavigation: TriageDetailFixPullRequestNavigationV1 | undefined;
 let pushed = false;
 let pageLead: React.ReactNode = null;
+let fixMount: React.ComponentProps<typeof TriageDetailTabbedBody>['fixPullRequest'] = null;
+let disclosure: TriageEvidenceDisclosureV1 | null = null;
+let renderAdmitted: ((launchInput: unknown) => React.ReactNode) | null = null;
 const renderBody = defineUiSurface(function Body(
   _context: RenderContext,
 ): React.ReactElement {
-  return (
+  const body = (
     <TriageDetailPageLeadProvider lead={pageLead}>
     <TriageDetailTabbedBody
       tabs={tabs}
       entry={{ surface: SURFACE, input: INPUT, instanceKey: 'entry-a' }}
-      fixPullRequest={null}
+      fixPullRequest={fixMount}
       fixPullRequestNavigation={fixNavigation}
       pushed={pushed}
       session={session}
@@ -204,11 +207,16 @@ const renderBody = defineUiSurface(function Body(
     />
     </TriageDetailPageLeadProvider>
   );
+  return disclosure === null ? body
+    : <TriageEvidenceDisclosureProvider disclosure={disclosure}>{body}</TriageEvidenceDisclosureProvider>;
 });
 
 const mounted: PluginUiTestkit[] = [];
 afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();
+  fixMount = null;
+  disclosure = null;
+  renderAdmitted = null;
 });
 
 async function mountBody(
@@ -240,7 +248,8 @@ async function mountBody(
               : { ...MOUNT, inputSchema: TriageDetailSurfaceInputV1JsonSchema },
         ],
         readContributorManifest: () => MANIFEST,
-        ...(probe === undefined ? {} : { renderAdmittedContent: () => probe }),
+        ...(renderAdmitted !== null ? { renderAdmittedContent: ({ launchInput }: { launchInput: unknown }) => renderAdmitted?.(launchInput) }
+          : probe === undefined ? {} : { renderAdmittedContent: () => probe }),
       },
     }),
     handlers: {
@@ -586,6 +595,37 @@ describe('the tabbed detail body (r0.42)', () => {
     });
     await expect(body.getByText(FALLBACK)).resolves.toBeDefined();
   });
+  it("keeps a linked fix PR's write and status out of the issue's header: the fix is drawn once, in its own step", async () => {
+    const plan = planTriageDetailTabsV1({
+      workflowSubject: 'issue',
+      entryTabs: [{ kind: 'shared', id: 'overview' }],
+      fixPullRequest: { detailTabs: [{ kind: 'shared', id: 'files', scrollOwner: 'list' }] },
+    });
+    const fixInput = { ...INPUT, observation: { ...INPUT.observation,
+      entryRef: { ...INPUT.observation.entryRef, entryId: 'fix-pr-7' } } } as TriageDetailSurfaceInputV1;
+    fixMount = { surface: SURFACE, input: fixInput, instanceKey: 'fix-a' };
+    const offered: string[] = [];
+    disclosure = { available: false, disclose: async () => ({ kind: 'inert' }),
+      primaryWrite: { offer: (write) => { if (write !== null) offered.push('write'); },
+        offerStatus: (status) => { if (status !== null) offered.push('status'); } } };
+    function Publisher(props: Readonly<{ entryId: string }>) {
+      const host = useTriageEvidenceDisclosure().primaryWrite;
+      React.useLayoutEffect(() => {
+        if (props.entryId !== 'fix-pr-7') return;
+        host?.offerStatus?.({ kind: 'unavailable', failure: { code: 'unavailable' } } as never);
+        host?.offer({ title: 'Merge' } as never);
+      }, [host, props.entryId]);
+      return <Text value={`${props.entryId} ${host === undefined ? 'publishes nothing' : 'publishes to the header'}`} />;
+    }
+    renderAdmitted = (launchInput) => <Publisher
+      entryId={(launchInput as TriageDetailSurfaceInputV1).observation.entryRef.entryId} />;
+    const body = await mountBody(plan.kind === 'tabs' ? plan.tabs : [], <Text value="unused" />, undefined, 'files', undefined, 'list');
+    await act(async () => {
+      await body.press(await body.getByRole('tab', { name: 'Files' }));
+    });
+    expect(offered).toEqual([]);
+    await expect(body.getByText('fix-pr-7 publishes nothing')).resolves.toBeDefined();
+  });
   it("opens on Overview with the story rail's agent step, and names the tabs in Triage's order", async () => {
     const body = await mountBody(PR_TABS.kind === 'tabs' ? PR_TABS.tabs : []);
 
@@ -603,21 +643,23 @@ describe('the tabbed detail body (r0.42)', () => {
   });
 
   it("names a tab's count beside its title when the source summarized it", async () => {
+    // An issue's Checks come from its linked fix, which its header has no cell for: the tab says their outcome.
     const plan = planTriageDetailTabsV1({
-      workflowSubject: 'pullRequest',
-      entryTabs: [
-        { kind: 'shared', id: 'overview' },
-        { kind: 'shared', id: 'files', scrollOwner: 'list' },
-        { kind: 'shared', id: 'checks', summaryFact: 'example/checks' },
-      ],
-      entryFacts: [
-        {
-          id: 'example/checks',
-          importance: 'primary',
-          value: { kind: 'status', value: '2 failing', tone: 'danger' },
-        },
-      ],
-      fixPullRequest: null,
+      workflowSubject: 'issue',
+      entryTabs: [{ kind: 'shared', id: 'overview' }],
+      fixPullRequest: {
+        detailTabs: [
+          { kind: 'shared', id: 'files', scrollOwner: 'list' },
+          { kind: 'shared', id: 'checks', summaryFact: 'example/checks' },
+        ],
+        facts: [
+          {
+            id: 'example/checks',
+            importance: 'primary',
+            value: { kind: 'status', value: '2 failing', tone: 'danger' },
+          },
+        ],
+      },
     });
     const body = await mountBody(plan.kind === 'tabs' ? plan.tabs : []);
     const strip = document.querySelector('[role="tablist"]')?.textContent ?? '';

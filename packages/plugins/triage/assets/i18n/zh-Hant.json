@@ -453,7 +453,6 @@
   "plugins.triage.surface.detail.openedAt": "{age}開啟",
   "plugins.triage.surface.detail.openedBy": "{author} {age}開啟",
   "plugins.triage.surface.detail.via": "透過 {name}",
-  "plugins.triage.surface.detail.branches": "{head} → {base}",
   "plugins.triage.surface.detail.facts.status": "狀態",
   "plugins.triage.surface.detail.facts.checks": "檢查",
   "plugins.triage.surface.detail.facts.reviewers": "審閱者",

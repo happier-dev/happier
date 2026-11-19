@@ -7,8 +7,8 @@ import {
   type TriageSourceEntrySnapshotV1,
   type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
-import type { TriageDetailChecksRollupV1 } from '@happier-dev/triage-sources/ui';
-import { readTriageAttentionReasonDangerV1, readTriageAttentionReasonIconV1 } from '../../corpus/attention/deriveAttention.js';
+import { isTriageReviewRequestedReasonV1, readTriageAttentionReasonDangerV1, readTriageAttentionReasonIconV1 } from '../../corpus/attention/deriveAttention.js';
+import { projectPullRequestStatusFactsV1, type PullRequestStatusFactsV1 } from '../../sessions/pullRequestGlance/glanceModel.js';
 
 import type { ProjectedObservationV1 } from '../../corpus/fold/projectedObservation.js';
 import type { TriageListLaneV1, TriageListRowV1 } from '../../projection/listWindow.js';
@@ -36,22 +36,6 @@ import { projectTriageEntryDisplay, type TriageEntryDisplayTextV1, type TriageEn
  * declared kinds this entry is, and what the source calls it — and that is the
  * §2.2 decision this projection exists to make in one place.
  */
-
-/** Where one reviewer's review stands, in the order a reader acts on it. */
-export type TriageDetailReviewerVerbV1 = 'changesRequested' | 'approved' | 'pending' | 'commented';
-
-/**
- * A change request's facts the header reads at a glance, as the source's own live status read states them.
- *
- * Each member is `null` (or empty) when that read did not state it, never a zero: a diff nobody counted is not
- * "+0 −0" and checks nobody read are not "none".
- */
-export type TriageDetailChangeFactsV1 = Readonly<{
-  diff: Readonly<{ additions: number; deletions: number }> | null;
-  /** The one rollup the detail story's Checks step also says, so the two never read two ways. */
-  checks: TriageDetailChecksRollupV1 | null;
-  reviewers: readonly Readonly<{ verb: TriageDetailReviewerVerbV1; names: readonly string[] }>[];
-}>;
 
 export type TriageDetailHeaderV1 = Readonly<{
   title: string;
@@ -114,7 +98,11 @@ export type TriageDetailHeaderV1 = Readonly<{
   /** The facts the row's kind glyph and its tone are read from, so the header wears the row's own mark. */
   markFacts: Pick<TriageEntryDisplayV1, 'lifecyclePresentation' | 'detailKind' | 'tone' | 'detailDanger'>;
   /** Why this entry is asking for the reader, in the source's own words. */
-  attention: Readonly<{ level: 'required' | 'suggested'; reasonLabel: string; icon: string | null; danger: boolean }> | null;
+  attention: Readonly<{
+    level: 'required' | 'suggested'; reasonLabel: string; icon: string | null; danger: boolean;
+    /** The reader's own review is requested: the facts' Reviewers cell says so ("Waiting on you"). */
+    reviewRequested: boolean;
+  }> | null;
   /** When the selected connection last answered for this entry; what a failed read says it still holds. */
   lastReadAtMs: number | null;
   /** How the aggregate's own knowledge of this entry stands right now. */
@@ -122,22 +110,13 @@ export type TriageDetailHeaderV1 = Readonly<{
   webUrl: string | null;
   linkedSessions: readonly TriageLinkedSessionProjectionV1[];
   linkedSessionsHasMore: boolean;
-  /** Diff size, checks outcome and reviewers; `null` for an entry whose source read states none of them. */
-  changeFacts: TriageDetailChangeFactsV1 | null;
+  /**
+   * A change request's glance facts (status, checks, review) from the one PR facts owner every PR presentation shares,
+   * read from the source's live status. Present for every pull/merge request from its first paint, its facts unknown
+   * until that read lands, so the header's cells hold their place; `null` for any other kind (an issue, an error group).
+   */
+  pullRequestFacts: PullRequestStatusFactsV1 | null;
 }>;
-
-const REVIEWER_VERB_ORDER: readonly TriageDetailReviewerVerbV1[] = ['changesRequested', 'approved', 'pending', 'commented'];
-
-function readChecksRollup(checks: TriagePullRequestStatusV1['checks']): TriageDetailChecksRollupV1 | null {
-  // No checks configured, or a read that established nothing, has no outcome to state.
-  if (checks === null || checks.state === 'none' || checks.state === 'unknown') return null;
-  if (checks.failed === null || checks.pending === null) return null;
-  if (checks.state === 'incomplete' || checks.incomplete) {
-    return { incomplete: true, failingCount: checks.failed, runningCount: checks.pending };
-  }
-  return checks.passed === null ? null
-    : { failingCount: checks.failed, runningCount: checks.pending, passingCount: checks.passed };
-}
 
 function readStatusBranches(status: TriagePullRequestStatusV1 | null | undefined): TriageDetailHeaderV1['branches'] {
   const head = status?.branch?.head;
@@ -145,19 +124,11 @@ function readStatusBranches(status: TriagePullRequestStatusV1 | null | undefined
   return head === undefined || base === undefined ? null : Object.freeze({ head, base });
 }
 
-/** The live status read's three header facts; `null` when it states none of them. */
-function projectChangeFacts(status: TriagePullRequestStatusV1 | null | undefined): TriageDetailChangeFactsV1 | null {
-  if (status === null || status === undefined) return null;
-  const branch = status.branch;
-  const diff = branch?.additions === undefined || branch.deletions === undefined
-    ? null : Object.freeze({ additions: branch.additions, deletions: branch.deletions });
-  const checks = readChecksRollup(status.checks);
-  const reviewers = REVIEWER_VERB_ORDER.flatMap((verb) => {
-    const names = (status.review?.reviewers ?? []).filter((reviewer) => reviewer.verb === verb).map((reviewer) => reviewer.name);
-    return names.length === 0 ? [] : [Object.freeze({ verb, names: Object.freeze(names) })];
-  });
-  if (diff === null && checks === null && reviewers.length === 0) return null;
-  return Object.freeze({ diff, checks, reviewers: Object.freeze(reviewers) });
+/** A pull request's lifecycle in the PR facts owner's words: the source-neutral presentation of its state. */
+function readPullRequestLinkState(
+  presentation: TriageSourceEntrySnapshotV1['state']['presentation'] | undefined,
+): Parameters<typeof projectPullRequestStatusFactsV1>[1] {
+  return presentation === 'resolved' ? 'merged' : presentation === 'closed' ? 'closed' : undefined;
 }
 
 function selectedObservation(row: TriageListRowV1): ProjectedObservationV1 | null {
@@ -254,12 +225,14 @@ export function projectTriageDetailHeaderV1(
       // The same mark the row's chip leads with, from the one reason-icon owner.
       icon: readTriageAttentionReasonIconV1(row.attention.reasonId),
       danger: readTriageAttentionReasonDangerV1(row.attention.reasonId),
+      reviewRequested: isTriageReviewRequestedReasonV1(row.attention.reasonId),
     }),
     presence: row.presence.kind,
     webUrl: present?.locator.webUrl ?? null,
     linkedSessions: input.linkedSessions,
     linkedSessionsHasMore: input.linkedSessionsHasMore,
-    changeFacts: projectChangeFacts(input.pullRequestStatus),
+    pullRequestFacts: kind?.workflowSubject !== 'pullRequest' ? null
+      : projectPullRequestStatusFactsV1(input.pullRequestStatus ?? null, readPullRequestLinkState(present?.snapshot.state.presentation)),
   });
 }
 
@@ -267,7 +240,7 @@ export function projectTriageDetailHeaderV1(
  * The line under the detail title: where the entry lives, then who opened it and when
  * ("example/repository #17 · You opened 42 minutes ago"). The source's brand mark leads it and the kind glyph sits
  * beside the title, so the source's name and the state word are not repeated in words. A pull request's branch pair
- * is not here: it leads the facts row under the header, beside the diff size it belongs with. The connection is named
+ * is not here: the story's What changed says it beside the diff, and the cells under the line say its state. The connection is named
  * only when the reader has more than one connection to this source, which is the only time there is one to tell
  * apart.
  */
@@ -292,6 +265,14 @@ export function readTriageDetailContextSegmentsV1(
       : text('plugins.triage.surface.detail.via', 'via {name}', { name: header.connectionLabel }),
   ].filter((part): part is string => part !== null && part.length > 0);
   return parts;
+}
+
+/**
+ * The attention badge the detail draws, if any: the reader's own requested review is said by the facts' Reviewers
+ * cell ("Waiting on you"), so a pull request's header does not say it a second time as a badge.
+ */
+export function readTriageDetailAttentionBadgeV1(header: TriageDetailHeaderV1): TriageDetailHeaderV1['attention'] {
+  return header.attention?.reviewRequested === true && header.pullRequestFacts !== null ? null : header.attention;
 }
 
 /** The same facts as one line, for a single-line text (the inline header); a host header takes the segments. */

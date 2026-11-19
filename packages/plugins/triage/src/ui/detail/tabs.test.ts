@@ -79,6 +79,16 @@ describe('the tab summaries (Files 17, Checks 2 failing)', () => {
     ? []
     : plan.tabs.map((tab) => [tab.id, tab.summary ?? null]));
 
+  it('leaves a pull request\'s own checks outcome to its header\'s Checks cell, so the page says it once', () => {
+    const plan = planTriageDetailTabsV1({
+      workflowSubject: 'pullRequest',
+      entryTabs: [shared('overview'), { kind: 'shared', id: 'checks', summaryFact: 'example/checks' }],
+      entryFacts: [failing],
+      fixPullRequest: null,
+    });
+    expect(summaries(plan)).toEqual([['overview', null], ['checks', null]]);
+  });
+
   it('reads the fact each declaring source named, from that source\'s own entry', () => {
     const plan = planTriageDetailTabsV1({
       workflowSubject: 'issue',

@@ -104,6 +104,7 @@ export { Avatar, type AvatarProps } from './Avatar.js';
 export { DetailPage, DetailsPane, DetailsPaneFooter, useDetailPageLead, type DetailPageProps, type DetailsPaneProps } from './DetailsPane.js';
 export { DetailsPaneOpenAsPageButton, type DetailsPaneOpenAsPageButtonProps } from './DetailsPaneOpenAsPageButton.js';
 export { DiffStat, type DiffStatProps } from './DiffStat.js';
+export { FactStrip, type FactStripProps } from './FactStrip.js';
 export { InlineCode, type InlineCodeProps } from './InlineCode.js';
 export { TaskStatusGlyph, type TaskStatusCategory, type TaskStatusGlyphProps } from './TaskStatusGlyph.js';
 export { ProgressRing, type ProgressRingProps } from './ProgressRing.js';
@@ -569,6 +570,12 @@ export {
   type HappierDiffStatProps,
   type HappierDiffStatTextProps,
 } from '../presentation/content/DiffStat.js';
+export {
+  HappierFactStrip,
+  type HappierFactStripFact,
+  type HappierFactStripProps,
+  type HappierFactStripTextProps,
+} from '../presentation/data/FactStrip.js';
 export {
   HAPPIER_INLINE_CODE_METRICS,
   HappierInlineCode,

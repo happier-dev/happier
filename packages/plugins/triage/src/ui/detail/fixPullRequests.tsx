@@ -163,7 +163,8 @@ export function TriageFixPullRequests(props: Readonly<{
       triggerAppearance="control"
       triggerIcon="add"
       triggerAccessibilityLabel={linkLabel}
-      items={offers.map((offer) => ({ id: refKey(offer.entryRef), label: offer.title }))}
+      // Two pull requests may share a title; the repository under each tells them apart.
+      items={offers.map((offer) => ({ id: refKey(offer.entryRef), label: offer.title, subtitle: offer.scopeLabel }))}
       onSelect={(id) => linkOffer(offers.find((candidate) => refKey(candidate.entryRef) === id))}
     />
   );

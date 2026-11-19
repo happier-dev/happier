@@ -99,7 +99,11 @@ export function planTriageDetailTabsV1(input: Readonly<{
     }
     const declared = declaredShared(input.entryTabs, id);
     if (declared !== undefined) {
-      tabs.push(Object.freeze({ kind: 'shared', id, frameId: id, from: 'entry', ...presentationOf(declared, input.entryFacts) }));
+      const presentation = presentationOf(declared, input.entryFacts);
+      // A pull request's own checks outcome is its header's Checks cell (ideas-1118 B): the tab names its place only.
+      const { summary: _inHeader, ...withoutSummary } = presentation;
+      tabs.push(Object.freeze({ kind: 'shared', id, frameId: id, from: 'entry',
+        ...(id === 'checks' && input.workflowSubject === 'pullRequest' ? withoutSummary : presentation) }));
     } else if (id === 'overview') {
       tabs.push(Object.freeze({ kind: 'shared', id, frameId: id, from: 'none' }));
     }

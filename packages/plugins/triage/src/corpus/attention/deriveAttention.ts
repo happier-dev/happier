@@ -111,6 +111,11 @@ export function deriveDisplayedAttention(
 const SECURITY_SEVERITY_REASON_ID = 'github-security-severity';
 
 /** Whether this reason is a failure rather than a request for the reader. */
+/** Whether the reason is the reader's own requested review (involvement), which a pull request's reviewers say. */
+export function isTriageReviewRequestedReasonV1(reasonId: string): boolean {
+    return INVOLVEMENT_REASONS.some(([value, reason]) => value === 'reviewRequested' && reason.reasonId === reasonId);
+}
+
 export function readTriageAttentionReasonDangerV1(reasonId: string): boolean {
     return reasonId === SECURITY_SEVERITY_REASON_ID;
 }

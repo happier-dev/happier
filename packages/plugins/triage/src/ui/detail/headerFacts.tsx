@@ -1,171 +1,72 @@
 import * as React from 'react';
 
 import {
-  DiffStat,
-  Icon,
-  Row,
-  Stack,
-  Text,
+  Avatar,
+  FactStrip,
+  HappierPageSheet,
+  resolveHappierWorkTheme,
+  usePluginTheme,
   usePluginTranslation,
-  useSurfaceContext,
+  type HappierFactStripFact,
+  type TextTone,
 } from '@happier-dev/plugin-ui';
-import { TriageChecksRollupLine } from '@happier-dev/triage-sources/ui';
 
-import type {
-  TriageDetailHeaderV1,
-  TriageDetailReviewerVerbV1,
-} from './header.js';
+import { checksFact, mergeFact, reviewFact } from '../../sessions/pullRequestGlance/factPresentation.js';
+import type { TriageDetailHeaderV1 } from './header.js';
 
-/** A reviewer group names this many people before it counts the rest. */
-const NAMES_SHOWN = 2;
+/** A Reviewers cell names this many people before it counts the rest. */
+const NAMES_SHOWN = 1;
 
-/**
- * Lets a fact that is wider than its line (a long head branch) take the whole line and shrink there instead of
- * overflowing the pane; a fact that fits keeps its own width so the next one can stand beside it.
- */
-const FACT_FIT_STYLE_V1 = { maxWidth: '100%' } as const;
-
-const REVIEWER_COPY: Readonly<
-  Record<TriageDetailReviewerVerbV1, readonly [key: string, fallback: string]>
-> = {
-  changesRequested: [
-    'plugins.triage.surface.detail.reviewers.changesRequested',
-    '{names} requested changes',
-  ],
-  approved: [
-    'plugins.triage.surface.detail.reviewers.approved',
-    '{names} approved',
-  ],
-  pending: [
-    'plugins.triage.surface.detail.reviewers.pending',
-    'Waiting on {names}',
-  ],
-  commented: [
-    'plugins.triage.surface.detail.reviewers.commented',
-    '{names} commented',
-  ],
-};
+/** Only the owner's needs-you and failed words speak in colour; every other tone stays ink. */
+function cellTone(tone: TextTone): Pick<HappierFactStripFact, 'tone'> {
+  return tone === 'danger' ? { tone: 'danger' } : tone === 'warning' ? { tone: 'attention' } : {};
+}
 
 /**
- * A change request's facts under the detail header (DESIGN.md: an entity as a header with its facts): the branch
- * pair with its diff size, the one checks outcome, then who reviewed it and where each review stands.
+ * A change request's glance cells under the detail header (ideas-1118 scene 1, B: the owner's choice): Status,
+ * Checks and Reviewers, each a value that leads and a quiet line beneath, ruled apart on one sheet, two to a row on a
+ * phone. Every word comes from the PR facts owner the Companion glance and the linked-entry detail also draw, so
+ * the three never read two ways.
  *
- * Each fact is one unit that wraps whole to the next line on a narrow pane; only the head branch, the longest and
- * least-read name, shortens, and the base branch and the diff size beside it always stay. A source shows only the
- * facts it states: an issue or an error group has none, and the row is absent.
+ * The cells are drawn from the first paint of any pull/merge request, quiet ("—", not read yet) until the source's
+ * status read lands, so its arrival fills them in place and moves nothing below. An issue or an error group has none:
+ * a linked fix PR is drawn once, by its own step in the story.
  */
 export function TriageDetailHeaderFacts(
-  props: Readonly<{ header: TriageDetailHeaderV1 }>,
+  props: Readonly<{ header: Pick<TriageDetailHeaderV1, 'pullRequestFacts' | 'attention'>; narrow?: boolean }>,
 ): React.ReactElement | null {
   const text = usePluginTranslation();
-  const { locale } = useSurfaceContext();
-  const { branches, changeFacts } = props.header;
-  const diff = changeFacts?.diff ?? null;
-  const checks = changeFacts?.checks ?? null;
-  const reviewers = changeFacts?.reviewers ?? [];
-  if (
-    branches === null &&
-    diff === null &&
-    checks === null &&
-    reviewers.length === 0
-  )
-    return null;
+  const { palette } = resolveHappierWorkTheme(usePluginTheme());
+  const facts = props.header.pullRequestFacts;
+  if (facts === null) return null;
+  const status = mergeFact(text, facts.merge, facts.branch?.base ?? null);
+  const checks = checksFact(text, facts.checks);
+  const review = reviewFact(text, facts.review);
+  const people = facts.review.kind === 'unknown' || facts.review.kind === 'none' ? [] : facts.review.people;
+  // The reader's own requested review is the one fact on this cell that needs them, said as "you" once. It leads
+  // while no decision stands; a decision (changes requested, approved) keeps the lead and "you" goes beneath.
+  const mine = props.header.attention?.reviewRequested === true;
+  const you = text('plugins.triage.surface.detail.reviewers.you', 'Waiting on you');
+  const decided = facts.review.kind === 'changesRequested' || facts.review.kind === 'approved';
+  const reviewers = mine && !decided
+    ? { value: you, tone: 'attention' as const, detail: null }
+    : { value: review.value, ...cellTone(review.tone), detail: mine ? you
+      : people.length > NAMES_SHOWN
+        ? text('plugins.triage.surface.detail.reviewers.more', '{names} +{count}', {
+          names: people.slice(0, NAMES_SHOWN).join(', '), count: String(people.length - NAMES_SHOWN),
+        })
+        : review.sub };
+  const cells: HappierFactStripFact[] = [
+    { key: 'status', testID: 'triage-detail-facts.status', label: text('plugins.triage.surface.detail.facts.status', 'Status'),
+      value: status.value, ...cellTone(status.tone), detail: status.sub },
+    { key: 'checks', testID: 'triage-detail-facts.checks', label: text('plugins.triage.surface.detail.facts.checks', 'Checks'),
+      value: checks.value, ...cellTone(checks.tone), detail: checks.sub },
+    { key: 'reviewers', testID: 'triage-detail-facts.reviewers', label: text('plugins.triage.surface.detail.facts.reviewers', 'Reviewers'),
+      ...reviewers, lead: review.person === null || (mine && !decided) ? null : <Avatar name={review.person} size="small" /> },
+  ];
   return (
-    <Row gap="medium" align="center" wrap>
-      {branches === null && diff === null ? null : (
-        <Row gap="xsmall" align="center" style={FACT_FIT_STYLE_V1}>
-          {branches === null ? null : (
-            <>
-              <Icon
-                name="branch"
-                size="small"
-                tone="secondary"
-                accessibilityLabel={text(
-                  'plugins.triage.surface.detail.facts.branch',
-                  'Branch',
-                )}
-              />
-              <Stack grow>
-                <Text
-                  variant="meta"
-                  tone="secondary"
-                  value={branches.head}
-                  numberOfLines={1}
-                />
-              </Stack>
-              <Text
-                variant="meta"
-                tone="secondary"
-                value={text(
-                  'plugins.triage.surface.detail.branchInto',
-                  '→ {base}',
-                  { base: branches.base },
-                )}
-                numberOfLines={1}
-              />
-            </>
-          )}
-          {diff === null ? null : (
-            <DiffStat
-              added={diff.additions}
-              removed={diff.deletions}
-              locale={locale}
-            />
-          )}
-        </Row>
-      )}
-      {checks === null ? null : (
-        <Row gap="xsmall" align="center">
-          <Icon
-            name="workflow"
-            size="small"
-            tone="secondary"
-            accessibilityLabel={text(
-              'plugins.triage.surface.detail.facts.checks',
-              'Checks',
-            )}
-          />
-          <TriageChecksRollupLine rollup={checks} variant="meta" />
-        </Row>
-      )}
-      {reviewers.length === 0 ? null : (
-        <Row gap="xsmall" align="center" style={FACT_FIT_STYLE_V1}>
-          <Icon
-            name="review"
-            size="small"
-            tone="secondary"
-            accessibilityLabel={text(
-              'plugins.triage.surface.detail.facts.reviewers',
-              'Reviewers',
-            )}
-          />
-          <Stack grow>
-            <Text
-              variant="meta"
-              tone="secondary"
-              numberOfLines={1}
-              value={reviewers
-                .map((group) => {
-                  const shown = group.names.slice(0, NAMES_SHOWN).join(', ');
-                  const names =
-                    group.names.length > NAMES_SHOWN
-                      ? text(
-                          'plugins.triage.surface.detail.reviewers.more',
-                          '{names} +{count}',
-                          {
-                            names: shown,
-                            count: String(group.names.length - NAMES_SHOWN),
-                          },
-                        )
-                      : shown;
-                  const [key, fallback] = REVIEWER_COPY[group.verb];
-                  return text(key, fallback, { names });
-                })
-                .join(' · ')}
-            />
-          </Stack>
-        </Row>
-      )}
-    </Row>
+    <HappierPageSheet colors={palette} rowDividers={false} testID="triage-detail-facts">
+      <FactStrip facts={cells} layout="columns" divided reserveDetail narrow={props.narrow === true} />
+    </HappierPageSheet>
   );
 }
