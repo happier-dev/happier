@@ -25,7 +25,26 @@ it('P01.F3 server presence admits one ordinary Run without a daemon observer', a
   const catalog = await actor.execute('workflow.events.list', executor.target);
   expect(catalog.ok, JSON.stringify(catalog)).toBe(true);
   if (!catalog.ok) throw new Error(catalog.errorCode);
-  const event = WorkflowEventsListOutputV1Schema.parse(catalog.result).events.find(row =>
+  const events = WorkflowEventsListOutputV1Schema.parse(catalog.result).events;
+  // D9: the loaded setup Actions must accept an omitted Machine for both
+  // presence transitions, through the same public executor as exact selection.
+  for (const localId of ['machine-online', 'machine-offline']) {
+    const aggregateEvent = events.find(row => row.event.identity.pluginId === 'happier.machine.services'
+      && row.event.identity.localId === localId);
+    if (!aggregateEvent?.observationBinding) throw new Error(`${localId} declaration unavailable`);
+    const aggregate = await actor.execute('action.invoke', { action: aggregateEvent.setupAction.identity,
+      expectedContributorOccurrenceId: aggregateEvent.setupAction.occurrenceId,
+      input: { v: 1, serverId: fixture.serverId } },
+    { presentUserConfirmation: { actionId: 'action.invoke' }, externalActionTarget: {
+      kind: 'machine', machineId: executor.target.machineId,
+      project: { machineId: executor.target.machineId, directory: executor.workspaceDir } } });
+    expect(aggregate.ok, JSON.stringify(aggregate)).toBe(true);
+    if (!aggregate.ok) throw new Error(aggregate.errorCode);
+    const selected = PluginEventAutomationSetupResultV1Schema.parse(aggregate.result);
+    expect(selected.sourceConfig).toEqual({ v: 1, serverId: fixture.serverId, afterRevision: 0 });
+    expect(selected.sourceContractVersion).toBe(1);
+  }
+  const event = events.find(row =>
     row.event.identity.pluginId === 'happier.machine.services' && row.event.identity.localId === 'machine-offline');
   if (!event?.observationBinding) throw new Error('Presence declaration unavailable');
   const configured = await actor.execute('action.invoke', { action: event.setupAction.identity,
