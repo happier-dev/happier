@@ -60,7 +60,7 @@ const { projectLastMobileSurfaceState, projectLastActiveRootPathState, projectLa
 
 function PaneWrapper(props: React.PropsWithChildren) { return React.createElement(AppPaneProvider, null, props.children); }
 
-async function refreshWorkspaceRefs() {
+function publishWorkspaceRows() {
     const next = workspaceRefs.current.map(ref => {
         const key = { kind: 'workspace-ref' as const, serverId: ref.serverId, id: ref.id };
         const { lastOpenedAtMs: _recency, ...value } = ref;
@@ -69,14 +69,33 @@ async function refreshWorkspaceRefs() {
     const keys = new Set(next.map(row => buildProjectAccountRowPhysicalKeyV1(row.key)));
     rows = [...next, ...rows.filter(row => !keys.has(buildProjectAccountRowPhysicalKeyV1(row.key)))
         .map(row => ({ ...row, revision: ++revision, content: null }))];
-    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-    const census = await createDefaultActionExecutor().execute('projects.list', { serverId: serverIdA });
-    expect(census, JSON.stringify(census)).toMatchObject({ ok: true });
-    expect(storage.getState().projectAccountRows?.workspaceRefs, JSON.stringify({ census, profileScope: storage.getState().profileScope,
-        snapshot: storage.getState().projectAccountRows })).toHaveLength(workspaceRefs.current.length);
+}
+
+async function refreshWorkspaceRefs() {
+    publishWorkspaceRows();
+    const { sync } = await import('@/sync/sync');
+    const owner = await sync.projectAccountRowsOwnerFor({ serverId: serverIdA, accountId: 'account-a' });
+    if (!owner) throw new Error('Missing app Project rows owner');
+    await owner.refresh();
+    expect(storage.getState().projectAccountRows?.workspaceRefs).toHaveLength(workspaceRefs.current.length);
 }
 
 describe('useOpenProject', () => {
+    it('opens the exact managed Project even when its guest path equals a controller Project path', async () => {
+        const native = { v: 2 as const, kind: 'managed' as const, id: 'guest-root', serverId: serverIdA,
+            managedId: 'guest', controller: { machineId: 'machine-a', installationId: 'installation' },
+            rootPath: '/guest/project', createdAtMs: 1 };
+        workspaceRefs.current = [native, { id: 'controller-root', serverId: serverIdA, machineId: native.controller.machineId,
+            rootPath: native.rootPath, createdAtMs: 1 }];
+        await refreshWorkspaceRefs();
+        const hook = await renderHook(() => useOpenProject());
+        try {
+            const { workspaceAddressFromRefV2 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
+            await act(async () => { expect(await hook.getCurrent()(native.id, { workspaceAddress: workspaceAddressFromRefV2(native) })).toBe(true); });
+            expect(hook.getCurrent().resolution).toBeNull();
+            expect(routerPush).toHaveBeenCalledExactlyOnceWith(expect.stringContaining(native.id));
+        } finally { await hook.unmount(); }
+    });
     beforeEach(async () => {
         dimensions.current = { width: 390, height: 844, scale: 1, fontScale: 1 };
         await loadSyncSingletonForTests(); await homes.reset();
@@ -229,7 +248,8 @@ describe('useOpenProject', () => {
         const draftId = '00000000-0000-4000-8000-000000000081';
         const accepted = { kind: 'opened' as const, workspace: { serverId: serverIdA, machineId: 'machine-a',
             workspaceId: 'wr_1', rootPath: '/repo' }, directory: '/repo/packages/app', setup: 'approvalRequired' as const };
-        workspaceRefs.current.push({ ...workspaceRefs.current[0]!, serverId: serverIdB, rootPath: '/other' });
+        const acceptedRef = workspaceRefs.current[0]!;
+        workspaceRefs.current = [{ ...acceptedRef, serverId: serverIdB, rootPath: '/other' }];
         await refreshWorkspaceRefs();
         projectLastActiveRootPathState.set('wr_1', '/repo/elsewhere');
         writeProjectOpenDraft({ scope: { serverId: serverIdA, accountId: 'account-a' }, draftId,
@@ -243,6 +263,8 @@ describe('useOpenProject', () => {
         expect(routerPush).not.toHaveBeenCalled();
         expect(screen.findByTestId('projects.open.acceptedUnfocused.action')).not.toBeNull();
         homes.answer(serverIdA, 'POST /v1/account/project-rows/list', { select: () => ({ body: { status: 'listed', coverage: 'complete', rows } }) });
+        workspaceRefs.current.push(acceptedRef);
+        await act(async () => { await refreshWorkspaceRefs(); });
         homes.requests.length = 0;
         await screen.pressByTestIdAsync('projects.open.acceptedUnfocused.action');
         await vi.waitFor(() => expect(routerPush).toHaveBeenCalledOnce());

@@ -18,7 +18,8 @@ import type { FileFindSeed as FindSeed } from '@/components/appShell/panes/fileF
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
+import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveProjectSelectionPreferenceKeys } from '@/sync/domains/settings/projectSelectionPersistence';
 import { resolveProjectMobileSurfaceStorageKey } from '@/sync/domains/settings/mobileSurfacePersistence';
 import { projectLastMobileSurfaceState } from '@/sync/domains/state/navigationUiState';
@@ -27,7 +28,7 @@ import type { WorkspaceRefResolutionV1 } from '@happier-dev/protocol/workspaces/
 
 export type OpenProjectOptions = Readonly<{
     serverId?: string;
-    workspaceAddress?: WorkspaceAddressV1;
+    workspaceAddress?: WorkspaceAddressV2;
     activeRootPath?: string;
     attachedDashboard?: ProjectAttachedDashboardSelection;
     /** Open on one of the person's own dashboards: its layout id, or `null` for the default. */
@@ -72,17 +73,18 @@ export function useOpenProject(): OpenProject {
             ? resolveWorkspaceRefByAddress(refs, options.workspaceAddress)
             : resolveWorkspaceRefById(refs, normalizedId, options?.serverId);
         if (resolution.kind !== 'resolved') { publishIssue(resolution); return false; }
-        publishIssue(null);
         const workspaceRef = resolution.ref;
+        publishIssue(null);
         const pageAuthority = captureActiveServerAccountScopeLifetime();
         const pagePreferenceKey = resolveProjectMobileSurfaceStorageKey({ workspaceRefs: refs, workspaceRefId: workspaceRef.id,
             targetServerId: workspaceRef.serverId, activeScope: pageAuthority?.scope, activeServerId: pageAuthority?.scope.serverId });
         const preferenceKeys = resolveProjectSelectionPreferenceKeys(refs, workspaceRef);
         const { activeRootPath: persistedActiveRootPath, worktreeId: persistedWorktreeId } = readProjectSelectionUiState(preferenceKeys);
         const scopeId = buildProjectPaneScopeId(workspaceRef.id, workspaceRef.serverId);
-        const activeRootPath = options?.activeRootPath?.trim()
+        const projectScope = workspaceScopeFromProject(workspaceRef, options?.activeRootPath?.trim()
             || persistedActiveRootPath
-            || workspaceRef.rootPath;
+            || workspaceRef.rootPath);
+        const activeRootPath = projectScope.rootPath;
         const activeWorktreeId = activeRootPath === workspaceRef.rootPath
             ? null
             : activeRootPath === persistedActiveRootPath
@@ -107,13 +109,13 @@ export function useOpenProject(): OpenProject {
                 find = { query: resource.find.query, options: resource.find.options, target: {
                     kind: 'project-file', workspaceRefId: workspaceRef.id,
                     serverId: resolveServerProfileScopeIdForIdentifier(workspaceRef.serverId),
-                    machineId: workspaceRef.machineId, rootPath: activeRootPath, path: resource.path,
+                    machineId: projectScope.machineId, rootPath: activeRootPath, path: resource.path,
                     ...(resource.find.target.anchor ? { anchor: resource.find.target.anchor } : {}),
                 } };
             }
             if (resource.kind === 'file') {
                 return openFile({ kind: 'project', workspaceRefId: workspaceRef.id, serverId: workspaceRef.serverId,
-                    machineId: workspaceRef.machineId, rootPath: activeRootPath, path: resource.path }, {
+                    machineId: projectScope.machineId, rootPath: activeRootPath, path: resource.path }, {
                     intent: 'pinned', ...(resource.anchor ? { anchor: resource.anchor } : {}),
                     ...(resource.anchorSource ? { anchorSource: resource.anchorSource } : {}), ...(find ? { find } : {}),
                 });

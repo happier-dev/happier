@@ -1,11 +1,10 @@
-import { normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { normalizeWorkspaceRootPathV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import type { WorkspaceRefV1 } from './workspaceRefModel';
 
-export type WorkspaceScope = Readonly<{
-    serverId: string;
-    machineId: string;
-    rootPath: string;
+export type WorkspaceScope = WorkspaceScopeBase & Readonly<{
     sessionId?: string | null;
 }>;
 
@@ -13,9 +12,17 @@ export type WorkspaceScopeBase = Readonly<{
     serverId: string;
     machineId: string;
     rootPath: string;
+    workspace?: Extract<WorkspaceAddressV2, { kind: 'managed' }>;
 }>;
 
 export type WorkspaceCacheKey = string;
+
+export function workspaceScopeFromProject(ref: WorkspaceRefV1, activeRootPath: string): WorkspaceScopeBase {
+    const address = workspaceAddressFromRefV2(ref);
+    if ('kind' in address) return { serverId: ref.serverId, machineId: address.controller.machineId,
+        rootPath: address.rootPath, workspace: address };
+    return { serverId: ref.serverId, machineId: address.machineId, rootPath: activeRootPath };
+}
 
 function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
@@ -32,12 +39,15 @@ export function normalizeWorkspaceScopeBase(input: WorkspaceScopeBase): Workspac
     if (!serverId || !machineId || !rootPath) {
         return null;
     }
-    return { serverId, machineId, rootPath };
+    return { serverId, machineId, rootPath, ...(input.workspace ? { workspace: input.workspace } : {}) };
 }
 
 export function tryBuildWorkspaceCacheKey(scope: WorkspaceScopeBase): WorkspaceCacheKey | null {
     const normalized = normalizeWorkspaceScopeBase(scope);
     if (!normalized) return null;
+    const workspace = normalized.workspace;
+    if (workspace) return JSON.stringify(['managed', normalized.serverId, workspace.workspaceId, workspace.managedId,
+        workspace.controller.machineId, workspace.controller.installationId, workspace.rootPath]);
     return `${normalized.serverId}:${normalized.machineId}:${normalized.rootPath}`;
 }
 

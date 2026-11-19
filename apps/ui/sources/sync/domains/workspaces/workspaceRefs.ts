@@ -1,7 +1,7 @@
 import { randomUUID } from '@/platform/randomUUID';
 import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolver, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { WorkspaceRefV1WriteSchema, type WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { resolveWorkspaceRefV1, createWorkspaceRefResolverV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, projectWorkspaceRefV1, normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { isManagedWorkspaceRefV2, WorkspaceRefV1WriteSchema, type WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { resolveWorkspaceRefV1, createWorkspaceRefResolverV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, projectWorkspaceRefV1, normalizeWorkspaceRootPathV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveProjectAccountWorkspaceRefRemovalV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 
 import type { WorkspaceScopeBase } from './workspaceScope';
@@ -63,9 +63,9 @@ export function resolveProjectCheckoutWorkspaceRef(
     projectRef: WorkspaceRefV1,
     rootPath: string,
 ): WorkspaceRefV1 | null {
-    const selected = resolveWorkspaceRefByScope(workspaceRefs, {
-        serverId: projectRef.serverId, machineId: projectRef.machineId, rootPath,
-    });
+    const selected = isManagedWorkspaceRefV2(projectRef)
+        ? resolveWorkspaceRefByAddress(workspaceRefs, { ...workspaceAddressFromRefV2(projectRef), rootPath })
+        : resolveWorkspaceRefByScope(workspaceRefs, { serverId: projectRef.serverId, machineId: projectRef.machineId, rootPath });
     return selected.kind === 'resolved' && sameWorkspaceProject(selected.ref, projectRef) ? selected.ref : null;
 }
 
@@ -83,7 +83,7 @@ export function resolveWorkspaceRefById(workspaceRefs: readonly WorkspaceRefV1[]
     return resolveWorkspaceRefV1(workspaceRefs, { id, ...(serverId !== undefined ? { serverId } : {}) }, workspaceRefResolutionContextV1());
 }
 
-export function resolveWorkspaceRefByAddress(workspaceRefs: readonly WorkspaceRefV1[], address: WorkspaceAddressV1) {
+export function resolveWorkspaceRefByAddress(workspaceRefs: readonly WorkspaceRefV1[], address: WorkspaceAddressV2) {
     return resolveWorkspaceRefV1(workspaceRefs, address, workspaceRefResolutionContextV1());
 }
 

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { WorkspaceRefV1 } from './workspaceRefModel';
+import { tryBuildWorkspaceCacheKey } from './workspaceScope';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 import {
     createWorkspaceRefScopeFinder,
@@ -16,6 +18,27 @@ vi.mock('@/platform/randomUUID', () => ({
 }));
 
 describe('workspaceRefs', () => {
+    it('retains the accepted managed checkout when a controller checkout has the same root', () => {
+        const managed: WorkspaceRefV1 = { v: 2, kind: 'managed', id: 'guest', serverId: 'home', managedId: 'native',
+            controller: { machineId: 'machine', installationId: 'installed' }, rootPath: '/repo', createdAtMs: 1 };
+        const controller: WorkspaceRefV1 = { id: 'local', serverId: 'home', machineId: 'machine', rootPath: '/repo',
+            projectKey: managed.id, createdAtMs: 1 };
+        expect(resolveProjectCheckoutWorkspaceRef([controller, managed], managed, '/repo')).toBe(managed);
+        expect(resolveProjectCheckoutWorkspaceRef([controller, managed], managed, '/elsewhere')).toBeNull();
+        expect(resolveProjectCheckoutWorkspaceRef([controller], managed, '/repo')).toBeNull();
+    });
+
+    it('does not reuse controller or previous installation cache entries at the guest root', () => {
+        const controller = { serverId: 'home', machineId: 'machine', rootPath: '/repo' };
+        const managed = { v: 2 as const, kind: 'managed' as const, id: 'guest', serverId: 'home', managedId: 'native',
+            controller: { machineId: 'machine', installationId: 'original' }, rootPath: '/repo', createdAtMs: 1 };
+        const current = workspaceAddressFromRefV2(managed);
+        if (!('kind' in current)) throw new Error('Missing managed address');
+        const replacement = { ...current, controller: { ...current.controller, installationId: 'replacement' } };
+        expect(tryBuildWorkspaceCacheKey({ ...controller, workspace: current })).not.toEqual(tryBuildWorkspaceCacheKey(controller));
+        expect(tryBuildWorkspaceCacheKey({ ...controller, workspace: current })).not.toEqual(tryBuildWorkspaceCacheKey({ ...controller, workspace: replacement }));
+    });
+
     it('resolves the actual accepted checkout only within the qualified Project anchor', () => {
         const project: WorkspaceRefV1 = { id: 'project', serverId: 'home', machineId: 'machine', rootPath: '/base', createdAtMs: 1 };
         const checkout: WorkspaceRefV1 = { ...project, id: 'checkout', projectKey: 'project', rootPath: '/feature' };
