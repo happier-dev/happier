@@ -122,6 +122,7 @@ const LIBRARY_GROUPS = {
     get axis() {
         return [
             { key: 'library', title: t('workflows.destination.sections.library') },
+            { key: 'account', title: t('settings.account') },
             { key: 'sharedWithYou', title: t('workflows.destination.sections.sharedWithYou') },
             // Read-only is a fact about the whole group, said once above it rather than on every row (F9).
             { key: 'fromPlugins', title: t('workflows.plugins.fromPlugins'), description: t('workflows.plugins.fromPluginsDescription') },
@@ -345,7 +346,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
             action={{ label: t('workflows.retry'), onPress: library.retry }}
             accessibilitySemantics="alert"
         />
-    ) : needle.length > 0 ? (
+    ) : needle.length > 0 && (library.status === 'loaded' || library.definitions.length > 0) ? (
         <EmptyState
             testID="workflows-home:noMatch"
             layout="inline"
@@ -371,6 +372,8 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         </ListPresentationProvider>
     );
 
+    const libraryStateBesideRows = library.status !== 'loaded' && library.definitions.length === 0 && model.keys.length > 0;
+
     // The page's scroller stands above the Collection, so the library's rows window in it (`page-virtualized`).
     return (
         <LibraryRowCommandsContext.Provider value={commands}>
@@ -380,6 +383,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                     <CoreCollectionScope renderPageScroller={passThroughPageScroller}>
                     <PageContentColumn>
                         {header}
+                            {libraryStateBesideRows ? empty : null}
                             <Collection<LibraryRow>
                                 testID="workflows-home:collection"
                                 model={model}
@@ -400,7 +404,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                                 {...(retainedRowKeys === undefined ? {} : { retainedRowKeys })}
                                 empty={empty}
                             />
-                        <WorkflowLibraryFreshness library={library} hasRows={rows.length > 0} />
+                        <WorkflowLibraryFreshness library={library} hasRows={library.definitions.length > 0} />
                         <AddressedAccountTriggersSlot />
                         <WorkflowBuiltinsSection isVisible={libraryView.isVisible} />
                         {/* Secondary on a returning library: one compact row, the whole catalog one press away. */}

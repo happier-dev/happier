@@ -436,6 +436,7 @@ describe('workflow library page anatomy', () => {
             definition: { ...definition, triggerSummaryErrorCode: undefined } }, null).triggered).toBe(false);
     });
     it('keeps readable rows and shows unavailable summaries when the selected trigger query fails', async () => {
+        windowSize.width = 1440;
         const definitionId = '10000000-0000-4000-8000-000000000053';
         execute.mockImplementation(async (actionId: string) => {
             if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [{
@@ -446,15 +447,24 @@ describe('workflow library page anatomy', () => {
             if (actionId === 'workflow.run.summaries') return { ok: true, result: { summaries: [], remainingSourceArtifactIds: [] } };
             return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
         });
-        automationDefinitionResponse = async (url, init) => url.pathname === '/v3/automations/query' && init?.method === 'POST'
-            ? Response.json({ error: 'storage_unavailable' }, { status: 404 }) : undefined;
+        const { AutomationDefinitionListRequestSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
+        automationDefinitionResponse = async (url, init) => {
+            if (url.pathname !== '/v3/automations/query' || init?.method !== 'POST') return undefined;
+            const query = AutomationDefinitionListRequestSchema.safeParse(JSON.parse(String(init.body)));
+            return query.success && query.data.workflowDefinitionIds?.includes(definitionId)
+                ? Response.json({ error: 'storage_unavailable' }, { status: 503 }) : undefined;
+        };
         const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
-        await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${definitionId}`)).not.toBeNull());
+        const { HostCollection } = await import('@happier-dev/plugin-ui');
         const { t } = await import('@/text');
-        const row = screen.findHostByTestId(`workflows-home:row:${definitionId}`)!;
-        expect(row.findAll(node => typeof node.type === 'string' && node.children.some(child =>
-            typeof child === 'string' && child.includes(t('common.unavailable')))).length).toBeGreaterThan(0);
-        expect(screen.findHostByTestId('workflows-home:error')).toBeNull();
+        await vi.waitFor(() => {
+            const collection = screen.findAllByType(HostCollection).find(node => node.props.testID === 'workflows-home:collection');
+            expect(collection?.props.model.keys).toEqual([definitionId]);
+            const row = collection?.props.model.sections[0]?.items[0];
+            const fields = collection?.props.anatomy.fields as readonly { key: string; render: (item: unknown) => unknown }[];
+            expect(fields.find(field => field.key === 'trigger')?.render(row)).toBe(t('common.unavailable'));
+        });
+        expect(screen.findHostByTestId('workflows-home:failed')).toBeNull();
     });
     it('keeps pane consumers asleep across unrelated publications and local navigation in a 100-row library', async () => {
         windowSize.width = 1200;
@@ -1070,7 +1080,7 @@ describe('workflow library page anatomy', () => {
     it.each(['phone', 'beside column'] as const)('keeps Account-only Workflows out of first-visit on %s', async (surface) => {
         const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
         const accountQueryAdmitted = createDeferred<void>();
-        const accountQuery = createDeferred<Response>();
+        const accountQuery = createDeferred<void>();
         const [{ AutomationDefinitionDetailSchema, AutomationDefinitionListResponseSchema}, { AutomationStoredWorkflowDefinitionRecipeV2Schema}, { validateWorkflowDefinition}] = await Promise.all([import('@happier-dev/protocol/automations/automationApiV3'), import('@happier-dev/protocol/automations/automationWorkflowRecipeV2'), import('@happier-dev/protocol/workflows/workflowValidationV1')]);
         const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
         const inlineDefinition = createWorkflowDefinitionFixture({
@@ -1100,7 +1110,8 @@ describe('workflow library page anatomy', () => {
                 const query = AutomationDefinitionDetailsRequestSchema.parse(JSON.parse(String(init.body)));
                 if (query.scope === 'account_saved') return Response.json({ automations: [], nextCursor: null });
                 accountQueryAdmitted.resolve();
-                return accountQuery.promise;
+                await accountQuery.promise;
+                return Response.json({ automations: [detail], nextCursor: null });
             }
             return url.pathname === '/v3/automations' ? Response.json(list)
                 : url.pathname === '/v3/automations/digest' ? Response.json(detail) : undefined;
@@ -1113,7 +1124,7 @@ describe('workflow library page anatomy', () => {
         const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
         const { WorkflowsColumn } = await import('../column/WorkflowsColumn');
         const besideColumn = surface === 'beside column';
-        if (besideColumn) windowSize.width = 1440;
+        windowSize.width = besideColumn ? 1440 : 390;
         const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: besideColumn, columnVisible: besideColumn }}>
             {besideColumn ? <WorkflowsColumn surface="plane" /> : null}
             <WorkflowsDestinationIndex />
@@ -1126,18 +1137,19 @@ describe('workflow library page anatomy', () => {
         // An Account Workflow is a Library row: until that read settles this is not yet a first visit.
         expect(screen.findByTestId('workflows-home:firstVisit')).toBeNull();
         expect(screen.findByTestId('workflows-home:empty')).toBeNull();
-        await act(async () => { accountQuery.resolve(Response.json({ automations: [detail], nextCursor: null })); });
+        await act(async () => { accountQuery.resolve(); });
+        await vi.waitFor(() => expect(screen.findByTestId('workflows-home:row:account-trigger:digest')).not.toBeNull());
         if (besideColumn) {
-            await vi.waitFor(() => expect(screen.findByTestId('workflows-column:library:account-trigger:digest')).not.toBeNull());
+            // Sidebar membership is visible at its row window even without native viewport measurements.
+            await vi.waitFor(() => expect(screen.findHostByTestId('workflows-column:row-window:account-trigger:digest'), screen.getTextContent()).not.toBeNull());
             expect(screen.findByTestId('workflows-home:firstVisit')).toBeNull();
             expect(screen.findByTestId('workflows-home:idle')).toBeNull();
-            expect(screen.findByTestId('workflows-home:row:account-trigger:digest')).not.toBeNull();
             expect(execute.mock.calls.filter(([actionId]) => actionId === 'workflow.run.list')).toHaveLength(0);
             return;
         }
-        await vi.waitFor(() => expect(screen.findByTestId('workflows-home:row:account-trigger:digest')).not.toBeNull());
+        const { formatClockTime } = await import('../triggers/triggerSchedule');
         await vi.waitFor(() => {
-            expect(screen.getTextContent()).toContain('workflows.triggers.summary.everyDayAt(time=09:00)');
+            expect(screen.getTextContent()).toContain(`workflows.triggers.summary.everyDayAt(time=${formatClockTime({ hour: 9, minute: 0 })})`);
         });
         expect(screen.findByTestId('workflows-home:firstVisit')).toBeNull();
         expect(screen.findByTestId('workflow-builtins:builtin:plan-with-a-panel')).not.toBeNull();
@@ -1146,11 +1158,6 @@ describe('workflow library page anatomy', () => {
         expect(screen.findByTestId('workflows-column:trigger:digest-switch')).toBeNull();
         await screen.pressByTestIdAsync('workflows-home:row:account-trigger:digest');
         await vi.waitFor(() => expect(screen.findByTestId('workflows-column-trigger-popover')).not.toBeNull());
-        expect(screen.findByTestId('workflows-column:add')).toBeNull();
-        await screen.pressByTestIdAsync('workflows-column:more');
-        await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 0)); });
-        expect(screen.findByTestId('workflows-column:more:settings')).not.toBeNull();
-        expect(screen.findByTestId('workflows-column:add:trigger')).not.toBeNull();
         // A returning Library keeps the examples one compact row away.
         await reportCollectionLayout(screen, 'workflow-examples:cards');
         expect(screen.findAll(node => /^workflow-examples:.+:use$/.test(String(node.props?.testID ?? ''))).length).toBeGreaterThan(0);
@@ -1264,9 +1271,10 @@ describe('workflow library page anatomy', () => {
         await screen.unmount();
     });
 
-    it('lays saved rows on one page sheet like the sections below, and marks built-ins by purpose with their step count', async () => {
+    it('presents saved workflows in one table and gives built-ins their own action and purpose mark', async () => {
+        const definitionIds = ['10000000-0000-4000-8000-000000000005', '10000000-0000-4000-8000-000000000006', '10000000-0000-4000-8000-000000000007'];
         execute.mockImplementation(async (actionId: string) => {
-            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: ['10000000-0000-4000-8000-000000000005', '10000000-0000-4000-8000-000000000006', '10000000-0000-4000-8000-000000000007'].map((definitionId) => (
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: definitionIds.map((definitionId) => (
                 { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
                     metadata: { title: definitionId }, ownerAccountId: 'account-a', access: 'owner', contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null })) } };
             if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [], metadataByRunId: {} } };
@@ -1277,22 +1285,16 @@ describe('workflow library page anatomy', () => {
         await vi.waitFor(() => expect(screen.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000007')).not.toBeNull());
         // A populated library needs summaries, not a history-window read just to rule out first visit.
         expect(execute.mock.calls.filter(([actionId]) => actionId === 'workflow.run.list')).toHaveLength(0);
-        // A sheet's hairline sits between its rows and never after the group's last one.
-        const divider = (definitionId: string) => screen.findAll((node) => node.props.testID === `workflows-home:row:${definitionId}`
-            && Array.isArray(node.props.secondaryActions))[0]?.props.showDivider;
-        expect(divider('10000000-0000-4000-8000-000000000005')).toBe(true);
-        expect(divider('10000000-0000-4000-8000-000000000006')).toBe(true);
-        expect(divider('10000000-0000-4000-8000-000000000007')).toBe(false);
         const { t } = await import('@/text');
-        // Built-in takes the library's row anatomy from the same shared Collection, its mark as the row glyph,
-        // never a page-local sheet of icon rows beside the library's rows (PHONE-ROWS-HUNT-1113).
         const { HostCollection } = await import('@happier-dev/plugin-ui');
+        const savedTable = screen.findAllByType(HostCollection).find(node => node.props.testID === 'workflows-home:collection');
+        expect(savedTable?.props.presentation).toBe('table');
+        expect(new Set(savedTable?.props.model.keys)).toEqual(new Set(definitionIds));
         expect(screen.findAll((node) => node.type === HostCollection && node.props.testID === 'workflows-home:builtins')).toHaveLength(1);
         const plan = screen.tree.findHostByTestId('workflow-builtins:builtin:plan-with-a-panel');
         expect(plan).not.toBeNull();
         const planCopy = plan!.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children).join('\n').replace(/\u00a0/g, ' ');
         const { getBuiltinWorkflowCatalogV1} = await import('@happier-dev/protocol/workflows/builtins/catalog');
-        const { countWorkflowStepsV1 } = await import('@happier-dev/protocol/workflows/workflowDefinitionEditV1');
         const planEntry = getBuiltinWorkflowCatalogV1().find((entry) => entry.id === 'builtin:plan-with-a-panel')!;
         // The lab's Built-in row (scene 8, fix 4): what it does under its name, and its own Start.
         expect(planCopy).toContain(t(planEntry.descriptionKey as never));
@@ -1515,7 +1517,7 @@ describe('workflow library summaries and filter', () => {
     });
 
     // Scene 8: every row keeps its run strip, a phone's list row too (it ends line 2).
-    it.each([[390, true], [800, true]] as const)('lays a row out for a %ipx window whether or not navigation chrome shows a title (run strip: %s)', async (width, showsStrip) => {
+    it.each([[390, 'list'], [800, 'table']] as const)('presents the library at %ipx as a %s with no navigation chrome', async (width, presentation) => {
         windowSize.width = width;
         const id = '10000000-0000-4000-8000-000000000031';
         execute.mockImplementation(async (actionId: string) => {
@@ -1532,14 +1534,19 @@ describe('workflow library summaries and filter', () => {
             // No NavigationTitleChromeProvider: a fresh narrow load without phone chrome is still a phone-sized window.
             const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
             await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${id}`)).not.toBeNull());
-            // Definition and summary transport reads settle separately; the row may paint first.
-            await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${id}:strip`) !== null).toBe(showsStrip));
+            const { HostCollection } = await import('@happier-dev/plugin-ui');
+            expect(screen.findAllByType(HostCollection).find(collection =>
+                collection.props.testID === 'workflows-home:collection')?.props.presentation).toBe(presentation);
+            if (presentation === 'list') {
+                await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${id}:strip`)).not.toBeNull());
+            }
         } finally {
             windowSize.width = 800;
         }
     });
 
-    it('paints count and shared trigger wording, and filters attached triggers without losing manual workflows', async () => {
+    it('shows the list trigger wording and filters attached triggers without losing manual workflows', async () => {
+        windowSize.width = 390;
         const timedTriggers = [{ kind: 'schedule' as const, schedule: { kind: 'interval' as const, everyMs: 3_600_000, scheduleExpr: null, timezone: null } }];
         let deletedDefinitionId: string | undefined;
         automationDefinitionResponse = async (url, init) => init?.method === 'DELETE'

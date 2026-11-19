@@ -198,10 +198,10 @@ export function createWorkflowActionHttpTransport(params: Readonly<{
             if (query.scope === 'account_inline' || query.managedTarget !== undefined || query.managedTargetUnindexed !== undefined) {
                 return json({ automations: [], nextCursor: null });
             }
-            const ids = query.workflowDefinitionIds;
-            if (ids === undefined) return json({ error: 'invalid_parameters' }, 400);
             return json({ automations: automations.automations.filter(row => row.workflowDefinitionId != null
-                && ids.includes(row.workflowDefinitionId)), nextCursor: null });
+                && (query.workflowDefinitionId === undefined || query.workflowDefinitionId === row.workflowDefinitionId)
+                && (query.workflowDefinitionIds === undefined || query.workflowDefinitionIds.includes(row.workflowDefinitionId))
+                && (query.scopeSessionId === undefined || query.scopeSessionId === row.scopeSessionId)), nextCursor: null });
         }
         if (target.pathname === '/v3/automations/runs' && params.automationRuns) return params.automationRuns(target, init);
         if (target.pathname === '/v3/automations/runs/workflow-storage') {

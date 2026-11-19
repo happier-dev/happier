@@ -1,6 +1,21 @@
+import * as React from 'react';
+
+import { useMachineDisplayNamesById } from '@/sync/domains/state/storage';
+import type { ProjectAccountRowsSnapshot } from '@/sync/domains/workspaces/projectAccountRows';
+import { buildProjectGroupDisplayIndex } from '@/sync/domains/workspaces/projectGroupDisplay';
 import { t } from '@/text';
 
 export type WorkflowProjectGroup = Readonly<{ key: string; title: string }>;
+
+/** The library and Runs use the Project owner over the same held Home census and Machine names. */
+export function useWorkflowProjectGroupDisplay(census: ProjectAccountRowsSnapshot | null, presented: boolean) {
+  const refs = census?.workspaceRefs;
+  const organizations = census?.organizations;
+  const machineIds = React.useMemo(() => refs?.map(ref => ref.machineId) ?? [], [refs]);
+  const machineNames = useMachineDisplayNamesById(machineIds, { serverId: census?.scope.serverId, presented });
+  return React.useMemo(() => refs ? buildProjectGroupDisplayIndex(refs, organizations, machineNames) : null,
+    [refs, organizations, machineNames]);
+}
 
 /**
  * Group by Project for workflows (scene 8 D1/D3): the projects by name, then "No project" for the rest. The one

@@ -28,12 +28,24 @@ export type WorkflowLibraryRecordRow = LibraryRecordFacts & (Readonly<{
     /** Undefined means unread; a present summary with lastRun:null means no run. */
     lastRunSummary: WorkflowLibraryRunSummary | undefined;
 }> | Readonly<{
-    group: 'library'; accountTrigger: WorkflowTriggerSetV1;
+    group: 'library' | 'account'; accountTrigger: WorkflowTriggerSetV1;
     openTarget: AccountWorkflowOpenTarget;
     lastRunSummary: WorkflowAutomationRunSummary | undefined;
     /** All existing settings editors remain reachable when a Workflow has several triggers. */
     triggerOpenTargets: readonly AccountWorkflowOpenTarget[];
 }>);
+
+export function describeAccountWorkflowLibraryRecord(set: WorkflowTriggerSetV1, summary?: WorkflowAutomationRunSummary) {
+    const sourceGone = isWorkflowTriggerSourceGone(set);
+    const triggerSummary = formatTriggerSetSummary(set.triggers, summary?.lastRun?.state);
+    // Automatic deployment observers can store their Environment identity as the name.
+    const named = set.name === set.automationId || set.name === set.observationOnly?.deploymentEnvironment?.environmentId
+        ? undefined : set.name;
+    const name = sourceGone ? t('workflows.triggers.row.workflowUnavailable')
+        : named ?? describeLegacyTriggerSet(set)?.title
+            ?? (set.observationOnly ? triggerSummary : describeTriggerTarget(set.target, () => null));
+    return { name, sourceGone, triggerSummary };
+}
 
 /** One projection and ordering for saved definitions and standalone Account Workflows. No reads. */
 export function projectWorkflowLibraryRecords(input: Readonly<{
@@ -41,6 +53,7 @@ export function projectWorkflowLibraryRecords(input: Readonly<{
     accountTriggers: readonly WorkflowTriggerSetV1[];
     summaries: ReadonlyMap<string, WorkflowLibraryRunSummary> | null;
     automationSummaries: ReadonlyMap<string, WorkflowAutomationRunSummary> | null;
+    savedLibraryIncomplete?: boolean;
     previous?: readonly WorkflowLibraryRecordRow[];
 }>): readonly WorkflowLibraryRecordRow[] {
     const projectDefinition = (definition: WorkflowLibraryDefinition, group: 'library' | 'sharedWithYou'): WorkflowLibraryRecordRow => ({
@@ -58,23 +71,18 @@ export function projectWorkflowLibraryRecords(input: Readonly<{
         ...input.definitions.sharedWithYou.map(definition => projectDefinition(definition, 'sharedWithYou')),
     ];
     const triggers = input.accountTriggers.map((set): WorkflowLibraryRecordRow => {
-        const sourceGone = isWorkflowTriggerSourceGone(set);
-        const triggerSummary = formatTriggerSetSummary(set.triggers, input.automationSummaries?.get(set.automationId)?.lastRun?.state);
-        // Automatic deployment observers can store their Environment identity as the name.
-        const named = set.name === set.automationId || set.name === set.observationOnly?.deploymentEnvironment?.environmentId
-            ? undefined : set.name;
+        const lastRunSummary = input.automationSummaries?.get(set.automationId);
+        const { name, sourceGone, triggerSummary } = describeAccountWorkflowLibraryRecord(set, lastRunSummary);
         // Nothing of a gone source is editable, so its row is one press: remove the retained set.
         const triggerOpenTargets = (set.triggers.length && !sourceGone ? set.triggers.map(trigger => trigger.id) : [null]).map(triggerId => ({
             kind: 'accountTrigger' as const, automationId: set.automationId, triggerId,
         }));
         return {
-            key: `account-trigger:${set.automationId}`, group: 'library', accountTrigger: set,
-            name: sourceGone ? t('workflows.triggers.row.workflowUnavailable')
-                : named ?? describeLegacyTriggerSet(set)?.title
-                    ?? (set.observationOnly ? triggerSummary : describeTriggerTarget(set.target, () => null)),
+            key: `account-trigger:${set.automationId}`, group: input.savedLibraryIncomplete ? 'account' : 'library', accountTrigger: set,
+            name,
             triggerSummary,
             updatedAt: set.updatedAt ?? 0,
-            lastRunSummary: input.automationSummaries?.get(set.automationId),
+            lastRunSummary,
             openTarget: triggerOpenTargets[0]!, triggerOpenTargets,
         };
     });

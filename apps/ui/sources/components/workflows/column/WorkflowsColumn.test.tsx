@@ -210,28 +210,23 @@ describe('WorkflowsColumn', () => {
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
         const { WorkflowsColumnActions } = await import('./WorkflowsColumnActions');
         const { WORKFLOWS_NEW_ROUTE } = await import('../workflowsRoutes');
-        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
-        const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
-        const screen = await renderScreen(<WorkflowsColumnActions canCreate />, { wrapper: TestAuth });
+        const screen = await renderScreen(<WorkflowsColumnActions canCreate />, { wrapper: TestAuth,
+            createNodeMock: () => ({ measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(40, 40, 120, 40) }),
+        });
         const menu = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'workflows-column:add:menu')!;
         const items = menu.props.items as readonly import('@/components/ui/forms/dropdown/DropdownMenu').DropdownMenuItem[];
         expect(items.map(item => item.id)).toEqual(['blank', 'trigger', 'agent', 'example', 'import']);
         await act(async () => menu.props.onSelect('blank'));
         expect(routerPush).toHaveBeenCalledWith(WORKFLOWS_NEW_ROUTE);
         await act(async () => menu.props.onSelect('trigger'));
-        const lifetime = captureActiveServerAccountScopeLifetime();
-        if (!lifetime) throw new Error('Expected the current authoring Account');
-        const route = routerPush.mock.calls.at(-1)?.[0];
-        expect(route).toMatchObject({ pathname: '/workflows/[id]', params: { id: 'new', serverId: lifetime.scope.serverId } });
-        expect(readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId, lifetime.scope))
-            .toMatchObject({ initialView: 'sentence' });
+        await vi.waitFor(() => expect(screen.findHostByTestId('workflow-builder')).not.toBeNull());
+        expect(routerPush).toHaveBeenCalledTimes(1);
+        await screen.pressByTestIdAsync('workflow-builder-cancel');
         await screen.update(<WorkflowsColumnActions canCreate={false} />);
         const more = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'workflows-column:more:menu')!;
         await act(async () => more.props.onSelect('trigger'));
-        const moreRoute = routerPush.mock.calls.at(-1)?.[0];
-        expect(moreRoute).toMatchObject({ pathname: '/workflows/[id]', params: { id: 'new', serverId: lifetime.scope.serverId } });
-        expect(readWorkflowDefinitionDraftSeed(moreRoute.params.definitionDraftSeedId, lifetime.scope))
-            .toMatchObject({ initialView: 'sentence' });
+        await vi.waitFor(() => expect(screen.findHostByTestId('workflow-builder')).not.toBeNull());
+        expect(routerPush).toHaveBeenCalledTimes(1);
     });
     it('lists saved and Account Workflows as one Library and opens each at its own target (Q7)', async () => {
         const [{ AutomationDefinitionDetailSchema, AutomationDefinitionListResponseSchema }, { AutomationStoredWorkflowDefinitionRecipeV2Schema },
@@ -1014,12 +1009,12 @@ describe('WorkflowsColumn', () => {
         const subtitleOf = (screen: Awaited<ReturnType<typeof renderScreen>>, id: string) => screen.findAll(node =>
             node.props?.testID === `workflows-column:library:account-trigger:${id}` && 'subtitle' in node.props)[0]?.props.subtitle as string | undefined;
 
-        it('reads Done or Missed from the occurrence Run\'s own state, and a pending one by its due time', async () => {
+        it('reads Succeeded or Missed from the occurrence Run\'s own state, and a pending one by its due time', async () => {
             await serveOnceWorkflows([{ id: 'ran', remaining: 0, lastRun: 'succeeded' }, { id: 'missed', remaining: 0, lastRun: 'missed' },
                 { id: 'due', remaining: 1, lastRun: null }]);
             const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
             await vi.waitFor(() => expect(subtitleOf(screen, 'missed')).toMatch(/^workflows\.runState\.missed · /u));
-            expect(subtitleOf(screen, 'ran')).toMatch(/^common\.done · workflows\.triggers\.once\.at\(/u);
+            expect(subtitleOf(screen, 'ran')).toMatch(/^workflows\.runState\.succeeded · workflows\.triggers\.once\.at\(/u);
             expect(subtitleOf(screen, 'missed')).toContain('workflows.triggers.once.at(');
             expect(subtitleOf(screen, 'due')).toMatch(/^workflows\.triggers\.once\.at\(/u);
         });
@@ -1036,7 +1031,7 @@ describe('WorkflowsColumn', () => {
             await vi.waitFor(() => expect(screen.findByTestId('session-work-trigger-history:ran')).not.toBeNull());
             // The spent schedule's History says how it ended before its Run rows.
             expect(screen.findAll(node => node.props?.testID === 'session-work-trigger-history:ran-once' && 'title' in node.props)[0]
-                ?.props.title).toBe('common.done');
+                ?.props.title).toBe('workflows.runState.succeeded');
             const back = screen.findByTestId('workflows-column-trigger-popover-back');
             expect(back).not.toBeNull();
             await screen.pressByTestIdAsync('workflows-column-trigger-popover-back');
@@ -1058,7 +1053,7 @@ describe('WorkflowsColumn', () => {
             const mark = screen.findAll(node => node.props.testID === `workflows-column:builtin:${entry.id}`)[0]!;
             const marks = mark.findAll(node => typeof node.props.name === 'string').map(node => node.props.name);
             // Each built-in names its own mark (owner 2026-11-12); the host draws it as that glyph.
-            const expectedMark = entry.icon;
+            const expectedMark = entry.icon === 'scan-search' ? 'magnifying-glass' : entry.icon;
             expect(marks).toContain(expectedMark);
             await screen.pressByTestIdAsync(`workflows-column:builtin:${entry.id}`);
             expect(routerPush).toHaveBeenLastCalledWith(createWorkflowDefinitionRoute(entry.id));

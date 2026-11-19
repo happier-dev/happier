@@ -57,6 +57,15 @@ describe('retained triggers whose Workflow is gone', () => {
         expect(project([trigger, trigger])).toHaveLength(1);
     });
 
+    it('keeps readable Account workflows out of the saved Library count before it settles', () => {
+        const input = { definitions: { library: [], sharedWithYou: [] },
+            accountTriggers: [set('digest', { name: 'Morning digest' })], summaries: null, automationSummaries: null };
+        expect(projectWorkflowLibraryRecords({ ...input, savedLibraryIncomplete: true }))
+            .toMatchObject([{ key: 'account-trigger:digest', group: 'account' }]);
+        expect(projectWorkflowLibraryRecords(input))
+            .toMatchObject([{ key: 'account-trigger:digest', group: 'library' }]);
+    });
+
     it('labels an unreadable legacy record by its state rather than its stored identity', () => {
         const legacy = set('cmwg2ttqc01hwmcswcfldvi20', { name: 'cmwg2ttqc01hwmcswcfldvi20',
             health: 'source_unavailable', legacy: { editable: false, reason: 'created_in_0_2', lockedReason: 'decryption_failed' } });

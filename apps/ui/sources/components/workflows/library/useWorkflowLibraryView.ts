@@ -10,7 +10,8 @@ import { useWorkflowTriggerSets } from '../triggers/useWorkflowTriggerSets';
 import { splitLibraryDefinitions } from '../column/workflowsColumnModel';
 import type { WorkflowLibraryView } from '@happier-dev/protocol/actions/scopeActionFamily';
 import { useActiveServerAccountScopeLifetime, useAuthoringMemoryField, useProjectAccountRows } from '@/sync/domains/state/storage';
-import { buildProjectGroupDisplayIndex, projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
+import { projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
+import { useWorkflowProjectGroupDisplay } from './workflowLibraryProjectGroups';
 import { registerWorkflowLibraryScopeActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 import { compileWorkflowListFilterV1, DEFAULT_WORKFLOW_LIST_FILTER_V1, WorkflowListFilterPatchV1Schema,
     workflowListFilterFieldsV1, type WorkflowListFilterV1, type WorkflowListFilterFactsV1 } from '@happier-dev/protocol/workflows/listing/workflowListFilterV1';
@@ -90,25 +91,26 @@ export function useWorkflowLibraryView(focused: boolean) {
     const { summaries } = useWorkflowLibrarySummaries(summaryIds, demand);
     const automationIds = React.useMemo(() => accountWorkflows.sets.map(set => set.automationId), [accountWorkflows.sets]);
     const automationSummaries = useWorkflowAutomationSummaries(automationIds, demand);
+    const savedLibraryIncomplete = library.status !== 'loaded';
     const previousRecords = React.useRef<readonly WorkflowLibraryRecordRow[]>([]);
     const records = React.useMemo(() => {
         const next = projectWorkflowLibraryRecords({ definitions: split, accountTriggers: accountWorkflows.sets,
-            summaries, automationSummaries: automationSummaries.summaries, previous: previousRecords.current });
+            summaries, automationSummaries: automationSummaries.summaries, savedLibraryIncomplete, previous: previousRecords.current });
         previousRecords.current = next;
         return next;
     },
-        [split, accountWorkflows.sets, summaries, automationSummaries.summaries, language]);
+        [split, accountWorkflows.sets, summaries, automationSummaries.summaries, savedLibraryIncomplete, language]);
     const libraryRows = React.useMemo(() => records.filter(row => row.group === 'library'), [records]);
     const libraryCount = libraryRows.length;
     const lifetime = useActiveServerAccountScopeLifetime();
     const workflowSections = useWorkflowSections(focused, lifetime, summaryIds);
     const census = useProjectAccountRows();
+    const projectDisplay = useWorkflowProjectGroupDisplay(census, focused);
     const placements = useAuthoringMemoryField('workflowProjectTargetsByDefinitionId');
     const projectsByWorkflow = React.useMemo(() => {
         const result = new Map<string, { key: string; title: string }>();
         const resolve = census?.sessionProjectKeyResolver;
-        if (!lifetime || !census || !resolve || census.coverage !== 'complete') return result;
-        const display = buildProjectGroupDisplayIndex(census.workspaceRefs, census.organizations);
+        if (!lifetime || !census || !resolve || census.coverage !== 'complete' || !projectDisplay) return result;
         for (const { key } of records) {
             const placement = placements[key];
             if (!placement) continue;
@@ -119,11 +121,11 @@ export function useWorkflowLibraryView(focused: boolean) {
             }, lifetime.scope.serverId);
             if (association.kind !== 'resolved') continue;
             const projectKey = projectGroupIdentityKey(association.projectKey);
-            const title = display.get(projectKey)?.title;
+            const title = projectDisplay.get(projectKey)?.title;
             if (title) result.set(key, { key: projectKey, title });
         }
         return result;
-    }, [lifetime, census, placements, records]);
+    }, [lifetime, census, placements, projectDisplay, records]);
     const rows = React.useMemo((): readonly WorkflowLibraryRow[] => [
         ...records,
         ...split.fromPlugins.map(plugin => ({ key: plugin.workflow, group: 'fromPlugins' as const, plugin })),
@@ -156,6 +158,9 @@ export function useWorkflowLibraryView(focused: boolean) {
     const filter = React.useCallback((row: WorkflowLibraryRow) => visibleKeySet.has(row.key), [visibleKeySet]);
     const isVisible = React.useCallback((key: string) => visibleKeySet.has(key), [visibleKeySet]);
     const visibleLibraryRows = React.useMemo(() => libraryRows.filter(row => visibleKeySet.has(row.key)), [libraryRows, visibleKeySet]);
+    const visibleAccountRows = React.useMemo(() => records.filter((row): row is Extract<WorkflowLibraryRecordRow, { accountTrigger: unknown }> => 'accountTrigger' in row
+        && row.group === 'account' && visibleKeySet.has(row.key)),
+        [records, visibleKeySet]);
     const update = React.useCallback((patch: Readonly<{ filters?: Partial<WorkflowListFilterV1>; searchQuery?: string }>): boolean => {
         const nextFilters = patch.filters ? WorkflowListFilterPatchV1Schema.safeParse(patch.filters) : null;
         if (nextFilters && (!nextFilters.success || getUnsupportedEntityFilterFieldsV1(workflowListFilterFieldsV1, { ...DEFAULT_WORKFLOW_LIST_FILTER_V1, ...nextFilters.data }, 'list').length > 0)) return false;
@@ -168,7 +173,7 @@ export function useWorkflowLibraryView(focused: boolean) {
         activeSpace: binding.activeSpace, spacesEnabled: binding.spacesEnabled,
         spacesReady: binding.spacesReady, spaceSettingsScope: binding.spaceSettingsScope,
         view: filters.view, searchQuery, offeredViews, visibleKeys, filterResult, filter, isVisible, needle, update, setFilters: binding.setFilters, reset, setView, setSearchQuery,
-        library, split, rows, projectsByWorkflow, workflowSections, summaries, accountWorkflows, automationSummaries, libraryRows, libraryCount, visibleLibraryRows,
+        library, split, rows, projectsByWorkflow, workflowSections, summaries, accountWorkflows, automationSummaries, libraryRows, libraryCount, visibleLibraryRows, visibleAccountRows,
         libraryCoverage: sourceCoverage, libraryIsEmpty };
     const latest = React.useRef(controller);
     React.useLayoutEffect(() => { latest.current = controller; });
