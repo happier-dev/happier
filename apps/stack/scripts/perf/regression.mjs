@@ -6,6 +6,8 @@ const countSignals = ['requests', 'renders', 'commits', 'storeNotifications', 's
 const median = values => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 const groupKey = run => JSON.stringify([run.journey, run.cache, run.captureMode, run.version, backendProfileRolesForRun(run)]);
 const finite = value => typeof value === 'number' && Number.isFinite(value);
+const footprintMetrics = ['rssBytes', 'pssBytes', 'ussBytes', 'heapUsedBytes', 'cpuMs',
+  'cpuMsPerMinute', 'voluntarySwitchesPerMinute'];
 
 function diagnosticMetrics(run) {
   const values = {};
@@ -19,6 +21,11 @@ function diagnosticMetrics(run) {
   };
   visit({ durationMs: run.durationMs ?? null,
     process: { server: run.processWindow?.server ?? null, daemon: run.processWindow?.daemon ?? null },
+    ...(run.footprint ? { footprint: { ...Object.fromEntries(Object.entries(run.footprint.phases ?? {}).map(([phase, roles]) => [
+      phase, Object.fromEntries(Object.entries(roles).map(([role, metrics]) => [
+        role, Object.fromEntries(footprintMetrics.map(metric => [metric, metrics?.[metric] ?? null])),
+      ])),
+    ])), completedTurns: run.footprint.completedTurns } } : {}),
     socketEventsPerSecond: run.socketEventsPerSecond ?? null,
     trace: run.profiling?.trace?.summary ?? null, sampledAllocation: run.profiling?.heap?.summary ?? null,
     backend: Object.fromEntries(['server', 'daemon'].map(role => [role, {
@@ -54,11 +61,21 @@ export function assessRegressionPairs(pairs, { requiredCounts = countSignals } =
     const mode = run.captureMode;
     const beforeDiagnostics = baseline ? diagnosticMetrics(baseline) : {};
     const afterDiagnostics = candidate ? diagnosticMetrics(candidate) : {};
+    const workload = baseline?.footprint?.workload;
+    const sameFootprintWorkload = typeof workload === 'string' && workload.length > 0
+      && workload === candidate?.footprint?.workload;
+    if (baseline?.footprint || candidate?.footprint) {
+      const reason = !sameFootprintWorkload ? 'unavailable for paired deltas (missing or incompatible workload)' : 'compatible workload';
+      observations.push({ pair: index, journey: run.journey, cache: run.cache, mode, metric: 'footprint.workload',
+        before: workload ? 'captured' : null, after: candidate?.footprint?.workload ? 'captured' : null, delta: null,
+        note: reason, changedNotably: false, noisy: true, gating: false });
+    }
     for (const metric of new Set([...Object.keys(beforeDiagnostics), ...Object.keys(afterDiagnostics)])) {
       const a = beforeDiagnostics[metric], b = afterDiagnostics[metric];
+      const paired = finite(a) && finite(b) && (!metric.startsWith('footprint.') || sameFootprintWorkload);
       observations.push({ pair: index, journey: run.journey, cache: run.cache, mode, metric,
-        before: a ?? null, after: b ?? null, delta: finite(a) && finite(b) ? b - a : null,
-        changedNotably: finite(a) && finite(b) && a !== b, noisy: true, gating: false });
+        before: a ?? null, after: b ?? null, delta: paired ? b - a : null,
+        changedNotably: paired && a !== b, noisy: true, gating: false });
     }
     if (baseline && candidate) {
       const group = groupKey(baseline);
@@ -252,7 +269,7 @@ export function renderPerfComparison(report) {
   if (report.elapsedMs !== undefined) lines.push(`Added job wall-clock: ${(report.elapsedMs / 1000).toFixed(2)} seconds.`, '');
   lines.push('| Journey/cache/mode | Metric | Baseline | Candidate | Delta | Observation |', '| --- | --- | ---: | ---: | ---: | --- |');
   for (const row of report.counts ?? []) lines.push(`| ${row.journey}/${row.cache}/${row.mode} | ${row.metric} | ${row.before ?? 'unavailable'} | ${row.after ?? 'unavailable'} | ${row.delta ?? 'unavailable'} | ${row.changedNotably ? 'Changed notably; ' : ''}noisy, informational |`);
-  for (const row of report.observations ?? []) lines.push(`| ${row.journey}/${row.cache}/${row.mode} | ${row.metric} | ${row.before ?? 'unavailable'} | ${row.after ?? 'unavailable'} | ${row.delta ?? 'unavailable'} | ${row.changedNotably ? 'Changed notably; ' : ''}noisy, informational |`);
+  for (const row of report.observations ?? []) lines.push(`| ${row.journey}/${row.cache}/${row.mode} | ${row.metric} | ${row.before ?? 'unavailable'} | ${row.after ?? 'unavailable'} | ${row.delta ?? 'unavailable'} | ${row.note ? `${row.note}; ` : ''}${row.changedNotably ? 'Changed notably; ' : ''}noisy, informational |`);
   for (const row of report.comparison ?? []) for (const percentile of ['p50Ms', 'p95Ms']) lines.push(`| ${row.journey}/${row.cache}/${row.captureMode} | ${percentile} | ${row.beforeTiming?.[percentile] ?? 'unavailable'} | ${row.afterTiming?.[percentile] ?? 'unavailable'} | ${row.beforeTiming && row.afterTiming ? row.afterTiming[percentile] - row.beforeTiming[percentile] : 'unavailable'} | noisy, informational |`);
   for (const row of report.timings ?? []) lines.push(`| ${row.group.join('/')} | paired timing ratio | 1 | ${row.pairedRatio} | ${row.pairedRatio - 1} | ${row.changedNotably ? 'Changed notably; ' : ''}baseline noise ratio ${row.noiseRatio} |`);
   for (const row of report.heap ?? []) lines.push(`| pair ${row.pair} | post-GC bytes/cycle | ${row.baselineBytesPerCycle ?? 'unavailable'} | ${row.candidateBytesPerCycle ?? 'unavailable'} | ${row.delta ?? 'unavailable'} | ${row.changedNotably ? 'Changed notably; ' : ''}baseline noise ${row.noiseBytesPerCycle ?? 'unavailable'} bytes/cycle; noisy, informational |`);

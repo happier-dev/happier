@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createStressHostObserver } from './stress-host.mjs';
+import { createLinuxFootprintReader, createStressHostObserver } from './stress-host.mjs';
 
 test('isolated stress observation uses real container identity and physical SQL totals; unknown daemon CPU stays unavailable', async () => {
   let calls = 37;
@@ -63,4 +63,17 @@ test('an unavailable informational SQL counter is explicit, never invented zero'
   assert.ok(!recovered.unavailable.some(reason => /SQL/.test(reason)));
   assert.equal(reads, 3, 'one SQL probe per initial/requested sample; no failure retry or stale-cache substitution');
   await observer.stop();
+});
+
+
+test('Linux footprint uses the running process and leaves an absent role unavailable', { skip: process.platform !== 'linux' }, async () => {
+  const measure = await createLinuxFootprintReader();
+  assert.ok(measure, 'Linux process clock available');
+  const rows = await measure({ runner: [process.pid], holder: [null] }, async () => {
+    const until = performance.now() + 50;
+    while (performance.now() < until) { /* account for measurable CPU in this process */ }
+  });
+  assert.ok(rows.runner.rssBytes > 0);
+  assert.ok(rows.runner.cpuMs > 0);
+  assert.equal(rows.holder, null);
 });

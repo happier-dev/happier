@@ -150,6 +150,21 @@ export async function preparePerfSourceDependencies(side, sourceDir, signal, own
       env: { ...process.env, CI: '1' }, signal, buildMode: 'strict',
     });
   }
+  if (process.platform === 'linux') {
+    // The source materializer excludes native outputs. Build the real holder
+    // from each side's private Rust sources using the existing native owner.
+    try {
+      const { buildSessionHolder } = await import('../../../packages/iroh-native/scripts/build-node-addon.mjs');
+      await buildSessionHolder({
+        packageDir: join(sourceDir, 'packages/iroh-native'),
+        runCommand: (executable, args, options) => command(executable, args, { ...options, signal }),
+      });
+    } catch {
+      signal?.throwIfAborted();
+      // Host availability only affects the footprint observation.
+      process.stderr.write('Performance Session holder preparation unavailable; continuing performance capture.\n');
+    }
+  }
 }
 
 async function prepareUi(side, sourceDir, out, supplied, signal, owned) {

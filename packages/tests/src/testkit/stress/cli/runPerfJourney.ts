@@ -8,14 +8,18 @@ import { createTestAuth } from '../../auth';
 import { buildTestAccountCliAuthCredentials, seedCliAuthForTestAccount } from '../../cliAuth';
 import { createEncryptedArtifactViaApi, decodeEncryptedArtifactJsonBase64ForCliAccessKey, fetchArtifactViaApi } from '../../artifactApi';
 import { startTestDaemon } from '../../daemon/daemon';
+import { daemonControlPostJson } from '../../daemon/controlServerClient';
 import { fakeClaudeFixturePath } from '../../fakeClaude';
 import { reserveAvailablePort } from '../../network/reserveAvailablePort';
 import { repoRootDir } from '../../paths';
+import { readTrackedRunnerPid } from '../../providers/harness/daemonRunnerContinuity';
+import { enqueueSessionPromptForScenario, waitForAssistantMessageContaining } from '../../providers/scenarios/sessionRuntime';
 import { startExistingUiWebExport } from '../../process/uiWeb';
 import { resolveTsxImportHookSpecifier } from '../../process/tsxImportHook';
 import { encryptDataKeyBase64 } from '../../rpcCrypto';
 import { createMachineBoundSessionScopedSocketCollector } from '../../sessionSocketBinding';
 import { fetchSessionV2 } from '../../sessions';
+import { readDecryptedSessionMetadataV2 } from '../../sessionHandoffMetadata';
 import { type SocketCollector } from '../../socketClient';
 import { waitFor } from '../../timing';
 import { buildAuthBootstrapStorageSnapshot } from '../../uiE2e/buildAuthBootstrapStorageSnapshot';
@@ -27,6 +31,7 @@ import { resolveCanonicalServerIdForUi } from '../../uiE2e/sessionFoldersDrag';
 import { readStressConfig } from '../config/readStressConfig';
 import { seedPerfProfile } from '../scenarios/seedPerfProfile';
 import { perfFixtureId } from '../scenarios/perfProfile';
+import { readServiceMetricsViaNodeFetch } from '../scenarios/fullComposeScenarioSupport';
 import { startStressTarget } from '../targets/startStressTarget';
 
 const supportedJourneys = ['J1', 'J13', 'J4-stream', 'J5', 'J14', 'Stop'] as const;
@@ -128,11 +133,13 @@ async function preparePerfJourneyEnvironment(options: PerfJourneyOptions, cleanu
     cleanup.push(() => daemon.stop());
     const seeded = await seedPerfProfile({ baseUrl: target.baseUrl, auth, seed: options.seed,
       concurrency: config.load.mixedSetupConcurrency ?? 8, workspaceDir, liveMachineId: seededCli.machineId });
-    return { workspaceDir, target, ui, auth, daemon, seeded, seededCli, serverId };
+    return { workspaceDir, target, ui, auth, daemon, seeded, seededCli, serverId,
+      footprintFixture: { dataset: seeded.summary, filesBackend: config.compose.filesBackend,
+        dbConnectionLimit: config.compose.dbConnectionLimit ?? null, metricsEnabled: config.compose.metricsEnabled } };
 }
 
 async function capturePerfJourney(options: PerfJourneyOptions, environment: Awaited<ReturnType<typeof preparePerfJourneyEnvironment>>, signal: AbortSignal, cleanupFailures: unknown[]) {
-  const { workspaceDir, target, ui, auth, daemon, seeded, seededCli, serverId } = environment;
+  const { workspaceDir, target, ui, auth, daemon, seeded, seededCli, serverId, footprintFixture } = environment;
   const cleanup: Array<() => Promise<unknown>> = [];
   let phase = 'browser-start';
   try {
@@ -191,9 +198,13 @@ async function capturePerfJourney(options: PerfJourneyOptions, environment: Awai
     const postgres = await admin.listServiceContainers('postgres');
     if (postgres.length !== 1) throw new Error('Owned PostgreSQL counter source unavailable');
     const { execFile } = await import('node:child_process');
-    const images = JSON.parse(await new Promise<string>((accept, reject) => execFile('docker', ['inspect', ...containers.map(container => container.id)], (error, stdout) => error ? reject(error) : accept(stdout)))) as Array<{ Id: string; Image: string }>;
-    const observedContainers = containers.map(container => ({ id: container.id, service: container.service,
-      image: images.find(image => image.Id === container.id)?.Image }));
+    const images = await new Promise<string>((accept, reject) => execFile('docker',
+      ['inspect', '--format', '{{.Image}}', ...containers.map(container => container.id)],
+      (error, stdout) => error ? reject(error) : accept(stdout)));
+    const imageIds = images.trim().split('\n');
+    const observedContainers = containers.map((container, index) => ({ id: container.id, service: container.service, image: imageIds[index] }));
+    const observerContext = { composeProjectName: target.topology.composeProjectName,
+      uiDir: options.uiExportDir, containers: observedContainers, postgresContainerId: postgres[0]!.id, daemonPid: daemon.state.pid };
     const observerModule: unknown = await import(pathToFileURL(join(repoRootDir(), 'apps/stack/scripts/perf/stress-host.mjs')).href);
     const auditModule: unknown = await import(pathToFileURL(join(repoRootDir(), 'apps/ui/scripts/perf/agentBrowserUiPerfAudit.mjs')).href);
     if (!observerModule || typeof observerModule !== 'object' || !('createStressHostObserver' in observerModule) || typeof observerModule.createStressHostObserver !== 'function'
@@ -205,8 +216,7 @@ async function capturePerfJourney(options: PerfJourneyOptions, environment: Awai
         : options.journey === 'Stop' ? 'Session header Stop through the real UI Action and daemon; observe persisted inactive state'
         : 'Deterministic seeded full-compose performance contract', prepare, steps }, heap: options.heapCycles ? heap : undefined,
       outputDirectoryPrepared: true,
-      startHostObserver: () => createObserver({ context: { composeProjectName: target.topology.composeProjectName,
-        uiDir: options.uiExportDir, containers: observedContainers, postgresContainerId: postgres[0]!.id, daemonPid: daemon.state.pid } }),
+      startHostObserver: () => createObserver({ context: observerContext }),
       runStep: async (step: JourneyStep, captureContext: { capture: CaptureControl }) => {
         signal.throwIfAborted();
         if (step.op === 'open') { await page.goto(step.path ? new URL(step.path, ui.baseUrl).href : ui.baseUrl, { waitUntil: 'domcontentloaded' }); return true; }
@@ -270,6 +280,57 @@ async function capturePerfJourney(options: PerfJourneyOptions, environment: Awai
       `--home-selector=${home}`, `--cache=${options.cache}`, '--ui-mode=export', `--capture-mode=${options.mode}`, `--out=${options.out}`], runtime);
     const bundle = JSON.parse(await readFile(join(options.out, 'bundle.json'), 'utf8')) as { status?: string };
     if (bundle.status === 'FAILED') throw new Error('Canonical performance journey failed');
+    if (options.journey !== 'J4-stream' || options.mode !== 'counts') return;
+
+    // The caller runs this after the browser and transcript publishers close,
+    // so their activity never enters the process windows or the web capture.
+    return async () => {
+      const observer = await createObserver({ context: observerContext }).catch(() => null);
+      if (!observer) {
+        signal.throwIfAborted();
+        await writeFile(join(options.out, 'bundle.json'), JSON.stringify({ ...bundle, footprint: { workload: null, phases: {} } }, null, 2) + '\n');
+        return;
+      }
+      const sessions: string[] = [];
+      const sessionAccess = { baseUrl: target.baseUrl, token: auth.token };
+      const daemonAccess = { port: daemon.state.httpPort, controlToken: daemon.state.controlToken };
+      const startFootprintSession = async () => {
+        const sessionId = await spawnSessionFromDaemon({ daemon, directory: workspaceDir, agent: 'claude', request: { terminal: { mode: 'plain' } } });
+        sessions.push(sessionId);
+        const runnerPid = await readTrackedRunnerPid({ daemon: daemon.state, sessionId });
+        const { selectedSecret, selectedUsesDataKeyVariant } = await readDecryptedSessionMetadataV2({
+          ...sessionAccess, sessionId, machineKeys: [auth.accountMachineKey],
+        });
+        if (!selectedSecret || !selectedUsesDataKeyVariant) throw new Error('Footprint Session data key unavailable');
+        return { ...sessionAccess, sessionId, runnerPid, secret: selectedSecret, encryptionVariant: 'dataKey' as const };
+      };
+      try {
+        const footprint: unknown = await observer.captureFootprint({
+          fixture: footprintFixture, signal,
+          startSession: startFootprintSession,
+          runTurn: async (session: Awaited<ReturnType<typeof startFootprintSession>>, turn: number) => {
+            signal.throwIfAborted();
+            await enqueueSessionPromptForScenario({ ...session, text: 'Describe the deterministic footprint fixture.' });
+            await waitForAssistantMessageContaining({ ...session, requiredSubstring: 'FAKE_CLAUDE_OK_' + turn, timeoutMs: 30_000 });
+          },
+          readServerHeap: async (role: 'api' | 'worker') => {
+            const metrics = await readServiceMetricsViaNodeFetch(target, role);
+            const value = metrics.match(/^runtime_heap_used_bytes ([0-9]+)$/m)?.[1];
+            return value === undefined ? null : Number(value);
+          },
+        });
+        await writeFile(join(options.out, 'bundle.json'), JSON.stringify({ ...bundle, footprint }, null, 2) + '\n');
+      } finally {
+        const stopped = await Promise.allSettled(sessions.map(async sessionId => {
+          const result = await daemonControlPostJson<{ status: string }>({ ...daemonAccess, path: '/stop-session', body: { sessionId } });
+          if (result.status !== 200 || !['stopped', 'requested', 'not_found'].includes(result.data.status)) throw new Error('Footprint Session cleanup failed');
+          await waitFor(async () => (await fetchSessionV2(target.baseUrl, auth.token, sessionId)).active === false,
+            { timeoutMs: 30_000, context: 'stopped footprint Session inactive' });
+        }));
+        await observer.stop();
+        if (stopped.some(result => result.status === 'rejected')) throw new Error('Footprint Session cleanup failed');
+      }
+    };
   } catch (error) {
     await writeFile(join(options.out, 'scenario-failure.json'), JSON.stringify({ phase, status: 'FAILED',
       error: error instanceof Error ? error.name : 'UnknownError', note: 'Sensitive subprocess and Account diagnostics are suppressed' }) + '\n');
@@ -311,7 +372,8 @@ export async function runPerfJourney(args: readonly string[]): Promise<void> {
         }
         environments.set(options.side, environment);
       }
-      await capturePerfJourney(options, environment, interrupted.signal, failures);
+      const captureFootprint = await capturePerfJourney(options, environment, interrupted.signal, failures);
+      await captureFootprint?.();
     }
   } finally {
     process.off('SIGINT', onSignal); process.off('SIGTERM', onSignal);

@@ -233,3 +233,22 @@ test('historical exact-base artifacts compare counts across hosts but never pret
   assert.equal(counts.status, 'PASS');
   assert.equal(counts.counts.find(row => row.metric === 'requests').delta, 0);
 });
+
+test('footprint shows measured zero, unavailable roles and only compatible informational deltas', () => {
+  const capture = (workload, roles) => run('counts', { footprint: { workload, phases: { settled: roles } } });
+  const baseline = capture('fake-claude-v1:42', { daemon: { rssBytes: 100, cpuMs: 0 }, holder: null });
+  const candidate = capture('fake-claude-v1:42', { daemon: { rssBytes: 120, cpuMs: 0 }, holder: { rssBytes: 10 } });
+  const value = (report, metric) => report.observations.find(row => row.metric === `footprint.settled.${metric}`);
+  const report = assess([pair(baseline, candidate)]);
+  assert.deepEqual([value(report, 'daemon.rssBytes')?.delta, value(report, 'daemon.cpuMs')?.delta], [20, 0]);
+  assert.equal(value(report, 'holder.rssBytes').before, null);
+  assert.equal(value(report, 'holder.rssBytes').delta, null);
+  assert.equal(report.status, 'PASS');
+  assert.match(regression.renderPerfComparison(report), /footprint.settled.holder.rssBytes.*unavailable.*10.*unavailable/);
+
+  const mismatched = assess([pair(baseline, capture('fake-claude-v1:43', { daemon: { rssBytes: 120 } }))]);
+  assert.equal(value(mismatched, 'daemon.rssBytes').after, 120);
+  assert.equal(value(mismatched, 'daemon.rssBytes').delta, null);
+  const oldBase = assess([pair(run(), candidate)]);
+  assert.equal(value(oldBase, 'daemon.rssBytes').delta, null);
+});
