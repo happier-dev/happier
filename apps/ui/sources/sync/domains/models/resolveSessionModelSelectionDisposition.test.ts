@@ -297,7 +297,7 @@ describe('resolveSessionModelSelectionDisposition', () => {
         });
     });
 
-    it('settles a durable Team proposal only after the runner publishes its accepted source', () => {
+    it.each([7, 9])('settles a durable Team proposal when the runner publishes its accepted source at revision %s', expectedResourceRevision => {
         const metadata = MetadataSchema.parse({
             path: '/tmp/project', host: 'localhost',
             modelSelectionIntentV2: {
@@ -323,13 +323,14 @@ describe('resolveSessionModelSelectionDisposition', () => {
             availableModels: [{ id: selection.modelId, name: 'Team model' }], activeSelectionV1: {
                 v: 2, source: 'runtime_apply', runner: params.currentRunnerProcessIdentity,
                 selection: { agentTargetKey: selection.agentTargetKey, providerConnectionId: null, modelId: selection.modelId },
-                teamCredentialModel: { kind: 'team_credential_provider_model', ...team },
+                teamCredentialModel: { kind: 'team_credential_provider_model', ...team, expectedResourceRevision },
             },
         } });
         expect(resolveSessionModelSelectionDisposition({ ...params, metadata: applied })).toMatchObject({
             proposedSelectionV2: {
-                ref: { source: 'team_resource', modelId: 'team-model' },
+                ref: { source: 'team_resource', modelId: 'team-model', expectedResourceRevision: 7 },
             },
+            selectedTeamCredentialModel: { modelId: 'team-model', expectedResourceRevision },
             selectionTransitionPending: false,
         });
     });

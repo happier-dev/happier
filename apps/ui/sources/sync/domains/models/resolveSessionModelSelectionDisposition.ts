@@ -7,6 +7,7 @@ import { readSessionProviderBindingMetadataStateV1, sessionProviderBindingMetada
 import type { ProviderBoundModelRef, SessionModelSelectionIntentV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { SessionActiveModelSelection, SessionModelRefV2, SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
+import { resolveRetainedTeamProviderBindingRevisionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 
 export type CurrentSessionRunnerProcessIdentity = Readonly<{
     pid: number;
@@ -137,13 +138,21 @@ export function resolveSessionModelSelectionDisposition(params: Readonly<{
         currentRunnerProcessIdentity: params.metadata?.sessionModelsV1?.activeSelectionV1?.runner ?? null,
     });
     const lastAppliedSelection = lastAppliedFact?.selection ?? null;
+    const teamIntent = proposedSelectionV2?.ref.source === 'team_resource' ? proposedSelectionV2.ref : null;
+    const appliedTeamModel = lastAppliedFact?.v === 2 ? lastAppliedFact.teamCredentialModel : null;
+    const teamIntentApplied = teamIntent !== null && appliedTeamModel !== null
+        && appliedTeamModel.agentTargetKey === teamIntent.agentTargetKey
+        && appliedTeamModel.modelId === teamIntent.modelId
+        && resolveRetainedTeamProviderBindingRevisionV1(teamIntent, appliedTeamModel) !== null;
     // The V1 launch intent names a model tuple, not its runtime-opened source.
     // Retain that source for presentation only while the tuple still matches;
     // an explicit V2 native/Provider choice always takes precedence.
     let selectedTeamCredentialModel: TeamCredentialProviderModelSelectionV1 | null = null;
-    if (proposedSelectionV2?.ref.source === 'team_resource') {
-        const { source: _source, ...ref } = proposedSelectionV2.ref;
-        selectedTeamCredentialModel = { kind: 'team_credential_provider_model', ...ref };
+    if (teamIntent) {
+        const { source: _source, ...ref } = teamIntent;
+        selectedTeamCredentialModel = params.sessionActive && exactFact?.v === 2 && teamIntentApplied
+            ? exactFact.teamCredentialModel
+            : { kind: 'team_credential_provider_model', ...ref };
     } else if (!proposedSelectionV2) {
         selectedTeamCredentialModel = matchingAppliedTeamSelection(lastAppliedFact, proposedSelection ?? reportedSelection);
     }
@@ -151,20 +160,10 @@ export function resolveSessionModelSelectionDisposition(params: Readonly<{
     const exactRouteSelection = routeSelection(exactFact);
     const activeRouteSelection = params.sessionActive ? exactRouteSelection : null;
     const lastAppliedRouteSelection = exactFact ? exactRouteSelection : routeSelection(lastAppliedFact);
-    const teamSelectionTransitionPending = proposedSelectionV2?.ref.source === 'team_resource'
-        && (
-            lastAppliedFact?.v !== 2
-            || lastAppliedFact.teamCredentialModel.teamId !== proposedSelectionV2.ref.teamId
-            || lastAppliedFact.teamCredentialModel.resourceId !== proposedSelectionV2.ref.resourceId
-            || lastAppliedFact.teamCredentialModel.expectedResourceRevision !== proposedSelectionV2.ref.expectedResourceRevision
-            || lastAppliedFact.teamCredentialModel.deliveryMode !== proposedSelectionV2.ref.deliveryMode
-            || lastAppliedFact.teamCredentialModel.agentTargetKey !== proposedSelectionV2.ref.agentTargetKey
-            || lastAppliedFact.teamCredentialModel.modelId !== proposedSelectionV2.ref.modelId
-        );
     const selectionTransitionPending = params.sessionActive
         && (
-            proposedSelectionV2?.ref.source === 'team_resource'
-                ? teamSelectionTransitionPending
+            teamIntent
+                ? !teamIntentApplied
                 : (
                     (proposedSelectionV2 !== null && lastAppliedFact?.v === 2)
                     || (
