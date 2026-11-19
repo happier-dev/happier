@@ -236,7 +236,8 @@ export function HappierFieldBoxTrigger({ colors, leading, children, trailing, sp
         ...(resolvedSpan === 'column' ? { minWidth: HAPPIER_FIELD_BOX_METRICS.inlineMinWidthPx } : {}),
         ...(resolvedSpan === 'row' ? { alignSelf: 'stretch' as const } : { maxWidth: maxWidthPx ?? HAPPIER_FIELD_BOX_METRICS.triggerMaxWidthPx }),
         borderColor: colors.borderColor,
-        backgroundColor: paintColor(colors.backgroundColor),
+        // A field is a control: it keeps its own fill on every plane, a popover's glass included (WF-ACCEPT-1119B 6).
+        backgroundColor: paintColor(colors.backgroundColor, undefined, 'solidControl'),
       }, happierRaisedEdgeStyle(colors.edge), colors.focusRing ? happierFocusRingStyle({ visible: true, color: colors.focusRing }) : null]}
     >
       {leading ?? null}
@@ -403,7 +404,8 @@ export function HappierFieldTextBox(props: HappierFieldTextBoxProps) {
           {...{ dataSet: surfaceBinding.dataSet }}
           style={[
             HAPPIER_FIELD_BOX_SHAPE,
-            { justifyContent: 'center', borderColor: props.colors.borderColor, backgroundColor: paintColor(props.colors.backgroundColor) },
+            // A field is a control: it keeps its own fill on every plane, a popover's glass included (WF-ACCEPT-1119B 6).
+            { justifyContent: 'center', borderColor: props.colors.borderColor, backgroundColor: paintColor(props.colors.backgroundColor, undefined, 'solidControl') },
             happierRaisedEdgeStyle(props.colors.edge),
             props.multiline ? { paddingVertical: HAPPIER_FIELD_TEXT_METRICS.multilinePaddingVerticalPx } : null,
             props.presentation === 'document' ? HAPPIER_FIELD_DOCUMENT_SHAPE : null,
