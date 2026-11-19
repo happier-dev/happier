@@ -123,6 +123,8 @@ async function createQuotaProbeServer(root: string, usedPercent: number, resetAt
 describe('generic usage-limit continuation through the session control boundary', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // Keep timing deterministic; nonzero timer spread is covered by the scheduler contract.
+    vi.spyOn(Math, 'random').mockReturnValue(0);
     network.enqueue.mockResolvedValue({ didWrite: true, terminal: false });
     network.rpc.mockResolvedValue({ ok: true });
     const features = FeaturesResponseSchema.parse({ features: { sessions: { enabled: true,

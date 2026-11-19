@@ -1,12 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { UsageLimitRecoveryScheduler } from './UsageLimitRecoveryScheduler';
 import { createUsageLimitRecoveryWakeGate } from './usageLimitRecoveryWakeGate';
 
 describe('createUsageLimitRecoveryWakeGate', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
   it('coalesces rehydrated sibling wakes for the same selected connected-service auth', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(1_000));
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const stored = new Map<string, unknown>([
       ['session-1', {
         v: 1,
@@ -62,6 +64,8 @@ describe('createUsageLimitRecoveryWakeGate', () => {
     });
 
     scheduler.hydrate();
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(recover).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
 
     expect(recover).toHaveBeenCalledTimes(1);
@@ -69,9 +73,9 @@ describe('createUsageLimitRecoveryWakeGate', () => {
     expect(scheduler.read('session-2')).toMatchObject({
       status: 'waiting',
       attemptCount: 0,
-      nextCheckAtMs: 2_000,
+      nextCheckAtMs: 62_000,
       lastProbeError: 'usage_limit_recovery_wake_coalesced',
     });
-    vi.useRealTimers();
+    scheduler.dispose();
   });
 });
