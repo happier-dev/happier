@@ -12,12 +12,17 @@ export function projectMachineAgentCapabilityObservation(
     let inventory: MachinesAgentsListOutput = { items: [] };
     let invalidResponse = false;
     let lastCheckedAt: number | null = null;
+    const memberInstalledCheckedAtByKey = new Map<string, number>();
     if (snapshot) {
         try {
             inventory = projectMachineAgentsDetectResponse({ agents, response: snapshot.response, ...definitionInventory });
             const previousLatestVersions = new Map(previousFacts.map(item => [buildMachineAgentInventoryKey(item), item.latestVersion]));
             inventory.items = inventory.items.map(item => {
                 const result = snapshot.response.results[`cli.${item.agentId}`];
+                if (item.install.executionScope === 'member') {
+                    const check = item.definitionId === undefined ? result : snapshot.response.results['tool.acpAgentInventory'];
+                    if (check?.ok) memberInstalledCheckedAtByKey.set(buildMachineAgentInventoryKey(item), check.checkedAt);
+                }
                 const data = result?.ok ? result.data : null;
                 const latestVersion = previousLatestVersions.get(buildMachineAgentInventoryKey(item));
                 // An unrequested update fact does not withdraw a known version.
@@ -42,6 +47,7 @@ export function projectMachineAgentCapabilityObservation(
         ? { reason: 'probe_failed' as const, ...(cache.error?.rpcErrorCode ? { errorCode: cache.error.rpcErrorCode } : {}) }
         : undefined;
     return { status, ...inventory, descriptors: agents, lastCheckedAt,
+        ...(memberInstalledCheckedAtByKey.size > 0 ? { memberInstalledCheckedAtByKey } : {}),
         ...(failure ? { failure, unavailable: agents.map(({ agentId, definitionId }) => ({ agentId,
             ...(definitionId === undefined ? {} : { definitionId }), ...failure })) } : {}) };
 }

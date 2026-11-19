@@ -16,7 +16,7 @@ const CompactItemSchema = z.lazy(() => {
         updateSupported: fields.update.shape.supported, updateCommand: fields.update.shape.command,
         signInStatus: fields.signIn.shape.status, signInRequired: fields.signIn.shape.required,
         loginSupport: fields.signIn.shape.loginSupport, accountLabel: fields.signIn.shape.accountLabel,
-        platform: fields.platform, fit: fields.fit,
+        platform: fields.platform, fit: fields.fit, executionScope: fields.install.shape.executionScope,
         missingDependencies: z.array(z.string().check(z.minLength(1))),
     });
 });
@@ -34,6 +34,7 @@ function compact(snapshot: PersistedMachineAgentInventory): CompactSnapshot {
         ...(item.signIn.required === undefined ? {} : { signInRequired: item.signIn.required }),
         ...(item.signIn.accountLabel === undefined ? {} : { accountLabel: item.signIn.accountLabel }),
         platform: item.platform, ...(item.fit === undefined ? {} : { fit: item.fit }),
+        ...(item.install.executionScope === undefined ? {} : { executionScope: item.install.executionScope }),
         missingDependencies: item.dependencies.filter(dependency => !dependency.installed).map(dependency => dependency.key),
     })) };
 }
@@ -50,7 +51,8 @@ function expand(snapshot: CompactSnapshot): PersistedMachineAgentInventory {
             ...(item.signInRequired === undefined ? {} : { required: item.signInRequired }),
             ...(item.accountLabel === undefined ? {} : { accountLabel: item.accountLabel }) },
         platform: item.platform, ...(item.fit === undefined ? {} : { fit: item.fit }),
-        install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null },
+        install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null,
+            ...(item.executionScope === undefined ? {} : { executionScope: item.executionScope }) },
         dependencies: item.missingDependencies.map(key => ({ key, installed: false, version: null })),
     })) };
 }

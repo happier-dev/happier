@@ -154,14 +154,15 @@ export function projectMachineAgent(input: Readonly<{
     connectedServices: readonly MachineAgentConnectedService[];
     credentialSelection?: MachineAgentCredentialSelection;
     job: MachineAgent['job'];
-    /** When the published installation fact was checked (daemon clock, like the job's start). */
+    /** When this job's installation scope was checked (daemon clock, like the job's start). */
     installedCheckedAt?: number;
     dependencyTitlesByKey?: Readonly<Record<string, string>>;
 }>): MachineAgent {
     const facts = input.facts;
-    // A succeeded job ran the CLI on the Machine (its verify step), so it is newer than any installation
-    // fact checked before the job started; the Machine's later check wins again.
+    // A succeeded job verified its executable. A later check in that same scope supersedes it.
+    const observedScope = facts?.install.executionScope;
     const settled = input.job?.outcome?.kind === 'succeeded'
+        && (observedScope === undefined || input.job.executionScope === undefined || input.job.executionScope === observedScope)
         && !(input.installedCheckedAt !== undefined && input.installedCheckedAt > input.job.startedAtMs)
         ? { installed: input.job.intent !== 'uninstall', version: input.job.intent === 'uninstall' ? null : input.job.outcome.version }
         : null;

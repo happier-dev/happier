@@ -15,6 +15,8 @@ export type MachineAgentsSnapshot = Readonly<{
 export type MachineAgentInventoryObservation = Readonly<{
     status: MachineAgentsSnapshot['status'];
     items: readonly MachineAgentInventoryItem[];
+    /** Requester checks are per row because capability snapshots can merge several reads. */
+    memberInstalledCheckedAtByKey?: ReadonlyMap<string, number>;
     /** Machine-owned native installation facts arrive independently of requester probes. */
     installedAgentIds?: readonly string[];
     /** When the Machine checked `installedAgentIds` (daemon clock); orders it against a settled install job. */
@@ -38,11 +40,13 @@ export type HeldMachineAgentSummary = Readonly<{
     complete: boolean;
 }>;
 
+type ObservedAgentFacts = Readonly<{ item: MachineAgentInventoryItem; checkedAt?: number }>;
+
 export function createMachineAgentInventoryStore() {
     const snapshots = new Map<string, MachineAgentsSnapshot>();
     const listeners = new Map<string, Set<() => void>>();
     const agentListeners = new Map<string, Set<() => void>>();
-    const factsByScope = new Map<string, Map<string, MachineAgentInventoryItem>>();
+    const factsByScope = new Map<string, Map<string, ObservedAgentFacts>>();
     const jobsByScope = new Map<string, Readonly<Record<string, MachineAgent['job']>>>();
     const credentialsByScope = new Map<string, NonNullable<MachineAgentInventoryObservation['credentialSelectionsByAgentId']>>();
     const installedCheckedAtByScope = new Map<string, number>();
@@ -56,8 +60,12 @@ export function createMachineAgentInventoryStore() {
         const credentials = credentialsByScope.get(key);
         if (observation.installedAgentsCheckedAt !== undefined) installedCheckedAtByScope.set(key, observation.installedAgentsCheckedAt);
         const installedCheckedAt = installedCheckedAtByScope.get(key);
-        const factsById = factsByScope.get(key) ?? new Map<string, MachineAgentInventoryItem>();
-        for (const item of observation.items) factsById.set(buildMachineAgentInventoryKey(item), item);
+        const factsById = factsByScope.get(key) ?? new Map<string, ObservedAgentFacts>();
+        for (const item of observation.items) {
+            const key = buildMachineAgentInventoryKey(item);
+            const checkedAt = observation.memberInstalledCheckedAtByKey?.get(key) ?? observation.lastCheckedAt ?? undefined;
+            factsById.set(key, { item, checkedAt });
+        }
         factsByScope.set(key, factsById);
         const descriptors = [...(observation.descriptors ?? (observation.items.length > 0 ? observation.items : previous.agents))];
         const unavailableById = new Map(observation.unavailable?.map(({ agentId, definitionId, ...reason }) => [buildMachineAgentInventoryKey({ agentId, definitionId }), reason]));
@@ -74,23 +82,27 @@ export function createMachineAgentInventoryStore() {
             }
         }
         const agents = reconcileMachineAgents(previous.agents, descriptors.map((descriptor) => {
-            const previousAgent = previousById.get(buildMachineAgentInventoryKey(descriptor));
-            let facts = factsById.get(buildMachineAgentInventoryKey(descriptor));
-            // Shared Machine installation and requester authentication have separate producers.
-            // A publication must also update retained facts while no probe snapshot is acquired.
-            if (facts && descriptor.definitionId === undefined && installedAgentIds !== undefined) {
-                const installed = installedAgentIds.has(descriptor.agentId);
-                if (facts.installed !== installed) {
-                    facts = { ...facts, installed };
-                    factsById.set(buildMachineAgentInventoryKey(descriptor), facts);
-                }
+            const agentKey = buildMachineAgentInventoryKey(descriptor);
+            const previousAgent = previousById.get(agentKey);
+            const observed = factsById.get(agentKey);
+            let facts = observed?.item;
+            const job = jobs ? jobs[agentKey] ?? null : previousAgent?.job ?? null;
+            // The daemon's Machine-wide PATH census cannot speak for the requester's private installation.
+            const memberScoped = (facts?.install.executionScope ?? job?.executionScope) === 'member';
+            const publishedInstalled = !memberScoped && descriptor.definitionId === undefined
+                ? installedAgentIds?.has(descriptor.agentId) : undefined;
+            // Keep the Machine-wide publication in held facts even when it arrives without a new probe.
+            if (observed && publishedInstalled !== undefined && observed.item.installed !== publishedInstalled) {
+                facts = { ...observed.item, installed: publishedInstalled };
+                factsById.set(agentKey, { ...observed, item: facts });
             }
+            const checkedAt = memberScoped ? observed?.checkedAt : installedCheckedAt;
             const credentialSelection: MachineAgentCredentialSelection = credentials?.[descriptor.agentId] ?? { credentialBindings: null };
             const projected = projectMachineAgent({
                 ...descriptor,
                 facts: facts ?? null,
                 installed: descriptor.definitionId === undefined
-                    ? installedAgentIds?.has(descriptor.agentId) ?? facts?.installed ?? previousAgent?.installed
+                    ? publishedInstalled ?? facts?.installed ?? (!memberScoped ? previousAgent?.installed : undefined)
                     : undefined,
                 checking: observation.status === 'loading',
                 // Starting or deferring a read does not make retained/offline facts fresh. Only its settled
@@ -99,13 +111,13 @@ export function createMachineAgentInventoryStore() {
                     || observation.status !== 'ready' && previousAgent?.stale === true,
                 staleReason: observation.status === 'offline' ? 'offline' : observation.status === 'error' ? 'error'
                     : observation.status !== 'ready' ? previousAgent?.staleReason : undefined,
-                unavailableReason: unavailableById.get(buildMachineAgentInventoryKey(descriptor))
+                unavailableReason: unavailableById.get(agentKey)
                     ?? (observation.status === 'error' ? failure : undefined)
-                    ?? (refreshedIds.has(buildMachineAgentInventoryKey(descriptor)) ? undefined : previousAgent?.unavailableReason),
+                    ?? (refreshedIds.has(agentKey) ? undefined : previousAgent?.unavailableReason),
                 connectedServices: observation.connectedServicesByAgentId?.[descriptor.agentId] ?? previousAgent?.signIn.connectedServices ?? [],
                 credentialSelection,
-                job: jobs ? jobs[buildMachineAgentInventoryKey(descriptor)] ?? null : previousAgent?.job ?? null,
-                ...(installedCheckedAt === undefined ? {} : { installedCheckedAt }),
+                job,
+                ...(checkedAt === undefined ? {} : { installedCheckedAt: checkedAt }),
                 dependencyTitlesByKey: observation.dependencyTitlesByKey,
             });
             // Hydrated native sign-in evidence reserves a pending row, but cannot assert Account-effective trouble.
@@ -169,7 +181,9 @@ export function createMachineAgentInventoryStore() {
                 const inventory = readInstalledMachineAgentInventory(publishedByKey?.get(key), cached, definitionId ? [definitionId] : []);
                 const selectedKey = buildMachineAgentInventoryKey({ agentId, definitionId });
                 const agent = cached.agents.find(row => buildMachineAgentInventoryKey(row) === selectedKey);
-                const installed = inventory.agentIds.some(id => buildMachineAgentInventoryKey({ agentId: id, definitionId }) === selectedKey) && (definitionId === undefined || agent?.installed === true);
+                const installed = agent?.install.executionScope === 'member' ? agent.installed
+                    : inventory.agentIds.some(id => buildMachineAgentInventoryKey({ agentId: id, definitionId }) === selectedKey)
+                        && (definitionId === undefined || agent?.installed === true);
                 const fact = { installed, version: installed && agent?.installed ? agent.version : null, complete: inventory.complete };
                 const previous = facts.get(key);
                 if (previous?.installed === fact.installed && previous.version === fact.version && previous.complete === fact.complete) return false;
@@ -219,7 +233,7 @@ export function createMachineAgentInventoryStore() {
         },
         /** After publication, persist only this observation's successful rows with their effective installation facts. */
         readObservedItems(key: string, items: readonly MachineAgentInventoryItem[]): readonly MachineAgentInventoryItem[] {
-            return items.map(item => factsByScope.get(key)!.get(buildMachineAgentInventoryKey(item))!);
+            return items.map(item => factsByScope.get(key)!.get(buildMachineAgentInventoryKey(item))!.item);
         },
         publish(key: string, observation: MachineAgentInventoryObservation): void {
             const previous = snapshots.get(key) ?? EMPTY_MACHINE_AGENTS;

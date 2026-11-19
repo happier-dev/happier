@@ -50,6 +50,68 @@ describe('machine agent inventory store', () => {
         off();
     });
 
+    it.each([
+        { name: 'member-negative/global-positive', installed: false, installedAgentIds: ['claude'] },
+        { name: 'member-positive/global-negative', installed: true, installedAgentIds: [] },
+    ])('keeps $name Claude installation scoped across Machine metadata publications', ({ installed, installedAgentIds }) => {
+        const store = createMachineAgentInventoryStore();
+        const native = facts('claude');
+        const member = { ...native, installed, version: installed ? '2.1.328' : null,
+            signIn: { ...native.signIn, status: 'signedOut' as const },
+            install: { ...native.install, executionScope: 'member' as const } };
+        store.publish('machine', { status: 'ready', items: [member], lastCheckedAt: 100,
+            installedAgentIds, installedAgentsCheckedAt: 200 });
+        const first = store.read('machine').agents[0];
+        expect(first).toMatchObject({ installed, version: member.version });
+        expect(store.readObservedItems('machine', [member])).toEqual([member]);
+
+        store.publish('machine', { status: 'ready', items: [], lastCheckedAt: null,
+            installedAgentIds, installedAgentsCheckedAt: 300 });
+        expect(store.read('machine').agents[0]).toBe(first);
+
+        const published = { installedAgentIds, checkedAt: 300 };
+        expect(store.createHeldAgentSummary(['machine'], 'claude', undefined, new Map([['machine', published]]))
+            .getSnapshot().machineCount).toBe(installed ? 1 : 0);
+
+        const values = new Map<string, string>();
+        const persistence = createMachineAgentInventoryPersistence({
+            getString: key => values.get(key), set: (key, value) => { values.set(key, value); },
+        });
+        const scope = { serverId: 'home', accountId: 'member' };
+        persistence.write(scope, 'machine', { items: [...store.readObservedItems('machine', [member])], lastCheckedAt: 100 });
+        const saved = persistence.read(scope, 'machine')!;
+        const reopened = createMachineAgentInventoryStore();
+        reopened.read('machine', () => ({ ...saved, status: 'offline' }));
+        reopened.publish('machine', { status: 'loading', items: [], lastCheckedAt: null,
+            installedAgentIds, installedAgentsCheckedAt: 300 });
+        expect(reopened.read('machine').agents[0]).toMatchObject({ installed, install: { executionScope: 'member' } });
+    });
+
+    it('orders a succeeded member install against its member check', () => {
+        const store = createMachineAgentInventoryStore();
+        const native = facts('claude');
+        const member = { ...native, installed: false, version: null, install: { ...native.install, executionScope: 'member' as const } };
+        const descriptors = [{ agentId: 'claude', title: 'Claude' }, { agentId: 'codex', title: 'Codex' }];
+        const checked = (memberCheckedAt: number) => projectMachineAgentCapabilityObservation(descriptors, {
+            status: 'loaded', snapshot: { response: { protocolVersion: 1, results: {
+                'cli.claude': { ok: true, checkedAt: memberCheckedAt, data: member },
+                'cli.codex': { ok: true, checkedAt: 350, data: facts('codex') },
+            } } },
+        });
+        store.publish('machine', { ...checked(100), installedAgentIds: [], installedAgentsCheckedAt: 300 });
+        const job = { jobId: 'install', intent: 'install' as const, startedAtMs: 200, steps: [], logLine: null,
+            outcome: { kind: 'succeeded' as const, version: '2.1.328' } };
+        store.publishJobs('machine', new Map([['claude', { ...job, executionScope: 'machine' }]]));
+        expect(store.read('machine').agents[0]).toMatchObject({ installed: false, version: null });
+        store.publishJobs('machine', new Map([['claude', { ...job, executionScope: 'member' }]]));
+        expect(store.read('machine').agents[0]).toMatchObject({ installed: true, version: '2.1.328' });
+        store.publish('machine', { status: 'ready', items: [], lastCheckedAt: null,
+            installedAgentIds: [], installedAgentsCheckedAt: 400 });
+        expect(store.read('machine').agents[0]).toMatchObject({ installed: true, version: '2.1.328' });
+        store.publish('machine', { ...checked(500), installedAgentIds: [], installedAgentsCheckedAt: 400 });
+        expect(store.read('machine').agents[0]).toMatchObject({ installed: false, version: null });
+    });
+
     it('settles a succeeded install over installation facts checked before it, and yields to a later check', () => {
         const store = createMachineAgentInventoryStore();
         const absent: MachineAgentInventoryItem = { ...facts('pi'), installed: false, version: null, latestVersion: null,
