@@ -156,17 +156,25 @@ describe('ReviewStartSteps', () => {
     await screen.unmount();
   });
 
-  it("offers the transcript to a Session subject and binds it to that step's engine reviewers only", async () => {
+  it("offers the transcript to a Session subject and binds it to every reviewer in the step that takes input", async () => {
+    const person: ReviewReviewerSelectionV1 = { kind: 'person', principal: { kind: 'account', accountId: 'mika' }, required: true };
     const mixed: readonly ReviewStepV1[] = [
       {
         kind: 'review',
-        reviewers: [engine('coderabbit'), session('s1')],
+        reviewers: [engine('coderabbit'), session('s1'), person],
         instructions: '',
       },
     ];
     const without = await renderScreen(<Harness initial={mixed} />);
     expect(without.findByTestId('review-start-step:0:transcript')).toBeNull();
     await without.unmount();
+
+    // People read the Review, not a prompt: a step of only people has nothing to pass the transcript to.
+    const peopleOnly = await renderScreen(
+      <Harness initial={[{ kind: 'review', reviewers: [person], instructions: '' }]} transcriptAvailable />,
+    );
+    expect(peopleOnly.findByTestId('review-start-step:0:transcript')).toBeNull();
+    await peopleOnly.unmount();
 
     const seen: (readonly ReviewStepV1[])[] = [];
     const screen = await renderScreen(
@@ -181,17 +189,15 @@ describe('ReviewStartSteps', () => {
     );
     await screen.pressByTestIdAsync('review-start-step:0:transcript');
     expect(seen.at(-1)?.[0]?.reviewers).toEqual([
-      {
-        kind: 'engine',
-        engineId: 'coderabbit',
-        includeSessionTranscript: true,
-      },
-      session('s1'),
+      { kind: 'engine', engineId: 'coderabbit', includeSessionTranscript: true },
+      { ...session('s1'), includeSessionTranscript: true },
+      person,
     ]);
     await screen.pressByTestIdAsync('review-start-step:0:transcript');
     expect(seen.at(-1)?.[0]?.reviewers).toEqual([
       { kind: 'engine', engineId: 'coderabbit' },
       session('s1'),
+      person,
     ]);
     await screen.unmount();
   });

@@ -7,6 +7,7 @@ import {
   type ReviewStepV1,
 } from '@happier-dev/protocol/reviews/reviewStart';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
@@ -47,7 +48,7 @@ export type ReviewStartStepsProps = Readonly<{
   ) => ReviewStartReviewerPresentation;
   /** The host's shared Who list (ContextualStartComposerBody) bound to this step's reviewers. */
   renderWho: (stepIndex: number) => React.ReactNode;
-  /** The subject is a Session, so engine reviewers may read its transcript (P01 selected input). */
+  /** The subject is a Session, so the step's reviewers may read its transcript as ordinary input. */
   transcriptAvailable: boolean;
   disabled?: boolean;
 }>;
@@ -68,10 +69,11 @@ function withTranscript(
   reviewer: ReviewReviewerSelectionV1,
   include: boolean,
 ): ReviewReviewerSelectionV1 {
-  if (reviewer.kind !== 'engine') return reviewer;
-  if (include) return { ...reviewer, includeSessionTranscript: true };
-  const { includeSessionTranscript: _dropped, ...rest } = reviewer;
-  return rest;
+  if (reviewer.kind === 'person') return reviewer;
+  const next = Object.assign({}, reviewer);
+  if (include) next.includeSessionTranscript = true;
+  else delete next.includeSessionTranscript;
+  return next;
 }
 
 /** One index set after a step is removed: later steps move up by one. */
@@ -208,15 +210,14 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
   );
   const warning =
     reviewers.find((reviewer) => reviewer.warning)?.warning ?? null;
-  const engines = step.reviewers.filter(
-    (reviewer) => reviewer.kind === 'engine',
+  // Every reviewer that takes input (engine, Agent, Session) reads the transcript; people read the Review.
+  const readers = step.reviewers.filter(
+    (reviewer) => reviewer.kind !== 'person',
   );
   const transcriptOn =
-    engines.length > 0 &&
-    engines.every(
-      (reviewer) =>
-        reviewer.kind === 'engine' &&
-        reviewer.includeSessionTranscript === true,
+    readers.length > 0 &&
+    readers.every(
+      (reviewer) => reviewer.includeSessionTranscript === true,
     );
   const [menuOpen, setMenuOpen] = React.useState(false);
   const menuAnchor = React.useRef<View | null>(null);
@@ -259,7 +260,7 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
       title: t('reviewWalkthrough.start.focus'),
       description: `${commandPrefix}.focus — Set this step's Focus with {value: string}.`,
       invoke: input => {
-        if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.value !== 'string') return false;
+        if (!isJsonObject(input) || typeof input.value !== 'string') return false;
         const instructions = input.value;
         onUpdate(index, current => ({ ...current, instructions }));
       },
@@ -269,7 +270,7 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
       title: t('reviewWalkthrough.start.stepOptions', { n: index + 1 }),
       description: `${commandPrefix}.kind — Choose this step's kind with {value: "review" | "verify"}.`,
       invoke: (input: PluginUiJsonValueV1 | undefined) => {
-        if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+        if (!isJsonObject(input)) return false;
         const kind = ReviewStepV1Schema.shape.kind.safeParse(input.value);
         if (!kind.success) return false;
         onMenu(kind.data);
@@ -280,12 +281,12 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
       description: `${commandPrefix}.remove — Remove this step.`,
       invoke: () => onMenu('remove'),
     }] : []),
-    ...(props.transcriptAvailable && engines.length > 0 ? [{
+    ...(props.transcriptAvailable && readers.length > 0 ? [{
       key: `${commandPrefix}.transcript`,
       title: t('reviewWalkthrough.start.includeTranscript'),
       description: `${commandPrefix}.transcript — Include the Session transcript with {value: boolean}.`,
       invoke: (input: PluginUiJsonValueV1 | undefined) => {
-        if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.value !== 'boolean') return false;
+        if (!isJsonObject(input) || typeof input.value !== 'boolean') return false;
         const include = input.value;
         onUpdate(index, current => ({ ...current, reviewers: current.reviewers.map(reviewer => withTranscript(reviewer, include)) }));
       },
@@ -431,7 +432,7 @@ const ReviewStartStep = React.memo(function ReviewStartStep(
           editable={!props.disabled}
         />
       </View>
-      {props.transcriptAvailable && engines.length > 0 ? (
+      {props.transcriptAvailable && readers.length > 0 ? (
         <Item
           testID={`${testID}:transcript`}
           title={t('reviewWalkthrough.start.includeTranscript')}

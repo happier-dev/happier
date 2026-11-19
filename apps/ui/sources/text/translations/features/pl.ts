@@ -12894,7 +12894,7 @@ const pl: ReviewWalkthroughTranslations = {
         acceptEstimate: ({ engine, estimate }) => `Akceptuję szacunek ${engine}: ${estimate}`,
         billedTo: ({ engine }) => `Rozliczane na Twoim koncie ${engine}, nie przez Happier.`,
         includeTranscript: 'Dołącz transkrypt sesji',
-        includeTranscriptLine: 'Silniki recenzji w tym kroku czytają rozmowę oprócz zmian.',
+        includeTranscriptLine: 'Każdy recenzent w tym kroku czyta rozmowę oprócz zmian.',
     },
     collection: {
         search: 'Szukaj recenzji',

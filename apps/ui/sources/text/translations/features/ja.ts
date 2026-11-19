@@ -12817,7 +12817,7 @@ const ja: ReviewWalkthroughTranslations = {
         acceptEstimate: ({ engine, estimate }) => `${engine} の見積もり ${estimate} を承認`,
         billedTo: ({ engine }) => `Happier ではなく、${engine} のアカウントに請求されます。`,
         includeTranscript: 'セッションの記録を含める',
-        includeTranscriptLine: 'このステップのレビューエンジンは、変更に加えて会話も読みます。',
+        includeTranscriptLine: 'このステップのすべてのレビュアーが、変更に加えて会話も読みます。',
     },
     collection: {
         search: 'レビューを検索',

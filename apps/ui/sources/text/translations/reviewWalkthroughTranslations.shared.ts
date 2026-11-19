@@ -293,7 +293,7 @@ export const en: ReviewWalkthroughTranslations = {
         acceptEstimate: ({ engine, estimate }) => `Accept ${engine}’s ${estimate} estimate`,
         billedTo: ({ engine }) => `Billed to your ${engine} account, not to Happier.`,
         includeTranscript: 'Include the session’s transcript',
-        includeTranscriptLine: 'Review engines in this step read the conversation as well as the changes.',
+        includeTranscriptLine: 'Every reviewer in this step reads the conversation as well as the changes.',
     },
     collection: {
         search: 'Search reviews',

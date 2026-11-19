@@ -12894,7 +12894,7 @@ const ru: ReviewWalkthroughTranslations = {
         acceptEstimate: ({ engine, estimate }) => `Принять оценку ${engine}: ${estimate}`,
         billedTo: ({ engine }) => `Оплачивается через ваш аккаунт ${engine}, а не Happier.`,
         includeTranscript: 'Включить расшифровку сессии',
-        includeTranscriptLine: 'Движки проверки на этом шаге читают разговор вместе с изменениями.',
+        includeTranscriptLine: 'Каждый рецензент на этом шаге читает разговор вместе с изменениями.',
     },
     collection: {
         search: 'Искать проверки',

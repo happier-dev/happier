@@ -12870,7 +12870,7 @@ const de: ReviewWalkthroughTranslations = {
         acceptEstimate: ({ engine, estimate }) => `${engine}s Schätzung von ${estimate} akzeptieren`,
         billedTo: ({ engine }) => `Wird über dein ${engine}-Konto abgerechnet, nicht über Happier.`,
         includeTranscript: 'Transkript der Sitzung einbeziehen',
-        includeTranscriptLine: 'Review-Engines in diesem Schritt lesen neben den Änderungen auch das Gespräch.',
+        includeTranscriptLine: 'Alle Prüfer in diesem Schritt lesen neben den Änderungen auch das Gespräch.',
     },
     collection: {
         search: 'Reviews durchsuchen',

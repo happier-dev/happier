@@ -12885,7 +12885,7 @@ const fr: ReviewWalkthroughTranslations = {
         acceptEstimate: ({ engine, estimate }) => `Accepter l’estimation de ${estimate} de ${engine}`,
         billedTo: ({ engine }) => `Facturé sur ton compte ${engine}, pas par Happier.`,
         includeTranscript: 'Inclure la transcription de la session',
-        includeTranscriptLine: 'Les moteurs de relecture de cette étape lisent la conversation en plus des modifications.',
+        includeTranscriptLine: 'Chaque relecteur de cette étape lit la conversation en plus des modifications.',
     },
     collection: {
         search: 'Rechercher des revues',

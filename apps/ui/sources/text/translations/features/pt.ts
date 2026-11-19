@@ -12860,7 +12860,7 @@ const pt: ReviewWalkthroughTranslations = {
         acceptEstimate: ({ engine, estimate }) => `Aceitar a estimativa de ${estimate} de ${engine}`,
         billedTo: ({ engine }) => `Cobrado na tua conta ${engine}, não pela Happier.`,
         includeTranscript: 'Incluir a transcrição da sessão',
-        includeTranscriptLine: 'Os motores de revisão deste passo leem a conversa além das alterações.',
+        includeTranscriptLine: 'Cada revisor deste passo lê a conversa além das alterações.',
     },
     collection: {
         search: 'Pesquisar revisões',

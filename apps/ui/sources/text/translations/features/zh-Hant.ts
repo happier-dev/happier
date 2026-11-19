@@ -12757,7 +12757,7 @@ const zhHant: ReviewWalkthroughTranslations = {
         acceptEstimate: ({ engine, estimate }) => `接受 ${engine} 的 ${estimate} 估算`,
         billedTo: ({ engine }) => `費用記入你的 ${engine} 帳戶，而不是 Happier。`,
         includeTranscript: '包含工作階段記錄',
-        includeTranscriptLine: '此步驟中的審閱引擎除了變更，還會閱讀對話。',
+        includeTranscriptLine: '此步驟中的每位審查者除了變更，還會閱讀對話。',
     },
     collection: {
         search: '搜尋審閱',
