@@ -40,6 +40,20 @@ function runCapableDefinition(definition: Record<string, unknown>) {
 }
 
 describe('buildReviewEngineInventoryItems', () => {
+  it.each([undefined, 201])('preserves the requested roster size without an implicit ceiling (limit %s)', async limit => {
+    const agents = Array.from({ length: 202 }, (_, index) => projectManifestAgentContribution({
+      pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },
+      definition: PluginAgentContributionV2Schema.parse({ id: `reviewer-${index}`, title: `Reviewer ${index}`,
+        primary: 'executionRuns', runtime: { kind: 'custom' },
+        capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } } }),
+    }));
+    const items = await buildReviewEngineInventoryItems({
+      limit,
+      registrySnapshot: { agentDefinitionsById: new Map(agents.map(agent => [agent.id, agent])), executionRunProfiles: [] },
+    });
+    expect(items.map(item => item.engineId)).toEqual(agents.slice(0, limit).map(agent => agent.id));
+  });
+
   it('projects optional start consent from the selected profile option without deciding whether it is required', async () => {
     const agent = projectManifestAgentContribution({
       pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },
@@ -98,7 +112,7 @@ describe('buildReviewEngineInventoryItems', () => {
     registryMocks.isRuntimeRegistryCurrent.mockReturnValue(true);
   });
 
-  it('projects transcript support from the selected profile while preserving the default roster', async () => {
+  it('derives transcript availability from the selected profile instruction support while preserving the default roster', async () => {
     const agent = projectManifestAgentContribution({
       pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },
       definition: PluginAgentContributionV2Schema.parse({ id: 'reviewer', title: 'Reviewer',
@@ -110,7 +124,7 @@ describe('buildReviewEngineInventoryItems', () => {
       pluginId: 'acme.review', sourceCustody: profileSourceCustody,
       definition: { id, intent: 'review' as const, title: id, promptAsset: 'prompt', compatibleAgents: ['reviewer'],
         defaults: { retention: 'ephemeral' as const, runClass: 'bounded' as const, io: 'streaming' as const },
-        ...(id === 'native-cli' ? { metadata: { reviewTranscriptInput: 'unsupported', reviewScopes: ['worktree'] } } : {}) },
+        ...(id === 'native-cli' ? { metadata: { reviewInstructionsInput: 'unsupported', reviewScopes: ['worktree'] } } : {}) },
     })), { resolveAgentIdentity: id => id === agent.id ? agent.identity ?? null : null });
     const inventory = await buildReviewEngineInventory({
       acpCatalogSnapshot: emptyCatalog,

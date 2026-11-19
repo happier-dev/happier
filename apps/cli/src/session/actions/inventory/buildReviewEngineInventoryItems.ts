@@ -35,7 +35,7 @@ type ReviewAgentCatalog = Pick<ReturnType<typeof readAgentCatalogSnapshot>, 'age
 function normalizeLimit(value: unknown): number | null {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return Math.max(1, Math.min(200, Math.floor(parsed)));
+  return Math.max(1, Math.floor(parsed));
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -104,7 +104,7 @@ function resolveReviewProfileFacts(
       optionKey: consentOptionKey, title: consentTitle,
       ...(consentDescription ? { description: consentDescription } : {}),
     } } : {}),
-    sessionTranscript: profile?.metadata?.reviewTranscriptInput !== 'unsupported',
+    sessionTranscript: profile?.metadata?.reviewInstructionsInput !== 'unsupported',
     ...(selected ? { profileId: selected.profileId,
       ...(selected.profileSourceCustody ? { profileSourceCustody: selected.profileSourceCustody } : {}) } : {}) };
 }
