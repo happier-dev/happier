@@ -21,6 +21,7 @@ import { buildApprovalExecutionOriginV1, createActionExecutor } from '@happier-d
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { createActionAutomationHttpPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
+import { PrivateLabelReadV1Schema } from '@happier-dev/protocol/crypto/privateLabelV1';
 
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -297,7 +298,7 @@ describe('daemon approval execution-origin currentness', () => {
       listAccountApiTokens: async () => ({
         tokens: [{
           tokenId: origin.credentialId!,
-          label: 'automation',
+          label: PrivateLabelReadV1Schema.parse({ content: { t: 'plain', v: 'automation' }, recipientEnvelope: null }),
           displayPrefix: 'hap_v1_11111111',
           createdAt: '2026-01-01T00:00:00.000Z',
           expiresAt: null,
@@ -378,7 +379,7 @@ describe('daemon approval execution-origin currentness', () => {
       isAccountCurrent: async () => true,
       listAccountApiTokens: async () => ({ tokens: [{
         tokenId: authorization.binding.credentialId,
-        label: 'automation',
+        label: PrivateLabelReadV1Schema.parse({ content: { t: 'plain', v: 'automation' }, recipientEnvelope: null }),
         displayPrefix: 'hap_v1_11111111',
         createdAt: '2026-09-01T00:00:00.000Z',
         lastUsedAt: null,
@@ -569,7 +570,7 @@ describe('daemon approval execution-origin currentness', () => {
       isAccountCurrent: async () => true,
       listAccountApiTokens: async () => ({ tokens: [{
         tokenId: authorization.binding.credentialId,
-        label: 'automation',
+        label: PrivateLabelReadV1Schema.parse({ content: { t: 'plain', v: 'automation' }, recipientEnvelope: null }),
         displayPrefix: 'hap_v1_11111111',
         createdAt: '2026-09-01T00:00:00.000Z',
         lastUsedAt: null,
@@ -621,7 +622,7 @@ describe('daemon approval execution-origin currentness', () => {
     const listAccountApiTokens = vi.fn(async () => ({
       tokens: [{
         tokenId: origin.credentialId!,
-        label: 'automation',
+        label: PrivateLabelReadV1Schema.parse({ content: { t: 'plain', v: 'automation' }, recipientEnvelope: null }),
         displayPrefix: 'hap_v1_11111111',
         createdAt: '2026-09-01T00:00:00.000Z',
         lastUsedAt: null,
@@ -654,7 +655,7 @@ describe('daemon approval execution-origin currentness', () => {
     const listAccountApiTokens = vi.fn(async () => ({
       tokens: [{
         tokenId: origin.credentialId!,
-        label: 'expired',
+        label: PrivateLabelReadV1Schema.parse({ content: { t: 'plain', v: 'expired' }, recipientEnvelope: null }),
         displayPrefix: 'hap_v1_11111111',
         createdAt: '2026-08-01T00:00:00.000Z',
         lastUsedAt: null,
