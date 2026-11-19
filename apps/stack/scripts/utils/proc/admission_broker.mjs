@@ -305,14 +305,18 @@ export function createAdmissionBroker({ root,
   /** Worker-count options follow the same identity rule: with a recorded peak,
    * offer the worker counts whose modelled floor fits inside it (else the
    * smallest), each reserving that peak, never the modelled maximum. */
-  function recordedIdentityFloorOptions(item) {
-    const peak = item.floorOptions && recordedIdentityPeakKiB(item);
-    if (peak === undefined || !item.floorOptions) return item.floorOptions;
-    const floorKiB = roundPeak(peak);
-    const within = item.floorOptions.filter(option => option.floorKiB <= floorKiB);
+  function sizeWaitingItem(item, peak = recordedIdentityPeakKiB(item)) {
+    if (peak !== undefined) item.floorKiB = roundPeak(peak);
+    const options = item.requestedFloorOptions;
+    if (peak === undefined || !options) {
+      item.floorOptions = options;
+      return;
+    }
+    const within = options.filter(option => option.floorKiB <= item.floorKiB);
     const offered = within.length ? within
-      : [item.floorOptions.reduce((smallest, option) => option.workers < smallest.workers ? option : smallest)];
-    return offered.map(option => ({ ...option, floorKiB }));
+      : [options.reduce((smallest, option) => option.workers < smallest.workers ? option : smallest)];
+    item.floorOptions = offered.map(option => ({ ...option, floorKiB: item.floorKiB }))
+      .sort((left, right) => right.workers - left.workers);
   }
   function recordIdentityPeak(identity, peakKiB) {
     const key = identityKey(identity);
@@ -323,6 +327,11 @@ export function createAdmissionBroker({ root,
     const target = join(root, IDENTITY_PEAKS_FILENAME);
     writeFileSync(`${target}.tmp`, JSON.stringify(Object.fromEntries(peaks)), { mode: 0o600 });
     renameSync(`${target}.tmp`, target);
+    // A retained waiter can gain its own measurement while it is queued.
+    // Update it before the normal release drain chooses the next reservation.
+    for (const item of waiting) {
+      if (!item.slot && identityKey(item) === key) sizeWaitingItem(item, peakKiB);
+    }
   }
 
   // Higher priority ranks go first; arrival orders waiters within a rank.
@@ -977,6 +986,7 @@ export function createAdmissionBroker({ root,
       if (request.kind === 'resources-busy' && item?.slot && !item.settled) {
         releaseReservation(item.slot);
         item.slot = null;
+        sizeWaitingItem(item);
         item.blocked = true;
         if (item.noWait) refuse(item, 'HSTACK_WORKSPACE_RESOURCE_BUSY');
         // A release may race the client's busy acknowledgement. Its offer's
@@ -1011,8 +1021,9 @@ export function createAdmissionBroker({ root,
         arrivedAt: request.arrivedAt ?? Date.now(), arrivalOrder: ++arrivalOrder, ownPriority: headPriorityRank(request),
         preparedPriority: preparedRank(request) };
       item.headPriority = Math.max(item.ownPriority, item.preparedPriority);
-      item.floorKiB = recordedIdentityFloorKiB(item);
-      item.floorOptions = recordedIdentityFloorOptions(item);
+      item.requestedFloorOptions = request.floorOptions?.toSorted((left, right) =>
+        right.floorKiB - left.floorKiB || right.workers - left.workers);
+      sizeWaitingItem(item);
       if (item.p99DurationMs === undefined) Object.assign(item, recordedIdentityDuration(item));
       // A waiter re-registering after a succession resends the releases it was holding
       // (`held`), so the successor does not admit work ahead of it. Capped by its own
@@ -1022,7 +1033,6 @@ export function createAdmissionBroker({ root,
           cpuCores: Math.min(item.heldCpuCores ?? 0, minimumCpuCores(item)) };
       }
       item.observation = createWorkspaceBuildResourceObservation({ locks: item.locks });
-      if (item.floorOptions) item.floorOptions = [...item.floorOptions].sort((left, right) => right.floorKiB - left.floorKiB || right.workers - left.workers);
       // The existing client carries its first arrival through reconnects.
       // Connection order breaks ties, but cannot replace that original age.
       const next = waiting.findIndex(other => compareService(Date.now())(item, other) < 0);

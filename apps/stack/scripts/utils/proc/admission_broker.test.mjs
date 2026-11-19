@@ -704,7 +704,7 @@ test('the shared current-source server starts next after a busy producer lock is
   const stop = new AbortController();
   const producer = (name, floorKiB, env) => {
     const job = runAdmittedTask({ root, repoDir: root, cacheBaseDir: root, ...priorityIdentity(root, 'producer'),
-      floorKiB, env, locks, signal: stop.signal }, async () => {
+      floorKiB, env, locks, signal: stop.signal, readJobPeakKiB: () => null }, async () => {
       order.push({ name, floorKiB: broker.status().reservedMemoryKiB });
     });
     waiters.push(job);
@@ -1111,6 +1111,42 @@ test('a sample for a routed command answers the floor the broker would reserve f
     'a recorded identity is sized by its recorded peak, as its reservation will be');
   assert.equal((await sample(['node', 'unrecorded.mjs'])).identityFloorKiB, 1.5 * gib,
     'an unrecorded identity takes the same related record the reservation would');
+});
+
+test('a queued request uses its own newly recorded peak instead of its initial class estimate', linux, async t => {
+  const gib = 1024 * 1024;
+  let availableMemoryKiB = 35 * gib;
+  const { root } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB, totalMemoryKiB: 50 * gib }),
+    admitDisk: () => ({ admitted: true }),
+  });
+  await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
+    [JSON.stringify(['compilation', '.', 'node unrelated.mjs', ['apps/ui']])]: 22 * gib,
+  }));
+  const identity = { className: 'compilation', resourceClass: 'compilation',
+    component: 'apps/cli', entry: 'pnpm run typecheck', projects: ['apps/cli'] };
+  const active = await (await acquire(root, 30 * gib, t, identity)).admit();
+  assert.equal(active.reserved.floorKiB, 22 * gib);
+
+  const queued = await acquire(root, 30 * gib, t, {
+    ...identity, floorOptions: [{ floorKiB: 8 * gib, workers: 8 }, { floorKiB: 4 * gib, workers: 4 }],
+  });
+  let sample;
+  do { sample = await requestAdmissionSample(root); } while (sample.waitingCount === 0);
+  assert.equal(sample.head.minimumFloorKiB, 22 * gib);
+
+  // The first run supplies a precise peak while its successor stays connected.
+  // There is still insufficient memory for the old estimate after release.
+  availableMemoryKiB = 15 * gib;
+  await active.report({ kind: 'slot-peak', ...identity, peakKiB: 4.25 * gib });
+  await active.release();
+  const before = sample.sampleCount;
+  do { sample = await requestAdmissionSample(root); } while (sample.sampleCount === before);
+  assert.equal(sample.waitingCount, 0, 'the live waiter should no longer hold its old class estimate');
+  const next = await queued.admit();
+  assert.equal(next.reserved.floorKiB, 4.5 * gib);
+  assert.equal(next.reserved.workers, 4);
+  await next.release();
 });
 
 test('succession re-sizes a recovered slot to max(its scope memory.current, its identity kernel peak)', linux, async t => {
