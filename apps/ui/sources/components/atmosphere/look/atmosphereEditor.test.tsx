@@ -124,7 +124,7 @@ describe('Home Atmosphere editor through declared Settings Actions', () => {
             expect(gets.mock.calls.filter(([key]) => key === 'unused-home-editor')).toHaveLength(1);
         } finally { gets.mockRestore(); standardCleanup(); await pictureStore.remove('unused-home-editor'); await account.dispose(); }
     });
-    it('holds Rich then Digits off as one cumulative choice while the first acknowledgement is pending', async () => {
+    it('holds Full then Digits off as one cumulative choice while the first acknowledgement is pending', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({
             actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
         }) });
@@ -140,18 +140,18 @@ describe('Home Atmosphere editor through declared Settings Actions', () => {
             return response;
         });
         const editor = await renderHook(useHomeAtmosphereEditor);
-        let rich: unknown;
+        let full: unknown;
         let digits: unknown;
         try {
-            await act(async () => { rich = editor.getCurrent().updateHome(current => ({ ...current, planet: { ...current.planet, style: 'rich' } })); });
+            await act(async () => { full = editor.getCurrent().updateHome(current => ({ ...current, planet: { ...current.planet, intensity: 'full' } })); });
             await posted.promise;
             await act(async () => { digits = editor.getCurrent().updateHome(current => ({ ...current, planet: { ...current.planet, digits: false } })); });
-            expect(editor.getCurrent().value.planet).toMatchObject({ style: 'rich', digits: false });
-            expect(storage.getState().settings.homeAtmosphere.planet).toMatchObject({ style: 'balanced', digits: true });
+            expect(editor.getCurrent().value.planet).toMatchObject({ intensity: 'full', digits: false });
+            expect(storage.getState().settings.homeAtmosphere.planet).toMatchObject({ intensity: 'quiet', digits: true });
             release.resolve();
-            await act(async () => { await Promise.all([rich, digits]); });
-            expect(account.persistedSettings.homeAtmosphere.planet).toMatchObject({ style: 'rich', digits: false });
-            expect(editor.getCurrent().value.planet).toMatchObject({ style: 'rich', digits: false });
+            await act(async () => { await Promise.all([full, digits]); });
+            expect(account.persistedSettings.homeAtmosphere.planet).toMatchObject({ intensity: 'full', digits: false });
+            expect(editor.getCurrent().value.planet).toMatchObject({ intensity: 'full', digits: false });
         } finally { release.resolve(); standardCleanup(); await account.dispose(); }
     });
     it('keeps value-only Appearance readers free of picture transactions', async () => {
