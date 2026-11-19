@@ -42,7 +42,7 @@ export const SessionOrganizationSnapshotRequestSchema = lazyZodSchema(() => z.st
     includeAttentionReminderTimes: z._default(z.boolean(), false),
     includeSessionAppearances: z._default(z.boolean(), false),
   }).check(z.refine(request => request.entityKind === 'workflow'
-    ? request.assignmentSessionIds.length === 0 && !request.includeAllFolderAssignments
+    ? request.assignmentSessionIds.length === 0 && (!request.includeAllFolderAssignments || request.assignmentEntityIds === undefined)
     : request.assignmentEntityIds === undefined, 'Select assignments for one kind')));
 export type SessionOrganizationSnapshotRequest = z.infer<typeof SessionOrganizationSnapshotRequestSchema>;
 

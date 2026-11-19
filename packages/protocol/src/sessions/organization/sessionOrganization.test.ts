@@ -596,6 +596,9 @@ describe('Workflow section selection', () => {
     expect(SessionOrganizationSnapshotRequestSchema.parse(query)).toMatchObject({
       entityKind: 'workflow', assignmentEntityIds: ['wf-a', 'wf-b'], assignmentSessionIds: [],
     });
+    expect(SessionOrganizationSnapshotRequestSchema.parse({ entityKind: 'workflow', includeAllFolderAssignments: true }))
+      .toMatchObject({ entityKind: 'workflow', includeAllFolderAssignments: true });
+    expect(SessionOrganizationSnapshotRequestSchema.safeParse({ ...query, includeAllFolderAssignments: true }).success).toBe(false);
     expect(SessionOrganizationSnapshotRequestSchema.parse({ assignmentSessionIds: ['session-a'] }).entityKind).toBeUndefined();
     expect(SetSessionFolderAssignmentRequestSchema.parse({ folderId: null })).toEqual({ folderId: null });
     expect(SetSessionFolderAssignmentRequestSchema.parse({ folderId: 'inbox', entityKind: 'workflow' })).toEqual({ folderId: 'inbox', entityKind: 'workflow' });

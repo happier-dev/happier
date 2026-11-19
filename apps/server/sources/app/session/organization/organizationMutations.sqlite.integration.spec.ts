@@ -63,6 +63,9 @@ describe("session organization mutations on SQLite", () => {
             folder(account.id, 'first'), folder(account.id, 'second'), folder(foreignAccount.id, 'private'),
         ]);
         await db.sessionFolderAssignment.create({ data: { accountId: account.id, sessionId: session.id, folderId: first.id } });
+        await db.organizationFolderAssignment.create({ data: {
+            accountId: foreignAccount.id, entityKind: 'workflow', entityId: foreign.id, folderId: privateFolder.id,
+        } });
         const app = createAuthenticatedTestApp();
         registerSessionOrganizationRoutes(app);
         await app.ready();
@@ -78,7 +81,7 @@ describe("session organization mutations on SQLite", () => {
             const moved = await setSection(saved.id, second.id);
             expect(moved.json()).toMatchObject({ folderId: second.id, previousFolderId: first.id });
             const read = await app.inject({ method: 'GET', headers, url: '/v2/session-organization?' + new URLSearchParams({
-                entityKind: 'workflow', assignmentEntityIds: [saved.id, foreign.id].join(','), includeTags: 'false', includeLabels: 'false',
+                entityKind: 'workflow', includeAllFolderAssignments: 'true', includeTags: 'false', includeLabels: 'false',
             }) });
             expect(read.statusCode).toBe(200);
             const { snapshot } = SessionOrganizationSnapshotResponseSchema.parse(read.json());

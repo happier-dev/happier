@@ -196,13 +196,14 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
             : null;
 
         if (params.request.entityKind === 'workflow') {
-            // These are the viewer's personal assignments, scoped to the exact held Workflow ids.
+            // Only the viewer's own organizer is readable. The complete read keeps the URL independent of library size.
             const entityIds = params.request.assignmentEntityIds ?? [];
+            const includeAll = params.request.includeAllFolderAssignments;
             const [checkpoint, folders, assignments] = await Promise.all([
                 tx.sessionOrganizationCheckpoint.findUnique({ where: { accountId: params.accountId }, select: { version: true } }),
                 params.request.includeFolders ? readOrganizationFolders(tx, params.accountId) : [],
-                entityIds.length > 0 ? tx.organizationFolderAssignment.findMany({
-                    where: { accountId: params.accountId, entityKind: 'workflow', entityId: { in: entityIds } },
+                includeAll || entityIds.length > 0 ? tx.organizationFolderAssignment.findMany({
+                    where: { accountId: params.accountId, entityKind: 'workflow', ...(includeAll ? {} : { entityId: { in: entityIds } }) },
                     select: { entityId: true, folderId: true },
                 }) : [],
             ]);
