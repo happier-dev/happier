@@ -441,8 +441,22 @@ it('labels unrequested ended PlanFit history as not loaded for multiple accounts
   const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
   const screen = await renderPlanAccessibility(<UsagePlanFitWidget {...bodyProps(reads)} id="usage_plan_fit" testID="fit-unloaded" />);
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.fitNoneEndedOnce'));
+  await screen.pressByTestIdAsync('fit-unloaded.plans-header');
   await screen.pressByTestIdAsync('fit-unloaded.plan.first.details-header');
   expect(screen.getTextContent()).toContain(t('usage.board.plans.pastCyclesNotLoaded'));
+});
+
+it('says once that no plan has anything to compare yet, and keeps every plan one press away (acceptance 11-18 #7)', async () => {
+  const now = Date.now();
+  const reads = ['first', 'second'].map(id => quotaRead(id, now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }]));
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const screen = await renderPlanAccessibility(<UsagePlanFitWidget {...bodyProps(reads)} id="usage_plan_fit" testID="fit" />);
+  expect(screen.findByTestId('fit.nothingYet')).toBeTruthy();
+  expect(screen.findByTestId('fit.plan.first')).toBeFalsy();
+  await screen.pressByTestIdAsync('fit.plans-header');
+  expect(screen.findByTestId('fit.plan.first')).toBeTruthy();
+  expect(screen.getTextContent()).not.toContain(t('usage.board.plans.fitNoneEnded'));
 });
 
 it('names reset rows as the exact-values path and includes hidden precision without extra focus targets', async () => {
@@ -465,19 +479,14 @@ it('shows the canonical capacity weather and insufficient model/reset basis insi
     resetAtMs: now + DAY, windowDurationMs: 7 * DAY }]);
   const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
   const screen = await renderScreen(wrap(<UsagePlanFitWidget {...bodyProps([read, other])} id="usage_plan_fit" testID="fit" />));
+  // No plan has a price, an ended window or known terms yet: that is one line, and the plans wait one press away.
+  expect(screen.findByTestId('fit.nothingYet')).toBeTruthy();
+  await screen.pressByTestIdAsync('fit.plans-header');
   // A plan is one row; its basis lines open under Details.
   expect(screen.findByTestId('fit.plan.work.weather.weekly')).toBeFalsy();
-  // An unknown plan value is never a lone dash at the row's far edge; when no row has a price, that is said
-  // once for the list (R9), never repeated on every row.
+  // An unknown plan value is never a lone dash at the row's far edge, nor repeated on every row.
   expect(screen.getTextContent()).not.toContain('—');
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.planNoPriceShort'));
-  const sharedPriceReason = t('usage.board.plans.planNoPriceAll');
-  // The list's caveats are one quiet line (USAGE-ACCEPT #7): the first leads, the rest open under Details.
-  expect(screen.findAllByType(SurfaceFreshnessLine).find(line => line.props.testID === 'fit.once')!.props.reason).toBe(sharedPriceReason);
-  expect(screen.getTextContent().split(sharedPriceReason), 'one shared cause across the accounts').toHaveLength(2);
-  // The plan row itself opens its details (lab p2sheet-D: one row per plan); no "Details" line repeats under every plan.
-  // The one "Details" is the list caveat's (its other caveats open there), never one per plan row.
-  expect(screen.getTextContent().split(t('usage.board.plans.planDetails'))).toHaveLength(2);
   await screen.pressByTestIdAsync('fit.plan.work.details-header');
   expect(screen.findByTestId('fit.plan.work.weather.weekly')).toBeTruthy();
   // What no account has a basis for yet is one line for the whole widget, never one per account.
@@ -736,22 +745,21 @@ it('does not materialize curve points for the meter-list presentation', async ()
   expect(curveReads).toBe(0);
 });
 
-it('counts a spent window down to its return in the list row, where "used up · back …" was cut at the row end (R8 #7)', async () => {
+it('lists only live windows beside other widgets; a used-up window is one count, its return said by Limits and Resets (acceptance 11-18 #7)', async () => {
   const now = Date.now();
   const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 100,
     resetAtMs: now + DAY, windowDurationMs: 7 * DAY }, { meterId: 'daily', label: 'Daily', usedPct: 10,
     resetAtMs: now + HOUR, windowDurationMs: DAY }]);
   const { WidgetPresentationProvider } = await import('@happier-dev/plugin-ui');
   const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
-  const { UsageMeterRow } = await import('@/components/settings/connectedServices/usage/UsageMeterRow');
   const screen = await renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'medium',
     footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 520, height: 260 } }}>
     <UsageProjectionsWidget {...bodyProps([read])} id="usage_projections" testID="proj" />
   </WidgetPresentationProvider>));
-  const spent = screen.findAllByType(UsageMeterRow).find((row) => row.props.testID === 'proj.window.work.weekly');
-  expect(spent?.props.remainingPct).toBe(0);
-  expect(spent?.props.resetsAt).toBe(now + DAY);
-  expect(spent?.props.resetText).toBeUndefined();
+  expect(screen.findByTestId('proj.window.work.weekly')).toBeFalsy();
+  expect(screen.findByTestId('proj.window.work.daily')).toBeTruthy();
+  expect(screen.findByTestId('proj.usedUp')).toBeTruthy();
+  expect(screen.getTextContent()).toContain(t('usage.board.plans.projectionsUsedUp', { count: 1 }));
 });
 
 it('lists every reported window with its projection beside other widgets, without the burn-up or disclosures', async () => {
@@ -895,6 +903,26 @@ it('shows a recorded week from accounting even without connected plan accounts',
   const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
   const screen = await renderScreen(wrap(<UsagePlanFitWidget {...base} slice={slice} id="usage_plan_fit" testID="fit" />));
   expect(screen.findByTestId('fit.recordedWeek')).toBeTruthy();
+});
+
+it('keeps the recorded week and the pace target beside the one "nothing yet" line (review E-03)', async () => {
+  const startMs = Date.UTC(2026, 8, 28);
+  const endMs = Date.UTC(2026, 9, 5);
+  const shownQuery = normalizeUsageQuery({ period: { startMs, endMs } });
+  const reads = ['first', 'second'].map(id => quotaRead(id, endMs, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,
+    resetAtMs: endMs + DAY, windowDurationMs: 7 * DAY }]));
+  const base = bodyProps(reads, undefined, shownQuery);
+  const tokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+  const slice = resolveUsagePageAggregation({ queries: [shownQuery], nowMs: endMs, quota: { status: 'available', value: reads },
+    accounting: [{ query: shownQuery, status: 'available', value: { v: 1,
+      totals: { eventCount: 1, tokens, cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
+      activity: { calendarDays: [{ date: '2026-10-01', eventCount: 1 }], weekdayHourBuckets: [] },
+    } }] }, bundledUsageModelPriceCatalog).results[0]!;
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const screen = await renderScreen(wrap(<UsagePlanFitWidget {...base} slice={slice} id="usage_plan_fit" testID="fit" />));
+  expect(screen.findByTestId('fit.nothingYet')).toBeTruthy();
+  expect(screen.findByTestId('fit.recordedWeek')).toBeTruthy();
+  expect(screen.findByTestId('fit.paceTarget')).toBeTruthy();
 });
 
 it("lists a pool in the selector's own order and builds the why detail from its trace only when opened", async () => {
@@ -1123,6 +1151,28 @@ it('gives a pool the selector lists no member for one quiet line, not a strategy
   await screen.update(wrap(<UsageCapacityWidget {...excluded} id="usage_capacity" testID="cap" />));
   await screen.pressByTestIdAsync('cap.usedFirst.empty.why');
   expect(screen.getTextContent()).toContain(t('usage.board.plans.whyNone'));
+});
+
+it('heads a wholly used-up pool with when its first account comes back, and keeps its order to one line (acceptance 11-18 #3, #7)', async () => {
+  const now = Date.now();
+  const weekly: Meter = { meterId: 'weekly', label: 'Weekly', usedPct: 100, resetAtMs: now + 2 * DAY, windowDurationMs: 7 * DAY };
+  const group = { service, groupId: 'spent' };
+  const candidates = ['a', 'b'].map(profileId => ({ profileId }));
+  const selection = { selected: null, reason: 'no_eligible_members' as const,
+    excluded: [{ profileId: 'a', reason: 'quota_exhausted' as const, retryAtMs: now + 2 * DAY },
+      { profileId: 'b', reason: 'quota_exhausted' as const, retryAtMs: now + DAY }],
+    decisionTrace: { activeProfileId: null, reason: 'no_eligible_members' as const, strategy: 'expiry_first' as const,
+      selectionBasis: 'no_eligible_members' as const, sticky: false, orderedEligibleCandidates: [], candidates } };
+  const props = bodyProps(['a', 'b'].map((id) => quotaRead(id, now, [weekly])), [{ query, value: [{ group,
+    memberAccountIds: ['a', 'b'], activeAccountId: null,
+    selection: { status: 'available', machineId: 'witnessed-selector', value: { group, observedAtMs: now, selection } } }] }]);
+  const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
+  const screen = await renderScreen(wrap(<UsageCapacityWidget {...props} id="usage_capacity" testID="cap" />));
+  expect(screen.findByTestId('cap.firstBack')).toBeTruthy();
+  expect(screen.getTextContent()).toContain(formatMoment(now + DAY, now));
+  expect(screen.findByTestId('cap.tightest')).toBeFalsy();
+  expect(screen.findByTestId('cap.usedFirst.spent.allUsedUp')).toBeTruthy();
+  expect(screen.findByTestId('cap.usedFirst.spent.a')).toBeFalsy();
 });
 
 it('states one unreadable-order cause once under every pool that shares it (H30)', async () => {

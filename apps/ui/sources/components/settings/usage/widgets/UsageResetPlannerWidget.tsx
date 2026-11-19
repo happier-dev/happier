@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
-import { ChartDatum, IntervalTimeline, formatHappierDataExactShare, type HappierChartDatum } from '@happier-dev/plugin-ui/presentation';
+import { ChartDatum, HAPPIER_DATA_METRICS, IntervalTimeline, formatHappierDataExactShare, type HappierChartDatum } from '@happier-dev/plugin-ui/presentation';
 import { AccountUsageResetsLine } from '@/components/settings/connectedServices/usage/AccountUsageFacts';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -15,7 +15,9 @@ import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { getPreferredLanguage, t } from '@/text';
 import { usageSignatureAccent } from '../usageAccent';
 import {
+  leadingUsageRows,
   UsageBodyInsufficient,
+  UsageShowAllRows,
   useUsagePluginTheme,
   type UsageBodyProps,
 } from './usageBodyKit';
@@ -69,8 +71,14 @@ export function UsageResetPlannerWidget(props: UsageBodyProps) {
   const plans = useUsagePlans(props.slice, props.model.refresh);
   const { projection, nameOf, nowMs } = plans;
   const text = usePlanText();
+  const presentation = useWidgetPresentation();
   // A tile keeps to the shared timeline, whose own rows are the exact list at that size.
-  const tile = useWidgetPresentation()?.size === 'small';
+  const tile = presentation?.size === 'small';
+  // With room for a lane per plan the planner is the timeline across the coming days (lab `p2reset`, p2sheet-D); a
+  // narrow column (a phone, lab p2sheet-P) lists the next resets first with the rest one press away.
+  const width = presentation?.geometry?.width ?? null;
+  const lanes = !tile && width !== null && width >= HAPPIER_DATA_METRICS.laneSideLabelMinWidthPx;
+  const [expanded, setExpanded] = React.useState(false);
   const refresh = plans.refresh;
   const settle = React.useCallback(() => { void refresh(); }, [refresh]);
   // A scoped Session keeps its private queued-message list. The Account view uses metadata only.
@@ -115,22 +123,27 @@ export function UsageResetPlannerWidget(props: UsageBodyProps) {
         />
       ) : (
         <>
-          {tile ? null : (
-            <ResetList
-              accounts={projection.accounts}
-              events={projection.events}
-              nameOf={nameOf}
-              nowMs={nowMs}
-              testID={`${props.testID}.list`}
-            />
-          )}
-          {tile ? <ResetTimeline
+          {tile || lanes ? <ResetTimeline
             accounts={projection.accounts}
             events={projection.events}
             nameOf={nameOf}
             nowMs={nowMs}
+            lanes={lanes}
             testID={`${props.testID}.timeline`}
-          /> : null}
+          /> : (() => {
+            const lead = leadingUsageRows(projection.events, expanded);
+            return <>
+              <ResetList
+                accounts={projection.accounts}
+                events={lead.rows}
+                nameOf={nameOf}
+                nowMs={nowMs}
+                testID={`${props.testID}.list`}
+              />
+              <UsageShowAllRows label={t('usage.widgets.usage_resets')} testID={`${props.testID}.showAll`} total={projection.events.length}
+                hidden={lead.hidden} expanded={expanded} onToggle={() => setExpanded((value) => !value)} />
+            </>;
+          })()}
         </>
       )}
       {selectedEvents.length > 0 ? <UsageCalendarExportButton input={{ query: props.query, selectedEvents }}
@@ -255,17 +268,27 @@ function ResetTimeline(
     events: readonly UsagePlanEvent[];
     nameOf: (account: UsagePlanAccount) => UsagePlanAccountName;
     nowMs: number;
+    /** A lane per plan across the coming days, each moment its marker (lab `p2reset`). */
+    lanes?: boolean;
     testID: string;
   }>,
 ) {
   const theme = useUsagePluginTheme();
   const presentation = useWidgetPresentation();
+  const DAY_MS = 86_400_000;
+  const last = Math.max(props.nowMs, ...props.events.map(event => event.atMs));
+  // A lane's last marker sits whole inside the plot rather than half past its edge.
+  const end = props.lanes ? last + (last - props.nowMs) * 0.03 : last;
+  // Each coming midnight is a tick, so the lanes read as days; the timeline drops ticks that would crowd.
+  const firstMidnight = new Date(props.nowMs); firstMidnight.setHours(24, 0, 0, 0);
+  const ticks: number[] = [];
+  for (let at = firstMidnight.getTime(); at < last; at += DAY_MS) ticks.push(at);
   const byKey = new Map(props.accounts.map(account => [account.key, account]));
   const eventsByKey = new Map(props.events.map(event => [event.key, event]));
   return <IntervalTimeline theme={theme} label={t('usage.board.plans.resetsCaption')} testID={props.testID}
-    domain={{ start: props.nowMs, end: Math.max(props.nowMs, ...props.events.map(event => event.atMs)) }}
+    domain={{ start: props.nowMs, end }}
     size={presentation?.size === 'small' ? 'tile' : 'full'}
-    geometry={presentation?.geometry}
+    {...(props.lanes ? { layout: 'lanes' as const, ticks, laneLabel: t('usage.widgets.usage_capacity') } : { geometry: presentation?.geometry })}
     startLabel={t('common.start')}
     valuesLabel={`${t('usage.widgets.usage_resets')}: ${t('usage.board.charts.showValues')}`}
     valuesCollapseLabel={t('usage.board.charts.hideValues')}
@@ -276,6 +299,8 @@ function ResetTimeline(
       const datum = resetEventDatum(event, name?.title ?? '');
       return { id: event.key, kind: 'point' as const,
         label: [name?.primaryLabel ?? name?.title, name?.qualifier, eventText(event)].filter(Boolean).join(' · '),
+        // A lane is the plan: its identity, never its title alone, so two "Leeroy" accounts keep their own lanes.
+        lane: name ? name.identity ? `${name.primaryLabel ?? name.title} · ${name.identity}` : name.title : '',
         datum: datum ?? { keyboard: false, label: name?.title ?? '', value: formatMoment(event.atMs, props.nowMs) },
         annotation: datum?.value,
         start: event.atMs, end: event.atMs };

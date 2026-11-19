@@ -95,8 +95,9 @@ describe('Usage host fragment presets', () => {
         // How you work: per-agent rows pair with per-agent rows and summaries with summaries, so no column holds a gap.
         expect(bandsOf('how-you-work')).toEqual([[['usage_rhythm']], [['usage_human_loop']],
             [['usage_parallel', 'usage_planet', 'usage_rhythm'], ['usage_run_length', 'usage_recap', 'usage_rhythm']]]);
-        // Plans: Capacity, then Projections and Plan fit stack beside the longer Resets list instead of leaving a column empty.
-        expect(bandsOf('plans')).toEqual([[['usage_capacity']], [['usage_projections', 'usage_plan_fit'], ['usage_resets']]]);
+        // Plans (lab p2sheet-D): Limits, where each live window lands, what each plan is worth, then the reset planner, each
+        // its own band so no short list leaves a column empty.
+        expect(bandsOf('plans')).toEqual([[['usage_capacity']], [['usage_projections']], [['usage_plan_fit']], [['usage_resets']]]);
     });
 
     it('uses declared Usage inputs for every definition; Home owns values and Project follows only projects', () => {

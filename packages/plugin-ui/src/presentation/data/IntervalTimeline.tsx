@@ -81,7 +81,7 @@ export type IntervalTimelineProps = Readonly<{
   /** Names the toggle that reveals the exact rows while the plot shows; defaults to the host's Details. */
   valuesLabel?: string;
   valuesCollapseLabel?: string;
-  /** Domain-owned marker ink, placed by the shared timeline geometry. */
+  /** Domain-owned marker ink, placed by the shared timeline geometry (a point's start in rows, the point itself in lanes). */
   renderMarker?: (interval: IntervalTimelineInterval) => ReactNode;
   testID?: string;
 }>;
@@ -315,13 +315,19 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
               const place = { position: 'absolute' as const, left: `${mark.from * 100}%` as const, width: span > 0 ? `${span * 100}%` as const : undefined,
                 minWidth: span > 0 ? HAPPIER_DATA_METRICS.barStubPx : HAPPIER_DATA_METRICS.lineStrokePx };
               const barHeight = HAPPIER_DATA_METRICS.laneBarHeightPx;
+              // A point with domain marker ink (a reset, an ending) draws that marker centred on its moment, as the rows layout does.
+              const marker = interval.kind === 'point' && props.renderMarker ? props.renderMarker(interval) : null;
               return <Fragment key={interval.id}>
-                <View testID={props.testID ? `${props.testID}-interval-${interval.id}` : undefined} aria-hidden importantForAccessibility="no-hide-descendants"
+                {marker !== null ? <View testID={props.testID ? `${props.testID}-interval-${interval.id}` : undefined} aria-hidden
+                  importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', left: `${mark.from * 100}%`, top: 0,
+                    width: trackHeight, height: trackHeight, marginLeft: -trackHeight / 2, alignItems: 'center', justifyContent: 'center',
+                    opacity: selectedId !== null && selectedId !== interval.id ? 0.55 : 1 }}>{marker}</View>
+                : <View testID={props.testID ? `${props.testID}-interval-${interval.id}` : undefined} aria-hidden importantForAccessibility="no-hide-descendants"
                   style={{ ...place, top: (trackHeight - barHeight) / 2, height: barHeight,
                     borderRadius: span > 0 ? HAPPIER_DATA_METRICS.barRadiusPx : 0, overflow: 'hidden', justifyContent: 'center',
                     backgroundColor: color, opacity: selectedId !== null && selectedId !== interval.id ? 0.55 : 1 }}>
                   {interval.pattern === 'hatched' ? <HappierDataHatch theme={props.theme} /> : null}
-                </View>
+                </View>}
                 {/* Pointer: the target covers the whole track over the ink, one per run. */}
                 {touchTrack ? null : <View style={{ ...place, top: 0, height: trackHeight }}>
                   <ChartDatum testID={props.testID ? `${props.testID}-datum-${interval.id}` : undefined}

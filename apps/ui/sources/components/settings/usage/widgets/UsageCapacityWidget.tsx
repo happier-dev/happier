@@ -64,11 +64,12 @@ const POOLED_SEGMENT_MIN_WIDTH_PX = 64;
  */
 const POOLED_COLUMN_LABEL_MIN_WIDTH_PX = 120;
 /**
- * Beside other widgets (Overview, Settings › Overview, a Home tile) Capacity is one pooled bar with each
- * account's figure under its segment (lab `d2top-A`, `wgusage-CD`); at full width (Plans) each account
- * keeps its own cell in the per-account grid.
+ * Beside other widgets (Overview, Settings › Overview, a Home tile or band) Capacity is one pooled bar with each
+ * account's figure under its segment (lab `d2top-A`, `wgusage-CD`, `surf-HOME`); only a view of its own (large: the
+ * Plans view) keeps each account's cell in the per-account grid and the switching order. A full band on Home ran
+ * ~600 px as the whole Plans body (acceptance 11-18 #20).
  */
-const POOLED_SIZES: ReadonlySet<string> = new Set(['small', 'medium', 'tall']);
+const POOLED_SIZES: ReadonlySet<string> = new Set(['small', 'medium', 'tall', 'wide', 'full']);
 
 
 
@@ -216,19 +217,24 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
     return state && typeof state === 'object' && !('status' in state) && state.memberStatus === 'all_excluded'
       ? readUsagePoolFirstResetAtMs(state.selection, nowMs) : null;
   });
+  // A pool whose every member is used up has no next account; its useful headline is when the first one comes back
+  // (acceptance 11-18 #3), the selector's own earliest witnessed return.
+  const spentPoolIndex = selectedResets.findIndex(time => time !== null);
+  const spentPool = spentPoolIndex >= 0 ? { pool: selectionPools[spentPoolIndex]!, atMs: selectedResets[spentPoolIndex]! } : null;
   const firstPoolReset = selectedResets.length > 0 && selectedResets.every(time => time !== null)
     && projection.accounts.every(account => selectionPools.some(pool => pool.accountKeys.includes(account.key)))
     ? Math.min(...selectedResets) : null;
   // Until the selector answers, which account leads is not known: the headline's room is held and no caption is said,
   // so the tightest standing in never turns into the next account after arrival (acceptance 11-13 #2).
   const deciding = next === null && [...selections.values()].some(state => state === 'loading');
+  const spentReturn = next === null && !deciding ? spentPool : null;
   // Beside other widgets the headline account is one figure and one meter and the rest one line: the next account
   // always, the tightest standing in when the pooled bar has no room for a label per segment. Listing them instead
   // grew the column ~240 px past the Daily chart beside it (R6 N12); their figures are Plans' to compare.
   const compact = pooled && (next !== null || deciding
     || width !== null && width / Math.max(1, drawn.length) < POOLED_COLUMN_LABEL_MIN_WIDTH_PX);
   // The caption says what the headline is: the next session's account, or the tightest of every plan standing in.
-  useWidgetFrameBodyCaption(deciding ? null : t(next !== null ? 'usage.board.plans.limitsCaption' : 'usage.board.plans.capacityCaption'));
+  useWidgetFrameBodyCaption(deciding ? null : t(next !== null || spentReturn !== null ? 'usage.board.plans.limitsCaption' : 'usage.board.plans.capacityCaption'));
   const nextWindow = next?.headline ?? null;
   const tightest = deciding ? null : next === null ? projection.tightest
     : nextWindow !== null && nextWindow.remainingFraction !== null
@@ -251,9 +257,9 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   })();
   const tightestName = tightest ? nameOf(tightest.account) : null;
   const cellCount = drawn.length;
-  // Under the pooled bar one cause is said once: when every drawn account's reading is old, "last read" joins
-  // the headline's line (the oldest reading) instead of repeating under each segment.
-  const everyStale = pooled && drawn.length > 1 && drawn.every((account) => account.stale && account.observedAtMs !== null);
+  // One cause is said once: when every drawn account's reading is old, "last read" joins the headline's line (the
+  // oldest reading) instead of repeating under each segment or cell (acceptance 11-18 #15).
+  const everyStale = drawn.length > 1 && drawn.every((account) => account.stale && account.observedAtMs !== null);
   const oldestReadMs = everyStale ? Math.min(...drawn.map((account) => account.observedAtMs!)) : null;
   // Until the first allowance answers there is no tightest to name, but the headline's room is held: the
   // figure it will be and one quiet line ("Reading 5 accounts…"), so its arrival moves nothing below it.
@@ -300,6 +306,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       name={nameOf(cell.account)}
       nowMs={nowMs}
       lone={lone}
+      staleSaidOnce={everyStale}
       {...(listed ? { listed } : {})}
       testID={`${props.testID}.cell.${cell.account.accountId}`}
     />
@@ -311,7 +318,26 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         burst={!tile}
         testID={`${props.testID}.resetBurst`}
       />
-      {tightest && tightestName ? (
+      {spentReturn !== null ? (
+        <View style={styles.hero} testID={`${props.testID}.firstBack`}>
+          <View style={styles.heroLine}>
+            <HappierDataMetric testID={`${props.testID}.firstBack.time`} theme={chartTheme} size="hero"
+              label={t('usage.board.plans.capacityFirstBack')} value={formatMoment(spentReturn.atMs, nowMs)} />
+            <Text style={[styles.heroUnit, text.title]} numberOfLines={2}>
+              {spentReturn.pool.name
+                ? t('usage.board.plans.capacityFirstBackIn', { pool: spentReturn.pool.name })
+                : t('usage.board.plans.capacityFirstBack')}
+            </Text>
+          </View>
+          <Text style={[styles.subline, text.detail]}>
+            {[
+              formatPlanCountdown(spentReturn.atMs, nowMs),
+              compact ? null : t('usage.board.plans.capacityAccounts', { count: projection.readAccountCount }),
+              oldestReadMs !== null ? t('usage.board.plans.cellStale', { time: formatMoment(oldestReadMs, nowMs) }) : null,
+            ].filter(Boolean).join(' · ')}
+          </Text>
+        </View>
+      ) : tightest && tightestName ? (
         <View style={styles.hero}>
           <View style={styles.heroLine}>
             <ChartDatum testID={`${props.testID}.tightest-datum`}
@@ -363,7 +389,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         </View>
       ) : null}
       {compact ? (
-        tightest !== null ? <View style={styles.nextMeter} testID={`${props.testID}.nextMeter`}>
+        tightest !== null && spentReturn === null ? <View style={styles.nextMeter} testID={`${props.testID}.nextMeter`}>
           <MeterBar height={8} tone={tightest.window.tone !== 'success' ? tightest.window.tone : 'neutral'}
             fillFraction={tightest.window.remainingFraction ?? 0} {...(tightest.account.stale ? { fillOpacity: 0.45 } : {})} />
         </View> : null
@@ -407,7 +433,9 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         </UsagePlanDisclosure>
       ) : null}
       {/* Beside other widgets the meters are said once; the switching order lives with the full view (Plans). */}
-      {pooled && (!tile || next !== null) ? null : tile ? (
+      {/* A narrow full view (a phone, lab p2sheet-P) says the order as Now → Next → Then, as a tile does: the account rows
+          above already list every member, so a second full list would repeat them. */}
+      {pooled && (!tile || next !== null) ? null : tile || listed ? (
         <UsagePoolSteps
           serverId={props.serverId}
           query={props.query}
@@ -670,7 +698,7 @@ function CapacityCell(
               included: "last read" or "used up" arrives into it, and settling never resizes the bar. Under the
               pooled bar a label is its figure and plan (lab `d2top-A`); only a state that changes what the viewer
               can do takes a line there. */}
-          {props.lone || props.pooled && detail === null ? null : detailLine}
+          {props.lone || (props.pooled || props.staleSaidOnce) && detail === null ? null : detailLine}
         </>
       )}
     </View>

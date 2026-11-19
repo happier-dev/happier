@@ -14,7 +14,6 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { captureUiUsageQueryAccountContext, getUsageQueryResourceStore } from '@/sync/api/account/usageQueryResource';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
-import { useDeviceType } from '@/utils/platform/responsive';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { StatusPill } from '@/components/ui/status/StatusPill';
@@ -50,8 +49,6 @@ type NameOf = (account: UsagePlanAccount) => UsagePlanAccountName;
 
 /** The popover's reading width; it narrows to the window on a phone. */
 const WHY_POPOVER_WIDTH_PX = 380;
-/** A queue row's meter: long enough to compare by eye, short enough to leave the reason its line. */
-const QUEUE_METER_WIDTH_PX = 88;
 
 /** One pool member as the selector's read lists it. The order is the read's; nothing is ranked here. */
 export type UsagePoolMember = Readonly<{
@@ -359,6 +356,11 @@ function PoolQueue(
           />
         }
       />
+      {/* Every member used up: there is no order to follow until one comes back, and the pool above already says when
+          each returns, so the list is one line; Why keeps every member's reason (acceptance 11-18 #3, #7). */}
+      {state.memberStatus === 'all_excluded' && readUsagePoolFirstResetAtMs(selection, props.nowMs) !== null ? (
+        <Text testID={`${props.testID}.allUsedUp`} style={[styles.quiet, text.detail]}>{t('usage.board.plans.queueAllUsedUp')}</Text>
+      ) : <>
       <Text style={[styles.quiet, text.detail]}>{strategy.description}</Text>
       <View accessibilityRole="list">
         {members.map((member, index) => (
@@ -374,6 +376,7 @@ function PoolQueue(
           />
         ))}
       </View>
+      </>}
     </View>
   );
 }
@@ -391,7 +394,6 @@ function QueueRow(
 ) {
   const text = usePlanText();
   const { member } = props;
-  const phone = useDeviceType() === 'phone';
   const name = member.account ? props.nameOf(member.account) : null;
   const window = member.account?.headline ?? null;
   const remaining = window?.remainingFraction ?? null;
@@ -446,8 +448,9 @@ function QueueRow(
         ) : null}
       </View>
       {window ? (
-        // A phone keeps only the short value right of the name; the meter would crowd it (lab p2pool P).
-        <View style={[styles.rowMeter, phone ? styles.rowMeterPhone : null]}>
+        // The value alone: the pool above draws every member's meter, so the order list says its place and
+        // reason without drawing them again (acceptance 11-18 #7).
+        <View style={styles.rowMeter}>
           <Text
             style={[
               styles.rowValue,
@@ -458,12 +461,6 @@ function QueueRow(
           >
             {left ?? t('usage.board.plans.cellUnknown')}
           </Text>
-          {phone ? null : <MeterBar
-            height={4}
-            tone={window.tone !== 'success' ? window.tone : 'neutral'}
-            fillFraction={remaining ?? 0}
-            {...(member.account?.stale ? { fillOpacity: 0.45 } : {})}
-          />}
         </View>
       ) : null}
     </View>
@@ -501,6 +498,17 @@ export function UsagePoolSteps(props: PoolOrderProps) {
         );
         if (state.memberStatus === 'none_known') {
           return <UsagePlanSectionHead key={pool.key} title={label} meta={!sharedCause && state.refreshError ? unreadText(state.refreshError) : null} />;
+        }
+        if (state.memberStatus === 'all_excluded' && readUsagePoolFirstResetAtMs(state.selection, props.nowMs) !== null) {
+          // No step to take until one comes back; each member's return is in the rows above (acceptance 11-18 #7).
+          return (
+            <View key={pool.key} testID={`${props.testID}.${pool.groupId}`} style={styles.pool}>
+              <UsagePlanSectionHead title={label} />
+              <Text testID={`${props.testID}.${pool.groupId}.allUsedUp`} style={[styles.quiet, text.detail]}>
+                {t('usage.board.plans.queueAllUsedUp')}
+              </Text>
+            </View>
+          );
         }
         const steps = members
           .filter((member) => member.rank !== null)
@@ -948,8 +956,7 @@ const styles = StyleSheet.create((theme) => ({
     columnGap: theme.space.s8,
     rowGap: theme.space.s2,
   },
-  rowMeter: { width: QUEUE_METER_WIDTH_PX, flexShrink: 0, gap: theme.space.s4 },
-  rowMeterPhone: { width: 'auto', minWidth: 52 },
+  rowMeter: { flexShrink: 0, alignItems: 'flex-end' },
   rowValue: {
     ...Typography.default('semiBold'),
     color: theme.colors.text.primary,

@@ -273,6 +273,9 @@ export function UsagePlanIdentity(
   const qualifier = [props.name.qualifier, props.detail]
     .filter(Boolean)
     .join(' · ');
+  // A narrow column's name with no space to wrap at (an address standing as the name, "ai3@happier.dev") can only
+  // break mid-word: it keeps one line and gives up its middle, as the split address under a name does (acceptance 11-18 #15).
+  const unbrokenColumnTitle = props.column && !split && !/\s/.test(props.name.title.trim());
   return (
     <View testID={props.testID} style={styles.identity}>
       <View style={styles.identityMark}>
@@ -290,7 +293,8 @@ export function UsagePlanIdentity(
           // "ChatGPT account 2" never reads as "ChatGPT account". A compact title also carries the address that tells
           // same-name accounts apart ("Leeroy · codex3@happier.dev"): it keeps a third line so the address is never
           // the part that is cut (sweep 1110 #12).
-          numberOfLines={split ? 1 : props.compact ? 3 : 2}
+          numberOfLines={split || unbrokenColumnTitle ? 1 : props.compact ? 3 : 2}
+          {...(unbrokenColumnTitle ? { ellipsize: 'middle' as const } : {})}
         />
         {split ? (
           <ConnectedAccountIdentityText
@@ -299,7 +303,7 @@ export function UsagePlanIdentity(
             // One line that gives up its middle ("codex3@ha…er.dev"): a tail cut read "codex3@…" (R6 #12) and a
             // two-line wrap broke every address at "@" and floated the rank badge mid-tile (USAGE-ACCEPT #7). The
             // start that tells same-name accounts apart stays; the cell's accessibility label keeps it whole.
-            numberOfLines={2}
+            numberOfLines={1}
             ellipsize="middle"
           />
         ) : null}

@@ -263,7 +263,8 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
   const focusName = focus ? nameOf(focus.account) : null;
   const focusTitle = focus && focusName ? `${focusName.title} · ${focus.window.label}` : '';
   const pace = focus?.window.pace ?? null;
-  const depleting = settled ? rows.filter(row => row.window.pace?.depletesAtMs != null)
+  // A window already used up has nothing left to run out of: its return is the reset, said by Limits and Resets.
+  const depleting = settled ? rows.filter(row => row.window.pace?.depletesAtMs != null && row.window.remainingFraction! > 0)
     .sort((left, right) => left.window.pace!.depletesAtMs! - right.window.pace!.depletesAtMs!
       || left.window.key.localeCompare(right.window.key))[0] : undefined;
   const range = pace?.empiricalRange
@@ -292,11 +293,15 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
     />
   ) : null;
   if (list) {
-    const lead = leadingUsageRows(rows, expanded);
+    // The list is where each live window lands. A used-up window has no projection left to make: its meter and its
+    // return are Limits' and Resets', so here it is one count (acceptance 11-18 #7).
+    const live = rows.filter(row => row.window.remainingFraction! > 0);
+    const spent = rows.length - live.length;
+    const lead = leadingUsageRows(live, expanded);
     // One cause, said once: when every listed window lacks a projection for the same reason ("reading is
     // old"), the rows show their reset instead and the reason is one quiet line under the list.
     // A paced window behind Show all still disproves a whole-list missing-pace statement.
-    const reasons = rows.map((row) => (row.window.pace ? null : planWindowStatement(row.window, nowMs).text));
+    const reasons = live.map((row) => (row.window.pace ? null : planWindowStatement(row.window, nowMs).text));
     const sharedReason = reasons.length > 1 && reasons[0] && reasons.every((reason) => reason === reasons[0]) ? reasons[0] : null;
     // When only some windows lack a projection and two or more share the cause, that cause is said once too:
     // under one line for the widget, never beneath every row.
@@ -307,7 +312,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
     const quietReason = sharedReason ?? repeatedReason;
     return (
       <View style={styles.body} testID={`${props.testID}.projections`}>
-        {rows.length ? (
+        {live.length ? (
           <UsageMeterStack testID={`${props.testID}.windows`}>
             {lead.rows.map((row) => (
               <ProjectionRow
@@ -329,13 +334,18 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
               : t('usage.board.plans.paceSharedReasonSome', { count: repeatedCount, reason: quietReason })}
           </Text>
         ) : null}
-        <UsageShowAllRows label={t(`usage.widgets.${props.id}`)} testID={`${props.testID}.showAll`} total={rows.length}
+        <UsageShowAllRows label={t(`usage.widgets.${props.id}`)} testID={`${props.testID}.showAll`} total={live.length}
           hidden={lead.hidden} expanded={expanded} onToggle={() => setExpanded((value) => !value)}
           unlisted={unreported.length ? t('usage.board.plans.unreportedWindows', { count: unreported.length }) : null} />
+        {spent > 0 ? (
+          <Text style={[styles.quiet, text.detail]} testID={`${props.testID}.usedUp`}>
+            {t('usage.board.plans.projectionsUsedUp', { count: spent })}
+          </Text>
+        ) : null}
         {/* The run-out alert lands inside the body's remembered height; no line is held for one that may come. */}
         {depletingNote}
         {/* The legend explains pace marks; without any pace it explains nothing. */}
-        {rows.some(row => row.window.pace) ? <UsagePlanLegend testID={`${props.testID}.legend`} parts={[t('usage.board.plans.legendEvenPace'), t('usage.board.plans.legendHatched')]} /> : null}
+        {live.some(row => row.window.pace) ? <UsagePlanLegend testID={`${props.testID}.legend`} parts={[t('usage.board.plans.legendEvenPace'), t('usage.board.plans.legendHatched')]} /> : null}
         <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice} onRetry={props.model.refresh}
           replacesContent={!rows.length && !unreported.length && !depletingNote}
           testID={`${props.testID}.state`} />

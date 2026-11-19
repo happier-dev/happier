@@ -16,7 +16,7 @@ import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { projectProviderAccountSubscriptionMonetaryFacts } from '@happier-dev/protocol/connect/accountSubscription';
 import type { UsagePlanInsights } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { UsageBodyReading, usageDimensionLabel, type UsageBodyProps } from './usageBodyKit';
+import { UsageBodyInsufficient, UsageBodyReading, usageDimensionLabel, type UsageBodyProps } from './usageBodyKit';
 import { summarizeUsagePlanFit, type UsagePlanAccount } from './plans/usagePlansModel';
 import { readUsagePersonalPaceTarget } from './plans/usagePacingTarget';
 import { UsageBillingButton, UsageSubscriptionPriceEditor } from './plans/UsagePlanActions';
@@ -90,6 +90,13 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
   // Rows with no ended window yet say so once under the list, not on every row (sweep 1110 item 19).
   const noneEndedOnce = drawn.filter((account) => account.read?.current
     && summarizeUsagePlanFit(account, target).reason === 'none_ended').length > 1;
+  // While no plan has a price, an ended window or known terms, every row would say only that it has nothing yet:
+  // the widget says it once and keeps the plans (price editor, billing) one press away (acceptance 11-18 #7).
+  const nothingYet = drawn.length > 1 && drawn.every((account) => readPlanKeyFact(account, insightsOf(account), nowMs) === null
+    && summarizeUsagePlanFit(account, target).observed === 0 && !isPlanRenewalKnown(account));
+  // The one line names why there is nothing to compare: ended windows not loaded or unavailable, else none ended yet.
+  const nothingYetReason = nothingYet ? drawn.map((account) => summarizeUsagePlanFit(account, target).reason)
+    .find((reason) => reason !== 'none_ended') ?? 'none_ended' : null;
   const planFitGaps = readPlanFitGaps(props.slice.planInsights);
   // A gap more readings cure is one quiet promise; attribution says what it needs.
   const caveats = [noPriceOnce ? t('usage.board.plans.planNoPriceAll') : null,
@@ -97,8 +104,7 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
     unreadCount > 0 ? t('usage.board.plans.capacityNotRead', { count: unreadCount }) : null,
     planFitGaps.attribution ? t('usage.board.plans.attributionNote') : null,
     planFitGaps.history ? t('usage.board.plans.moreDetailLater') : null].filter((line): line is string => line !== null);
-  return (
-    <View style={styles.body} testID={`${props.testID}.planFit`}>
+  const planRows = (
       <View style={styles.rows} accessibilityRole="list">
         {drawn.map((account) => (
           <PlanRow
@@ -112,11 +118,40 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
             onSettled={props.model.refresh}
             insights={insightsOf(account)}
             noPriceSaidOnce={noPriceOnce}
-            noneEndedSaidOnce={noneEndedOnce}
+            noneEndedSaidOnce={noneEndedOnce || nothingYet}
             testID={`${props.testID}.plan.${account.accountId}`}
           />
         ))}
       </View>
+  );
+  // The recorded week and the pace target do not depend on plan prices or ended windows: every state keeps them.
+  const recordedWeek = props.slice.planInsights?.recordedWeek.status === 'available'
+    ? <RecordedWeek value={props.slice.planInsights.recordedWeek} compact={tile} testID={`${props.testID}.recordedWeek`} /> : null;
+  // The pace these rows are read against is set here: the one route from a plan's value to its target.
+  const paceTargetLink = tile ? null : <Item testID={`${props.testID}.paceTarget`} title={t('usage.board.plans.paceTargetLink')}
+    subtitle={t('usage.board.plans.paceTargetLinkSubtitle')}
+    icon={<Icon name="speedometer" size={ICON_SIZE.md} color={appTheme.colors.text.secondary} />}
+    onPress={() => router.push(SETTINGS_ROUTES.sessionProviderLimits as Parameters<typeof router.push>[0])} />;
+  if (nothingYet) {
+    return (
+      <View style={styles.body} testID={`${props.testID}.planFit`}>
+        <UsageBodyInsufficient testID={`${props.testID}.nothingYet`} replacesContent={false}
+          title={t(nothingYetReason === 'not_loaded' ? 'usage.board.plans.pastCyclesNotLoaded'
+            : nothingYetReason === 'unavailable' ? 'usage.board.plans.pastCyclesUnavailable' : 'usage.board.plans.fitNoneEndedOnce')}
+          reason={t('usage.board.plans.fitNoneEndedReason')} />
+        <UsagePlanDisclosure testID={`${props.testID}.plans`} title={t('usage.board.plans.fitPlans', { count: drawn.length })}>
+          {planRows}
+        </UsagePlanDisclosure>
+        {recordedWeek}
+        <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice}
+          onRetry={props.model.refresh} testID={`${props.testID}.state`} />
+        {paceTargetLink}
+      </View>
+    );
+  }
+  return (
+    <View style={styles.body} testID={`${props.testID}.planFit`}>
+      {planRows}
       {/* The list's caveats are one quiet line: the first, with the rest one press away, never a run-on line plus
           a sentence (USAGE-ACCEPT #7). */}
       {caveats.length > 0 ? (
@@ -125,15 +160,10 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
           {...(caveats.length > 1 ? { action: { label: caveatsOpen ? t('usage.showLess') : t('common.details'),
             testID: `${props.testID}.once.detail`, onPress: () => setCaveatsOpen(open => !open) } } : {})} />
       ) : null}
-      {props.slice.planInsights?.recordedWeek.status === 'available'
-        ? <RecordedWeek value={props.slice.planInsights.recordedWeek} compact={tile} testID={`${props.testID}.recordedWeek`} /> : null}
+      {recordedWeek}
       <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice}
         onRetry={props.model.refresh} testID={`${props.testID}.state`} />
-      {/* The pace these rows are read against is set here: the one route from a plan's value to its target. */}
-      {tile ? null : <Item testID={`${props.testID}.paceTarget`} title={t('usage.board.plans.paceTargetLink')}
-        subtitle={t('usage.board.plans.paceTargetLinkSubtitle')}
-        icon={<Icon name="speedometer" size={ICON_SIZE.md} color={appTheme.colors.text.secondary} />}
-        onPress={() => router.push(SETTINGS_ROUTES.sessionProviderLimits as Parameters<typeof router.push>[0])} />}
+      {paceTargetLink}
     </View>
   );
 }
@@ -144,6 +174,12 @@ function readPlanKeyFact(account: UsagePlanAccount, insights: UsagePlanInsights[
   if (value?.status === 'available' && value.priceMultiple.status === 'available') return 'multiple';
   const price = projectProviderAccountSubscriptionMonetaryFacts({ subscription: account.subscription, nowMs, tier: account.planLabel });
   return account.subscription?.enteredMonthlyPrice || price.paid || price.list ? 'price' : null;
+}
+
+/** The plan says when it renews or ends. */
+function isPlanRenewalKnown(account: UsagePlanAccount): boolean {
+  const subscription = account.subscription;
+  return subscription?.status === 'subscribed' && subscription.currentPeriodEndAtMs !== undefined && subscription.renewal !== 'unknown';
 }
 
 function PlanRow(
@@ -265,7 +301,7 @@ function PlanRow(
   const verdict = fit.observed === 0 ? null : fit.usedUp === 0
     ? t('usage.board.plans.fitNeverRanOut', { total: fit.observed })
     : t('usage.board.plans.fitRanOut', { count: fit.usedUp, total: fit.observed });
-  const renewalKnown = subscription?.status === 'subscribed' && end !== undefined && subscription.renewal !== 'unknown';
+  const renewalKnown = isPlanRenewalKnown(account);
   // An unknown value is a quiet reason right under the plan's name, never a lone dash at the far edge.
   const secondary = [
     keyFact === null && !props.noPriceSaidOnce ? t('usage.board.plans.planNoPriceShort') : null,

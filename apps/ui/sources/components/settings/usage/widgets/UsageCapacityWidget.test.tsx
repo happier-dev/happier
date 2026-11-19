@@ -528,7 +528,7 @@ it.each([['loaded_data', true], ['loaded_empty', false], ['not_loaded', false]] 
   }
 });
 
-it.each([['medium', true, 520, false], ['tall', true, 520, false], ['full', false, 520, false], ['full', false, 180, true]] as const)('draws one pooled bar with labels under its segments beside other widgets (%s), the per-account grid at full width, and one row per account in a grid too narrow for its cells (native N2)', async (size, pooled, width, listed) => {
+it.each([['medium', true, 520, false], ['tall', true, 520, false], ['full', true, 520, false], ['large', false, 520, false], ['large', false, 180, true]] as const)('draws one pooled bar with labels under its segments beside other widgets (%s), the per-account grid as a view of its own, and one row per account in a grid too narrow for its cells (native N2)', async (size, pooled, width, listed) => {
   const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
   const query = normalizeUsageQuery({});
   const quota = [['work', 'loaded_data', 40], ['personal', 'loaded_data', 75], ['spare', 'not_loaded', null]].map(([accountId, state, usedPct]) => {

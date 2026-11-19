@@ -236,6 +236,22 @@ describe('neutral intervals and outcomes', () => {
     } finally { mount.unmount(); }
   });
 
+  it('draws a lanes point with the domain marker ink at its moment, and a span without it', () => {
+    const mount = mountThroughReactNativeWeb(<IntervalTimeline theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="resets"
+      label="Resets" layout="lanes" domain={{ start: 0, end: 100 }} geometry={{ width: 800, height: 400 }}
+      renderMarker={interval => <span data-testid={`marker-${interval.id}`} />}
+      intervals={[
+        { id: 'r', label: 'Weekly resets', kind: 'point', lane: 'Claude Max', start: 25, end: 25 },
+        { id: 's', label: 'Session', lane: 'Claude Max', start: 50, end: 70 },
+      ]} />);
+    try {
+      const point = query(mount.container, 'resets-interval-r')!;
+      expect(point.querySelector('[data-testid="marker-r"]')).not.toBeNull();
+      expect(Number.parseFloat(point.style.left)).toBeCloseTo(25);
+      expect(query(mount.container, 'resets-interval-s')!.querySelector('[data-testid="marker-s"]')).toBeNull();
+    } finally { mount.unmount(); }
+  });
+
   it('picks the run nearest the finger along a track and steps through runs for assistive technology', () => {
     const track = [
       { id: 'a', label: 'A', start: 1, end: 3 },
