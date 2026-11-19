@@ -11,6 +11,8 @@ import { buildAcpAgentMessageEnvelope } from '@/api/session/acpMessageEnvelope';
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { connectedAccountActionFormSelectionV1JsonSchema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { DaemonPluginActionSchemasReadResponseSchema, DaemonPluginUiTargetedContributionsReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createPluginActionInvocation } from '@happier-dev/protocol/plugins/actions/invocation';
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/protocol/automations/event-setup-result';
@@ -366,6 +368,7 @@ function createActionFormConnectedAccountManifest(input: Readonly<{
     secondSelect?: boolean;
     pluginOnly?: boolean;
     useOnly?: boolean;
+    acceptsTeamResource?: boolean;
 }> = {}) {
     const primaryAccess = {
         id: 'select-account',
@@ -421,23 +424,9 @@ function createActionFormConnectedAccountManifest(input: Readonly<{
                 inputSchema: {
                     type: 'object',
                     properties: {
-                        credentialRef: {
-                            type: 'object',
-                            properties: {
-                                service: {
-                                    type: 'object',
-                                    properties: {
-                                        pluginId: { type: 'string' },
-                                        localId: { type: 'string' },
-                                    },
-                                    required: ['pluginId', 'localId'],
-                                    additionalProperties: false,
-                                },
-                                accountId: { type: 'string' },
-                            },
-                            required: ['service', 'accountId'],
-                            additionalProperties: false,
-                        },
+                        credentialRef: input.acceptsTeamResource
+                            ? connectedAccountActionFormSelectionV1JsonSchema()
+                            : QualifiedConnectedAccountRefJsonSchema,
                     },
                     required: ['credentialRef'],
                     additionalProperties: false,
@@ -729,6 +718,28 @@ describe('daemon contribution registry projection rpc handler', () => {
             serviceRefs: [{ pluginId: 'acme.action-form', localId: 'account' }],
             signal: expect.any(AbortSignal),
         });
+    });
+
+    it.each([false, true])('offers a Team Connected Account only when the Action declaration admits it (accepts Team: %s)', async (acceptsTeamResource) => {
+        const personal = {
+            value: { service: { pluginId: 'acme.action-form', localId: 'account' }, accountId: 'account-1' },
+            label: 'Personal GitHub',
+        };
+        const team = {
+            value: { teamId: 'team-1', selection: { source: 'team_resource', resourceId: 'resource-1', deliveryMode: 'brokered' } },
+            label: 'Shared GitHub',
+        } as const;
+        const handler = await registerActionFormOptionsHandler({
+            manifest: createActionFormConnectedAccountManifest({ acceptsTeamResource }),
+            resolveGeneration: async () => 7,
+            targetActionInvocations: createActionFormTargetInvocationRuntime(),
+            listActionFormConnectedAccountOptions: async () => [personal, team],
+        });
+
+        await expect(handler({
+            machineId: 'machine-1', expectedOccurrenceId: ACTION_FORM_OCCURRENCE_ID,
+            qualifiedActionId: 'acme.action-form/run', fieldPath: 'credentialRef',
+        })).resolves.toEqual({ ok: true, options: acceptsTeamResource ? [personal, team] : [personal] });
     });
 
     it('uses the target Action occurrence rather than the aggregate projection generation for Action-form Connected Account options', async () => {

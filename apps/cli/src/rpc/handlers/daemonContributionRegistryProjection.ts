@@ -34,6 +34,9 @@ import { skillsProjectionFamily } from '@/plugins/projection/registry/skills';
 import { machineRecipesProjectionFamily } from '@/plugins/projection/registry/machineRecipes';
 import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema, DaemonPluginUiTargetedSurfaceMountV1Schema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsSetResponseSchema, DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS, DaemonPluginSecretStatusRequestSchema, DaemonPluginSecretStatusResponseSchema, DaemonPluginSecretSetRequestSchema, DaemonPluginSecretSetResponseSchema, DaemonPluginSecretDeleteRequestSchema, DaemonPluginSecretDeleteResponseSchema, DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema, DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseRequestSchema, DaemonPluginUiResourceWatchCloseResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema, DaemonPluginActionSchemasReadRequestSchema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema, DaemonPluginComposerReferenceSearchRequestSchema, DaemonPluginComposerReferenceSearchResponseSchema, DaemonPluginUiArtifactBytesReadRequestSchema, DaemonPluginUiArtifactBytesReadResponseSchema, PluginUiResourceBindingCapabilityV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { embedProtocolJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { resolveDeclaredInputLeaves } from '@happier-dev/protocol/plugins/actions/v2';
 import type { DaemonPluginSettingsSnapshot, FeatureDecision, DaemonHostedWebFrameCapabilityV1, DaemonReactNativeHostRuntimeIdentityV1, ActionOperationDeclarationV1, DaemonContributionRegistryProjectionDescribeRequest, DaemonContributionRegistryProjectionDescribeResponse, DaemonPluginUiTargetedContributionsReadRequest, DaemonPluginUiTargetedContributionsReadResponse, PluginSettingFieldV2, DaemonPluginUiArtifactBytesReadResponse, DaemonPluginUiTargetedSurfaceMountV1, DaemonPluginStructuredMessageActionInvocationV1, MessageActionReferenceV1, MessageActionResolutionV1, PluginMachineExecutionOriginV1, PluginProjectionBrandAssetV2, PluginProjectionV2 } from '@happier-dev/protocol';
 import { resolvePluginMachineExecutionOrigin } from '@/plugins/runtime/resolvePluginMachineExecutionOrigin';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -3412,9 +3415,31 @@ export function registerDaemonContributionRegistryProjectionHandler(
                     code: 'plugin_occurrence_stale',
                 });
             }
+            const inputSchema = lease.registry.contributes.actionsById?.get(request.data.qualifiedActionId)?.definition.inputSchema;
+            const referencePath = ['$defs', 'actionInput'];
+            let referenceRoot: typeof inputSchema;
+            const compileField = (fieldPath: string) => {
+                if (!inputSchema) return null;
+                const leaves = resolveDeclaredInputLeaves(inputSchema, fieldPath, 'conditional-field');
+                if (!leaves) return null;
+                // A field's references still resolve against the complete Action declaration.
+                return compilePluginJsonSchema({
+                    $defs: { actionInput: referenceRoot ??= embedProtocolJsonSchema(inputSchema, referencePath) },
+                    anyOf: leaves.map(leaf => embedProtocolJsonSchema(leaf, referencePath)),
+                });
+            };
+            const credentialField = options.some(option => !('nativeServicePath' in option))
+                ? compileField(request.data.fieldPath) : null;
+            const nativeField = currentAuthorization.nativeServicePath && options.some(option => 'nativeServicePath' in option)
+                ? compileField(currentAuthorization.nativeServicePath) : null;
             return DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema.parse({
                 ok: true,
-                options,
+                options: options.filter(option => {
+                    const validate = 'nativeServicePath' in option
+                        ? (option.nativeServicePath === currentAuthorization.nativeServicePath ? nativeField : null)
+                        : credentialField;
+                    return validate !== null && isValidPluginJsonSchemaValue(validate, option.value);
+                }),
             });
         } catch (error) {
             return DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema.parse({
