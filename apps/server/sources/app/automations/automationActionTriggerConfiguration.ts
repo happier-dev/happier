@@ -52,6 +52,14 @@ export function readAutomationDefinitionConsentFor(
     return null;
 }
 
+/** Consent definitions take their execution Machine from invocation admission. */
+export function isAutomationConsentDefinition(
+    triggers: readonly Readonly<AutomationActionTriggerColumns & { kind: string }>[],
+): boolean {
+    return triggers.length > 0 && triggers.every(trigger => trigger.kind === 'action'
+        && readAutomationDefinitionConsentFor([trigger]) !== null);
+}
+
 export function decodeAutomationActionTriggerConfiguration(row: AutomationActionTriggerColumns) {
     if (row.consentForAutomationId != null || row.consentForTriggerId != null) {
         return AutomationActionConsentTriggerSchema.parse({ kind: 'action',

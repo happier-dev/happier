@@ -224,10 +224,11 @@ async function assertMachineAssignmentsCanBeWritten(params: {
 
 /**
  * Assignment-liveness invariant, shared by every definition writer. An enabled
- * Automation must own at least one enabled execution assignment: admission
+ * ordinary Automation owns at least one enabled execution assignment: admission
  * freezes the current enabled-assignment set into the Run, so a Run admitted
  * with zero enabled assignments could never be claimed by any machine. A
- * disabled draft may own zero enabled assignments.
+ * disabled draft may own zero enabled assignments. Consent definitions instead
+ * receive their Machine at invocation admission and own no assignments.
  *
  * Callers pass the exact assignment set their transaction is about to persist
  * (or the loaded persisted set). Canonical normalization prevents a repeated
@@ -237,9 +238,14 @@ export function assertAutomationAssignmentLiveness(params: Readonly<{
     enabled: boolean;
     assignments: ReadonlyArray<Readonly<{ machineId: string; enabled?: boolean }>>;
     observationOnly?: boolean;
+    consentOnly?: boolean;
 }>): void {
     if (params.observationOnly) {
         if (params.assignments.length > 0) throw new AutomationValidationError("Observation-only Automations have no execution assignments");
+        return;
+    }
+    if (params.consentOnly) {
+        if (params.assignments.length > 0) throw new AutomationValidationError("Consent definitions have no execution assignments");
         return;
     }
     if (!params.enabled) return;

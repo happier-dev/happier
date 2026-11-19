@@ -53,7 +53,7 @@ import { AutomationTemplatePayloadV1Schema } from '@happier-dev/protocol/automat
 import { AutomationObservationOnlyDefinitionV1Schema, parseAutomationObservationOnlyDefinitionV1, parseAutomationStoredWorkflowDefinitionRecipeV2, serializeAutomationStoredWorkflowDefinitionRecipeV2, type AutomationManagedTargetV1, type AutomationObservationOnlyDefinitionV1, type AutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { AutomationActionTriggerSchema, projectAutomationActionTriggerStructuralV1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
-import { AUTOMATION_ACTION_TRIGGER_FIELDS_CLEARED, automationConsentReferenceSelect, decodeAutomationActionTriggerConfiguration } from './automationActionTriggerConfiguration';
+import { AUTOMATION_ACTION_TRIGGER_FIELDS_CLEARED, automationConsentReferenceSelect, decodeAutomationActionTriggerConfiguration, isAutomationConsentDefinition } from './automationActionTriggerConfiguration';
 import { resolveAutomationActionReachInTx } from './automationActionReachAdmission';
 import { assertAutomationActionSubjectInTx } from './automationActionSubjectAdmission';
 import { createAutomationPluginEventTriggerDefinitionV1, sealAutomationTriggerDefinitionStoredEnvelopeV1, openAutomationTriggerDefinitionStoredEnvelopeV1, type AutomationTriggerDefinitionBindingV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
@@ -4847,6 +4847,7 @@ async function assertWorkflowTriggerContextTx(tx: Tx, params: Readonly<{
     assignments: readonly AutomationAssignmentInput[];
     existingAssignments?: AutomationListItem['assignments'];
     observationOnly?: boolean;
+    consentOnly?: boolean;
 }>): Promise<void> {
     if (params.observationOnly) {
         if (params.targetType !== null || params.workflowDefinitionId !== null || params.scopeSessionId !== null
@@ -4864,7 +4865,7 @@ async function assertWorkflowTriggerContextTx(tx: Tx, params: Readonly<{
     // New authoring remains single-project. A disabled draft may own no
     // assignment, and a same-row conversion/metadata edit preserves the exact
     // existing placement census rather than fabricating a replacement Machine.
-    if (params.assignments.length !== 1
+    if (!params.consentOnly && params.assignments.length !== 1
         && !(params.assignments.length === 0 && !params.enabled)
         && !(params.existingAssignments
             && automationAssignmentsMatch(params.existingAssignments, params.assignments))) {
@@ -4976,11 +4977,12 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
     if (!definition) {
         throw new Error("Automation definition normalization failed");
     }
-    // Assignment-liveness: an enabled Automation must own at least one
-    // enabled execution assignment; a disabled draft may own none.
+    const consentOnly = isAutomationConsentDefinition(triggerInputs.map(item => item.trigger));
+    // Ordinary enabled definitions need placement; consent uses the invoking Machine.
     assertAutomationAssignmentLiveness({
         enabled: params.input.enabled,
         assignments: params.input.assignments ?? [],
+        consentOnly,
         observationOnly: parseAutomationObservationOnlyDefinitionV1(definition.templateCiphertext) !== null,
     });
     await assertWorkflowTriggerContextTx(tx, {
@@ -4989,6 +4991,7 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
         scopeSessionId: params.input.scopeSessionId ?? null,
         enabled: params.input.enabled,
         assignments: params.input.assignments ?? [],
+        consentOnly,
         observationOnly: parseAutomationObservationOnlyDefinitionV1(definition.templateCiphertext) !== null,
     });
 
@@ -5392,6 +5395,7 @@ export async function updateAutomation(params: {
 
         const schedule = legacyInput?.schedule;
         const effectiveEnabled = params.input.enabled ?? existing.enabled;
+        const consentOnly = isAutomationConsentDefinition(existing.triggers);
         const effectiveWorkflowDefinitionId = params.input.workflowDefinitionId === undefined
             ? existing.workflowDefinitionId : params.input.workflowDefinitionId;
         const effectiveScopeSessionId = params.input.scopeSessionId === undefined
@@ -5406,6 +5410,7 @@ export async function updateAutomation(params: {
             enabled: effectiveEnabled,
             existingAssignments: existing.assignments,
             assignments: params.input.assignments ?? existing.assignments,
+            consentOnly,
             observationOnly: parseAutomationObservationOnlyDefinitionV1(effectiveTemplateCiphertext) !== null,
         });
         // Assignment-liveness against the exact post-patch set: a replacement
@@ -5416,6 +5421,7 @@ export async function updateAutomation(params: {
         assertAutomationAssignmentLiveness({
             enabled: effectiveEnabled,
             assignments: params.input.assignments ?? existing.assignments,
+            consentOnly,
             observationOnly: parseAutomationObservationOnlyDefinitionV1(effectiveTemplateCiphertext) !== null,
         });
         const targetTypeChanged =
@@ -5657,6 +5663,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
             throw new AutomationTemplateMutationConflictError();
         }
 
+        const existingTriggersById = new Map(existing.triggers.map(trigger => [trigger.id, trigger]));
         const retained = new Map(params.input.triggers.flatMap((item) =>
             item.kind === "existing" ? [[item.triggerId, item] as const] : [],
         ));
@@ -5673,6 +5680,8 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                 throw new AutomationTriggerMutationConflictError();
             }
         }
+        const consentOnly = isAutomationConsentDefinition(params.input.triggers.map(item =>
+            item.trigger ?? existingTriggersById.get(item.triggerId)!));
         // Cleanup may outlive its Environment; a mixed editor save remains authoring.
         const cleanupOnly = params.input.executionRecipe === undefined && params.input.observationOnly === undefined
             && params.input.name === existing.name && params.input.description === existing.description
@@ -5681,7 +5690,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
             && (params.input.scopeSessionId === undefined || params.input.scopeSessionId === existing.scopeSessionId)
             && automationAssignmentsMatch(existing.assignments, params.input.assignments)
             && params.input.triggers.every(item => item.kind === "existing"
-                && (automationTriggerPatchMatches(existing, existing.triggers.find(trigger => trigger.id === item.triggerId)!, item)
+                && (automationTriggerPatchMatches(existing, existingTriggersById.get(item.triggerId)!, item)
                     || automationTriggerPatchOnlyDisables(item)));
         // Assignment-liveness before any write: a whole-editor Save of an
         // enabled Automation must commit at least one enabled execution
@@ -5689,6 +5698,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
         assertAutomationAssignmentLiveness({
             enabled: params.input.enabled,
             assignments: params.input.assignments,
+            consentOnly,
             observationOnly: params.input.observationOnly !== undefined
                 || (params.input.executionRecipe === undefined && parseAutomationObservationOnlyDefinitionV1(existing.templateCiphertext) !== null),
         });
@@ -5726,7 +5736,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
         };
         assertAutomationTriggerKindsForDefinition(effectiveAutomation.templateCiphertext,
             params.input.triggers.map(item => item.trigger?.kind
-                ?? existing.triggers.find(trigger => trigger.id === item.triggerId)?.kind));
+                ?? existingTriggersById.get(item.triggerId)?.kind));
         if (params.input.triggers.some((item) => item.kind === "existing"
             && existing.triggers.some((trigger) => trigger.id === item.triggerId
                 && (trigger.kind === "prComment" || trigger.kind === "ciFailed")
@@ -5744,6 +5754,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
             enabled: params.input.enabled,
             existingAssignments: existing.assignments,
             assignments: params.input.assignments,
+            consentOnly,
             observationOnly: parseAutomationObservationOnlyDefinitionV1(effectiveAutomation.templateCiphertext) !== null,
         });
         await validateExistingSessionAutomationTargetTx({
@@ -5773,7 +5784,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
 
         const changedTriggerIds = new Set(params.input.triggers.filter(item => item.kind === "new"
             || !automationTriggerPatchMatches(existing,
-                existing.triggers.find(trigger => trigger.id === item.triggerId)!, item)).map(item => item.triggerId));
+                existingTriggersById.get(item.triggerId)!, item)).map(item => item.triggerId));
         const definitionChanged = currentDefinition?.changed === true
             || params.input.name !== existing.name || params.input.description !== existing.description
             || params.input.enabled !== existing.enabled
