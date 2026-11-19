@@ -14,6 +14,8 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { planTriageConfigureSourceOffersV1 } from './configureSources.js';
+import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../../internalTasks/contribution.js';
+import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
 import {
   activate as externalActivate,
   manifest as externalManifest,
@@ -168,6 +170,28 @@ describe('the way out of an unconfigured PRs & Issues', () => {
   });
   it('offers no source destination before an Account mount has an admitted contribution snapshot', () => {
     expect(planTriageConfigureSourceOffersV1(undefined)).toEqual([]);
+  });
+
+  it('offers tracker setup alongside the setup-free personal source', () => {
+    const offers = planTriageConfigureSourceOffersV1(snapshot([
+      contribution({
+        pluginId: INTERNAL_TASK_SOURCE_V1.pluginId,
+        contributionId: INTERNAL_TASK_SOURCE_V1.localId,
+        descriptor: INTERNAL_TASK_DESCRIPTOR_V1,
+      }),
+      contribution({
+        pluginId: 'acme.tracker',
+        contributionId: 'issues',
+        descriptor: {
+          v: 1,
+          purpose: 'tracker',
+          displayName: 'Acme',
+          kinds: [{ id: 'issue', workflowSubject: 'issue', displayName: 'Issue' }],
+          settingsPageId: 'sources',
+        },
+      }),
+    ]));
+    expect(offers.map(offer => offer.destination)).toEqual([{ pluginId: 'acme.tracker', localId: 'sources' }]);
   });
 
   it('qualifies the page with the contributor the host admitted, never with one a descriptor named', () => {

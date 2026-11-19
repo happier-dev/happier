@@ -1,14 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
+import { formatTriageTimestampV1, MAX_TRIAGE_LIST_SOURCE_BATCH_V1 } from '@happier-dev/triage-protocol/v1';
 
 import type { TriageListWindowV1 } from '../../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
-import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../../internalTasks/contribution.js';
 import { REVIEW_DESCRIPTOR_V1 } from '../../reviews/contribution.js';
-import { planTriageConfigureSourceOffersV1 } from './configureSources.js';
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
-  TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1, MAX_TRIAGE_LIST_SOURCE_BATCH_V1 } from '@happier-dev/triage-protocol/v1';
 import {
   TRIAGE_LIST_NO_FILTERS_V1,
 } from '../../projection/listWindow.js';
@@ -188,19 +184,6 @@ describe('resolveTriageListShellState', () => {
     }] }) }));
     expect(state).toMatchObject({ kind: 'window', showReadWarning: true, failure: { kind: 'sources',
       sources: [{ sourceInstanceId: INSTANCE, code: failure.code, reason: failure.detail }] } });
-  });
-  it('offers trackers without asking to connect the already-built-in personal source', () => {
-    const protocol = { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 };
-    const offers = planTriageConfigureSourceOffersV1({
-      target: { pluginId: 'happier.triage', occurrenceId: 'triage', sourceCustody: { kind: 'development', registeredRootId: 'triage' } },
-      points: [{ pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocols: [{ protocol, contributions: [
-        { pluginId: 'happier.triage', localId: 'internal', descriptor: INTERNAL_TASK_DESCRIPTOR_V1 },
-        { pluginId: 'acme.tracker', localId: 'issues', descriptor: { ...INTERNAL_TASK_DESCRIPTOR_V1,
-          purpose: 'tracker', displayName: 'Acme', settingsPageId: 'sources' } },
-      ].map(source => ({ contributor: { pluginId: source.pluginId, contributionId: source.localId, occurrenceId: 'source',
-        sourceCustody: { kind: 'development' as const, registeredRootId: 'source' } }, protocol, descriptor: source.descriptor, operations: [], surfaces: [] })) }] }],
-    });
-    expect(offers.map(offer => offer.destination.pluginId)).toEqual(['acme.tracker']);
   });
   it('decides first run from the sources serving the current page', () => {
     const builtin = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance;
