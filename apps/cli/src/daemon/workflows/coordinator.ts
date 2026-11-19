@@ -2029,18 +2029,21 @@ async function executeActionBlock(
     assertWorkflowAbortSignal(context);
     const invoked = await context.holds.track(async () => {
       try { return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result; }
-      catch { return undefined; }
+      catch (error) {
+        return parseActionExecuteFailure(error) ?? { ok: false as const, errorCode: 'action_failed', error: 'action_failed',
+          failureCause: projectActionFailureCauseV1(error, actionId) };
+      }
     });
-    if (!invoked || (!invoked.ok && invoked.errorCode === 'action_failed')) {
+    if (!invoked.ok && invoked.errorCode === 'action_failed') {
       // A failed read cannot leave an unknown mutation. Keep it interrupted so
       // the person can Retry, while writes retain their no-replay uncertainty.
+      const failure = prepareActionCompletionV1(undefined, invoked);
       if (readOnlyAction) {
-        const failure = invoked ? prepareActionCompletionV1(undefined, invoked) : undefined;
         return await fail('action_failed', 'failed', true,
-          failure?.kind === 'failed' && 'value' in failure ? failure.value : undefined,
-          invoked && !invoked.ok ? invoked.failureCause : undefined);
+          failure.kind === 'failed' && 'value' in failure ? failure.value : undefined, invoked.failureCause);
       }
-      return await fail('outcome_uncertain', 'outcome_uncertain', false, undefined, invoked && !invoked.ok ? invoked.failureCause : undefined);
+      return await fail('outcome_uncertain', 'outcome_uncertain', false,
+        failure.kind === 'failed' && 'value' in failure ? failure.value : undefined, invoked.failureCause);
     }
     if (!invoked.ok && isActionOutcomeUnknownErrorCodeV1(invoked.errorCode)) {
       // Retaining the native diagnosis does not establish whether its effect occurred.

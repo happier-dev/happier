@@ -9,6 +9,7 @@ import {
   ResolvedRoleV1Schema,
 } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol';
 import {
@@ -109,6 +110,7 @@ async function accepted(definition: WorkflowDefinitionV1, evidence: Record<strin
 
 type NativeRun = { localInputId: string; value: JsonValue; intent: string; failed?: boolean };
 type Fixtures = {
+  reviewCreateFailure?: ActionExecuteFailure;
   workDepthLimit?: number;
   reviewCounts?: { total: number; needsDecision: number } | (() => { total: number; needsDecision: number });
   reviewRequests?: readonly ReviewRequestedReviewerV1[];
@@ -147,6 +149,7 @@ function harness(fixtures: Fixtures = {}) {
   const reviewRecords = createReviewRecordPortV1({
     read: async reviewId => reviewRows.get(reviewId) ?? null,
     create: async value => {
+      if (fixtures.reviewCreateFailure) throw createActionExecuteFailureError(fixtures.reviewCreateFailure);
       const row = { artifactId: value.artifactId, header: value.header, body: value.body,
         revision: { headerVersion: 1, bodyVersion: 1 } };
       reviewRows.set(value.artifactId, row);
@@ -543,6 +546,22 @@ function harness(fixtures: Fixtures = {}) {
 }
 
 describe('built-ins through accepted materialization and native leaf adapters', () => {
+  it('retains the declared Review storage failure without replaying an uncertain Hunt write', async () => {
+    const failure: ActionExecuteFailure = { ok: false, errorCode: 'action_failed', error: 'action_failed',
+      details: { reasonCode: 'review_record_write_unavailable' }, failureCause: {
+        phase: 'artifact.create', errorClass: 'HttpStatusError', errorCode: 'database_unavailable', httpStatus: 503,
+      } };
+    const h = harness({ reviewCreateFailure: failure });
+    const snapshot = await accepted(builtin('repository-review'), { cwd: '/repo', instructions: 'Find repository issues.',
+      reviewers: [{ kind: 'engine', engineId: engine }],
+    }, false);
+    expect(await h.runAccepted(snapshot, false, 'uncertain-hunt')).toMatchObject({ state: 'outcome_uncertain' });
+    const retained = h.store.list().find(row => row.blockId === 'review');
+    expect(retained).toMatchObject({ lifecycle: 'outcome_uncertain', result: failure.details, failureCause: failure.failureCause });
+    expect(h.launches).toEqual([]);
+    expect(await h.runAccepted(snapshot, false, 'uncertain-hunt')).toMatchObject({ state: 'outcome_uncertain' });
+    expect(h.store.list().find(row => row.blockId === 'review')).toEqual(retained);
+  });
   it.each([false, true])('retains saved Hunt lineage through real Review execution (composed: %s)', async composed => {
     const reviewIds: string[] = [];
     for (const runId of ['hunt-first-attempt', 'hunt-retry']) {
