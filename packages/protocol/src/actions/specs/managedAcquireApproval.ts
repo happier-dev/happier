@@ -18,6 +18,7 @@ import { readRecord } from '../../inputs/inputRecords.js';
 const reviewSchema = lazyZodSchema(() => z.strictObject({
   homeId: z.string(), provider: z.string(), name: z.optional(z.string()), size: z.string(),
   price: z.string(), lifetime: z.string(),
+  wakeOnAcceptedMessage: z.optional(z.boolean()), workspaceAttachment: z.optional(z.string()),
   // RELOAD 78 retained raw native facts. Read those through the same presenter as new reviews.
   nativeFacts: z.optional(z.pipe(z.union([z.string(), ProviderNativeOptionFactsV1Schema]),
     z.transform(value => typeof value === 'string' ? value : describeNativeChoices(value)))),
@@ -38,6 +39,7 @@ function projectReview(value: unknown) {
   const input = ManagedAcquireInputV1Schema.parse(value);
   const effect = resolveManagedAcquireReviewV1(input);
   const oneOffInput = 'enrollmentIdentity' in input ? input : undefined;
+  const attachment = oneOffInput?.selection.attachWorkspace === true;
   const facts = oneOffInput?.reviewedFacts;
   const launch = facts?.launch ?? oneOffInput?.selection.launch;
   const provider = facts?.provisioner
@@ -63,7 +65,9 @@ function projectReview(value: unknown) {
       `${formatProviderAmount(price)} ${formatPriceUnit(price.unit)}`, price.source,
     ].filter(Boolean).join(' · ')).join('; ') : presentManagedCost(cost).value,
     lifetime, ...(facts?.nativeFacts ? { nativeFacts: describeNativeChoices(facts.nativeFacts) } : {}),
-    ...(oneOffInput ? { enrollmentIdentity: oneOffInput.enrollmentIdentity } : {}),
+    ...(effect.wakeOnAcceptedMessage === undefined ? {} : { wakeOnAcceptedMessage: effect.wakeOnAcceptedMessage }),
+    ...(attachment ? { workspaceAttachment: 'Uses your existing workspace. Happier copies a small helper into ~/.happier.' }
+      : oneOffInput ? { enrollmentIdentity: oneOffInput.enrollmentIdentity } : {}),
     ...(facts?.setup ? { setup: facts.setup } : {}), ...(input.agentStart ? { agentStart: input.agentStart } : {}),
   };
 }
@@ -84,6 +88,8 @@ export const managedAcquireApprovalPresentation = {
     { path: 'size', title: 'Selected size', widget: 'text', required: true },
     { path: 'price', title: 'Provider price', widget: 'text', required: true },
     { path: 'lifetime', title: 'Keep and lifetime', widget: 'text', required: true },
+    { path: 'wakeOnAcceptedMessage', title: 'Wake on accepted message', widget: 'boolean' },
+    { path: 'workspaceAttachment', title: 'Workspace attachment', widget: 'text' },
     { path: 'nativeFacts', title: 'Selected native choices', widget: 'text' },
     { path: 'enrollmentIdentity.role', title: 'Enrollment identity', widget: 'select', options: Object.values({
       server: { value: 'server', label: 'Runs as a dedicated user on the machine.\nAgents share a Linux user until separate users are enabled in Security.',

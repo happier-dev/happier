@@ -3,7 +3,7 @@ import { MANAGED_MACHINE_ACTION_SPECS } from './managedMachines.js';
 import { describeApprovalActionFields, projectApprovalReviewInput } from '../actionApprovalPresentation.js';
 import { getActionSpec } from '../actionSpecs.js';
 import type { ManagedMachineEnrollmentIdentityV1 } from '../../machines/managed/enrollmentIdentityV1.js';
-import { describeManagedSize } from '../../machines/managed/configurationPresentation.js';
+import { describeManagedSize, describeRetention } from '../../machines/managed/configurationPresentation.js';
 import { ManagedAdmissionComputeInputV1Schema } from '../../machines/managed/actionsV1.js';
 
 describe('managed acquire review', () => {
@@ -16,6 +16,27 @@ describe('managed acquire review', () => {
     const input = { selection, enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } };
     expect(ManagedAdmissionComputeInputV1Schema.parse(input)).toEqual(input);
     expect(ManagedAdmissionComputeInputV1Schema.safeParse({ ...input, preparedAttachment: { resource: {} } }).success).toBe(false);
+  });
+
+  it('discloses the helper attachment and wake setting in pending and retained approval', () => {
+    const spec = getActionSpec('machines.managed.acquire');
+    const input = spec.inputSchema.parse({
+      selection: { kind: 'one-off', homeId: 'home',
+        controller: { machineId: 'controller', installationId: 'installed' },
+        launch: { provider: { pluginId: 'happier.machine.coder', localId: 'coder' }, schemaVersion: 1,
+          name: 'API Development', choices: { existingWorkspaceId: 'my-coder-workspace' } },
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, attachWorkspace: true },
+      enrollmentIdentity: { kind: 'existingUser', role: 'adopted' },
+    });
+    for (const [status, actionArgs] of [['pending', input], ['executed', projectApprovalReviewInput(spec, input)]] as const) {
+      const { rows, unrepresentable } = describeApprovalActionFields({ actionId: spec.id, actionArgs, status });
+      expect(unrepresentable).toBeNull();
+      expect(rows).toContainEqual(expect.objectContaining({ path: 'wakeOnAcceptedMessage', valueFormat: 'boolean' }));
+      expect(rows).toContainEqual(expect.objectContaining({ path: 'lifetime', value: describeRetention({ kind: 'until-delete' }) }));
+      expect(rows).toContainEqual(expect.objectContaining({ path: 'workspaceAttachment', value: expect.stringContaining('~/.happier') }));
+      expect(rows.some(row => row.path.startsWith('enrollmentIdentity'))).toBe(false);
+    }
+    expect(projectApprovalReviewInput(spec, input)).toMatchObject({ wakeOnAcceptedMessage: false });
   });
 
   it('reads the reviewed local Lima configuration without raw native records, in pending and retained review', () => {
