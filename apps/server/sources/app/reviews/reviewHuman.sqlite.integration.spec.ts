@@ -5,7 +5,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 import { encodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
-import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -79,6 +79,67 @@ describe('Review requested-person HTTP flow', () => {
                 expect(publications()).toEqual([reviewChange, reviewChange, reviewChange]);
                 expect(await db.reviewVerdict.findFirstOrThrow({ where: { reviewId: review.id } })).toEqual(changed);
             } finally { eventRouter.removeConnection(person.id, connection); }
+        }, { authentication: 'real' });
+    });
+
+    it('renews required and optional requested people through Artifact HTTP without changing history or access', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const optional = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(owner.id, [optional.id]);
+        const ownerToken = await createAccountTokenForTests(owner.id, { kind: 'account', authority: 'present_user' });
+        const optionalToken = await createAccountTokenForTests(optional.id, { kind: 'account', authority: 'present_user' });
+        const outsiderToken = await createAccountTokenForTests(outsider.id, { kind: 'account', authority: 'present_user' });
+        const reviewId = randomUUID();
+        const header = encodePlainArtifactStoredContent({ kind: 'review.v1', v: 1, reviewId, title: 'Round history' });
+        const firstRound = { ordinal: 1, state: 'completed', startedAt: 10, finishedAt: 20, reviewerIds: [], runs: [] };
+        const metadata = { projectSourceId: null, workflowId: null, subjectKind: 'comparison', sourceKind: 'direct' };
+        await withAuthenticatedTestApp(registerHttpRoutes, async app => {
+            const headers = (token: string) => ({ authorization: `Bearer ${token}`,
+                'x-happier-account-stored-content-protocol': String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) });
+            const post = (token: string, url: string, payload: unknown) => app.inject({ method: 'POST', url, headers: headers(token), payload });
+            const create = await post(ownerToken, '/v1/artifacts', { id: reviewId,
+                kind: encodeArtifactKindV1({ kind: 'other', kindHint: 'review.v1' }), header,
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1,
+                    rounds: [{ ...firstRound, state: 'running', finishedAt: null }] }) }),
+                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                reviewMetadata: { ...metadata, currentRoundOrdinal: 1, state: 'running', startedAt: 10, finishedAt: null } });
+            expect(create.statusCode, create.body).toBe(200);
+            expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { actorAccountId: owner.id, artifactId: reviewId,
+                principal: { kind: 'account', accountId: optional.id }, accessLevel: 'view' }))).toMatchObject({ ok: true });
+            expect((await post(ownerToken, `/v1/reviews/${reviewId}/reviewers`, { roundOrdinal: 1, reviewers: [
+                { principal: { kind: 'account', accountId: owner.id }, required: true },
+                { principal: { kind: 'account', accountId: optional.id }, required: false },
+            ] })).statusCode).toBe(200);
+            expect((await post(ownerToken, `/v1/reviews/${reviewId}/verdicts`, { roundOrdinal: 1, verdict: 'approve' })).statusCode).toBe(200);
+            expect((await post(optionalToken, `/v1/reviews/${reviewId}/verdicts`, { roundOrdinal: 1, verdict: 'comment' })).statusCode).toBe(200);
+            const settled = await post(ownerToken, `/v1/artifacts/${reviewId}`, { header, expectedHeaderVersion: 1,
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, rounds: [firstRound] }) }), expectedBodyVersion: 1,
+                reviewMetadata: { currentRoundOrdinal: 1, state: 'completed', finishedAt: 20 } });
+            expect(settled.json()).toMatchObject({ success: true, headerVersion: 2, bodyVersion: 2 });
+            const oldRequests = await db.reviewRequestedReviewer.findMany({ where: { reviewId, roundOrdinal: 1 }, orderBy: { id: 'asc' } });
+            const oldVerdicts = await db.reviewVerdict.findMany({ where: { reviewId, roundOrdinal: 1 }, orderBy: { accountId: 'asc' } });
+            const grants = await db.artifactGrant.findMany({ where: { artifactId: reviewId }, orderBy: { id: 'asc' } });
+            const next = await post(ownerToken, `/v1/artifacts/${reviewId}`, { header, expectedHeaderVersion: 2,
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, rounds: [firstRound,
+                    { ordinal: 2, state: 'running', startedAt: 30, finishedAt: null, reviewerIds: [], runs: [] }] }) }), expectedBodyVersion: 2,
+                reviewMetadata: { ...metadata, currentRoundOrdinal: 2, state: 'running', startedAt: 30, finishedAt: null } });
+            expect(next.json()).toMatchObject({ success: true });
+            for (const token of [ownerToken, optionalToken]) {
+                const human = await app.inject({ method: 'GET', url: `/v1/reviews/${reviewId}/human`, headers: headers(token) });
+                expect(human.json()).toMatchObject({ roundOrdinal: 2, needsYou: { requestedVerdict: true, canSubmitVerdict: true } });
+                expect(human.json().requests).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ roundOrdinal: 2, principal: { kind: 'account', accountId: owner.id }, required: true }),
+                    expect.objectContaining({ roundOrdinal: 2, principal: { kind: 'account', accountId: optional.id }, required: false }),
+                ]));
+                expect(human.json().requests).toHaveLength(2);
+                expect(human.json().verdicts).toHaveLength(2);
+            }
+            expect(await db.reviewRequestedReviewer.findMany({ where: { reviewId, roundOrdinal: 1 }, orderBy: { id: 'asc' } })).toEqual(oldRequests);
+            expect(await db.reviewVerdict.findMany({ where: { reviewId, roundOrdinal: 1 }, orderBy: { accountId: 'asc' } })).toEqual(oldVerdicts);
+            expect(await db.artifactGrant.findMany({ where: { artifactId: reviewId }, orderBy: { id: 'asc' } })).toEqual(grants);
+            expect((await app.inject({ method: 'GET', url: `/v1/reviews/${reviewId}/human`, headers: headers(outsiderToken) })).statusCode).toBe(404);
+            expect((await post(optionalToken, `/v1/reviews/${reviewId}/verdicts`, { roundOrdinal: 2, verdict: 'approve' })).statusCode).toBe(200);
         }, { authentication: 'real' });
     });
 
@@ -192,12 +253,20 @@ describe('Review requested-person HTTP flow', () => {
                 subjectKind: 'comparison', sourceKind: 'direct', state: 'running', currentRoundOrdinal: 2, startedAt: 3, finishedAt: null } }));
             const renewed = await app.inject({ method: 'GET', url: `/v1/reviews/${reviewId}/human`, headers: headers(person.id) });
             expect(renewed.json()).toMatchObject({ roundOrdinal: 2, needsYou: { requestedVerdict: true, reason: 'review_needs_you' } });
+            expect(renewed.json().requests).toHaveLength(2);
             expect(renewed.json().requests.filter((request: { roundOrdinal: number }) => request.roundOrdinal === 2))
-                .toEqual([expect.objectContaining({ principal: { kind: 'account', accountId: person.id }, required: true })]);
-            expect(await db.reviewRequestedReviewer.findMany({ where: { reviewId, roundOrdinal: 2 },
-                select: { principal: true, required: true, eligibleAccounts: { select: { accountId: true } } } }))
-                .toEqual([{ principal: { kind: 'account', accountId: person.id }, required: true,
-                    eligibleAccounts: [{ accountId: person.id }] }]);
+                .toEqual(expect.arrayContaining([
+                    expect.objectContaining({ principal: { kind: 'account', accountId: person.id }, required: true }),
+                    expect.objectContaining({ principal: { kind: 'account', accountId: outsider.id }, required: false, needsAccess: true }),
+                ]));
+            const renewedRows = await db.reviewRequestedReviewer.findMany({ where: { reviewId, roundOrdinal: 2 },
+                select: { principal: true, required: true, eligibleAccounts: { select: { accountId: true } } } });
+            expect(renewedRows).toHaveLength(2);
+            expect(renewedRows).toEqual(expect.arrayContaining([
+                    { principal: { kind: 'account', accountId: person.id }, required: true, eligibleAccounts: [{ accountId: person.id }] },
+                    { principal: { kind: 'account', accountId: outsider.id }, required: false, eligibleAccounts: [{ accountId: outsider.id }] },
+                ]));
+            expect((await app.inject({ method: 'GET', url: `/v1/reviews/${reviewId}/human`, headers: headers(outsider.id) })).statusCode).toBe(404);
             expect(renewed.json().verdicts).toEqual([expect.objectContaining({ roundOrdinal: 1, revision: 3 })]);
             expect((await post(person.id, 'verdicts', { roundOrdinal: 1, verdict: 'approve' })).json())
                 .toMatchObject({ error: 'review_round_not_admitted' });
@@ -270,10 +339,11 @@ describe('Review requested-person HTTP flow', () => {
                 subjectKind: 'comparison', sourceKind: 'direct', state: 'running', currentRoundOrdinal: 2, startedAt: 3, finishedAt: null } }));
             const renewedRequests = await db.reviewRequestedReviewer.findMany({ where: { reviewId, roundOrdinal: 2 },
                 select: { principal: true, required: true } });
-            expect(renewedRequests).toHaveLength(2);
+            expect(renewedRequests).toHaveLength(3);
             expect(renewedRequests).toEqual(expect.arrayContaining([
                 { principal: { kind: 'team', teamId: team.id }, required: true },
                 { principal: { kind: 'account', accountId: alice.id }, required: true },
+                { principal: { kind: 'account', accountId: unsharedMember.id }, required: false },
             ]));
             expect((await post(bob.id, 'verdicts', { roundOrdinal: 2, verdict: 'approve' })).json())
                 .toMatchObject({ error: 'review_reviewer_not_requested' });

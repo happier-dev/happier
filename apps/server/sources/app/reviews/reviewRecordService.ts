@@ -30,10 +30,10 @@ export async function writeReviewRoundState(tx: Tx, input: Readonly<{ reviewId: 
             startedAt: new Date(metadata.startedAt), finishedAt: null };
         if (current) {
             await tx.reviewMetadata.update({ where: { artifactId: reviewId }, data });
-            // A new round admits required principals again. Eligibility remains
-            // frozen within that round; verdict submission does not re-resolve it.
+            // Re-admit the requested roster, preserving required/optional flags.
+            // Eligibility stays frozen within each round, not across rounds.
             const requests = await tx.reviewRequestedReviewer.findMany({
-                where: { reviewId, roundOrdinal: current.currentRoundOrdinal, required: true },
+                where: { reviewId, roundOrdinal: current.currentRoundOrdinal },
                 select: { principal: true, required: true },
             });
             await admitReviewRequestedReviewersInTx(tx, { reviewId, roundOrdinal: metadata.currentRoundOrdinal,
