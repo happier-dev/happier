@@ -17,7 +17,7 @@ import { configuration } from '@/configuration';
 import { createUsageObservationPublisher } from '@/usage/createUsageObservationPublisher';
 import type { readS0ControllerCredentials } from './deploymentDaemonIngress.testkit';
 
-type Viewer = Readonly<{ accountId: string; accepted(name: string, input: unknown): Promise<unknown> }>;
+type Viewer = Readonly<{ accountId: string; accepted(name: string, input: unknown, machineId?: string): Promise<unknown> }>;
 const settingSchema = z.object({ anchor: z.literal('usage.modelPrices'), value: z.unknown() });
 const emittedSchema = z.object({ attempts: z.literal(4), producer: z.object({ serviceName: z.string(), serviceVersion: z.string().optional() }) });
 const healthSetupSchema = z.object({ sourceInstanceId: z.string() });
@@ -95,7 +95,8 @@ export async function runProductionCostsJourney(input: Readonly<{
             since, until: Date.now(), serviceName: emitted.producer.serviceName,
             ...(emitted.producer.serviceVersion ? { serviceVersion: emitted.producer.serviceVersion } : {}), granularity: 'hour' as const };
         const read = async (viewer: Viewer) => {
-            const result = DatabaseCaptureCostsReadResultV1Schema.parse(await viewer.accepted(TELEMETRY_COSTS_READ_ACTION_ID_V1, operands));
+            const result = DatabaseCaptureCostsReadResultV1Schema.parse(await viewer.accepted(
+                TELEMETRY_COSTS_READ_ACTION_ID_V1, operands, input.collectorMachineId));
             expect(result.ok).toBe(true);
             if (!result.ok) throw new Error(`F17 cost read unavailable: ${result.code}`);
             return result;
@@ -138,7 +139,7 @@ export async function runProductionCostsJourney(input: Readonly<{
             const demand = TelemetryMetricsReadResultV1Schema.parse(await viewer.accepted(TELEMETRY_METRICS_READ_ACTION_ID_V1, {
                 serverId: input.serverId, environmentId: input.environmentId, since: operands.since, until: operands.until,
                 serviceName: operands.serviceName, serviceVersion: operands.serviceVersion, measure,
-            }));
+            }, input.collectorMachineId));
             expect(demand.result.measurements).toMatchObject({ value: expected!.amountUsd, unit: 'USD',
                 basis: 'catalog_estimate', completeness: 'partial' });
             expect(demand.trend).toEqual(projectDatabaseAppCostMetricSeriesV1(projections[index]!));
