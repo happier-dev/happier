@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { MachineServiceRowV1Schema } from '@happier-dev/protocol';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { DeploymentDomainContentV1Schema } from '@happier-dev/deployment-protocol/v1';
-import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { projectMachineNetworkExposureFacts } from './networkExposureFacts';
 import { presentNetworkHeadline, resolveMachineNetworkProviderTitle, type MachineNetworkFacts } from './networkSurface';
 

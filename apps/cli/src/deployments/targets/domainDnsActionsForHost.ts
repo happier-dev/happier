@@ -1,7 +1,7 @@
 import { DeploymentActionOutputSchemasV1, DeploymentDomainDnsInputV1Schema, DeploymentDomainDnsRecordResultV1Schema,
     DeploymentDomainDnsResultV1Schema, isDeploymentDomainDnsActionIdV1,
     type ActionExecutorContext, type ActionExecutorDeps, type ActionExecuteResult } from '@happier-dev/protocol';
-import { readDeploymentDomainArtifactV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentDomainArtifactV1 } from '@happier-dev/deployments';
 import type { createOwnServerDomainActions } from './ownServer/ownServerDomainActions';
 import { buildDomainDnsRecordChildren } from './domainDnsRecords';
 import { projectDeploymentFailure } from '../deploymentFailure';

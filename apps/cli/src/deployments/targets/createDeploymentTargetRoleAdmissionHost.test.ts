@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import fastify from 'fastify';
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { registerAccountArtifactRoutes, registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createDeploymentTargetRoleAdmissionFixture } from './deploymentTargetRoleAdmission.testkit';

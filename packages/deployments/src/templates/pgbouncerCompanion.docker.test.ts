@@ -4,7 +4,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DeploymentTemplateV1Schema, DeploymentTemplateRefV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentTemplateRefV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
 import { prepareDeploymentTemplateInstantiationV1 } from './prepareDeploymentTemplateInstantiationV1.js';
 
 // Docker is the real boundary here: the pinned images, PgBouncer's own start-time auth_file and SCRAM handshake.

@@ -1,5 +1,4 @@
-import { readDeploymentBindingSavedSecretRevisionsV1,
-    type EnvironmentSecretBindingRoutingV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentBindingSavedSecretRevisionsV1, type EnvironmentSecretBindingRoutingV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 
 export type EnvironmentSecretRequiredUseV1 = Readonly<{
     resourceId: string; resourceRevision: number; machineId: string; installationId: string;

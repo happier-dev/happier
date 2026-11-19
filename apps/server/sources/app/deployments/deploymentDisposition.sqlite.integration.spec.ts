@@ -24,7 +24,7 @@ import { readDeploymentMachineReferencesInTx, readDeploymentReceiptInTx } from '
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
-import { MachineSecretGrantV1Schema } from '@happier-dev/deployment-protocol';
+import { MachineSecretGrantV1Schema } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 
 const publishedMachine = { metadata: encodePlainMachineStoredContent({ host: 'Disposition', platform: 'linux',
     happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),

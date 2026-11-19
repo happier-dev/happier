@@ -17,7 +17,8 @@ import { observeSessionSocketEvents } from '@/session/transport/socket/sessionSo
 import type { StoredCredentials } from '@/persistence';
 import { DeploymentPendingDeployIntentV1Schema, DeploymentPendingDeployStoredIntentV1Schema, DeploymentPendingDeployV1Schema,
     type DeploymentPendingDeployIntentV1 } from '@happier-dev/protocol';
-import { readDeploymentEnvironmentArtifactV1, readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
 import type { AccountArtifact, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import type { ActionOperationCancellation, ActionOperationCancellationContext } from '@/daemon/actionOperations/actionOperationTypes';
 import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1 } from '@happier-dev/protocol/deployments/storedAppInputV1';

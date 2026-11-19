@@ -5,7 +5,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, computeDeploymentTransitionRequestDiges
     type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
-import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';

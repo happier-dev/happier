@@ -1,4 +1,4 @@
-import type { DeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import type { ProjectReadinessReadInputV1, ProjectReadinessReadResultV1 } from '@happier-dev/protocol/projects/readinessV1';
 
 type Environment = Pick<DeploymentEnvironmentHeaderV1, 'id' | 'serverId' | 'projectSourceId' | 'controllerMachineId' | 'revision'>;

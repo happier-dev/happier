@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { DeploymentStepV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentStepV1 } from '@happier-dev/deployments/contracts/v1';
 
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';

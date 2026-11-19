@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { DeploymentEnvironmentCreateInputV1Schema, DeploymentBindingsSetInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { EnvironmentSecretBindingV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import { createDeploymentEnvironmentDetailV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createEnvironmentWithCopyForHost } from './copyEnvironmentForHost';
 
 describe('Copy acknowledged step result', () => {

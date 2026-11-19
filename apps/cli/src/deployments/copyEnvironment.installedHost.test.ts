@@ -9,8 +9,9 @@ import { DeploymentEnvironmentCreateStorageInputV1Schema, DeploymentEnvironmentC
     DeploymentEnvironmentGetResultV1Schema, DeploymentTargetLinkInputV1Schema, DeploymentTargetLinkResultV1Schema,
     DeploymentTargetLinksListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
-import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentEnvironmentContentV1Schema, readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';

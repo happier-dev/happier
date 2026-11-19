@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import nacl from 'tweetnacl';
 import { create as createTar } from 'tar';
 import { describe, expect, it, vi } from 'vitest';
-import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { createNativeComposeLifecycle } from './nativeComposeLifecycle';
 import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
 import { createDeploymentExecEnvPortForHost } from '@/deployments/secrets/deploymentExecEnvPort';

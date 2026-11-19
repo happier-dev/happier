@@ -1,8 +1,7 @@
 import { prepareEnvironmentSecretBindingsV1 } from '@happier-dev/deployments';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import {
-    type EnvironmentSecretBindingV1, type MachineSecretGrantV1,
-} from '@happier-dev/deployment-protocol';
+import { type EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
+import { type MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import type { SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import { LaunchSecretReferenceOverlayError, materializeSavedSecretReferenceBinding } from '@/settings/secrets/secretReferenceOverlay';
 import { sealMachineSecretGrant } from './machineSecretGrant';

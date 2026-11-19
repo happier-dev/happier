@@ -7,7 +7,7 @@ import type {
   DeploymentReadDemandV1,
   DeploymentReceiptFactsV1,
 } from '@happier-dev/deployments';
-import { isDeploymentRollbackSourceEligibleV1, type DeploymentMachineResultV1 } from '@happier-dev/deployment-protocol/v1';
+import { isDeploymentRollbackSourceEligibleV1, type DeploymentMachineResultV1 } from '@happier-dev/deployments/contracts/v1';
 import { deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentStateV1';
 
 import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';

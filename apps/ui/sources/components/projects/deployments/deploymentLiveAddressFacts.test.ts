@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import {
-  createDeploymentReceiptDetailV1,
   createDeploymentReceiptHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { projectDeploymentReceiptFactsV1 } from '@happier-dev/deployments';

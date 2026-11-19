@@ -7,13 +7,15 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptHeaderV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';
 import { createPrepareEnvironmentContentForHost } from './prepareEnvironmentContentForHost';
 import { DeploymentPrepareInputV1Schema, DeploymentEnvironmentCreationReviewV1Schema, DeploymentReceiptListResultV1Schema, DeploymentActionOutputSchemasV1,
     ArtifactJsonCreateHttpInputV1Schema } from '@happier-dev/protocol';
 import { resolveDeploymentCreationDefaultsV1 } from '@happier-dev/deployments';
-import { DeploymentEnvironmentContentV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';

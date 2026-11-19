@@ -1,4 +1,4 @@
-import { projectDeploymentReceiptActivityV1, type DeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/v1';
+import { projectDeploymentReceiptActivityV1, type DeploymentReceiptHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 
 /** Presentation facts only. Receipt state remains the lifecycle authority. */
 export type DeploymentChipV1 = Readonly<{

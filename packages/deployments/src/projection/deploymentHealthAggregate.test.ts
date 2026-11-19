@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DeploymentEnvironmentDetailV1Schema, DeploymentEnvironmentHealthAggregateV1Schema } from '@happier-dev/deployment-protocol/v1';
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentEnvironmentDetailV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentEnvironmentHealthAggregateV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { projectDeploymentHealthAggregateV1, type DeploymentHealthObservationV1 } from './deploymentHealthAggregate.js';
 import { createDeploymentProjectionV1 } from './deploymentStore.js';
 import { createDeploymentReadControllerV1 } from '../controller/createDeploymentReadControllerV1.js';

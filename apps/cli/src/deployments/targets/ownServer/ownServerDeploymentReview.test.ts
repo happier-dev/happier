@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { projectOwnServerDeploymentReview } from './ownServerDeploymentReview';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentMachineReviewV1Schema, OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentMachineReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 
 describe('own-server deployment review reference changes', () => {
     it('reviews requested build platforms without claiming that a different CPU means emulation', () => {

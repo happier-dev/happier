@@ -4,7 +4,8 @@ import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/o
 import { DeploymentDeployInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentBindingsSetInputV1Schema } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { DeploymentEnvironmentCreateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentCreateV1';
-import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';

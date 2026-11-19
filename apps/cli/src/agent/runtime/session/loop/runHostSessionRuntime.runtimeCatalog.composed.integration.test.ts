@@ -1184,7 +1184,7 @@ describe('runHostSessionRuntime', () => {
       { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 }] = await Promise.all([
       import('fastify'), import('@/plugins/runtime/accountPluginActions.testkit'),
       import('@/session/actions/widgetApproval.testkit'), import('@/testkit/http/axiosAdapter'),
-      import('@/plugins/runtime/deploymentRoleAccount.test-support'), import('@happier-dev/deployment-protocol/testing/v1'),
+      import('@/plugins/runtime/deploymentRoleAccount.test-support'), import('@happier-dev/deployments/testing/v1'),
       import('@happier-dev/protocol/deployments/deploymentActionsV1'), import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4'),
       import('@happier-dev/deployment-protocol'),
     ]);

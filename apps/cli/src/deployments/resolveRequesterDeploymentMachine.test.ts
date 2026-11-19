@@ -1,6 +1,6 @@
 import fastify from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { resolveRequesterDeploymentMachine } from './resolveRequesterDeploymentMachine';
 

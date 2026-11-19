@@ -7,8 +7,9 @@ import { resolveDeploymentRestoreCaptureV1, type DeploymentRestoreResolvedCaptur
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { join } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { DeploymentOwnServerContentV1Schema, DeploymentReviewV1Schema, OwnServerDeploymentInputBasisV1Schema, getDeploymentTargetLinkLineageV1, environmentSecretBindingIdentityV1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentEnvironmentDetailV1, OwnServerDeploymentInputBasisV1, OwnServerDeploymentRuntimeProjectionV1, DeploymentMachineResultV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentOwnServerContentV1Schema, OwnServerDeploymentInputBasisV1Schema, getDeploymentTargetLinkLineageV1, environmentSecretBindingIdentityV1 } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import type { DeploymentEnvironmentDetailV1, OwnServerDeploymentInputBasisV1, OwnServerDeploymentRuntimeProjectionV1, DeploymentMachineResultV1 } from '@happier-dev/deployments/contracts/v1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { presentMachineAuthorityV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';

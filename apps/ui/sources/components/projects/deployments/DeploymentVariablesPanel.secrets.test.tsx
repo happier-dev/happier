@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import * as React from 'react';
-import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';

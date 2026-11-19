@@ -26,7 +26,7 @@ import { createDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx } from
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
-import { createDeploymentEnvironmentV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentV1 } from '@happier-dev/deployments/testing/v1';
 import * as privacyKit from 'privacy-kit';
 
 import {

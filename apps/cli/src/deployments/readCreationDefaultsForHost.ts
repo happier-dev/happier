@@ -6,7 +6,7 @@ import type { DeploymentEnvironmentGetResultV1, DeploymentEnvironmentUpdateInput
 import type { DeploymentTemplateInstantiationReviewV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import type { ProjectSourceOwnerV1, ProjectSourcesCreateInputV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { resolveDeploymentCreationDefaultsV1, type DeploymentCreationDefaultsInputV1 } from '@happier-dev/deployments';
-import type { DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { createActionExecuteFailureError, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';

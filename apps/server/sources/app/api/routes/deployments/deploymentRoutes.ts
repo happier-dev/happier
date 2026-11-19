@@ -18,8 +18,8 @@ import {
     DeploymentTimestampV1Schema,
     DeploymentTelemetryAssignmentsInputV1Schema, DeploymentTelemetryAssignmentsV1Schema,
 } from '@happier-dev/protocol';
-import { DeploymentBindingsSetStorageInputV1Schema, DeploymentEnvironmentTemplateSetInputV1Schema, DeploymentEnvironmentBackupSetInputV1Schema,
-    DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentTemplateSetInputV1Schema, DeploymentEnvironmentBackupSetInputV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentBindingsSetStorageInputV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { MachineDeploymentReferencesInputV1Schema, MachineDeploymentReferencesPageV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { inReadSnapshot, inTx } from '@/storage/inTx';
 import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';

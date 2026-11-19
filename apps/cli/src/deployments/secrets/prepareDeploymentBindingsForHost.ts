@@ -15,11 +15,10 @@ import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHI
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, DeploymentActionIdV1, DeploymentBindingsSetInputV1 } from '@happier-dev/protocol';
 type DeploymentEnvironmentGetResultV1 = ReturnType<typeof DeploymentEnvironmentGetResultV1Schema.parse>;
-import { readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1, isDeploymentEnvironmentBindingsOnlyUpdateV1,
-    isEnvironmentSecretBindingManagedByBindingsWriterV1, readRetainedOperationalEnvironmentBindingGrantsV1,
-    machineSecretGrantSubjectKey, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
-    type DeploymentTargetLinkContentV1, type DeploymentTargetLinkHeaderV1, type MachineSecretGrantV1,
-    type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentTargetLinkArtifactV1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { isDeploymentEnvironmentBindingsOnlyUpdateV1, isEnvironmentSecretBindingManagedByBindingsWriterV1, readRetainedOperationalEnvironmentBindingGrantsV1, type DeploymentTargetLinkContentV1, type DeploymentTargetLinkHeaderV1, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
+import { machineSecretGrantSubjectKey, type MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createCredentialedAccountArtifactStore, type ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

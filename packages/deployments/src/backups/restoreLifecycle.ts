@@ -1,7 +1,6 @@
 import type { DeploymentRestoreIntegrityUnavailableV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
-import { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupNativeFailureV1,
-    type DeploymentRestoreStepV1, type DeploymentBackupManifestV1, type DeploymentRestoreUploadSourceV1, type DeploymentRestoreUploadFormatV1 } from '@happier-dev/deployment-protocol';
-export { deploymentRestoreStepProgressV1, readDeploymentRestoreStepProgressV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupNativeFailureV1, type DeploymentRestoreStepV1, type DeploymentBackupManifestV1, type DeploymentRestoreUploadSourceV1, type DeploymentRestoreUploadFormatV1 } from '@happier-dev/deployments/contracts/v1';
+export { deploymentRestoreStepProgressV1, readDeploymentRestoreStepProgressV1 } from '@happier-dev/deployments/contracts/v1';
 
 import { runDeploymentBackupV1, type DeploymentBackupNativeResultV1, type DeploymentBackupRunInputV1,
     type DeploymentBackupRunResultV1 } from '../actions/backups.js';
@@ -9,7 +8,7 @@ import { readResticNativeJsonV1 } from './manifestV1.js';
 import { readBackupNativeFailureEvidenceV1, verifyDeploymentBackupV1 } from './verificationV1.js';
 import { buildResticRequestV1, type ResticAccessV1, type ResticRequestV1 } from './resticExecutor.js';
 import { createActionExecuteFailureError, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { DeploymentRestoreRecoveryPointV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentRestoreRecoveryPointV1 } from '@happier-dev/deployments/contracts/v1';
 
 /** Exact native identities and supported tools are captured by P41/P30 at admission.
  * Staging/recovery names belong to this operation, not a caller-selected live database. */

@@ -26,9 +26,9 @@ import { applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/dep
 import { EnvironmentSecretBindingInputV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { HappyError } from '@/utils/errors/errors';
 import { randomUUID } from '@/platform/randomUUID';
-import { DeploymentDomainContentV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { DeploymentDomainDnsPreviewResultV1Schema, type DeploymentDomainAddInputV1, type DeploymentDomainPreviewInputV1, type DeploymentDomainRemoveInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import { isDeploymentTelemetrySetRefusalV1, type DeploymentEnvironmentTelemetrySetInputV1, type DeploymentEnvironmentTelemetrySetSuccessV1,
     type DeploymentTelemetrySetRefusalV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';

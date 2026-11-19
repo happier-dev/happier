@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import type { DeploymentImageV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentImageV1 } from '@happier-dev/deployments/contracts/v1';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import { createDeploymentExecEnvPortForHost } from '@/deployments/secrets/deploymentExecEnvPort';

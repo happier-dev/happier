@@ -5,7 +5,7 @@ import {
   buildApprovalRequestArtifactHeaderV1,
 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { buildApprovalExecutionOriginV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import type { DeploymentApprovalReviewV1, DeploymentMachineReviewV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentApprovalReviewV1, DeploymentMachineReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 
 import { ApprovalDetailScreen } from '@/components/approvals/ApprovalDetailScreen';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';

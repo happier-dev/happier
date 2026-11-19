@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import { HealthCheckResultV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { HealthCheckResultV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { plugin } from '../../../../../packages/plugins/machine-services/src/manifest';
 import { healthResultProjectionSchema, healthResultProjectionAt, retainHealthResult } from '../../../../../packages/plugins/machine-services/src/healthResultProjection';
 import { createHealthCheckSourceAdapter } from '../../../../../packages/plugins/machine-services/src/healthObserver';
@@ -13,7 +13,7 @@ import { readHeartbeatHealthCheckV1 } from './finiteHeartbeatHealthCheck';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createPlainAccountArtifactHttpBoundary } from '@/api/artifacts/accountArtifactStore.testkit';
 import { createConfiguredHealthCheckNotices } from '../deploymentServiceHealthNotices';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { normalizePluginAccountStorageJsonValueV1 } from '@happier-dev/protocol/plugins/data/accountKvValueV1';
 import { PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';

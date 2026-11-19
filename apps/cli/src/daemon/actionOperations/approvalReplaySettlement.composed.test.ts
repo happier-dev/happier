@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createHostActionOperationRuntime } from './createHostActionOperationRuntime';

@@ -33,7 +33,7 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 
 import { useProjectSaveAsSource } from '../ProjectSaveAsSourceSheet';

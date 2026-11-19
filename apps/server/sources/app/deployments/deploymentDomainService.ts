@@ -27,7 +27,7 @@ import { deploymentContentReference, admitDeploymentStoredContentInTx, updateDep
 import { publishDeploymentChangesInTx } from './deploymentPublication';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import type { EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import type { DeploymentChildAdmission } from './deploymentChildAuthorization';
 import type { VerifiedExternalActionExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
 import { readDeploymentMembershipAdmissionInTx } from './deploymentMembershipService';

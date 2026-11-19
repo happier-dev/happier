@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
-import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
 import { deploymentDataTargetOperands, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';

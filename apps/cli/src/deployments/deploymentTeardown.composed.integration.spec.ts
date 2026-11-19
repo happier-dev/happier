@@ -15,10 +15,10 @@ import { type ActionExecutorContext, encodeBase64,
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ProjectSourcesCreateOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { createDeploymentEnvironmentV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DEPLOYMENT_TEARDOWN_STEPS_V1, readDeploymentReceiptArtifactV1, type DeploymentTeardownResourceV1,
-    type DeploymentTeardownStepProofV1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_TEARDOWN_STEPS_V1, type DeploymentTeardownResourceV1, type DeploymentTeardownStepProofV1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
+import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentSocketHome, type DeploymentSocketHomeFixture } from '../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { ApiClient } from '@/api/api';

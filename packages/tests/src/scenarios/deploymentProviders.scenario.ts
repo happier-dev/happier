@@ -14,7 +14,7 @@ import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects
 import { sealSavedSecretResourceRecipientEnvelopeV1, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { SharedSavedSecretMutationOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
-import { DeploymentTargetLinkContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentTargetLinkContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import type { TeamSetupFFixture } from '../testkit/teamSetupF';
 import type { DeploymentJourneyProvider, DeploymentProvidersHttp } from '../testkit/deploymentProvidersHttp';

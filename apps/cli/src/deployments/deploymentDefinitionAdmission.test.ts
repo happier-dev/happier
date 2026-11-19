@@ -4,7 +4,7 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/proto
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { admitUseDeploymentDefinition, resolveDeploymentDefinitionRoleForHost } from './deploymentDefinitionAdmission';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import * as persistence from '@/persistence';
 import { createDeploymentTargetRoleAdmissionFixture } from './targets/deploymentTargetRoleAdmission.testkit';
 

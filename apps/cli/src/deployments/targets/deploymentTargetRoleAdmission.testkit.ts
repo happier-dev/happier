@@ -1,6 +1,6 @@
-import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1,
-    createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { isDeploymentTargetRuntimeRoleV1, type DeploymentTargetRoleV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol';
 import type { DeploymentTargetRoleAdmissionHost, DeploymentTargetRoleAdmissionRequest } from './admitDeploymentTargetRoleForHost';

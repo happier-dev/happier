@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentTeardownExecutor } from './teardown';
-import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 
 describe('teardown operation custody', () => {
     it.each([

@@ -17,8 +17,8 @@ import { ProjectSourcesCreateInputV1Schema, ProjectSourcesCreateOutputV1Schema }
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowMutationResponseV1Schema }
   from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { DeploymentEnvironmentContentV1Schema, DeploymentOwnServerContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import {
-  DeploymentEnvironmentContentV1Schema, DeploymentOwnServerContentV1Schema,
   DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1,
   DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
 } from '@happier-dev/deployment-protocol';

@@ -50,9 +50,10 @@ import { signMachineInstallationProof } from '@happier-dev/protocol/machines/ide
 import { createRegistryHostV1, DeploymentTemplateV1Schema, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1,
     type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
-import { DeploymentEnvironmentContentV1Schema, DeploymentDomainContentV1Schema,
-    DeploymentEnvironmentTemplateSetInputV1Schema, DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentTemplateSetInputV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 

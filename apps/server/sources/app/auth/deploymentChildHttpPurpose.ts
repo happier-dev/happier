@@ -3,7 +3,8 @@ import * as managedIds from '@happier-dev/protocol/machines/managed/actionIdsV1'
 import { DeploymentEnvironmentGetInputV1Schema, DeploymentReceiptGetInputV1Schema, DeploymentReceiptListInputV1Schema, DeploymentTransitionInputV1Schema,
     DeploymentDomainListInputV1Schema, type DeploymentChildRoutingV1, type DeploymentArtifactContentReferenceV1 } from '@happier-dev/protocol';
 import { readMemberDeploymentDomainContentInTx } from '@/app/deployments/deploymentDomainService';
-import { EnvironmentSecretLaunchAdmissionInputV1Schema, getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployment-protocol';
+import { getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployments/contracts/v1';
+import { EnvironmentSecretLaunchAdmissionInputV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import type { DeploymentChildAdmission } from '@/app/deployments/deploymentChildAuthorization';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';

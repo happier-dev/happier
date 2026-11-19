@@ -1,7 +1,7 @@
 import { createDeploymentMoveWorkflowV1, createDeploymentDataMoveWorkflowV1,
     type StatefulDeploymentMoveWorkflowInputV1 } from '@happier-dev/protocol/workflows/builtins/deploymentMoveV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import type { DeploymentEnvironmentDetailV1, DeploymentTargetLinkHeaderV1, DeploymentOwnServerContentV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1, DeploymentTargetLinkHeaderV1, DeploymentOwnServerContentV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 
 /** The exact serving source and the service used to verify destination health. */
 export function resolveStatelessDeploymentMoveSourceV1(receipt: DeploymentReceiptDetailV1, selectedService: string | null = null): Readonly<{

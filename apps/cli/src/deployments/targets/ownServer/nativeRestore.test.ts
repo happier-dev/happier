@@ -4,10 +4,11 @@ import { watch } from 'node:fs';
 import { join } from 'node:path';
 import nacl from 'tweetnacl';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
-import { OwnServerDeploymentInputBasisV1Schema, DeploymentOwnServerContentV1Schema,
-    createDeploymentReceiptArtifactHeaderV1, readDeploymentReceiptArtifactV1, environmentSecretBindingIdentityV1,
-    type EnvironmentSecretBindingV1, type DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
-import { createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { OwnServerDeploymentInputBasisV1Schema, DeploymentOwnServerContentV1Schema, environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1, type DeploymentBackupConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployments';
+import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import type { OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';
 import { RESTIC_RUNTIME_V1, buildResticRequestV1, runDeploymentBackupV1, type DeploymentBackupRunInputV1,
     type ResticAccessV1, type DeploymentRestoreResolvedCaptureV1 } from '@happier-dev/deployments';

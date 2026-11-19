@@ -12,7 +12,7 @@ import { prepareWorkflowAcceptedWorkspaceTarget } from './resolveWorkflowWorkspa
 import type { WorkflowClaimForCoordination } from './worker';
 import { AutomationRunPluginEventTriggerEvidenceV1Schema } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { normalizeGithubWebhookDelivery } from '../../../../../packages/plugins/scm-github/src/observations/githubWebhookNormalization';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { resolvePreviewWorkflowForHost } from '@/deployments/previewWorkflowForHost';
 import { ScmHostingPullRequestLifecycleV1Schema } from '@happier-dev/protocol/scm/pullRequestLifecycleV1';
 

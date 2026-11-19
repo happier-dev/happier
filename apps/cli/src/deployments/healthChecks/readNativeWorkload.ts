@@ -1,4 +1,4 @@
-import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentMemberVersionProjectionV1, createDeploymentHealthAggregateLeaseV1,
     type DeploymentHealthServicesObservationV1, type DeploymentHealthObservationV1, type DeploymentHealthAggregateLeaseV1 } from '@happier-dev/deployments';
 import type { EnvironmentProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';

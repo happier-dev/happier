@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { readDeploymentOutputValidation } from '../../outputValidation';
 import { projectDeploymentFailure, projectDeploymentReceiptFailure } from '../../deploymentFailure';
 import { configuration } from '@/configuration';
-import { DeploymentOwnServerContentV1Schema, type DeploymentEnvironmentDetailV1, type DeploymentOwnServerContentV1, type DeploymentImageV1, type OwnServerDeploymentDetailsV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentOwnServerContentV1Schema, type DeploymentEnvironmentDetailV1, type DeploymentOwnServerContentV1, type DeploymentImageV1, type OwnServerDeploymentDetailsV1 } from '@happier-dev/deployments/contracts/v1';
 import { createNativeComposeLifecycle } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { normalizeNativeComposePlatform, resolveNativeComposeImageDistributionRegistry } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';

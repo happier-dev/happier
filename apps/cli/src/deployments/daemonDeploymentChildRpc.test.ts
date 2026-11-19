@@ -21,9 +21,11 @@ import { readDeploymentChildResult } from './deploymentChild';
 import { registerDaemonDeploymentChildRpcHandler } from './daemonDeploymentChildRpc';
 import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
 import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/ownServerDeploymentHostRuntime';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { createDeploymentReceiptArtifactHeaderV1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
     DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployments';
 import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { readReviewedDeploymentDeployInput } from '@/api/externalActionExecutionAuthorization';

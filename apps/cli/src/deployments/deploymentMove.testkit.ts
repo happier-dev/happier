@@ -12,8 +12,8 @@ import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/d
 import { DeploymentEnvironmentUpdateInputV1Schema,
   deploymentMoveToRepositoryReviewedChildrenV1, DeploymentMoveToRepositoryInputV1Schema,
   type DeploymentMoveToRepositoryInputV1, type DeploymentMoveToRepositoryContinuationV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
 import { createBareGitRemoteFixture, createLocalScmRepositoryFixture, runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
 import { createDeploymentGitRegistry } from './targets/ownServer/exactCommitRelease.testkit';

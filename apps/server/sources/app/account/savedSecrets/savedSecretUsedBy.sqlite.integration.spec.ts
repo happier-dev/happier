@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, encodePlainMachineStoredContent,
     MACHINE_PLAIN_DATA_KEY_MARKER, formatSharedSavedSecretRefV1, sealEncryptedDataKeyEnvelopeV1,
     sealSavedSecretResourceStoredContentV1, openSavedSecretResourceStoredContentV1, signAccountContentKeyBindingV1, verifyAccountContentKeyBindingV1 } from '@happier-dev/protocol';
-import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { decodeBase64, encodeBase64 } from 'privacy-kit';
 import tweetnacl from 'tweetnacl';
 import { db } from '@/storage/db';

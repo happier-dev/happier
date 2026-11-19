@@ -7,7 +7,7 @@ import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/o
 import { ScmPullRequestOpenOrReuseResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
 import { createReducer } from '@happier-dev/session-core/reducer';
 import type { Message } from '@happier-dev/session-core/messages';
-import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { WorkflowRunStartRequestV1Schema, WorkflowRunStartResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { act, renderHook, flushHookEffects, standardCleanup, createSessionFixture } from '@/dev/testkit';
 import { createUiActionExecutorBoundary } from '@/dev/testkit/fixtures/actionExecutorBoundary';

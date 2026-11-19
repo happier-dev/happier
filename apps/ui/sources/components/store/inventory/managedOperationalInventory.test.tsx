@@ -27,7 +27,8 @@ function watchesField(serviceWatchesV1: unknown) {
 afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); });
 
 it('lists configured Backups through the shared App page in Installed and Machine Overview, including never-run configuration', async () => {
-    const { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
+    const { createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
     const { buildDeploymentEnvironmentHref } = await import('@/components/projects/deployments/deploymentNavigation');

@@ -3,7 +3,7 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 import { DeploymentTargetRoleInputProtocolSchemasV1,
     DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { DeploymentTargetVariablesReadResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetVariablesV1';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';

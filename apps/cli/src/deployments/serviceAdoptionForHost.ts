@@ -12,7 +12,7 @@ import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/ac
 import { DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { normalizeStrictJsonValue, projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
-import type { DeploymentNativeComposeOriginV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentNativeComposeOriginV1 } from '@happier-dev/deployments/contracts/v1';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';

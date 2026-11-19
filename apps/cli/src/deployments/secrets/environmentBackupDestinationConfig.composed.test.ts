@@ -1,7 +1,7 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import nacl from 'tweetnacl';
 import { expect, it } from 'vitest';
-import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sealMachineSecretGrant } from './machineSecretGrant';
 import { prepareEnvironmentSecretBindingsForLaunch } from './prepareEnvironmentSecretBindingsForLaunch';

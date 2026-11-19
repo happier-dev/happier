@@ -29,8 +29,10 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec } from '@happier-dev/sync-client';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentDomainContentV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, machineSecretGrantSubjectKey } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { machineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -40,7 +42,8 @@ import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDepl
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import type { ClientToServerEvents } from '@/api/types';
 import type { StoredCredentials } from '@/persistence';
-import type { DeploymentArtifactDocumentV1, DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import type { DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import { createNativeCaddyRoutes, createNativeCaddyAdminExchange } from '@/machines/reachability/nativeCaddyRoutes';
 import { materializeCaddyDomainRouteV1, type CaddyDomainRouteInput } from './caddyRouteMaterialization';
 import { selectEdgeCaddyDomainRoute, selectPrivateCaddyOriginNetwork, selectDomainCaddyPlacements, selectDomainPublicCaddyServer,

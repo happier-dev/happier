@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as owners from '../index.js';
-import type { DeploymentBackupConfigurationV1, DeploymentBackupManifestV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupConfigurationV1, DeploymentBackupManifestV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentBackupRunInputV1 } from '../actions/backups.js';
 import type { ResticRequestV1 } from './resticExecutor.js';
 import { DeploymentBackupFailureDetailsV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1 }

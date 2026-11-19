@@ -1,6 +1,6 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import { DeploymentOwnServerContentV1Schema, type DeploymentOwnServerContentV1, type DeploymentEnvironmentDetailV1, type DeploymentMachineResultV1, type DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentOwnServerContentV1Schema, type DeploymentOwnServerContentV1, type DeploymentEnvironmentDetailV1, type DeploymentMachineResultV1, type DeploymentSourceIntentV1 } from '@happier-dev/deployments/contracts/v1';
 import { createNativeComposeLifecycle } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { createDeploymentExecEnvPortForHost } from '@/deployments/secrets/deploymentExecEnvPort';
 import { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';

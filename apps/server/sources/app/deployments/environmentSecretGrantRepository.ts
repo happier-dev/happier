@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 import { createHash } from 'node:crypto';
-import { MachineSecretGrantV1Schema, MachineSecretGrantStoredReadV1Schema, EnvironmentVariableBindingGrantReferenceV1Schema, machineSecretGrantSubjectKey,
-    type MachineSecretGrantV1, type MachineSecretGrantSubjectV1, type MachineSecretGrantSubjectStoredReadV1, type MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/deployment-protocol';
+import { EnvironmentVariableBindingGrantReferenceV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { MachineSecretGrantV1Schema, MachineSecretGrantStoredReadV1Schema, machineSecretGrantSubjectKey, type MachineSecretGrantV1, type MachineSecretGrantSubjectV1, type MachineSecretGrantSubjectStoredReadV1, type MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import type { EnvironmentSecretRequiredUseV1 } from '@happier-dev/deployments';
 import type { Tx } from '@/storage/inTx';
 import { deploymentInProgressStates, readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';

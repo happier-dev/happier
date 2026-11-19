@@ -60,9 +60,9 @@ import { EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER } from '@happier-dev/
 import { decodeDeploymentChildExecutionV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
 import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
-import { createDeploymentEnvironmentV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { DeploymentDeployActionInputV1Schema } from '@happier-dev/protocol';
-import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployments';
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
 import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
@@ -70,8 +70,9 @@ import { captureRequesterCurrentnessRefusal } from '@/daemon/sessionEncryption/r
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
 import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { buildAccountIdentitiesChangeV1, type ChangeEntry } from '@happier-dev/protocol/changes';
-import { DeploymentEnvironmentArtifactHeaderV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, readDeploymentEnvironmentArtifactV1,
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
   readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentArtifactHeaderV1Schema, readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
 
 let channel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>;
 it.each(['plain', 'e2ee'] as const)('carries exact native incumbent custody through the %s installed review HTTP projection', async encryptionMode => {

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { CollectionConditionBindings } from '@happier-dev/plugin-ui/components';
-import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
 import type { EntityListFilterResultV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
 import {
   compileDeploymentEnvironmentListFilterV1,

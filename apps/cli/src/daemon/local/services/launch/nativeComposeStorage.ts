@@ -1,7 +1,7 @@
 import { posix } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { DeploymentTemplateV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
-import type { OwnServerDeploymentSourceV1 } from '@happier-dev/deployment-protocol';
+import type { OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
 
 export type NativeComposeStorageWarning = Readonly<{
     kind: 'writable_source' | 'concurrent_writers';

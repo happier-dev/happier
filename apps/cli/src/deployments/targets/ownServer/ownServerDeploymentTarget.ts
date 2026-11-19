@@ -1,15 +1,14 @@
 import type { DeploymentBackupRestoreInputV1, DeploymentBackupRestoreResultV1,
     DeploymentRestoreActivationReferenceV1, DeploymentTransitionInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentRestoreDestinationV1, DeploymentRestoreResultV1 } from '@happier-dev/deployments';
-import type { DeploymentBackupManifestV1 as BackupManifestV1, DeploymentPreMigrationBackupV1,
-    DeploymentBackupRestoreCaptureV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupManifestV1 as BackupManifestV1, DeploymentPreMigrationBackupV1, DeploymentBackupRestoreCaptureV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentBackupActionInputV1, DeploymentBackupActionResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import type { OwnServerRestorePreparationForHost } from './restorePreparation';
 import type { ActionExecutorContext, DeploymentTeardownProofV1 } from '@happier-dev/protocol';
 import type { DeploymentTransitionResultForHost } from '../../deploymentTransitionResult';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import type { DeploymentContentV1, DeploymentOwnServerContentV1, DeploymentEnvironmentContentV1, DeploymentEnvironmentDetailV1, DeploymentEnvironmentHeaderV1, DeploymentReceiptDetailV1, DeploymentReceiptHeaderV1, DeploymentSourceIntentV1, DeploymentStateV1, OwnServerDeploymentInputBasisV1, DeploymentMachineResultV1, OwnServerDeploymentImageArchiveV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentContentV1, DeploymentOwnServerContentV1, DeploymentEnvironmentContentV1, DeploymentEnvironmentDetailV1, DeploymentEnvironmentHeaderV1, DeploymentReceiptDetailV1, DeploymentReceiptHeaderV1, DeploymentSourceIntentV1, DeploymentStateV1, OwnServerDeploymentInputBasisV1, DeploymentMachineResultV1, OwnServerDeploymentImageArchiveV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { StoredCredentials } from '@/persistence';
@@ -95,7 +94,7 @@ export type OwnServerDeploymentTransition = OwnServerDeploymentReadContext & Rea
 
 /** The installed daemon lends its existing ports; this is not another effect dispatcher. */
 export type OwnServerDomainCaddyRequest = Readonly<{
-    domain: Pick<import('@happier-dev/deployment-protocol').DeploymentDomainContentV1, 'hostname' | 'target'>;
+    domain: Pick<import('@happier-dev/protocol/deployments/deploymentDomainV1').DeploymentDomainContentV1, 'hostname' | 'target'>;
     environment: DeploymentEnvironmentContentV1;
     replicas: readonly Readonly<{ containerName: string; networkNames: readonly string[] }>[];
     retainedCaddy?: Extract<import('@happier-dev/cli-common/machineSetup').NativeCaddyObservationResult, { status: 'ready' }>;
@@ -118,7 +117,7 @@ export type OwnServerDomainCaddyPreparation = Readonly<{
 export type OwnServerDeploymentRuntime = Readonly<{
     prepareBackupSourceChoices?(request: Readonly<{
         environment: Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'>; context: ActionExecutorContext;
-    }>): Promise<readonly import('@happier-dev/deployment-protocol').DeploymentBackupSourceV1[]>;
+    }>): Promise<readonly import('@happier-dev/deployments/contracts/v1').DeploymentBackupSourceV1[]>;
     /** Domain setup borrows the deployed generation's already observed routing facts. */
     prepareDomainCaddy?(input: OwnServerDomainCaddyRequest): OwnServerDomainCaddyPreparation;
     acquireRetention?(request: OwnServerDeploymentRetentionRequest, assertCurrent: () => Promise<void>): Promise<Readonly<{
@@ -181,7 +180,7 @@ export type OwnServerDeploymentRuntimeAcquisition = Readonly<{
         acquireCopySourceSecrets?(input: Readonly<{ environmentId: string; targetLinkId: string;
             deploymentId: string; actionOperationId: string }>): Promise<import('./ownServerDeploymentHostRuntime').OwnServerSecretLaunchAdmission>;
         /** Reopen captured nonsecret transport without selecting the current backup configuration. */
-        openBackupDestination?(configuration: import('@happier-dev/deployment-protocol').DeploymentBackupConfigurationV1):
+        openBackupDestination?(configuration: import('@happier-dev/deployments/contracts/v1').DeploymentBackupConfigurationV1):
             ReturnType<typeof import('./backupDestination').openDeploymentBackupDestinationForHost>;
         /** Lazy use of this acquisition's captured destination and P42 bindings. */
         preparePreMigrationBackupOperands?(): Promise<import('./backupDestination').OwnServerPreMigrationBackupOperandsForHost>;
@@ -253,7 +252,7 @@ export type OwnServerRestoreRequestForHost = Readonly<{
     recovery?: Parameters<typeof import('@happier-dev/deployments').recoverDeploymentRestoreV1>[0]['recovery'];
     /** Selected once from the exact scoped, successful backup Action operation. */
     backup?: Readonly<{ manifest: BackupManifestV1;
-        capture?: import('@happier-dev/deployment-protocol').DeploymentBackupRestoreCaptureV1 }>;
+        capture?: import('@happier-dev/deployments/contracts/v1').DeploymentBackupRestoreCaptureV1 }>;
     upload?: import('@/transfers/targets/deploymentRestoreUpload').AdmittedDeploymentRestoreUpload;
     /** Prepare lends the admitted native tuple; selector bytes never enter public evidence. */
     reviewNativeSnapshot?(input: Readonly<{

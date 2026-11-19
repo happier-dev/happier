@@ -1,11 +1,11 @@
-import { z } from 'zod/mini';
-import { DeploymentActionFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentDomainPlacementV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
-import { EnvironmentDomainCredentialBindingV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
-import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
-import { MachineInstallationProofV1Schema, MachineInstallationPublicKeySchema } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from '../v1/ids.js';
+import { z } from '../zodRuntimePolicy.js';
+import { DeploymentActionFailureV1Schema } from './deploymentActionsV1.js';
+import { DeploymentDomainPlacementV1Schema } from './deploymentDomainV1.js';
+import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
+import { EnvironmentDomainCredentialBindingV1Schema } from './storedAppInputV1.js';
+import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
+import { MachineInstallationProofV1Schema, MachineInstallationPublicKeySchema } from '../machines/identity/installationIdentity.js';
+import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { MachineConnectorSecretGrantSubjectV1Schema, MachineSecretGrantV1Schema, MachineSecretGrantStoredReadV1Schema } from './machineSecretGrantV1.js';
 
 /** Private installed-daemon transport, never an Action or public binding projection. */

@@ -19,15 +19,16 @@ import { delimiter, join } from 'node:path';
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
-    DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_TEARDOWN_STEPS_V1,
-    DeploymentContentV1Schema, DeploymentEnvironmentContentV1Schema, DeploymentProviderTeardownContentV1Schema, DeploymentPlatformContentV1Schema,
-    OwnServerDeploymentInputBasisV1Schema, DeploymentOwnServerContentV1Schema,
-    readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployment-protocol';
+    DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DeploymentContentV1Schema, DeploymentEnvironmentContentV1Schema, DeploymentProviderTeardownContentV1Schema, DeploymentPlatformContentV1Schema, OwnServerDeploymentInputBasisV1Schema, DeploymentOwnServerContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
+import { readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
 import { ArtifactJsonUpdateHttpInputV1Schema, DeploymentTransitionInputV1Schema, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema,
     DeploymentReceiptListResultV1Schema, DeploymentReceiptResultV1Schema, DeploymentPendingDeployV1Schema,
     doesDeploymentChildInputMatchRootV1 } from '@happier-dev/protocol';

@@ -25,7 +25,7 @@ import { StoredMachinePublishedMetadataV1Schema } from '@happier-dev/protocol/ma
 import { DeploymentReceiptResultV1Schema, computeDeploymentTransitionRequestDigestV1,
     DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
     type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { openExternalActionResponseV2, prepareExternalActionResponseV2, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import tweetnacl from 'tweetnacl';
 import { fetchAutomationAccountCurrentnessWitnessTx } from '@/app/automations/automationAccountCurrentness';

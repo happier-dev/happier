@@ -2,7 +2,7 @@ import { posix } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createHash } from 'node:crypto';
 import type { DeploymentExecEnvPortV1 } from '@happier-dev/plugin-sdk/exec';
-import type { DeploymentImageV1, DeploymentReceiptDetailV1, DeploymentRestoreUploadFormatV1, DeploymentRestoreUploadSourceV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentImageV1, DeploymentReceiptDetailV1, DeploymentRestoreUploadFormatV1, DeploymentRestoreUploadSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { prepareDeploymentRestoreV1, confirmDeploymentRestoreV1, recoverDeploymentRestoreV1, runDeploymentBackupV1, resolveDeploymentRestoreCaptureV1,
     deploymentRestoreStepProgressV1,

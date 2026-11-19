@@ -10,7 +10,7 @@ import { projectDeploymentException, projectDeploymentFailure, projectDeployment
 import { inspectNativeComposeStorage } from '@/daemon/local/services/launch/nativeComposeStorage';
 import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
-import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';

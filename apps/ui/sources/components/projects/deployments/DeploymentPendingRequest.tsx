@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';

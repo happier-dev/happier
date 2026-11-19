@@ -31,9 +31,9 @@ import nacl from 'tweetnacl';
 import { createHash } from 'node:crypto';
 import { delimiter } from 'node:path';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { DeploymentContentV1Schema, createDeploymentReceiptArtifactHeaderV1,
-    EnvironmentSecretLaunchAdmissionInputV1Schema, computeEnvironmentSecretLaunchAdmissionDigestV1,
-    type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentContentV1Schema, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
+import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployments';
+import { EnvironmentSecretLaunchAdmissionInputV1Schema, computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';

@@ -1,8 +1,5 @@
-import type {
-    DeploymentEnvironmentHeaderV1, DeploymentEnvironmentHealthAggregateV1,
-    DeploymentHealthMemberV1, DeploymentHealthRoleEvidenceV1, DeploymentHealthRoleV1, DeploymentHealthStatusV1,
-    DeploymentTargetLinkHeaderV1,
-} from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentEnvironmentHealthAggregateV1, DeploymentHealthMemberV1, DeploymentHealthRoleEvidenceV1, DeploymentHealthRoleV1, DeploymentHealthStatusV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 
 /**
  * Current, admitted owner facts, after P50's D5/expected-operation admission.

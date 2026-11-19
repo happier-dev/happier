@@ -12,7 +12,7 @@ import { evaluateApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGran
 import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { WorkflowTriggerListResultV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { MachineAccessGrantsListResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
-import { readDeploymentEnvironmentArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol/v1';
+import { readDeploymentEnvironmentArtifactV1, type DeploymentArtifactDocumentV1 } from '../artifacts/deploymentArtifacts.js';
 
 export type ProjectSourceTeamMoveAccountV1 = Readonly<{
     accountId: string;

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { resolveTelemetryCollectorSelectionV1 } from '@happier-dev/deployments';
 import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import {

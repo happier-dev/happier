@@ -13327,9 +13327,11 @@ project preparation does not fabricate a resource id; selected branch and secret
 operations require the current data link, not a runtime Deployment receipt.
 Dynamic data Resources use their declared backing Actions through the existing
 Resource `readAction` bridge, so those reads share the same role map and admission
-route as directly invoked Actions. Its existing
-contribution exports and the deployment-protocol host facade reuse those same
-validators. The SDK's readonly target declaration derives from that same contribution type.
+route as directly invoked Actions. The SDK's readonly target declaration
+derives from the canonical contribution type. The public
+`@happier-dev/deployment-protocol` package exposes versioned, validator-neutral
+deployment facts through the SDK's `/protocol` entry. Host Action routes and
+stored-content readers continue to use their canonical host validators.
 Deployment outcomes use the Machine-services generic `deployment-failed` and
 `deployment-succeeded` Events for every target, including Cloudflare. Runtime
 target declarations do not select a separate failure-transition Event or payload.
@@ -13341,10 +13343,10 @@ actual Environment and controller context. For repository deployments, the
 Account-opened receipt also supplies the App context. Targeted observation and
 preview-child sources still require their Environment.
 The named Receipt and Target Link Artifact readers in the SDK's `/protocol`
-entry use the host Protocol's stored-content validators. The deployment protocol
-entry re-exports those same readers and validators. Both entrypoints keep the
-exact Artifact identity, revision, kind and body checks. This preserves the
-persisted content and both public reader signatures.
+entry and in `@happier-dev/deployment-protocol/v1` are the same canonical
+functions. Both entrypoints preserve the exact Artifact identity, revision,
+kind and body checks and the public reader signatures. Host-only Environment
+and Domain Artifact operations live in `@happier-dev/deployments`.
 The platform's finite `deployments.receipts.observe` Action dispatches the target's
 declared observe Action; provider-specific notice enrichment stays in the host
 platform adapter.

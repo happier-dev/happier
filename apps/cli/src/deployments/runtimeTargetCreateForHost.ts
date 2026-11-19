@@ -1,5 +1,5 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { DeploymentTargetV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentTargetV1 } from '@happier-dev/deployments/contracts/v1';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { DeploymentTargetLinkProviderIntentInputV1Schema,
     DeploymentTargetLinkProvisionedResultV1Schema, type DeploymentTargetLinkCreateIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';

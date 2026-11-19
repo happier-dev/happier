@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DeploymentEnvironmentDetailV1, EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1, EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentReadSnapshotV1 } from '@happier-dev/deployments';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';

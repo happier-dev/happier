@@ -1,6 +1,6 @@
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/v1';
+import { type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentFailedEventV1Schema, DeploymentReceiptOutcomeEventV1Schema, DeploymentReceiptEventSourceConfigV1Schema,
     DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import type { AutomationEventSourceDefinitionV1, AutomationEventAdmitInputV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';

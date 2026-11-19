@@ -1,8 +1,7 @@
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createDeploymentFleetWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/deploymentFleetV1';
 import type { WorkflowRunStartRequestV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import type { DeploymentEnvironmentDetailV1, DeploymentOwnServerContentV1,
-    DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1, DeploymentOwnServerContentV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentIngressV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentOwnServerTargetMachinesV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentCreateV1';
 

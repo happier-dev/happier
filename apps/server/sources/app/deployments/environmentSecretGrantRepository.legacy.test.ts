@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { Tx } from '@/storage/inTx';
-import { EnvironmentSecretLaunchAdmissionResultV1Schema } from '@happier-dev/deployment-protocol';
+import { EnvironmentSecretLaunchAdmissionResultV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { readEnvironmentMachineSecretGrantsInTx, syncEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
 
 describe('retained Machine grant storage', () => {

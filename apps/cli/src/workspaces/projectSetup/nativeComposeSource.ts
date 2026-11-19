@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { posix, win32 } from 'node:path';
 import { gte, valid } from 'semver';
-import type { DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentSourceIntentV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentStoredDefinitionInputV1 } from '@happier-dev/protocol';
 import { WorkspaceManifestRelativePathSchema } from '@happier-dev/protocol/workspaces/manifestSchema';
 import { isNativeDefinitionRecord } from './nativePackageScripts';

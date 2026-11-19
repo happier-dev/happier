@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, writeFile, rename, chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { DeploymentBackupManifestV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentBackupManifestV1Schema } from '@happier-dev/deployments/contracts/v1';
 
 export const archive = Buffer.from([80, 71, 68, 77, 80, 0, 255, 128, 10]);
 /** Fixed valid TAR bytes shared by native and public finite-upload corridors. */

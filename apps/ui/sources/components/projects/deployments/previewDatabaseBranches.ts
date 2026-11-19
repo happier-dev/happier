@@ -1,6 +1,6 @@
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
-import type { DeploymentTargetProviderIdentityV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentTargetProviderIdentityV1 } from '@happier-dev/deployments/contracts/v1';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { isRecord } from '@happier-dev/protocol/common/records';
 

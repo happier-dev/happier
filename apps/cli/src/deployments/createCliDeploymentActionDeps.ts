@@ -20,7 +20,8 @@ import { hasDeploymentEnvironmentContentPatchV1 } from '@happier-dev/protocol/de
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentBindingsSetInputV1, DeploymentBindingsPreparedInputV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
-import type { DeploymentBindingsSetStorageInputV1, MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBindingsSetStorageInputV1 } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
+import type { MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { isDeploymentPromoteActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentApprovalEnvironmentResultV1Schema, type DeploymentApprovalEnvironmentResultV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1, DeploymentTargetV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1, DeploymentTargetV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentTargetLinkProviderContentV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { ScmHostingPullRequestLifecycleV1 } from '@happier-dev/protocol';
 import { WorkflowDefinitionV1Schema, type WorkflowActionFieldBindingV1, type WorkflowBlock, type WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';

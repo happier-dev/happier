@@ -6,8 +6,9 @@ import {
   type DeploymentReadControllerV1,
   type DeploymentReadTransportV1,
 } from '@happier-dev/deployments';
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
 import {
   act,
   renderScreen,
@@ -546,7 +547,7 @@ describe('Services column grouping (owner 2026-11-16 10:20Z: All Â· By project Â
   });
 
   it('By type draws Apps and each type that has items as its own section, every row through the one Environment row', async () => {
-    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
     const shop = createDeploymentEnvironmentHeaderV1({ id: 'env-shop-staging', projectSourceId: 'source-shop' });
     const detail = createDeploymentEnvironmentDetailV1();
     const controller = controllerFor(ITEMS, null, {

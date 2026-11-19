@@ -8,7 +8,7 @@ import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValu
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { DeploymentTargetLinkCreateIntentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
-import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { createPlainAccountArtifactHttpBoundary } from '@/api/artifacts/accountArtifactStore.testkit';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

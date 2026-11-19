@@ -1,9 +1,9 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import type { ActionExecutorContext, DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol';
-import { readDeploymentReceiptArtifactV1, type DeploymentArtifactDocumentV1, type DeploymentReceiptDetailV1,
-    type DeploymentReceiptHeaderV1, DeploymentOwnServerContentV1Schema, isDeploymentSettledV1,
-    projectDeploymentCancellationConsequenceV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
+import { type DeploymentReceiptDetailV1, type DeploymentReceiptHeaderV1, DeploymentOwnServerContentV1Schema, isDeploymentSettledV1, projectDeploymentCancellationConsequenceV1 } from '@happier-dev/deployments/contracts/v1';
+import { type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import { DeploymentReceiptListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 /** Incumbent history pager shared by member-version and finite health reads.

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { EnvironmentSecretBindingV1Schema } from '@happier-dev/deployment-protocol';
+import { EnvironmentSecretBindingV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { prepareEnvironmentSecretBindingsV1 } from './secrets/prepareEnvironmentSecretBindingsV1.js';
 import { readResticBackupSummaryV1 } from './backups/manifestV1.js';

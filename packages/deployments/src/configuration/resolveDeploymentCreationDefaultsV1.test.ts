@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DeploymentCreationDefaultsV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentCreationDefaultsV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { resolveDeploymentCreationDefaultsV1 as resolve } from './resolveDeploymentCreationDefaultsV1.js';
 
 const ownServer = { kind: 'ownServer', machines: ['runtime-one', 'runtime-two'] } as const;

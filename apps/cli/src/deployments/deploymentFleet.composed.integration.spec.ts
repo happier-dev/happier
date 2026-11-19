@@ -3,8 +3,8 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { DeploymentSourceIntentV1Schema, type DeploymentIngressV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1,
-    createDeploymentTargetLinkHeaderV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { buildDeploymentFleetWorkflowDefinition } from '@happier-dev/deployments';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createTestWorkflowCoordinator, createInMemoryWorkflowCoordinatorStore } from '@/daemon/workflows/workflowCoordinator.testkit';

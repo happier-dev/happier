@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { watch } from 'node:fs';
 import { create as createTar } from 'tar';
-import type { DeploymentImageV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentImageV1 } from '@happier-dev/deployments/contracts/v1';
 
 type DockerImageFixture = Readonly<{ image: DeploymentImageV1; archive: string; nativeId: string;
     archiveDirectory: string; manifest: string; configuration: string }>;

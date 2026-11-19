@@ -10,7 +10,8 @@ import { DeploymentReceiptAcceptedResultV1Schema } from '@happier-dev/protocol/d
 import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { readHostAdmittedReviewedParentV1, readHostAdmittedReviewedRootV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { readDeploymentEnvironmentArtifactV1, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import { type DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
 import type { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 import { preparePreviewForkEligibilityForHost } from './previewAdmissionForHost';
 import type { EnvironmentVariableBindingInputV1 } from '@happier-dev/protocol';

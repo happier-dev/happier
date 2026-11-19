@@ -1,4 +1,5 @@
-import type { EnvironmentSecretBindingV1, EnvironmentVariableBindingV1, MachineSecretGrantSubjectV1, MachineSecretGrantV1Schema } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1, EnvironmentVariableBindingV1 } from '@happier-dev/deployments/contracts/v1';
+import type { MachineSecretGrantSubjectV1, MachineSecretGrantV1Schema } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 
 type GrantContent = Readonly<{ kind: 'secret'; value: string }>
     | Readonly<{ kind: 'environmentValues'; binding: Pick<EnvironmentVariableBindingV1,

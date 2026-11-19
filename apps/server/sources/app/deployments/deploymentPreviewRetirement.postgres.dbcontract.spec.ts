@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, encodePlainMachineStoredContent,
     MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
-import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { AutomationDefinitionCreateRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { db, initDbPostgres } from '@/storage/db';
 import { inTx, type Tx } from '@/storage/inTx';

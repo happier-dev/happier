@@ -7,8 +7,9 @@ import { applyEnvironmentSecretBindingsPatchV1, isSettledEnvironmentSecretBindin
     type ActionExecutorContext, type DeploymentChildRpcV1 } from '@happier-dev/protocol';
 import { DeploymentDataRoleChildRpcV1Schema } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { createActionExecuteFailureError, parseActionExecuteFailure, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readDeploymentEnvironmentArtifactV1, environmentSecretBindingIdentityV1, machineSecretGrantSubjectKey, MachineSecretGrantV1Schema,
-    type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import { environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
+import { machineSecretGrantSubjectKey, MachineSecretGrantV1Schema } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import type { AccountArtifact } from '@/api/artifacts/accountArtifactStore';
 import type { PrepareDataRoleBindingsForHost } from '../../secrets/prepareDeploymentBindingsForHost';

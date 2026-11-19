@@ -1,12 +1,11 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentReadControllerV1, projectDeploymentReceiptFactsV1 } from '@happier-dev/deployments';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import {
-  createDeploymentEnvironmentDetailV1,
-  createDeploymentReceiptDetailV1,
   createDeploymentReceiptHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { t } from '@/text';
 import {
   act,

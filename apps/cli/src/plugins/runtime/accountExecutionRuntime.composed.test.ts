@@ -24,9 +24,11 @@ import { PLUGIN_MANIFEST as boatManifest } from '../../../../../packages/plugins
 import { PLUGIN_MANIFEST as agent37Manifest } from '../../../../../packages/plugins/machine-agent37/src/manifest';
 import { PLUGIN_MANIFEST as vercelManifest } from '../../../../../packages/plugins/deploy-vercel/src/manifest';
 import { openApiTypedRuntimeLog } from '../../../../../packages/plugins/deploy-vercel/src/platform/fixtures/runtimeLogResponse';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
-    DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DeploymentPlatformContentV1Schema } from '@happier-dev/deployment-protocol';
+    DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DeploymentPlatformContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { encodePlainArtifactStoredContent, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema,
     DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol';
 import { createActionExecutor, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';

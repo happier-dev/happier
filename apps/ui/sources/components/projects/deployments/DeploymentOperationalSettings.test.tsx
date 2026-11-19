@@ -7,7 +7,8 @@ import { createSecretSettingsTestHarness } from '@/components/settings/secrets/s
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createDeploymentReadControllerV1, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
 import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { resetSavedSecretCatalogEngineForTests, refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
@@ -106,7 +107,7 @@ it.each(['plain', 'e2ee'] as const)('edits and removes registry access through t
   const { DeploymentEnvironmentSettingsPanel } = await import('./DeploymentEnvironmentSettingsPanel');
   const { DeployOutcomeBanner } = await import('./DeploymentEnvironmentDetail');
   const { ModalProvider } = await import('@/modal');
-  const { EnvironmentSecretBindingV1Schema } = await import('@happier-dev/deployment-protocol/v1');
+  const { EnvironmentSecretBindingV1Schema } = await import('@happier-dev/deployments/contracts/v1');
   const initial = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: context.serverIdentityId! }) });
   const binding = EnvironmentSecretBindingV1Schema.parse({ purpose: 'registry', targetLinkId: initial.environment.runtimeTargetLinkId,
     registryOrigin: 'https://registry.example', access: 'pull', source: { kind: 'secret', ref: entry.ref, resourceRevision: 1 } });

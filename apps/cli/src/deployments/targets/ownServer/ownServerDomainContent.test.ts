@@ -3,7 +3,7 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/ca
 import { afterEach, expect, it, vi } from 'vitest';
 import { DeploymentDomainHeaderV1Schema, DeploymentDomainPreparedContentInputV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
 import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
-import type { DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';

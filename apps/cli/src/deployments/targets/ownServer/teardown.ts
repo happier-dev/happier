@@ -4,8 +4,8 @@ import { DeploymentChildRpcV1Schema, type DeploymentChildRpcV1, type ActionExecu
 import { createActionExecuteFailureError, ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { buildDeploymentTeardownInputV1, DeploymentTeardownNothingDeployedInputV1Schema,
     type DeploymentTeardownInputV1, type DeploymentTeardownRefusalDetailsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentOwnServerContentV1Schema, type DeploymentContentV1, type DeploymentEnvironmentDetailV1,
-    type DeploymentReceiptDetailV1, type DeploymentOwnServerContentV1, type DeploymentTeardownResourceV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentOwnServerContentV1Schema, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentOwnServerContentV1 } from '@happier-dev/deployments/contracts/v1';
+import { type DeploymentTeardownResourceV1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { configuration } from '@/configuration';
 import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';

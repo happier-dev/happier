@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentReadDemandV1, DeploymentReadSnapshotV1 } from '@happier-dev/deployments';
 import { useInboxArtifactRowDemand, useOptionalInboxArtifactSource } from '@/hooks/inbox/useInboxArtifactSource';
 import { storage } from '@/sync/domains/state/storage';

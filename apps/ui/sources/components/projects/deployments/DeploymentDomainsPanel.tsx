@@ -1,13 +1,14 @@
 import * as React from 'react';
 import { presentMachineAuthorityV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
-import type { DeploymentEnvironmentHeaderV1, OwnServerDeploymentRuntimeProjectionV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentHeaderV1, OwnServerDeploymentRuntimeProjectionV1 } from '@happier-dev/deployments/contracts/v1';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { DeploymentDomainHealthCheckV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainHealthCheckV1';
 import type { DeploymentDomainCloudflareRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { DeploymentDomainContentV1, DeploymentEnvironmentContentV1, DeploymentTargetLinkContentV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentContentV1, DeploymentTargetLinkContentV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type {
   DeploymentReadControllerV1,
   DeploymentReadDemandV1,

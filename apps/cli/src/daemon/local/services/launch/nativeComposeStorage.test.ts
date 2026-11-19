@@ -4,8 +4,8 @@ import { copyFile, lstat, mkdir, mkdtemp, readFile, readlink, rm, symlink, write
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { OwnServerDeploymentInputBasisV1Schema, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
-import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { OwnServerDeploymentInputBasisV1Schema, type DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
+import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { create as createTar } from 'tar';
 import { describe, expect, it } from 'vitest';

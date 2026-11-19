@@ -1,8 +1,8 @@
-import { z } from 'zod/mini';
-import { AccessProviderRefV1Schema } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { z } from '../zodRuntimePolicy.js';
+import { AccessProviderRefV1Schema } from '../plugins/contributions/catalog.js';
 
-import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from '../v1/ids.js';
-import { EnvironmentVariableBindingGrantReferenceV1Schema, EnvironmentVariableBindingV1Schema } from '../v1/environment.js';
+import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
+import { EnvironmentVariableBindingGrantReferenceV1Schema, EnvironmentVariableBindingV1Schema } from './storedAppInputV1.js';
 
 const recipient = { v: z.literal(1), machineId: id, installationId: id };
 const secretSubject = z.strictObject({ ...recipient, kind: z.literal('secret'), environmentId: id,

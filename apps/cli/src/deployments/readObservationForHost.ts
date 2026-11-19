@@ -3,7 +3,8 @@ import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentObservationGetInputV1Schema,
     DeploymentObservationGetResultV1Schema, DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { readDeploymentTargetLinkArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
+import { type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import type { z } from 'zod/mini';
 import { openDeploymentReceiptForHost } from './readReceiptForHost';
 

@@ -14,9 +14,11 @@ import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, signMachineInstallationProof,
     DeploymentReceiptResultV1Schema } from '@happier-dev/protocol';
-import { computeEnvironmentSecretLaunchAdmissionDigestV1, DeploymentEnvironmentUpdateStorageInputV1Schema,
-    captureDeploymentBindingSavedSecretRevisionsV1, createOwnServerEnvironmentConfigurationV1,
-    MachineSecretGrantV1Schema, type EnvironmentSecretLaunchAdmissionBodyV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+import { createOwnServerEnvironmentConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
+import { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { computeEnvironmentSecretLaunchAdmissionDigestV1, type EnvironmentSecretLaunchAdmissionBodyV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
+import { DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
+import { MachineSecretGrantV1Schema, type MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { readEnvironmentSecretLaunchAdmissionInTx } from './environmentSecretLaunchAdmission';
 import { createDeploymentEnvironmentInTx, loadDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader, updateDeploymentEnvironmentInTx, setDeploymentEnvironmentBindingsInTx,
@@ -41,7 +43,7 @@ import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/sett
 import { createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { linkDeploymentTargetInTx, projectDeploymentTargetHeader } from './deploymentTargetLinkService';
 import { projectDeploymentHealthAggregateV1 } from '@happier-dev/deployments';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';

@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentEnvironmentV1, createDeploymentReceiptHeaderV1, createDeploymentTargetLinkHeaderV1, createDeploymentTargetLinkV1, createDeploymentTargetLinksListResultV1, createDeploymentTargetV1, createDeploymentV1 } from '../testing/v1.js';
-import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentEnvironmentV1Schema, EnvironmentSecretBindingV1Schema } from './environment.js';
-import { DeploymentSourceIntentV1Schema, DeploymentStateV1Schema, DeploymentV1Schema, canTransitionDeploymentV1, isDeploymentSettledV1 } from './deployment.js';
-import { DeploymentOwnServerTargetLinkContentV1Schema, DeploymentTargetLinkContentV1Schema, DeploymentTargetLinkV1Schema, DeploymentTargetLinksListResultV1Schema, DeploymentTargetV1Schema } from './target.js';
-import { DeploymentEnvironmentDetailV1Schema } from './details.js';
-import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema } from './operations.js';
+import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentV1, createDeploymentTargetLinkHeaderV1, createDeploymentTargetLinkV1, createDeploymentTargetLinksListResultV1, createDeploymentTargetV1, createDeploymentV1 } from '../testing/v1.js';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentEnvironmentV1Schema, EnvironmentSecretBindingV1Schema } from '../artifacts/deploymentEnvironmentContent.js';
+import { DeploymentSourceIntentV1Schema, DeploymentStateV1Schema, DeploymentV1Schema, canTransitionDeploymentV1, isDeploymentSettledV1 } from '../artifacts/deploymentReceiptRecord.js';
+import { DeploymentOwnServerTargetLinkContentV1Schema, DeploymentTargetLinkContentV1Schema, DeploymentTargetLinkV1Schema, DeploymentTargetLinksListResultV1Schema, DeploymentTargetV1Schema } from '../targets/deploymentTargetContracts.js';
+import { DeploymentEnvironmentDetailV1Schema } from '../controller/deploymentDetailContracts.js';
+import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTargetRoleInputSchemasV1, DeploymentTargetRoleResultV1Schema, DeploymentTargetRoleFailureV1Schema,
-    DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetPreparedNativeV1Schema } from './target.js';
+    DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetPreparedNativeV1Schema } from '../targets/deploymentTargetContracts.js';
 
 describe('S0 deployment wire contracts', () => {
     it('uses the canonical SCM branch grammar for captured Preview branches', () => {

@@ -8,8 +8,9 @@ import { DeploymentChildRpcV1Schema, DeploymentReceiptGetResultV1Schema, Deploym
 import { createActionExecuteFailureError, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { readDeploymentReceiptArtifactV1, readDeploymentEnvironmentArtifactV1,
-    DeploymentOwnServerContentV1Schema, type DeploymentContentV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentOwnServerContentV1Schema, type DeploymentContentV1 } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
 import type { AccountArtifact } from '@/api/artifacts/accountArtifactStore';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { isReviewedDeploymentChild, readReviewedDeploymentDeployInput } from '@/api/externalActionExecutionAuthorization';

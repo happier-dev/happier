@@ -1,6 +1,6 @@
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
-import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1, type DeploymentEnvironmentDetailV1,
-    type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import { type DeploymentEnvironmentDetailV1, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import { readDeploymentDomainServingUrlV1, type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { DeploymentDomainMutationResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentPreviewTemplateV1, DeploymentPreviewDomainFactV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';

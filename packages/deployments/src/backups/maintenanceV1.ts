@@ -1,5 +1,5 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
 import { isResticSnapshotBoundToManifestV1, readResticRepositoryConfigV1, readResticSnapshotsV1 } from './manifestV1.js';
 import { selectResticForgetCandidatesV1 } from './retentionV1.js';
 import { backupOperationFailureV1, backupOperationStepV1, executeBackupOperationStepV1,
@@ -15,8 +15,7 @@ export type DeploymentBackupPruneInputV1 = DeploymentBackupReadInputV1 & Readonl
 export type DeploymentBackupPruneResultV1 = Readonly<{
     kind: 'pruned' | 'kept'; removedSnapshotIds: readonly string[];
 }>;
-export { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupMaintenanceFailureEvidenceV1 }
-    from '@happier-dev/deployment-protocol';
+export { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployments/contracts/v1';
 
 /** Restic owns policy grouping/locking/compaction. This owner deletes only proven-owned, unprotected exact ids. */
 export async function pruneDeploymentBackupsV1(input: DeploymentBackupPruneInputV1): Promise<DeploymentBackupPruneResultV1> {

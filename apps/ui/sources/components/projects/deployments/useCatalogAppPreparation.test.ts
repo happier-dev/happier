@@ -6,7 +6,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { DeploymentPublishPrepareInputV1Schema, DeploymentPublishPrepareResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createRegistryHostV1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, DeploymentTemplateV1Schema } from '@happier-dev/protocol/registries';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');

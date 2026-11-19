@@ -6,7 +6,7 @@ import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import nacl from 'tweetnacl';
 import { describe, expect, it } from 'vitest';
-import type { DeploymentImageV1, DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentImageV1, DeploymentBackupConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { runDeploymentBackupV1 } from '@happier-dev/deployments';
 import { createDeploymentSourceMaterializationPort } from './exactCommitRelease';

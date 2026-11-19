@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';

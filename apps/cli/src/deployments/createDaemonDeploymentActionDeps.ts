@@ -66,16 +66,12 @@ import { admitForkPreviewDeploymentForHost, prepareForkPreviewCreateForHost } fr
 import { readPreviewDomainForHost, preparePreviewDomainFactForHost } from './previewDomainForHost';
 import { createDeploymentCandidatePublicationV1, createDeploymentDomainContentArtifactIdV1, createDeploymentEnvironmentContentArtifactIdV1,
     isDeploymentDomainNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import {
-    readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1, readDeploymentReceiptArtifactV1, createDeploymentReceiptArtifactHeaderV1,
-    DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, readDeploymentReceiptActionFactsV1,
+import { readDeploymentTargetLinkArtifactV1, readDeploymentReceiptArtifactV1,
+    DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
-    type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentContentV1,
-    type DeploymentMachineResultV1, type DeploymentReceiptHeaderV1, type DeploymentSourceIntentV1,
-    DeploymentContentV1Schema, DeploymentEnvironmentContentV1Schema, DeploymentDataTeardownContentV1Schema, DeploymentOwnServerContentV1Schema, DeploymentPlatformContentV1Schema,
-    DeploymentProviderTeardownContentV1Schema,
-    OwnServerDeploymentInputBasisV1Schema, getDeploymentTargetLinkLineageV1,
 } from '@happier-dev/deployment-protocol';
+import { readDeploymentReceiptActionFactsV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentContentV1, type DeploymentMachineResultV1, type DeploymentReceiptHeaderV1, type DeploymentSourceIntentV1, DeploymentContentV1Schema, DeploymentEnvironmentContentV1Schema, DeploymentDataTeardownContentV1Schema, DeploymentOwnServerContentV1Schema, DeploymentPlatformContentV1Schema, DeploymentProviderTeardownContentV1Schema, OwnServerDeploymentInputBasisV1Schema, getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentEnvironmentArtifactV1, createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployments';
 import { findExistingNativeComposeTargetLinkV1 } from '@happier-dev/deployments';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { createDeploymentMemberVersionProjectionV1, deploymentDomainProbeVantageV1,
@@ -827,7 +823,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     type CreatePreparationRequest = Readonly<{
         input: DeploymentEnvironmentCreateIntentInputV1; context: ActionExecutorContext;
         creationReview?: import('@happier-dev/protocol').DeploymentEnvironmentCreationReviewV1;
-        nativeOrigin?: import('@happier-dev/deployment-protocol').DeploymentNativeComposeOriginV1;
+        nativeOrigin?: import('@happier-dev/deployments/contracts/v1').DeploymentNativeComposeOriginV1;
     }>;
     function previewTemplateCreateContinuation(plan: PreviewTemplateCreationPlanForHost,
         prepared: import('@happier-dev/protocol').DeploymentEnvironmentCreateInputV1): HostReviewedChildrenPreparationV1 {
@@ -840,7 +836,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     }
     async function preparePreviewCreateContinuation(preview: import('./prepareEnvironmentCreateForHost').EnvironmentCreatePreviewResolution,
         prepared: import('@happier-dev/protocol').DeploymentEnvironmentCreateInputV1,
-        content: import('@happier-dev/deployment-protocol').DeploymentEnvironmentContentV1,
+        content: import('@happier-dev/deployments/contracts/v1').DeploymentEnvironmentContentV1,
         context: ActionExecutorContext): Promise<HostReviewedChildrenPreparationV1 | undefined> {
         if (preview.fork) {
             const plan = preview.nativeTemplate ?? { name: content.name, definition: content.definition,
@@ -865,7 +861,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             readPreviewTemplate: (request: Readonly<{ environmentId: string; context: ActionExecutorContext }>) =>
                 readDeploymentEnvironmentForHost(request, { readMetadata: readEnvironmentMetadata, open, assertCurrent }) };
     }
-    function prepareEnvironmentCreate(request: CreatePreparationRequest & { nativeOrigin: import('@happier-dev/deployment-protocol').DeploymentNativeComposeOriginV1 }): Promise<NativeCreatePreparation>;
+    function prepareEnvironmentCreate(request: CreatePreparationRequest & { nativeOrigin: import('@happier-dev/deployments/contracts/v1').DeploymentNativeComposeOriginV1 }): Promise<NativeCreatePreparation>;
     function prepareEnvironmentCreate(request: CreatePreparationRequest & { nativeOrigin?: undefined }): Promise<CreatePreparation>;
     async function prepareEnvironmentCreate({ input, context, creationReview, nativeOrigin }: CreatePreparationRequest): Promise<CreatePreparation | NativeCreatePreparation> {
         try {

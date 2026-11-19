@@ -7,7 +7,7 @@ import {
   type ProjectReadinessEnvironmentSelectionV1, type ProjectReadinessFactKindV1, type ProjectReadinessFactOutcomeV1,
   type ProjectReadinessFactV1, type ProjectReadinessReadInputV1,
 } from '@happier-dev/protocol';
-import type { DeploymentBackupConfigurationV1, DeploymentEnvironmentBackupV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupConfigurationV1, DeploymentEnvironmentBackupV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { deploymentBackupTargetOperands, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
 

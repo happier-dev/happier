@@ -9,7 +9,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, compu
     DeploymentChildRpcV1Schema, projectDeploymentChildRoutingV1, type DeploymentChildRpcV1,
     DeploymentReceiptResultV1Schema, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent,
     type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
-import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';

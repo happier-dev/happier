@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentOwnServerContentV1Schema, type DeploymentOwnServerContentV1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { DeploymentOwnServerContentV1Schema, type DeploymentOwnServerContentV1 } from '@happier-dev/deployments/contracts/v1';
 import { createOwnServerTeardownForHost } from './teardown';
 
 it.each([undefined, ['machine-b']])('prepares exactly the selected fleet members, retaining installation custody (%j)', async machines => {

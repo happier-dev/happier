@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistryUpdateCheckResultV1, type RegistryKindV1, type RegistryAppUpdateDemandV1 } from '@happier-dev/protocol/registries';
 import type { MountedAuthoringActionExecute } from '@/sync/ops/actions/sessionAuthoringActions';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { useRegistryActionRead } from './useRegistryActionRead';
 import { useRegistrySourceRevision } from './useRegistrySourceRevision';
 

@@ -1,5 +1,5 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 
 type ArtifactStore = ReturnType<typeof createCredentialedAccountArtifactStore>;

@@ -16,9 +16,10 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { HappierStorageSummaryV1Schema, MachineStorageDockerPruneResultV1Schema } from '@happier-dev/protocol/storage/storageV1';
 import { ArtifactHttpReadV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { MachineDeploymentReferencesPageV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
-    createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployment-protocol';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1,
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployments';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import {
     createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createOwnServerDockerBoundary } from '@/deployments/targets/ownServer/ownServerDeployment.testkit';
 import { resolveNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';

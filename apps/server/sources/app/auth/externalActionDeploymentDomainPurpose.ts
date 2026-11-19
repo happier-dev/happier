@@ -7,7 +7,7 @@ import type { ExternalActionExecutionAuthorizationBindingV1, ReviewedActionChild
 import { projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
     matchesDeploymentDomainPreparedInputV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentDomainAddActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentMembershipActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { EnvironmentSecretLaunchAdmissionInputV1Schema, type EnvironmentSecretLaunchAdmissionInputV1 } from '@happier-dev/deployment-protocol';
+import { EnvironmentSecretLaunchAdmissionInputV1Schema, type EnvironmentSecretLaunchAdmissionInputV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 export type DomainHttpPurpose = Readonly<{ kind: 'transition'; input: DeploymentDomainTransitionInputV1 }>

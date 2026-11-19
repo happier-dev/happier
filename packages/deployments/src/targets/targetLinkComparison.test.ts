@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
-import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1, createDeploymentTargetLinksListResultV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentTargetLinkHeaderV1, createDeploymentTargetLinksListResultV1 } from '@happier-dev/deployments/testing/v1';
 import { findExistingNativeComposeTargetLinkV1 } from './targetLinkComparison.js';
 
 it('recognizes the exact linked native Compose project across pages and ignores other engines and installations', async () => {

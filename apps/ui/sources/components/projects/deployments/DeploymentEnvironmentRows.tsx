@@ -12,7 +12,7 @@ import {
   type HappierCollectionModel,
 } from '@happier-dev/plugin-ui';
 import { HAPPIER_PAGE_METRICS, HappierColumnEdgeContext } from '@happier-dev/plugin-ui/presentation';
-import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { ItemGroup, ItemGroupDefaultSurfaceProvider } from '@/components/ui/lists/ItemGroup';

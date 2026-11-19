@@ -1,7 +1,7 @@
 import { Resolver } from 'node:dns/promises';
 import { createServer } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HealthCheckResultV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { HealthCheckResultV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { readDnsHealthCheckV1, readTcpHealthCheckV1 } from './finiteNetworkHealthCheck';
 import { logger } from '@/ui/logger';
 

@@ -17,7 +17,8 @@ import { createMachineSetupPlanAction } from './machineSetupAction';
 import { MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecuteResult, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
-import { DeploymentContentV1Schema, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DeploymentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 
 afterEach(() => vi.restoreAllMocks());
 

@@ -23,7 +23,7 @@ import { ExternalActionExecutionAuthorizationBindingV1Schema, createDeploymentCa
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { createDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
 import { createDeploymentCandidateArtifactMutationGuard } from '@/app/deployments/deploymentPreparationAuthorization';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 
 const bytes = (value: unknown) => privacyKit.decodeBase64(encodePlainArtifactStoredContent(value));
 

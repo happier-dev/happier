@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
-import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol';
-import type { HealthCheckResultV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
+import type { HealthCheckResultV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { deploymentDomainProbeVantageV1, type DeploymentHealthObservationV1 } from '@happier-dev/deployments';
 import type { DeploymentDomainHeaderV1, PluginMachineMaterializationRefV1 } from '@happier-dev/protocol';
 import type { HealthCheckDefinitionV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';

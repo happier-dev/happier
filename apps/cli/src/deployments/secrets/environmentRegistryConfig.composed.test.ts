@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import nacl from 'tweetnacl';
 import { describe, expect, it, vi } from 'vitest';
-import { EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import { EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sealMachineSecretGrant } from './machineSecretGrant';
 import * as grantCustody from './machineSecretGrant';

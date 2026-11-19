@@ -8,7 +8,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
 import type {
   DeploymentEnvironmentDestinationV1,
   DeploymentEnvironmentReadDetailV1,

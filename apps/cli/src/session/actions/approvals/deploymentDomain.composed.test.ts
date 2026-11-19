@@ -5,7 +5,7 @@ import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/action
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { resolveApprovalExecutor } from '@happier-dev/protocol/approvals/resolveApprovalExecutor';
 import { projectApprovalRequestForPublicRead } from '@happier-dev/protocol/actions/actionApprovalPresentation';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { configuration } from '@/configuration';
 import { updateSettings } from '@/persistence';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';

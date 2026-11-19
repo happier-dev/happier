@@ -1,9 +1,7 @@
-import { DeploymentBackupConfigurationV1Schema, validateDeploymentBackupDestinationConfigurationV1, isSettledEnvironmentSecretBindingV1,
-    type DeploymentBackupConfigurationV1, type DeploymentBackupRetentionV1, type DeploymentEnvironmentBackupV1,
-    type EnvironmentSecretBindingInputV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentBackupConfigurationV1Schema, validateDeploymentBackupDestinationConfigurationV1, isSettledEnvironmentSecretBindingV1, type DeploymentBackupConfigurationV1, type DeploymentBackupRetentionV1, type DeploymentEnvironmentBackupV1, type EnvironmentSecretBindingInputV1 } from '@happier-dev/deployments/contracts/v1';
 
 import { readSQLiteRuntimeAvailabilityV1, type SQLiteRuntimeUnavailableV1 } from './sqliteRuntime.js';
-import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 
 type Destination = Readonly<{ ref: DeploymentBackupConfigurationV1['destinationRef']; occurrenceId: string;
     descriptor: Parameters<typeof validateDeploymentBackupDestinationConfigurationV1>[0]['descriptor'] }>;

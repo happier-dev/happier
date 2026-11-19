@@ -1,4 +1,4 @@
-import { deploymentInProgressStates, type DeploymentStateV1 } from '@happier-dev/deployment-protocol/v1';
+import { deploymentInProgressStates, type DeploymentStateV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentReadDemandV1 } from './deploymentReadControllerTypes.js';
 
 export function isDeploymentReadDemandActiveV1(demand: DeploymentReadDemandV1): boolean {

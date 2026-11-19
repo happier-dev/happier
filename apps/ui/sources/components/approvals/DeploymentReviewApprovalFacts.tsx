@@ -1,14 +1,7 @@
 import * as React from 'react';
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
-import {
-  DeploymentApprovalReviewV1Schema,
-  type DeploymentMachineReviewV1,
-  type DeploymentReviewRevisionV1,
-  type DeploymentReviewRiskKindV1,
-  type DeploymentReviewServiceV1,
-  type DeploymentReviewV1,
-} from '@happier-dev/deployment-protocol/v1';
+import { DeploymentApprovalReviewV1Schema, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { isLiteralLoopbackHostname} from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 

@@ -1,4 +1,4 @@
-import type { DeploymentEnvironmentDetailV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentDetailV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentEnvironmentTelemetrySetInputV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { selectDeploymentRuntimeTargetLinkV1 } from '../projection/deploymentSelectors.js';
 import { OWN_SERVER_DEPLOYMENT_TARGET_V1 } from '../targets/deploymentTargetCatalog.js';

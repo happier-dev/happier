@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { DeploymentTeardownDetachInputV1Schema, DeploymentTeardownInputV1Schema,
     type ActionExecutorDeps, type DeploymentTargetLinkHeaderV1 } from '@happier-dev/protocol';
-import { DeploymentProviderTeardownContentV1Schema, DEPLOYMENT_TEARDOWN_STEPS_V1,
-    type DeploymentEnvironmentDetailV1, type DeploymentProviderTeardownContentV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentProviderTeardownContentV1Schema, type DeploymentEnvironmentDetailV1, type DeploymentProviderTeardownContentV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
+import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
 import { DeploymentTargetDataInputV1Schema, DeploymentTargetRoleResultV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';

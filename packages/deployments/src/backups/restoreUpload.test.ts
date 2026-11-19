@@ -5,7 +5,7 @@ import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { expect, it } from 'vitest';
-import type { DeploymentBackupManifestV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupManifestV1 } from '@happier-dev/deployments/contracts/v1';
 import { prepareDeploymentRestoreV1, confirmDeploymentRestoreV1,
     type DeploymentRestoreNativeRequestV1, type DeploymentRestoreNativeResultV1 } from './restoreLifecycle.js';
 

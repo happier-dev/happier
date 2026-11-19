@@ -11,8 +11,8 @@ import type { DeploymentPreviewDataSelectionV1 } from '@happier-dev/protocol/dep
 import { buildCatalogAppTemplateBindings } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { createDeploymentDumpBackupSourceIdV1, createDeploymentVolumeBackupSourceIdV1,
     prepareDeploymentTemplateInstantiationV1, type DeploymentTemplateInstantiationPreparationInputV1 } from '@happier-dev/deployments';
-import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
-import { createOwnServerEnvironmentConfigurationV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
+import { createOwnServerEnvironmentConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
 import type { StoredCredentials } from '@/persistence';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';

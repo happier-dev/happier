@@ -1,12 +1,11 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import {
-  createDeploymentEnvironmentDetailV1,
   createDeploymentEnvironmentHeaderV1,
-  createDeploymentReceiptDetailV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentOwnServerContentV1Schema, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentOwnServerContentV1Schema, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';

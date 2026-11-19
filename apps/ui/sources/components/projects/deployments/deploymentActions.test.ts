@@ -7,7 +7,8 @@ import { createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/f
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1,
     DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinksListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -23,7 +24,7 @@ import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/acti
 import { createApprovalArtifact } from '@/sync/ops/actions/approvalArtifactWriter';
 import { resolveActionsSettingsV1FromState } from '@/sync/domains/settings/actionsSettings';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
-import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentPreviewTemplateV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 import { createWorkflowAutomationHttpBoundary } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
 import { AutomationStoredWorkflowDefinitionV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';

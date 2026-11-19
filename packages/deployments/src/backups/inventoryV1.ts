@@ -1,4 +1,4 @@
-import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
 import { isResticSnapshotBoundToManifestV1, isResticSnapshotOwnedV1, readResticRepositoryConfigV1,
     readResticSnapshotInventoryV1, readResticSourceIdsV1, type BackupManifestV1, type ResticSnapshotV1 } from './manifestV1.js';
 import { backupOperationFailureV1, backupOperationStepV1, executeBackupOperationStepV1,

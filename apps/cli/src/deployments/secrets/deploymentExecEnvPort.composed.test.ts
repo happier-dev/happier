@@ -4,7 +4,7 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import nacl from 'tweetnacl';
 import { describe, expect, it } from 'vitest';
-import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentSecretVariableBindingV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { authorizePluginExecLaunchForHost, createProjectNativeToolchainIoForHost, createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { createPluginExecSystemToolResolver } from '@/plugins/runtime/exec/system/tools/resolveGrant';

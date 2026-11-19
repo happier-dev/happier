@@ -1,7 +1,7 @@
 import { DeploymentTargetLinkProviderContentV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
-import { DeploymentTargetRoleInputProtocolSchemasV1, DeploymentReceiptDetailV1Schema,
-    DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/deployment-protocol/v1';
-import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentTargetRoleInputProtocolSchemasV1, DeploymentReceiptDetailV1Schema, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/deployments/contracts/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { AutomationEventSourceDefinitionV1Schema, AutomationEventAdmitInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';

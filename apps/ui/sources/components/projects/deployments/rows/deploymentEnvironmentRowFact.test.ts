@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1,
-  createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { deploymentEnvironmentRunsOnMachine } from './deploymentEnvironmentRowFact';
 
 describe('Environment service disclosure placement', () => {

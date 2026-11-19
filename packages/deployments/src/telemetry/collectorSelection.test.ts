@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { resolveTelemetryCollectorSelectionV1 } from './export.js';
 
 it('offers collector deployment for a Team without inferring ownership or uptime from placement', () => {

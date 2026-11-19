@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { projectDeploymentConnections } from './deploymentConnections';
 describe('declared Environment connections', () => {
  it('retains managed database attachments and exact configure keys when domains are unavailable', () => {

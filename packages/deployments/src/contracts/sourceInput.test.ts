@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { createDeploymentTargetV1, createDeploymentV1, createDeploymentEnvironmentV1 } from '../testing/v1.js';
-import { DeploymentPendingDeployV1Schema, DeploymentSourceIntentV1Schema, DeploymentV1Schema } from './deployment.js';
-import { DeploymentTargetV1Schema } from './target.js';
+import { DeploymentPendingDeployV1Schema, DeploymentSourceIntentV1Schema, DeploymentV1Schema } from '../artifacts/deploymentReceiptRecord.js';
+import { DeploymentTargetV1Schema } from '../targets/deploymentTargetContracts.js';
 import { DeploymentDeployAdmissionInputV1Schema, DeploymentEnvironmentGetResultV1Schema, DeploymentDeployIntentInputV1Schema } from '@happier-dev/protocol';
-import { createDeploymentEnvironmentHeaderV1 } from '../testing/v1.js';
-import { DeploymentEnvironmentV1Schema } from './environment.js';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentEnvironmentV1Schema } from '../artifacts/deploymentEnvironmentContent.js';
 
 describe('protected pending transport', () => {
     it('carries explicit supersession through admission and the exact Environment read without flattening private intent', () => {

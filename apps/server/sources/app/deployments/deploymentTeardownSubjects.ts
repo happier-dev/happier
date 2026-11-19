@@ -1,5 +1,5 @@
 import type { DeploymentAcceptedExecutionV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/protocol';
-import { getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployment-protocol';
+import { getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployments/contracts/v1';
 import type { Tx } from '@/storage/inTx';
 import { readDeploymentTargetsInTx } from './deploymentTargetLinkService';
 

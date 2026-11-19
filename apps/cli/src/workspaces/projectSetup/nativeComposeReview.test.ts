@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { DeploymentApprovalReviewV1Schema } from '@happier-dev/deployment-protocol/v1';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentApprovalReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { projectOwnServerDeploymentReview } from '@/deployments/targets/ownServer/ownServerDeploymentReview';
 
 import { nativeComposeSourceInterpolationNames } from './nativeComposeInterpolation';

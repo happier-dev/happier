@@ -2,7 +2,7 @@ import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
-import { createDeploymentEnvironmentV1, createDeploymentTargetLinkV1, createDeploymentV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentV1, createDeploymentTargetLinkV1, createDeploymentV1 } from '@happier-dev/deployments/testing/v1';
 import { db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { inTx } from '@/storage/inTx';

@@ -5,8 +5,8 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, type DeploymentChildRoutingV1 } from '@happier-dev/protocol';
 import { isDeploymentDomainRemoveActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { DeploymentStateV1Schema, getDeploymentTargetLinkLineageV1, isDeploymentRollbackSourceEligibleV1,
-    type EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentStateV1Schema, getDeploymentTargetLinkLineageV1, isDeploymentRollbackSourceEligibleV1 } from '@happier-dev/deployments/contracts/v1';
+import { type EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { isDeploymentDomainDnsNativeAdmissionV1, type ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';

@@ -2,7 +2,7 @@ import axios from 'axios';
 import { x25519 } from '@noble/curves/ed25519';
 import { afterEach, expect, it, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 import { createActionOperationRpcHandlers } from '@/daemon/actionOperations/actionOperationRpcHandlers';

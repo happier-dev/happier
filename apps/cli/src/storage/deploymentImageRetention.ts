@@ -7,8 +7,8 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readMachineDeploymentReferencesV1, MachineDeploymentReferencesPageV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import { getDeploymentTargetLinkLineageV1, readDeploymentTargetLinkArtifactV1,
-    type DeploymentEnvironmentDetailV1, type DeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol';
+import { getDeploymentTargetLinkLineageV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptHeaderV1 } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
 import type { StoredCredentials } from '@/persistence';
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
 import { readDeploymentEnvironmentForHost } from '@/deployments/readEnvironmentForHost';

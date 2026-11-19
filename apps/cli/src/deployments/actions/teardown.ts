@@ -1,14 +1,8 @@
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod/mini';
 import type { ActionExecutorContext, DeploymentReceiptResultV1 } from '@happier-dev/protocol';
-import {
-    DEPLOYMENT_TEARDOWN_STEPS_V1,
-    DeploymentTeardownStepProofV1Schema,
-    type DeploymentReceiptDetailV1,
-    type DeploymentTeardownResourceV1,
-    type DeploymentTeardownStepProofV1,
-    type DeploymentTeardownStepV1,
-} from '@happier-dev/deployment-protocol';
+import { type DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
+import { DEPLOYMENT_TEARDOWN_STEPS_V1, DeploymentTeardownStepProofV1Schema, type DeploymentTeardownResourceV1, type DeploymentTeardownStepProofV1, type DeploymentTeardownStepV1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { DeploymentTeardownEnvironmentPartialDetailsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';

@@ -26,7 +26,7 @@ import { createPlainWorkflowRunKeyCensusFixture, createWorkflowRunStorageTestkit
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { prepareWorkflowDataCreationResultCapture } from './targets/workflowDataCreationResult';
 import { createWorkflowRunActionOwner } from '@/session/actions/workflowRunActions';
-import { DeploymentPreviewProvenanceV1Schema, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentPreviewProvenanceV1Schema, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import type { ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 
 /** Shared fixture content for the accepted PR's reviewed Environment-create. */

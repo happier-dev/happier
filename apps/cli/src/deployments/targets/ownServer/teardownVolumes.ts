@@ -1,6 +1,7 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
-import type { DeploymentEnvironmentDetailV1, DeploymentTeardownResourceV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentTeardownResourceV1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import { DeploymentPreviewCleanupV1Schema, type DeploymentPreviewCleanupV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { NativeComposeActivatedProject, NativeComposeProjectRender } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { readNativeComposeProjectVolumeNames, selectNativeComposePreviewVolumeNames, settleNativeComposeVolumeRemoval } from '@/daemon/local/services/launch/nativeComposeVolumes';

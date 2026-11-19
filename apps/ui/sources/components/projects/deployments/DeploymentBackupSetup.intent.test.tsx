@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentPreviewDataSelectionV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { BackupDestinationContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/backupDestinations';

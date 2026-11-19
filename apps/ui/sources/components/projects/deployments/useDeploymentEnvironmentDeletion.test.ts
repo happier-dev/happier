@@ -12,8 +12,8 @@ const operationRpc = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: operationRpc }));
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1,
-    createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createDeploymentReadControllerV1, type DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import { DeploymentEnvironmentDeleteInputV1Schema, DeploymentTargetUnlinkInputV1Schema, DeploymentTeardownActionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { HappyError } from '@/utils/errors/errors';

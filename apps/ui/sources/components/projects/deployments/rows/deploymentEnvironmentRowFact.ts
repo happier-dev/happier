@@ -1,4 +1,4 @@
-import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
 import { selectDeploymentSingleDataMachineV1 } from '@happier-dev/deployments';
 
 import { isSameDeploymentName } from '../DeploymentEnvironmentCollection';

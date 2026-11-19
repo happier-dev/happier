@@ -1,4 +1,4 @@
-import { createDeploymentEnvironmentCollectionV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentCollectionV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import type { InstalledAppRow } from '@/components/store/catalog/storeKinds';
 import { buildStoreUpdates } from '@/components/store/updates/storeUpdatesModel';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

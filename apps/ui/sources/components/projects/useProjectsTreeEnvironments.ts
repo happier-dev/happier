@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
 
 import { useCurrentRouteParamsSelector } from '@/components/appShell/workspace/currentRouteLocation';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';

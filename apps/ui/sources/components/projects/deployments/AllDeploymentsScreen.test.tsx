@@ -8,7 +8,7 @@ import {
   type DeploymentReadResultV1,
 } from '@happier-dev/deployments';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
 import {
   act,
   createDeferred,
@@ -528,7 +528,7 @@ describe('Services (pfc-redesign svcApps · svcDb)', () => {
     }
   });
   it('moves past a page of Environments without databases to the page that has them (the read pages every Environment)', async () => {
-    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
     const bare = createDeploymentEnvironmentHeaderV1({ id: 'env-bare', projectSourceId: 'source-bare' });
     const shop = createDeploymentEnvironmentHeaderV1({ id: 'env-shop', projectSourceId: 'source-shop' });
     const content = createDeploymentEnvironmentDetailV1().content;
@@ -555,7 +555,7 @@ describe('Services (pfc-redesign svcApps · svcDb)', () => {
   });
 
   it('names the page Services and, in its Databases view, lists each environment\'s databases with their measured size', async () => {
-    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
     const shop = createDeploymentEnvironmentHeaderV1({ id: 'env-shop', projectSourceId: 'source-shop' });
     const { controller } = controllerFor(() => page([environment('env-shop', 'source-shop', 'Production')]), {
       listDataServicePage: async () => ({ ok: true, value: { nextCursor: null, items: [{ environment: shop, title: 'Production',

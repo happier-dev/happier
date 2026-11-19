@@ -9,7 +9,7 @@ import {
     type DeploymentBackupInventoryInputV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentBackupRecordedHealthV1 } from '@happier-dev/protocol';
-import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployments';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';

@@ -22,7 +22,7 @@ import {
     type DatabaseActionIdV1,
 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
-import { DeploymentTargetLinkContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentTargetLinkContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';

@@ -5,7 +5,8 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { readPluginActionError, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { DeploymentImageResolutionFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { DeploymentBuildSupportV1, DeploymentImageV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentImageV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentBuildSupportV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import { isDeploymentSourceUnchangedManifestInput } from '@/deployments/targets/ownServer/exactCommitRelease';
 import { createNativeComposeImageIdentity, resolveNativeComposeDeploymentOwnedImageTag, normalizeNativeComposePlatform,

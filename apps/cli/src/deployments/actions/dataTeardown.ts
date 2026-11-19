@@ -1,8 +1,8 @@
 import { DeploymentTeardownInputV1Schema, type ActionExecutorContext, type ActionExecutorDeps,
     type DeploymentTeardownInputV1, type DeploymentReceiptResultV1 } from '@happier-dev/protocol';
 import type { HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { DeploymentDataTeardownContentV1Schema, DEPLOYMENT_TEARDOWN_STEPS_V1,
-    type DeploymentDataTeardownContentV1, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentDataTeardownContentV1Schema, type DeploymentDataTeardownContentV1, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
+import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createActionExecuteFailureError, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
@@ -20,7 +20,7 @@ import { readWorkflowDataCreationResult } from '../targets/workflowDataCreationR
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 import { createDataProjectTeardownForHost } from './dataProjectTeardown';
-import { DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1 } from '@happier-dev/deployments/contracts/v1';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };

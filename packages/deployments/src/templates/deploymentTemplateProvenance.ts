@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '@happier-dev/protocol/zodRuntimePolicy';
 import { DeploymentTemplateDataV1Schema, DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
 import { DeploymentTemplateRefV1Schema, DeploymentDigestV1Schema, DeploymentRepositoryDefinitionV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentEnvironmentContentCasV1Schema } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';

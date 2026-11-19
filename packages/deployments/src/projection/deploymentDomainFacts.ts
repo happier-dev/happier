@@ -3,7 +3,7 @@ import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments
 import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { isDeploymentDomainAddActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentCurrentDomainObservationV1, DeploymentDomainHealthFactsV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
-import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 
 export type DeploymentDomainFactsV1 = Readonly<{
     state: DeploymentDomainHeaderV1['state'] | 'cancelled' | 'outcome_unknown';

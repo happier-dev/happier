@@ -1,4 +1,4 @@
-import type { DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { projectDeploymentHealthAggregateV1 } from './deploymentHealthAggregate.js';
 import { createDeploymentProjectionV1 } from './deploymentStore.js';
 

@@ -1,7 +1,7 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import type { DeploymentContentV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
-import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentContentV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
+import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { isDeepStrictEqual } from 'node:util';
 import { isHostRequesterUnrestrictedOwner } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';

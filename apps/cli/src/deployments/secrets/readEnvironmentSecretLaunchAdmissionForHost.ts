@@ -16,12 +16,8 @@ import { projectDeploymentException } from '../deploymentFailure';
 import { isAxiosError } from 'axios';
 import axios from '@/api/client/credentialAxios';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionBodyV1Schema,
-    EnvironmentSecretLaunchAdmissionResultV1Schema, EnvironmentSecretClientBindingsInputV1Schema, MachineConnectorSecretGrantBodyV1Schema,
-    MachineConnectorSecretGrantResultV1Schema, MachineConnectorSecretGrantInputV1Schema, machineSecretGrantSubjectKey, parseMachineSecretGrantSubjectKey,
-    type EnvironmentSecretLaunchAdmissionBodyV1, type EnvironmentSecretAdmissionRequestV1, type MachineConnectorSecretGrantBodyV1,
-    type MachineConnectorSecretGrantSubjectV1, type MachineConnectorSecretGrantInputV1,
-    type EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/deployment-protocol';
+import { computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionBodyV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, EnvironmentSecretClientBindingsInputV1Schema, MachineConnectorSecretGrantBodyV1Schema, MachineConnectorSecretGrantResultV1Schema, MachineConnectorSecretGrantInputV1Schema, type EnvironmentSecretLaunchAdmissionBodyV1, type EnvironmentSecretAdmissionRequestV1, type MachineConnectorSecretGrantBodyV1, type MachineConnectorSecretGrantInputV1, type EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
+import { machineSecretGrantSubjectKey, parseMachineSecretGrantSubjectKey, type MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { createExternalActionMachineRpcExecution, projectExternalActionRequesterHttpAuthorization,

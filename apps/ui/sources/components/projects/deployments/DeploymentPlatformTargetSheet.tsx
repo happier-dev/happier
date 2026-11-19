@@ -16,7 +16,7 @@ import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRu
 import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
-import { DeploymentSourceMethodV1Schema, type DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentSourceMethodV1Schema, type DeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 

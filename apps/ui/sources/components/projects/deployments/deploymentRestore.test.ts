@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { deploymentBackupCaptureChoices, deploymentDatabaseMoveDestination, deploymentRestoreOperands, readDeploymentRestorePreparation } from './deploymentRestore';
-import { DeploymentRestorePreparationV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentRestorePreparationV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentBackupInventoryResultV1Schema, type DeploymentBackupInventoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { deploymentDataTargetOperands } from '@happier-dev/deployments';
 

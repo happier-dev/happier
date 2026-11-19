@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { openDeploymentReceiptForHost } from './readReceiptForHost';
 

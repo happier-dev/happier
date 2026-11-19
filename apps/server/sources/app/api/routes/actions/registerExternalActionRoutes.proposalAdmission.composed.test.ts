@@ -18,7 +18,7 @@ import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/arti
 import { ArtifactRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { SESSION_DATA_KEY_ENVELOPE_BYTES_V1 } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/deployment-protocol';
+import { computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import {
     bindExternalActionExecutionAuthorizationHttpPathV1,

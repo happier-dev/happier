@@ -1,4 +1,4 @@
-import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentSecretBindingSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentEnvironmentContentPatchV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentContentPatchV1';
 import type { DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';

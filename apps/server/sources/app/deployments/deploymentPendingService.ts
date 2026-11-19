@@ -5,7 +5,7 @@ import { z } from 'zod/mini';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
 import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { getActivePrismaRuntime } from '@/storage/prisma';
 import type { Tx } from '@/storage/inTx';
 import { deploymentFailure, canDeployDeploymentEnvironment, type DeploymentAuthentication } from './deploymentAdmission';

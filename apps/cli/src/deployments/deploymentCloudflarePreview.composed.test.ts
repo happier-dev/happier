@@ -15,8 +15,9 @@ import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/
 import { DeploymentFailedEventV1ProtocolSchema, DeploymentReceiptOutcomeEventV1ProtocolSchema,
     DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
-import { canTransitionDeploymentV1, DeploymentPlatformContentV1Schema } from '@happier-dev/deployment-protocol';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { canTransitionDeploymentV1, DeploymentPlatformContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';

@@ -18,7 +18,7 @@ import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerAutomationV3Routes } from '@/app/api/routes/automations/registerAutomationV3Routes';
 import { removeAutomationMachineAssignmentsTx } from '@/app/automations/automationMachineAssignmentRemoval';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
-import { createDeploymentEnvironmentV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentV1 } from '@happier-dev/deployments/testing/v1';
 
 const publishedMachine = { metadata: encodePlainMachineStoredContent({ host: 'Controller', platform: 'linux',
     happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),

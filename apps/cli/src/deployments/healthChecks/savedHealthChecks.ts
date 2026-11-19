@@ -12,8 +12,8 @@ import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import type { PluginMachineMaterializationRefV1 } from '@happier-dev/protocol';
 import { DeploymentDomainMutationResultV1Schema, DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentUpdateResultV1Schema,
     type DeploymentDomainHeaderV1, type DeploymentEnvironmentHeaderV1, type DeploymentTargetLinkHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
-import type { HealthCheckResultV1 } from '@happier-dev/deployment-protocol/v1';
+import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
+import type { HealthCheckResultV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { HEALTH_CHECK_KINDS_V1, HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HealthCheckResultV1Schema, HealthCheckDomainHttpConfigV1Schema,
     type HealthCheckDefinitionV1,
     HealthCheckHeartbeatConfigV1Schema, SavedHealthCheckSelectorV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';

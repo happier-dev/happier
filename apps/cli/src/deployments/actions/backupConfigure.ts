@@ -1,6 +1,6 @@
 import type { ActionExecutorContext, EnvironmentSecretBindingV1, EnvironmentSecretBindingInputV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { environmentSecretBindingIdentityV1, isSettledEnvironmentSecretBindingV1, type DeploymentBackupConfigurationV1, type DeploymentEnvironmentBackupV1 } from '@happier-dev/deployment-protocol';
+import { environmentSecretBindingIdentityV1, isSettledEnvironmentSecretBindingV1, type DeploymentBackupConfigurationV1, type DeploymentEnvironmentBackupV1 } from '@happier-dev/deployments/contracts/v1';
 import { prepareDeploymentBackupConfigurationV1, prepareDeploymentBackupNotNeededV1 } from '@happier-dev/deployments';
 import { resolveSshKnownHostTrust } from '@happier-dev/cli-common/systemTasks';
 import type { DeploymentBackupConfigurationNativeInputForHost, DeploymentBackupConfigurationNativeResultForHost } from '../targets/ownServer/backupConfigurationNative';

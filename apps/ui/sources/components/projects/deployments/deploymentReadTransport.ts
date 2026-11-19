@@ -13,15 +13,14 @@ import {
     type DeploymentDataPageSuccessV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
-    readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1, readDeploymentReceiptArtifactHeaderV1,
-    readDeploymentReceiptArtifactV1,
-    readDeploymentDomainArtifactV1, readDeploymentTargetLinkArtifactV1,
-    projectDeploymentCancellationConsequenceV1,
+    readDeploymentReceiptArtifactV1, readDeploymentTargetLinkArtifactV1,
 } from '@happier-dev/deployment-protocol/v1';
+import { projectDeploymentCancellationConsequenceV1 } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1, readDeploymentReceiptArtifactHeaderV1, readDeploymentDomainArtifactV1 } from '@happier-dev/deployments';
 import type {
     DeploymentReadTransportV1, DeploymentReadScopeV1, DeploymentReadOptionsV1, DeploymentReadResultV1,
 } from '@happier-dev/deployments';
-import type { DeploymentEnvironmentCollectionV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentCollectionV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';

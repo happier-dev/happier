@@ -3,7 +3,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { type DeploymentTargetLinkAlreadyLinkedResultV1, type DeploymentTargetLinkProviderIntentInputV1, type DeploymentTargetLinkHeaderV1, type DeploymentTargetLinksListInputV1, type DeploymentTargetLinksListResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentTargetLinkArtifactV1 } from '@happier-dev/protocol/deployments/deploymentTargetLinkContentV1';
 import type { DeploymentArtifactDocumentV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
-import type { DeploymentNativeComposeOriginV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentNativeComposeOriginV1 } from '@happier-dev/deployments/contracts/v1';
 
 type TargetLinkSelection = NonNullable<DeploymentTargetLinksListInputV1['selection']>;
 type TargetLinkReads = Readonly<{

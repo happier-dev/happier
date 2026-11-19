@@ -5,7 +5,7 @@ import type { ResticAccessV1 } from '@happier-dev/deployments';
 import type { BackupDestinationOpenV1 } from '@happier-dev/plugin-sdk';
 import { isAbsolute } from 'node:path';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
-import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { prepareEnvironmentSecretBindingsForLaunch } from './prepareEnvironmentSecretBindingsForLaunch';
 
 import { createProviderRedactionLease, type ProviderRedactionLease } from '@/providers/spawn/redaction';

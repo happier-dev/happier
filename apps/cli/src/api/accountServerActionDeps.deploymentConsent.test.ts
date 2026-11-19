@@ -13,7 +13,7 @@ import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-pro
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { tryDeriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe('token deployment authoring through the native Account HTTP owner', () => {
   it.each(['production', 'nonProduction'] as const)('preselects omitted mode from one admitted Environment header (%s)', async protection => {

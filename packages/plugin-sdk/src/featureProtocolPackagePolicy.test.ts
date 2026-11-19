@@ -212,8 +212,8 @@ const FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE = Object.freeze({
     ContributionSurfaceNodeInput: 'target-authoring',
 } as const satisfies Readonly<Record<string, FeatureProtocolProtocolAuthoringImportAudience>>);
 
-const FEATURE_PROTOCOL_PROTOCOL_IMPORT_ALLOWLIST = new Set(
-    Object.entries(FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE)
+const FEATURE_PROTOCOL_PROTOCOL_IMPORT_ALLOWLIST = new Set([
+    ...Object.entries(FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE)
         .flatMap(([symbol, audience]) => (
             audience === 'feature-protocol'
             && (symbol === 'PluginJsonSchema'
@@ -231,7 +231,36 @@ const FEATURE_PROTOCOL_PROTOCOL_IMPORT_ALLOWLIST = new Set(
                 ? [symbol]
                 : []
         )),
-);
+    'DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1',
+    'deploymentRevisionShortLabelV1',
+    'readDeploymentFailureRecoveryV1',
+    'formatSharedSavedSecretRefV1',
+    'ProtocolDeploymentDeploySemanticInputV1Schema',
+    'ProtocolDeploymentCorrelationV1Schema',
+    'ProtocolDeploymentEnvironmentHeaderV1Schema',
+    'ProtocolDeploymentReceiptHeaderV1Schema',
+    'ProtocolDeploymentVariableBindingV1Schema',
+    'ProtocolDeploymentSecretBindingSourceV1Schema',
+    // Deployment facts are admitted by name; host schemas and services stay outside this seam.
+    'DeploymentContentV1',
+    'DeploymentPreviewProvenanceV1',
+    'DeploymentSourceIntentV1',
+    'DeploymentReceiptFailureV1',
+    'DeploymentDeploySemanticInputV1',
+    'DeploymentCorrelationV1',
+    'DeploymentEnvironmentHeaderV1',
+    'DeploymentReceiptHeaderV1',
+    'EnvironmentVariableBindingV1',
+    'DeploymentSecretBindingSourceV1',
+    'DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1',
+    'DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1',
+    'readDeploymentReceiptArtifactV1',
+    'readDeploymentTargetLinkArtifactV1',
+    'ProtocolDeploymentPreviewProvenanceV1Schema',
+    'ProtocolDeploymentReceiptOperationV1Schema',
+    'ProtocolDeploymentSourceIntentV1Schema',
+    'ProtocolDeploymentControllerAvailabilityV1Schema',
+]);
 const FEATURE_PROTOCOL_CONTRIBUTIONS_IMPORT_ALLOWLIST = new Set(
     Object.entries(FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE)
         .flatMap(([symbol, audience]) => (

@@ -1,6 +1,5 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DeploymentBackupManifestV1Schema, DeploymentBackupSnapshotV1Schema, DeploymentBackupNativeFailureV1Schema,
-    readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentBackupManifestV1Schema, DeploymentBackupSnapshotV1Schema, DeploymentBackupNativeFailureV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentBackupNativeResultV1, DeploymentBackupRunInputV1 } from '../actions/backups.js';
 import { isResticSnapshotBoundToManifestV1, readResticNativeJsonV1, readResticNativeRecordV1,
     readResticRepositoryConfigV1, readResticSnapshotsV1, type BackupManifestV1 } from './manifestV1.js';

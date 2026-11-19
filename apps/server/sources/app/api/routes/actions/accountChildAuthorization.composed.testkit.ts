@@ -8,7 +8,7 @@ import { buildDiscussionMutationRequestBodyV1, DISCUSSION_HTTP_PATHS_V1 } from '
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';

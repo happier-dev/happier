@@ -2,15 +2,13 @@ import * as React from 'react';
 import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentReadControllerV1, isDeploymentDatabaseMoveCandidateV1, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import {
-  createDeploymentEnvironmentDetailV1,
   createDeploymentEnvironmentHeaderV1,
-  createDeploymentReceiptDetailV1,
   createDeploymentSecretVariableBindingV1,
-  createDeploymentTargetLinkHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
-  DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentBackupActionInputSchemasV1, deploymentBackupPolicyV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentListResultV1Schema, readDeploymentActionOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
@@ -736,7 +734,7 @@ describe('Environment → Database → Workbench', () => {
     { origin: undefined, starts: 'detach' },
   ])('unlinks or deletes a managed database project through the one removal review (origin $origin)', async ({ origin, starts }) => {
     const { definePlugin, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } = await import('@happier-dev/plugin-sdk');
-    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
     const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
     const pluginId = 'com.example.removable-database';
     const execution = { target: 'account', account: { artifactId: 'removal-runtime', exportName: 'activate' } } as const;
@@ -1012,7 +1010,7 @@ describe('Environment → Database → Move', () => {
 describe('Environment → Data → Add (P10)', () => {
   it.each(['ready', 'unreachable'] as const)('hydrates the selected database on its Environment controller and settles its read (%s)', async outcome => {
     const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
-    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
     const { normalizePluginInstalledUiDeclarations } = await import('@/sync/domains/plugins/ui/projection');
     const { unionPluginUiProjections } = await import('@/sync/domains/plugins/ui/projectionUnion');
     const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
@@ -1112,7 +1110,7 @@ describe('Environment → Data → Add (P10)', () => {
     const { outcome, update, choices } = testCase;
     const repository = 'repository' in testCase && testCase.repository;
     const { showDeploymentAddSheet, showDeploymentTemplateUpdateSheet } = await import('./DeploymentDatabasePage');
-    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
     const serverUrl = `https://database-add-${outcome}.test`;
     const catalogUrl = `${serverUrl}/apps.json`;
     const sourceId = deriveMarketplaceSourceId(catalogUrl);
@@ -1377,7 +1375,7 @@ describe('Environment → Data → Add (P10)', () => {
       serverIdentityId: 'srv_database_picker', accountId: 'account-owner', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
     const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
-    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1(), memberVersions: {}, secretRevisions: [],
       content: { ...base.content, definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}`,
@@ -1880,7 +1878,7 @@ describe('Environment → Data → Database page (P9)', () => {
 
 // P45 one database presentation: identity and the native console come from protected link facts.
 it.each([true, false])('opens a header-only managed database through the Artifact owner and shows only a produced console (console=%s)', async (hasConsole) => {
-  const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+  const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
   const { Item } = await import('@/components/ui/lists/Item');
   const { PageHeader } = await import('@/components/ui/layout/PageHeader');
   const serverId = await homes.addHome({ name: 'Managed identity', serverUrl: 'https://managed-identity.test', serverIdentityId: 'srv_managed_identity', accountId: 'owner', currentAccount: true });

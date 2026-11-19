@@ -14,7 +14,8 @@ import { DeploymentSourceAdmissionFailureV1Schema, DeploymentReceiptFailureV1Sch
     type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { DeploymentImageResolutionFailureV1Schema, describeDeploymentImageResolutionFailureV1,
     projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
-import { DeploymentMissingRequiredSecretsV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 import type { DeploymentArtifactReadFailureV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 import { ManagedMachineControllerError, readManagedNativeFailureDetails } from '@/machines/managed/controllerErrors';

@@ -2,7 +2,8 @@ import type { ActionExecutorContext, DeploymentDomainChildRpcV1 } from '@happier
 import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { DeploymentDomainHeaderV1, DeploymentDomainTopologyV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentDomainTunnelOwnershipV1, DeploymentDomainTunnelDispositionV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { parseMachineSecretGrantSubjectKey, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
+import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { parseMachineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { readCloudflareNamedControllerSelection } from '@happier-dev/cli-common/relayAccess';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import type { StoredCredentials } from '@/persistence';

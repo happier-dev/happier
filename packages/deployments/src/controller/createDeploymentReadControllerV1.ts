@@ -1,10 +1,5 @@
 import { withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
-import {
-    DeploymentEnvironmentDetailV1Schema, DeploymentEnvironmentCollectionV1Schema,
-    DeploymentReceiptDetailV1Schema, DeploymentReceiptHistoryV1Schema,
-    type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentDetailV1, type DeploymentEnvironmentCollectionV1,
-    type DeploymentReceiptDetailV1,
-} from '@happier-dev/deployment-protocol/v1';
+import { DeploymentEnvironmentDetailV1Schema, DeploymentEnvironmentCollectionV1Schema, DeploymentReceiptDetailV1Schema, DeploymentReceiptHistoryV1Schema, type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentDetailV1, type DeploymentEnvironmentCollectionV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentProjectionV1 } from '../projection/deploymentStore.js';
 import { deriveDeploymentMemberVersionsV1 } from '../projection/deploymentStepProjection.js';
 import { selectDeploymentRuntimeTargetLinkV1 } from '../projection/deploymentSelectors.js';

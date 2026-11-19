@@ -8,7 +8,7 @@ import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testk
 import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { DeploymentTemplateInstantiationReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DeploymentEnvironmentCreationReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentApprovalReviewV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentApprovalReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { prepareApprovalRequest } from '@happier-dev/protocol/actions/executor/approvalPreparation';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';

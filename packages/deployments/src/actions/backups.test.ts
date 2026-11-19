@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import * as owners from '../index.js';
 import type { ResticRequestV1 } from '../backups/resticExecutor.js';
-import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
-import { DeploymentBackupConfigurationV1Schema, DeploymentContentV1Schema, OwnServerDeploymentInputBasisV1Schema,
-  createDeploymentReceiptArtifactHeaderV1, readDeploymentReceiptArtifactV1,
-  type DeploymentPreMigrationBackupV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
-import { createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentBackupConfigurationV1Schema, DeploymentContentV1Schema, OwnServerDeploymentInputBasisV1Schema, type DeploymentPreMigrationBackupV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentReceiptArtifactHeaderV1 } from '../artifacts/deploymentArtifacts.js';
+import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 const environmentId = 'environment-a';
 const snapshotId = 'a'.repeat(64), treeId = 'b'.repeat(64), repositoryId = 'c'.repeat(64), checksum = 'd'.repeat(64);

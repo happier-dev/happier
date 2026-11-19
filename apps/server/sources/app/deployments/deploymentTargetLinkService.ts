@@ -1,6 +1,6 @@
 import { DeploymentTargetLinkHeaderV1Schema, type DeploymentTargetLinkInputV1 } from '@happier-dev/protocol';
 import type { Prisma } from '@prisma/client';
-import { DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { getActivePrismaRuntime } from '@/storage/prisma';

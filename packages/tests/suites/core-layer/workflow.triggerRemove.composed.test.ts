@@ -3,7 +3,7 @@ import type { SignKeyPair } from 'tweetnacl';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { DeploymentEnvironmentCreateResultV1Schema } from '@happier-dev/protocol';
-import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';

@@ -10,7 +10,7 @@ import { nativeCaddyImage } from '@happier-dev/cli-common/machineSetup';
 import { DeploymentDomainHeaderV1Schema, DeploymentDomainListResultV1Schema, DeploymentDomainObservationV1Schema, verifyNativeCaddyRemovalProofV1, nativeCaddyDomainRouteIdsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentChildRpcV1Schema } from '@happier-dev/protocol';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploymentChildRequesterHarness';
@@ -39,7 +39,7 @@ import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/cre
 import { runMachineSetupEffectInternal } from '@/machines/setup/effectInternal';
 import type { MachineElevationSpawn } from '@/machines/adminAccess/runElevatedEffect';
 import { sealMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';
-import { machineSecretGrantSubjectKey } from '@happier-dev/deployment-protocol';
+import { machineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 
 const connectorFs = vi.hoisted(() => ({ directory: '' }));
 // Substitute protected OS paths only. Real bytes/modes, root CHECK/APPLY,

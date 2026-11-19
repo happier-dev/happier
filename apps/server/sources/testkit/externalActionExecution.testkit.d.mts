@@ -1,5 +1,5 @@
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
-import type { MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/deployment-protocol';
+import type { MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { PeerMediationGrantSigningKeyCapability } from '@happier-dev/protocol';
 

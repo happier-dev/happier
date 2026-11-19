@@ -2,12 +2,11 @@ import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Sch
     type DeploymentEnvironmentAccessInputV1, type DeploymentEnvironmentAccessResultV1, type DeploymentEnvironmentControllerResultV1,
     type DeploymentEnvironmentGetInputV1, type DeploymentReceiptGetInputV1,
     type DeploymentEnvironmentListInputV1, type DeploymentReceiptListInputV1, DeploymentStateV1Schema } from '@happier-dev/protocol';
-import { canTransitionDeploymentV1, projectDeploymentReceiptActivityV1 } from '@happier-dev/deployment-protocol/v1';
+import { canTransitionDeploymentV1, projectDeploymentReceiptActivityV1 } from '@happier-dev/deployments/contracts/v1';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
-    DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import type { Tx } from '@/storage/inTx';
 import { evaluateApiTokenGrantV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { deploymentFailure, resolveDeploymentEnvironmentAdmissionInTx, projectDeploymentSourceAdmission,

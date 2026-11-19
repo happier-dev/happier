@@ -16,7 +16,7 @@ import { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/pro
 import { DeploymentFailureRecoveryV1Schema, DeploymentImageResolutionFailureV1Schema, describeDeploymentImageResolutionFailureV1,
     projectDeploymentFailureRecoveryV1, readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { FiniteCommandFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 
 import { OpenProjectRefusalV1Schema } from '@happier-dev/protocol/projects/openProjectV1';

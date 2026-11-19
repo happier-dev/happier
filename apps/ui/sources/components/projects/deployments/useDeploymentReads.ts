@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { DeploymentUiRollbackInput } from './deploymentActions';
-import type { DeploymentEnvironmentCollectionV1, DeploymentPreMigrationBackupV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentCollectionV1, DeploymentPreMigrationBackupV1 } from '@happier-dev/deployments/contracts/v1';
 import { useRegistryAppUpdate } from '@/registries/useRegistryUpdateCheck';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { useEnvironmentHealthNotices } from './useEnvironmentHealthNotices';

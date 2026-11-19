@@ -1,5 +1,5 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 
 /** Facts come from the already admitted source/receipt, never another storage read. */
 export function resolveEnvironmentDeploymentFactForHost(

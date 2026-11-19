@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { ProjectSourceV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { ProjectReadinessReadInputV1Schema } from '@happier-dev/protocol/projects/readinessV1';

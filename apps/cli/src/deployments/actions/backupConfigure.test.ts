@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentEnvironmentTemplateProvenanceV1Schema } from '@happier-dev/deployment-protocol';
-import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { DeploymentEnvironmentTemplateProvenanceV1Schema } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
 import { resolveDeploymentCreationDefaultsV1 } from '@happier-dev/deployments';
 import { DeploymentBackupConfigureResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';

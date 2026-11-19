@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { decodeBase64 } from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DeploymentReceiptGetResultV1Schema,
     encodePlainArtifactStoredContent } from '@happier-dev/protocol';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { createDaemonDeploymentActionDeps } from '../../../../cli/src/deployments/createDaemonDeploymentActionDeps';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';

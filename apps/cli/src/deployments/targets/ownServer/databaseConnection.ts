@@ -9,7 +9,7 @@ import type {
 import { openPostgresqlConnection, type PostgresqlConnection } from '@happier-dev/databases/connection/postgresql';
 import { openMysqlConnection } from '@happier-dev/databases/connection/mysql';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { environmentSecretBindingIdentityV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import { environmentSecretBindingIdentityV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import type { StoredCredentials } from '@/persistence';

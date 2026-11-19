@@ -1,4 +1,5 @@
-import { MachineConnectorSecretGrantInputV1Schema, machineSecretGrantSubjectKey } from '@happier-dev/deployment-protocol';
+import { MachineConnectorSecretGrantInputV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
+import { machineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 /** Purpose narrowing only; the installed route retains proof, access and exact grant admission. */

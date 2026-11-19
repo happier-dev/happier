@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { projectNativeComposeReview } from '@/workspaces/projectSetup/nativeComposeReview';
 import { readOwnServerPreviewCleanup, readOwnServerTeardownVolumes, settleOwnServerTeardownVolumes } from './teardownVolumes';
 import { normalizeActionExecutorThrownError, settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';

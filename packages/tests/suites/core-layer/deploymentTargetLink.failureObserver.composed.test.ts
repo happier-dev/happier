@@ -17,7 +17,7 @@ import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializations
     PluginAvailabilityCollectionWritersClaimActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { projectPluginMachineMaterializationReportFactsV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
-import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import * as cloudflare from '../../../plugins/deploy-cloudflare/src/index';
 import * as machineServices from '../../../plugins/machine-services/src/index';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';

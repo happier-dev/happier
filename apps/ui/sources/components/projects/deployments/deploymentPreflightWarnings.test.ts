@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { projectDeploymentPromotionBindingGaps, readDeploymentAddDeclaredInputs, readDeploymentComposeServiceFacts,
     projectDeploymentConfigurePreflightV1, readDeploymentPreparationFacts } from './deploymentPreflightWarnings';
 

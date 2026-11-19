@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1,
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import {
     createDeploymentReceiptHeaderV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import type { DeploymentReadTransportV1 } from './deploymentReadControllerTypes.js';
 import { createDeploymentReadControllerV1 } from './createDeploymentReadControllerV1.js';

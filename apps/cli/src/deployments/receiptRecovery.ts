@@ -1,5 +1,5 @@
 import type { ActionExecutorContext, ActionExecuteFailure, ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions';
-import type { DeploymentContentV1, DeploymentReceiptHeaderV1, DeploymentStateV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentContentV1, DeploymentReceiptHeaderV1, DeploymentStateV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentTransitionResultForHost } from './deploymentTransitionResult';
 
 /** Reconcile at the next preparation or receipt admission, through the signed writer.

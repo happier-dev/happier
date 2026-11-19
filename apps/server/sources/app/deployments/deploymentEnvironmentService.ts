@@ -6,15 +6,11 @@ import { DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentPrincipalsV1S
     type DeploymentEnvironmentCreateStorageInputV1 } from '@happier-dev/protocol';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
-    machineSecretGrantSubjectKey, resolveDeploymentStoredDefinitionRevisionV1,
-    isDeploymentEnvironmentBindingsOnlyUpdateV1, reconcileDeploymentRemovedDataServicesV1,
-    applyOwnServerEnvironmentConfigurationPatchV1,
-    isEnvironmentSecretBindingManagedByBindingsWriterV1, readRetainedOperationalEnvironmentBindingGrantsV1,
-    captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1,
-    normalizeDeploymentBindingSavedSecretRevisionsV1, readDeploymentBindingSavedSecretRevisionsV1,
-    type DeploymentBindingsSetStorageInputV1, type DeploymentEnvironmentTemplateSetInputV1, type DeploymentEnvironmentBackupSetInputV1,
-    type DeploymentEnvironmentUpdateStorageInputV1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import { resolveDeploymentStoredDefinitionRevisionV1, isDeploymentEnvironmentBindingsOnlyUpdateV1, reconcileDeploymentRemovedDataServicesV1, applyOwnServerEnvironmentConfigurationPatchV1, isEnvironmentSecretBindingManagedByBindingsWriterV1, readRetainedOperationalEnvironmentBindingGrantsV1, type DeploymentEnvironmentTemplateSetInputV1, type DeploymentEnvironmentBackupSetInputV1 } from '@happier-dev/deployments/contracts/v1';
+import { captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1, normalizeDeploymentBindingSavedSecretRevisionsV1, readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { machineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
+import { type DeploymentBindingsSetStorageInputV1, type DeploymentEnvironmentUpdateStorageInputV1 } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { environmentSecretBindingInstallationsV1, projectEnvironmentSecretBindingRequiredUsesV1,
     selectEnvironmentSecretCapturePurposesV1, type EnvironmentSecretRequiredUsesProjectionV1 } from '@happier-dev/deployments';
 import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';

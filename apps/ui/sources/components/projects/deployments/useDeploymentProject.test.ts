@@ -3,7 +3,8 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { waitForTestEvent } from '@/dev/testkit/hooks/waitForTestEvent';
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1,
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentHeaderV1,
     createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { buildDeploymentAccountChangeV1, readDeploymentAccountChangeV1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { useDeploymentActivity, useDeploymentCollection } from './useDeploymentReads';

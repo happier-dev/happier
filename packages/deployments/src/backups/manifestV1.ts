@@ -1,6 +1,5 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DeploymentBackupManifestV1Schema, DeploymentBackupSnapshotV1Schema,
-    type DeploymentBackupManifestV1, type DeploymentBackupSnapshotV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentBackupManifestV1Schema, DeploymentBackupSnapshotV1Schema, type DeploymentBackupManifestV1, type DeploymentBackupSnapshotV1 } from '@happier-dev/deployments/contracts/v1';
 
 export type ResticSnapshotV1 = DeploymentBackupSnapshotV1;
 export type BackupManifestV1 = DeploymentBackupManifestV1;

@@ -47,7 +47,7 @@ export async function prepareMachineRecipeProgramV1(input: Readonly<{
     // services remain outside that graph unless an online recipe selects one.
     const credentialGrant = credentialSelection ? await (async () => {
       const [{ machineSecretGrantSubjectKey }, { reachabilityConnectorSubject }] = await Promise.all([
-        import('@happier-dev/deployment-protocol'), import('../reachability/prepareReachabilityJoinCredential'),
+        import('@happier-dev/protocol/deployments/machineSecretGrantV1'), import('../reachability/prepareReachabilityJoinCredential'),
       ]);
       return machineSecretGrantSubjectKey(reachabilityConnectorSubject(credentialSelection,
         { machineId: input.machineId!, installationId: input.installationId! }));

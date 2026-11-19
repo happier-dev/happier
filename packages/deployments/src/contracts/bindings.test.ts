@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createDeploymentEnvironmentV1 } from '../testing/v1.js';
 import { DeploymentEnvironmentContentV1Schema, DeploymentSecretBindingSourceV1Schema,
-    EnvironmentSecretBindingV1Schema, EnvironmentVariableBindingV1Schema } from './environment.js';
+    EnvironmentSecretBindingV1Schema, EnvironmentVariableBindingV1Schema } from '../artifacts/deploymentEnvironmentContent.js';
 
 const secret = DeploymentSecretBindingSourceV1Schema.parse({
     kind: 'secret', ref: 'happier:shared-secret:v1:resource-a', resourceRevision: 2,

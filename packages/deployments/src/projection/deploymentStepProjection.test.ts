@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import type { DeploymentMachineResultV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import type { DeploymentMachineResultV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentReadControllerV1 } from '../controller/createDeploymentReadControllerV1.js';
 import type { DeploymentReadTransportV1 } from '../controller/deploymentReadControllerTypes.js';
 import { createDeploymentMemberVersionProjectionV1, deriveDeploymentMemberVersionsV1 } from './deploymentStepProjection.js';

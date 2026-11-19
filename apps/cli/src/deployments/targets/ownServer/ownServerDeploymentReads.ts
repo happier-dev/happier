@@ -2,7 +2,7 @@ import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/a
 import { isDeepStrictEqual } from 'node:util';
 import { resolve } from 'node:path';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentDriftReadInputV1, DeploymentHealthReadInputV1, DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';

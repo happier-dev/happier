@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import {
   act,
   renderScreen,
@@ -128,8 +129,8 @@ describe('Promote', () => {
   });
 
   it('says which source variables the chosen destination lacks, links to its Variables and keeps the choice on return (#3)', async () => {
-    const { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1, createDeploymentTargetLinkHeaderV1 } =
-      await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
+    const { createDeploymentSecretVariableBindingV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const production = createDeploymentEnvironmentHeaderV1({ id: 'production', projectSourceId: 'source-app' });
     const detail = (id: string, bindings: unknown[]) => {
       const base = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ id }),

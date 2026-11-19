@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveInstalledMachineEffectCli } from '@/machines/adminAccess/runElevatedEffect';
 import { getMachineSetupDesiredV1 } from '@happier-dev/protocol';
-import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
 import { createNativeCaddyRoutes } from '@/machines/reachability/nativeCaddyRoutes';
 import { createServer } from 'node:http';

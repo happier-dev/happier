@@ -14,7 +14,7 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE
   ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
   projectDeploymentPreparationAdmissionV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { computeEnvironmentSecretLaunchAdmissionDigestV1, MachineConnectorSecretGrantInputV1Schema } from '@happier-dev/deployment-protocol';
+import { computeEnvironmentSecretLaunchAdmissionDigestV1, MachineConnectorSecretGrantInputV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';

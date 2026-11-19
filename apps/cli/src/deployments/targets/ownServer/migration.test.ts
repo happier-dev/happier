@@ -3,9 +3,9 @@ import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import nacl from 'tweetnacl';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
-import { OwnServerDeploymentInputBasisV1Schema, DeploymentOwnServerContentV1Schema,
-    type EnvironmentSecretBindingV1, type DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
-import { createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { OwnServerDeploymentInputBasisV1Schema, DeploymentOwnServerContentV1Schema, type EnvironmentSecretBindingV1, type DeploymentBackupConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
+import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { RESTIC_RUNTIME_V1 } from '@happier-dev/deployments';
 import { sealMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';
 import { createDeploymentBackupEnvironmentForHost } from '@/deployments/secrets/deploymentExecEnvPort';

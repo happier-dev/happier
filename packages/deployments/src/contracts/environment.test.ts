@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentV1, createDeploymentTargetLinkV1 } from '../testing/v1.js';
+import { createDeploymentEnvironmentDetailV1, createDeploymentV1, createDeploymentTargetLinkV1 } from '../testing/v1.js';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentHeaderV1Schema, EnvironmentSecretBindingV1Schema,
     createOwnServerEnvironmentConfigurationV1, applyOwnServerEnvironmentConfigurationPatchV1, resolveDeploymentStoredDefinitionRevisionV1,
-    readRetainedOperationalEnvironmentBindingGrantsV1 } from './environment.js';
-import { DeploymentV1Schema, OwnServerDeploymentInputBasisV1Schema } from './deployment.js';
-import { DeploymentTargetLinkV1Schema } from './target.js';
+    readRetainedOperationalEnvironmentBindingGrantsV1 } from '../artifacts/deploymentEnvironmentContent.js';
+import { DeploymentV1Schema, OwnServerDeploymentInputBasisV1Schema } from '../artifacts/deploymentReceiptRecord.js';
+import { DeploymentTargetLinkV1Schema } from '../targets/deploymentTargetContracts.js';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 describe('multi-Machine deployment contracts', () => {

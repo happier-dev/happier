@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { readOwnedNoticeArtifactV1 } from '@happier-dev/plugin-sdk/protocol';
 import { TriageSessionHandoffInputV1Schema } from '@happier-dev/triage-protocol/v1';
-import { createDeploymentReceiptArtifactHeaderV1, type DeploymentContentV1 } from '@happier-dev/deployment-protocol/v1';
-import { createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, type DeploymentContentV1 } from '@happier-dev/deployment-protocol/v1';
+import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { readTriageHealthAlertHandoffV1 } from './healthAlertHandoff.js';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
@@ -22,7 +23,7 @@ function receiptFixture(
     } }).content;
     return { deployment, content, artifact: {
         artifactId: deployment.contentArtifactId, ownerAccountId: 'account-a', access: 'owner', publicAudience: 'none',
-        header: createDeploymentReceiptArtifactHeaderV1('Failed deployment', content), body: JSON.stringify(content),
+        header: { kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, title: 'Failed deployment', steps: content.steps }, body: JSON.stringify(content),
         revision: { headerVersion: deployment.contentHeaderVersion, bodyVersion: deployment.contentBodyVersion },
         seq: 1, createdAt: 1, updatedAt: 1,
     } };

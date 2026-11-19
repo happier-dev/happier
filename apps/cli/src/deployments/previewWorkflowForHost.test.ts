@@ -1,14 +1,15 @@
 import axios from 'axios';
 import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentTargetLinkActionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { AutomationStoredWorkflowDefinitionV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { WorkflowDefinitionV1Schema, type WorkflowActionFieldBindingV1, type WorkflowActionLeafV1 } from '@happier-dev/protocol/workflows';
 import { preparePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
-import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { PLUGIN_MANIFEST as neon } from '../../../../packages/plugins/deployment-neon/src/manifest';
 import { PLUGIN_MANIFEST as supabase } from '../../../../packages/plugins/deployment-supabase/src/manifest';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';

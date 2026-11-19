@@ -482,7 +482,8 @@ it.each([
             const { DeploymentEnvironmentSettingsPanel } = await import('@/components/projects/deployments/DeploymentEnvironmentSettingsPanel');
             const { SectionActionButton } = await import('@/components/ui/lists/SectionActionButton');
             const { createDeploymentReadControllerV1, selectDeploymentRuntimeTargetLinkV1 } = await import('@happier-dev/deployments');
-            const { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+            const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
+            const { createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
             const { createDeploymentReadTransport } = await import('@/components/projects/deployments/deploymentReadTransport');
             const { createDeploymentActions } = await import('@/components/projects/deployments/deploymentActions');
             const { ItemList } = await import('@/components/ui/lists/ItemList');

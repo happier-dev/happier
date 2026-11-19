@@ -4,9 +4,8 @@ import {
   createDeploymentReadControllerV1,
   type DeploymentHistoryQueryV1,
 } from '@happier-dev/deployments';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import {
-  createDeploymentEnvironmentDetailV1,
-  createDeploymentReceiptDetailV1,
   createDeploymentReceiptHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 import {

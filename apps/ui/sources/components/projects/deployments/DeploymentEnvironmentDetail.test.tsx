@@ -9,14 +9,13 @@ import {
   type DeploymentEnvironmentTabV1,
   type DeploymentReadTransportV1,
 } from '@happier-dev/deployments';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import {
-  createDeploymentEnvironmentDetailV1,
   createDeploymentEnvironmentHeaderV1,
-  createDeploymentReceiptDetailV1,
   createDeploymentReceiptHeaderV1,
   createDeploymentSecretVariableBindingV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { act, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';

@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { DeploymentImageV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentImageV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import { createProjectNativeToolchainIoForHost, createStablePluginExecService,
     type ProjectNativeEffectCaptureForHost } from '@/plugins/runtime/invocation/services/exec';

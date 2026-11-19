@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import { encodeTelemetryAuthorizationHeaderV1 } from '@happier-dev/deployments/telemetry';
 import { join } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { EnvironmentSecretBindingStoredReadV1Schema, environmentSecretBindingIdentityV1, machineSecretGrantSubjectKey, type EnvironmentSecretBindingV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+import { EnvironmentSecretBindingStoredReadV1Schema, environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
+import { machineSecretGrantSubjectKey, type MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { openMachineSecretGrant, type MachineSecretGrantReadContentV1 } from './machineSecretGrant';
 import { configuration } from '@/configuration';
@@ -11,7 +12,7 @@ import { createEnvironmentRegistryConfigForHost } from './environmentRegistryCon
 import { createEnvironmentBackupDestinationConfigForHost } from './environmentBackupDestinationConfig';
 import type { DeploymentReferenceAddressV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { listMissingProjectSecretRequirements, type ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
-import type { DeploymentMissingRequiredSecretsV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentMissingRequiredSecretsV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import type { BackupDestinationOpenV1 } from '@happier-dev/plugin-sdk';
 
 function missing(): never {

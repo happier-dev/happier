@@ -40,8 +40,8 @@ import { inTx } from '@/storage/inTx';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { createDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
 import { readDeploymentCreateHttpPurposeInTx } from '@/app/deployments/deploymentPreparationAuthorization';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import {
   createLightSqliteHarness,
   type LightSqliteHarness,

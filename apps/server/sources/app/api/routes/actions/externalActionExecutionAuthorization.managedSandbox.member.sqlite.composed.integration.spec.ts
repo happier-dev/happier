@@ -172,7 +172,7 @@ import { createDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnv
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { buildProjectAccountRowPhysicalKeyV1, ProjectAccountRowListResponseV1Schema, ProjectAccountRowMutationRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { hasCurrentSessionScopedMachineAccessInTx } from '@/app/api/socket/sessionScopedBinding';
@@ -315,7 +315,7 @@ import { TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema,
     DeploymentBindingsPreparedInputV1Schema } from '@happier-dev/protocol';
-import { DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { COPY_ENVIRONMENT_BINDINGS_ROLE } from '../../../../../../cli/src/deployments/copyEnvironmentForHost';
 
 import { machineOperationSupportForTest } from '@/testkit/machineOperationSupport.testkit';

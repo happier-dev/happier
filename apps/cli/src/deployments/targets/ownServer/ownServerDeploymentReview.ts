@@ -1,7 +1,7 @@
-import type { DeploymentEnvironmentDetailV1, DeploymentMachineReviewV1,
-    OwnServerDeploymentInputBasisV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentDetailV1, OwnServerDeploymentInputBasisV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentMachineReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import type { NativeComposeRuntimeReview } from '@/workspaces/projectSetup/nativeComposeReview';
-import { projectDeploymentDowntimeClassV1, projectDeploymentReviewRevisionV1 } from '@happier-dev/deployment-protocol/v1';
+import { projectDeploymentDowntimeClassV1, projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import type { DeploymentReferenceAddressV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { environmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { projectNativeComposeBuildSupport } from '@/daemon/local/services/launch/nativeComposeImagePreparation';

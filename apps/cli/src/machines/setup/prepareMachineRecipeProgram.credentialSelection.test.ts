@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { MachineRecipeV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
-import { machineSecretGrantSubjectKey } from '@happier-dev/deployment-protocol';
+import { machineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import type { AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { createMachineSetupNativeBackend } from '@happier-dev/cli-common/machineSetup';
 import { reachabilityConnectorSubject } from '../reachability/prepareReachabilityJoinCredential';

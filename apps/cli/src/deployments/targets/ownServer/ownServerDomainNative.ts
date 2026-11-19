@@ -15,8 +15,9 @@ import type { ActionExecutorContext, DeploymentDomainChildRpcV1, DeploymentDomai
 import type { DeploymentDomainDnsChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { isDeploymentDomainAddActionIdV1, isDeploymentDomainRemoveActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createActionExecuteFailureError, readActionFailureCauseV1, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readDeploymentDomainArtifactV1, readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1, environmentSecretBindingIdentityV1,
-    type DeploymentArtifactDocumentV1, type DeploymentEnvironmentDetailV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
+import { environmentSecretBindingIdentityV1, type DeploymentEnvironmentDetailV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentDomainArtifactV1, readDeploymentEnvironmentArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import { ApiClient } from '@/api/api';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';

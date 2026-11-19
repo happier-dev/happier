@@ -4,7 +4,7 @@ import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automa
 import { randomBytes } from 'node:crypto';
 import { x25519 } from '@noble/curves/ed25519';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { readOwnedNoticeArtifactV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
@@ -28,7 +28,7 @@ import { PushNotificationClient } from '@/api/pushNotifications';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
-import { OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { logger } from '@/ui/logger';
 import { readDeploymentNoticeHistory } from './deploymentNoticeRecovery';
 import { readDeploymentNoticeMachineLabels } from './deploymentNoticeLabels';

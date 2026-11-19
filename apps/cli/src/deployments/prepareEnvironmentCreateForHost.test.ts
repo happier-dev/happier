@@ -9,10 +9,12 @@ import { ArtifactAccessGrantSetInputV1Schema, ArtifactAccessGrantMutationRespons
     ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitInputV1Schema,
     ArtifactRecipientKeyEnvelopeCommitResponseV1Schema,
     type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
-import { readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1, DeploymentTargetV1Schema } from '@happier-dev/deployment-protocol';
+import { readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentTargetV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
 import { actionSchema as supabaseDataActionSchema } from '../../../../packages/plugins/deployment-supabase/src/data/schemas';
-import { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1,
-    createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { encodeBase64, encryptWithDataKey, libsodiumPublicKeyFromSecretKey } from '@/api/encryption';

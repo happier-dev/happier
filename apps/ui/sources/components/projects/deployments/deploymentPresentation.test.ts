@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentReceiptMetadataV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { deploymentDeployAvailability, deploymentFailureTitle, deploymentSourceLabel, deploymentHeadline, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState, deploymentEnvironmentAttention, deploymentAttentionLeaves } from './deploymentPresentation';
 
 it('presents the recorded interruption reason on the receipt and its history row', () => {

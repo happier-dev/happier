@@ -12,7 +12,8 @@ import { DeploymentBindingsSetResultV1Schema, DeploymentEnvironmentUpdateResultV
 import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentEnvironmentContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentEnvironmentBackupSetInputV1Schema } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentBackupSetInputV1Schema } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import { createDeploymentArtifactForHost } from '../createArtifactForHost';
 import { createPrepareDeploymentBackupConfigurationDestinationForHost } from '../targets/ownServer/backupDestination';

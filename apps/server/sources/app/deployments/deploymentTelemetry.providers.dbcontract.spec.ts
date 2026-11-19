@@ -16,8 +16,7 @@ import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORI
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
     projectExternalActionDeploymentNativeEnvelopeAdmissionV1, createDeploymentEnvironmentContentArtifactIdV1,
 } from '@happier-dev/protocol/actions/externalActionApi';
-import { createDeploymentEnvironmentV1, createDeploymentTargetLinkV1,
-    createDeploymentV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentV1, createDeploymentTargetLinkV1, createDeploymentV1 } from '@happier-dev/deployments/testing/v1';
 import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { initEncrypt } from '@/modules/encrypt';

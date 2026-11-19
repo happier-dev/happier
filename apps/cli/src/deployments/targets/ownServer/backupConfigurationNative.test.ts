@@ -3,7 +3,7 @@ import { access, chmod, mkdir, readFile, realpath, writeFile } from 'node:fs/pro
 import { constants } from 'node:fs';
 import { join } from 'node:path';
 import nacl from 'tweetnacl';
-import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { RESTIC_RUNTIME_V1, buildResticRequestV1, testDeploymentBackupDestinationV1 } from '@happier-dev/deployments';
 import { withFiniteComposeFixture } from '@/daemon/local/services/launch/serviceExec.testkit';

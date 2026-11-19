@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useSavedSecretReferenceResolver } from '@/components/secrets/useSavedSecretCatalog';

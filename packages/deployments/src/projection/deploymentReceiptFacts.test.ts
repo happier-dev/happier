@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployment-protocol';
+import { createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { projectDeploymentReceiptFactsV1, projectDeploymentReceiptHistoryEntryV1, selectDeploymentReceiptRetainedHistoryV1 } from './deploymentReceiptFacts';
 
 describe('receipt facts', () => {
     it.each(['running', 'failed'] as const)('carries controller and %s member step timing through the parsed history read', async state => {
-        const { DeploymentReceiptHistoryV1Schema } = await import('@happier-dev/deployment-protocol/v1');
+        const { DeploymentReceiptHistoryV1Schema } = await import('@happier-dev/deployments/contracts/v1');
         const receipt = createDeploymentReceiptDetailV1();
         receipt.content.steps = [{ id: 'prepare', label: 'Prepare', state: 'succeeded', startedAtMs: 100, settledAtMs: 200, durationMs: 100 }];
         receipt.content.machineResults = [{ machineId: 'machine-a', installationId: 'installation-a',
@@ -72,7 +73,7 @@ describe('receipt facts', () => {
     });
 
     it('projects failed controller build output before a provider deployment exists', async () => {
-        const { DeploymentContentV1Schema } = await import('@happier-dev/deployment-protocol');
+        const { DeploymentContentV1Schema } = await import('@happier-dev/deployments/contracts/v1');
         const receipt = createDeploymentReceiptDetailV1();
         receipt.deployment.state = 'failed';
         receipt.content = DeploymentContentV1Schema.parse({ sourceIntent: receipt.content.sourceIntent, sourceMethod: 'upload',

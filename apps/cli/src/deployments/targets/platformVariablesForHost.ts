@@ -5,7 +5,7 @@ import { DeploymentObservationGetResultV1Schema, type DeploymentBindingsSetInput
     DeploymentObservationGetInputV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { usesOwnTelemetryCollectorV1 } from '@happier-dev/deployments/telemetry';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { createContributedDeploymentTargetForHost } from './contributedDeploymentTargetForHost';
 import type { PreparePlatformBindingsForHost } from '../secrets/prepareDeploymentBindingsForHost';
 

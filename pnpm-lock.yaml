@@ -2298,14 +2298,10 @@ importers:
         version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@22.20.5)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/deployment-protocol:
-    dependencies:
-      '@happier-dev/protocol':
-        specifier: 0.0.0
-        version: link:../protocol
-      zod:
-        specifier: 4.6.7
-        version: 4.6.7
     devDependencies:
+      '@happier-dev/plugin-sdk':
+        specifier: 0.0.0
+        version: link:../plugin-sdk
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
@@ -2477,9 +2473,6 @@ importers:
       '@happier-dev/cli-common':
         specifier: 0.0.0
         version: link:../cli-common
-      '@happier-dev/deployment-protocol':
-        specifier: 0.0.0
-        version: link:../deployment-protocol
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../protocol
@@ -4631,6 +4624,9 @@ importers:
         specifier: 0.0.0
         version: link:../../triage-sources
     devDependencies:
+      '@happier-dev/deployments':
+        specifier: 0.0.0
+        version: link:../../deployments
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../../protocol
@@ -4982,6 +4978,9 @@ importers:
       '@happier-dev/deployment-protocol':
         specifier: workspace:*
         version: link:../deployment-protocol
+      '@happier-dev/deployments':
+        specifier: workspace:*
+        version: link:../deployments
       '@happier-dev/iroh-native':
         specifier: 0.0.0
         version: link:../iroh-native

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { createDeploymentEnvironmentDetailV1 } from '../testing/v1.js';
-import { DeploymentEnvironmentContentV1Schema } from './environment.js';
-import * as schemas from './index.js';
+import { DeploymentEnvironmentContentV1Schema } from '../artifacts/deploymentEnvironmentContent.js';
+import * as schemas from './v1.js';
+import { DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { DeploymentBackupConfigureInputV1Schema, DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol';
 import { projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -26,9 +27,9 @@ describe('Environment backup content', () => {
             expectedRevision: 1, contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1,
             patch: { buildMachineId: 'builder', backup } };
         expect(DeploymentEnvironmentUpdateInputV1Schema.safeParse(update).success).toBe(false);
-        expect(schemas.DeploymentEnvironmentUpdateStorageInputV1Schema.safeParse(update).success).toBe(false);
+        expect(DeploymentEnvironmentUpdateStorageInputV1Schema.safeParse(update).success).toBe(false);
         const prepared = { ...update, contentArtifactId: 'prepared', patch: { buildMachineId: 'builder' } };
-        expect(schemas.DeploymentEnvironmentUpdateStorageInputV1Schema.safeParse(prepared).success).toBe(true);
+        expect(DeploymentEnvironmentUpdateStorageInputV1Schema.safeParse(prepared).success).toBe(true);
         const input = DeploymentBackupConfigureInputV1Schema.parse({ serverId: 'home', environmentId: 'environment-a',
             expectedRevision: 1, intent: 'save', configuration: backup });
         const native = projectDeploymentNativeAdmissionV1(DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, input);

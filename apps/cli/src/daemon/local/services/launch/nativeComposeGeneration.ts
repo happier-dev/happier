@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { nativeComposeContainerDnsName } from './nativeComposeDnsName';
-import type { DeploymentImageV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentImageV1 } from '@happier-dev/deployments/contracts/v1';
 import { captureNativeComposeConfiguration, type NativeComposeConfigurationMatcher } from './nativeComposeConfiguration';
 import type { NativeComposeRoutingGeneration } from './nativeComposeStartFirst';
 

@@ -18,7 +18,7 @@ import { authorizePluginExecLaunchForHost, type HostAuthorizedPluginExecLaunch }
 import { createProviderRedactionLease, type ProviderRedactionLease } from '@/providers/spawn/redaction';
 import type { ProjectBuiltinNativeLifecycle, ProjectNativeContainerObservation, ProjectNativeAccountingResult, ProjectNativeRuntimeFacts, ProjectNativeStageOutput } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
-import type { DeploymentImageV1, OwnServerDeploymentInputBasisV1, OwnServerDeploymentSourceV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentImageV1, OwnServerDeploymentInputBasisV1, OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import type { DeploymentExecEnvPortV1, ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { MachineNativeEffectContext, MachineNativeEffectKey } from './machineNativeEffectAdmission';

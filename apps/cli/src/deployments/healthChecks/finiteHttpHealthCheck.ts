@@ -1,4 +1,5 @@
-import type { DeploymentDomainContentV1, HealthCheckResultV1, HealthCheckSubjectV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import type { HealthCheckResultV1, HealthCheckSubjectV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { HttpService, HttpResponse } from '@happier-dev/plugin-sdk/http';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';

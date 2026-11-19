@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 
 import { SharedSavedSecretValueItem } from '@/components/secrets/SharedSavedSecretValueItem';
 import { useSavedSecretCatalogEntries } from '@/components/secrets/useSavedSecretCatalog';

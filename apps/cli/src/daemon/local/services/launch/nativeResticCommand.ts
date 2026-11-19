@@ -8,7 +8,7 @@ import { isIP } from 'node:net';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { DeploymentExecEnvAttachmentV1, DeploymentExecEnvPortV1, ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
-import type { DeploymentImageV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentImageV1 } from '@happier-dev/deployments/contracts/v1';
 import type { StoragePathCapacityV1 } from '@happier-dev/protocol/storage/storageV1';
 import { RESTIC_RUNTIME_V1, RESTIC_VOLUME_SOURCE_PATH_V1, RESTIC_VOLUME_STAGE_PATH_V1, type ResticRequestV1, type ResticAccessV1, type DeploymentBackupNativeResultV1 } from '@happier-dev/deployments';
 import { authorizePluginExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';

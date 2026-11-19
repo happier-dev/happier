@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '@happier-dev/protocol/zodRuntimePolicy';
 
 /** The persisted Account mode admits the matching arm before disclosure or mutation. */
 export function deploymentStoredContentV1Schema<T extends z.ZodMiniType>(content: T) {

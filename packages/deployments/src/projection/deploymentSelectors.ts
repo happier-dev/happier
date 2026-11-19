@@ -1,4 +1,4 @@
-import type { DeploymentBackupConfigurationV1, DeploymentEnvironmentDetailV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentBackupConfigurationV1, DeploymentEnvironmentDetailV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import { parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 /** Move extracts into a dedicated PostgreSQL service on the supported native data target. */

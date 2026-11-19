@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '@happier-dev/protocol/zodRuntimePolicy';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import type { BackupDestinationContributionV1 } from '@happier-dev/protocol/plugins/contributions/backupDestinations';
 import { DeploymentEnvironmentUpdateInputV1BaseSchema } from '@happier-dev/protocol/deployments/deploymentActionsV1';

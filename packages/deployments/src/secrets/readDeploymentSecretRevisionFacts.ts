@@ -1,5 +1,5 @@
-import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/v1';
+import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { environmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { DeploymentSecretRevisionFactV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';

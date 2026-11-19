@@ -1,6 +1,6 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isDeepStrictEqual } from 'node:util';
-import type { DeploymentEnvironmentDetailV1, DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1, DeploymentSourceIntentV1 } from '@happier-dev/deployments/contracts/v1';
 
 /** Placement and row versions may advance without changing the exact definition.
  * Retained recovery uses its receipt proof rather than today's editor content. */

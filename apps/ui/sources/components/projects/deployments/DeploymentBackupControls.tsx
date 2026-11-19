@@ -3,8 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
-import { DeploymentBackupConfigurationV1Schema,
-  type DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentBackupConfigurationV1Schema, type DeploymentBackupConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentBackupVerifyInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import type { DeploymentBackupHistoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupHistoryV1';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';

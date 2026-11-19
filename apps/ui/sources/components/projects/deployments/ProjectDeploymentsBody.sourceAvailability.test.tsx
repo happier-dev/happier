@@ -47,7 +47,8 @@ describe('Source availability at Environment creation', () => {
       homes.answer(serverId, 'GET /v1/projects/sources/source-app', available ? { body: ProjectSourcesReadOutputV1Schema.parse({ ok: true, canManage: true,
         source: { id: 'source-app', revision: 1, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [], createdByAccountId: 'alice' } }) }
         : { status: 404, body: { ok: false, error: 'source_unavailable' } });
-      const { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+      const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
+      const { createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
       const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } = await import('@happier-dev/deployment-protocol/v1');
       const detail = createDeploymentEnvironmentDetailV1();
       const environment = createDeploymentEnvironmentHeaderV1({ serverId, owner: { kind: 'account', accountId: 'alice' } });

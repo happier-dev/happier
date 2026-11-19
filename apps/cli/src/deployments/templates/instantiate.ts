@@ -25,11 +25,10 @@ import { DeploymentReceiptAcceptedResultV1Schema, DeploymentReceiptSettlementFai
 import { RegistryFetchErrorV1 } from '@happier-dev/protocol/registries';
 import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentTemplateSetInputV1Schema,
-    DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
-    environmentSecretBindingIdentityV1, resolveDeploymentStoredDefinitionRevisionV1, createOwnServerEnvironmentConfigurationV1,
-    type DeploymentDomainContentV1, type DeploymentEnvironmentDetailV1, type EnvironmentSecretBindingV1,
-    type EnvironmentVariableBindingInputV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentTemplateSetInputV1Schema, environmentSecretBindingIdentityV1, resolveDeploymentStoredDefinitionRevisionV1, createOwnServerEnvironmentConfigurationV1, type DeploymentEnvironmentDetailV1, type EnvironmentSecretBindingV1, type EnvironmentVariableBindingInputV1 } from '@happier-dev/deployments/contracts/v1';
+import {
+    DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { DeploymentTemplatePreparationErrorV1, prepareDeploymentTemplateInstantiationV1, resolveDeploymentCreationDefaultsV1, resolveDeploymentTemplateInstantiationBaselineRefV1 } from '@happier-dev/deployments';
 import type { StoredCredentials } from '@/persistence';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';

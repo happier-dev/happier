@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentContentV1Schema } from '@happier-dev/deployment-protocol';
+import { createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { DeploymentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { readDeploymentUniformTargetLinkRevisionV1 } from './deploymentUniformProof';
 
 describe('installation-signed uniform receipt proof', () => {

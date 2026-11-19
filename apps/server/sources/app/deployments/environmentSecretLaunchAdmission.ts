@@ -2,10 +2,7 @@ import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/i
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { projectEnvironmentSecretBindingRequiredUsesV1, selectEnvironmentSecretCapturePurposesV1 } from '@happier-dev/deployments';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
-import { computeEnvironmentSecretLaunchAdmissionDigestV1,
-    EnvironmentSecretLaunchAdmissionResultV1Schema, type EnvironmentSecretAdmissionRequestV1,
-    type EnvironmentSecretLaunchAdmissionResultV1, type MachineConnectorSecretGrantInputV1,
-    type MachineConnectorSecretGrantResultV1 } from '@happier-dev/deployment-protocol';
+import { computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionResultV1Schema, type EnvironmentSecretAdmissionRequestV1, type EnvironmentSecretLaunchAdmissionResultV1, type MachineConnectorSecretGrantInputV1, type MachineConnectorSecretGrantResultV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
 import type { DeploymentRestoreNativeAdmissionV1, DeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';

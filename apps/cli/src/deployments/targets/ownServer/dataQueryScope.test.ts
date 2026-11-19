@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { resolveOwnServerDataQueryDefinitionForHost } from './dataQueryScope';
 import { bootstrapOwnServerReadOnlyDataRoleForHost } from './dataRoleBootstrap';
 import type { OwnServerDataQueryNative } from './dataQueryNative';

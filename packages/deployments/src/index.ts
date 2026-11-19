@@ -50,3 +50,4 @@ export { readDeploymentDatabaseSizesV1 } from './projection/deploymentDatabaseSi
 export * from './actions/contentRecipients.js';
 export * from './actions/projectSourceTeamMove.js';
 export * from './targets/targetLinkComparison.js';
+export * from './artifacts/deploymentArtifacts.js';

@@ -3,8 +3,9 @@ import { mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, symlink, writ
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { OwnServerDeploymentInputBasisV1Schema, type OwnServerDeploymentSourceV1 } from '@happier-dev/deployment-protocol';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { OwnServerDeploymentInputBasisV1Schema, type OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { configuration } from '@/configuration';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import * as installationStore from '@/daemon/identity/store';

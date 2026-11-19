@@ -1,14 +1,7 @@
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import type {
-  DeploymentContentV1,
-  DeploymentEnvironmentContentV1,
-  DeploymentMachineResultV1,
-  DeploymentReceiptFailureV1,
-  DeploymentReceiptDetailV1,
-  DeploymentStepV1,
-} from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentContentV1, DeploymentEnvironmentContentV1, DeploymentMachineResultV1, DeploymentReceiptFailureV1, DeploymentReceiptDetailV1, DeploymentStepV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { resolveWorkStatusTone, type WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { t } from '@/text';

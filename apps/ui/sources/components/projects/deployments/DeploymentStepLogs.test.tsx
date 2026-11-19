@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { projectDeploymentReceiptFactsV1 } from '@happier-dev/deployments';
-import type { DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';

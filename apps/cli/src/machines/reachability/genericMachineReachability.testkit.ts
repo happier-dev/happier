@@ -26,7 +26,8 @@ import { ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1
 import { MachineReachabilityInspectResultV1Schema, MachineReachabilityConfigureResultV1Schema,
   MachineReachabilityInspectInputV1Schema, MachineReachabilityConfigureInputV1Schema,
   MachineReachabilityPlanBasisV1Schema } from '@happier-dev/protocol';
-import { computeEnvironmentSecretLaunchAdmissionDigestV1, MachineConnectorSecretGrantInputV1Schema, type MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/deployment-protocol';
+import { computeEnvironmentSecretLaunchAdmissionDigestV1, MachineConnectorSecretGrantInputV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
+import { type MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import type { MachineSetupEffectError, MachineSetupNativeCommand, MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import { runMachineSetupEffectInternal } from '@/machines/setup/effectInternal';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
 import {
   createDeploymentEnvironmentHeaderV1,
   createDeploymentReceiptHeaderV1,

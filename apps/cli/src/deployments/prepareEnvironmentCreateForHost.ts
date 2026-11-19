@@ -8,9 +8,10 @@ import { DeploymentTargetLinkProviderContentV1Schema,
 import type { DeploymentPreviewProvenanceV1 } from '@happier-dev/protocol/deployments/deploymentPreviewProvenanceV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { DeploymentEnvironmentContentV1Schema, createOwnServerEnvironmentConfigurationV1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
-    DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DeploymentOwnServerTargetLinkContentV1Schema,
-    readDeploymentTargetLinkArtifactV1, type DeploymentNativeComposeOriginV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentContentV1Schema, createOwnServerEnvironmentConfigurationV1, DeploymentOwnServerTargetLinkContentV1Schema, type DeploymentNativeComposeOriginV1 } from '@happier-dev/deployments/contracts/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
+    DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
+    readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
 import { ArtifactEncryptionMaterialUnavailableError, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
@@ -158,7 +159,7 @@ export function createPrepareEnvironmentCreateForHost(host: EnvironmentCreateHos
     const artifacts = host.accountArtifacts ?? createCredentialedAccountArtifactStore(host.credentials);
     return async ({ input, context, projectOwner, copy, nativeOrigin, admittedPreview, telemetry }: EnvironmentCreateRequest,
         retainPreparedPreview?: (prepared: DeploymentEnvironmentCreateInputV1,
-            content: import('@happier-dev/deployment-protocol').DeploymentEnvironmentContentV1) => Promise<void>,
+            content: import('@happier-dev/deployments/contracts/v1').DeploymentEnvironmentContentV1) => Promise<void>,
     ): Promise<DeploymentEnvironmentCreateInputV1 | ActionExecuteFailure> => {
         try {
             await host.assertCurrent(context);

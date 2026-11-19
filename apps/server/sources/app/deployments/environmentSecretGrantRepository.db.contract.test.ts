@@ -5,8 +5,9 @@ import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
     sealEncryptedDataKeyEnvelopeV1, sealSavedSecretResourceStoredContentV1,
     verifyAccountContentKeyBindingV1, computeContentPublicKeyFingerprint, sealSessionDataKeyBundleV0 } from '@happier-dev/protocol';
-import { captureDeploymentBindingSavedSecretRevisionsV1, DeploymentEnvironmentContentV1Schema,
-    type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { type MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { listUnreferencedPluginCreatedSecretResources } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';

@@ -1,6 +1,6 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecuteFailure, ActionExecutorContext } from '@happier-dev/protocol';
-import type { OwnServerDeploymentImageArchiveV1 } from '@happier-dev/deployment-protocol';
+import type { OwnServerDeploymentImageArchiveV1 } from '@happier-dev/deployments/contracts/v1';
 import { readNativeComposeArchiveTransportIdentity } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { resolveActionCliCredentialTarget } from '@/cli/actions/actionServerTarget';

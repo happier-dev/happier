@@ -26,7 +26,8 @@ import type { ProjectAccountWorkspaceRefKeyV1 } from '@happier-dev/protocol/proj
 import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import { DeploymentPrepareResultV1Schema, type DeploymentPrepareInputV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
-import { projectDeploymentCancellationConsequenceV1, readDeploymentReceiptActionFactsV1, readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol/v1';
+import { projectDeploymentCancellationConsequenceV1, readDeploymentReceiptActionFactsV1 } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol/v1';
 import { listDeploymentTargetsFromManifestsV1, projectDeploymentSuggestionTargetsV1 } from '@happier-dev/deployments';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { completeActionResult } from '@happier-dev/protocol/actions/actionExecutor';

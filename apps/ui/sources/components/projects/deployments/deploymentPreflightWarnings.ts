@@ -1,4 +1,4 @@
-import { environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import { environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { LocalServiceEndpointV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 import { projectDeploymentConfigurePreflightV1, type DeploymentConfigureDraftV1 } from '@happier-dev/protocol/deployments/deploymentPublishPreparationV1';

@@ -5,8 +5,8 @@ import { DeploymentReceiptHeaderV1Schema, DeploymentReceiptResultV1Schema, Deplo
     type DeploymentCancelInputV1, type DeploymentCancelTransitionInputV1 } from '@happier-dev/protocol';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { canTransitionDeploymentV1, isDeploymentSettledV1, isDeploymentRollbackSourceEligibleV1, DeploymentStateV1Schema, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1,
-    DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployment-protocol';
+import { canTransitionDeploymentV1, isDeploymentSettledV1, isDeploymentRollbackSourceEligibleV1, DeploymentStateV1Schema, getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployments/contracts/v1';
+import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import type { Tx } from '@/storage/inTx';
 import { disableDeploymentEnvironmentAutomationsInTx } from '@/app/automations/automationDeploymentEnvironment';
 import { getActivePrismaRuntime } from '@/storage/prisma';
@@ -24,7 +24,7 @@ import { resolveDeploymentAcceptedIdentityInTx, createDeploymentAcceptedExecutio
     deploymentAcceptedExecutionColumns, deploymentInProgressStates, isOwnServerDeploymentTarget, readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
 import { readDeploymentTeardownSubjectsInTx } from './deploymentTeardownSubjects';
 import { admitDeploymentTeardownEnvironmentRemovalInTx, removeAdmittedDeploymentEnvironmentInTx } from './deploymentDispositionService';
-import { projectDeploymentReceiptActivityV1 } from '@happier-dev/deployment-protocol/v1';
+import { projectDeploymentReceiptActivityV1 } from '@happier-dev/deployments/contracts/v1';
 import { resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { deploymentTeardownMembershipAdmissionSchema, haveDeploymentMembershipRoutesInTx } from './deploymentMembershipService';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';

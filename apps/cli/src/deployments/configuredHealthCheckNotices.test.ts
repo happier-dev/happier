@@ -5,7 +5,7 @@ import { MachineServiceRowV1Schema } from '@happier-dev/protocol/actions/specs/m
 import { createConfiguredHealthCheckNotices } from './deploymentServiceHealthNotices';
 import { createPlainAccountArtifactHttpBoundary } from '@/api/artifacts/accountArtifactStore.testkit';
 import { AutomationEventSourceDefinitionV1Schema, AutomationEventAdmitInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 
 afterEach(() => vi.restoreAllMocks());
 

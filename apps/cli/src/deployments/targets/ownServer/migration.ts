@@ -1,5 +1,5 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { OwnServerEnvironmentConfigurationV1 } from '@happier-dev/deployment-protocol';
+import type { OwnServerEnvironmentConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
 import { executeAdmittedServiceCommand, type NativeComposeEnvironmentProject, type NativeComposeProjectRender } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import type { MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import type { OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';

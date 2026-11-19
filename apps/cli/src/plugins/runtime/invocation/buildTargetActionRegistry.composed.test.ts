@@ -117,8 +117,8 @@ import axios from 'axios';
 import nacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { EnvironmentSecretLaunchAdmissionInputV1Schema, MachineConnectorSecretGrantInputV1Schema, machineSecretGrantSubjectKey,
-    computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/deployment-protocol';
+import { EnvironmentSecretLaunchAdmissionInputV1Schema, MachineConnectorSecretGrantInputV1Schema, computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
+import { machineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import * as installationStore from '@/daemon/identity/store';
 import { writeMachineConnectorSecretGrantForHost } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import { openMachineSecretGrant, sealMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';

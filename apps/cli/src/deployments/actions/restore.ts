@@ -16,7 +16,7 @@ import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID
 import { projectDeploymentException } from '../deploymentFailure';
 import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { AdmittedDeploymentRestoreUpload } from '@/transfers/targets/deploymentRestoreUpload';
-import { DeploymentRestoreRecoveryPointV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentRestoreRecoveryPointV1Schema } from '@happier-dev/deployments/contracts/v1';
 import {
     DatabaseReadStatementInputV1Schema,
     type DatabaseReadStatementInputV1,

@@ -8,9 +8,8 @@ import {
     DeploymentReceiptResultV1Schema, DeploymentTargetLinkResultV1Schema,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentArtifactContentReferenceV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
+import { DeploymentEnvironmentContentV1Schema, DeploymentPlatformContentV1Schema, DeploymentTargetLinkContentV1Schema, type DeploymentSourceIntentV1 } from '@happier-dev/deployments/contracts/v1';
 import {
-    DeploymentEnvironmentContentV1Schema, DeploymentPlatformContentV1Schema,
-    DeploymentTargetLinkContentV1Schema, type DeploymentSourceIntentV1,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1,
 } from '@happier-dev/deployment-protocol';

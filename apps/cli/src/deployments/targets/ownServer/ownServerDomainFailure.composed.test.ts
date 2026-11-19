@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 import { readDeploymentTargetLinkArtifactV1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentApprovalScopeResolverV1, DeploymentEnvironmentGetResultV1Schema, type ActionExecutorDeps, FeaturesResponseSchema, DeploymentActionInputSchemasV1, DeploymentChildRpcV1Schema } from '@happier-dev/protocol';
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';

@@ -1,5 +1,5 @@
 import type { DeploymentTransitionInputV1 } from '@happier-dev/protocol';
-import type { DeploymentContentV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentContentV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 
 /** Only final per-installation version facts attest the selected link revision. */
 export function readDeploymentUniformTargetLinkRevisionV1(input: Readonly<{

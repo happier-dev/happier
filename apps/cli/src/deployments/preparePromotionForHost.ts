@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { buildDeploymentPromoteInputV1, type ActionExecutorContext,
     type DeploymentPromoteIntentInputV1, type DeploymentArtifactContentReferenceV1 } from '@happier-dev/protocol';
-import { DeploymentPlatformContentV1Schema, type DeploymentContentV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentPlatformContentV1Schema, type DeploymentContentV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { readPromotionSelectionForHost, prepareStoredPromotionForHost, createStoredPromotionReceiptContentForHost } from './storedPromotionCandidate';
 import { DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE } from './targets/ownServer/prepareCandidate';
 

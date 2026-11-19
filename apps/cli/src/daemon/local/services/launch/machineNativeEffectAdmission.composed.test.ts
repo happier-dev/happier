@@ -300,7 +300,7 @@ describe('Machine native effect admission', () => {
         expect(rebootEffects).toBe(0);
     });
     it('links the actual deployment executor to an incumbent setup before any competing Docker effect', async () => {
-        const { DeploymentEnvironmentDetailV1Schema, DeploymentReceiptDetailV1Schema } = await import('@happier-dev/deployment-protocol');
+        const { DeploymentEnvironmentDetailV1Schema, DeploymentReceiptDetailV1Schema } = await import('@happier-dev/deployments/contracts/v1');
         const { createOwnServerDeploymentTargetForHost } = await import('@/deployments/targets/ownServer/ownServerDeploymentTarget');
         const root = await mkdtemp(join(tmpdir(), 'happier-admission-deploy-'));
         const setup = setupFixture();

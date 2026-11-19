@@ -1,4 +1,4 @@
-import type { DeploymentBackupManifestV1, DeploymentPreMigrationBackupV1, DeploymentBackupRestoreCaptureV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupManifestV1, DeploymentPreMigrationBackupV1, DeploymentBackupRestoreCaptureV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { isResticSnapshotOwnedV1, readResticSourceIdsV1 } from './manifestV1.js';
 import { deploymentBackupDumpFilenameV1 } from '../actions/backups.js';
 import type { DeploymentRestoreDestinationV1 } from './restoreLifecycle.js';

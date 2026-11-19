@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { ed25519 } from '@noble/curves/ed25519';
-import { EnvironmentVariableBindingV1Schema } from '@happier-dev/deployment-protocol';
+import { EnvironmentVariableBindingV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { deriveBoxPublicKeyFromEd25519PublicKey, sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
 

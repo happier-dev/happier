@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { readDeploymentSecretRevisionFacts } from './readDeploymentSecretRevisionFacts.js';
 
 const ref = 'happier:shared-secret:v1:credential';

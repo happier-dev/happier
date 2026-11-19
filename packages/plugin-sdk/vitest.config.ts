@@ -9,7 +9,6 @@ export const PLUGIN_SDK_AUTHORED_TEST_INCLUDE = ['src/**/*.test.ts'] as const;
 export default defineConfig({
     plugins: [createWorkspacePackageSourcesPlugin([
         { packageName: '@happier-dev/protocol', packageSourceRoot: sourceRoot('protocol') },
-        { packageName: '@happier-dev/deployment-protocol', packageSourceRoot: sourceRoot('deployment-protocol') },
         { packageName: '@happier-dev/agents', packageSourceRoot: sourceRoot('agents') },
         { packageName: '@happier-dev/cli-common', packageSourceRoot: sourceRoot('cli-common') },
         { packageName: '@happier-dev/release-runtime', packageSourceRoot: sourceRoot('release-runtime') },

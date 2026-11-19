@@ -1,7 +1,7 @@
 import { projectDeploymentHealthAggregateV1, type DeploymentReadTransportV1,
     type DeploymentEnvironmentHealthFeedV1, type DeploymentEnvironmentHealthMemberV1, type DeploymentHealthServicesObservationV1,
     type DeploymentReadScopeV1, type DeploymentReadOptionsV1, type DeploymentReadResultV1 } from '@happier-dev/deployments';
-import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentHealthCurrentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { MachineServicesListResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';

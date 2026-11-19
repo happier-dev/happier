@@ -5,7 +5,7 @@ import { delimiter, join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import type { ActionExecutorContext, DeploymentSourceIntentV1 } from '@happier-dev/protocol';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createActionOperationCancellationFixture } from '@/daemon/actionOperations/actionOperationCancellation.testkit';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';

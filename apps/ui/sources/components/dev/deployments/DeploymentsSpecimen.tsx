@@ -1,15 +1,13 @@
-import type { DeploymentOwnServerContentV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentOwnServerContentV1 } from '@happier-dev/deployments/contracts/v1';
 import * as React from 'react';
 import {
   createDeploymentReadControllerV1,
   type DeploymentReadTransportV1,
 } from '@happier-dev/deployments';
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import {
-  createDeploymentEnvironmentDetailV1,
   createDeploymentEnvironmentHeaderV1,
-  createDeploymentTargetLinkHeaderV1,
-  createDeploymentReceiptDetailV1,
   createDeploymentReceiptHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 

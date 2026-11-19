@@ -5,7 +5,8 @@ import type { SessionMessageRefV1 } from '@happier-dev/protocol/sessions/message
 import type { InboxReadySessionResult } from '@/activity/presentation/buildInboxReadySessionResult';
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm/pullRequests';
-import type { DeploymentReceiptHeaderV1, DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentReceiptHeaderV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { DeploymentEnvironmentHealthFeedV1, DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import type { QualifiedActionOperation } from '../actionOperations/qualifiedActionOperation';
 import type { DeploymentReceiptAcceptedResultV1 } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';

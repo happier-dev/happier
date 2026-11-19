@@ -3,7 +3,7 @@ import { machineServiceLogReadFailureReason } from '@/components/machines/servic
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { DeploymentReceiptFactsV1 } from '@happier-dev/deployments';
-import type { DeploymentStepV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentStepV1 } from '@happier-dev/deployments/contracts/v1';
 
 import { formatElapsedDuration } from '@/components/machines/durationWords';
 import {

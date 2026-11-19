@@ -2,11 +2,8 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod/mini';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { sealMachineSecretGrantEnvelopeV1 } from '@happier-dev/deployments';
-import {
-    DeploymentNonSecretVariableBindingSourceV1Schema, EnvironmentVariableBindingV1Schema,
-    MachineSecretGrantSubjectV1Schema, MachineSecretGrantStoredReadV1Schema, MachineSecretGrantSubjectStoredReadV1Schema, machineSecretGrantSubjectKey,
-    type MachineConnectorSecretGrantSubjectV1, type MachineSecretGrantSubjectV1, type MachineSecretGrantV1,
-} from '@happier-dev/deployment-protocol';
+import { DeploymentNonSecretVariableBindingSourceV1Schema, EnvironmentVariableBindingV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { MachineSecretGrantSubjectV1Schema, MachineSecretGrantStoredReadV1Schema, MachineSecretGrantSubjectStoredReadV1Schema, machineSecretGrantSubjectKey, type MachineConnectorSecretGrantSubjectV1, type MachineSecretGrantSubjectV1, type MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { deriveBoxPublicKeyFromEd25519PublicKey, deriveBoxSecretKeyFromSeed,
     openBoxBundleWithSecretKey, sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { buildDeploymentFleetWorkflowDefinition, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
-import type { DeploymentReceiptDetailV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentReceiptDetailV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { Item } from '@/components/ui/lists/Item';

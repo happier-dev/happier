@@ -156,7 +156,7 @@ describe('partitionUncheckedItems — one cause is said once', () => {
 
 describe('a Machine\'s Store items (UPDATES-UNIFY-1113 group.storeItems)', () => {
     async function appEntries(state: 'update_available' | 'current') {
-        const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+        const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
         const { buildStoreUpdates, captureStoreUpdateBasis } = await import('@/components/store/updates/storeUpdatesModel');
         const detail = createDeploymentEnvironmentDetailV1();
         const row = { kind: 'app' as const, key: 'app:env', scope: { serverId: 'home', accountId: 'account' },

@@ -1,5 +1,5 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { DeploymentBackupRetentionV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupRetentionV1 } from '@happier-dev/deployments/contracts/v1';
 import { isResticSnapshotOwnedV1, readResticNativeJsonV1, readResticNativeRecordV1,
     readResticNativeSnapshotV1, resticEvidenceFailureV1 } from './manifestV1.js';
 

@@ -8,9 +8,8 @@ import { applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/dep
 import type { ActionExecutorContext, DeploymentActionIdV1, DeploymentEnvironmentCreateInputV1,
     DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readDeploymentEnvironmentArtifactV1, resolveDeploymentStoredDefinitionRevisionV1,
-    applyOwnServerEnvironmentConfigurationPatchV1, reconcileDeploymentRemovedDataServicesV1,
-    type DeploymentEnvironmentDefinitionV1 } from '@happier-dev/deployment-protocol';
+import { resolveDeploymentStoredDefinitionRevisionV1, applyOwnServerEnvironmentConfigurationPatchV1, reconcileDeploymentRemovedDataServicesV1, type DeploymentEnvironmentDefinitionV1 } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';

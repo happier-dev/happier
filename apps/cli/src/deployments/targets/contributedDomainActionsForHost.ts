@@ -8,7 +8,8 @@ import { DeploymentDomainTransitionInputV1Schema, DeploymentDomainProviderObserv
 import { DeploymentTargetDomainResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { readDeploymentDomainArtifactV1, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
+import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { readDeploymentDomainArtifactV1 } from '@happier-dev/deployments';
 import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol/actions/executor/types';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';

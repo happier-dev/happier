@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { relayAccessProviderDescriptorsById } from '@happier-dev/cli-common/relayAccess/catalog';
-import type { DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { AccessProviderSelectionV1Schema } from '@happier-dev/protocol/plugins/contributions/accessProviders';

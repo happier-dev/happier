@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
 import { PluginContributesV2Schema } from '@happier-dev/protocol';
-import { DeploymentTargetV1Schema } from './target.js';
+import { DeploymentTargetV1Schema } from '../targets/deploymentTargetContracts.js';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { DeploymentTargetRoleInputProtocolSchemasV1,
-    DeploymentTargetRoleResultV1ProtocolSchema } from './target.js';
+    DeploymentTargetRoleResultV1ProtocolSchema } from '../targets/deploymentTargetContracts.js';
 
 const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
 const target = {

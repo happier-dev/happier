@@ -12,7 +12,8 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequ
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/registries';
 import { deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
-import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { StoreAppListingState, StoreAppCreateChoices } from './useStoreAppListing';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';

@@ -72,6 +72,7 @@
     "@happier-dev/triage-sources": "0.0.0"
   },
   "devDependencies": {
+    "@happier-dev/deployments": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
     "@types/node": "^22.15.3",
     "@types/react": "19.2.0",

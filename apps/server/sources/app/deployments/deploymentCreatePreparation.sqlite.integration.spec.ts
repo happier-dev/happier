@@ -9,8 +9,8 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, encodePlainArtifactStoredContent,
     DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, SOCKET_RPC_EVENTS,
     ArtifactJsonCreateHttpInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { EnvironmentSecretClientBindingsInputV1Schema } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { EnvironmentSecretClientBindingsInputV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { ExternalActionExecutionAuthorizationBindingV1Schema, projectDeploymentPreparationAdmissionV1,
     createDeploymentCandidatePublicationV1, createDeploymentLinkContentArtifactIdV1,
     createDeploymentEnvironmentContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';

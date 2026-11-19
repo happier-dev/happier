@@ -56,9 +56,9 @@ describe('managed database attachment at the deployment owner', () => {
         const active = [{ purpose: 'variable' as const, name: 'DB_NAME', phase: 'runtime' as const, source: { kind: 'value' as const, value: 'deployed' } }];
         const original = stored.state.receipt.content;
         // Persisted receipt is the external boundary. Use the actual native receipt fixture's approved basis.
-        const { createDeploymentReceiptDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+        const { createDeploymentReceiptDetailV1 } = await import('@happier-dev/deployments/testing/v1');
         const receipt = createDeploymentReceiptDetailV1();
-        const { OwnServerDeploymentInputBasisV1Schema } = await import('@happier-dev/deployment-protocol');
+        const { OwnServerDeploymentInputBasisV1Schema } = await import('@happier-dev/deployments/contracts/v1');
         const basis = OwnServerDeploymentInputBasisV1Schema.parse({ v: 1, environmentId: stored.state.environment.environment.id, environmentRevision: 1,
             targetLinkId: 'target-link', targetLinkRevision: 1, sourceIntent: receipt.content.sourceIntent, manifestFingerprint: 'manifest',
             configInputDigests: [], physicalProjectName: 'native', toolVersion: '2.40.1', services: ['db'], profiles: [], bindings: active,

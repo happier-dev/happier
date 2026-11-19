@@ -10,8 +10,8 @@ import type { MachineSetupAcceptedAppRunV1 } from '@happier-dev/protocol/machine
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { deriveWorkflowReplacementId } from '@happier-dev/protocol';
-import { readDeploymentReceiptArtifactV1, readDeploymentEnvironmentArtifactV1,
-  type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentEnvironmentArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import { readMachineSetupAcceptedAppRuns, type MachineSetupAcceptedAppRunObservation } from './acceptedAppRuns';
 
 type AppObservation = NonNullable<MachineSetupPlanReviewV1['apps']>[number];

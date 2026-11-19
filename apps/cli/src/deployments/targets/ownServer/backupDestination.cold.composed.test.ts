@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { plugin } from '../../../../../../packages/plugins/backup-destinations/src/manifest';
-import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';

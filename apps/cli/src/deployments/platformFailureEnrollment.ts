@@ -11,7 +11,7 @@ import { PLATFORM_FAILURE_SETUP_ROLE } from '@happier-dev/protocol/deployments/d
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, readDeploymentReceiptEventPendingObservationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import type { PlatformFailureEnrollmentReadBackV1, PlatformFailureEnrollmentV1, PlatformFailureEnrollmentSourceV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
-import type { DeploymentEnvironmentDetailV1, DeploymentTargetV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1, DeploymentTargetV1 } from '@happier-dev/deployments/contracts/v1';
 import type { ResolvedAutomationEligibleEvent } from '@/plugins/projection/registry/types';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { readDeploymentTargetV1 } from './targets/deploymentTargetCatalog';

@@ -2,9 +2,11 @@ import axios from 'axios';
 import * as syncClient from '@happier-dev/sync-client';
 import { z } from 'zod/mini';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { OwnServerDeploymentInputBasisV1Schema, createDeploymentReceiptArtifactHeaderV1,
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployments/contracts/v1';
+import {
   DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployments';
 import { ApprovalRequestV2Schema, DeploymentChildRpcV1Schema, DeploymentReceiptResultV1Schema } from '@happier-dev/protocol';
 import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';

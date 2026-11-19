@@ -1,7 +1,7 @@
 import { isAbsolute } from 'node:path';
 import { z } from 'zod';
-import { machineSecretGrantSubjectKey, MachineConnectorSecretGrantSubjectV1Schema, MachineConnectorSecretGrantInputV1Schema,
-    type MachineConnectorSecretGrantSubjectV1, type MachineConnectorSecretGrantInputV1 } from '@happier-dev/deployment-protocol';
+import { machineSecretGrantSubjectKey, MachineConnectorSecretGrantSubjectV1Schema, type MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
+import { MachineConnectorSecretGrantInputV1Schema, type MachineConnectorSecretGrantInputV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import type { MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { configuration } from '@/configuration';
 import { assertMachineConnectorSecretInvocationCurrent, materializeMachineConnectorSecretGrantForHost, machineConnectorSecretGrantPathForHost,

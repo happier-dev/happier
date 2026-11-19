@@ -1,8 +1,8 @@
-import { z } from 'zod/mini';
+import { z } from '@happier-dev/protocol/zodRuntimePolicy';
 import { DeploymentReceiptHeaderV1Schema, DeploymentReceiptMetadataV1Schema, DeploymentReceiptListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentStateV1Schema, deploymentInProgressStates, DeploymentStepV1Schema } from '@happier-dev/protocol/deployments/deploymentStateV1';
 import { DeploymentContentV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptContentV1';
-import { deploymentStoredContentV1Schema } from './storedContent.js';
+import { deploymentStoredContentV1Schema } from './storedDeploymentContent.js';
 
 export { DeploymentStateV1Schema };
 export { deploymentInProgressStates };

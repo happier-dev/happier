@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
-import { OwnServerEnvironmentConfigurationV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { OwnServerEnvironmentConfigurationV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { InlineFormActions } from '@/components/ui/forms/InlineAddExpander';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';

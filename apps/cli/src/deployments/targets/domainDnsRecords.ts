@@ -1,6 +1,6 @@
 import type { ActionExecuteFailure } from '@happier-dev/protocol';
 import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol/actions/executor/types';
-import type { DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentDomainDnsInputV1, DeploymentDomainDnsRecordInputV1 } from '@happier-dev/protocol';
 
 type Child = HostReviewedChildInvocationV1;

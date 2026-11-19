@@ -7,7 +7,7 @@ import { ExternalActionHttpErrorSchema, parseExternalActionResponseEnvelopeV1, p
 import { API_TOKEN_FULL_GRANT_V1, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER,
     ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, createDeploymentApprovalScopeResolverV1,
     DeploymentEnvironmentGetInputV1Schema } from "@happier-dev/protocol";
-import { createDeploymentEnvironmentV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentV1 } from '@happier-dev/deployments/testing/v1';
 import { decodeBase64 } from "privacy-kit";
 import { ApiTokenGrantV1Schema } from "@happier-dev/protocol/auth/apiTokenGrant";
 import { AutomationV3RunMutationResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { createDeploymentEnvironmentDetailV1 } from '../testing/v1.js';
-import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentHeaderV1Schema } from './environment.js';
+import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentHeaderV1Schema } from '../artifacts/deploymentEnvironmentContent.js';
 import { DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol';
-import { DeploymentEnvironmentUpdateStorageInputV1Schema } from './operations.js';
+import { DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 
 describe('P44 preview template private content', () => {
     it('retains fresh destination backup authoring without borrowing source ownership or inline credentials', () => {

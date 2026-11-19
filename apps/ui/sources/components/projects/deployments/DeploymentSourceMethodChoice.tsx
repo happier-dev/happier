@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { t } from '@/text';
 

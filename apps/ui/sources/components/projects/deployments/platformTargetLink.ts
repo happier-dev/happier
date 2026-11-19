@@ -1,5 +1,5 @@
 import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
-import type { DeploymentRuntimeTargetV1, DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentRuntimeTargetV1, DeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { EffectiveActionInputField } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { patchHappierActionInputPath, readHappierActionInputPath } from '@happier-dev/plugin-ui/presentation';

@@ -32,7 +32,8 @@ import { createDeploymentGitRegistry } from '@/deployments/targets/ownServer/exa
 import { createScmHostingProviderRegistry } from '@/scm/hostingProviders/registry';
 import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
 import { isHostGitPush } from '@/scm/gitHostTransport';
-import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createGitWorkspace, runGit } from '@/scm/rpc/__tests__/testRpcHarness';
 import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from './projectAccountRows.testkit';

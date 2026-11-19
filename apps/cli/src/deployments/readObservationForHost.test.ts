@@ -1,8 +1,9 @@
 import { expect, it } from 'vitest';
-import { createDeploymentEnvironmentHeaderV1, createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1,
-    createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1,
-    DeploymentPlatformContentV1Schema, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DeploymentPlatformContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import { readDeploymentObservationForHost } from './readObservationForHost';
 
 function fixture() {

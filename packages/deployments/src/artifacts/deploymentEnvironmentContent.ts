@@ -1,20 +1,20 @@
-import { z } from 'zod/mini';
+import { z } from '@happier-dev/protocol/zodRuntimePolicy';
 import { DeploymentEnvironmentCapabilitiesV1Schema, DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentEnvironmentOwnerV1Schema, DeploymentIngressV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, EnvironmentSecretBindingStoredReadV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryDefinitionV1Schema, DeploymentPendingDeployV1Schema, OwnServerEnvironmentConfigurationV1Schema, type OwnServerEnvironmentConfigurationV1, parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 import { hasCompleteDeploymentPreviewRelationV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
-import { DeploymentTextV1Schema as text } from './ids.js';
-import { deploymentStoredContentV1Schema } from './storedContent.js';
-import { DeploymentEnvironmentTemplateProvenanceV1Schema } from './template.js';
-import { DeploymentPreviewProvenanceV1Schema, DeploymentPreviewTemplateV1Schema } from './previews.js';
-import { DeploymentEnvironmentBackupV1Schema } from './backup.js';
+import { DeploymentTextV1Schema as text } from './deploymentIdentity.js';
+import { deploymentStoredContentV1Schema } from './storedDeploymentContent.js';
+import { DeploymentEnvironmentTemplateProvenanceV1Schema } from '../templates/deploymentTemplateProvenance.js';
+import { DeploymentPreviewProvenanceV1Schema, DeploymentPreviewTemplateV1Schema } from '../projection/deploymentPreviewSchemas.js';
+import { DeploymentEnvironmentBackupV1Schema } from '../backups/deploymentBackupContracts.js';
 import { DeploymentTelemetryCapabilitiesV1Schema } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { WorkflowRunIdV1Schema } from '@happier-dev/protocol/workflows/workflowIdsV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { EnvironmentSecretBindingV1 } from '@happier-dev/protocol';
-import type { MachineSecretGrantV1 } from '../secrets/machineSecretGrantV1.js';
+import type { MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 
 export { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, DeploymentSecretBindingSourceV1Schema, DeploymentVariableBindingSourceV1Schema, DeploymentNonSecretVariableBindingSourceV1Schema, EnvironmentVariableBindingV1Schema, EnvironmentVariableBindingInputV1Schema, EnvironmentVariableBindingGrantReferenceV1Schema, StoredAppPresetInputV1Schema, DeploymentTemplateRefV1Schema, StoredAppPresetBindingV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 export type { EnvironmentVariableBindingV1, EnvironmentVariableBindingInputV1, EnvironmentVariableBindingGrantReferenceV1, StoredAppPresetInputV1 } from '@happier-dev/protocol';

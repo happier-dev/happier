@@ -1,7 +1,7 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isDeepStrictEqual } from 'node:util';
 import type { DeploymentDeployIntentInputV1 } from '@happier-dev/protocol';
-import type { DeploymentContentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentContentV1 } from '@happier-dev/deployments/contracts/v1';
 
 /** The admitted root selects source and failure policy; receipt content cannot replace them. */
 export function assertReviewedDeploymentSource(input: Readonly<{

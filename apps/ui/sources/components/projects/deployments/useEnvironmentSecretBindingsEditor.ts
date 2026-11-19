@@ -1,9 +1,5 @@
 import * as React from 'react';
-import {
-    EnvironmentSecretBindingInputV1Schema, environmentSecretBindingIdentityV1,
-    type DeploymentEnvironmentHeaderV1, type EnvironmentSecretBindingInputV1, type EnvironmentSecretBindingV1,
-    type EnvironmentVariableBindingV1,
-} from '@happier-dev/deployment-protocol';
+import { EnvironmentSecretBindingInputV1Schema, environmentSecretBindingIdentityV1, type DeploymentEnvironmentHeaderV1, type EnvironmentSecretBindingInputV1, type EnvironmentSecretBindingV1, type EnvironmentVariableBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { projectEnvironmentSecretBindingsV1, type EnvironmentSecretBindingProjectionV1 } from '@happier-dev/deployments';
 import { applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { projectEnvironmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';

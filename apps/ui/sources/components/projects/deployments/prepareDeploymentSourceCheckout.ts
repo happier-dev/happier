@@ -1,5 +1,5 @@
-import type { DeploymentEnvironmentDetailV1, DeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
-import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentDetailV1, DeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
+import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';

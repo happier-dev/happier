@@ -1,9 +1,7 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { lstat, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { isDeploymentSettledV1, getDeploymentTargetLinkLineageV1,
-    type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentImageV1,
-    type DeploymentTargetLinkHeaderV1, type OwnServerDeploymentSourceV1 } from '@happier-dev/deployment-protocol';
+import { isDeploymentSettledV1, getDeploymentTargetLinkLineageV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentImageV1, type DeploymentTargetLinkHeaderV1, type OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import { deriveDeploymentMemberVersionsV1, selectDeploymentRetainedPreviousV1 } from '@happier-dev/deployments';
 import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createNativeComposeIncumbentBindReader } from '@/daemon/local/services/launch/nativeComposeSharedData';

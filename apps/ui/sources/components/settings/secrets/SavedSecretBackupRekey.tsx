@@ -2,7 +2,7 @@ import * as React from 'react';
 import { ScrollView } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { SavedSecretBackupRekeyRequiredV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
-import type { DeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 
 import { createDeploymentActions } from '@/components/projects/deployments/deploymentActions';
 import { deploymentWorkStatus } from '@/components/projects/deployments/deploymentPresentation';

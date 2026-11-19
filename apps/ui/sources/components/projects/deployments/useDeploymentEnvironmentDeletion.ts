@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentReadControllerV1, DeploymentReadDemandV1, DeploymentReadSnapshotV1 } from '@happier-dev/deployments';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';

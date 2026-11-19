@@ -20,7 +20,7 @@ import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResult
 import { DeploymentDeployAdmissionInputV1Schema, DeploymentBackupRestoreResultV1Schema,
     DeploymentTeardownNothingDeployedInputV1Schema, DeploymentTeardownResultV1Schema,
     DeploymentEnvironmentAccessInputV1Schema, DeploymentEnvironmentAccessResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentRestoreRecoveryPointV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentRestoreRecoveryPointV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { configuration } from '@/configuration';
 import { prepareProjectOpenReceiptPersistence } from '@/daemon/actionOperations/projectOpenReceiptPersistence';
@@ -94,13 +94,16 @@ import { createOwnServerSourceCustodyReader } from './sourceProvenance';
 import { buildOwnServerDeploymentReceipt, isOwnServerBuildReceiptComplete } from './buildReceipt';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost, resolveOwnServerDeploymentRootForHost } from './paths';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { sealMachineSecretGrant } from '../../secrets/machineSecretGrant';
 import { createOwnServerDeploymentTargetForHost, type OwnServerDeploymentRequest, type OwnServerDeploymentTargetHostInput, type OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';
 import { prepareStoredPromotionCandidate, readStoredPromotionCandidateForHost } from '../../storedPromotionCandidate';
-import { DeploymentApprovalReviewV1Schema, DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol/v1';
-import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, computeEnvironmentSecretLaunchAdmissionDigestV1,
-    createDeploymentReceiptArtifactHeaderV1, readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentApprovalReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployments';
+import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { createDaemonDeploymentActionDeps } from '../../createDaemonDeploymentActionDeps';
 import { createRegistryHostV1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
@@ -112,9 +115,8 @@ import { createOwnServerTeardownForHost } from './teardown';
 import { DeploymentTeardownRequestInputV1Schema } from '@happier-dev/protocol/deployments/deploymentTeardownRequestV1';
 import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentStateV1';
-import { DeploymentBindingsSetStorageInputV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
-    DeploymentOwnServerContentV1Schema, DeploymentTargetLinkContentV1Schema,
-    DeploymentEnvironmentBackupSetInputV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentOwnServerContentV1Schema, DeploymentTargetLinkContentV1Schema, DeploymentEnvironmentBackupSetInputV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentBindingsSetStorageInputV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isRecord } from '@happier-dev/protocol/inputs/inputRecords';
@@ -138,7 +140,7 @@ import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentEnvironmentBackupV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentBackupV1 } from '@happier-dev/deployments/contracts/v1';
 
 afterEach(() => {
     // Each fixture owns a different checkout, not a mutation of the preceding

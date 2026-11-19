@@ -1,6 +1,6 @@
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { DeploymentEnvironmentContentV1, DeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentContentV1, DeploymentEnvironmentHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import { DeploymentEnvironmentListResultV1Schema, type DeploymentEnvironmentListInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentPreviewForkEligibilityV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';

@@ -12,7 +12,7 @@ import { teamIdentityConnectionReferenceKey } from '@/app/teams/identity/teamIde
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
-import { createDeploymentEnvironmentDetailV1, createDeploymentV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentV1 } from '@happier-dev/deployments/testing/v1';
 import { initEncrypt } from '@/modules/encrypt';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { createDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';

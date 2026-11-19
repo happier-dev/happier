@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
-import { OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployment-protocol';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1,
+import { OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import {
     createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createOwnServerDeploymentTargetForHost, type OwnServerDeploymentTargetHostInput,
     type OwnServerDeploymentRequest } from './ownServerDeploymentTarget';

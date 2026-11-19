@@ -10,7 +10,8 @@ import { ScmPullRequestGetResponseSchema } from '@happier-dev/protocol/scm/pullR
 import { ScmFileAtRevisionResponseSchema } from '@happier-dev/protocol/scm/fileAtRevision';
 import { ScmRemoteResponseSchema, ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
 import { readScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
-import { DeploymentEnvironmentContentV1Schema, type DeploymentEnvironmentDetailV1,
+import { DeploymentEnvironmentContentV1Schema, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
+import {
   DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { resolveAdmittedRepositoryWorkspace, validateAdmittedRepositoryWorkspace } from '@/workspaces/admittedRepositoryWorkspace';
 import type { CliAdmittedProjectRowsReader } from '@/session/actions/cliActionDeps/projectAdmission';

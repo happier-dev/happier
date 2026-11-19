@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DeploymentEnvironmentDefinitionV1, DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentDefinitionV1, DeploymentSourceIntentV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';

@@ -4,8 +4,7 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
 import type { DatabaseOperationClassV1 } from '@happier-dev/plugin-sdk/database';
 import { parseDatabaseConnectionUrl } from '@happier-dev/databases';
-import { environmentSecretBindingIdentityV1, type DeploymentEnvironmentDetailV1,
-    type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import { environmentSecretBindingIdentityV1, type DeploymentEnvironmentDetailV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import type { DeploymentTargetRoleAdmissionHost } from '@/deployments/targets/admitDeploymentTargetRoleForHost';
 import { prepareEnvironmentSecretBindingsForLaunch } from './prepareEnvironmentSecretBindingsForLaunch';

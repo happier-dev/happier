@@ -1,6 +1,6 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentHeaderV1, WorkflowDefinitionV1 } from '@happier-dev/protocol';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import type { z } from 'zod/mini';
 import { createHash } from 'node:crypto';

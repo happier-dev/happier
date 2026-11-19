@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-import { DeploymentTemplateV1Schema, DeploymentTemplateRefV1Schema, DeploymentEnvironmentContentV1Schema, type DeploymentEnvironmentContentV1,
-    type DeploymentTemplateV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentTemplateRefV1Schema, DeploymentEnvironmentContentV1Schema, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
+import { type DeploymentTemplateV1 } from '@happier-dev/protocol';
 import { createDeploymentSecretVariableBindingV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { prepareDeploymentTemplateInstantiationV1 } from './prepareDeploymentTemplateInstantiationV1.js';
 

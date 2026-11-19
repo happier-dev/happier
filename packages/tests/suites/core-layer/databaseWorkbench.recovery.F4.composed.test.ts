@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { expect, it } from 'vitest';
 
-import { DeploymentContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentDumpBackupSourceV1 } from '@happier-dev/deployments';
 import {
     DatabaseReadStatementInputV1Schema,

@@ -38,7 +38,7 @@ describe('Update all', () => {
 
 describe('a Machine\'s Store items (UPDATES-UNIFY-1113 group.storeItems)', () => {
     it('lists the Store update waiting on a Machine in that Machine\'s section, through the Store\'s own row', async () => {
-        const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+        const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
         const { buildStoreUpdates, captureStoreUpdateBasis } = await import('@/components/store/updates/storeUpdatesModel');
         const detail = createDeploymentEnvironmentDetailV1();
         const row = { kind: 'app' as const, key: 'app:env', scope: { serverId: 'home', accountId: 'account' },

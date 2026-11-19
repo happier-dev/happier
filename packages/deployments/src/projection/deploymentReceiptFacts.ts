@@ -1,10 +1,9 @@
-import type {
-    DeploymentReceiptDetailV1, DeploymentReceiptFailureV1, DeploymentReviewRevisionV1, DeploymentStepV1,
-    DeploymentReceiptHeaderV1, DeploymentTargetLinkHeaderV1, DeploymentReceiptHistoryV1,
-} from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentReceiptDetailV1, DeploymentReceiptFailureV1, DeploymentStepV1, DeploymentReceiptHeaderV1, DeploymentTargetLinkHeaderV1, DeploymentReceiptHistoryV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import type { DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
-import { deploymentRevisionShortLabelV1, getDeploymentTargetLinkLineageV1, isDeploymentRollbackSourceEligibleV1,
-    projectDeploymentDowntimeClassV1, projectDeploymentReviewRevisionV1 } from '@happier-dev/deployment-protocol/v1';
+import { deploymentRevisionShortLabelV1 } from '@happier-dev/deployment-protocol/v1';
+import { getDeploymentTargetLinkLineageV1, isDeploymentRollbackSourceEligibleV1 } from '@happier-dev/deployments/contracts/v1';
+import { projectDeploymentDowntimeClassV1, projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 
 type Version = Readonly<{ deploymentId: string; revision: DeploymentReviewRevisionV1 }>;
 export function deploymentRevisionLabelV1(revision: DeploymentReviewRevisionV1): string {

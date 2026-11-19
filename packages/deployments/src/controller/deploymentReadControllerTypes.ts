@@ -1,15 +1,6 @@
-import type {
-    DeploymentEnvironmentDetailV1,
-    DeploymentEnvironmentHeaderV1, DeploymentEnvironmentContentV1,
-    DeploymentEnvironmentCollectionV1,
-    DeploymentReceiptHistoryV1,
-    DeploymentReceiptDetailV1,
-    DeploymentReceiptHeaderV1,
-    DeploymentTargetLinkHeaderV1,
-    DeploymentHealthStatusV1,
-    DeploymentDomainContentV1,
-    DeploymentEnvironmentHealthAggregateV1,
-} from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentDetailV1, DeploymentEnvironmentHeaderV1, DeploymentEnvironmentContentV1, DeploymentEnvironmentCollectionV1, DeploymentReceiptHistoryV1, DeploymentReceiptDetailV1, DeploymentReceiptHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentHealthStatusV1, DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentEnvironmentListInputV1, DeploymentReceiptListInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentDatabaseSizeV1, DeploymentDomainHealthFactsV1, DeploymentSecretRevisionFactV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';

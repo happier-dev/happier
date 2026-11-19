@@ -10,7 +10,7 @@ import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, Deploy
 import {
     createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
 import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { createHomeGovernanceHarness, createAccountTokenForTests, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';

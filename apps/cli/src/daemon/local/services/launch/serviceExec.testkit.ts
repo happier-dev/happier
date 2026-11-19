@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import nacl from 'tweetnacl';
 import { createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import type { EnvironmentVariableBindingV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentVariableBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentSourceMaterializationPort } from '@/deployments/targets/ownServer/exactCommitRelease';
 import { createOwnServerDockerBoundary } from '@/deployments/targets/ownServer/ownServerDeployment.testkit';
 import { createDeploymentExecEnvPortForHost } from '@/deployments/secrets/deploymentExecEnvPort';

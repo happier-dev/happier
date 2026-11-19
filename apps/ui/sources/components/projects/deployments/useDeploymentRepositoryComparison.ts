@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DeploymentEnvironmentDefinitionV1, DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentDefinitionV1, DeploymentSourceIntentV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import type { ScmLogListResponse, ScmRevisionRangeV1 } from '@happier-dev/protocol/scm';
 import { machineScmLogList } from '@/sync/ops/scm/machineScm';

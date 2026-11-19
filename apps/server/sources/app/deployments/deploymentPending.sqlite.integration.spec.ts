@@ -15,7 +15,7 @@ import { ExternalActionExecutionAuthorizationV1Schema, bindExternalActionExecuti
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { signExternalActionMachineRequestV1, encodeExternalActionResolvedTargetV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { createDeploymentEnvironmentV1, createDeploymentV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentV1, createDeploymentV1 } from '@happier-dev/deployments/testing/v1';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';

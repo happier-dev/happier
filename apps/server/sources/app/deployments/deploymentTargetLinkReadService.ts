@@ -1,7 +1,7 @@
 import type { DeploymentTargetLinksListInputV1, DeploymentTargetLinksListResultV1 } from '@happier-dev/protocol';
 import type { Prisma } from '@prisma/client';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import type { Tx } from '@/storage/inTx';
 import { getActivePrismaRuntime } from '@/storage/prisma';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';

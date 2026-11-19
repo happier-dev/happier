@@ -12,8 +12,10 @@ import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER,
     encodePlainMachineStoredContent } from '@happier-dev/protocol';
-import { DeploymentEnvironmentContentV1Schema, readDeploymentReceiptArtifactV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
+import { type MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { ArtifactHeaderMetadataV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -352,7 +354,7 @@ describe('deployment storage real SQLite boundary', () => {
 
     it.each([false, true])('admits same-confirm Domain retirement with the teardown capture and keeps the final live custody guard (removeEnvironment=%s)', async removeEnvironment => {
         const { createDeploymentInTx, transitionDeploymentInTx } = await import('./deploymentService');
-        const { createDeploymentReceiptDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+        const { createDeploymentReceiptDetailV1 } = await import('@happier-dev/deployments/testing/v1');
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
         const team = await db.team.create({ data: { name: 'Teardown Domain custody' } });

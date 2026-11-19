@@ -10,8 +10,9 @@ import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/pr
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { encodeBase64, DeploymentTransitionInputV1Schema } from '@happier-dev/protocol';
 import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployment-protocol';
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1,
+import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentHeaderV1,
     createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';

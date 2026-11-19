@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HealthCheckResultV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { HealthCheckResultV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { readHeartbeatHealthCheckV1 } from './finiteHeartbeatHealthCheck';
 
 describe('finite accepted-heartbeat age', () => {

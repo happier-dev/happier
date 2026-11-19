@@ -6,7 +6,7 @@ import { runCliJson } from '../../../../../../../packages/tests/src/testkit/uiE2
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentSocketHome } from '@/testkit/deploymentSocketHome.testkit.mjs';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';

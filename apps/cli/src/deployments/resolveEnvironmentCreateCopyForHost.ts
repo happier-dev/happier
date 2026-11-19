@@ -6,8 +6,8 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { DeploymentEnvironmentCopyProvisionV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentCopyV1';
 import type { ResolvedActionContribution } from '@/plugins/projection/registry/types';
-import type { DeploymentTargetV1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentTargetV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import { ArtifactEncryptionMaterialUnavailableError, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';

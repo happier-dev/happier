@@ -43,18 +43,19 @@ import { symbols, type DestinationStream } from 'pino';
 import { logger } from '@/utils/logging/log';
 import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowMutationResponseV1Schema,
     ProjectAccountRowReadResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { ProjectSourcesReadOutputV1Schema, ProjectSourcesUpdateInputV1Schema,
     ProjectSourceRepositorySelectorV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { DEPLOYMENT_TEARDOWN_STEPS_V1, DeploymentBindingsSetStorageInputV1Schema, DeploymentDomainContentV1Schema, readDeploymentDomainArtifactV1,
-    computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionBodyV1Schema,
-    EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretClientBindingsInputV1Schema,
-    EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema,
-    readDeploymentEnvironmentArtifactV1, captureDeploymentBindingSavedSecretRevisionsV1,
-    type EnvironmentSecretBindingV1, type MachineConnectorSecretGrantBodyV1 } from '@happier-dev/deployment-protocol';
+import { type EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
+import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
+import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { readDeploymentDomainArtifactV1, readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
+import { DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
+import { computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionBodyV1Schema, EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretClientBindingsInputV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema, type MachineConnectorSecretGrantBodyV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { API_TOKEN_FULL_GRANT_V1, ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, sealSavedSecretResourceStoredContentV1,
     encodePlainMachineStoredContent, encodePlainArtifactStoredContent, type DeploymentChildRpcV1, projectDeploymentChildRoutingV1,
     computeDeploymentTransitionRequestDigestV1, ArtifactJsonCreateHttpInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DeploymentReceiptResultV1Schema, DeploymentReceiptListInputV1Schema,

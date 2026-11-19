@@ -13,7 +13,7 @@ import type {
   DeploymentReadDemandV1,
 } from '@happier-dev/deployments';
 import type { DeploymentBackupConfigureResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
-import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 import {

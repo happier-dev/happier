@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import * as health from './index.js';
+import * as health from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 
 const serviceSubject = { kind: 'machineService', machineId: 'machine-b', serviceId: 'watch-b' };
 const check = { checkId: 'availability', kind: { pluginId: 'example.health', localId: 'http' },

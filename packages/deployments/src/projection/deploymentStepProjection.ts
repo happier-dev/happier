@@ -1,5 +1,5 @@
-import type { DeploymentMachineResultV1, DeploymentReceiptDetailV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/v1';
-import { getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentMachineResultV1, DeploymentReceiptDetailV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
+import { getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployments/contracts/v1';
 
 export type DeploymentMemberVersionV1 = Readonly<{
     machineId: string;

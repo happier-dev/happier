@@ -1,10 +1,7 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DEFAULT_DEPLOYMENT_RETAIN_PREVIOUS_DEPLOYMENTS_V1,
-  type DeploymentCreationDefaultsV1, type ProjectDeploymentDefaultsPayloadV1,
-  type ProjectSourceOwnerV1, type DeploymentCreationDefaultSourceV1,
-  type ResolvedDeploymentCreationDefaultsV1 } from '@happier-dev/deployment-protocol';
+import { DEFAULT_DEPLOYMENT_RETAIN_PREVIOUS_DEPLOYMENTS_V1, type DeploymentCreationDefaultsV1, type ProjectDeploymentDefaultsPayloadV1, type ProjectSourceOwnerV1, type DeploymentCreationDefaultSourceV1, type ResolvedDeploymentCreationDefaultsV1 } from '@happier-dev/deployments/contracts/v1';
 
-export type { DeploymentCreationDefaultSourceV1, ResolvedDeploymentCreationDefaultsV1 } from '@happier-dev/deployment-protocol';
+export type { DeploymentCreationDefaultSourceV1, ResolvedDeploymentCreationDefaultsV1 } from '@happier-dev/deployments/contracts/v1';
 export type DeploymentCreationDefaultsInputV1 = Readonly<{
   /** Absent only for an unsaved Project whose reviewed intended owner is already known. */
   projectSourceId?: string;

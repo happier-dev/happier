@@ -1,4 +1,4 @@
-import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import { isMap, isSeq, parseDocument } from 'yaml';
 import { DeploymentEnvironmentContentPatchV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentContentPatchV1';

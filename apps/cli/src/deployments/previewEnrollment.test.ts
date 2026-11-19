@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import fastify from 'fastify';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -28,7 +28,8 @@ import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/acces
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { activate, activateAccount } from '../../../../packages/plugins/scm-github/src/activate';
 import { CONFIGURED_ACCOUNT, REPOSITORY_KEY, previewStatusTransport } from '../../../../packages/plugins/scm-github/src/triage/testkit/githubMutation.test-support';

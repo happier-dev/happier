@@ -1,6 +1,6 @@
 import { isAbsolute, relative, sep } from 'node:path';
 import { isLiteralLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
-import type { DeploymentApprovalReviewV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentApprovalReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { isNativeDefinitionRecord as record } from './nativePackageScripts';
 
 export type NativeComposeRuntimeReview = Pick<Extract<DeploymentApprovalReviewV1, { inspection: string }>,

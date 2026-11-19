@@ -55,7 +55,7 @@ import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceSer
 import { createDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
-import { createDeploymentEnvironmentV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentV1 } from '@happier-dev/deployments/testing/v1';
 import { registerExternalActionRoutes } from './registerExternalActionRoutes';
 
 // Composed hop: the real bearer verifier, persisted API token, grant evaluator,

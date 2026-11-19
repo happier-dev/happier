@@ -8,8 +8,9 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
     AccountApiTokenSummaryV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1,
-    createDeploymentSecretVariableBindingV1, createDeploymentTargetLinkHeaderV1, createDeploymentReceiptDetailV1,
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentHeaderV1,
+    createDeploymentSecretVariableBindingV1,
     createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
 import { encodeBase64, decodeBase64 } from '@/encryption/base64';

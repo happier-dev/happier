@@ -1,4 +1,4 @@
-import type { DeploymentEnvironmentContentV1, DeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentContentV1, DeploymentEnvironmentHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import {
     DatabaseOperationResultV1Schema,
     type DatabaseDescriptorV1,

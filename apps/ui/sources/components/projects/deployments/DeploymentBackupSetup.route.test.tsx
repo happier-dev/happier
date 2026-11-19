@@ -7,8 +7,8 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';

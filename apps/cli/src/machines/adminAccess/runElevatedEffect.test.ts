@@ -6,7 +6,7 @@ import nacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/deployment-protocol';
+import { computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
@@ -611,7 +611,7 @@ describe('one operation-scoped sudo stdin hand-off', () => {
         const f = nativeFixture();
         const subject = { v: 1 as const, kind: 'connectorToken' as const, machineId: 'machine-a', installationId: 'install-a',
             provider: { pluginId: 'example.network', localId: 'connector' }, connectorId: 'connector' };
-        const { machineSecretGrantSubjectKey } = await import('@happier-dev/deployment-protocol');
+        const { machineSecretGrantSubjectKey } = await import('@happier-dev/protocol/deployments/machineSecretGrantV1');
         const plan = machineSetup.createMachineSetupEffectPlan({ basis, steps: [{ id: 'token', kind: 'file',
             path: '/etc/example/connector.token', mode: 0o600, owner: 'root', group: 'root',
             content: { kind: 'secretGrant', grantRef: machineSecretGrantSubjectKey(subject) } }],
@@ -631,7 +631,7 @@ describe('one operation-scoped sudo stdin hand-off', () => {
     it('settles child cancellation while its exact signed header exchange is still pending', async () => {
         const subject = { v: 1 as const, kind: 'connectorToken' as const, machineId: 'machine-a', installationId: 'install-a',
             provider: { pluginId: 'example.network', localId: 'connector' }, connectorId: 'connector' };
-        const { machineSecretGrantSubjectKey } = await import('@happier-dev/deployment-protocol');
+        const { machineSecretGrantSubjectKey } = await import('@happier-dev/protocol/deployments/machineSecretGrantV1');
         const plan = machineSetup.createMachineSetupEffectPlan({ basis, steps: [{ id: 'token', kind: 'file',
             path: '/etc/example/connector.token', mode: 0o600, owner: 'root', group: 'root',
             content: { kind: 'secretGrant', grantRef: machineSecretGrantSubjectKey(subject) } }],

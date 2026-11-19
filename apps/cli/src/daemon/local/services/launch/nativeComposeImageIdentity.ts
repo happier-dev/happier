@@ -3,7 +3,7 @@ import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { list as listTar } from 'tar';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import type { DeploymentImageV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentImageV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentExecEnvPortV1 } from '@happier-dev/plugin-sdk/exec';
 import { createFileTransferPayloadSource, resolveTransferPayloadManifestHash } from '@/machines/transfer/transferPayloadSource';
 import type { MachineNativeEffectContext } from './machineNativeEffectAdmission';

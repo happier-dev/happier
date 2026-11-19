@@ -22,7 +22,7 @@ import { resolveMachineAdmission } from '@/app/machines/machineAccess';
 import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { readMachineConnectorSecretGrantInTx, setMachineConnectorSecretGrantInTx } from '@/app/deployments/environmentSecretGrantRepository';
-import { MachineConnectorSecretGrantSubjectV1Schema } from '@happier-dev/deployment-protocol';
+import { MachineConnectorSecretGrantSubjectV1Schema } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { inReadSnapshot, inTx } from '@/storage/inTx';
 import { createExternalActionDaemonDispatcher } from '@/app/api/socket/externalActionDispatcher';
 import { buildRpcMethodRoom } from '@/app/api/socket/rpc/rpcMethodRoom';

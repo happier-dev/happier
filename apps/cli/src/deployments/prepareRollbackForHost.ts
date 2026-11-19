@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DeploymentRollbackInputV1Schema, type ActionExecutorContext,
     type DeploymentArtifactContentReferenceV1, type DeploymentRollbackInputV1, type DeploymentRollbackIntentInputV1 } from '@happier-dev/protocol';
-import { DeploymentContentV1Schema, type DeploymentContentV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentContentV1Schema, type DeploymentContentV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { readPromotionSelectionForHost } from './storedPromotionCandidate';
 import { deploymentUnavailableError } from './deploymentFailure';
 

@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { randomBytes } from 'node:crypto';
 import { x25519 } from '@noble/curves/ed25519';
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1,
-    createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createDeploymentHealthAggregateLeaseV1, type DeploymentHealthObservationV1 } from '@happier-dev/deployments';
 import { readOwnedNoticeArtifactV1, type HealthCheckSourceConfigV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { attachDeploymentServiceHealthNotices } from '@/deployments/deploymentServiceHealthNotices';

@@ -2,7 +2,7 @@ import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/a
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import type { DeploymentEnvironmentContentV1, DeploymentEnvironmentDetailV1, EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentContentV1, DeploymentEnvironmentDetailV1, EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { configuration } from '@/configuration';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';

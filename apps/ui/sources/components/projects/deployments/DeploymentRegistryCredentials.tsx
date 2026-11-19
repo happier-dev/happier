@@ -1,7 +1,6 @@
 import * as React from 'react';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
-import { EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1,
-  type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol/v1';
+import { EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { projectEnvironmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';

@@ -1,4 +1,4 @@
-import type { DeploymentDomainHeaderV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentHealthCurrentResultV1, ProjectReadinessFactOutcomeV1 } from '@happier-dev/protocol';
 import type { SavedHealthCheckSourceRead } from './readSavedHealthCheckSource';
 

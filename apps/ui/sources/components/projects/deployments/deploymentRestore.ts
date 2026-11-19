@@ -1,4 +1,4 @@
-import { DeploymentRestorePreparationV1Schema, type DeploymentRestorePreparationV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentRestorePreparationV1Schema, type DeploymentRestorePreparationV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentNativeSnapshotOfferV1Schema, DeploymentNativeSnapshotUnavailableV1Schema, type DeploymentNativeSnapshotOfferV1, type DeploymentNativeSnapshotUnavailableV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol';
 import type { DeploymentBackupInventoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';

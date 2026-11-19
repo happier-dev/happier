@@ -1,5 +1,5 @@
 import { DeploymentTargetLinkContentV1Schema } from '@happier-dev/protocol/deployments/deploymentTargetLinkContentV1';
-import { z } from 'zod/mini';
+import { z } from '@happier-dev/protocol/zodRuntimePolicy';
 import { deploymentTargetFitFieldsV1 } from '@happier-dev/protocol/deployments/deployShapeV1';
 import { DeploymentTargetLinkHeaderV1Schema, DeploymentTargetLinkMetadataV1Schema, DeploymentTargetLinkMemberV1Schema, DeploymentTargetSourceV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { PluginActionIconV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
@@ -33,8 +33,8 @@ export { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetProviderId
     type DeploymentTargetRuntimeRoleV1, type DeploymentTargetRoleInputV1,
     type DeploymentTargetRoleResultV1, type DeploymentTargetRoleFailureV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 
-import { deploymentStoredContentV1Schema } from './storedContent.js';
-import { DeploymentIdentifierV1Schema as id } from './ids.js';
+import { deploymentStoredContentV1Schema } from '../artifacts/storedDeploymentContent.js';
+import { DeploymentIdentifierV1Schema as id } from '../artifacts/deploymentIdentity.js';
 import type { DeploymentSourceMethodV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 /** An invocation can override its link's authored choice; older links retain the Git default. */

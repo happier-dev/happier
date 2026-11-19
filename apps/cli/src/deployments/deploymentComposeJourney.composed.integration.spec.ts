@@ -48,10 +48,11 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { DEFAULT_MACHINE_UNUSED_RETENTION_MS_V1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { nativeCaddyImage } from '@happier-dev/cli-common/machineSetup';
-import { DeploymentEnvironmentContentV1Schema, DeploymentContentV1Schema,
+import { DeploymentEnvironmentContentV1Schema, DeploymentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import {
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
-import type { MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+import type { MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
@@ -105,7 +106,7 @@ import { runTriageConfiguredHandoffV1 } from '../../../../packages/plugins/triag
 import { readTriageActionsForSurface } from '../../../../packages/plugins/triage/src/actions/actionsCatalog';
 import { createTestkitAccountKv } from '../../../../packages/plugins/triage/src/settings/testkit/accountKv.test-support';
 import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } from '../../../../packages/plugins/triage/src/settings/actions';
-import type { DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { createOwnServerDockerBoundary, type OwnServerDockerInvocation } from '@/deployments/targets/ownServer/ownServerDeployment.testkit';
 import { createLocalServiceLauncherFeed } from '@/daemon/local/services/launch/feed';
 import { createLocalServiceInventoryRegistry } from '@/daemon/local/services/inventory/registry';

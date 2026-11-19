@@ -2,7 +2,7 @@ import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/a
 import type { EnvironmentServiceRecoveryRow } from '@/plugins/runtime/invocation/services/environmentServiceRecovery';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema,
     DeploymentReceiptGetResultV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
-import { getDeploymentTargetLinkLineageV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
+import { getDeploymentTargetLinkLineageV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentMemberVersionProjectionV1 } from '@happier-dev/deployments';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';

@@ -6,8 +6,8 @@ import { readDeploymentOutputValidation } from '../../outputValidation';
 import { projectDeploymentFailure } from '../../deploymentFailure';
 import { DeploymentReceiptFailureV1Schema, type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
-import { isDeploymentSettledV1, projectDeploymentReviewRevisionV1, type DeploymentEnvironmentDetailV1,
-    type DeploymentMachineResultV1, type DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol';
+import { isDeploymentSettledV1, type DeploymentEnvironmentDetailV1, type DeploymentMachineResultV1, type DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
+import { projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import type { OwnServerDeploymentRequest, OwnServerDeploymentResult, OwnServerDeploymentTargetHostInput, OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';
 import { isOwnServerBuildReceiptComplete, requiresOwnServerBuildReceipt } from './buildReceipt';
 import { normalizeNativeComposePlatform } from '@/daemon/local/services/launch/nativeComposeImageIdentity';

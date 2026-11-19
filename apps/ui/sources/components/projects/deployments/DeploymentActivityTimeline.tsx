@@ -4,10 +4,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Timeline, type TimelineItemContent } from '@happier-dev/plugin-ui';
 import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import type {
-  DeploymentReceiptFailureV1,
-  DeploymentReviewRevisionV1,
-} from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentReceiptFailureV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { IconButton } from '@/components/ui/buttons/IconButton';

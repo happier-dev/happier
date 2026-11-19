@@ -11,7 +11,7 @@ import { encodeBase64, verifyMachineInstallationProof, type ActionExecutorContex
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/deployment-protocol';
+import { computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { checkElevatedMachineSetupPlan, runElevatedEffect, type MachineElevationDependencies,
     type MachineElevationSpawn } from '../adminAccess/runElevatedEffect';
 import { writeMachineConnectorSecretGrantForHost, type MachineConnectorSecretGrantHostRequest } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';

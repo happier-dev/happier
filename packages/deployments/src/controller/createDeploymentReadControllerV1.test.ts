@@ -1,13 +1,14 @@
 import { readDeploymentDatabaseSizesV1 } from '../projection/deploymentDatabaseSize.js';
 import type { DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { describe, expect, it, vi } from 'vitest';
-import { createDeploymentEnvironmentCollectionV1, createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentCollectionV1, createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createDeploymentReadControllerV1 } from './createDeploymentReadControllerV1.js';
 import { createDeploymentHealthAggregateLeaseV1 } from '../projection/deploymentHealthAggregateLease.js';
 import type { DeploymentHealthServicesObservationV1 } from '../projection/deploymentHealthAggregate.js';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { DeploymentDomainContentV1Schema } from '@happier-dev/deployment-protocol/v1';
-import type { DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import type { DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { DeploymentDomainPageV1, DeploymentEnvironmentHealthFeedV1, DeploymentReadDemandV1, DeploymentReadTransportV1 } from './deploymentReadControllerTypes.js';
 
 const active: DeploymentReadDemandV1 = { mounted: true, visible: true, focused: true };

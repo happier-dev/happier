@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { prepareEnvironmentSecretBindingsV1 } from './prepareEnvironmentSecretBindingsV1.js';
 import { sealMachineSecretGrantEnvelopeV1 } from './sealMachineSecretGrantEnvelopeV1.js';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';

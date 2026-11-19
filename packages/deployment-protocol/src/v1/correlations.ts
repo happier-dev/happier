@@ -1,4 +1,4 @@
 export {
-    DeploymentCorrelationV1Schema,
+    ProtocolDeploymentCorrelationV1Schema as DeploymentCorrelationV1Schema,
     type DeploymentCorrelationV1,
-} from '@happier-dev/protocol/deployments/deploymentReceiptContentV1';
+} from '@happier-dev/plugin-sdk/protocol';

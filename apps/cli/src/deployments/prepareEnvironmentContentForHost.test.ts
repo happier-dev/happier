@@ -2,11 +2,11 @@ import axios from 'axios';
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createPrepareEnvironmentContentForHost } from './prepareEnvironmentContentForHost';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, createOwnServerEnvironmentConfigurationV1, DeploymentEnvironmentContentV1Schema,
-    type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { createOwnServerEnvironmentConfigurationV1, DeploymentEnvironmentContentV1Schema, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { encodeBase64, encryptWithDataKey, libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
 import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';

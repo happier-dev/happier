@@ -26,10 +26,10 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { socketRpcCodec } from '@happier-dev/sync-client';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
-    EnvironmentSecretLaunchAdmissionInputV1Schema, MachineConnectorSecretGrantInputV1Schema,
-    computeEnvironmentSecretLaunchAdmissionDigestV1, machineSecretGrantSubjectKey } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { EnvironmentSecretLaunchAdmissionInputV1Schema, MachineConnectorSecretGrantInputV1Schema, computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
+import { machineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import * as cloudflareEntry from '../../../../../../packages/plugins/deploy-cloudflare/src/index.js';
 import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountPluginActions.testkit';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';

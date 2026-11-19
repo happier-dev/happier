@@ -8,7 +8,7 @@ import { createPlatformFailureEnrollmentForHost } from '@/deployments/platformFa
 import { AccountProfileSchema, AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema, AutomationDefinitionListResponseSchema, AutomationDefinitionReconcileRequestSchema,
   FeaturesResponseSchema, openAutomationTriggerDefinitionStoredEnvelopeV1, sealAutomationTriggerDefinitionStoredEnvelopeV1,
   type AutomationDefinitionDetail, type ActionExecutorContext } from '@happier-dev/protocol';
-import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/plugin-sdk/events';

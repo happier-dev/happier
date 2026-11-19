@@ -14,7 +14,7 @@ import {
     type DeploymentTargetRoleInputV1, type DeploymentTargetRoleCommonInputV1,
     type DeploymentTargetRoleV1,
 } from '@happier-dev/protocol/plugins/contributions/v2';
-import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { ResolvedDeploymentTargetActionRole } from '@/plugins/projection/registry/types';
 import type { RegistryConnectedAccountActionFormPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 import type { StoredCredentials } from '@/persistence';

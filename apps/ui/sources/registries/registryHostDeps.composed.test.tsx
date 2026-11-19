@@ -827,7 +827,7 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
     expect(appUpstreamReads).toBe(3);
     phase = 'open Environment consumes the finite registry observation without another content reader';
     const { createDeploymentReadControllerV1 } = await import('@happier-dev/deployments');
-    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
     const { useDeploymentEnvironment } = await import('@/components/projects/deployments/useDeploymentReads');
     const baseDetail = createDeploymentEnvironmentDetailV1();
     let appDetail = createDeploymentEnvironmentDetailV1({ environment: { ...appEnvironment, revision: appRevision }, targetLinks: [],

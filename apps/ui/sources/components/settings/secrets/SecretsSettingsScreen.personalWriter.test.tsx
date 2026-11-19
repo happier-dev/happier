@@ -211,8 +211,9 @@ it('keeps the entered replacement when a backup cannot be identified and explain
 });
 
 it('re-keys the named backup through its controller before retrying the entered replacement', async () => {
-    const { createDeploymentEnvironmentHeaderV1, createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
-    const { DeploymentBackupConfigurationV1Schema } = await import('@happier-dev/deployment-protocol');
+    const { createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
+    const { DeploymentBackupConfigurationV1Schema } = await import('@happier-dev/deployments/contracts/v1');
     const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } = await import('@happier-dev/deployment-protocol/v1');
     const { DeploymentBackupConfigureInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentBackupConfigureV1');
     const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');

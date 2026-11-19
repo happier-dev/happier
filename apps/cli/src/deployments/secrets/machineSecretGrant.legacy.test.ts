@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { ed25519 } from '@noble/curves/ed25519';
-import { DeploymentEnvironmentContentV1Schema, MachineSecretGrantV1Schema, readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployment-protocol';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
+import { MachineSecretGrantV1Schema } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { deriveBoxPublicKeyFromEd25519PublicKey, sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
 import { prepareEnvironmentSecretBindingsForLaunch } from './prepareEnvironmentSecretBindingsForLaunch';

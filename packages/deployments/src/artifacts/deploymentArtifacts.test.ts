@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { ArtifactDocumentV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
-import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1, createDeploymentReceiptDetailV1 } from '../testing/v1.js';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
-    readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1,
-    createDeploymentReceiptArtifactHeaderV1, readDeploymentReceiptArtifactHeaderV1, readDeploymentReceiptArtifactV1 } from './artifacts.js';
-import { readDeploymentDomainArtifactV1 } from './artifacts.js';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, readDeploymentTargetLinkArtifactV1, readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol/v1';
+import {
+    readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1,
+    createDeploymentReceiptArtifactHeaderV1, readDeploymentReceiptArtifactHeaderV1 } from './deploymentArtifacts.js';
+import { readDeploymentDomainArtifactV1 } from './deploymentArtifacts.js';
 
 describe('deployment Artifact content boundary', () => {
     const detail = createDeploymentEnvironmentDetailV1();

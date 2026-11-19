@@ -8,14 +8,15 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
     DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentGetInputV1Schema,
     DeploymentTransitionInputV1Schema, DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol';
 import { createActionExecutor, readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { DeploymentPlatformContentV1Schema, createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentPlatformContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployments';
 import { DeploymentTargetLinkProviderContentV1Schema, DeploymentTargetRoleInputProtocolSchemasV1,
     DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import { bindExternalActionExecutionAuthorizationVerifyHttpPathV1, createDeploymentDomainContentArtifactIdV1,
     createDeploymentLinkContentArtifactIdV1, createDeploymentEnvironmentContentArtifactIdV1, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1,
     ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -29,7 +30,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { createAutomationWorkflowRecipeFixture } from '@/testkit/automationWorkflowRecipe';
 import { createReviewedChildAuthorizationFixture, prepareReviewedChildAuthorization } from './reviewedChildAuthorization.composed.testkit';
 import type { ActionExecutorContext, ActionExecuteResult, HostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { prepareForkPreviewCreateForHost } from '../../../../../../cli/src/deployments/forkPreviewCreateForHost';
 import { createPlatformFailureEnrollmentForHost } from '../../../../../../cli/src/deployments/platformFailureEnrollment';

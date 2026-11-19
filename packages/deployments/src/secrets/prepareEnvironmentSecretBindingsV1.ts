@@ -1,7 +1,8 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, machineSecretGrantSubjectKey, parseSavedSecretRefV1,
-    captureDeploymentBindingSavedSecretRevisionsV1,
-    type EnvironmentSecretBindingV1, type EnvironmentVariableBindingV1, type MachineSecretGrantSubjectV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
+import { EnvironmentSecretBindingV1Schema, environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1, type EnvironmentVariableBindingV1 } from '@happier-dev/deployments/contracts/v1';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { machineSecretGrantSubjectKey, type MachineSecretGrantSubjectV1, type MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { environmentSecretBindingInstallationsV1, type EnvironmentSecretRequiredUseV1 } from './projectEnvironmentSecretBindingRequiredUsesV1.js';
 
 /** Compare the exact admitted binding vocabulary, independent of object property order. */

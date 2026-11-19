@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1 } from './artifacts.js';
+import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1 } from './deploymentArtifacts.js';
 
 describe('protected Domain Cloudflare preparation', () => {
     const reference = { contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 2 };

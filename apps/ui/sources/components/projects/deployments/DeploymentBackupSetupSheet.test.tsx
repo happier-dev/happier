@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployment-protocol';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { HappyError } from '@/utils/errors/errors';
 import { DeployOutcomeBanner } from './DeploymentEnvironmentDetail';
 import { HappierInputField } from '@happier-dev/plugin-ui/presentation';

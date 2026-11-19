@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { DeploymentDomainHeaderV1Schema, DeploymentDomainMachineTopologyV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import type { DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import type { MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { readTelemetryCollectorDomainForHost, readTelemetryCollectorPlacementForHost } from '../targets/ownServer/domainRouteSelection';
 

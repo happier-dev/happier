@@ -30,7 +30,7 @@ import type { MachineNativeEffectOperation } from './machineNativeEffectAdmissio
 import { access, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { RESTIC_RUNTIME_V1, RESTIC_VOLUME_SOURCE_PATH_V1, buildResticRequestV1, type ResticRequestV1 } from '@happier-dev/deployments';
-import type { EnvironmentSecretBindingV1, DeploymentImageV1 } from '@happier-dev/deployment-protocol';
+import type { EnvironmentSecretBindingV1, DeploymentImageV1 } from '@happier-dev/deployments/contracts/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createDeploymentBackupEnvironmentForHost } from '@/deployments/secrets/deploymentExecEnvPort';
 import { sealMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';

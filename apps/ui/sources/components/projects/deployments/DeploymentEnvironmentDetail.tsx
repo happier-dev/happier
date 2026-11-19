@@ -1,6 +1,6 @@
 import { readDeploymentMoveEligibility, showDeploymentMoveSheet, type DeploymentMoveEligibility } from './DeploymentMoveSheet';
 import * as React from 'react';
-import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployment-protocol/v1';
+import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { isDeploymentDomainAttachedV1, selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
@@ -17,7 +17,7 @@ import type {
 } from '@happier-dev/deployments';
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { readDeploymentDomainServingUrlV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
@@ -73,7 +73,8 @@ import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import type { DeploymentContentV1, DeploymentReceiptFailureV1, DeploymentReviewRevisionV1, DeploymentSourceMethodV1, DeploymentStepV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentContentV1, DeploymentReceiptFailureV1, DeploymentSourceMethodV1, DeploymentStepV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 
 import {
   deploymentActorIsViewer,

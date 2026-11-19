@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { create as createTar } from 'tar';
 import { describe, expect, it } from 'vitest';
-import { OwnServerDeploymentImageArchiveV1Schema } from '@happier-dev/deployment-protocol';
+import { OwnServerDeploymentImageArchiveV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { createNativeComposeImageIdentity } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { adoptOwnServerImageArchives, prepareOwnServerImageArchiveDestinationForHost, readOwnServerImageArchiveOriginHint, resolveOwnServerImageArchivePathForHost, verifyOwnServerImageArchiveForHost } from './releaseProvenance';

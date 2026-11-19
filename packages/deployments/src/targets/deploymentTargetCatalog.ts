@@ -10,8 +10,7 @@ import type { DeploySuggestionCatalogV1 } from '@happier-dev/protocol/deployment
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 
 export type DeploymentTargetDeclarationV1 = Readonly<{ pluginId: string; identity: PluginContributionIdentityV1; definition: DeploymentTargetContributionV1 }>;
-import { DeploymentOwnServerTargetLinkContentV1Schema, DeploymentTargetV1Schema,
-    type DeploymentTargetV1 } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentOwnServerTargetLinkContentV1Schema, DeploymentTargetV1Schema, type DeploymentTargetV1 } from '@happier-dev/deployments/contracts/v1';
 
 /** The consumed S0 daemon contribution. Role references use the public Action front door. */
 export const OWN_SERVER_DEPLOYMENT_TARGET_V1: DeploymentTargetV1 = DeploymentTargetV1Schema.parse({

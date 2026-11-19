@@ -1,4 +1,4 @@
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/v1';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentDomainReadItemV1, DeploymentDomainReadPageV1 } from '@happier-dev/deployments';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 

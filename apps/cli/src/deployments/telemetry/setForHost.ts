@@ -8,7 +8,7 @@ import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/
 import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1, isMachineRoleActiveV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import type { DeploymentEnvironmentDetailV1, DeploymentTargetLinkHeaderV1, EnvironmentSecretBindingInputV1, EnvironmentVariableBindingInputV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1, DeploymentTargetLinkHeaderV1, EnvironmentSecretBindingInputV1, EnvironmentVariableBindingInputV1 } from '@happier-dev/deployments/contracts/v1';
 import { TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1, resolveTelemetryCollectorSelectionV1 } from '@happier-dev/deployments/telemetry';
 import type { StoredCredentials } from '@/persistence';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';

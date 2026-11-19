@@ -1,6 +1,6 @@
 import { Resolver } from 'node:dns/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HealthCheckResultV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { HealthCheckResultV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { createNativeCaddyRoutes, type NativeCaddyAdminExchange, type NativeCaddyRoutePlacement } from './nativeCaddyRoutes';
 import { caddyPublicHttpServerId, type CaddyDomainRouteRemovalInput } from '@/deployments/targets/ownServer/caddyRouteMaterialization';
 

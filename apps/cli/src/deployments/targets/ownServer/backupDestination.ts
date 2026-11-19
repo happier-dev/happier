@@ -1,9 +1,9 @@
-import type { DeploymentBackupRestoreCaptureV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupRestoreCaptureV1 } from '@happier-dev/deployments/contracts/v1';
 import { PluginError, BackupDestinationOpenV1ProtocolSchema, type BackupDestinationOpenV1, type BackupDestinationOpenInputV1 } from '@happier-dev/plugin-sdk';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
-import { environmentSecretBindingIdentityV1, type DeploymentBackupConfigurationV1, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
+import { environmentSecretBindingIdentityV1, type DeploymentBackupConfigurationV1, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentBackupRunInputV1, DeploymentRestoreDatabaseDestinationV1 } from '@happier-dev/deployments';
 import { readSQLiteRuntimeAvailabilityV1 } from '@happier-dev/deployments';
 import { readStoragePathCapacity } from '@/storage/pathCapacity';

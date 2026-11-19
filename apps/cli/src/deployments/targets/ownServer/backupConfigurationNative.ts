@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { StoragePathCapacityV1 } from '@happier-dev/protocol/storage/storageV1';
-import type { DeploymentBackupConfigurationV1, DeploymentBackupTestResultV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupConfigurationV1, DeploymentBackupTestResultV1 } from '@happier-dev/deployments/contracts/v1';
 import { addDeploymentBackupRepositoryKeyV1, testDeploymentBackupDestinationV1 } from '@happier-dev/deployments';
 import { configuration } from '@/configuration';
 import type { readDeploymentEnvironmentForHost } from '@/deployments/readEnvironmentForHost';

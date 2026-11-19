@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDeploymentReceiptDetailV1, createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentReceiptDetailV1, createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { projectDeploymentHealthAggregateV1 } from '@happier-dev/deployments';
 import { projectOperationsRunOutcome } from './operationsRunOutcome';
 

@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest';
-import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { readPreviewCloseWorkflowForHost } from './previewCloseWorkflowForHost';
-import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentTeardownInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTeardownRequestInputV1Schema } from '@happier-dev/protocol/deployments/deploymentTeardownRequestV1';
 import { resolveWorkflowActionFieldBinding } from '@/daemon/workflows/input';

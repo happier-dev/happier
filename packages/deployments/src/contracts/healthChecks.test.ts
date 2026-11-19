@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import * as contracts from './index.js';
+import * as contracts from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 
 const evidence = { v: 1, items: [{ source: { kind: 'alert', label: 'Saved check' },
     author: { kind: 'process' }, text: 'The admitted endpoint returned its expected status.' }] };

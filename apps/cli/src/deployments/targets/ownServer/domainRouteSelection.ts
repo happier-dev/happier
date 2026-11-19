@@ -5,7 +5,8 @@ import { accessProviderRefsEqualV1, type MachinePrivateNetworkObservationV1 } fr
 import type { DeploymentIngressV1, DeploymentDomainAddInputV1, DeploymentDomainHeaderV1,
     DeploymentDomainListInputV1, DeploymentDomainListResultV1Schema, DeploymentDomainTopologyV1,
     DeploymentDomainMachineTopologyV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
+import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import type { createNativeCaddyRoutes, NativeCaddyStartFirstLeg } from '@/machines/reachability/nativeCaddyRoutes';
 import { caddyPublicHttpServerId, type CaddyDomainRouteInput } from './caddyRouteMaterialization';
 import type { Machine } from '@/api/types';
@@ -49,7 +50,7 @@ export function selectDomainIngressMembers<T extends DomainMemberIdentity & Read
  * rollout. Its incumbent receipt, rather than the next placement's flag, owns
  * whether it already runs a release. Membership children keep their exact set. */
 export async function readDomainIngressMembersForHost(
-    link: import('@happier-dev/deployment-protocol').DeploymentTargetLinkHeaderV1,
+    link: import('@happier-dev/deployments/contracts/v1').DeploymentTargetLinkHeaderV1,
     membershipMachines: readonly DomainMemberIdentity[] | undefined,
     context: import('@happier-dev/protocol').ActionExecutorContext,
     readReceipt: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readReceipt'],

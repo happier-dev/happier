@@ -155,7 +155,7 @@ describe('Environment draft Machine Home', () => {
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
   it.each(['team', 'account-shared'] as const)('edits draft deployers through the shared choices and retains them in the creating Action (%s)', async (sourceKind) => {
-    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
     const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
     const { TeamCredentialAudiencePicker } = await import('@/components/settings/teams/credentials/TeamCredentialAudiencePicker');
     const { DeploymentPermissionsPanel } = await import('./DeploymentPermissionsPanel');
@@ -297,7 +297,8 @@ describe('Environment draft Machine Home', () => {
       const createdHeader = { ...detail.environment, id: 'created-environment', serverId, projectSourceId: 'source-app',
         deployerMode: created.deployerMode, deployerPrincipals: created.deployerPrincipals, protection: created.protection,
         contentArtifactId: created.contentArtifactId, contentHeaderVersion: created.contentHeaderVersion, contentBodyVersion: created.contentBodyVersion };
-      const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentEnvironmentDetailV1Schema } = await import('@happier-dev/deployment-protocol/v1');
+      const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } = await import('@happier-dev/deployment-protocol/v1');
+      const { DeploymentEnvironmentDetailV1Schema } = await import('@happier-dev/deployments/contracts/v1');
       await account.createArtifactDocument({ artifactId: createdHeader.contentArtifactId,
         header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.content.name }, body: JSON.stringify(detail.content) });
       // The real reader parses the server's persisted header and opens its Artifact before the panel consumes it.
@@ -341,8 +342,8 @@ describe('Environment draft Machine Home', () => {
   it.each(['omit', 'reuse'] as const)('duplicates with explicit binding and data choices through the creating Action and renders its refusal remedy (%s)', async (dataChoice) => {
     const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
     const { Switch } = await import('@/components/ui/forms/Switch');
-    const { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1,
-      createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
+    const { createDeploymentSecretVariableBindingV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const serverId = await homes.addHome({ name: 'Duplicate', serverUrl: 'https://duplicate-environment.test', accountId: 'alice',
       serverIdentityId: `srv_${'a'.repeat(32)}`, currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
@@ -430,8 +431,8 @@ describe('Environment draft Machine Home', () => {
   });
 
   it('retains a copied Environment after binding failure and recovers only in its variables', async () => {
-    const { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1,
-      createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
+    const { createDeploymentSecretVariableBindingV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const serverId = await homes.addHome({ name: 'Duplicate', serverUrl: 'https://duplicate-environment.test', accountId: 'alice',
       serverIdentityId: `srv_${'a'.repeat(32)}`, currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
@@ -892,7 +893,7 @@ describe('Environment draft Machine Home', () => {
   });
 
   it.each([false, true])('never defaults to a Deployments-off Machine, including a copy source (copy: %s)', async copying => {
-    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
     const base = createDeploymentEnvironmentDetailV1();
     const copy = createDeploymentEnvironmentDetailV1({ targetLinks: base.targetLinks.map(row => ({ ...row, targetLink: {
       ...row.targetLink, machines: ['a-parked'], members: [{ machineId: 'a-parked', installationId: 'parked-installation', state: 'active' as const }] } })) });

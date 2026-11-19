@@ -59,7 +59,7 @@ import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/appr
 import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { createStablePluginNotificationsService } from '@/plugins/runtime/invocation/services/notifications';
-import { DeploymentEnvironmentHealthAggregateV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentEnvironmentHealthAggregateV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1,
   SessionMetadataOwnerPatchV1Schema }
   from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';

@@ -4,7 +4,7 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 import type { AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { computeCanonicalDomainSeparatedHexDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
-import { machineSecretGrantSubjectKey } from '@happier-dev/deployment-protocol';
+import { machineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';

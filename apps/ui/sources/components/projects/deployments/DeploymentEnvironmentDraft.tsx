@@ -11,7 +11,7 @@ import { useInStepActionConfirmation } from '@/components/approvals/useInStepAct
 import type { DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
 import { DeploymentPartialProgress } from './DeploymentPartialProgress';
 import { DeploymentProjectChoiceGroups, type DeploymentProjectChoiceModel } from './DeploymentProjectChoice';
-import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentEnvironmentCopyChoicesV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentCopyV1';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { DeploymentTemplateV1 } from '@happier-dev/protocol/registries';

@@ -3,7 +3,7 @@ import { chmod, copyFile, lstat, mkdir, open, realpath } from 'node:fs/promises'
 import { createHash } from 'node:crypto';
 import { basename, join, posix, relative, win32 } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import type { DeploymentImageV1, OwnServerDeploymentImageArchiveV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentImageV1, OwnServerDeploymentImageArchiveV1 } from '@happier-dev/deployments/contracts/v1';
 import { readNativeComposeArchiveTransportIdentity, verifyNativeComposeImageArchive,
     type NativeComposeImageArchive } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { resolveDeploymentSourcePathForHost, type DeploymentSourceAdmissionForHost } from './exactCommitRelease';

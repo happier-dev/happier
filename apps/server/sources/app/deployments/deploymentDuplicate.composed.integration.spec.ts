@@ -4,7 +4,8 @@ import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema,
     encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1, sealSessionDataKeyBundleV0 } from '@happier-dev/protocol';
-import { DeploymentEnvironmentContentV1Schema, DeploymentTargetLinkContentV1Schema, MachineSecretGrantV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentContentV1Schema, DeploymentTargetLinkContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { MachineSecretGrantV1Schema } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { inTx } from '@/storage/inTx';

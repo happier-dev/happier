@@ -12,8 +12,8 @@ import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointSto
     from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 }
-    from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import * as supabase from '../../../../../packages/plugins/deployment-supabase/src/index';
 import * as neon from '../../../../../packages/plugins/deployment-neon/src/index';
 import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountPluginActions.testkit';

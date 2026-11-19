@@ -4,11 +4,9 @@ import {
   createDeploymentReadControllerV1,
   type DeploymentReadTransportV1,
 } from '@happier-dev/deployments';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import {
-  createDeploymentEnvironmentDetailV1,
   createDeploymentEnvironmentHeaderV1,
-  createDeploymentTargetLinkHeaderV1,
-  createDeploymentReceiptDetailV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
@@ -811,7 +809,7 @@ describe('Environment → Domains', () => {
 
 describe('Environment → Overview before the first deploy', () => {
   it('says the Machine builds the first deploy when a Machine is linked, even without a Compose path', async () => {
-    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
     const base = createDeploymentEnvironmentDetailV1();
     const detail = createDeploymentEnvironmentDetailV1({
       content: { ...base.content, definition: { kind: 'repository', ref: 'main' } } as never,
@@ -1237,7 +1235,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
       } });
     }
     const { DeploymentBackupConfigureInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
-    const { DeploymentBackupConfigurationV1Schema } = await import('@happier-dev/deployment-protocol');
+    const { DeploymentBackupConfigurationV1Schema } = await import('@happier-dev/deployments/contracts/v1');
     await answerExternalActionAccountForHome(homes, serverId, {
       machineId: detail.environment.controllerMachineId, actionId: 'deployments.backups.configure', tokenEpoch: 0,
       installationId: 'installation-a',
@@ -1719,8 +1717,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
     const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
     const { DeploymentActionInputSchemasV1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
     const { DeploymentBackupActionInputSchemasV1, DeploymentBackupInventoryResultV1Schema } = await import('@happier-dev/protocol/deployments/deploymentBackupActionsV1');
-    const { DeploymentBackupConfigurationV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
-      DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } = await import('@happier-dev/deployment-protocol');
+    const { DeploymentBackupConfigurationV1Schema } = await import('@happier-dev/deployments/contracts/v1');
+    const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } = await import('@happier-dev/deployment-protocol');
     const { SavedSecretCatalogEntryV1Schema } = await import('@happier-dev/protocol/account/settings/savedSecretCatalogV1');
     const { SharedSavedSecretListOutputV1Schema } = await import('@happier-dev/protocol/account/settings/savedSecretResourceActionsV1');
     const { getSavedSecretCatalogSnapshot } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
@@ -2113,7 +2111,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
     const detail = withDatabase(createDeploymentEnvironmentDetailV1());
     const { createDeploymentActions } = await import('./deploymentActions');
     const { DeploymentBackupConfigureInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
-    const { DeploymentBackupConfigurationV1Schema } = await import('@happier-dev/deployment-protocol');
+    const { DeploymentBackupConfigurationV1Schema } = await import('@happier-dev/deployments/contracts/v1');
     const actions = createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);
     const configureInputs: Array<ReturnType<typeof DeploymentBackupConfigureInputV1Schema.parse>> = [];
     homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, {

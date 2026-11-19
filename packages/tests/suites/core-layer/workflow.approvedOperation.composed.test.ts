@@ -141,7 +141,8 @@ import { createCliRegistryHostV1 } from '../../../../apps/cli/src/registries/cre
 import { createFilesystemEffectAdmission } from '../../../../apps/cli/src/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { RpcActionExecutorContext } from '../../../../apps/cli/src/rpc/handlers/_actionDispatchAdapter';
 import { updateAccountSettingsV2OnceAgainstLatest } from '../../../../apps/cli/src/settings/accountSettings/updateAccountSettingsV2WithRetry';
-import { DeploymentEnvironmentContentV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 
 const nativeBoundary = vi.hoisted(() => ({
     costRead: null as ((kind: string) => void) | null,

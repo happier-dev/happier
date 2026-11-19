@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { expect, it } from 'vitest';
-import { DeploymentDomainContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { createDeploymentTelemetryHost } from './collectorHost';
 import { materializeCaddyDomainRouteV1 } from '../targets/ownServer/caddyRouteMaterialization';
 

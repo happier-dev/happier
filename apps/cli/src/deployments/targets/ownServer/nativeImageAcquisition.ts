@@ -1,4 +1,4 @@
-import { environmentSecretBindingIdentityV1, type DeploymentEnvironmentContentV1, type OwnServerDeploymentImageArchiveV1 } from '@happier-dev/deployment-protocol';
+import { environmentSecretBindingIdentityV1, type DeploymentEnvironmentContentV1, type OwnServerDeploymentImageArchiveV1 } from '@happier-dev/deployments/contracts/v1';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import type { NativeComposeEnvironmentProjectInput } from '@/daemon/local/services/launch/nativeComposeLifecycle';

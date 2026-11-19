@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { assertReviewedDeploymentSource } from './reviewedSource';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from './targets/ownServer/paths';
 import { privateServiceForwardAcquisitionError, projectDeploymentFailure, projectDeploymentReceiptFailure, rethrowDeploymentSourceAcquisitionFailure } from './deploymentFailure';

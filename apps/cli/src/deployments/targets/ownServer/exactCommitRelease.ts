@@ -3,7 +3,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { lstat, mkdir, mkdtemp, readdir, readlink, realpath, rm, writeFile } from 'node:fs/promises';
 import type { DeploymentSourceMaterializationPortV1, DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import type { WorkspaceManifestEntry } from '@happier-dev/protocol';
-import type { OwnServerDeploymentSourceV1 } from '@happier-dev/deployment-protocol';
+import type { OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncRootIdentity';
 import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ScmBackendRegistry } from '@/scm/registry';

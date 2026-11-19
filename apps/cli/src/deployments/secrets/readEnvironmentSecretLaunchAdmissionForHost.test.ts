@@ -6,10 +6,9 @@ import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE
 import { computeExternalActionRequestEnvelopeDigestV1, decodeReviewedActionChildHttpProofV1, decodeDeploymentChildExecutionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { invokeHostReviewedChildV1, readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
-import { computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionInputV1Schema,
-    EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema,
-    machineSecretGrantSubjectKey, type EnvironmentDomainSecretLaunchAdmissionV1,
-    type EnvironmentSecretBindingV1, type EnvironmentSecretLaunchAdmissionResultV1 } from '@happier-dev/deployment-protocol';
+import { type EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
+import { computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema, type EnvironmentDomainSecretLaunchAdmissionV1, type EnvironmentSecretLaunchAdmissionResultV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
+import { machineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER, ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1,
     projectDeploymentPreparationAdmissionV1, projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -604,7 +603,7 @@ describe('installed Environment secret launch reader', () => {
             privateKey: encodeBase64(fixture.controller.secretKey, 'base64url') });
         const grantRef = operation === 'add' ? (await reader.writeMachineConnectorSecretGrantForHost({ ...controllerRequest,
             installationPublicKey: fixture.receiver.publicKey, token: bytes })).grantRef :
-            (await import('@happier-dev/deployment-protocol')).machineSecretGrantSubjectKey(subject);
+            (await import('@happier-dev/protocol/deployments/machineSecretGrantV1')).machineSecretGrantSubjectKey(subject);
         vi.mocked(installationStore.readInstallationIdentityIfExistsSync).mockReturnValue(fixture.installed);
         const material = await reader.materializeMachineConnectorSecretGrantForHost({ ...base, hostMachineId: 'receiver',
             hostInstallationId: fixture.installed.installationId, context: { ...request.context, externalActionExecutionAuthorization: target }, grantRef });

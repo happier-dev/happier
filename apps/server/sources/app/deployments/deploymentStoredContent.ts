@@ -10,9 +10,9 @@ import { decodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKi
 import { ArtifactHeaderMetadataV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
-    readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1,
-    type DeploymentArtifactReadResultV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import { readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentEnvironmentArtifactV1, type DeploymentArtifactReadResultV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import { eventRouter, buildUpdateArtifactUpdate } from '@/app/events/eventRouter';
 import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
 import { afterTx, type Tx } from '@/storage/inTx';

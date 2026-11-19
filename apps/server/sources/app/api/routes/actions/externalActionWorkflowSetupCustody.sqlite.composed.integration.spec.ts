@@ -37,8 +37,8 @@ import { encodeExternalActionResolvedTargetV1, encodeReviewedActionChildHttpProo
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
     EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
-import { computeEnvironmentSecretLaunchAdmissionDigestV1, machineSecretGrantSubjectKey, MachineConnectorSecretGrantInputV1Schema,
-    type MachineConnectorSecretGrantBodyV1 } from '@happier-dev/deployment-protocol';
+import { computeEnvironmentSecretLaunchAdmissionDigestV1, MachineConnectorSecretGrantInputV1Schema, type MachineConnectorSecretGrantBodyV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
+import { machineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { createCloudflareConnectorSetupSteps } from '@happier-dev/cli-common/machineSetup';
 
 let server: Awaited<ReturnType<typeof startWorkflowSharedMachineServer>>;

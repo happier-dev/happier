@@ -1,6 +1,6 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
-import type { OwnServerDeploymentSourceV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
+import type { OwnServerDeploymentSourceV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, sep } from 'node:path';

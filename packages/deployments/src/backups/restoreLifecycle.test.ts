@@ -4,8 +4,8 @@ import { createDeploymentDumpBackupSourceV1 } from './configurationV1.js';
 import type { DeploymentRestoreConfirmInputV1, DeploymentRestoreNativeRequestV1, DeploymentRestoreNativeResultV1,
     DeploymentRestorePrepareInputV1, DeploymentRestorePrepareReceiptV1 } from '../index.js';
 import type { DeploymentBackupRunInputV1 } from '../actions/backups.js';
-import { DeploymentRestoreStepV1Schema } from '@happier-dev/deployment-protocol';
-import type { DeploymentBackupManifestV1, DeploymentPreMigrationBackupV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentRestoreStepV1Schema } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentBackupManifestV1, DeploymentPreMigrationBackupV1 } from '@happier-dev/deployments/contracts/v1';
 
 const snapshotId = 'a'.repeat(64), treeId = 'b'.repeat(64), repositoryId = 'c'.repeat(64), checksum = 'd'.repeat(64);
 const manifest: DeploymentBackupManifestV1 = { schemaVersion: 1, environmentId: 'source', sourceId: 'main', kind: 'dump', configRevision: 1,

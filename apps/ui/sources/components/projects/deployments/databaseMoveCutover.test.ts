@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { isMap, parse, parseDocument } from 'yaml';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { authorDatabaseMoveCutoverPatch } from './databaseMoveCutover';
 

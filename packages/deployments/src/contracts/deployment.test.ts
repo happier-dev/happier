@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDeploymentReceiptDetailV1, createDeploymentV1 } from '../testing/v1.js';
 import { canTransitionDeploymentV1, DeploymentContentV1Schema, DeploymentV1Schema,
-    DeploymentPlatformContentV1Schema, DeploymentMachineResultV1Schema } from './deployment.js';
+    DeploymentPlatformContentV1Schema, DeploymentMachineResultV1Schema } from '../artifacts/deploymentReceiptRecord.js';
 import { DeploymentTargetRoleFailureV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 
 describe('receipt structural integrity', () => {

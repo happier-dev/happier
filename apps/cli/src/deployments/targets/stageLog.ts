@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { writeSync } from 'node:fs';
 import { mkdir, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { DeploymentReceiptDetailV1, DeploymentStageLogV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentReceiptDetailV1, DeploymentStageLogV1 } from '@happier-dev/deployments/contracts/v1';
 import type { ManagedServiceNativeLogCursorV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import { createProtectedLocalStateFileExclusive, ensureProtectedLocalStateDirectory,
     openProtectedLocalStateFile } from '@/utils/fs/protectedLocalState';

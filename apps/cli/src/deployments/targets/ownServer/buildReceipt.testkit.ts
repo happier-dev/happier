@@ -13,10 +13,13 @@ import { ArtifactJsonUpdateHttpInputV1Schema, DeploymentActionInputSchemasV1, De
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1, createDeploymentSecretVariableBindingV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentOwnServerContentV1Schema, type DeploymentOwnServerContentV1, type DeploymentEnvironmentDetailV1, type DeploymentImageV1,
-    type MachineSecretGrantV1, type EnvironmentSecretBindingV1, createDeploymentReceiptArtifactHeaderV1,
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentReceiptHeaderV1, createDeploymentSecretVariableBindingV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentOwnServerContentV1Schema, type DeploymentOwnServerContentV1, type DeploymentEnvironmentDetailV1, type DeploymentImageV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
+import {
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
+import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployments';
+import { type MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';

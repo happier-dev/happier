@@ -1,6 +1,6 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { DeploymentTemplateV1, DeploymentTemplateSecretProfileV1, StoredAppPresetInputV1,
-    DeploymentEnvironmentContentV1, EnvironmentVariableBindingV1, EnvironmentVariableBindingInputV1, DeploymentTemplateCapacityReviewV1, DeploymentTemplateInstantiateInputV1 } from '@happier-dev/deployment-protocol';
+import type { StoredAppPresetInputV1, DeploymentEnvironmentContentV1, EnvironmentVariableBindingV1, EnvironmentVariableBindingInputV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentTemplateV1, DeploymentTemplateSecretProfileV1, DeploymentTemplateCapacityReviewV1, DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol';
 import { prepareDeploymentTemplateAdditionV1 } from './prepareDeploymentTemplateAdditionV1.js';
 import { buildCatalogAppTemplateBindings } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 

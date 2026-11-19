@@ -2,7 +2,7 @@ import { posix } from 'node:path';
 import { Parser, type ReadEntry } from 'tar';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { DeploymentRestoreDestinationV1, DeploymentRestoreNativeRequestV1, DeploymentRestoreNativeResultV1 } from '@happier-dev/deployments';
-import type { DeploymentRestoreUploadFormatV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentRestoreUploadFormatV1 } from '@happier-dev/deployments/contracts/v1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { configuration } from '@/configuration';
 import { readTransferPayloadChunk, type TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';

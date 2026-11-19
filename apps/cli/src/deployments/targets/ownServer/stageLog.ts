@@ -1,4 +1,4 @@
-import type { DeploymentOwnServerContentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentOwnServerContentV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentStageLogWriter as OwnServerDeploymentStageLogWriter } from '../stageLog';
 export {
     DEPLOYMENT_STAGE_LOG_RELATIVE_PATH as OWN_SERVER_STAGE_LOG_RELATIVE_PATH,

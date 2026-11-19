@@ -12,9 +12,9 @@ import { isDeepStrictEqual } from 'node:util';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import type { DeploymentOwnServerContentV1, DeploymentEnvironmentDetailV1, DeploymentReceiptHeaderV1, DeploymentSourceIntentV1,
-    EnvironmentSecretLaunchAdmissionBodyV1 } from '@happier-dev/deployment-protocol';
-import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol';
+import type { DeploymentOwnServerContentV1, DeploymentEnvironmentDetailV1, DeploymentReceiptHeaderV1, DeploymentSourceIntentV1 } from '@happier-dev/deployments/contracts/v1';
+import type { EnvironmentSecretLaunchAdmissionBodyV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
+import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { decodeBase64 } from '@/api/encryption';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';

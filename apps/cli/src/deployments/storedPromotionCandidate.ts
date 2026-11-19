@@ -1,6 +1,5 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { resolveDeploymentStoredDefinitionRevisionV1, DeploymentOwnServerContentV1Schema, type DeploymentContentV1,
-    type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
+import { resolveDeploymentStoredDefinitionRevisionV1, DeploymentOwnServerContentV1Schema, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { ActionExecutorContext, DeploymentPromoteActionInputV1 } from '@happier-dev/protocol';
 import type { OwnServerDeploymentTargetHostInput } from './targets/ownServer/ownServerDeploymentTarget';
 import { requireOwnServerDeploymentBuildMachine } from './targets/ownServer/ownServerTargetAdmission';

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { DeploymentDomainContentV1Schema } from '@happier-dev/deployment-protocol';
+import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { disableCloudflareDomainForHost } from './cloudflareDomainPreparation';
 
 it('identifies the missing Cloudflare removal fact before any vendor effect', async () => {

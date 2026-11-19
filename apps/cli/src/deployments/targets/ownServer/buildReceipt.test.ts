@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { access, mkdir, readFile, realpath, rmdir, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { OwnServerDeploymentSourceV1 } from '@happier-dev/deployment-protocol';
+import type { OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import type { OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';

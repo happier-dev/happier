@@ -1,6 +1,5 @@
 import { readDeploymentActivityPageV1 } from '@happier-dev/deployments';
-import { DeploymentEnvironmentCollectionV1Schema,
-    DeploymentReceiptHistoryV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { DeploymentEnvironmentCollectionV1Schema, DeploymentReceiptHistoryV1Schema } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentActivityQueryV1 } from '@happier-dev/protocol/deployments/deploymentActivityPageV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { listActionOperations } from '@/sync/ops/actionOperations';
