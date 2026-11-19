@@ -37,6 +37,8 @@ import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/conne
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createManagedMachineAcquisitionDriver } from './acquire';
+import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { reloadConfiguration } from '@/configuration';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
@@ -247,8 +249,12 @@ async function confirmCreate(alreadyEnrolled: boolean, entry: 'create' | 'admin'
     const guestCli = GuestCliIdentityV1Schema.parse({ source: 'home-payload', line: '0.3', channel: 'stable' });
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ features: { teams: { enabled: true } },
         capabilities: { serverIdentity: { serverIdentityId: homeId }, guestCli }, homeConnectionDescriptor: homeDescriptor })));
+    // Action admission reads the Account's automation index (696f6e7545a fails closed when it can't);
+    // this Account has no automations, and the index travels over generic axios.request.
+    installAxiosRequestMethodAdapter();
     vi.spyOn(axios, 'get').mockImplementation(async rawUrl => {
         const path = new URL(String(rawUrl)).pathname;
+        if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
         if (path === '/v1/machines/mac36-guest') return { status: 200, data: { machine: guestRow } };
         if (path === '/v1/machines') return { status: 200, data: [guestRow] };
         if (path.endsWith('/account/profile')) return { status: 200, data: { id: accountId } };
