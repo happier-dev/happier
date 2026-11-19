@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { formatTriageTimestampV1, MAX_TRIAGE_LIST_SOURCE_BATCH_V1 } from '@happier-dev/triage-protocol/v1';
+import { describe, expect, it, vi } from 'vitest';
+import { MAX_TRIAGE_LIST_SOURCE_BATCH_V1 } from '@happier-dev/triage-protocol/v1';
 
 import type { TriageListWindowV1 } from '../../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
@@ -110,25 +110,38 @@ describe('resolveTriageListShellState', () => {
   });
 
   // QB-24: a throttle exposes the provider's retry time at once, in Manage sources and in the notice.
-  it('says when a rate-limited source may be read again', () => {
-    const retryNotBeforeMs = 1_760_000_120_000;
-    const state = resolveTriageListShellState(snapshot({ window: window({ lanes: [{
-      source: SOURCE, sourceInstanceId: INSTANCE, exhausted: false,
-      health: { kind: 'failed', failure: { class: 'rateLimit', code: 'rate_limited', retryNotBeforeMs } },
-    }] }) }));
-    if (state.kind !== 'window' || state.failure === null) throw new Error('Expected a source failure');
-    const retryAt = formatTriageTimestampV1('en-US', retryNotBeforeMs, 'absolute', retryNotBeforeMs);
-    const [source] = state.failure.sources;
-    if (source === undefined) throw new Error('Expected a named source');
-    expect(readTriageSourceFailureRowV1(source, undefined, 'en-US').reason).toContain(`Try again at ${retryAt}.`);
-    expect(readTriageListFailureNotice(state.failure, undefined, 'en-US').description).toContain(`Try again at ${retryAt}.`);
-    // One translated sentence owns the time's position and punctuation (ja puts it first).
-    const ja: TriageTextResolverV1 = (key, fallback = '') => key === 'plugins.triage.surface.waiting.retryAtTime' ? '{time}以降に再試行できます。' : fallback;
-    const jaAt = formatTriageTimestampV1('ja', retryNotBeforeMs, 'absolute', retryNotBeforeMs);
-    expect(readTriageSourceFailureRowV1(source, ja, 'ja').reason).toMatch(new RegExp(`${jaAt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}以降に再試行できます。$`));
-    expect(readTriageRefreshPacingNotice('sourceRetryDeadline', retryNotBeforeMs, 'ja', ja).description).toMatch(/以降に再試行できます。$/);
-    // The line beside the rows is where the reader is, so it names the time too (TRIAGE-UI-ACCEPT-1119 §4).
-    expect(readTriageListFailureLine(state.failure, undefined, 'en-US').label).toMatch(new RegExp(`Try again at ${retryAt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.$`));
+  // TRIAGE-UI-ACCEPT-1119 S1/S2: the consequence is said once, and a time minutes away reads as a clock time.
+  it('says when a rate-limited source may be read again, as a person says the time', () => {
+    const nowMs = new Date(2026, 7, 28, 14, 0).getTime();
+    const retryNotBeforeMs = new Date(2026, 7, 28, 14, 13).getTime();
+    vi.useFakeTimers({ now: nowMs, toFake: ['Date'] });
+    try {
+      const state = resolveTriageListShellState(snapshot({ window: window({ lanes: [{
+        source: SOURCE, sourceInstanceId: INSTANCE, exhausted: false,
+        health: { kind: 'failed', failure: { class: 'rateLimit', code: 'rate_limited', retryNotBeforeMs } },
+      }] }) }));
+      if (state.kind !== 'window' || state.failure === null) throw new Error('Expected a source failure');
+      const clock = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(retryNotBeforeMs);
+      const [source] = state.failure.sources;
+      if (source === undefined) throw new Error('Expected a named source');
+      expect(readTriageSourceFailureRowV1(source, undefined, 'en-US').reason).toBe(`Asked us to slow down. Try again at ${clock}.`);
+      expect(readTriageListFailureNotice(state.failure, undefined, 'en-US').description).toContain(`Try again at ${clock}.`);
+      const line = readTriageListFailureLine(state.failure, undefined, 'en-US').label;
+      expect(line.endsWith(`Asked us to slow down. Try again at ${clock}.`)).toBe(true);
+      expect(line.match(/may be missing/g)).toHaveLength(1);
+      // One translated sentence owns the time's position and punctuation (ja puts it first).
+      const ja: TriageTextResolverV1 = (key, fallback = '') => key === 'plugins.triage.surface.waiting.retryAtTime' ? '{time}以降に再試行できます。' : fallback;
+      const jaClock = new Intl.DateTimeFormat('ja', { hour: 'numeric', minute: '2-digit' }).format(retryNotBeforeMs);
+      expect(readTriageSourceFailureRowV1(source, ja, 'ja').reason.endsWith(`${jaClock}以降に再試行できます。`)).toBe(true);
+      expect(readTriageRefreshPacingNotice('sourceRetryDeadline', retryNotBeforeMs, 'ja', ja).description).toMatch(/以降に再試行できます。$/);
+      // Another day names the day, never the year.
+      const tomorrow = new Date(2026, 7, 29, 9, 5).getTime();
+      const later = readTriageRefreshPacingNotice('sourceRetryDeadline', tomorrow, 'en-US').description;
+      expect(later).toContain(new Intl.DateTimeFormat('en-US', { day: 'numeric', month: 'short' }).format(tomorrow));
+      expect(later).not.toContain('2026');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // VIEW-HEALTH-1109: the selected view owns the body; the whole scan owns Manage sources.
@@ -381,21 +394,6 @@ describe('resolveTriageListShellState', () => {
       pending: 'refresh',
       refreshBlocked: { reason: 'sourceRetryDeadline', nextEligibleAtMs: 9_000 },
     }), 1).kind).toBe('running');
-  });
-
-  it('shows the coordinator deadline as the exact retry time', () => {
-    const retryAtMs = Date.parse('2026-08-28T14:30:00.000Z');
-    const notice = readTriageRefreshPacingNotice(
-      'sourceRetryDeadline',
-      retryAtMs,
-      'en-US',
-    );
-
-    // SURFACE §6.1 requires the provider/source retry evidence to reach the reader. The shell
-    // must present that exact time, not re-derive another retry estimate.
-    expect(notice.description).toContain(
-      formatTriageTimestampV1('en-US', retryAtMs, 'absolute', retryAtMs),
-    );
   });
 
   it('keeps durable user state its own reachability answer', () => {

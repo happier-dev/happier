@@ -26,6 +26,7 @@ import {
   LoadingState,
   Menu,
   Row,
+  RowStatusLine,
   Screen,
   Select,
   Stack,
@@ -2827,10 +2828,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                         title={source.displayLabel}
                         icon={<TriageSourceMark source={source.configured.instance.source} />}
                         {...(subtitle === undefined ? {} : { subtitle })}
-                        {...(health === null ? {} : {
-                          detail: `${text('plugins.triage.surface.sources.notRead', 'Not read')} · ${health.reason}`,
-                          detailTone: 'warning' as const,
-                        })}
+                        // The reason is a status sentence, not a short value: it reads under the name and its
+                        // subtitle at every width, where a row states its status (TRIAGE-UI-ACCEPT-1119 S3).
+                        {...(health === null ? {} : { children: (
+                          <RowStatusLine tone="warn" numberOfLines={3}
+                            text={`${text('plugins.triage.surface.sources.notRead', 'Not read')} · ${health.reason}`} />
+                        ) })}
                         {...(fixLabel === null ? {} : { accessory: (
                           <TriageFailureLineAction label={fixLabel} accessibilityLabel={`${fixLabel} ${source.displayLabel}`}
                             busy={health?.fix === 'retry' && refreshState.kind === 'running'}

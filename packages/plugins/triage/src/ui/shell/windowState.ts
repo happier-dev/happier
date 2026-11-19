@@ -1,7 +1,5 @@
-import {
-  formatTriageTimestampV1,
-  type TriageSourceFailureV1,
-} from '@happier-dev/triage-protocol/v1';
+import { formatHappierAsOfTime } from '@happier-dev/plugin-ui';
+import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 import { TRIAGE_LIST_NO_FILTERS_V1, type SurfaceFilterSelectionV1, type TriageListWindowV1 } from '../../projection/listWindow.js';
 import { UNREADABLE_IN_THIS_PASS_V1, type TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
@@ -40,7 +38,7 @@ import {
 const SOURCE_FAILURE_COPY_V1: Readonly<Record<TriageSourceFailureV1['class'], string>> = Object.freeze({
   authentication: 'Needs you to sign in again.',
   permission: 'Refused this account access.',
-  rateLimit: 'Asked us to slow down, so its entries may be missing.',
+  rateLimit: 'Asked us to slow down.',
   transient: 'Could not be reached just now.',
   unknown: 'Failed for a reason it did not name.',
   unsupportedContract: 'Answered with something Happier could not read.',
@@ -385,9 +383,12 @@ function latestRetryDeadline(sources: readonly TriageListSourceFailureV1[]): Pic
     ? { retryNotBeforeMs: Math.max(...deadlines) } : {};
 }
 
-/** "Try again at <time>." as one translated sentence, so each locale places the time and punctuation itself. */
+/**
+ * "Try again at <time>." as one translated sentence, so each locale places the time and punctuation itself. The time
+ * is the clock every Happier time reads in: today's time alone, another day's date and time, never the year.
+ */
 function readRetryAtSentence(text: TriageTextResolverV1, locale: string, retryAtMs: number): string {
-  const retryAt = formatTriageTimestampV1(locale, retryAtMs, 'absolute', retryAtMs);
+  const retryAt = formatHappierAsOfTime(retryAtMs, Date.now(), locale);
   return text('plugins.triage.surface.waiting.retryAtTime', 'Try again at {time}.').replace('{time}', retryAt);
 }
 
