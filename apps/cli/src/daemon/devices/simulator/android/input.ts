@@ -88,6 +88,7 @@ const HARDWARE_BUTTON_KEYEVENTS = new Map<string, string>([
 ]);
 
 function normalizeKeyName(value: string): string {
+    if (value === ' ') return 'space';
     return value.trim().toLowerCase().replace(/[-_\s]/g, '');
 }
 

@@ -12,7 +12,8 @@ type KeyboardEventLike = Readonly<{
     ctrlKey?: boolean;
     metaKey?: boolean;
     altKey?: boolean;
-    nativeEvent?: Readonly<{ key?: string; shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean }>;
+    isComposing?: boolean;
+    nativeEvent?: Readonly<{ key?: string; shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; isComposing?: boolean }>;
     preventDefault?: () => void;
     stopPropagation?: () => void;
 }>;
@@ -210,6 +211,8 @@ export function HappierLiveStreamInputLayer(props: Readonly<{
         if (!focusedRef.current || !inputAccepted) return;
         const key = event.key ?? event.nativeEvent?.key;
         if (!key) return;
+        // Candidate keys belong to the local input method; only its committed text is relayed.
+        if ((event.isComposing ?? event.nativeEvent?.isComposing) || key === 'Dead' || key === 'Process') return;
         // Keep the browser's reverse traversal available to leave the viewer; plain Tab stays guest input.
         if (key === 'Tab' && (event.shiftKey ?? event.nativeEvent?.shiftKey)) return;
         const command = (event.metaKey ?? event.nativeEvent?.metaKey) || (event.ctrlKey ?? event.nativeEvent?.ctrlKey);
@@ -226,7 +229,8 @@ export function HappierLiveStreamInputLayer(props: Readonly<{
             const property = modifier === 'control' ? 'ctrlKey' : `${modifier}Key` as const;
             return event[property] ?? event.nativeEvent?.[property];
         });
-        if (key.length === 1 && !command && !modifiers.includes('alt') && supports('keyboard_text')) {
+        // Space is also activation/scroll input. Let the remote native focus decide its effect.
+        if (key.length === 1 && key !== ' ' && !command && !modifiers.includes('alt') && supports('keyboard_text')) {
             sendAction({ eventId: `keyboard_text:${Date.now()}`, action: { kind: 'keyboard_text', text: key } });
             event.preventDefault?.();
             event.stopPropagation?.();
@@ -239,6 +243,17 @@ export function HappierLiveStreamInputLayer(props: Readonly<{
             event.stopPropagation?.();
         }
     }, [inputAccepted, props.onClipboardShortcut, sendAction, supports]);
+
+    React.useEffect(() => {
+        const target = captureRef.current as (View & Partial<Element>) | null;
+        if (!inputAccepted || !supports('keyboard_text') || !target?.addEventListener || !target.removeEventListener) return;
+        const listener = (event: Event) => {
+            const text = (event as CompositionEvent).data;
+            if (focusedRef.current && text) emit({ kind: 'keyboard_text', text });
+        };
+        target.addEventListener('compositionend', listener);
+        return () => target.removeEventListener?.('compositionend', listener);
+    }, [emit, inputAccepted, supports]);
 
     const handleWheel = React.useCallback((event: WheelEventLike) => {
         if (!inputAccepted || !supports('wheel')) return;

@@ -206,6 +206,18 @@ describe('Android simulator input dispatch', () => {
         });
     });
 
+    it('maps a viewer Space key to its native adb keyevent instead of rejecting whitespace', async () => {
+        const { dispatchAndroidSimulatorInput } = await import('./input');
+        const runAdb = vi.fn<AndroidToolRunner>(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+        await expect(dispatchAndroidSimulatorInput({
+            resolveAdbTooling: async () => ({ ok: true as const, command: 'adb', source: 'path' as const }),
+            runAdb,
+            event: controlAction({ ...baseControl, kind: 'keyboard_key', key: ' ' }),
+        })).resolves.toMatchObject({ status: 'accepted' });
+        expect(runAdb).toHaveBeenCalledWith({ command: 'adb',
+            args: ['-s', 'emulator-5554', 'shell', 'input', 'keyevent', '62'], timeoutMs: expect.any(Number) });
+    });
+
     it('maps conservative keyboard and hardware controls to adb keyevent codes', async () => {
         const { dispatchAndroidSimulatorInput } = await import('./input');
         const runAdb = vi.fn<AndroidToolRunner>(async () => ({ exitCode: 0, stdout: '', stderr: '' }));

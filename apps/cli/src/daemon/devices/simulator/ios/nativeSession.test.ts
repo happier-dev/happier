@@ -91,6 +91,18 @@ describe('iOS native session', () => {
         await owner.stop();
     });
 
+    it('delivers the viewer Space key as a native HID press', async () => {
+        const native = boundary();
+        const owner = createIosSimulatorNativeSession({ addon: native.addon });
+        const adapter = createSimulatorFrameProducerCaptureAdapter({ sourceId, sourceCodecs: ['h264.avcc'], producer: owner.createProducer('device-1') });
+        await adapter.start(captureInput(() => ({ ok: true })));
+        try {
+            await expect(owner.sendCommand({ ...controlBase, kind: 'keyboard_key', key: ' ' })).resolves.toEqual({ ok: true });
+            expect(native.events).toContainEqual(['key', 'down', 44]);
+            expect(native.events).toContainEqual(['key', 'up', 44]);
+        } finally { await owner.stop(); }
+    });
+
     it.each(['🙂', 'İ'])('does not acknowledge Unicode %s the native keyboard refused', async (text) => {
         const native = boundary();
         const owner = createIosSimulatorNativeSession({ addon: native.addon });

@@ -6,6 +6,57 @@ import { HappierLiveStreamInputLayer } from './LiveStreamInputLayer.js';
 import type { HappierLiveStreamInputGesture } from './inputGesture.js';
 
 describe('live stream keyboard focus', () => {
+    it('preserves native Space, navigation and editing keys while sending printable Unicode as text', () => {
+        const gestures: HappierLiveStreamInputGesture[] = [];
+        const mounted = mountThroughReactNativeWeb(<HappierLiveStreamInputLayer inputAccepted supports={() => true}
+            onGesture={({ action }) => gestures.push(action)} testID="viewer" />);
+        try {
+            const capture = mounted.container.querySelector<HTMLElement>('[data-testid="viewer-capture"]')!;
+            act(() => capture.focus());
+            const keys = [' ', 'Enter', 'Tab', 'Backspace', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
+            for (const key of keys) {
+                const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+                act(() => capture.dispatchEvent(event));
+                expect(event.defaultPrevented).toBe(true);
+            }
+            act(() => capture.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', shiftKey: true, bubbles: true })));
+            for (const key of ['a', 'é', '日']) {
+                act(() => capture.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })));
+            }
+            expect(gestures).toEqual([
+                ...keys.map(key => ({ kind: 'keyboard_key', key })),
+                { kind: 'keyboard_key', key: ' ', modifiers: ['shift'] },
+                ...['a', 'é', '日'].map(text => ({ kind: 'keyboard_text', text })),
+            ]);
+        } finally { mounted.unmount(); }
+    });
+
+    it('withholds dead keys and IME candidates and sends only committed composition as text', () => {
+        const gestures: HappierLiveStreamInputGesture[] = [];
+        const mounted = mountThroughReactNativeWeb(<HappierLiveStreamInputLayer inputAccepted supports={() => true}
+            onGesture={({ action }) => gestures.push(action)} testID="viewer" />);
+        try {
+            const capture = mounted.container.querySelector<HTMLElement>('[data-testid="viewer-capture"]')!;
+            act(() => capture.focus());
+            for (const key of ['Dead', 'Process']) {
+                const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+                act(() => capture.dispatchEvent(event));
+                expect(event.defaultPrevented).toBe(false);
+            }
+            for (const key of ['n', ' ', 'Enter']) {
+                const event = new KeyboardEvent('keydown', { key, isComposing: true, bubbles: true, cancelable: true });
+                act(() => capture.dispatchEvent(event));
+                expect(event.defaultPrevented).toBe(false);
+            }
+            expect(gestures).toEqual([]);
+            act(() => capture.dispatchEvent(new CompositionEvent('compositionend', { data: '日本 é ', bubbles: true })));
+            expect(gestures).toEqual([{ kind: 'keyboard_text', text: '日本 é ' }]);
+            act(() => capture.blur());
+            act(() => capture.dispatchEvent(new CompositionEvent('compositionend', { data: 'ignored', bubbles: true })));
+            expect(gestures).toHaveLength(1);
+        } finally { mounted.unmount(); }
+    });
+
     it.each([true, false])('consumes host file drops and delivers only when input is accepted (%s)', inputAccepted => {
         const onFileDrop = vi.fn();
         const mounted = mountThroughReactNativeWeb(<HappierLiveStreamInputLayer inputAccepted={inputAccepted} supports={() => true}

@@ -15,7 +15,7 @@ type ActiveCapture = {
 
 // USB HID keyboard usages accepted by the native producer's keyboard channel.
 const KEY_USAGES: Readonly<Record<string, number>> = {
-    enter: 40, return: 40, escape: 41, backspace: 42, tab: 43, space: 44,
+    enter: 40, return: 40, escape: 41, backspace: 42, tab: 43, space: 44, ' ': 44,
     delete: 76, end: 77, home: 74, arrowright: 79, arrowleft: 80, arrowdown: 81, arrowup: 82,
 };
 

@@ -99,10 +99,19 @@ describe('streamed browser human input composition', () => {
                 capture!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 400, clientY: 200 }));
                 capture!.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0, clientX: 400, clientY: 200 }));
                 for (const key of 'HUMAN') capture!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+                capture!.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }));
                 capture!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
             });
-            expect(admissions).toHaveLength(8);
-            expect(admissions).toEqual(Array.from({ length: 8 }, () => ({ ok: true })));
+            expect(admissions).toHaveLength(9);
+            expect(admissions).toEqual(Array.from({ length: 9 }, () => ({ ok: true })));
+            // Space must retain native button activation/scroll semantics rather than
+            // inserting text into Chromium's last editable target.
+            await vi.waitFor(() => expect(commands).toEqual(expect.arrayContaining([
+                expect.objectContaining({ method: 'Input.dispatchKeyEvent', params: expect.objectContaining({
+                    type: 'keyDown', key: ' ', windowsVirtualKeyCode: 32,
+                }) }),
+                expect.objectContaining({ method: 'Input.dispatchKeyEvent', params: expect.objectContaining({ type: 'keyUp', key: ' ' }) }),
+            ])));
             await vi.waitFor(() => expect(commands.filter(command => command.method === 'Input.insertText')
                 .map(command => command.params?.text).join('')).toBe('HUMAN'));
             expect(commands).toEqual(expect.arrayContaining([
