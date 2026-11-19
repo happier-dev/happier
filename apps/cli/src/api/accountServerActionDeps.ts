@@ -81,16 +81,14 @@ import {
   type ExternalActionMachineRequestSigningKey,
 } from '@/api/externalActionExecutionAuthorization';
 import { captureSessionOrganizationDisplayHost } from '@/api/sessionOrganizationDisplayHost';
-import { getUsageQueryKey, resolveUsageQueryPeriod } from '@happier-dev/protocol/inputs/usageQuery';
+import { getUsageQueryKey } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveSessionProjectScopeV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { readUsageAccountingSnapshots } from './usageAccountingReads';
 import { UsageModelPriceCatalogSchema } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { resolveUsagePageAggregation, resolveUsagePageAccountingReads, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { resolveUsagePageAggregation, resolveUsagePageAccountingReads, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { ConnectedServiceQuotaGetResultV1Schema, type ConnectedServiceQuotaGetResultV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
-import { wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
 import { PublicProfileReadResultV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
 import { USAGE_PUBLIC_RECAP_ACTION_IDS, isUsagePublicRecapActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
@@ -671,7 +669,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         };
         type Quota = NonNullable<Parameters<typeof resolveUsagePageAggregation>[0]['quota']>;
         let quota: Quota = { status: 'unknown' };
-        let quotaSources: UsageQuerySourceState[] = [];
+        let quotaByQuery: Parameters<typeof resolveUsagePageAggregation>[0]['quotaByQuery'];
         let pools: UsagePoolSourceSnapshot[] | undefined;
         let preferences: ReturnType<typeof accountSettingsParse>['usageCoachPreferencesV1'] | undefined;
         let suppressionState: UsageCoachSuppressionStateV1 | undefined;
@@ -738,37 +736,13 @@ export function createAccountServerActionDeps(input: Readonly<{
                 activeAccountId: group.activeConnectedAccountId, selection };
             })),
           })));
-          const accounts = profile.connectedAccountsV4.filter(account => account.status !== 'needs_reauth');
-          const periods = request.queries.filter(query => query.includeQuotaHistory)
-            .map(query => resolveUsageQueryPeriod(query, accountingNowMs));
-          const starts = periods.map(period => period.startMs ?? 0);
-          const ends = periods.flatMap(period => period.endMs === undefined ? [] : [period.endMs]);
-          const range = periods.length > 0 && starts.length === periods.length && ends.length === periods.length
-            ? { startAtMs: Math.min(...starts), endAtMs: Math.max(...ends) } : undefined;
-          const rows = await Promise.all(accounts.map(async account => {
-            const source = { bindingKind: 'account' as const, ref: account.ref };
-            // A finite snapshot retains the canonical page and its continuation,
-            // rather than withholding current facts until history is exhausted.
-            const history = range && range.endAtMs > range.startAtMs ? { range, pageSize: 100 } : undefined;
-            const result = await readQuota({ source, ...(history ? { history } : {}) }, context);
-            const asOfMs = !('ok' in result) && result.current && wasConnectedServiceQuotaObserved(result.current)
-              ? result.current.fetchedAtMs : undefined;
-            return { source, result, asOfMs };
-          }));
+          const { readCliUsageQuota } = await import('@/usage/readCliUsageQuota');
+          const quotaReads = await readCliUsageQuota({ queries: request.queries, nowMs: accountingNowMs, context, readQuota,
+            sources: profile.connectedAccountsV4.filter(account => account.status !== 'needs_reauth')
+              .map(account => ({ bindingKind: 'account', ref: account.ref })),
+          });
           await check();
-          quotaSources = rows.map(({ source, result, asOfMs }) => ({ source: `quota:${createCanonicalJsonSigningInput(source)}`,
-            ...('ok' in result ? { status: result.errorCode === 'unsupported' ? 'unsupported' as const : 'error' as const,
-              errorCode: result.errorCode ?? 'usage_quota_read_failed' }
-              : { status: result.history?.nextCursor != null ? 'partial' as const : 'available' as const,
-                ...(asOfMs === undefined ? {} : { asOfMs }) }),
-          }));
-          const values = rows.flatMap(({ result }) => 'ok' in result ? [] : [result]);
-          const failures = rows.flatMap(({ result }) => 'ok' in result ? [result] : []);
-          const times = rows.flatMap(row => row.asOfMs === undefined ? [] : [row.asOfMs]);
-          quota = { status: failures.length ? values.length ? 'partial' : 'unknown'
-            : values.some(row => row.history?.nextCursor != null) ? 'partial' : 'available',
-            ...(failures.length ? { errorCode: failures[0]!.errorCode ?? 'usage_quota_read_failed' } : {}),
-            ...(values.length || failures.length === 0 ? { value: values } : {}), ...(times.length ? { asOfMs: Math.min(...times) } : {}) };
+          quotaByQuery = quotaReads;
         } catch (error) {
           const code = error instanceof Error && 'code' in error ? error.code : undefined;
           quota = { status: code === 'unsupported' ? 'unsupported' : 'unknown',
@@ -795,9 +769,9 @@ export function createAccountServerActionDeps(input: Readonly<{
           await check();
         }
         const { bundledUsageModelPriceCatalog } = await import('@happier-dev/protocol/usage/usageModelPriceCatalog');
-        const result = resolveUsagePageAggregation({ queries: request.queries, accountSettings, quota, pools, pricingOverrides, coachPreferences: preferences ?? null, nowMs: accountingNowMs,
+        const result = resolveUsagePageAggregation({ queries: request.queries, accountSettings, quota, quotaByQuery, pools, pricingOverrides, coachPreferences: preferences ?? null, nowMs: accountingNowMs,
           accounting, work: detail.work, howYouWork: detail.howYouWork,
-          sources: [...quotaSources, { source: 'coach_preferences', status: preferences ? 'available' : 'unknown' },
+          sources: [{ source: 'coach_preferences', status: preferences ? 'available' : 'unknown' },
             { source: 'pricing_overrides', status: pricingOverrides === undefined ? 'unknown' : 'available' }],
         }, bundledUsageModelPriceCatalog);
         const nowMs = accountingNowMs;

@@ -235,6 +235,7 @@ export type UsageQueryResultSlice = z.infer<typeof UsageQueryResultSliceSchema>;
 
 type AdmittedUsageProjection<T> = Readonly<{ inputs: Readonly<Record<string, unknown>>; value: T }>;
 type UsagePageProjections = {
+  accountingReadAtMs?: number;
   calendar: AdmittedUsageProjection<UsageAgentAccountingCalendar | undefined>;
   howYouWork: AdmittedUsageProjection<UsageQueryResultSlice['howYouWork']> & Readonly<{ period?: UsageWorkIntervalsInput['period'] }>;
   coach: AdmittedUsageProjection<UsageQueryResultSlice['coach']>;
@@ -249,6 +250,11 @@ type UsagePageProjections = {
 // enter JSON, Action schemas or an independent cache/lifetime.
 const usagePageProjections = Symbol('usagePageProjections');
 type ProjectedUsageSlice = UsageQueryResultSlice & { [usagePageProjections]?: UsagePageProjections };
+
+/** The admitted local read of the displayed accounting value. */
+export function readUsageAccountingReadAtMs(slice: Pick<UsageQueryResultSlice, 'sources'>): number | undefined {
+  return (slice as ProjectedUsageSlice)[usagePageProjections]?.accountingReadAtMs;
+}
 
 /** Shares and their legends read the admitted accounting cohort even when a sibling supplies private activity. */
 export function readUsageAgentAccountingCalendar(slice: UsageQueryResultSlice): UsageAgentAccountingCalendar['projection'] | null {
@@ -294,7 +300,7 @@ function carryUsageProjectionInputs(value: UsageQueryResultSlice, source: UsageQ
     comparisonCostFactTotals: withValue(admitted.comparisonCostFactTotals, value.comparison?.costFactTotals),
   };
   const current = (value as ProjectedUsageSlice)[usagePageProjections];
-  if (current) {
+  if (current && current.accountingReadAtMs === admitted.accountingReadAtMs) {
     // A retained public slice must keep its identity even when a completed
     // reread refreshes its private projection basis. Memoize only that basis;
     // never replace or mutate any admitted public fact.
@@ -449,6 +455,8 @@ export type UsageAccountingSourceSnapshot = Readonly<{
   value?: UsageAnalyticsQueryResponse;
   status: UsageQuerySourceState['status'];
   asOfMs?: number;
+  /** Successful Account acquisition of the value, carried locally across retained reads. */
+  readAtMs?: number;
   errorCode?: string;
   /** Same-read derived value held by the existing accounting snapshot owner; never serialized. */
   priceProjection?: Readonly<{
@@ -525,11 +533,23 @@ export function projectUsageAccountingSnapshotCalendar(snapshot: UsageAccounting
     timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, costMode: query.costBasis }) };
 }
 
-/** A successful read retains producer observation time, never the adapter's clock. */
+/** The producer record that supplies the accounting observation witness. */
+export function readUsageOldestAccountingObservation(value: UsageAnalyticsQueryResponse) {
+  let oldestSource: string | undefined;
+  let oldestAtMs: number | undefined;
+  for (const { source, status, asOfMs } of value.coverage?.sources ?? []) {
+    if ((status === 'available' || status === 'partial') && asOfMs !== undefined
+      && (oldestAtMs === undefined || asOfMs < oldestAtMs)) {
+      oldestSource = source;
+      oldestAtMs = asOfMs;
+    }
+  }
+  return oldestSource !== undefined && oldestAtMs !== undefined ? { source: oldestSource, asOfMs: oldestAtMs } : undefined;
+}
+
+/** An accounting witness dates the producer's observation. */
 export function resolveUsageAccountingAsOfMs(value: UsageAnalyticsQueryResponse): number | undefined {
-  const times = value.coverage?.sources.filter(source => source.status === 'available' || source.status === 'partial')
-    .flatMap(source => source.asOfMs === undefined ? [] : [source.asOfMs]) ?? [];
-  return times.length ? Math.min(...times) : undefined;
+  return readUsageOldestAccountingObservation(value)?.asOfMs;
 }
 
 /** Display currentness has no Machine/path dimension; preserve each distinct status. */
@@ -621,17 +641,22 @@ function isUsageDetailSourceReadable(source: UsageQuerySourceState): boolean {
 }
 
 export function retainAccountingOnReadFailure(observed: UsageAccountingSourceSnapshot | undefined,
-  value: UsageAnalyticsQueryResponse | undefined, asOfMs: number | undefined): UsageAccountingSourceSnapshot | undefined {
+  value: UsageAnalyticsQueryResponse | undefined, asOfMs: number | undefined, readAtMs?: number): UsageAccountingSourceSnapshot | undefined {
   // Authority loss/cancellation never revives previously disclosed facts.
   if (!observed || observed.value !== undefined || value === undefined || observed.status !== 'error'
     || !canRetainUsageReadFailure(observed.errorCode)) return observed;
-  return { ...observed, value, ...(asOfMs === undefined ? {} : { asOfMs }) };
+  return { ...observed, value, ...(asOfMs === undefined ? {} : { asOfMs }), ...(readAtMs === undefined ? {} : { readAtMs }) };
 }
 
 /**
  * One deterministic page composition over already-authorized owner snapshots.
  * No accounting, vendor refresh, transport, cache or authority is invented here.
  */
+export type UsageQuotaSourceSnapshot = Readonly<Omit<UsageQuerySourceState, 'source'> & {
+  value?: readonly ConnectedServiceQuotaGetResultV1[];
+  sources?: readonly UsageQuerySourceState[];
+}>;
+
 export type UsagePageAggregationInput = Readonly<{
   queries: readonly UsageQuery[];
   /** Opened Account preferences share one resolution path across UI, CLI and daemon callers. */
@@ -643,7 +668,9 @@ export type UsagePageAggregationInput = Readonly<{
   /** Account preference is available independently of private Session detail; null explicitly clears it. */
   nightHours?: UsageWorkIntervalsInput['nightHours'] | null;
   nowMs?: number;
-  quota?: Readonly<Omit<UsageQuerySourceState, 'source'> & { value?: readonly ConnectedServiceQuotaGetResultV1[] }>;
+  quota?: UsageQuotaSourceSnapshot;
+  /** Host-side finite reads keyed by their admitted query; never serialized. */
+  quotaByQuery?: ReadonlyMap<string, UsageQuotaSourceSnapshot>;
   pools?: readonly UsagePoolSourceSnapshot[];
   sources?: readonly UsageQuerySourceState[];
   /** Already-opened machine labels authorized for this Account; absence withdraws retained labels. */
@@ -654,6 +681,12 @@ export type UsagePageAggregationInput = Readonly<{
   pricingOverrides?: UsageModelPriceOverridesV1;
   coachPreferences?: UsageCoachPreferencesV1 | null;
 }>;
+
+/** A scoped read never borrows a sibling period's value or currentness. */
+export function resolveUsageQuotaSourceSnapshot(input: Pick<UsagePageAggregationInput, 'quota' | 'quotaByQuery'>,
+  query: UsageQuery): UsageQuotaSourceSnapshot | undefined {
+  return input.quotaByQuery ? input.quotaByQuery.get(getUsageQueryKey(query)) : input.quota;
+}
 
 /** Shared B admission and source projection for accounting-backed and quota-only slices. */
 function projectUsageQuotaFields(query: UsageQuery, quota: UsagePageAggregationInput['quota'], observedPools: readonly UsageQueryPoolSnapshot[] | undefined,
@@ -672,6 +705,7 @@ function projectUsageQuotaFields(query: UsageQuery, quota: UsagePageAggregationI
     { source: 'quota', status: quota?.status ?? 'not_loaded',
       ...(quota?.asOfMs === undefined ? {} : { asOfMs: quota.asOfMs }),
       ...(quota?.errorCode === undefined ? {} : { errorCode: quota.errorCode }) },
+    ...(quota?.sources ?? []),
     ...(pools?.map(pool => ({ source: `selection:${pool.group.service.pluginId}/${pool.group.service.localId}:${pool.group.groupId}`,
       status: pool.selection.status, ...(pool.selection.asOfMs === undefined ? {} : { asOfMs: pool.selection.asOfMs }),
       ...(pool.selection.errorCode === undefined ? {} : { errorCode: pool.selection.errorCode }) })) ?? []),
@@ -697,7 +731,7 @@ function retainPublicProfileEvidence(previous: NonNullable<UsageQueryResultSlice
 }
 
 /** Quota-only demand uses the same admitted B snapshots and result identity, without touching A or private evidence. */
-export function resolveUsageQuotaPageAggregation(input: Pick<UsagePageAggregationInput, 'queries' | 'quota' | 'pools' | 'sources' | 'previous' | 'nowMs'>): UsageQueryBatchResult {
+export function resolveUsageQuotaPageAggregation(input: Pick<UsagePageAggregationInput, 'queries' | 'quota' | 'quotaByQuery' | 'pools' | 'sources' | 'previous' | 'nowMs'>): UsageQueryBatchResult {
   const poolsByQuery = new Map(input.pools?.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot.value]));
   const queries = new Map(input.queries.map(candidate => {
     const query = normalizeUsageQuery(candidate);
@@ -705,14 +739,16 @@ export function resolveUsageQuotaPageAggregation(input: Pick<UsagePageAggregatio
     return [getUsageQueryKey(query), query] as const;
   }));
   const results = [...queries].map(([key, query]): UsageQueryResultSlice => {
-    const { sources: quotaSources, ...quotaFields } = projectUsageQuotaFields(query, input.quota, poolsByQuery.get(key),
+    const quota = resolveUsageQuotaSourceSnapshot(input, query);
+    const { sources: quotaSources, ...quotaFields } = projectUsageQuotaFields(query, quota, poolsByQuery.get(key),
       input.previous?.results.find(slice => slice.key === key)?.pools);
     const sources: UsageQuerySourceState[] = [
       { source: 'accounting', status: 'unsupported' },
       { source: 'work', status: 'not_loaded' },
       { source: 'how_you_work', status: 'not_loaded' },
       ...quotaSources,
-      ...(input.sources ?? []).filter(source => query.includeQuota !== false && source.source.startsWith('quota:')),
+      ...(!input.quotaByQuery && !quota?.sources ? input.sources ?? [] : [])
+        .filter(source => query.includeQuota !== false && source.source.startsWith('quota:')),
     ];
     return { key, requestedQuery: query, shownQuery: query,
       ...quotaFields,
@@ -778,10 +814,12 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     const prior = previous.get(key);
     const admitted = (projectionPrevious.get(key) as ProjectedUsageSlice | undefined)?.[usagePageProjections];
     const pools = poolsByQuery.get(key);
-    const { sources: quotaSources, ...quotaFields } = projectUsageQuotaFields(query, input.quota, pools, prior?.pools);
-    const sourceStates = (input.sources ?? []).filter(source => query.includeQuota !== false || !source.source.startsWith('quota:'));
+    const quota = resolveUsageQuotaSourceSnapshot(input, query);
+    const { sources: quotaSources, ...quotaFields } = projectUsageQuotaFields(query, quota, pools, prior?.pools);
+    const sourceStates = (input.sources ?? []).filter(source => !source.source.startsWith('quota:')
+      || query.includeQuota !== false && !input.quotaByQuery && !quota?.sources);
     const snapshot = projectPrices(retainAccountingOnReadFailure(observed, prior?.accounting,
-      prior?.sources.find(source => source.source === 'accounting')?.asOfMs));
+      prior?.sources.find(source => source.source === 'accounting')?.asOfMs, prior && readUsageAccountingReadAtMs(prior)));
     const readPeriod = observed?.period ?? (input.nowMs !== undefined ? resolveUsageQueryPeriod(query, input.nowMs)
       : 'relative' in query.period ? snapshot?.value?.coverage?.range ?? query.period : query.period);
     // A failed refresh retains the prior accounting window as well as its
@@ -991,16 +1029,16 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     const planInsights = projectAdmittedUsageInputs(admitted?.planInsights, {
       accounting: snapshot?.value, asOfMs: snapshot?.asOfMs, startMs: period.startMs, endMs: period.endMs,
       howYouWork: detailProjection, nowMs: input.nowMs,
-      quota: query.includeQuota !== false && input.quota?.value && ['available', 'partial', 'stale'].includes(input.quota.status) ? input.quota.value : undefined,
+      quota: query.includeQuota !== false && quota?.value && ['available', 'partial', 'stale'].includes(quota.status) ? quota.value : undefined,
     }, () => projectUsagePlanInsights({ query: { ...query, period }, nowMs: input.nowMs, accounting: snapshot?.value, accountingAsOfMs: snapshot?.asOfMs,
       howYouWork: detailProjection,
-      quota: query.includeQuota !== false && input.quota?.value && ['available', 'partial', 'stale'].includes(input.quota.status) ? input.quota.value : undefined }));
+      quota: query.includeQuota !== false && quota?.value && ['available', 'partial', 'stale'].includes(quota.status) ? quota.value : undefined }));
     const costFactTotals = projectAdmittedUsageInputs(admitted?.costFactTotals, { facts: snapshot?.value?.costFacts, available: snapshot?.value !== undefined },
       () => snapshot?.value === undefined ? undefined : projectUsageCostFactTotals(snapshot.value.costFacts ?? []));
     const comparisonCostFactTotals = projectAdmittedUsageInputs(admitted?.comparisonCostFactTotals, { facts: comparisonSnapshot?.value?.costFacts,
       available: comparisonSnapshot?.value !== undefined },
       () => comparisonSnapshot?.value === undefined ? undefined : projectUsageCostFactTotals(comparisonSnapshot.value.costFacts ?? []));
-    const projections: UsagePageProjections = { calendar, howYouWork: detailFacts, coach: coachFacts, work: workFacts, mergedOutcomes: mergedFacts,
+    const projections: UsagePageProjections = { accountingReadAtMs: snapshot?.readAtMs, calendar, howYouWork: detailFacts, coach: coachFacts, work: workFacts, mergedOutcomes: mergedFacts,
       planInsights, costFactTotals, comparisonCostFactTotals };
     const slice: ProjectedUsageSlice = {
       key, requestedQuery: query, shownQuery: query,
