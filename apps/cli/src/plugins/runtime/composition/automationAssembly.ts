@@ -114,7 +114,7 @@ export async function assembleAutomationRuntime(input: Readonly<{
                 });
                 const adopted = Object.freeze({ caller, occurrenceId, transport, owner });
                 adoptedOwners.push(adopted);
-                await owner.refresh(lifecycle.retirementSignal);
+                await owner.reconcileCatalog(lifecycle.retirementSignal);
                 await reportNativePresenceObservation(adopted);
             }
         }
@@ -250,7 +250,7 @@ export async function assembleAutomationRuntime(input: Readonly<{
                     const eventRef = { pluginId: caller.pluginId, localId: `machine-${fact.transition}` };
                     let projection = owner.readPublicProjection({ definitions: fact.definitions });
                     if (projection.kind === 'initializing') {
-                        await owner.refresh(lifecycle.retirementSignal);
+                        await owner.reconcileCatalog(lifecycle.retirementSignal);
                         projection = owner.readPublicProjection({ definitions: fact.definitions });
                     }
                     if (projection.kind !== 'available') continue;
@@ -283,7 +283,7 @@ export async function assembleAutomationRuntime(input: Readonly<{
         async refreshSourceDefinitions(pluginIds?: readonly string[]) {
             for (const entry of adoptedOwners) {
                 if (pluginIds === undefined || pluginIds.includes(entry.caller.pluginId)) {
-                    await entry.owner.refresh(input.resolveConsumerLifecycle(entry.caller.pluginId).retirementSignal);
+                    await entry.owner.reconcileCatalog(input.resolveConsumerLifecycle(entry.caller.pluginId).retirementSignal);
                     await reportNativePresenceObservation(entry);
                 }
             }

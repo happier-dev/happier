@@ -14,6 +14,8 @@ import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/acti
 import { sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import type { AutomationEventSourceDefinitionV1, AutomationEventActionHttpCallerV1, AutomationEventAdmitEncryptedDefinitionEvidenceV1, AutomationEventAdmitHttpRequestV1, AutomationEventAdmitInputV1, AutomationAccountCurrentnessWitnessV1, AutomationEventDeclarationReleaseV1, AutomationEventStoredDefinitionProjectionV1, AutomationEventStoredDefinitionsReadResultV1, AutomationEventCheckpointRetirementCandidateV1, AutomationEventSourcesListInputV1, AutomationEventSourcesListResultV1, AutomationEventSourcesListTransportV1, PluginJsonSchemaValidator, PluginMachineMaterializationRefV1, PluginEventAutomationHistoryGapResetActionInputV1, PluginWebhookInvocationReferenceV1 } from '@happier-dev/protocol';
 
+import { logger } from '@/ui/logger';
+
 import {
   isAvailableE2eeAutomationAccountEncryptionV1,
   type AvailableAutomationAccountEncryptionV1,
@@ -120,7 +122,10 @@ export type AutomationEventAdoptedDefinitionSetHistoryGapRecoveryV1 = Readonly<{
 }>;
 
 export type AutomationEventAdoptedDefinitionSetWithHistoryGapRecoveryV1 =
-  AutomationEventAdoptedDefinitionSetV1 & AutomationEventAdoptedDefinitionSetHistoryGapRecoveryV1 & Readonly<{ invalidate(): void }>;
+  AutomationEventAdoptedDefinitionSetV1 & AutomationEventAdoptedDefinitionSetHistoryGapRecoveryV1 & Readonly<{
+    invalidate(): void;
+    reconcileCatalog(signal?: AbortSignal): Promise<AutomationEventAdoptedDefinitionSetRefreshResultV1>;
+  }>;
 
 type AdoptedSnapshot = Readonly<{
   revision: string;
@@ -980,6 +985,13 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
     }
   }
 
+  async function reconcileCatalog(signal = createEmptySignal()): Promise<AutomationEventAdoptedDefinitionSetRefreshResultV1> {
+    const result = await joinAdoptedSnapshotRefresh(signal);
+    if (result.kind === 'discarded' || !catalogInvalidated) return result;
+    // An invalidation delivered during the shared read still owns its scan.
+    return joinAdoptedSnapshotRefresh(signal);
+  }
+
   /**
    * The occurrence-local owner exists before its first catalog read can
    * succeed, and a transient first read must not strand the plugin for the
@@ -1003,6 +1015,7 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       adoptedSnapshotRefresh?.expedite();
     },
     refresh,
+    reconcileCatalog,
     readPublicProjection(request) {
       const snapshot = adopted;
       if (
@@ -1056,7 +1069,21 @@ export function createAutomationEventAdoptedDefinitionSetV1(params: Readonly<{
       ) return { kind: 'unavailable' };
       let snapshot: AdoptedSnapshot | null;
       let sourceSetReadopted = false;
-      if (
+      const exactPullSource = params.transport.kind === 'checkpointedPull'
+        && request.input.cursor === undefined
+        && request.input.source !== undefined;
+      if (exactPullSource && request.input.catalogRefresh === undefined
+          && request.input.knownRevision === undefined
+          && (adopted === null || catalogInvalidated || adoptedSnapshotRefresh !== null || catalogRefreshFailed)) {
+        // A one-shot observation has no prior catalog revision to confirm.
+        // Join the host's refresh before deciding whether the source is armed.
+        const refreshed = await reconcileCatalog(signal);
+        if (refreshed.kind === 'discarded') {
+          if (!signal.aborted) logger.warnLocalFile('Automation Event source catalog unavailable', { reason: refreshed.reason });
+          return { kind: 'unavailable' };
+        }
+        snapshot = adopted;
+      } else if (
         request.input.catalogRefresh !== undefined
         || (params.transport.kind === 'checkpointedPull'
           && request.input.cursor === undefined

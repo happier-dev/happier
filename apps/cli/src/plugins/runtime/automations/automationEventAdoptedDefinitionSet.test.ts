@@ -197,6 +197,65 @@ function unchanged(
 }
 
 describe('createAutomationEventAdoptedDefinitionSetV1', () => {
+  it('selects a newly armed checkpointed source while the invalidated catalog is refreshing', async () => {
+    const armed = storedDefinition(1);
+    const started = Promise.withResolvers<void>();
+    const response = Promise.withResolvers<AutomationEventStoredDefinitionsReadResultV1>();
+    const readStoredDefinitions = vi.fn(async ({ input }: Readonly<{
+      input: AutomationEventSourcesListInputV1;
+    }>): Promise<AutomationEventStoredDefinitionsReadResultV1> => {
+      if (input.knownRevision === undefined) return page('7', [], null);
+      started.resolve();
+      return response.promise;
+    });
+    const owner = createAutomationEventAdoptedDefinitionSetV1({
+      caller,
+      transport: { kind: 'checkpointedPull' },
+      occurrenceSignal: new AbortController().signal,
+      isOccurrenceCurrent: () => true,
+      revalidateCallerMaterialization: async () => true,
+      resolveAccountEncryption: async () => PLAIN_ACCOUNT_ENCRYPTION,
+      readStoredDefinitions,
+      projectStoredDefinition: async ({ storedDefinition: definition }) => projectStoredDefinition(definition),
+    });
+    const select = () => owner.listPublicProjection({
+      accountId: 'account-1',
+      input: {
+        transport: { kind: 'checkpointedPull' },
+        pageSize: 500,
+        source: { eventRef: armed.eventRef, sourceInstanceId: 'repository-1', sourceContractVersion: 1 },
+      },
+    });
+
+    await owner.reconcileCatalog();
+    await expect(select()).resolves.toMatchObject({ kind: 'page', revision: '7', definitions: [] });
+    owner.invalidate();
+    const refresh = owner.reconcileCatalog();
+    await started.promise;
+    const firstObservation = select();
+    // If the read uses the retained snapshot, its exact-source selection
+    // completes on the empty catalog before the Home can return the new row.
+    const settledBeforeHome = await Promise.race([
+      firstObservation.then(() => true),
+      new Promise<false>(resolve => setImmediate(() => resolve(false))),
+    ]);
+    response.resolve(page('8', [armed], null));
+    await refresh;
+
+    expect(settledBeforeHome).toBe(false);
+    await expect(firstObservation).resolves.toMatchObject({
+      kind: 'page', revision: '8', definitions: [{ triggerId: armed.triggerId }],
+    });
+    await expect(select()).resolves.toMatchObject({
+      kind: 'page', revision: '8', definitions: [{ triggerId: armed.triggerId }],
+    });
+    expect(readStoredDefinitions).toHaveBeenCalledTimes(2);
+
+    owner.invalidate();
+    readStoredDefinitions.mockRejectedValueOnce(new Error('Home catalog unavailable'));
+    await expect(select()).resolves.toEqual({ kind: 'unavailable' });
+  });
+
   it('reads only the observed source across an adopted multi-page catalog', async () => {
     const stored = Array.from({ length: 1001 }, (_, index) => storedDefinition(index + 1));
     const owner = createAutomationEventAdoptedDefinitionSetV1({
