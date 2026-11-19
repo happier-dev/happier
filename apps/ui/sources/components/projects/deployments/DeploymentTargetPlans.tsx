@@ -69,8 +69,25 @@ export function DeploymentTargetPlans(props: DeploymentTargetPlansProps) {
   const anchorRef = React.useRef<View>(null);
   const title = t('newApp.deploy.plan.includedTitle', { platform: props.platform });
   const yourPlan = matchAccountPlan(props.plans, props.accountPlanLabel);
+  // One label column for the whole card, so every plan's values start at the same x (PAGE-ACCEPT-176 R4-D2).
+  const labels = React.useMemo(() => [...new Set(props.plans.flatMap((plan) => plan.facts.map((fact) => fact.label)))],
+    [props.plans]);
+  const [labelWidth, setLabelWidth] = React.useState<number | null>(null);
   return (
     <View style={styles.body}>
+      {labels.length > 0 ? (
+        <View style={styles.factMeasure} pointerEvents="none" aria-hidden importantForAccessibility="no-hide-descendants"
+          onLayout={(event) => {
+            // Layout reports whole pixels on the web; the label's natural width can be a fraction over, so one more
+            // pixel keeps the widest label on its line.
+            const width = Math.ceil(event.nativeEvent.layout.width) + 1;
+            setLabelWidth((current) => current === width ? current : width);
+          }}>
+          {/* One line each, so the copy measures each label's natural width rather than wrapping to the narrowest. */}
+          {labels.map((label) => <Text key={label} variant="meta" numberOfLines={1}
+            style={{ color: theme.colors.text.secondary }}>{label}</Text>)}
+        </View>
+      ) : null}
       {yourPlan ? (
         <Text testID={`${props.testID}:yourPlan`} variant="meta" emphasis="medium" style={{ color: theme.colors.text.primary }}>
           {`${t('newApp.deploy.plan.yourPlan')} · ${yourPlan.title}`}
@@ -85,7 +102,7 @@ export function DeploymentTargetPlans(props: DeploymentTargetPlansProps) {
               {plan.price ? <Text variant="meta" emphasis="medium" style={{ color: theme.colors.text.primary }} accessibilityLabel={
                 `${t('newApp.deploy.plan.price')} ${formatDeclaredPlanPrice(plan.price)}`}>{formatDeclaredPlanPrice(plan.price)}</Text> : null}
             </View>
-            {plan.facts.length > 0 ? <PlanFacts facts={plan.facts} /> : null}
+            {plan.facts.length > 0 ? <PlanFacts facts={plan.facts} labelWidth={labelWidth} /> : null}
             <Text variant="meta" style={{ color: theme.colors.text.secondary }}>{sourceLine(plan.source)}</Text>
           </View>
         ))}
@@ -112,29 +129,18 @@ export function DeploymentTargetPlans(props: DeploymentTargetPlansProps) {
 }
 
 /**
- * A plan's facts as label · value rows whose label column is as wide as its longest label (jdF-where), so values keep
- * one line in a half-width card. An unseen copy of the labels sizes that column at their natural widths (and again if
- * the face finishes loading); a value that still needs two lines keeps its own row, so labels and values never drift.
+ * A plan's facts as label · value rows on the card's one label column (as wide as its longest label, jdF-where), so
+ * values keep one line in a half-width card and line up across plans; a value that still needs two lines keeps its own
+ * row, so labels and values never drift.
  */
-function PlanFacts(props: Readonly<{ facts: Plans[number]['facts'] }>) {
+function PlanFacts(props: Readonly<{ facts: Plans[number]['facts']; labelWidth: number | null }>) {
   const { theme } = useUnistyles();
-  const [labelWidth, setLabelWidth] = React.useState<number | null>(null);
   const label = { color: theme.colors.text.secondary };
   return (
     <View>
-      <View style={styles.factMeasure} pointerEvents="none" aria-hidden importantForAccessibility="no-hide-descendants"
-        onLayout={(event) => {
-          // Layout reports whole pixels on the web; the label's natural width can be a fraction over, so one more
-          // pixel keeps the widest label on its line.
-          const width = Math.ceil(event.nativeEvent.layout.width) + 1;
-          setLabelWidth((current) => current === width ? current : width);
-        }}>
-        {/* One line each, so the copy measures each label's natural width rather than wrapping to the narrowest. */}
-        {props.facts.map((fact, index) => <Text key={index} variant="meta" numberOfLines={1} style={label}>{fact.label}</Text>)}
-      </View>
       {props.facts.map((fact, index) => (
         <View key={`${index}:${fact.label}`} style={styles.fact}>
-          <Text variant="meta" style={[label, styles.factLabel, labelWidth === null ? null : { width: labelWidth }]}>{fact.label}</Text>
+          <Text variant="meta" style={[label, styles.factLabel, props.labelWidth === null ? null : { width: props.labelWidth }]}>{fact.label}</Text>
           <Text variant="meta" style={[styles.factValue, { color: theme.colors.text.primary }]}>{factValue(fact)}</Text>
         </View>
       ))}
