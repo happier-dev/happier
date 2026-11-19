@@ -15,6 +15,7 @@ import { BotSetInputSchema, BotFaceSetInputSchema, BotFaceStyleSchema, BotFaceBo
 import { SessionTitleSetInputSchema, SessionStatusReasonSetInputSchema, SessionStatusReasonSetResultSchema, SessionToolCallsSetInputSchema, SessionMemorySetInputV1Schema, SessionVoicePreferenceSetInputV1Schema, SessionContextUpdateInputV1Schema, SessionInstructionsSetInputV1Schema } from '../../sessionStateFieldActions.js';
 import { SessionStatusClearInputSchema, SessionStatusProgressSetInputSchema, SessionStatusProgressSetResultSchema } from '../../sessionStateFieldActions.js';
 import { SESSION_STATUS_CLEAR_ACTION_ID_V1, SESSION_STATUS_SET_PROGRESS_ACTION_ID_V1 } from '../../actionIds.js';
+import { SESSION_TASKS_SET_ACTION_ID_V1 } from '../../actionIds.js';
 import { z } from '../../../zodRuntimePolicy.js';
 import { SessionSpaceMembershipSetInputV1Schema, SessionSpaceMembershipSetResultV1Schema } from '../../sessionSpaceMembership.js';
 import { SetSessionTagAssignmentsRequestSchema, PatchSessionTagAssignmentsRequestSchema, SetSessionTagAssignmentsResponseSchema } from '../../../sessions/organization/mutations.js';
@@ -23,7 +24,7 @@ import { ActionIdSchema } from '../../actionIds.js';
 import { type ActionInputOption } from '../../actionInputHints.js';
 import { ProviderConnectionIdSchema } from '../../../providers/ids.js';
 import { SESSION_PERMISSION_INTENT_INPUTS, SessionPermissionModeInputSchema } from '../../../sessions/metadata/sessionPermissionModes.js';
-import { SessionWorkStateStatusV1Schema } from '../../../sessions/work/state/sessionWorkStateV1.js';
+import { SessionTasksSetInputV1Schema, SessionWorkStateStatusV1Schema } from '../../../sessions/work/state/sessionWorkStateV1.js';
 import { SESSION_RPC_METHODS } from '../../../rpc/methods.js';
 import { SessionSectionSetInputV1Schema, SessionSectionSetResultV1Schema } from '../../sessionSections.js';
 import { TeamCredentialProviderModelSelectionV1Schema } from '../../../teams/credentials/resourceV1.js';
@@ -695,6 +696,19 @@ function createSessionStateActionSpecs() {
     },
     outputSchema: StrictJsonValueSchema,
     inputSchema: SessionGoalSetInputSchema,
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: SESSION_TASKS_SET_ACTION_ID_V1,
+    toolExposure: { agent: 'direct', mcp: 'direct' },
+    executionPlacement: 'session', approval: { result: 'none' },
+    title: 'Set Session tasks',
+    description: 'Replace the current Session’s Happier checklist with the complete ordered list. Pass an empty list to clear it.',
+    safety: 'safe', sideEffectClass: 'write', placements: [],
+    bindings: { mcpToolName: 'session_tasks_set' },
+    surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: false, rpc: false },
+    inputHints: { fields: [{ path: 'items', title: 'Tasks', widget: 'json', required: true }] },
+    inputSchema: SessionTasksSetInputV1Schema,
+    outputSchema: StrictJsonValueSchema,
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.goal.clear', executionPlacement: 'session', approval: {result: 'required'},

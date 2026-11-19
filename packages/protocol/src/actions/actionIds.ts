@@ -47,6 +47,7 @@ export function isSessionSpawnHomeDefaultsReadEffectV1(rootActionId: string, eff
 export const SESSION_PERMISSION_MODE_SET_ACTION_ID_V1 = 'session.permission_mode.set' as const;
 export const SESSION_STATUS_CLEAR_ACTION_ID_V1 = 'session.status.clear' as const;
 export const SESSION_STATUS_SET_PROGRESS_ACTION_ID_V1 = 'session.status.set_progress' as const;
+export const SESSION_TASKS_SET_ACTION_ID_V1 = 'session.tasks.set' as const;
 export const EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1 = 'sessions.external.candidates.list' as const;
 export const EXTERNAL_SESSION_CANDIDATE_DELETE_ACTION_ID_V1 = 'sessions.external.candidate.delete' as const;
 export const SCM_REMOTE_PUSH_ACTION_ID_V1 = 'scm.remote.push' as const;
@@ -571,6 +572,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.goal.get',
     'session.goal.set',
     'session.goal.clear',
+    SESSION_TASKS_SET_ACTION_ID_V1,
     'session.usageLimit.waitResume.enable',
     'session.usageLimit.waitResume.cancel',
     'session.usageLimit.checkNow',

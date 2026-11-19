@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol';
+import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -18,6 +19,7 @@ import type { HappyMcpSessionClient } from './startHappyServer';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
 import { createSessionRoleContext } from '@/session/roles/sessionRoleContext';
 import { createRoleSourceReader } from '@/session/roles/roleSources';
+import { bindHappierSessionTasks } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionWorkState';
 
 function goalSessionRoles(metadata: ReturnType<typeof createTestMetadata>) {
   return createSessionRoleContext({ readMetadata: () => metadata, readOrganization: async () => ({}),
@@ -135,6 +137,62 @@ describe('createHappierMcpServer goal parity', () => {
       await execution?.catch(() => undefined);
       await rpcHandlerManager.waitForIdle();
       await client.close();
+      await runtime.mcp.close();
+    }
+  });
+
+  it('replaces the bound Session task list through MCP and preserves the provider goal', async () => {
+    const sessionId = 'native-task-list-session';
+    let metadata = createTestMetadata({
+      flavor: 'claude', machineId: 'machine-1', path: '/repo',
+      sessionWorkStateV1: {
+        v: 1, backendId: 'claude', updatedAt: 1,
+        items: [{ id: 'vendor-goal', kind: 'goal', origin: 'vendor', status: 'active', title: 'Ship', updatedAt: 1 }],
+      },
+    });
+    let writes = 0;
+    const session = { sessionId, async updateMetadata(update: (current: typeof metadata) => typeof metadata) {
+      writes++;
+      metadata = update(metadata);
+    } };
+    const runtime = createHappierMcpServer({
+      ...session,
+      rpcHandlerManager: new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' }),
+      getServerBinding: () => ({ serverId: 'test-home', serverUrl: 'https://test-home.example.test' }),
+      publishHappierSessionTasks: bindHappierSessionTasks({ session, occurrenceId: 'task-runner', agentId: 'claude', isCurrent: () => true }),
+      getMetadataSnapshot: () => metadata,
+      getBackendTarget: () => ({ kind: 'backend', backendId: 'claude', sourceKind: 'built_in' }),
+      getSessionRoleContext: () => goalSessionRoles(metadata),
+      getCurrentSessionLocation: () => ({ machineId: 'machine-1', path: '/repo' }),
+      getPermissionMode: () => 'default', getWorkDepth: () => 0, getHostTurnWorkDepth: () => 0,
+      getActiveTurnPermissionWitness: () => ({ turnId: 'task-turn', causalPermissionAuthority: {
+        kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default',
+      } }),
+    }, {
+      credentials: { token: 'task-list-account', encryption: null },
+      accountSettings: admitAccountSettings('task-list-account'),
+    });
+    const replace = (items: readonly { title: string; status: string }[]) => runtime.executeTool({
+      toolName: 'action_execute', args: { actionId: 'session.tasks.set', input: { items } },
+    });
+    try {
+      const tasks = [{ title: 'Write test', status: 'complete' }, { title: 'Run test', status: 'active' }];
+      const result = await replace(tasks);
+      if (!result.ok) throw new Error(JSON.stringify(result));
+      expect(readSessionWorkStateV1FromMetadata(metadata)?.items).toEqual([
+        expect.objectContaining({ id: 'vendor-goal', kind: 'goal' }),
+        expect.objectContaining({ title: 'Write test', kind: 'task', origin: 'happier', status: 'complete' }),
+        expect.objectContaining({ title: 'Run test', kind: 'task', origin: 'happier', status: 'active' }),
+      ]);
+      expect(runtime.toolNames).toContain('session_tasks_set');
+      expect(await runtime.executeTool({ toolName: 'session_tasks_set', args: { items: tasks } })).toMatchObject({ ok: true });
+      expect(await runtime.executeTool({ toolName: 'action_execute', args: {
+        actionId: 'session.tasks.set', input: { sessionId: 'another-session', items: [] },
+      } })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+      expect(await replace([])).toMatchObject({ ok: true });
+      expect(readSessionWorkStateV1FromMetadata(metadata)?.items).toEqual([expect.objectContaining({ id: 'vendor-goal' })]);
+      expect(writes).toBe(2);
+    } finally {
       await runtime.mcp.close();
     }
   });

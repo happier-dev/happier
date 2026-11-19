@@ -1,10 +1,12 @@
 import { normalizeId } from '../inputReading.js';
+import { SESSION_TASKS_SET_ACTION_ID_V1 } from '../../actionIds.js';
 import { QualifiedConnectedAccountPurposeV1Schema } from '../../../connect/connectedAccountPurposeIdentity.js';
 import { QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema } from '../../../connect/connectedAccountPurposeBindings.js';
 import { resolveServerIdForSession } from '../sessionScope.js';
 import { completeActionResult } from '../resultProjection.js';
 import { isAgentCaller } from '../callerContext.js';
 import type { SessionGoalSetRequestV1 } from '../../../sessions/work/state/sessionWorkStateRpc.js';
+import type { SessionTasksSetInputV1 } from '../../../sessions/work/state/sessionWorkStateV1.js';
 import { WorkflowTriggerListResultV1Schema } from '../../../workflows/triggers/workflowTriggerActionsV1.js';
 import { isKeepGoingTriggerTargetV1 } from '../../../workflows/triggers/triggerTargetV1.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
@@ -80,6 +82,14 @@ export async function dispatchSessionWork(inv: Pick<CoreInvocation, 'actionId' |
             ...(ctx.actionRequestId ? { actionRequestId: ctx.actionRequestId } : {}),
           });
           return completeActionResult(res);
+        }
+
+        if (actionId === SESSION_TASKS_SET_ACTION_ID_V1) {
+          if (!deps.sessionTasksSet) {
+            return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          }
+          return completeActionResult(await deps.sessionTasksSet(parsed.data as SessionTasksSetInputV1,
+            ctx.signal ? { signal: ctx.signal } : undefined));
         }
 
         if (actionId === 'session.goal.clear') {

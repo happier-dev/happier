@@ -180,6 +180,8 @@ export function createHappierMcpServer(
 } {
   const environment = sessionProcessEnvironment();
   const actionInvocation = client.getRunActionInvocation?.();
+  const sessionId = client.sessionId;
+  const publishHappierSessionTasks = client.publishHappierSessionTasks;
   const toolSurface = actionInvocation?.surface === 'voice' ? 'voice' as const : 'agent' as const;
   const credentials = opts?.authorityScope === 'session' ? null : opts?.credentials ?? null;
   const sessionCredentials = opts?.sessionCredentials ?? opts?.credentials ?? null;
@@ -471,6 +473,17 @@ export function createHappierMcpServer(
             && client.getActiveTurnPermissionWitness?.()?.turnId === witness.turnId,
         } : null);
       },
+      ...(publishHappierSessionTasks ? {
+        sessionTasksSet: async (input, options) => {
+          try {
+            await publishHappierSessionTasks(input.items, options?.signal);
+            return { sessionId };
+          } catch {
+            const errorCode = options?.signal?.aborted ? 'cancelled' : 'metadata_update_failed';
+            return { ok: false, errorCode, error: errorCode };
+          }
+        },
+      } satisfies Pick<ActionExecutorDeps, 'sessionTasksSet'> : {}),
       sessionStateFieldSet: async (write) => {
         const { sessionId, value, fieldId } = write;
         const normalizedSessionId = String(sessionId ?? '').trim();

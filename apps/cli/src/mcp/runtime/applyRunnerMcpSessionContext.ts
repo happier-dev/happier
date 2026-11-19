@@ -7,9 +7,11 @@ import type { RuntimeActiveTurnPermissionWitness } from '@/agent/runtime/turns/r
 import type { ResolvedRolesSnapshotV1 } from '@happier-dev/protocol';
 import type { RoleSourceReader } from '@/session/roles/roleSources';
 import type { SessionSkillReadItemV1 } from '@happier-dev/protocol/prompts/library/skills/skillReadV1';
+import type { bindHappierSessionTasks } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionWorkState';
 type WorkspaceWritesPolicyPreparation = (workspaceWrites: 'allow' | 'deny', context: import('@happier-dev/protocol').ActionExecutorContext) => Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; errorCode: string }>>;
 
 export type RunnerMcpSessionContextAccessors = Readonly<{
+  publishHappierSessionTasks?: ReturnType<typeof bindHappierSessionTasks>;
   getSessionRoleContext?: () => import('@/session/roles/sessionRoleContext').SessionRoleContext;
   getPluginMcpRuntimeRegistry?: () => import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry').ResolvedExecutablePluginRuntimeRegistry | null;
   getPluginMcpPort?: () => import('./pluginMcpPort').PluginMcpPort | null;
@@ -33,6 +35,7 @@ export type RunnerMcpSessionContextAccessors = Readonly<{
 }>;
 
 export type RunnerMcpSessionWithContext<TSession> = TSession & {
+  publishHappierSessionTasks?: RunnerMcpSessionContextAccessors['publishHappierSessionTasks'];
   getSessionRoleContext?: RunnerMcpSessionContextAccessors['getSessionRoleContext'];
   getPluginMcpRuntimeRegistry?: RunnerMcpSessionContextAccessors['getPluginMcpRuntimeRegistry'];
   getPluginMcpPort?: RunnerMcpSessionContextAccessors['getPluginMcpPort'];
@@ -61,6 +64,7 @@ export function applyRunnerMcpSessionContext<TSession extends object>(
   accessors: RunnerMcpSessionContextAccessors,
 ): RunnerMcpSessionWithContext<TSession> {
   const target = session as RunnerMcpSessionWithContext<TSession>;
+  if (accessors.publishHappierSessionTasks) target.publishHappierSessionTasks = accessors.publishHappierSessionTasks;
   if (accessors.getSessionRoleContext) target.getSessionRoleContext = accessors.getSessionRoleContext;
   if (accessors.getCurrentSessionSkillItems) target.getCurrentSessionSkillItems = accessors.getCurrentSessionSkillItems;
   if (accessors.getPluginMcpRuntimeRegistry) target.getPluginMcpRuntimeRegistry = accessors.getPluginMcpRuntimeRegistry;

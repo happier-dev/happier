@@ -63,6 +63,12 @@ export const SessionWorkStateItemV1Schema = lazyZodSchema(() => z.looseObject({
   }));
 export type SessionWorkStateItemV1 = z.infer<typeof SessionWorkStateItemV1Schema>;
 
+/** Replace the Happier checklist in the Session bound to the tool. */
+export const SessionTasksSetInputV1Schema = lazyZodSchema(() => z.strictObject({
+    items: z.array(z.strictObject(z.pick(SessionWorkStateItemV1Schema, { title: true, status: true }).shape)),
+}));
+export type SessionTasksSetInputV1 = z.infer<typeof SessionTasksSetInputV1Schema>;
+
 export const SessionWorkStateTruncationV1Schema = lazyZodSchema(() => z.looseObject({
     reason: z.enum(['item_limit', 'provider_limit']),
     omittedCount: z.optional(z.number().check(z.int(), z.nonnegative())),

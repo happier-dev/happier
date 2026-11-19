@@ -41,6 +41,7 @@ import type { LocalDaemonServiceActionId } from '../specs/localDaemonService.js'
 import type { MemoryWindowRequestV1 } from '../../memory/memoryWindow.js';
 import type { SessionModelMutationExpectedV1 } from '../../sessions/control/modelTransitionV1.js';
 import type { SessionGoalSetRequestV1 } from '../../sessions/work/state/sessionWorkStateRpc.js';
+import type { SessionTasksSetInputV1 } from '../../sessions/work/state/sessionWorkStateV1.js';
 import type { SessionNeedsYouRaiseInputV1 } from '../../sessions/permissions/questionV1.js';
 import type { SessionMessageExplicitReplyV1, SessionMessageReplyAccountMutationV1 } from '../../sessions/messages/sessionMessageReplyV1.js';
 import type { DiscussionReplyReturnV1 } from '../../workflows/workflowDiscussionPublicationV1.js';
@@ -2756,6 +2757,7 @@ export type ActionExecutorDeps = Readonly<{
     readAwareness: () => Promise<unknown>;
   }>) => Promise<WaitOwnerResultV1>;
   sessionWorkStateGet?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionTasksSet?: (input: SessionTasksSetInputV1, options?: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
   sessionGoalGet?: (args: Readonly<{ sessionId: string; serverId?: string | null; context?: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   sessionGoalSet?: (args: Readonly<{
     sessionId: string;

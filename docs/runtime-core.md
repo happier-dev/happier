@@ -3710,6 +3710,11 @@ declaration, including configured ACP and installed plugin Agents. Keep going
 owns continuation for those Sessions; the host objective adds no native Goal
 capability or second continuation loop.
 
+The Session-bound `session.tasks.set` Action and its `session_tasks_set` MCP
+tool publish a complete ordered Happier checklist through the same work-state
+owner. An empty list clears that checklist. Provider task and plan sources keep
+their own published items in the Session list.
+
 `session.goal.clear` owns clearing the Goal and removing its Session-scoped
 Keep going triggers through the existing trigger owner. UI and agent callers
 consume that same Action result; the Goal control has no separate removal step.

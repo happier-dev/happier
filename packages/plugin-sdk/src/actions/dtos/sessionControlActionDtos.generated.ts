@@ -1351,6 +1351,12 @@ export type SessionControlActionInputById = {
         tokenBudget?: null | number | undefined;
         resumeInactiveWithInitialGoal?: boolean | undefined;
     };
+    readonly "session.tasks.set": {
+        items: {
+            title: string;
+            status: 'active' | 'blocked' | 'cancelled' | 'complete' | 'paused' | 'pending' | 'unknown';
+        }[];
+    };
     readonly "session.goal.clear": {
         [x: string]: unknown;
         sessionId: SessionTargetV1<true>;
@@ -4185,6 +4191,9 @@ export type SessionControlActionResultById = {
         readonly [key: string]: JsonValue;
     };
     readonly "session.goal.set": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.tasks.set": boolean | null | number | readonly JsonValue[] | string | {
         readonly [key: string]: JsonValue;
     };
     readonly "session.goal.clear": boolean | null | number | readonly JsonValue[] | string | {

@@ -162,6 +162,7 @@ import type { ResolvedAgentContribution } from '@/plugins/projection/registry/ty
 import { publishRunnerSkillNotice } from '@/prompts/skills/runtime/publishRunnerSkillNotice';
 import { readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { applyRunnerMcpSessionContext } from '@/mcp/runtime/applyRunnerMcpSessionContext';
+import { bindHappierSessionTasks } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionWorkState';
 import { createSessionRoleContext } from '@/session/roles/sessionRoleContext';
 import { createWorkspaceWritesPolicyPreparation } from '@/session/roles/workspaceWritesPolicyPreparation';
 import { prepareActiveAccountRoleOverrides } from '@/settings/prompts/hydratePromptLibraryCatalog';
@@ -1416,10 +1417,14 @@ async function runHostedSessionRuntime(
       : augmented;
   };
   let bindProviderInputReadiness: ((client: ApiSessionClient) => void) | null = null;
+  const makeSessionTaskPublisher = (target: ApiSessionClient) => bindHappierSessionTasks({
+    session: target, agentId: policyAgentId, occurrenceId: sessionTag,
+    isCurrent: () => session === target && !startupRegistrationLifetime.signal.aborted,
+  });
   const applySessionSwap = async (newSession: ApiSessionClient): Promise<void> => {
     const previousSession = typeof session === 'undefined' ? null : session;
-    const roleContext = (previousSession as import('@/mcp/runtime/applyRunnerMcpSessionContext').RunnerMcpSessionWithContext<ApiSessionClient> | null)
-      ?.getSessionRoleContext;
+    const previousMcp = previousSession as import('@/mcp/runtime/applyRunnerMcpSessionContext').RunnerMcpSessionWithContext<ApiSessionClient> | null;
+    const roleContext = previousMcp?.getSessionRoleContext;
     newSession.setOwnerActivityDelivery(ownerActivityDelivery);
     if (previousSession && previousSession.sessionId !== newSession.sessionId) {
       latestSessionContextUsage = null;
@@ -1461,6 +1466,9 @@ async function runHostedSessionRuntime(
     session = newSession;
     workerUpdatePublication?.bind(newSession);
     if (roleContext) applyRunnerMcpSessionContext(newSession, { getSessionRoleContext: roleContext });
+    if (previousSession !== newSession && previousMcp?.publishHappierSessionTasks) {
+      applyRunnerMcpSessionContext(newSession, { publishHappierSessionTasks: makeSessionTaskPublisher(newSession) });
+    }
     currentSessionPresentationHost?.bindCurrentSession();
     sessionEnvironment[PROCESS_OWNER_ENV_KEY] = formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir,
       owner: { kind: 'session', sessionId: newSession.sessionId } });
@@ -2891,6 +2899,7 @@ async function runHostedSessionRuntime(
   let runnerSkills: RunnerSkillsResult | null = null;
   let activeAgentCompositionToolSelection: AgentCompositionToolSelection | null = null;
   const runnerMcpSession = applyRunnerMcpSessionContext(currentLifecycleSession, {
+    ...(agentToolsDelivery !== 'unsupported' ? { publishHappierSessionTasks: makeSessionTaskPublisher(session) } : {}),
     getSessionRoleContext: () => sessionRoleContext,
     getCurrentSessionSkillItems: () => runnerSkills && !runnerSkills.unavailable
       ? runnerSkills.plan.items.filter(item => item.state === 'delivered')

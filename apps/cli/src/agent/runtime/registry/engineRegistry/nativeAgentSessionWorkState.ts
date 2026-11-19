@@ -2,6 +2,7 @@ import { SessionWorkStateItemV1Schema, readSessionWorkStateV1FromMetadata, write
 import { buildDeterministicSessionWorkStateItemId } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateItemIds';
 import { mergeSessionWorkStateV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateMerge';
 import type { SessionWorkStateItemKindV1, SessionWorkStateTruncationV1, SessionWorkStateV1 } from '@happier-dev/protocol';
+import { createSessionTaskSnapshotPublisher } from '@happier-dev/plugin-sdk/sessions/work-state';
 import type {
     WorkStatePublisher,
     WorkStateService,
@@ -388,4 +389,16 @@ export function createNativeAgentSessionWorkStateService(params: Readonly<{
             return publisher;
         },
     });
+}
+
+/** The current Session host owns one checklist publisher across its request-local MCP bridges. */
+export function bindHappierSessionTasks(params: Pick<Parameters<typeof createNativeAgentSessionWorkStateService>[0],
+    'session' | 'agentId' | 'occurrenceId' | 'isCurrent'>) {
+    const source = createNativeAgentSessionWorkStateService({
+        ...params,
+        pluginId: 'happier',
+        contributionId: 'session',
+        declarations: [{ id: 'tasks', itemKinds: ['task'] }],
+    }).publisher('tasks');
+    return createSessionTaskSnapshotPublisher(source, { kind: 'task', origin: 'happier' });
 }
