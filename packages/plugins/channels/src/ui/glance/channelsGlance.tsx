@@ -209,13 +209,7 @@ function ChannelsColumn(props: Readonly<{
       {props.snapshot.state === 'loading' ? (
         <LoadingState testID="channels-column-loading" title={t('plugins.channels.page.loadingTitle', 'Loading conversations')} rows={3} />
       ) : null}
-      {props.snapshot.state === 'ready' && bindings.length === 0 ? (
-        <EmptyState
-          testID="channels-column-empty"
-          layout="line"
-          title={t('plugins.channels.column.empty', 'No conversations yet.')}
-        />
-      ) : null}
+      {/* Nothing linked yet: the page beside the column says so and offers the next step, once. */}
       {props.snapshot.state === 'error' && bindings.length === 0 ? (
         <EmptyState
           testID="channels-column-error"

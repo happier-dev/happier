@@ -180,7 +180,7 @@ export const CHANNELS_UI = {
       key: 'plugins.channels.session.title',
       fallback: 'External conversations',
     },
-    icon: 'globe' as const,
+    icon: 'send' as const,
   }, {
     // The Board/Companion host owns placement and geometry. Channels reuses
     // the same read-only Session projection and renderer as its destination;
@@ -209,7 +209,7 @@ export const CHANNELS_UI = {
       key: 'plugins.channels.session.title',
       fallback: 'External conversations',
     },
-    icon: 'conversations' as const,
+    icon: 'send' as const,
   }, {
     // The existing rail placement puts Channels in expanded More by default
     // (owner ruling 2026-11-19). The open binding id is the page location,
@@ -219,7 +219,7 @@ export const CHANNELS_UI = {
     target: { kind: 'app' as const },
     renderer: CHANNELS_RENDERER_ID,
     title: { key: 'plugins.channels.page.title', fallback: 'Channels' },
-    icon: 'conversations' as const,
+    icon: 'send' as const,
     placement: { kind: 'rail' as const },
     column: { renderer: CHANNELS_GLANCE_RENDERER_ID },
   }, {
@@ -235,7 +235,7 @@ export const CHANNELS_UI = {
     ],
     renderer: CHANNELS_GLANCE_RENDERER_ID,
     title: { key: 'plugins.channels.widget.title', fallback: 'Channels' },
-    icon: 'conversations' as const,
+    icon: 'send' as const,
     home: { default: 'available' as const },
   }],
   renderers: [{
@@ -264,7 +264,7 @@ export const CHANNELS_UI = {
       fallback: 'Account policy for external conversation integrations.',
     },
     keywords: ['conversation', 'channels', 'connections'],
-    icon: 'conversations' as const,
+    icon: 'send' as const,
     defaultRank: 20,
     renderer: CHANNELS_RENDERER_ID,
   }],
@@ -561,7 +561,7 @@ function createChannelsPlugin(): ChannelsPlugin {
           key: 'plugins.channels.session.title',
           fallback: 'External conversations',
         },
-        icon: 'globe',
+        icon: 'send',
         command: {
           kind: 'openSurface',
           destination: CHANNELS_SESSION_CONVERSATIONS_VIEW_ID,
@@ -576,7 +576,7 @@ function createChannelsPlugin(): ChannelsPlugin {
             key: 'plugins.channels.session.composerChip',
             fallback: 'External conversations',
           },
-          icon: 'globe',
+          icon: 'send',
           // Only a Session Composer can carry a Session binding. An absent
           // `scopes` would be the widest policy, offering the chip on the
           // new-Session and Automation-authoring drafts it cannot describe.

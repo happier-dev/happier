@@ -11131,6 +11131,20 @@ describe('Channels page (the one owner of linked conversations)', () => {
     }
   });
 
+  it('reaches bot setup from the conversation list when the column is hidden', async () => {
+    const { fixture, openedSurfaces } = await mountPage({
+      subPath: '',
+      surfaceContext: { ...createChannelsPageSurfaceContext(), page: { columnVisible: false } },
+    });
+    try {
+      await vi.waitFor(async () => { await fixture.getByText('Example conversation'); });
+      await fixture.press(await fixture.getByRole('button', { name: 'Bots & connections' }));
+      expect(opened(openedSurfaces)).toEqual(['connections:']);
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it('asks for a bot first when none is connected', async () => {
     const { fixture, openedSurfaces } = await mountPage({
       subPath: '',

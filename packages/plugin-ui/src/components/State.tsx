@@ -311,7 +311,7 @@ function EmptyStateView(props: EmptyStateProps): ReactElement {
     <HappierInfoState testID={add || page ? undefined : props.testID} action={sizedAction} size={size}>
       <HappierInfoTile
         icon={scene ?? (props.icon ? (
-          <View style={size ? { marginBottom: HAPPIER_STATE_SIZE_METRICS[size].glyphGapPx } : undefined}>
+          <View style={{ marginBottom: size ? HAPPIER_STATE_SIZE_METRICS[size].glyphGapPx : UNSIZED_STATE_GLYPH_GAP_PX }}>
             <PluginUiIconGlyph name={props.icon} size={size ? HAPPIER_STATE_SIZE_METRICS[size].glyphPx : 24} tone="secondary" />
           </View>
         ) : undefined)}

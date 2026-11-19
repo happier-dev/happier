@@ -486,10 +486,19 @@ describe('PluginMachineExecutionOriginSelector', () => {
 
 
 it('keeps an unavailable chip as the Run-on control while the body owns the failure sentence', async () => {
-    const fixture = selection({ candidates: [], state: { kind: 'unavailable', storedOrigin: null, candidates: [], reasons: ['offline'] } });
+    const machine = candidate({ machineId: 'machine-a', materializationId: 'mat-a', version: '1.0.0' });
+    const fixture = selection({ candidates: [machine], state: { kind: 'unavailable', storedOrigin: null, candidates: [machine], reasons: ['offline'] } });
     const screen = await renderScreen(<PluginMachineExecutionOriginSelectorView selection={fixture.value} presentation="chip" testIDPrefix="run-on" />);
     const filter = screen.root.findAll(node => node.props.filter?.id === 'plugin-execution')[0]?.props.filter;
-    expect(filter?.valueLabel).toBeNull();
+    expect(filter).toBeDefined();
+    expect(filter?.valueLabel ?? null).toBeNull();
     expect(filter?.label).toBeTruthy();
+    await screen.unmount();
+});
+
+it('draws no Run-on chip while there is no Machine to name or choose', async () => {
+    const fixture = selection({ candidates: [], state: { kind: 'unavailable', storedOrigin: null, candidates: [], reasons: ['offline'] } });
+    const screen = await renderScreen(<PluginMachineExecutionOriginSelectorView selection={fixture.value} presentation="chip" testIDPrefix="run-on" />);
+    expect(screen.root.findAll(node => node.props.filter?.id === 'plugin-execution')).toHaveLength(0);
     await screen.unmount();
 });

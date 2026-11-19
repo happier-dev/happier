@@ -206,13 +206,15 @@ describe('the Channels column', () => {
     expect(document.body.textContent).not.toContain('Other conversations');
   });
 
-  it('says once when nothing is linked yet', async () => {
+  it('leaves the empty state to the page when nothing is linked yet', async () => {
     const column = await mountGlance({
       view: 'column',
       bindings: jsonResource({ bindings: [] }, 'e'),
       openSurface: () => undefined,
     });
-    await vi.waitFor(async () => { await column.getByText('No conversations yet.'); });
+    await vi.waitFor(async () => { await column.getByRole('button', { name: 'Bots & connections' }); });
+    await vi.waitFor(() => { expect(document.querySelector('[data-testid="channels-column-loading"]')).toBeNull(); });
+    expect(document.querySelector('[data-testid="channels-column-empty"]')).toBeNull();
   });
 });
 

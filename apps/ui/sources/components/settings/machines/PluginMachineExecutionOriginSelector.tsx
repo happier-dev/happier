@@ -407,12 +407,15 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
     const clearAccessibilityScope = props.groupTitle ?? t('settingsPlugins.executionOriginTitle');
 
     if (props.presentation === 'chip') {
-        return <>{projectionDemands}<SelectionListFilterChip filter={{
+        const valueLabel = props.selection.state.kind === 'unavailable' && !hasChoice ? undefined : current.titleParts?.name ?? current.title;
+        // No Machine to name, remembered or to choose: a chip would be a control with nothing to say or do.
+        const showsChip = valueLabel !== undefined || hasCandidates || Boolean(storedTarget);
+        return <>{projectionDemands}{showsChip ? <SelectionListFilterChip filter={{
             id: 'plugin-execution',
             open: pickerOpen,
             onOpenChange: setPickerOpen,
             label: groupTitle,
-            valueLabel: props.selection.state.kind === 'unavailable' && !hasChoice ? undefined : current.titleParts?.name ?? current.title,
+            valueLabel,
             ...(current.titleParts?.hint ? { valueQualifier: current.titleParts.hint } : {}),
             // Picked for the viewer: named like a choice, with one quiet word that it was picked, so an
             // explicit pin (no word) and an unavailable pin (the offline dot) each read as themselves.
@@ -466,7 +469,7 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
                     </>
                 ),
             } : {}),
-        }} />{pendingApproval ? <PluginOriginApprovalNotice key={pendingApproval.approval.artifactId} pending={pendingApproval} presentation="inline"
+        }} /> : null}{pendingApproval ? <PluginOriginApprovalNotice key={pendingApproval.approval.artifactId} pending={pendingApproval} presentation="inline"
             testID={props.testIDPrefix ? `${props.testIDPrefix}.approvalPending` : undefined}
             onFinished={finishApproval} onScopeChanged={dismissApproval} /> : null}</>;
     }

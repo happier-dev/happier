@@ -1947,7 +1947,7 @@ describe('Channels Session-facing surfaces (CU-03)', () => {
       target: { kind: 'app' },
       renderer: 'channels-renderer',
       title: { key: 'plugins.channels.page.title', fallback: 'Channels' },
-      icon: 'conversations',
+      icon: 'send',
       placement: { kind: 'rail' },
       column: { renderer: 'channels-glance' },
     });
@@ -1964,7 +1964,7 @@ describe('Channels Session-facing surfaces (CU-03)', () => {
         { pluginId: 'happier.channels', localId: 'connections-v1' },
       ],
       title: { key: 'plugins.channels.widget.title', fallback: 'Channels' },
-      icon: 'conversations',
+      icon: 'send',
       home: { default: 'available' },
     });
     // The column and the widget share one small artifact; both only navigate.
@@ -1992,7 +1992,7 @@ describe('Channels Session-facing surfaces (CU-03)', () => {
         key: 'plugins.channels.session.title',
         fallback: 'External conversations',
       },
-      icon: 'globe',
+      icon: 'send',
     }, expect.objectContaining({
       id: 'session-conversations-widget',
       container: 'widget',
@@ -2054,7 +2054,7 @@ describe('Channels Session-facing surfaces (CU-03)', () => {
         key: 'plugins.channels.session.title',
         fallback: 'External conversations',
       },
-      icon: 'globe',
+      icon: 'send',
       command: {
         kind: 'openSurface',
         destination: 'session-conversations',
@@ -2070,7 +2070,7 @@ describe('Channels Session-facing surfaces (CU-03)', () => {
         key: 'plugins.channels.session.composerChip',
         fallback: 'External conversations',
       },
-      icon: 'globe',
+      icon: 'send',
       scopes: ['session'],
       state: { resource: 'session-conversations-state-v1' },
       interaction: {

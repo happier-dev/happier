@@ -3251,7 +3251,7 @@ function ConversationsEmptyPage(props: Readonly<{
       <EmptyState
         testID="channels-page-no-bots"
         layout="page"
-        icon="conversations"
+        icon="send"
         title={providerNames.length === 0
           ? t('plugins.channels.page.noBotsTitleGeneric', 'Talk to your sessions from the apps your team already uses')
           : t('plugins.channels.page.noBotsTitleProviders', 'Talk to your sessions from {providers}', {
@@ -3276,7 +3276,7 @@ function ConversationsEmptyPage(props: Readonly<{
     <Stack gap="large" testID="channels-page-no-conversations">
       <EmptyState
         layout="page"
-        icon="conversations"
+        icon="send"
         title={t('plugins.channels.page.noConversationsTitle', 'Link a conversation to a session')}
         description={bots.length === 1
           ? t('plugins.channels.page.noConversationsOneBot', '{bot} is connected. Choose a chat and the session it should talk to.', {
@@ -3312,6 +3312,7 @@ function ConversationsIndexPage(props: Readonly<{
   connections: readonly ChannelsConnection[];
   onOpen: (bindingId: string) => void;
   onLink?: () => void;
+  onOpenSettings: () => void;
   t: Translate;
 }>): React.ReactElement {
   const { t } = props;
@@ -3382,6 +3383,15 @@ function ConversationsIndexPage(props: Readonly<{
           })}
         </ItemGroup>
       ))}
+      {/* Without the column (phones), its "Bots & connections" footer lives at the end of the list. */}
+      <ItemGroup>
+        <Item
+          testID="channels-page-bots"
+          title={t('plugins.channels.column.botsAndConnections', 'Bots & connections')}
+          icon={<Icon name="settings" />}
+          onPress={props.onOpenSettings}
+        />
+      </ItemGroup>
     </Stack>
   );
 }
@@ -8687,6 +8697,7 @@ function BindingsContent(props: BindingsContentProps): React.ReactElement {
         presentations={props.presentations}
         connections={props.connections}
         onOpen={navigation.openConversation}
+        onOpenSettings={() => navigation.openSettings()}
         {...(liveBots && props.bindingCreateContent !== undefined ? { onLink: navigation.openLink } : {})}
         t={props.t}
       />
@@ -14526,7 +14537,7 @@ function SessionConversationsEmpty(props: Readonly<{
   return (
     <EmptyState
       testID="channels-session-conversations-empty"
-      icon="conversations"
+      icon="send"
       title={providerNames.length === 0
         ? t('plugins.channels.session.emptyInviteTitle', 'Talk to this session from your chats')
         : t('plugins.channels.session.emptyInviteTitleProviders', 'Talk to this session from {providers}', {
