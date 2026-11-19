@@ -236,7 +236,13 @@ import { useAttachmentDraftManager } from "@/components/sessions/attachments/use
 import { SessionDraftAdmissionContext } from "@/components/sessions/drafts/sessionDraftAdmission";
 import { sendableAttachmentDrafts } from "@/components/sessions/attachments/attachmentDraftModel";
 import { clearSessionAttachmentDrafts, readSessionAttachmentDrafts, resolveSessionAttachmentDraftScope, sessionAttachmentDraftKey, type SessionAttachmentDraftScope, writeSessionAttachmentDrafts } from "@/components/sessions/attachments/sessionAttachmentDraftStore";
-import { AttachmentUploadCancelled, buildSessionAttachmentIngressMeta, uploadAttachmentDraftsToSession } from "@/components/sessions/attachments/uploadAttachmentDraftsToSession";
+import {
+    AttachmentUploadCancelled,
+    buildSessionAttachmentIngressMeta,
+    recoverRejectedAttachmentDrafts,
+    uploadAttachmentDraftsToSession,
+    type IssuedUploadedAttachment,
+} from "@/components/sessions/attachments/uploadAttachmentDraftsToSession";
 import { describeUploadFailure } from '@/components/transfers/describeUploadFailure';
 import { classifyTransferFailure } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
@@ -7270,6 +7276,16 @@ export function useSessionComposerController({
                                         || currentDrafts.every((draft) => submittedAttachmentDraftIds.has(draft.id));
                                 };
                                 let attachmentDraftsForRestore = readSubmittedAttachmentDraftsFromCurrent();
+                                let uploaded: readonly IssuedUploadedAttachment[] | undefined;
+                                const recoverAttachmentDraftsAfterRejection = (failure: unknown) => {
+                                    if (!uploaded) return;
+                                    const recover = recoverRejectedAttachmentDrafts(failure, submittedAttachmentDrafts, uploaded);
+                                    if (!recover) return;
+                                    attachmentDraftsForRestore = recover(attachmentDraftsForRestore);
+                                    const current = getAttachmentDraftsSnapshot();
+                                    const recovered = recover(current);
+                                    if (recovered !== current) attachmentDraftManager.replaceDrafts(recovered);
+                                };
                                 try {
                                     const readyForSend = resetStart ? true : await ensureReadyForComposerSend();
                                     if (!readyForSend || !outboundAccountLifetime.isCurrent()) {
@@ -7306,7 +7322,7 @@ export function useSessionComposerController({
                                         }
                                     }
 
-                                    const { uploaded } = await uploadAttachmentDraftsToSession({
+                                    ({ uploaded } = await uploadAttachmentDraftsToSession({
                                         sessionId,
                                         sessionTarget: { ...outboundAccountLifetime.scope, sessionId },
                                         signal: composerPluginActionScopeSignal,
@@ -7316,7 +7332,7 @@ export function useSessionComposerController({
                                             const submitted = submittedAttachmentDrafts.find((draft) => draft.id === id);
                                             if (submitted) applyAttachmentDraftPatch(id, patch, submitted.source);
                                         },
-                                    });
+                                    }));
                                     if (!outboundAccountLifetime.isCurrent()) return { status: 'rejected' };
                                     // Input admission consumes issued handles. The daemon alone
                                     // resolves them into transcript attachment descriptions.
@@ -7461,8 +7477,11 @@ export function useSessionComposerController({
                                             alertComposerActionResultFailure(result);
                                             return { status: 'accepted' };
                                         }
-                                        if (result.persistence === 'none' && canRestoreFailedAttachmentHandoffSnapshot()) {
-                                            restoreAfterFailedOutboundHandoff(attachmentDraftsForRestore);
+                                        if (result.persistence === 'none') {
+                                            recoverAttachmentDraftsAfterRejection(result);
+                                            if (canRestoreFailedAttachmentHandoffSnapshot()) {
+                                                restoreAfterFailedOutboundHandoff(attachmentDraftsForRestore);
+                                            }
                                         }
                                         alertComposerActionResultFailure(result);
                                         return {
@@ -7483,6 +7502,10 @@ export function useSessionComposerController({
                                     return { status: 'accepted' };
                                 } catch (e) {
                                     if (e instanceof AttachmentUploadCancelled) return { status: 'rejected' };
+                                    if (outboundAccountLifetime.isCurrent()
+                                        && !hasCanonicalOutboundHandoffForLocalId(sessionId, outboundHandoffLocalId)) {
+                                        recoverAttachmentDraftsAfterRejection(e);
+                                    }
                                     if (canRestoreFailedAttachmentHandoffSnapshot()) {
                                         restoreAfterFailedOutboundHandoff(attachmentDraftsForRestore);
                                     }

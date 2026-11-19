@@ -714,6 +714,7 @@ const homes = createHomeGovernanceHarness();
 const externalRpcRequests: Array<Readonly<{ serverUrl?: string; targetId: string; method: string; payload: unknown }>> = [];
 const composerMediaCaptureIds = new Set<string>();
 let legacyAttachmentUpload: {
+  sessionId?: string;
   recipient: ReturnType<typeof import('@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption').createTransferRecipientKeyPair>;
   uploads: Array<{ uploadId: string; attachmentId: string; path: string; bytes: number[]; messageLocalId: string }>;
 } | undefined;
@@ -877,10 +878,11 @@ installDisconnectedServerSocketBoundary((socket: Socket, serverUrl) => {
         result = postUpdateRpcResponse;
       } else if (legacyAttachmentUpload && method === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT) {
         const request = SessionAttachmentUploadInitRequestV1Schema.parse(rpc.params);
-        expect(request).toMatchObject({ sessionId: 'peer-session', fileName: 'note.txt', sizeBytes: 5 });
-        expect(rpc.method.slice(0, separator)).toBe('peer-session');
+        const sessionId = legacyAttachmentUpload.sessionId ?? 'peer-session';
+        expect(request).toMatchObject({ sessionId, fileName: 'note.txt', sizeBytes: 5 });
+        expect(rpc.method.slice(0, separator)).toBe(sessionId);
         expect(payload).toMatchObject({ transferRouting: {
-          sessionId: 'peer-session', method, t: 'session_attachment_upload_v1',
+          sessionId, method, t: 'session_attachment_upload_v1',
         } });
         if (typeof request.messageLocalId !== 'string') throw new Error('Attachment upload requires the authored input identity');
         const ordinal = legacyAttachmentUpload.uploads.length + 1;
@@ -905,7 +907,9 @@ installDisconnectedServerSocketBoundary((socket: Socket, serverUrl) => {
         if (!upload) throw new Error('Unknown attachment upload');
         expect(new TextDecoder().decode(new Uint8Array(upload.bytes))).toBe('hello');
         result = { success: true, path: upload.path, sizeBytes: 5, sha256: 'a'.repeat(64),
-          attachmentHandle: SessionAttachmentHandleV1Schema.parse({ v: 1, sessionId: 'peer-session', id: upload.attachmentId }) };
+          attachmentHandle: SessionAttachmentHandleV1Schema.parse({
+            v: 1, sessionId: legacyAttachmentUpload.sessionId ?? 'peer-session', id: upload.attachmentId,
+          }) };
       } else if (method === RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_CAPABILITY_GET_V1) {
         result = { success: true, available: true, capability: 'composer.mediaContent.v1' };
       } else if (method === RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_CLAIM) {
@@ -7595,6 +7599,117 @@ describe('SessionView (direct sessions)', () => {
       expect(externalRpcRequests).toHaveLength(effectCount);
     } finally { canonicalDraftScope = originalDraftScope; }
   });
+
+  it.each(['session_attachment_upload_checkpoint_stale', 'action_failed'] as const)(
+    'retries the mounted own Session attachment after %s with the correct upload handle',
+    async failureCode => {
+      installRunnerActiveDirectSubmitStatus();
+      const originalDraftScope = canonicalDraftScope;
+      const { homeServerId, serverId } = await restorePresentUserComposerHome();
+      try {
+        const { transferFeatures, transferMachine } = await import('@/components/sessions/files/sessionFileTransferTestkit');
+        const { createTransferRecipientKeyPair } = await import('@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption');
+        legacyAttachmentUpload = { sessionId: 's1', recipient: createTransferRecipientKeyPair(), uploads: [] };
+        featureEnabledState['attachments.uploads'] = true;
+        storageState.machines['machine-1'] = transferMachine({ id: 'machine-1', storageMode: 'plain', activeAt: Date.now() });
+        const features = createRootLayoutFeaturesResponse({ features: { machines: transferFeatures().features.machines },
+          capabilities: { serverIdentity: { serverIdentityId: 'srv_composer_ask_home' } } });
+        homes.answer(homeServerId, '/v1/features', { body: features });
+        homes.answer(homeServerId, '/v1/features/authenticated', { body: features });
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        await getServerFeaturesSnapshot({ serverId, force: true });
+        homes.answer(homeServerId, '/v2/sessions/s1', { body: createPlainSessionByIdResponseFixture(storageState.sessions.s1) });
+
+        const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
+        const serverIdentityId = getServerProfileById(serverId)?.serverIdentityId;
+        expect(serverIdentityId).toBeTruthy();
+        const machine = {
+          ...createPlainMachineRowFixture({ id: 'machine-1', accountId: canonicalDraftScope.accountId }),
+          installationId: 'composer-ask-installation', installationPublicKey: encodeBase64(installation.publicKey),
+          operationProtocolCapabilities: { finiteTransferRpc: { protocolVersions: [1] } },
+          operationProtocolCapabilitiesRevision: 1,
+          daemonState: encodePlainMachineStoredContent(storageState.machines['machine-1'].daemonState),
+        };
+        homes.answer(homeServerId, '/v1/machines', { body: [machine] });
+        for (const actionId of ['action.spec.get', 'session.message.send'] as const) {
+          homes.answer(homeServerId, `/v1/actions/${actionId}/execution-authorization`, { select: body => {
+            const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            return { body: { v: 1, token: 'composer-send-root', binding: { accountId: canonicalDraftScope.accountId,
+              authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId, machineId: 'machine-1',
+              installationId: 'composer-ask-installation', custodianAccountId: canonicalDraftScope.accountId,
+              accountEncryptionMode: 'plain', actionId, requestId: authorized.envelope.requestId,
+              target: authorized.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(authorized.envelope) } } };
+          } });
+        }
+        homes.answer(homeServerId, '/v1/actions/action.spec.get', { select: body => {
+          const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+          return { body: { v: 1, actionId: 'action.spec.get', requestId: envelope.requestId, execution: { ok: true,
+            result: { actionSpec: actionSpecToActionDefinitionV1(getActionSpec('session.message.send'), { surface: 'ui', includeOutputSchema: false }) } } } };
+        } });
+        const sentInputs: unknown[] = [];
+        homes.answer(homeServerId, '/v1/actions/session.message.send', { select: body => {
+          const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+          if (envelope.v !== 1) throw new Error('Expected the plain composer fixture envelope');
+          const input = getActionSpec('session.message.send').inputSchema.parse(envelope.input);
+          if (!('message' in input)) throw new Error('Expected the user message fixture variant');
+          sentInputs.push(input);
+          return { body: { v: 1, actionId: 'session.message.send', requestId: envelope.requestId,
+            execution: sentInputs.length === 1 ? { ok: false, errorCode: failureCode, error: failureCode }
+              : { ok: true, result: { status: 'accepted', localId: input.localId } } } };
+        } });
+
+        const drafts: readonly AttachmentDraft[] = [{
+          id: 'legacy-file', source: { kind: 'memory', name: 'note.txt', bytes: new TextEncoder().encode('hello'), mimeType: 'text/plain' },
+          status: 'pending',
+        }];
+        const { writeSessionAttachmentDrafts, resolveSessionAttachmentDraftScope } =
+          await import('@/components/sessions/attachments/sessionAttachmentDraftStore');
+        writeSessionAttachmentDrafts(resolveSessionAttachmentDraftScope({ ...canonicalDraftScope, sessionId: 's1' }), drafts);
+        const screen = await renderSessionViewAndSettle({ routeServerId: serverId, initialAttachmentDrafts: drafts });
+        homes.answer(homeServerId, '/v1/machines/machine-1', { body: { machine } });
+        const message = 'Read the attached note.';
+        await act(async () => { findAgentInput(screen).props.onChangeText(message); });
+        expect(findAgentInput(screen).props.hasSendableAttachments).toBe(true);
+        const { submitSessionDraft } = await import('@/components/sessions/composer/submitSessionDraft');
+        const sessionTarget = { ...canonicalDraftScope, sessionId: 's1' };
+        const { readSessionComposerPresentationTargetAtAddress } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
+        expect(readSessionComposerPresentationTargetAtAddress(sessionTarget)?.readScope?.()).toEqual(canonicalDraftScope);
+        const send = async (attempt: number) => {
+          const requestStart = homes.requests.length;
+          const rpcStart = externalRpcRequests.length;
+          let result: Awaited<ReturnType<typeof submitSessionDraft>> | undefined;
+          await act(async () => { result = await submitSessionDraft({ sessionTarget }); });
+          expect(sentInputs, JSON.stringify({ result: result?.ok === false ? result.errorCode : result?.ok,
+            requests: homes.requests.slice(requestStart).map(({ path }) => path),
+            rpc: externalRpcRequests.slice(rpcStart).map(({ method }) => method) })).toHaveLength(attempt);
+          return result;
+        };
+        const attemptedInput = (attachmentId: string) => ({
+          sessionId: 's1', message,
+          structuredInput: { v: 1, sessionAttachments: [{ v: 1, sessionId: 's1', id: attachmentId }] },
+        });
+        await expect(send(1)).resolves.toMatchObject({ ok: false, errorCode: failureCode });
+        expect(sentInputs[0]).toMatchObject(attemptedInput('legacy-target-issued-1'));
+        expect(readComposerText(findAgentInput(screen))).toBe(message);
+        expect(findAgentInput(screen).props.hasSendableAttachments).toBe(true);
+        expect(legacyAttachmentUpload.uploads).toHaveLength(1);
+
+        await send(2);
+        const retriesUpload = failureCode === 'session_attachment_upload_checkpoint_stale';
+        expect(sentInputs).toHaveLength(2);
+        expect(sentInputs[1]).toMatchObject(attemptedInput(retriesUpload ? 'legacy-target-issued-2' : 'legacy-target-issued-1'));
+        expect(legacyAttachmentUpload.uploads).toHaveLength(retriesUpload ? 2 : 1);
+        // The HTTP fixture records admission, while the live Session publishes
+        // the accepted input that settles the on-screen draft.
+      } finally {
+        const { clearSessionAttachmentDrafts, resolveSessionAttachmentDraftScope } =
+          await import('@/components/sessions/attachments/sessionAttachmentDraftStore');
+        clearSessionAttachmentDrafts(resolveSessionAttachmentDraftScope({ ...canonicalDraftScope, sessionId: 's1' }));
+        await clearCanonicalSessionDraft();
+        canonicalDraftScope = originalDraftScope;
+      }
+    },
+  );
 
   it.each([false, true, 'media', 'media_partial', 'media_approval', 'media_cancel', 'review', 'legacy', 'legacy_only', 'legacy_retry', 'legacy_stale'] as const)('asks another Session through the shared Action without sending the source Agent a duplicate question (context: %s)', async content => {
     const withBrowserContext = content === true;

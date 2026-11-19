@@ -2,6 +2,7 @@ import { SessionAttachmentHandleV1Schema, type SessionAttachmentHandleV1 } from 
 import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import type { RawIngressStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { buildUploadedAttachment, type UploadedAttachment } from '@happier-dev/protocol/messages/structured/sessionAttachmentsInputV1';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
 
 import type { AttachmentsUploadConfig } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
 import { sessionAttachmentsUploadFile } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
@@ -118,9 +119,45 @@ type DraftUploadArguments = Parameters<typeof uploadAttachmentDraftsToSession>[0
 type TransferUploadResult = Awaited<ReturnType<typeof sessionAttachmentsUploadFile>>;
 type DraftUploadResult = Exclude<TransferUploadResult, { success: true }>
     | (Extract<TransferUploadResult, { success: true }> & Readonly<{ attachmentHandle: SessionAttachmentHandleV1 }>);
+type RecoverAttachmentDrafts = (drafts: readonly AttachmentDraft[]) => readonly AttachmentDraft[];
 // Eager upload and Send share one complete transfer, including finalize recovery.
 // Successful results also serve snapshots captured before the draft checkpoint arrived.
-const folderUploads = new WeakMap<AttachmentUploadSource, Map<string, Promise<DraftUploadResult>>>();
+const folderUploads = new WeakMap<AttachmentUploadSource, Map<string, Promise<DraftUploadResult> | Extract<DraftUploadResult, { success: true }>>>();
+
+function sameIssuedHandle(current: SessionAttachmentHandleV1 | undefined, attempted: SessionAttachmentHandleV1): boolean {
+    return current?.id === attempted.id && current.sessionId === attempted.sessionId;
+}
+
+export function recoverRejectedAttachmentDrafts(
+    failure: unknown,
+    submittedDrafts: readonly AttachmentDraft[],
+    uploaded: readonly IssuedUploadedAttachment[],
+): RecoverAttachmentDrafts | undefined {
+    if (readActionErrorCodeV1(failure) !== 'session_attachment_upload_checkpoint_stale') return;
+    const issuedByDraftId = new Map(uploaded.map(attachment => [attachment.id, attachment.attachmentHandle]));
+    const sourceByDraftId = new Map(submittedDrafts.map(draft => [draft.id, draft.source]));
+
+    for (const draft of submittedDrafts) {
+        const attempted = issuedByDraftId.get(draft.id);
+        const uploads = folderUploads.get(draft.source);
+        if (!attempted || !uploads) continue;
+        for (const [key, cached] of uploads) {
+            if ('attachmentHandle' in cached && sameIssuedHandle(cached.attachmentHandle, attempted)) uploads.delete(key);
+        }
+    }
+
+    return drafts => {
+        let changed = false;
+        const recovered = drafts.map(draft => {
+            const attempted = issuedByDraftId.get(draft.id);
+            if (!attempted || sourceByDraftId.get(draft.id) !== draft.source || !sameIssuedHandle(draft.attachmentHandle, attempted)) return draft;
+            changed = true;
+            return { ...draft, status: 'pending' as const, uploadedPath: undefined, uploadedSizeBytes: undefined,
+                uploadedMimeType: undefined, sha256: undefined, attachmentHandle: undefined, uploadProgress: undefined };
+        });
+        return changed ? recovered : drafts;
+    };
+}
 
 async function uploadAndRecoverDraft(args: DraftUploadArguments, draft: AttachmentDraft, messageLocalId: string): Promise<DraftUploadResult> {
     const upload = async (): Promise<DraftUploadResult> => {
@@ -156,7 +193,10 @@ async function uploadAndRecoverDraft(args: DraftUploadArguments, draft: Attachme
     const pending = upload();
     uploads.set(key, pending);
     const capturedUploads = uploads;
-    void pending.then(result => { if (!result.success) capturedUploads.delete(key); }, () => capturedUploads.delete(key));
+    void pending.then(result => {
+        if (result.success) capturedUploads.set(key, result);
+        else capturedUploads.delete(key);
+    }, () => capturedUploads.delete(key));
     return await pending;
 }
 

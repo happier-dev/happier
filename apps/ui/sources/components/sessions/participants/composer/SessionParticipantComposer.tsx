@@ -66,7 +66,9 @@ import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/us
 import {
     AttachmentUploadCancelled,
     buildSessionAttachmentIngressMeta,
+    recoverRejectedAttachmentDrafts,
     uploadAttachmentDraftsToSession,
+    type IssuedUploadedAttachment,
 } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
 import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
@@ -725,7 +727,7 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
                             : undefined,
                     );
 
-                    let uploadedAttachments: Parameters<typeof mergeBrowserContextMessageMetaOverrides>[0]['uploadedAttachments'];
+                    let uploadedAttachments: readonly IssuedUploadedAttachment[] | undefined;
                     const mergeBrowserContextMeta = (metaOverrides?: Record<string, unknown>): Record<string, unknown> | undefined | null => {
                         const result = mergeBrowserContextMessageMetaOverrides({
                             // Detached text-only Runs do not inherit a parent Session's browser attachments.
@@ -876,6 +878,14 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
                         return { status: 'accepted' };
                     } catch (error) {
                         if (error instanceof ParticipantComposerSubmissionHeld || error instanceof AttachmentUploadCancelled) return { status: 'rejected' };
+                        if (uploadedAttachments && composerAccountLifetime?.isCurrent() && !participantComposerPresentation.scopeSignal.aborted) {
+                            const recover = recoverRejectedAttachmentDrafts(error, submittedTransferDrafts, uploadedAttachments);
+                            if (recover) {
+                                const current = transferDraftManager.getDraftsSnapshot();
+                                const recovered = recover(current);
+                                if (recovered !== current) transferDraftManager.replaceDrafts(recovered);
+                            }
+                        }
                         const failureLabelKey = getSessionInputFailureLabelKey(error);
                         Modal.alert(
                             t('common.error'),

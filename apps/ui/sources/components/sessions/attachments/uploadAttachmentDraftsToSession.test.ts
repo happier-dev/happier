@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
-import { uploadAttachmentDraftsToSession } from './uploadAttachmentDraftsToSession';
+import { recoverRejectedAttachmentDrafts, uploadAttachmentDraftsToSession } from './uploadAttachmentDraftsToSession';
+import type { AttachmentDraft } from './attachmentDraftModel';
 import { describeUploadFailure } from '@/components/transfers/describeUploadFailure';
 import { t } from '@/text';
 
@@ -51,6 +52,32 @@ describe('uploadAttachmentDraftsToSession', () => {
             vcsIgnoreWritesEnabled: false, maxFileBytes: 1024 }, applyDraftPatch: vi.fn() };
         await expect(uploadAttachmentDraftsToSession(args)).rejects.toThrow(describeUploadFailure('other', t('common.machine')));
         await expect(uploadAttachmentDraftsToSession(args)).resolves.toMatchObject({ uploaded: [{ attachmentHandle }] });
+    });
+
+    it('retires the refused eager folder handle before an explicit retry', async () => {
+        const staleHandle = { v: 1 as const, sessionId: 's1', id: 'stale-folder' };
+        const freshHandle = { ...staleHandle, id: 'fresh-folder' };
+        sessionAttachmentsUploadFileSpy.mockResolvedValueOnce({ success: true, path: 'folder', sizeBytes: 1, attachmentHandle: staleHandle })
+            .mockResolvedValueOnce({ success: true, path: 'folder-retry', sizeBytes: 1, attachmentHandle: freshHandle });
+        const source = { kind: 'folder' as const, name: 'project', mimeType: 'inode/directory' as const, entries: [{ relativePath: 'note.txt',
+            source: { kind: 'memory' as const, name: 'note.txt', bytes: new Uint8Array([1]) } }] };
+        let draft: AttachmentDraft = { id: 'folder-draft', status: 'pending', source };
+        const args = { sessionId: 's1', config: { uploadLocation: 'workspace' as const,
+            workspaceRelativeDir: '.happier/attachments', vcsIgnoreStrategy: 'none' as const,
+            vcsIgnoreWritesEnabled: false, maxFileBytes: 1024 },
+            applyDraftPatch: (_id: string, patch: Partial<Omit<AttachmentDraft, 'id' | 'source'>>) => { draft = { ...draft, ...patch }; } };
+        await uploadAttachmentDraftsToSession({ ...args, drafts: [draft] });
+        expect(draft).toMatchObject({ status: 'uploaded', attachmentHandle: staleHandle });
+        const submittedDrafts = [draft];
+        const refused = await uploadAttachmentDraftsToSession({ ...args, drafts: submittedDrafts });
+        const recover = recoverRejectedAttachmentDrafts(
+            { code: 'session_attachment_upload_checkpoint_stale' }, submittedDrafts, refused.uploaded,
+        );
+        expect(recover).toBeDefined();
+        const retainedDrafts = recover?.([draft]) ?? [draft];
+        expect(retainedDrafts[0].source).toBe(source);
+        await expect(uploadAttachmentDraftsToSession({ ...args, drafts: retainedDrafts }))
+            .resolves.toMatchObject({ uploaded: [{ attachmentHandle: freshHandle }] });
     });
 
     it.each(['response', 'throw'] as const)('classifies a raw transfer %s for the tray and send caller', async mode => {
