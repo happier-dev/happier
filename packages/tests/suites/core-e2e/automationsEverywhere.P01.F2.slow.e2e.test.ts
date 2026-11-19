@@ -98,14 +98,7 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
     expect(response.status).toBe(200);
     return V2SessionByIdResponseSchema.parse(response.data).session;
   };
-  // Keep going is intentionally unavailable on native Goal owners. Use the
-  // real ACP runtime without that facet for the two Goal-clear lifetimes.
-  const continuationAgent = {
-    target: { kind: 'agent', identity: { pluginId: 'happier.agent.ohmypi', localId: 'ohmypi' } },
-    prompt: 'ACP_STUB_USAGE_UPDATE=f2-continuation',
-    assistantSubstring: 'ACP_STUB_USAGE_UPDATE_DONE f2-continuation',
-  } as const;
-  const lifetime = await fixture.assertKnownGoodSessionControl(actor, machine, continuationAgent);
+  const lifetime = await fixture.assertKnownGoodSessionControl(actor, machine);
   const watched = await fixture.assertKnownGoodSessionControl(actor, machine);
   const sessionSubject = { kind: 'session', serverId: fixture.serverId, sessionId: watched.sessionId } as const;
   type Scope = Readonly<{ name: string; subject?: AutomationSubjectV1;
@@ -219,7 +212,7 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
     automationId: cleanupSaved.set.automationId, expectedRevision: siblingSaved.set.revision,
     patch: { inputs: { automationId: cleanupSaved.set.automationId } },
   })).toMatchObject({ ok: true });
-  const neighborLifetime = await fixture.assertKnownGoodSessionControl(actor, machine, continuationAgent);
+  const neighborLifetime = await fixture.assertKnownGoodSessionControl(actor, machine);
   const neighbor = await person('workflow.trigger.add', {
     lifetimeSession: { sessionId: neighborLifetime.sessionId }, target: target('another lifetime'),
     project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
@@ -482,15 +475,34 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
   expect(await actor.execute('workflow.trigger.remove', { automationId: saved[0]!.set.automationId,
     triggerId: saved[0]!.triggerId }, { presentUserConfirmation: { actionId: 'workflow.trigger.remove' } })).toMatchObject({ ok: true });
   expect(await readRuns(0), 'Removing a habit retains its authoritative Run history').toHaveLength(1);
+  // Keep going is intentionally unavailable on native Goal owners. Its two
+  // lifetimes use a real ACP runtime independently of the cancellation journey.
+  const continuationAgent = {
+    target: { kind: 'agent', identity: { pluginId: 'happier.agent.ohmypi', localId: 'ohmypi' } },
+    prompt: 'ACP_STUB_USAGE_UPDATE=f2-continuation',
+    assistantSubstring: 'ACP_STUB_USAGE_UPDATE_DONE f2-continuation',
+  } as const;
+  const goalLifetime = await fixture.assertKnownGoodSessionControl(actor, machine, continuationAgent);
+  const goalNeighborLifetime = await fixture.assertKnownGoodSessionControl(actor, machine, continuationAgent);
+  const ordinaryGoalHabit = await person('workflow.trigger.add', {
+    lifetimeSession: { sessionId: goalLifetime.sessionId }, target: target('ordinary Goal-clear habit'),
+    project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
+    trigger: { kind: 'sessionLifecycle', enabled: true,
+      subject: { kind: 'session', serverId: fixture.serverId, sessionId: goalLifetime.sessionId },
+      events: ['sessionArchived'], policy: { kind: 'everyMatch' } },
+  });
+  expect(ordinaryGoalHabit.ok, JSON.stringify(ordinaryGoalHabit)).toBe(true);
+  if (!ordinaryGoalHabit.ok) throw new Error(`Ordinary Goal-clear habit refused (${ordinaryGoalHabit.errorCode})`);
+  const ordinaryGoalSaved = WorkflowTriggerWriteResultV1Schema.parse(ordinaryGoalHabit.result);
   const attachContinuation = async (sessionId: string) => {
     const added = await addContinuation(sessionId);
     expect(added.ok, JSON.stringify(added)).toBe(true);
     if (!added.ok) throw new Error(`Continuation habit refused (${added.errorCode})`);
     return WorkflowTriggerWriteResultV1Schema.parse(added.result);
   };
-  const continuation = await attachContinuation(lifetime.sessionId);
-  const neighborContinuation = await attachContinuation(neighborLifetime.sessionId);
-  expect(await actor.execute('session.goal.clear', { sessionId: lifetime.sessionId },
+  const continuation = await attachContinuation(goalLifetime.sessionId);
+  const neighborContinuation = await attachContinuation(goalNeighborLifetime.sessionId);
+  expect(await actor.execute('session.goal.clear', { sessionId: goalLifetime.sessionId },
     { presentUserConfirmation: { actionId: 'session.goal.clear' } })).toMatchObject({ ok: true });
   const readLifetimeSets = async (sessionId: string) => {
     const result = await actor.execute('workflow.trigger.list', { lifetimeSession: { sessionId } });
@@ -498,11 +510,13 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
     if (!result.ok) throw new Error(`Goal-clear habit list refused (${result.errorCode})`);
     return WorkflowTriggerListResultV1Schema.parse(result.result).sets;
   };
-  const afterGoalClear = await readLifetimeSets(lifetime.sessionId);
+  const afterGoalClear = await readLifetimeSets(goalLifetime.sessionId);
   expect(afterGoalClear.find(set => set.automationId === continuation.set.automationId)?.triggers).toEqual([]);
-  expect(afterGoalClear.find(set => set.automationId === saved[2]!.set.automationId)?.triggers)
+  expect(afterGoalClear.find(set => set.automationId === ordinaryGoalSaved.set.automationId)?.triggers)
+    .toEqual(expect.arrayContaining([expect.objectContaining({ id: ordinaryGoalSaved.triggerId, enabled: true })]));
+  expect((await readLifetimeSets(lifetime.sessionId)).find(set => set.automationId === saved[2]!.set.automationId)?.triggers)
     .toEqual(expect.arrayContaining([expect.objectContaining({ id: saved[2]!.triggerId, enabled: true })]));
-  expect((await readLifetimeSets(neighborLifetime.sessionId)).find(set =>
+  expect((await readLifetimeSets(goalNeighborLifetime.sessionId)).find(set =>
     set.automationId === neighborContinuation.set.automationId)?.triggers)
     .toEqual(expect.arrayContaining([expect.objectContaining({ id: neighborContinuation.triggerId, enabled: true })]));
 }, 0);
