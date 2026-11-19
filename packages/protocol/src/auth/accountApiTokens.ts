@@ -7,6 +7,7 @@ import { decodeBase64, encodeBase64, type Base64Variant } from '../crypto/base64
 import { SERVER_IDENTITY_ID_PATTERN } from '../features/payload/capabilities/serverIdentityCapabilities.js';
 import { DeploymentDeploySemanticInputV1Schema } from '../deployments/deploymentDeployIntentV1.js';
 import { PrivateLabelReadV1Schema, PrivateLabelStoredV1Schema, parsePrivateLabelStoredV1 } from '../crypto/privateLabelV1.js';
+import { ACCOUNT_API_TOKEN_BEARER_V1_SOURCE, ACCOUNT_API_TOKEN_CREDENTIAL_V1_PREFIX } from './accountApiTokenFormatV1.js';
 
 const AccountApiTokenIdV1Schema = lazyZodSchema(() => z.string().check(z.uuid()));
 const AccountApiTokenInstantV1Schema = lazyZodSchema(() => z.string().check(z.iso.datetime({ offset: true }), z.maxLength(64)));
@@ -16,8 +17,7 @@ export const AccountApiTokenLabelV1Schema = lazyZodSchema(() => z.string().check
 export function accountApiTokenLabelBindingV1(tokenId: string) {
   return { entity: 'account_api_token', field: 'label', id: tokenId } as const;
 }
-const ACCOUNT_API_TOKEN_BEARER_V1_PATTERN =
-  /^hap_v1_([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})_([A-Za-z0-9_-]{43})$/u;
+const ACCOUNT_API_TOKEN_BEARER_V1_PATTERN = new RegExp(`^${ACCOUNT_API_TOKEN_BEARER_V1_SOURCE}$`, 'u');
 export const AccountApiTokenBearerV1Schema = lazyZodSchema(() => z.string().check(z.regex(ACCOUNT_API_TOKEN_BEARER_V1_PATTERN)));
 
 export type ParsedAccountApiTokenBearerV1 = Readonly<{
@@ -324,13 +324,13 @@ export type AccountApiTokenCredentialV1 = z.infer<typeof AccountApiTokenCredenti
 /** Invocation-local encoding. It must never be used as an HTTP bearer. */
 export function formatAccountApiTokenCredentialV1(value: AccountApiTokenCredentialV1): string {
   const payload = AccountApiTokenCredentialV1Schema.parse(value);
-  return `hapc_v1_${encodeBase64(new TextEncoder().encode(JSON.stringify(payload)), 'base64url')}`;
+  return `${ACCOUNT_API_TOKEN_CREDENTIAL_V1_PREFIX}${encodeBase64(new TextEncoder().encode(JSON.stringify(payload)), 'base64url')}`;
 }
 
 export function parseAccountApiTokenCredentialV1(value: string): AccountApiTokenCredentialV1 | null {
-  if (!value.startsWith('hapc_v1_')) return null;
+  if (!value.startsWith(ACCOUNT_API_TOKEN_CREDENTIAL_V1_PREFIX)) return null;
   try {
-    const encoded = value.slice('hapc_v1_'.length);
+    const encoded = value.slice(ACCOUNT_API_TOKEN_CREDENTIAL_V1_PREFIX.length);
     const bytes = decodeBase64(encoded, 'base64url');
     if (encodeBase64(bytes, 'base64url') !== encoded) return null;
     const parsed = AccountApiTokenCredentialV1Schema.safeParse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));

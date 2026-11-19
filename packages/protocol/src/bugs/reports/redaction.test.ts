@@ -509,6 +509,19 @@ describe('additional constructible credential shapes', () => {
       .toBe('hf_cache and dckr_pat_ are names, not values');
   });
 
+  it('redacts a first-party Account API token that a provider transcript carries without a label', () => {
+    // A tool result inside a transcript line is JSON-escaped, so `\"token\": \"…\"`
+    // reaches neither the quoted-field nor the `token:` label rule.
+    const bearer = `hap_v1_00000000-0000-4000-8000-000000000000_${'A'.repeat(43)}`;
+    const credential = `hapc_v1_${'eyJ2IjoxfQ'.repeat(4)}`;
+    const line = JSON.stringify({ type: 'function_call_output', output: JSON.stringify({ token: bearer }) });
+    expect(redactBugReportSensitiveText(line)).not.toContain(bearer.slice(-43));
+    expect(redactBugReportSensitiveText(`exported ${credential} for the job`)).toBe('exported [REDACTED] for the job');
+    expect(redactBugReportSensitiveText(`request with ${bearer} was refused`)).toBe('request with [REDACTED] was refused');
+    // The listed display prefix names a token; it is not the credential.
+    expect(redactBugReportSensitiveText('revoked hap_v1_0000abcd')).toBe('revoked hap_v1_0000abcd');
+  });
+
   it('leaves real repository identifiers and prose near the new prefixes untouched', () => {
     // Each new rule keys on a distinctive literal prefix followed by a credential
     // -length body. Nothing this repository writes satisfies both.

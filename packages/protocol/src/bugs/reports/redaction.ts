@@ -4,6 +4,16 @@ import {
   isBaseCredentialDiagnosticKey,
   splitSensitiveDiagnosticKeySegments,
 } from '../../common/sensitiveKeys.js';
+import {
+  ACCOUNT_API_TOKEN_BEARER_V1_SOURCE,
+  ACCOUNT_API_TOKEN_CREDENTIAL_V1_PREFIX,
+} from '../../auth/accountApiTokenFormatV1.js';
+
+// Happier's own Account API tokens have a fixed minted shape, so like the vendor
+// prefixes below they need no label: a provider transcript carries a tool result
+// JSON-escaped, where neither the quoted-field nor the `token:` rule can reach it.
+const ACCOUNT_API_TOKEN_BEARER_V1_TEXT_PATTERN = new RegExp(`\\b${ACCOUNT_API_TOKEN_BEARER_V1_SOURCE}`, 'g');
+const ACCOUNT_API_TOKEN_CREDENTIAL_V1_TEXT_PATTERN = new RegExp(`\\b${ACCOUNT_API_TOKEN_CREDENTIAL_V1_PREFIX}[A-Za-z0-9_-]+`, 'g');
 
 /**
  * Arbitrary agent, plugin and provider text reaches this redactor, so the value
@@ -364,6 +374,8 @@ function redactKnownSensitiveText(input: string): string {
       JSON_WEB_TOKEN_RUN_PATTERN,
       (_match, delimiter: string, run: string) => `${delimiter}${redactJsonWebTokensInBase64UrlRun(run)}`,
     )
+    .replace(ACCOUNT_API_TOKEN_BEARER_V1_TEXT_PATTERN, '[REDACTED]')
+    .replace(ACCOUNT_API_TOKEN_CREDENTIAL_V1_TEXT_PATTERN, '[REDACTED]')
     .replace(/\b(A3T[A-Z0-9]{16}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16})\b/g, '[REDACTED]')
     .replace(/\bgh[pousr]_[A-Za-z0-9]{20}[A-Za-z0-9]*\b/g, '[REDACTED]')
     .replace(/\bgithub_pat_[A-Za-z0-9_]{20}[A-Za-z0-9_]*\b/g, '[REDACTED]')
