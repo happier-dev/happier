@@ -20231,6 +20231,7 @@ const enUsage = {
       average: "avg",
       byAgent: "by agent",
       byModel: "by model",
+      byWeek: "by week",
       noUsageTitle: "No usage in this period",
       noUsageReason: "Sessions you run on any machine show up here.",
       nothingYetTitle: "Nothing yet",

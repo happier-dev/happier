@@ -16949,6 +16949,7 @@ settingsSession: {
             average: "Ø",
             byAgent: "nach Agent",
             byModel: "nach Modell",
+            byWeek: "nach Woche",
             noUsageTitle: "Keine Nutzung in diesem Zeitraum",
             noUsageReason: "Sitzungen auf jedem deiner Rechner erscheinen hier.",
             nothingYetTitle: "Noch nichts",

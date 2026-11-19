@@ -67,6 +67,14 @@ describe('Daily period chart', () => {
       t('usage.board.charts.partialWeek', { from: shortDate(start + 10 * day), to: shortDate(start + 13 * day) }),
     ]);
   });
+  it('names weekly bars by the dates they start on and says the chart is by week (USAGE-ACCEPT 1118 #18)', async () => {
+    const props = fixture([10, 30, 20], start + 14 * day, true, 'week');
+    const screen = await renderScreen(<UsageDailyWidget {...props} />);
+    const chart = screen.findByType(StackedSeriesChart);
+    const shortDate = (date: number) => formatUsageCalendarDate(date, props.query.timeZoneOffsetMinutes, { month: 'short', day: 'numeric' });
+    expect(chart.props.axisTicks.map((tick: { label: string }) => tick.label)).toEqual([shortDate(start), shortDate(start + 10 * day)]);
+    expect(chart.props.label).toContain(t('usage.board.page.byWeek'));
+  });
   it('rises on first data and draws retained bars immediately on a revisit, keeping change motion', async () => {
     const props = fixture([10, 30], start + 2 * day);
     const first = await renderScreen(<UsageDailyWidget {...props} />);

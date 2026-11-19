@@ -16642,6 +16642,7 @@ settingsSession: {
             average: "moy.",
             byAgent: "par agent",
             byModel: "par modèle",
+            byWeek: "par semaine",
             noUsageTitle: "Aucune utilisation sur cette période",
             noUsageReason: "Les sessions lancées sur n'importe quelle machine apparaissent ici.",
             nothingYetTitle: "Rien pour l’instant",

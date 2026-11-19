@@ -16712,6 +16712,7 @@ settingsSession: {
             average: "сред.",
             byAgent: "по агентам",
             byModel: "по моделям",
+            byWeek: "по неделям",
             noUsageTitle: "За этот период использования нет",
             noUsageReason: "Здесь появятся сеансы с любой вашей машины.",
             nothingYetTitle: "Пока ничего",

@@ -16880,6 +16880,7 @@ settingsSession: {
       average: "śr.",
       byAgent: "według agenta",
       byModel: "według modelu",
+      byWeek: "według tygodni",
       noUsageTitle: "Brak użycia w tym okresie",
       noUsageReason: "Sesje uruchamiane na dowolnej maszynie pojawią się tutaj.",
       nothingYetTitle: "Jeszcze nic",

@@ -224,20 +224,26 @@ export function UsageDailyWidget(props: UsageBodyProps) {
       ? [{ bucketId: current.id, lower: current.total, upper: value, label: reference.label }] : [];
     return { reference, barRanges, bucketShading, ...peak };
   }, [series, byAgent, range, props.query.granularity, props.query.timeZoneOffsetMinutes, metric, incompleteBucketStarts, costTrend, view?.trend]);
+  const weekly = range?.granularity === 'week';
   const axisTicks = React.useMemo(() => {
-    const labels = series[0]?.points.map((point) => point.label ?? '') ?? [];
-    const last = series[0]?.points[labels.length - 1];
+    const starts = series[0]?.points.map((point) => typeof point.x === 'number' ? (byAgent ? point.x : point.x * 1000) : null) ?? [];
+    // A week's axis tick is the date it starts on (a clipped first week: the period's first day). Its "partial week"
+    // reading stays with the bar's exact value; on the axis it would crowd the ticks beside it.
+    const labels = series[0]?.points.map((point, index) => weekly && range && starts[index] !== null
+      ? formatUsageCalendarDate(Math.max(starts[index]!, range.startMs ?? starts[index]!), props.query.timeZoneOffsetMinutes, { month: 'short', day: 'numeric' })
+      : point.label ?? '') ?? [];
+    const lastStart = starts[labels.length - 1] ?? null;
     const now = Date.now();
-    const lastStart = typeof last?.x === 'number' ? (byAgent ? last.x : last.x * 1000) : null;
-    // The still-running bucket is named for what it is.
-    const running = props.query.granularity === 'day' && lastStart !== null && now >= lastStart && now - lastStart < 24 * 60 * 60 * 1000;
-    return usageAxisTicks(labels, running ? t('usage.today') : undefined);
-  }, [series, metric, byAgent, props.query.granularity]);
-  const measure = `${metric === 'cost' ? t('usage.cost') : t('usage.tokens')} · ${usagePeriodPhrase(props.query)}`;
+    // The still-running bucket is named for what it is: today, or this week.
+    const span = weekly ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    const running = (props.query.granularity === 'day' || weekly) && lastStart !== null && now >= lastStart && now - lastStart < span;
+    return usageAxisTicks(labels, running ? (weekly ? t('usage.summary.thisWeek') : t('usage.today')) : undefined);
+  }, [series, metric, byAgent, props.query.granularity, props.query.timeZoneOffsetMinutes, weekly, range]);
+  const measure = `${metric === 'cost' ? t('usage.cost') : t('usage.tokens')} · ${usagePeriodPhrase(props.query)}${weekly ? ` · ${t('usage.board.page.byWeek')}` : ''}`;
   // The frame's subtitle is the same from the first paint: whether the bars split by agent is only known once the
   // read answers, and the legend says it then. The chart's own label (for assistive technology) names the split.
   useWidgetFrameBodyCaption(measure);
-  const caption = byAgent ? `${metric === 'cost' ? t('usage.cost') : t('usage.tokens')} ${t('usage.board.page.byAgent')} · ${usagePeriodPhrase(props.query)}` : measure;
+  const caption = byAgent ? `${metric === 'cost' ? t('usage.cost') : t('usage.tokens')} ${t('usage.board.page.byAgent')} · ${usagePeriodPhrase(props.query)}${weekly ? ` · ${t('usage.board.page.byWeek')}` : ''}` : measure;
   const details = useUsageChartDetails(t(`usage.widgets.${props.id}`), Boolean(view && count > 0));
   const compact = presentation?.size === 'small' || presentation?.size === 'wide';
   const shape = useUsageDailyChartShape();

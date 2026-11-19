@@ -15930,6 +15930,7 @@ settingsSession: {
           average: "mitj.",
           byAgent: "per agent",
           byModel: "per model",
+          byWeek: "per setmana",
           noUsageTitle: "No hi ha ús en aquest període",
           noUsageReason: "Les sessions que executis a qualsevol màquina apareixeran aquí.",
           nothingYetTitle: "Encara res",

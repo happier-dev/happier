@@ -16876,6 +16876,7 @@ settingsSession: {
             average: "média",
             byAgent: "por agente",
             byModel: "por modelo",
+            byWeek: "por semana",
             noUsageTitle: "Sem uso neste período",
             noUsageReason: "As sessões que você executa em qualquer máquina aparecem aqui.",
             nothingYetTitle: "Nada ainda",

@@ -16409,6 +16409,7 @@ settingsSession: {
             average: "平均",
             byAgent: "按代理",
             byModel: "按模型",
+            byWeek: "按周",
             noUsageTitle: "此期间没有用量",
             noUsageReason: "你在任何机器上运行的会话都会显示在这里。",
             nothingYetTitle: "暂无内容",
