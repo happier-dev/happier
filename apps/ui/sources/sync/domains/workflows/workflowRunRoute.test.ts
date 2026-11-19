@@ -4,6 +4,7 @@ import {
     createAdmittedWorkflowRunRoute,
     createMachineExecutionRunRoute,
     createWorkflowInvocationRoute,
+    createWorkflowRunListRowRoute,
     createWorkflowRunRoute,
     readWorkflowInvocationId,
     readWorkflowRunId,
@@ -31,6 +32,15 @@ describe('workflow Run routes', () => {
             .toBe('/workflows/runs/same-run?target=occurrence&automationId=automation%2F1&serverId=home-b');
         expect(createWorkflowRunRoute({ kind: 'occurrence', automationId: 'automation/1', runId: 'same-run' }))
             .toBe('/workflows/runs/same-run?target=occurrence&automationId=automation%2F1');
+    });
+
+    it('opens a Run row through the reader identified by its held origin', () => {
+        expect(createWorkflowRunListRowRoute({ id: 'run-one', summary: { origin: { kind: 'automation', automationId: 'automatic' } }, automation: null }, 'home-b'))
+            .toBe('/workflows/runs/run-one?target=occurrence&automationId=automatic&serverId=home-b');
+        expect(createWorkflowRunListRowRoute({ id: 'run-one', summary: null, automation: { automationId: 'legacy' } }, 'home-b'))
+            .toBe('/workflows/runs/run-one?target=occurrence&automationId=legacy&serverId=home-b');
+        expect(createWorkflowRunListRowRoute({ id: 'run-one', summary: { origin: { kind: 'direct' } }, automation: null }, 'home-b'))
+            .toBe('/workflows/runs/run-one?serverId=home-b');
     });
 
     it('reads back the exact Run and invocation its own routes address, and nothing else', () => {

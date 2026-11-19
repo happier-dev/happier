@@ -26,7 +26,7 @@ import { resolveEditedByLabel } from '@/components/workflows/run/workflowEditedB
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { serverAccountScopeKeySuffix, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { createWorkflowRunListRowRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { createWorkflowRunDetailActions } from '@/sync/domains/workflows/workflowRunDetailActions';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { publishOpenedWorkflowRunDetail } from '@/sync/engine/workflows/refreshWorkflowRun';
@@ -177,9 +177,7 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     // A hidden surface retains its body, never another Account's body.
     const row = inScope && retained.current.scopeKey === scopeKey ? retained.current.row : null;
     const summary = row?.summary;
-    const runRoute = createWorkflowRunRoute(summary?.origin.kind === 'automation'
-        ? { kind: 'occurrence', automationId: summary.origin.automationId, runId: props.runId }
-        : props.runId, props.serverId);
+    const runRoute = row ? createWorkflowRunListRowRoute(row, props.serverId) : createWorkflowRunRoute(props.runId, props.serverId);
     const cachedSourceProfile = useUser(props.sourceProfile === undefined && summary?.sourceSavedBy?.kind === 'person' ? summary.sourceSavedBy.accountId : '');
     const editedBy = resolveEditedByLabel({ savedBy: summary?.sourceSavedBy, viewerAccountId: scope?.accountId,
         viewerOwnSave: props.inTriggerHistory === true ? 'you' : 'omit',

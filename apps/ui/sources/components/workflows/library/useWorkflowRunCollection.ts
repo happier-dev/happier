@@ -12,6 +12,7 @@ import { useCollectionSpaceHeader } from '@/components/ui/lists/collection/useCo
 import { useWorkflowRunDisplayOptions } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
 import { useProjectAccountRows } from '@/sync/domains/state/storage';
 import { buildProjectGroupDisplayIndex, projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
+import { createWorkflowRunListRowRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import type { WorkflowRunRow } from '@/sync/store/domains/workflowRuns';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { t, usePreferredLanguage } from '@/text';
@@ -27,6 +28,7 @@ type GroupLabel = Readonly<{ key: string; title: string }>;
 export type WorkflowRunCollectionRow = Readonly<{
     key: string;
     title: string;
+    route: ReturnType<typeof createWorkflowRunListRowRoute>;
     run: WorkflowRunRow;
     facts: WorkflowRunListFilterFactsV1;
     date: GroupLabel;
@@ -70,17 +72,18 @@ export function useWorkflowRunCollection(focused: boolean) {
             const startedBy = summary?.startedBy;
             const startedByLabel = startedBy == null ? null : t(`workflows.destination.display.starter.${startedBy}`);
             const createdAtSource = summary?.createdAt ?? run.automation?.createdAt;
-            const createdAt = createdAtSource === undefined ? undefined : new Date(createdAtSource).getTime();
+            const timestamp = createdAtSource === undefined ? NaN : new Date(createdAtSource).getTime();
+            const createdAt = Number.isFinite(timestamp) ? timestamp : undefined;
             const day = createdAt === undefined ? null : new Date(createdAt);
-            const dateKey = day && Number.isFinite(day.getTime()) ? String(day.setHours(0, 0, 0, 0)) : 'unknownDate';
+            const dateKey = day ? String(day.setHours(0, 0, 0, 0)) : 'unknownDate';
             let date = dates.get(dateKey);
             if (!date) {
-                date = { key: dateKey, title: day && dateKey !== 'unknownDate' ? dateFormat.format(day) : t('workflows.destination.display.unknownDate') };
+                date = { key: dateKey, title: day ? dateFormat.format(day) : t('workflows.destination.display.unknownDate') };
                 dates.set(dateKey, date);
             }
             const result = summary?.state ?? run.automation?.workflowRunState;
             return {
-                key: run.id, title, run, date,
+                key: run.id, title, route: createWorkflowRunListRowRoute(run, runs.serverId), run, date,
                 project: { key: projectKey ?? 'noProject', title: projectTitle ?? t('workflows.destination.sections.noProject') },
                 workflow: { key: workflowId ?? 'noWorkflow', title: workflowId ? title : t('workflows.destination.display.noWorkflow') },
                 result: result === undefined ? null : describeWorkflowRunState(result).label,

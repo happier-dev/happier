@@ -1,4 +1,5 @@
 import { WorkflowInvocationRecordIdSchema, WorkflowRunIdV1Schema } from '@happier-dev/protocol/workflows/workflowIdsV1';
+import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 /** The Workflows collection, whose Saved/Runs views are route-selected. */
 export const WORKFLOWS_ROUTE = '/workflows';
@@ -36,6 +37,17 @@ export function createWorkflowRunRoute(target: string | WorkflowRunRouteTarget, 
     const route: `/workflows/runs/${string}` = `${WORKFLOWS_ROUTE}/runs/${encodeURIComponent(runId)}`;
     return appendWorkflowRunHome(typeof target !== 'string' && target.kind === 'occurrence'
         ? `${route}?target=occurrence&automationId=${encodeURIComponent(target.automationId)}` : route, serverId);
+}
+
+/** A held Run row already declares its reader, including retained Automation occurrences. */
+export function createWorkflowRunListRowRoute(row: Readonly<{
+    id: string;
+    summary: Pick<WorkflowRunSummaryV1, 'origin'> | null;
+    automation: Readonly<{ automationId: string }> | null;
+}>, serverId?: string | null): ReturnType<typeof createWorkflowRunRoute> {
+    const origin = row.summary?.origin;
+    const automationId = origin ? (origin.kind === 'automation' ? origin.automationId : undefined) : row.automation?.automationId;
+    return createWorkflowRunRoute(automationId ? { kind: 'occurrence', automationId, runId: row.id } : row.id, serverId);
 }
 
 /**
