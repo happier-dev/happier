@@ -37,6 +37,11 @@ export function AgentInputFieldAccessories(props: Readonly<{
     accessory?: React.ReactNode;
     orderedIds?: readonly string[];
     belowToggle: boolean;
+    /**
+     * `inline`: the tools stand in their line's flow beside the field (an embedded composer's one line,
+     * shared with its "+"), not in the field's top-right corner.
+     */
+    placement?: 'corner' | 'inline';
 }>) {
     const geometry = resolveAgentInputFieldAccessoryGeometry({
         library: props.showLibrary,
@@ -44,8 +49,10 @@ export function AgentInputFieldAccessories(props: Readonly<{
         belowToggle: props.belowToggle,
     });
     if (!geometry.width) return null;
+    const inline = props.placement === 'inline';
+    const slot = { width: geometry.targetSize, height: geometry.targetSize };
     const library = props.showLibrary ? (
-        <View key="promptLibrary" style={[styles.target, { width: geometry.targetSize, height: geometry.targetSize }]}>
+        <View key="promptLibrary" style={[styles.target, slot, inline ? styles.inlineSlot : null]}>
             <IconButton
                 testID="agent-input-prompt-library"
                 // The composer's quiet tools rest in the shell's chrome ink (owner 11-10), coming up while engaged.
@@ -61,7 +68,7 @@ export function AgentInputFieldAccessories(props: Readonly<{
         </View>
     ) : null;
     const accessory = props.accessory != null ? (
-        <View key="accessory" style={[styles.accessory, { width: geometry.targetSize, height: geometry.targetSize }]}>
+        <View key="accessory" style={[styles.accessory, slot, inline ? styles.inlineSlot : null]}>
             {props.accessory}
         </View>
     ) : null;
@@ -69,9 +76,9 @@ export function AgentInputFieldAccessories(props: Readonly<{
     const libraryIndex = props.orderedIds?.indexOf('promptLibrary') ?? -1;
     const accessoryFirst = dictateIndex >= 0 && (libraryIndex < 0 || dictateIndex < libraryIndex);
     return (
-        <View testID="agent-input-field-accessories" style={[styles.cluster, {
-            width: geometry.width, height: geometry.targetSize, top: geometry.top, right: geometry.right,
-        }]}>
+        <View testID="agent-input-field-accessories" style={inline
+            ? [styles.inlineCluster, { width: geometry.width, height: geometry.targetSize }]
+            : [styles.cluster, { width: geometry.width, height: geometry.targetSize, top: geometry.top, right: geometry.right }]}>
             {accessoryFirst ? [accessory, library] : [library, accessory]}
         </View>
     );
@@ -81,4 +88,7 @@ const styles = StyleSheet.create({
     cluster: { position: 'absolute', zIndex: 2, flexDirection: 'row', alignItems: 'flex-start' },
     target: { alignItems: 'center', justifyContent: 'flex-start', paddingTop: 4 },
     accessory: { position: 'relative', alignItems: 'center', justifyContent: 'flex-start', paddingTop: 4 },
+    inlineCluster: { flexDirection: 'row', alignItems: 'center' },
+    /** In the line's flow the slot is the drawn square itself; its line centres it. */
+    inlineSlot: { paddingTop: 0, justifyContent: 'center' },
 });

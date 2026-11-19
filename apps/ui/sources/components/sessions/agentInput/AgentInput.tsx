@@ -31,7 +31,7 @@ import {
     KeyPressEvent,
     type MultiTextInputSubmitBehavior,
 } from '@/components/ui/forms/MultiTextInput';
-import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from '@/components/ui/forms/multiTextInputTypography';
+import { MULTI_TEXT_INPUT_BASE_FONT_SIZE, MULTI_TEXT_INPUT_BASE_LINE_HEIGHT } from '@/components/ui/forms/multiTextInputTypography';
 import { composerReferencesFromStructuredMentions, composerStructuredMentionsFromReferences } from '@/components/sessions/composer/composerScopeAdapters';
 import type { ComposerEditorReference, ComposerEditorDecoration } from '@/components/ui/forms/composerEditor/composerEditorTypes';
 import { buildMentionRefV1, parseMentionRefV1, MENTION_KIND_V1, readMentionRefOpaqueForKindV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
@@ -988,10 +988,38 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         },
         /** The same composer edge in a document, editable or read-only (C1: read-only is interaction, not an edge). */
         documentPanel: resolveAgentInputPanelLayoutStyle(theme),
-        /** Inside a card its host draws: the card is the edge, so the composer draws none. */
-        embeddedPanel: { borderWidth: 0, borderRadius: 0, paddingHorizontal: 0 },
-        /** Embedded, the host card's content inset is the text edge: the input adds no leading inset of its own. */
-        embeddedInputContainer: { paddingLeft: 0, paddingRight: 0 },
+        /**
+         * Inside a card its host draws: the card is the edge and its rhythm places the text, so the composer draws
+         * none and adds no inset above or below (a step's prompt stands where it stood at rest). Its tools may
+         * overhang the line (`embeddedTools`), so the panel does not clip them.
+         */
+        embeddedPanel: { borderWidth: 0, borderRadius: 0, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0, overflow: 'visible' },
+        /** Embedded, the host card's content inset is the text edge: the input adds no inset of its own. */
+        embeddedInputContainer: { paddingLeft: 0, paddingRight: 0, paddingVertical: 0, minHeight: 0 },
+        /**
+         * Embedded, the prompt and its tools share one line: the text, then "+" and the field tools at the line's
+         * end. No chip rail is drawn under the prompt (lab round 1116b bstep-v-A draws none).
+         */
+        embeddedLine: {
+            flexDirection: 'row',
+            alignItems: 'flex-start',
+            columnGap: theme.space.s8,
+        },
+        embeddedTextSection: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0 },
+        /** No rail follows the text, so no gap is kept for one. */
+        embeddedTextSectionContent: { paddingBottom: 0 },
+        /**
+         * The line's tools, centred on the prompt's first line. They are a chip tall, a little taller than the
+         * line, and overhang it equally above and below rather than making editing taller than rest.
+         */
+        embeddedTools: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            flexShrink: 0,
+            height: AGENT_INPUT_ACTION_CHIP_HEIGHT_PX,
+            marginVertical: (MULTI_TEXT_INPUT_BASE_LINE_HEIGHT - AGENT_INPUT_ACTION_CHIP_HEIGHT_PX) / 2,
+            ...(Platform.OS === 'web' ? { columnGap: AGENT_INPUT_ACTION_CHIP_GAP_X } : {}),
+        },
         readOnlyPanel: {
             ...resolveAgentInputPanelLayoutStyle(theme),
             width: '100%',
@@ -3578,7 +3606,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         belowToggle: shouldShowInputExpansionToggle,
     });
     const trailingAccessory = props.trailingAccessory ?? (mountsVoiceComposerPlanet ? voiceComposerPlanet : null);
-    const fieldInputPaddingRight = Math.max(fieldAccessoryGeometry.paddingRight ?? 0,
+    // Embedded, the tools stand beside the field on its line, so the field keeps no corner for them.
+    const fieldInputPaddingRight = Math.max(embeddedPanel ? 0 : fieldAccessoryGeometry.paddingRight ?? 0,
         shouldReserveInputExpansionToggleSpace ? INPUT_EXPANSION_TOGGLE_INPUT_PADDING_RIGHT : 0) || undefined;
     const accessoryMenuChips = React.useMemo<readonly AgentInputExtraActionChip[]>(() => {
         const { promptLibrary, dictate } = accessoryPlacements;
@@ -4308,6 +4337,183 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             {submitButtonNode}
         </View>
     ) : null;
+    // The field tools (prompt library, dictation): in the field's top-right corner, or on an embedded line.
+    const fieldAccessories = (
+        <AgentInputFieldAccessories showLibrary={showPromptLibraryButton} onOpenLibrary={openPromptPicker} libraryOpen={promptPicker.isOpen}
+            accessory={fieldAccessory} orderedIds={resolvedControls.accessories} belowToggle={shouldShowInputExpansionToggle}
+            placement={embeddedPanel ? 'inline' : 'corner'} />
+    );
+    // Embedded, the host card's rhythm places the text: the field adds no inset above or below it.
+    const fieldPaddingY = embeddedPanel ? 0 : AGENT_INPUT_FIELD_PADDING_Y;
+    const nativeFieldPaddingY = embeddedPanel ? 0 : 8;
+    // Embedded, the footer's controls end the prompt's own line instead of adding a rail under it: "+" and
+    // any chips, then the field tools, then the trailing cluster. Every node here is the footer's own, placed
+    // once, so "+" keeps its menu, attachments and anchors.
+    const embeddedTools = embeddedPanel ? (
+        <View testID="agent-input-embedded-tools" style={styles.embeddedTools}>
+            <AgentInputChipRowReach reach={chipRowReach}>
+                {renderedActionControlNodes}
+                {secondaryLeadingControlsForWrap}
+                {secondaryTrailingControlsForWrap}
+            </AgentInputChipRowReach>
+            {fieldAccessories}
+            {trailingAccessory}
+            {submitButtonNode}
+        </View>
+    ) : null;
+    // The prompt's text section (web scrolls it within the card's height cap).
+    const webTextSection = controlsOnly ? null : (
+            <ScrollView
+                style={[
+                    styles.nativeKeyboardVariableSection,
+                    styles.webVariableSectionEdgeToEdge,
+                    typeof panelVariableSectionMaxHeight === 'number'
+                        ? { maxHeight: panelVariableSectionMaxHeight }
+                        : null,
+                    embeddedPanel ? styles.embeddedTextSection : null,
+                ]}
+                contentContainerStyle={[
+                    styles.nativeKeyboardVariableSectionContent,
+                    styles.webVariableSectionContentInset,
+                    embeddedPanel ? styles.embeddedTextSectionContent : null,
+                ]}
+                keyboardShouldPersistTaps="handled"
+                alwaysBounceVertical={false}
+            >
+                {renderVariableContentBeforeInput()}
+                <View
+                    ref={composerAnchorRef}
+                    collapsable={false}
+                    dataSet={themeSurfaceDataSet('composer', 'input', composerSurfaceState)}
+                    style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined, embeddedPanel ? styles.embeddedInputContainer : null, inputSurfaceStyle]}
+                    onLayout={(event) => {
+                        updateNullableLayoutHeight(setInputContainerHeightPx, event.nativeEvent.layout.height);
+                    }}
+                >
+                    <ComposerHistorySwipeArea
+                        enabled={dictationEditable && submitEnabled && props.messageHistory !== 'none' && (!liveTextStatus.hasText || historyFlicksArmed)}
+                    hint={historyPositionHint}
+                        onStep={handleHistorySwipe}
+                    >
+                    <AgentInputTextField
+                        {...composerInputComboboxProps}
+                        textSource={textSource}
+                        buildReferences={buildEditorReferences}
+                        ref={inputRef}
+                        composerRef={composerRef}
+                        testID={isConversation ? AGENT_INPUT_TEST_IDS.sessionInput : AGENT_INPUT_TEST_IDS.newSessionInput}
+                        textStyle={isConversation ? styles.sessionInputText : styles.newSessionInputText}
+                        paddingTop={fieldPaddingY}
+                        attachmentIds={editorAttachmentIds}
+                        decorations={editorDecorations}
+                        onReferencesChange={handleEditorReferencesChange}
+                        paddingBottom={fieldPaddingY}
+                        paddingRight={fieldInputPaddingRight}
+                        onChangeText={handleComposerTextChange}
+                        placeholder={props.placeholder}
+                        placeholderTextColor={theme.colors.composer.chipTint}
+                        accessibilityLabel={props.inputAccessibilityLabel ?? props.placeholder}
+                        accessibilityHint={props.inputAccessibilityHint}
+                        onKeyPress={handleKeyPress}
+                        onStateChange={handleInputStateChange}
+                        initialScrollY={props.inputPersistence?.initialScrollY}
+                        scrollRestoreToken={props.inputPersistence?.restoreToken}
+                        onScrollYChange={props.inputPersistence?.onScrollYChange}
+                        onFocus={handleComposerFocus}
+                        onBlur={handleComposerBlur}
+                        submitBehavior={submitBehavior}
+                        onSubmitEditing={handleSubmitEditing}
+                        maxHeight={resolvedInputMaxHeight}
+                        editable={!props.disabled && !composerInputEditLocked}
+                        onFilesPasted={props.onAttachmentsAdded ? handleFilesPastedToComposer : undefined}
+                        onAttachmentsDropped={props.onAttachmentsAdded && dictationEditable && surfacePresented ? handleNativeAttachmentsDropped : undefined}
+                        attachmentDropScope={attachmentIntakeScope}
+                        onContentHeightChange={handleInputContentHeightChange}
+                    />
+                    </ComposerHistorySwipeArea>
+                    {props.inputExpansion && shouldShowInputExpansionToggle ? (
+                        <AgentInputExpansionToggle
+                            expanded={props.inputExpansion.expanded}
+                            onToggle={props.inputExpansion.onToggle}
+                        />
+                    ) : null}
+                    {embeddedPanel ? null : fieldAccessories}
+                </View>
+            </ScrollView>
+    );
+    // The prompt's text section on native.
+    const nativeTextSection = controlsOnly ? null : (
+            <View
+                style={[
+                    styles.nativeKeyboardVariableSection,
+                    styles.nativeKeyboardVariableSectionContent,
+                    typeof panelVariableSectionMaxHeight === 'number'
+                        ? { maxHeight: panelVariableSectionMaxHeight }
+                        : null,
+                    embeddedPanel ? [styles.embeddedTextSection, styles.embeddedTextSectionContent] : null,
+                ]}
+            >
+                {renderVariableContentBeforeInput()}
+                <View
+                    ref={composerAnchorRef}
+                    collapsable={false}
+                    dataSet={themeSurfaceDataSet('composer', 'input', composerSurfaceState)}
+                    style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined, embeddedPanel ? styles.embeddedInputContainer : null, inputSurfaceStyle]}
+                    onLayout={(event) => {
+                        updateNullableLayoutHeight(setInputContainerHeightPx, event.nativeEvent.layout.height);
+                    }}
+                >
+                    <ComposerHistorySwipeArea
+                        enabled={dictationEditable && submitEnabled && props.messageHistory !== 'none' && (!liveTextStatus.hasText || historyFlicksArmed)}
+                    hint={historyPositionHint}
+                        onStep={handleHistorySwipe}
+                    >
+                    <AgentInputTextField
+                        {...composerInputComboboxProps}
+                        textSource={textSource}
+                        buildReferences={buildEditorReferences}
+                        ref={inputRef}
+                        composerRef={composerRef}
+                        testID={isConversation ? AGENT_INPUT_TEST_IDS.sessionInput : AGENT_INPUT_TEST_IDS.newSessionInput}
+                        textStyle={isConversation ? styles.sessionInputText : styles.newSessionInputText}
+                        paddingTop={nativeFieldPaddingY}
+                        attachmentIds={editorAttachmentIds}
+                        decorations={editorDecorations}
+                        onReferencesChange={handleEditorReferencesChange}
+                        paddingBottom={nativeFieldPaddingY}
+                        paddingRight={fieldInputPaddingRight}
+                        onChangeText={handleComposerTextChange}
+                        placeholder={props.placeholder}
+                        placeholderTextColor={theme.colors.composer.chipTint}
+                        accessibilityLabel={props.inputAccessibilityLabel ?? props.placeholder}
+                        accessibilityHint={props.inputAccessibilityHint}
+                        onKeyPress={handleKeyPress}
+                        onStateChange={handleInputStateChange}
+                        initialScrollY={props.inputPersistence?.initialScrollY}
+                        scrollRestoreToken={props.inputPersistence?.restoreToken}
+                        onScrollYChange={props.inputPersistence?.onScrollYChange}
+                        onFocus={handleComposerFocus}
+                        onBlur={handleComposerBlur}
+                        submitBehavior={submitBehavior}
+                        onSubmitEditing={handleSubmitEditing}
+                        maxHeight={resolvedInputMaxHeight}
+                        editable={!props.disabled && !composerInputEditLocked}
+                        onFilesPasted={props.onAttachmentsAdded ? handleFilesPastedToComposer : undefined}
+                        onAttachmentsDropped={props.onAttachmentsAdded && dictationEditable && surfacePresented ? handleNativeAttachmentsDropped : undefined}
+                        attachmentDropScope={attachmentIntakeScope}
+                        onContentHeightChange={handleInputContentHeightChange}
+                    />
+                    </ComposerHistorySwipeArea>
+                    {props.inputExpansion && shouldShowInputExpansionToggle ? (
+                        <AgentInputExpansionToggle
+                            expanded={props.inputExpansion.expanded}
+                            onToggle={props.inputExpansion.onToggle}
+                        />
+                    ) : null}
+                    {embeddedPanel ? null : fieldAccessories}
+                </View>
+            </View>
+    );
     // One footer for the web and native panels.
     const actionFooter = (
             <View
@@ -4495,163 +4701,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         <>
                             {fixedComposerAttentionRequestsNode}
                             {headerControlsLine}
-                            {controlsOnly ? null : (
-                            <ScrollView
-                                style={[
-                                    styles.nativeKeyboardVariableSection,
-                                    styles.webVariableSectionEdgeToEdge,
-                                    typeof panelVariableSectionMaxHeight === 'number'
-                                        ? { maxHeight: panelVariableSectionMaxHeight }
-                                        : null,
-                                ]}
-                                contentContainerStyle={[
-                                    styles.nativeKeyboardVariableSectionContent,
-                                    styles.webVariableSectionContentInset,
-                                ]}
-                                keyboardShouldPersistTaps="handled"
-                                alwaysBounceVertical={false}
-                            >
-                                {renderVariableContentBeforeInput()}
-                                <View
-                                    ref={composerAnchorRef}
-                                    collapsable={false}
-                                    dataSet={themeSurfaceDataSet('composer', 'input', composerSurfaceState)}
-                                    style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined, embeddedPanel ? styles.embeddedInputContainer : null, inputSurfaceStyle]}
-                                    onLayout={(event) => {
-                                        updateNullableLayoutHeight(setInputContainerHeightPx, event.nativeEvent.layout.height);
-                                    }}
-                                >
-                                    <ComposerHistorySwipeArea
-                                        enabled={dictationEditable && submitEnabled && props.messageHistory !== 'none' && (!liveTextStatus.hasText || historyFlicksArmed)}
-                                    hint={historyPositionHint}
-                                        onStep={handleHistorySwipe}
-                                    >
-                                    <AgentInputTextField
-                                        {...composerInputComboboxProps}
-                                        textSource={textSource}
-                                        buildReferences={buildEditorReferences}
-                                        ref={inputRef}
-                                        composerRef={composerRef}
-                                        testID={isConversation ? AGENT_INPUT_TEST_IDS.sessionInput : AGENT_INPUT_TEST_IDS.newSessionInput}
-                                        textStyle={isConversation ? styles.sessionInputText : styles.newSessionInputText}
-                                        paddingTop={AGENT_INPUT_FIELD_PADDING_Y}
-                                        attachmentIds={editorAttachmentIds}
-                                        decorations={editorDecorations}
-                                        onReferencesChange={handleEditorReferencesChange}
-                                        paddingBottom={AGENT_INPUT_FIELD_PADDING_Y}
-                                        paddingRight={fieldInputPaddingRight}
-                                        onChangeText={handleComposerTextChange}
-                                        placeholder={props.placeholder}
-                                        placeholderTextColor={theme.colors.composer.chipTint}
-                                        accessibilityLabel={props.inputAccessibilityLabel ?? props.placeholder}
-                                        accessibilityHint={props.inputAccessibilityHint}
-                                        onKeyPress={handleKeyPress}
-                                        onStateChange={handleInputStateChange}
-                                        initialScrollY={props.inputPersistence?.initialScrollY}
-                                        scrollRestoreToken={props.inputPersistence?.restoreToken}
-                                        onScrollYChange={props.inputPersistence?.onScrollYChange}
-                                        onFocus={handleComposerFocus}
-                                        onBlur={handleComposerBlur}
-                                        submitBehavior={submitBehavior}
-                                        onSubmitEditing={handleSubmitEditing}
-                                        maxHeight={resolvedInputMaxHeight}
-                                        editable={!props.disabled && !composerInputEditLocked}
-                                        onFilesPasted={props.onAttachmentsAdded ? handleFilesPastedToComposer : undefined}
-                                        onAttachmentsDropped={props.onAttachmentsAdded && dictationEditable && surfacePresented ? handleNativeAttachmentsDropped : undefined}
-                                        attachmentDropScope={attachmentIntakeScope}
-                                        onContentHeightChange={handleInputContentHeightChange}
-                                    />
-                                    </ComposerHistorySwipeArea>
-                                    {props.inputExpansion && shouldShowInputExpansionToggle ? (
-                                        <AgentInputExpansionToggle
-                                            expanded={props.inputExpansion.expanded}
-                                            onToggle={props.inputExpansion.onToggle}
-                                        />
-                                    ) : null}
-                                    <AgentInputFieldAccessories showLibrary={showPromptLibraryButton} onOpenLibrary={openPromptPicker} libraryOpen={promptPicker.isOpen}
-                                        accessory={fieldAccessory} orderedIds={resolvedControls.accessories} belowToggle={shouldShowInputExpansionToggle} />
-                                </View>
-                            </ScrollView>
-                            )}
-                            {actionFooter}
+                            {embeddedPanel ? <View style={styles.embeddedLine}>{webTextSection}{embeddedTools}</View> : webTextSection}
+                            {embeddedPanel ? null : actionFooter}
                         </>
                     ) : (
                         <View style={styles.nativeKeyboardPanelContent}>
                             {fixedComposerAttentionRequestsNode}
                             {headerControlsLine}
-                            {controlsOnly ? null : (
-                            <View
-                                style={[
-                                    styles.nativeKeyboardVariableSection,
-                                    styles.nativeKeyboardVariableSectionContent,
-                                    typeof panelVariableSectionMaxHeight === 'number'
-                                        ? { maxHeight: panelVariableSectionMaxHeight }
-                                        : null,
-                                ]}
-                            >
-                                {renderVariableContentBeforeInput()}
-                                <View
-                                    ref={composerAnchorRef}
-                                    collapsable={false}
-                                    dataSet={themeSurfaceDataSet('composer', 'input', composerSurfaceState)}
-                                    style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined, embeddedPanel ? styles.embeddedInputContainer : null, inputSurfaceStyle]}
-                                    onLayout={(event) => {
-                                        updateNullableLayoutHeight(setInputContainerHeightPx, event.nativeEvent.layout.height);
-                                    }}
-                                >
-                                    <ComposerHistorySwipeArea
-                                        enabled={dictationEditable && submitEnabled && props.messageHistory !== 'none' && (!liveTextStatus.hasText || historyFlicksArmed)}
-                                    hint={historyPositionHint}
-                                        onStep={handleHistorySwipe}
-                                    >
-                                    <AgentInputTextField
-                                        {...composerInputComboboxProps}
-                                        textSource={textSource}
-                                        buildReferences={buildEditorReferences}
-                                        ref={inputRef}
-                                        composerRef={composerRef}
-                                        testID={isConversation ? AGENT_INPUT_TEST_IDS.sessionInput : AGENT_INPUT_TEST_IDS.newSessionInput}
-                                        textStyle={isConversation ? styles.sessionInputText : styles.newSessionInputText}
-                                        paddingTop={8}
-                                        attachmentIds={editorAttachmentIds}
-                                        decorations={editorDecorations}
-                                        onReferencesChange={handleEditorReferencesChange}
-                                        paddingBottom={8}
-                                        paddingRight={fieldInputPaddingRight}
-                                        onChangeText={handleComposerTextChange}
-                                        placeholder={props.placeholder}
-                                        placeholderTextColor={theme.colors.composer.chipTint}
-                                        accessibilityLabel={props.inputAccessibilityLabel ?? props.placeholder}
-                                        accessibilityHint={props.inputAccessibilityHint}
-                                        onKeyPress={handleKeyPress}
-                                        onStateChange={handleInputStateChange}
-                                        initialScrollY={props.inputPersistence?.initialScrollY}
-                                        scrollRestoreToken={props.inputPersistence?.restoreToken}
-                                        onScrollYChange={props.inputPersistence?.onScrollYChange}
-                                        onFocus={handleComposerFocus}
-                                        onBlur={handleComposerBlur}
-                                        submitBehavior={submitBehavior}
-                                        onSubmitEditing={handleSubmitEditing}
-                                        maxHeight={resolvedInputMaxHeight}
-                                        editable={!props.disabled && !composerInputEditLocked}
-                                        onFilesPasted={props.onAttachmentsAdded ? handleFilesPastedToComposer : undefined}
-                                        onAttachmentsDropped={props.onAttachmentsAdded && dictationEditable && surfacePresented ? handleNativeAttachmentsDropped : undefined}
-                                        attachmentDropScope={attachmentIntakeScope}
-                                        onContentHeightChange={handleInputContentHeightChange}
-                                    />
-                                    </ComposerHistorySwipeArea>
-                                    {props.inputExpansion && shouldShowInputExpansionToggle ? (
-                                        <AgentInputExpansionToggle
-                                            expanded={props.inputExpansion.expanded}
-                                            onToggle={props.inputExpansion.onToggle}
-                                        />
-                                    ) : null}
-                                    <AgentInputFieldAccessories showLibrary={showPromptLibraryButton} onOpenLibrary={openPromptPicker} libraryOpen={promptPicker.isOpen}
-                                        accessory={fieldAccessory} orderedIds={resolvedControls.accessories} belowToggle={shouldShowInputExpansionToggle} />
-                                </View>
-                            </View>
-                            )}
-                            {actionFooter}
+                            {embeddedPanel ? <View style={styles.embeddedLine}>{nativeTextSection}{embeddedTools}</View> : nativeTextSection}
+                            {embeddedPanel ? null : actionFooter}
                         </View>
                     )}
                 </GlassSurface>
