@@ -253,7 +253,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     const memberRequester = resolveHostRequesterAgentExecutionIdentity(identity);
     const placement = resolveTerminalPlacement(identity, context);
     if (admission.role !== 'manage') {
-      if (identity.kind !== 'isolated' || placement !== 'member') return err('terminal_forbidden');
+      if (identity.kind !== 'isolated' || placement !== 'member') {
+        return { ok: false, errorCode: 'machine_manage_required', error: 'machine_manage_required' };
+      }
       if (!params.deps?.nativeOperationRuntime) return unavailableIdentityTransport();
     }
     if (placement === 'member' && (admission.actorAccountId !== admission.custodianAccountId || admission.role !== 'manage')) {

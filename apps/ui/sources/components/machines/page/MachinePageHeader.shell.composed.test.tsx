@@ -37,6 +37,7 @@ afterEach(() => standardCleanup());
 it.each([
     { role: 'manage', refusal: null },
     { role: 'use', refusal: null },
+    { role: 'use', refusal: 'machine_manage_required' },
     { role: 'manage', refusal: 'terminal_unavailable' },
     { role: 'manage', refusal: 'terminal_forbidden' },
 ] as const)('settles a shared $role Shell through the real header and Action ($refusal)', async ({ role, refusal }) => {
@@ -50,13 +51,15 @@ it.each([
     const availabilityReads: Array<{ input: unknown }> = [];
     const authenticatedAccounts: Array<string | null> = [];
     const openedShells: unknown[] = [];
+    const failure = refusal ? { ok: false as const, errorCode: refusal, error: refusal } : null;
     const listBoundary = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId, accountId: 'bob',
         custodian: { accountId: 'alice', displayName: 'Alice' }, machineId: machine.id,
         actionId: 'machines.terminal.list', tokenEpoch: 0, requesterInvocation: 'credentials', execute: input => {
             availabilityReads.push({ input });
-            return refusal ? { ok: false, errorCode: refusal, error: refusal }
-                : pendingAvailability ?? { ok: true, terminals: [], machineShell: { ok: true, cwd, ...(role === 'use' ? { preparation: 'member_not_prepared' } : {}) } };
-        }, failure: () => refusal ? { errorCode: refusal, error: refusal } : null });
+            if (refusal === 'machine_manage_required') return { ok: true, terminals: [], machineShell: failure };
+            return failure ?? pendingAvailability
+                ?? { ok: true, terminals: [], machineShell: { ok: true, cwd, ...(role === 'use' ? { preparation: 'member_not_prepared' } : {}) } };
+        }, failure: () => refusal === 'machine_manage_required' ? null : failure });
     const openBoundary = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId, accountId: 'bob',
         custodian: { accountId: 'alice', displayName: 'Alice' }, machineId: machine.id,
         actionId: 'machines.terminal.open', tokenEpoch: 0, requesterInvocation: 'credentials', execute: input => {
@@ -94,7 +97,9 @@ it.each([
             await vi.waitFor(() => expect(screen.findByTestId('machine-detail-shell-unavailable')).not.toBeNull());
             expect(screen.findByTestId('machine-detail-open-terminal')).toBeNull();
             const line = screen.findByType(SurfaceFreshnessLine);
-            expect(line.props.reason).toBe(t(refusal === 'terminal_forbidden' ? 'machines.terminals.denied' : 'machines.terminals.unavailable'));
+            const reason = refusal === 'machine_manage_required' ? 'toolView.actionOutcome.cause.machineManageRequired'
+                : refusal === 'terminal_forbidden' ? 'machines.terminals.denied' : 'machines.terminals.unavailable';
+            expect(line.props.reason).toBe(t(reason));
             await act(async () => line.props.action.onPress());
             expect(vi.mocked(Modal.alert).mock.calls.at(-1)).toEqual([t('approvals.technicalDetails'), refusal]);
             expect(listReads()).toHaveLength(1);

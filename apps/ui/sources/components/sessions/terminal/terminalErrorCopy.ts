@@ -7,6 +7,7 @@ export type TerminalErrorCopy = Readonly<{
 }>;
 
 const COPY_BY_ERROR_CODE: Record<string, TerminalErrorCopy> = {
+    machine_manage_required: { bodyKey: 'toolView.actionOutcome.cause.machineManageRequired' },
     terminal_forbidden: { bodyKey: 'machines.terminals.denied' },
     terminal_access_denied: { bodyKey: 'machines.terminals.denied' },
     access_denied: { bodyKey: 'machines.terminals.denied' },

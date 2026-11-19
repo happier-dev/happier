@@ -3267,8 +3267,11 @@ existing member identity's workspace root. That root permits daemon-group
 access; the member's private home does not. Manage retains full Machine control
 and explicit paths. A present Use requester can open only its own native member
 root through this Machine Shell path; accepted Project and Session terminals
-retain their existing custody. Native identity and retained requester custody
-continue to refuse another Account's terminal.
+retain their existing custody. A Use grant without native member placement
+returns `machine_manage_required` for this Machine Shell path. This uses the
+existing Action failure envelope. The Machine header describes the Manage
+requirement. Native identity and retained requester custody continue to
+refuse another Account's terminal.
 
 Off preview optionally adds `plan.retirement`, and accepted/unchanged Set results
 optionally add `retirement: { removed, retained }`. The closed presentation rows

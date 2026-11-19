@@ -481,6 +481,17 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
     expect(f.processes).toEqual([]);
   });
 
+  it('requires Manage for a Machine shell when Can use has no isolated member placement', async () => {
+    const f = await fixture({ isolationEnabled: false });
+    await expect(f.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_LIST, { machineShell: true }))
+      .resolves.toMatchObject({ ok: true, machineShell: { ok: false, errorCode: 'machine_manage_required' } });
+    for (const method of [RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART]) {
+      await expect(f.invokeInstalledTerminal(method, { terminalKey: 'use-without-member-shell' }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'machine_manage_required' });
+    }
+    expect(f.processes).toEqual([]);
+  });
+
   it.each([false, true])('offers a requester-rooted Machine shell and admits isolated Use without exposing another Account terminal (Agent=%s)', async agent => {
     const f = await fixture();
     const invokeOwn = (method: string, input: unknown) => agent
