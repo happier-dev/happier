@@ -237,24 +237,20 @@ export async function connectUiPersonActionClient(params: Readonly<{
         const [{ renderHook }, { createMountedCurrentUiContextWrapper }, { createElement, Fragment },
             { PluginSurfaceProjectionDemand }, { REGISTRY_SOURCE_PROJECTION_SECTIONS },
             { useRegistryListSourceSelection }, { REGISTRY_ACTION_IDS_V1, RegistryKindV1Schema }, { waitForTestEvent },
-            { useAppShellPluginUiProjection }, { usePluginUiProjectionCurrentness }] = await Promise.all([
+            { useAppShellPluginUiProjection }] = await Promise.all([
             import('./hooks/renderHook'), import('./harness/mountedCurrentUiContext'),
             import('react'), import('@/components/plugins/surfaces/PluginSurfaceProjectionDemand'),
             import('@/sync/domains/plugins/ui/projectionSections'), import('@/registries/useRegistrySourceRevision'),
             import('@happier-dev/protocol/registries'), import('./hooks/waitForTestEvent'),
             import('@/components/appShell/plugins/AppShellPluginUiProjection'),
-            import('@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness'),
         ]);
         const AppShell = await createMountedCurrentUiContextWrapper({ withAppShellActions: params.withAppShellActions !== false,
             withCurrentUiActionPort: params.withCurrentUiActionPort, withAccountLifecycle: params.withAccountLifecycle !== false });
         const scope = getActiveServerAccountScope();
         const shell = await renderHook((kind: RegistryKindV1 | undefined) => {
-            const projection = useAppShellPluginUiProjection();
-            const currentness = usePluginUiProjectionCurrentness({ machineId: projection.machineId,
-                serverId: projection.serverId, load: false });
-            return { selection: useRegistryListSourceSelection(kind), hasMachine: projection.machineId !== null,
-                currentness: { phase: currentness.phase,
-                registrySourcesCurrent: currentness.registrySourcesCurrent, unavailableReasonCode: currentness.unavailableReasonCode } };
+            const registrySourcesPending = useAppShellPluginUiProjection(value => value.registrySourcesPending === true);
+            const selection = useRegistryListSourceSelection(kind);
+            return registrySourcesPending || selection.resolving;
         }, {
             wrapper: ({ children }) => createElement(AppShell, null, createElement(Fragment, null,
                 createElement(PluginSurfaceProjectionDemand, { accountScope: scope,
@@ -268,11 +264,9 @@ export async function connectUiPersonActionClient(params: Readonly<{
                 await getSyncSingleton().refreshPluginAccountAvailability();
                 const kind = RegistryKindV1Schema.safeParse(input && typeof input === 'object' && 'kind' in input ? input.kind : undefined);
                 await shell.rerender(kind.success ? kind.data : undefined);
-                const settled = await waitForTestEvent(shell.subscribe, shell.getCurrent, value => !value.selection.resolving
-                    && (!value.hasMachine || value.currentness.registrySourcesCurrent === true || value.currentness.phase !== 'establishing'));
-                if (settled.hasMachine && settled.currentness.registrySourcesCurrent !== true && settled.currentness.phase !== 'current') {
-                    throw new Error(`Person registry fixture projection ${settled.currentness.phase}: ${settled.currentness.unavailableReasonCode}`);
-                }
+                // The person fixture takes a one-shot snapshot. Known built-ins can
+                // render while the publication owner still owes plugin sources.
+                await waitForTestEvent(shell.subscribe, shell.getCurrent, pending => !pending);
             }
         };
         const execute: typeof client.execute = Object.assign(async (...args: Parameters<typeof client.execute>) => {
