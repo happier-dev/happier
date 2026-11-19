@@ -80,6 +80,7 @@ async function mountControl(options: Readonly<{
     attachments?: readonly unknown[];
     launchInput?: unknown;
     unavailable?: boolean;
+    watchUnavailable?: boolean;
     translations?: Readonly<Record<string, string>>;
 }> = {}): Promise<PluginUiTestkit> {
     const launchInput = options.launchInput ?? {
@@ -107,7 +108,9 @@ async function mountControl(options: Readonly<{
                 readComposer: () => (options.unavailable === true
                     ? { status: 'unavailable', reason: 'scope_closed' }
                     : { status: 'ready', snapshot: snapshot(options.attachments ?? []) }) as never,
-                watchComposer: () => undefined,
+                watchComposer: () => {
+                    if (options.watchUnavailable) throw new Error('Composer observation transport disconnected');
+                },
             },
         }) as PluginUiTestkit;
     });
@@ -195,6 +198,16 @@ describe('the Triage entries compact control', () => {
 
         // Truthfully the zero state, never a remembered count: the addressed
         // scope is gone and the draft it described no longer exists.
+        await expect(control.getByText('PRs & Issues')).resolves.toEqual({ content: 'PRs & Issues' });
+    });
+
+    it('falls back after observation transport fails even when the baseline read still has attachments', async () => {
+        const control = await mountControl({
+            attachments: [attachmentView({ instanceId: 'a1', label: 'Unobserved entry', entryId: '42' })],
+            watchUnavailable: true,
+        });
+
+        await expect(control.queryByText('Unobserved entry')).resolves.toBeUndefined();
         await expect(control.getByText('PRs & Issues')).resolves.toEqual({ content: 'PRs & Issues' });
     });
 

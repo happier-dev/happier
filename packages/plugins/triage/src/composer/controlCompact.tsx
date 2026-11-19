@@ -69,8 +69,8 @@ export function TriageEntriesControlCompact(context: RenderContext): React.React
     const text = usePluginTranslation();
     const mount = readTriageComposerControlMount(context.launchInput);
     const handle = useTriageBoundComposer(mount.status === 'bound' ? mount.composer : null);
-    const composerView = useComposerView(handle);
-    const state = projectTriageEntriesCompactState(composerView.result);
+    const { error, result } = useComposerView(handle);
+    const state = projectTriageEntriesCompactState(error === null ? result : null);
     const label = compactLabel(state, text);
 
     return (
