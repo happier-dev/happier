@@ -235,3 +235,37 @@ not a measured reference-runtime total or an equivalent authorization topology.
 | `remote-workspaces.RW4` | An attached row with `until-delete` retention is unaffected by Account `unused` retention. | Deciding server-owner test owed to managed retention owner. | Managed retention policy owner |
 | `remote-workspaces.D-i` | N attached resources with no open panel start with zero channels, holder processes and polls. | Startup census owed to U1 daemon workspace registry owner. | Workspace-source registry startup/lifecycle |
 | `remote-workspaces.credential` | SSH credential is absent from Action inputs, child argv, logs and transcripts while remaining available only through the controller credential owner. | Boundary test owed to U4 machine-ssh plugin; existing Coder transport tests cover argv/token separation only. | Machine provisioner SavedSecret binding |
+
+### First open (approved 2026-11-19)
+
+The first-open gates in `.project/plans/2026-11-19-first-open/` own these formulas. Pending rows carry no measured count. Expected failures are removed when the named composed test passes on the landed owner.
+
+| Flow | Shape contract | Deciding boundary |
+| --- | --- | --- |
+| `firstOpen.01.F1.rest` | Settled Home with Digits off: 0 clock fires and draws in 60 s. Digits on and visible: 30 draws in 60 s, 0 React commits above the drawing leaf. Hidden: 0 draws. | Real Home and glyph painter with the testkit clock |
+| `firstOpen.01.F1.return` | 12 visits produce 12 initial frames, 0 settle frames and leave 0 contexts after departure. | Home return lifecycle |
+| `firstOpen.01.F1.idle60` | Settled Home with a Bot: 0 clock callbacks, draws, samples and animation commits in 60 s. 0 recurring work offscreen, parked, minimized, backgrounded or in reduced motion. | PR performance runner |
+| `firstOpen.01.F2.write` | 1 settings write per changed choice, 0 for the same value. Field change commits 0 atmosphere readers. Intensity changes commit 0 field readers. | Home look sheet with the Account settings transport |
+| `firstOpen.01.F2.unrelated` | N unrelated settings pushes produce 0 frames and preserve scene identity. | Settings source and mounted glyph surface |
+| `firstOpen.01.F3.settle` | Frame production stops when the arrival timeline ends. Settling writes 0 settings. | Home build and Home atmosphere |
+| `firstOpen.01.F5.frame` | Per frame: 0 React commits and 0 per-sprite allocations. Unchanged-body ticks add 0 body or atlas allocations, uploads or readbacks. Resources return to baseline after 20 settled cycles. | Glyph renderer exercised by opening, Home, and Look |
+| `firstOpen.02.F1` | One desktop candidate decision; one hidden presenter, then one prepare, ready, content acknowledgement, start, swap and destroy when eligible, with W model forwards for W model changes. 1 seen write, 0 added server calls. One rAF per frame with 0 React commits and layout reads. | Desktop opening route and Tauri bridge |
+| `firstOpen.02.F2` | One boot decision; one chunk, warm-up, scene, build and seen write when eligible. 1 frame production per frame, 0 welcome commits and layout reads, 0 added server calls. After settle: 0 frames and retained GPU objects. | In-app opening and wizard entry |
+| `firstOpen.02.F3` | Later launch: 0 opening chunk loads and scene initializations. Desktop without a candidate adds 0 overlay windows and IPC. A rejected candidate boots and destroys a hidden presenter without showing it. | Second launch through the same host and device fixture |
+| `firstOpen.03.F1` | One welcome load for the selected Home, with features and auth-entry observed together and retention where supported. Unchanged rerender adds 0 requests. One existing keyed provision per admission. | Fresh welcome → Home |
+| `firstOpen.03.F2` | One QR start plus R rendezvous reads and P approval polls until settlement. Hidden: 0 requests and timer wakes. Approver parses the link and performs one approval after consent. | Two real browser profiles and the Account server |
+| `firstOpen.03.F3` | Back or New account ends approval work before keyed provision begins. | Approve → New account → Home |
+| `firstOpen.03.F4` | One key-challenge login. | Recovery key restore |
+| `firstOpen.03.F5` | One OAuth start, one return claim, one directory read for H Homes, then the selected Home's sign-in. | OAuth provider boundary plus real directory and Home |
+| `firstOpen.03.F6` | One POST per login, forgot, resend or reset submit. | Email sign-in with a mail sink |
+| `firstOpen.03.F7` | One existing probe per checked address plus the selected service's sign-in calls. | Sign-in service selection |
+| `firstOpen.03.F8` | Existing bootstrap and relay operations, with 0 added calls or polls. | Desktop personal Home setup |
+| `firstOpen.03.F9` | One local SSH suggestions read plus the existing SSH Actions. | Wizard and real sshd |
+| `firstOpen.03.F10` | Existing Home connection and its existing probe. | Browser hand-off to a Home address |
+| `firstOpen.03.F11` | One invitation preview, one accept and the chosen sign-in method's calls. | Team plan D join and sign-in |
+| `firstOpen.03.F12` | One preview and one accept only where offered. | Invitation outcomes at the join receiver |
+| `firstOpen.03.F13` | One terminal request read and one approval after Accept. | Real CLI link through the web receiver |
+| `firstOpen.03.F14` | Returning-method lead adds 0 reads. Recovery uses only the chosen method's calls. | Same-profile logout, return and Home recovery |
+| `firstOpen.03.F15` | No reread until Retry, then 1 for the failed resource. | Welcome notices at the server boundary |
+| `firstOpen.04.F1` | One outgoing freeze, one incoming layout pass, one particle set, and 0 added server calls. Per frame: 1 production and 0 layout, style recalculation, React commits, sprite allocations or pixel copies. After settle: 0 frames or retained captures. | Real wizard entry and mounted step stage |
+| `firstOpen.04.F5` | Same move budget, with work proportional to rendered Home leaves and 0 frames after settle. | Welcome provision → Home build |
