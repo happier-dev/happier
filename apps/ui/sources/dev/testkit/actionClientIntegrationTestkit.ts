@@ -60,6 +60,27 @@ export async function mountUiManagedMachineDetail(params: Readonly<{ serverId: s
     };
 }
 
+/** Exercise the native picker read owner under the journey's restored Account. */
+export async function mountUiAutomationSubjectPicker(params: Omit<Extract<
+    import('@/sync/domains/workflows/useAutomationSubjectPicker').AutomationSubjectPickerInput,
+    { kind: { kind: 'plugin' } }
+>, 'lifetime' | 'demanded' | 'context'> & Readonly<{ machineId: string }>) {
+    const [{ captureActiveServerAccountScopeLifetime }, { useAutomationSubjectPicker }, { renderHook }] = await Promise.all([
+        import('@/sync/domains/scope/activeServerAccountScope'),
+        import('@/sync/domains/workflows/useAutomationSubjectPicker'), import('./hooks/renderHook'),
+    ]);
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Restored Account lifetime unavailable');
+    const input = { ...params, lifetime, demanded: true,
+        context: { externalActionTarget: { kind: 'machine' as const, machineId: params.machineId } } };
+    const hook = await renderHook(() => useAutomationSubjectPicker(input));
+    return { read: hook.getCurrent, close: hook.unmount,
+        async waitForSettled() {
+            await waitForTestEvent(hook.subscribe, hook.getCurrent,
+                state => state.status === 'ready' || state.status === 'error' || state.status === 'unsupported');
+        } };
+}
+
 /** Read the canonical UI projection under the restored Account's lifetime. */
 export async function readUiMachineProjection(params: Readonly<{
     serverId: string;

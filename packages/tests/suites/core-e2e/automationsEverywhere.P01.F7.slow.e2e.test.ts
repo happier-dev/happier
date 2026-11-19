@@ -17,10 +17,9 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { readWorkflowChildSession, waitForWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 import { installExternalTicketAutomationFixture } from '../../src/testkit/pluginPlatform/externalTicketAutomationFixture';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
-import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
+import { connectUiPersonActionClient, mountUiAutomationSubjectPicker } from '@happier-tests/ui-action-client';
 import { captureActiveServerAccountScopeLifetime } from '../../../../apps/ui/sources/sync/domains/scope/activeServerAccountScope';
 import { acquireDaemonMergedWorkflowActionCatalog, loadDaemonMergedProjectionCacheEntry } from '../../../../apps/ui/sources/agents/backendCatalog/loadDaemonMergedProjectionInputs';
-import { readAutomationSubjectPickerActionPage } from '../../../../apps/ui/sources/sync/domains/workflows/automationSubjectPicker';
 import { listWorkflowStepActionSpecs } from '../../../../apps/ui/sources/components/workflows/presentation/workflowActionCatalog';
 
 describe('Automations everywhere: qualified plugin subjects', () => {
@@ -117,18 +116,22 @@ describe('Automations everywhere: qualified plugin subjects', () => {
             kind: 'plugin', pluginId: pluginIds[0], subjectKindId: 'ticket', definition: { listAction: 'list-tickets' },
           } } });
       } finally { catalog.release(); }
-      const page = await readAutomationSubjectPickerActionPage({
-        kind: { kind: 'plugin', pluginId: pluginIds[0], subjectKindId: 'ticket' }, lifetime,
+      const subjectPicker = await mountUiAutomationSubjectPicker({
+        kind: { kind: 'plugin', pluginId: pluginIds[0], subjectKindId: 'ticket' },
         page: { limit: 20 }, subjectKinds: Object.values(inputs.pluginUiProjection.subjectKindsById),
-        context: { ...context, executeChildAction: pickerClient.executeConfirmed },
+        machineId: machine.target.machineId,
       });
-      expect(page).toMatchObject({ items: expect.arrayContaining([{ label: 'Fix the checkout', subject: {
-        kind: 'plugin', serverId: pickerClient.serverId, pluginId: pluginIds[0], subjectKindId: 'ticket',
-        identity: { ticketId: 'ticket-1' },
-      } }]), nextCursor: null, coverage: 'complete' });
-      const selected = page.items.find(item => item.label === 'Fix the checkout')?.subject;
-      if (!selected) throw new Error('Ticket picker selection unavailable');
-      selectedTicket = selected;
+      try {
+        await subjectPicker.waitForSettled();
+        const page = subjectPicker.read();
+        expect(page).toMatchObject({ status: 'ready', items: expect.arrayContaining([{ label: 'Fix the checkout', subject: {
+          kind: 'plugin', serverId: pickerClient.serverId, pluginId: pluginIds[0], subjectKindId: 'ticket',
+          identity: { ticketId: 'ticket-1' },
+        } }]), hasMore: false, coverage: 'complete' });
+        const selected = page.items.find(item => item.label === 'Fix the checkout')?.subject;
+        if (!selected) throw new Error('Ticket picker selection unavailable');
+        selectedTicket = selected;
+      } finally { await subjectPicker.close(); }
     } finally { await pickerClient.close(); }
     const workflowId = randomUUID();
     expect(await actor.executeAsPerson('workflow.definition.create', { definitionId: workflowId,

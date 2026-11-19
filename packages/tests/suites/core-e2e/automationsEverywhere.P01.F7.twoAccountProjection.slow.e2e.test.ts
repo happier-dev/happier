@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import { connectUiPersonActionClient, readUiMachineProjection } from '@happier-tests/ui-action-client';
+import { connectUiPersonActionClient, mountUiAutomationSubjectPicker, readUiMachineProjection } from '@happier-tests/ui-action-client';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createExternalTicketPlugin } from '../../../plugin-ui/fixtures/external-authoring/src/ticketAutomationPlugin';
 import { createPluginManifestV2Fixture } from '../../../../apps/cli/src/plugins/testkit/manifestV2Fixture';
@@ -55,6 +55,14 @@ it('reacquires the adopted projection after two Accounts and two Machines prewar
         expect.objectContaining({ pluginId, definition: expect.objectContaining({ id: 'ticket' }) }),
       ]));
     }
+    const picker = await mountUiAutomationSubjectPicker({
+      kind: { kind: 'plugin', pluginId: pluginIds[0], subjectKindId: 'ticket' }, page: { limit: 20 },
+      subjectKinds: Object.values(entry.inputs.pluginUiProjection.subjectKindsById), machineId: machine.target.machineId,
+    });
+    try {
+      await picker.waitForSettled();
+      expect(picker.read()).toMatchObject({ status: 'ready', items: [], hasMore: false, coverage: 'complete' });
+    } finally { await picker.close(); }
   } finally {
     await ui?.close();
     await fixture.stop();
