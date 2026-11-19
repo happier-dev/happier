@@ -920,7 +920,11 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 return;
             }
             if (link.kind === 'terminal_connect') {
-                const result = await openTerminalConnectApproval(link.terminal, { navigate: router.push, refreshAuth: auth.refreshFromActiveServer });
+                const result = await openTerminalConnectApproval(link.terminal, {
+                    navigate: router.push,
+                    refreshAuth: auth.refreshFromActiveServer,
+                    isAuthenticated: auth.isAuthenticated,
+                });
                 if (result === 'expired') {
                     setExpiredTerminalLink(true);
                     setEnrollmentResult('expired');
@@ -951,7 +955,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
             }
             await processHomeQrInvite({ invite });
         },
-        [auth.refreshFromActiveServer, classifyScannedLink, handleBack, openShowQrInstead, processHomeQrInvite, props.onShowQrInstead, router],
+        [auth.isAuthenticated, auth.refreshFromActiveServer, classifyScannedLink, handleBack, openShowQrInstead, processHomeQrInvite, props.onShowQrInstead, router],
     );
 
     const approveRequester = React.useCallback(async () => {

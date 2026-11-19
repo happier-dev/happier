@@ -19,7 +19,7 @@ vi.mock('expo-router', () => createExpoRouterMock({
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({
-        processAuthUrl: processorTestState.terminalProcess,
+        openApproval: processorTestState.terminalProcess,
         isLoading: false,
     }),
 }));

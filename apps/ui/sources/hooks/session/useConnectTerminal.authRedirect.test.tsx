@@ -23,7 +23,7 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installSessionHooksCommonModuleMocks } from './sessionHooksTestHelpers';
-import { buildTerminalConnectAuthRedirectHref } from '@/utils/path/terminalConnectUrl';
+import { buildTerminalConnectAuthRedirectHref, parseTerminalConnectUrl, type ParsedTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -98,6 +98,7 @@ const { renderScreen, standardCleanup } = await import('@/dev/testkit');
 await initializeRealAppRuntimeForTests();
 const { AuthProvider } = await import('@/auth/context/AuthContext');
 const { useConnectTerminal } = await import('./useConnectTerminal');
+const { useScannedAuthUrlProcessor } = await import('@/hooks/auth/useScannedAuthUrlProcessor');
 const profiles = await import('@/sync/domains/server/serverProfiles');
 const runtime = await import('@/sync/domains/server/serverRuntime');
 const connection = await import('@/sync/runtime/orchestration/connectionManager');
@@ -187,7 +188,15 @@ async function renderHook(home: Home, options?: Parameters<typeof useConnectTerm
         installHomeGovernanceBoundaries(boundary);
     }
     let api: ReturnType<typeof useConnectTerminal> | undefined;
-    function Probe() { api = useConnectTerminal(options); return null; }
+    let scanner: ReturnType<typeof useScannedAuthUrlProcessor> | undefined;
+    let setApprovalRequest: React.Dispatch<React.SetStateAction<ParsedTerminalConnectUrl | null>>;
+    function Probe() {
+        const [request, setRequest] = React.useState(options?.approvalRequest ?? null);
+        setApprovalRequest = setRequest;
+        api = useConnectTerminal({ ...options, approvalRequest: request });
+        scanner = useScannedAuthUrlProcessor({ allowedUrlKind: 'terminal' });
+        return null;
+    }
     await renderScreen(<AuthProvider initialCredentials={home.credentials}><Probe /></AuthProvider>);
     routerReplaceSpy.mockClear();
     routerPushSpy.mockClear();
@@ -195,11 +204,22 @@ async function renderHook(home: Home, options?: Parameters<typeof useConnectTerm
     modalAlertAsyncSpy.mockClear();
     modalConfirmSpy.mockClear();
     boundary.requests.length = 0;
+    const showConfirmation = async (url: string) => {
+        await act(async () => { setApprovalRequest(parseTerminalConnectUrl(url)); });
+    };
     return {
         get api() { return api!; },
+        get scanner() { return scanner!; },
         async process(url: string) {
             let result: boolean | undefined;
-            await act(async () => { result = await api!.processAuthUrl(url); });
+            await act(async () => { result = await api!.connectWithUrl(url); });
+            return result;
+        },
+        showConfirmation,
+        async approveLink(url: string) {
+            await showConfirmation(url);
+            let result: boolean | undefined;
+            await act(async () => { result = await api!.approve(); });
             return result;
         },
     };
@@ -344,7 +364,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         });
         const strict: HomeConnectionDescriptorV1 = { ...descriptor(),
             endpoints: [{ kind: 'iroh', endpointId: 'a'.repeat(64) }] };
-        expect(await hook.process(link(pairing(), { descriptor: strict }))).toBe(false);
+        expect(await hook.approveLink(link(pairing(), { descriptor: strict }))).toBe(false);
         expect(pending.getPendingTerminalConnect()).toMatchObject({
             serverIdentityId: CURRENT_ID, homeConnectionDescriptor: strict,
         });
@@ -359,7 +379,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const strict: HomeConnectionDescriptorV1 = { ...descriptor(target.url, target.identity),
             endpoints: [{ kind: 'iroh', endpointId: 'b'.repeat(64) }] };
         const before = await authority();
-        expect(await hook.process(link(pairing(), { descriptor: strict }))).toBe(false);
+        expect(await hook.approveLink(link(pairing(), { descriptor: strict }))).toBe(false);
         expect(await authority()).toEqual(before);
         expect(routerReplaceSpy).not.toHaveBeenCalled();
         expect(modalAlertSpy).toHaveBeenCalledWith('welcome.serverUnavailableTitle', 'welcome.serverUnavailableBody', expect.any(Array));
@@ -372,7 +392,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const hook = await renderHook(home);
         const before = await authority();
         const request = pairing();
-        expect(await hook.process(identityLink(request, home.url, home.identity))).toBe(false);
+        expect(await hook.approveLink(identityLink(request, home.url, home.identity))).toBe(false);
         expect(pending.getPendingTerminalConnect()).toMatchObject({
             publicKeyB64Url: Buffer.from(request.terminalPublicKey).toString('base64url'),
             serverUrl: CURRENT_URL, serverIdentityId: CURRENT_ID,
@@ -387,7 +407,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const target = await addHome({ url: 'https://stack.example.test', identity: 'srv_stack' });
         const hook = await renderHook(focused);
         const before = await authority();
-        expect(await hook.process(identityLink(pairing(), target.url, target.identity))).toBe(false);
+        expect(await hook.approveLink(identityLink(pairing(), target.url, target.identity))).toBe(false);
         expect(modalConfirmSpy).not.toHaveBeenCalled();
         expect(await authority()).toEqual(before);
         expect(routerReplaceSpy).toHaveBeenCalledWith(buildTerminalConnectAuthRedirectHref({ serverUrl: target.url }));
@@ -401,7 +421,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const before = await authority();
         // Unlike the old impossible AuthContext/stored-token split, this is a genuinely
         // signed-in Home and a destination with no credential. Declining preserves both.
-        expect(await hook.process(unboundLink(pairing(), 'https://unknown.example.test'))).toBe(false);
+        expect(await hook.approveLink(unboundLink(pairing(), 'https://unknown.example.test'))).toBe(false);
         expect(posts()).toHaveLength(0);
         expect(await authority()).toEqual(before);
         // The focused signed-in Home keeps syncing as itself; nothing may reach the unknown destination.
@@ -415,7 +435,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             credentials: keyedCredentials('loopback-account'), publishDescriptor: false });
         const hook = await renderHook(home, { allowLoopbackServerOverride: true });
         const before = await authority();
-        expect(await hook.process(link(pairing(), { url: 'https://localhost:3121' }))).toBe(true);
+        expect(await hook.approveLink(link(pairing(), { url: 'https://localhost:3121' }))).toBe(true);
         approval(home);
         expect(await authority()).toEqual(before);
         expect(modalConfirmSpy).not.toHaveBeenCalled();
@@ -428,7 +448,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const home = await addHome({ url: focusedUrl, publishDescriptor: false });
         const hook = await renderHook(home);
         const before = await authority();
-        expect(await hook.process(identityLink(pairing(), requestedUrl, home.identity))).toBe(false);
+        expect(await hook.approveLink(identityLink(pairing(), requestedUrl, home.identity))).toBe(false);
         expect(await authority()).toEqual(before);
         expect(pending.getPendingTerminalConnect()).toMatchObject({ serverUrl: focusedUrl, serverIdentityId: home.identity });
         expect(routerReplaceSpy).toHaveBeenCalledWith(buildTerminalConnectAuthRedirectHref({ serverUrl: focusedUrl }));
@@ -440,7 +460,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
             const home = await addHome();
             const hook = await renderHook(home);
             const before = await authority();
-            expect(await hook.process(unboundLink(pairing(), requestedUrl))).toBe(false);
+            expect(await hook.approveLink(unboundLink(pairing(), requestedUrl))).toBe(false);
             expect(pending.getPendingTerminalConnect()).toBeNull();
             expect(posts()).toHaveLength(0);
             expect(await authority()).toEqual(before);
@@ -459,7 +479,8 @@ describe('useConnectTerminal unauthenticated flow', () => {
             await new Promise<void>((resolve) => { release = resolve; });
         });
         let done!: Promise<boolean>;
-        await act(async () => { done = hook.api.processAuthUrl(link(pairing())); });
+        await hook.showConfirmation(link(pairing()));
+        await act(async () => { done = hook.api.approve(); });
         await vi.waitFor(() => expect(modalAlertSpy).toHaveBeenCalledWith('common.success', 'modals.terminalConnectedSuccessfully', expect.anything()));
         await act(async () => {});
         expect(hook.api.isLoading).toBe(false);
@@ -471,7 +492,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const hook = await renderHook(home);
         const p = pairing();
         const before = await authority();
-        expect(await hook.process(link(p))).toBe(true);
+        expect(await hook.approveLink(link(p))).toBe(true);
         const body = approval(home);
         expect(body.publicKey).toBe(Buffer.from(p.terminalPublicKey).toString('base64'));
         expect(body.responseKind).toBe('dataKey');
@@ -487,7 +508,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const home = await addHome({ credentials: keyedCredentials('unbound-account') });
         const hook = await renderHook(home);
         const before = await authority();
-        expect(await hook.process(unboundLink(pairing()))).toBe(false);
+        expect(await hook.approveLink(unboundLink(pairing()))).toBe(false);
         expect(posts()).toHaveLength(0);
         expect(await authority()).toEqual(before);
     });
@@ -496,7 +517,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const home = await addHome({ credentials: keyedCredentials('qr-secret-account') });
         const hook = await renderHook(home);
         const p = pairing();
-        expect(await hook.process(link(p))).toBe(true);
+        expect(await hook.approveLink(link(p))).toBe(true);
         const body = approval(home);
         expect(open(body.response, p)).toEqual({ type: 'dataKey', key: new Uint8Array(32).fill(7) });
         expect(open(body.response, p, new Uint8Array(32).fill(13))).toBeNull();
@@ -506,7 +527,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const home = await addHome({ credentials: tokenCredentials() });
         const hook = await renderHook(home);
         const p = pairing();
-        expect(await hook.process(link(p))).toBe(true);
+        expect(await hook.approveLink(link(p))).toBe(true);
         const body = approval(home);
         expect(body.responseKind).toBe('tokenOnly');
         expect(open(body.response, p)).toEqual({ type: 'tokenOnly' });
@@ -528,7 +549,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const hook = await renderHook(home);
         const before = await authority();
         const p = pairing();
-        expect(await hook.process(fixture.withPairing ? link(p, { supportsTokenOnly: fixture.supportsTokenOnly }) : unboundLink(p))).toBe(false);
+        expect(await hook.approveLink(fixture.withPairing ? link(p, { supportsTokenOnly: fixture.supportsTokenOnly }) : unboundLink(p))).toBe(false);
         expect(posts()).toHaveLength(0);
         expect(await authority()).toEqual(before);
     });
@@ -540,7 +561,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const hook = await renderHook(focused);
         const p = pairing(8);
         const before = await authority();
-        expect(await hook.process(identityLink(p, target.url, target.identity))).toBe(true);
+        expect(await hook.approveLink(identityLink(p, target.url, target.identity))).toBe(true);
         const body = approval(target);
         expect(body.responseKind).toBe('dataKey');
         expect(open(body.response, p))
@@ -557,7 +578,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const hook = await renderHook(home);
         modalConfirmSpy.mockResolvedValueOnce(false);
         const before = await authority();
-        expect(await hook.process(identityLink(pairing(), home.url, 'srv_expected_other'))).toBe(false);
+        expect(await hook.approveLink(identityLink(pairing(), home.url, 'srv_expected_other'))).toBe(false);
         expect(posts()).toHaveLength(0);
         // The focused Home keeps its own sync traffic; none of it may be an auth approval request.
         expect(boundary.requests.filter(request => request.token !== null && request.path.startsWith('/v1/auth'))).toHaveLength(0);
@@ -568,7 +589,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const home = await addHome({ credentials: legacyCredentials('legacy-account') });
         const hook = await renderHook(home);
         const p = pairing(6);
-        expect(await hook.process(link(p))).toBe(true);
+        expect(await hook.approveLink(link(p))).toBe(true);
         const body = approval(home);
         expect(body.responseKind).toBe('dataKey');
         const opened = open(body.response, p);
@@ -583,7 +604,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const target = await addHome({ url: 'http://localhost:53288', identity: 'srv_other_saved_target', publishDescriptor: false });
         const hook = await renderHook(home, { allowLoopbackServerOverride: true });
         const before = await authority();
-        expect(await hook.process(identityLink(pairing(4), target.url, home.identity))).toBe(false);
+        expect(await hook.approveLink(identityLink(pairing(4), target.url, home.identity))).toBe(false);
         expect(posts()).toHaveLength(0);
         // URL-only sign-in advice does not adopt or focus a Home. The explicit next
         // user focus below verifies that the retained intent still names that URL.
@@ -601,7 +622,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const hook = await renderHook(home, { allowLoopbackServerOverride: true });
         const before = await authority();
         expect(profiles.buildHomeConnectionDescriptorForProfile(profiles.getServerProfileById(home.id)!)).toBeNull();
-        expect(await hook.process(identityLink(pairing(2), 'http://127.0.0.1:53288', home.identity))).toBe(true);
+        expect(await hook.approveLink(identityLink(pairing(2), 'http://127.0.0.1:53288', home.identity))).toBe(true);
         approval(home);
         expect(modalConfirmSpy).not.toHaveBeenCalled();
         expect(await authority()).toEqual(before);
@@ -614,7 +635,7 @@ describe('useConnectTerminal unauthenticated flow', () => {
         const before = await authority();
         pending.setPendingTerminalConnect({ publicKeyB64Url: 'previous-request', serverUrl: home.url, serverIdentityId: home.identity });
         expect(pending.getPendingTerminalConnect()).not.toBeNull();
-        expect(await hook.process(identityLink(pairing(3), 'https://other-home.example.test', 'srv_other_home'))).toBe(false);
+        expect(await hook.approveLink(identityLink(pairing(3), 'https://other-home.example.test', 'srv_other_home'))).toBe(false);
         expect(modalConfirmSpy).toHaveBeenCalledWith('terminal.connectTerminal',
             'terminal.switchServerToConnectTerminal', expect.objectContaining({ confirmText: 'server.switchToServer' }));
         expect(modalAlertSpy).not.toHaveBeenCalled();
@@ -626,6 +647,24 @@ describe('useConnectTerminal unauthenticated flow', () => {
 });
 
 describe('useConnectTerminal real approval outcomes', () => {
+    it.each(['scanner', 'manual entry'] as const)('opens approval from %s without connecting the terminal', async (origin) => {
+        const home = await addHome({ credentials: keyedCredentials('focused-account') });
+        const hook = await renderHook(home);
+        const request = pairing();
+        const url = link(request);
+        await act(async () => {
+            if (origin === 'scanner') await hook.scanner.processAuthUrl(url);
+            else await hook.api.connectWithUrl(url);
+        });
+        expect(posts()).toHaveLength(0);
+        expect(routerPushSpy).toHaveBeenCalledWith('/terminal');
+        expect(pending.getPendingTerminalConnect()).toMatchObject({
+            serverIdentityId: CURRENT_ID,
+            publicKeyB64Url: Buffer.from(request.terminalPublicKey).toString('base64url'),
+        });
+        expect(await hook.approveLink(url)).toBe(true);
+        approval(home);
+    });
     it.each(['unavailable', 'obsolete-key'] as const)('refuses currentness %s before issuing a sealed response', async failure => {
         const home = await addHome({ credentials: keyedCredentials('currentness-account') });
         const onError = vi.fn();
@@ -635,7 +674,7 @@ describe('useConnectTerminal real approval outcomes', () => {
             ? { status: 404, body: { error: 'not_found' } }
             : { body: currentness(keyedCredentials('currentness-account', 10), 'e2ee') });
         const before = await authority();
-        expect(await hook.process(link(pairing()))).toBe(false);
+        expect(await hook.approveLink(link(pairing()))).toBe(false);
         expect(posts()).toHaveLength(0);
         expect(boundary.requests.filter(request => request.path.startsWith('/v1/auth/request/status'))).toHaveLength(0);
         expect(onError).toHaveBeenCalledOnce();
@@ -649,7 +688,7 @@ describe('useConnectTerminal real approval outcomes', () => {
         const onSuccess = vi.fn();
         const hook = await renderHook(home, { onSuccess });
         const before = await authority();
-        expect(await hook.process(link(pairing()))).toBe(false);
+        expect(await hook.approveLink(link(pairing()))).toBe(false);
         expect(posts()).toHaveLength(0);
         expect(onSuccess).not.toHaveBeenCalled();
         expect(await authority()).toEqual(before);
@@ -664,7 +703,7 @@ describe('useConnectTerminal real approval outcomes', () => {
         boundary.answer(home.id, '/v1/auth/request/status', { body: { status: fixture.status, supportsV2: true } });
         const onSuccess = vi.fn();
         const hook = await renderHook(home, { onSuccess });
-        expect(await hook.process(link(pairing()))).toBe(fixture.result);
+        expect(await hook.approveLink(link(pairing()))).toBe(fixture.result);
         expect(modalAlertSpy).toHaveBeenCalledWith(fixture.title, fixture.message, [{ text: 'common.ok' }]);
         expect(onSuccess).toHaveBeenCalledTimes(fixture.result ? 1 : 0);
         expect(posts()).toHaveLength(fixture.result ? 1 : 0);

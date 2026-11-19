@@ -11,7 +11,6 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 
 type UseScannedAuthUrlProcessorCallbacks = Readonly<{
-    onSuccess?: () => void;
     onError?: (error: unknown) => void;
 }>;
 
@@ -26,6 +25,8 @@ type UseScannedAuthUrlProcessorOptions = UseScannedAuthUrlProcessorCallbacks & (
         allowedUrlKind: 'terminal';
         homeQrEntryIntent?: never;
         onShowQrInstead?: never;
+        navigateToApproval?: NonNullable<Parameters<typeof useConnectTerminal>[0]>['navigateToApproval'];
+        onApprovalOpened?: () => void;
     }>
 );
 
@@ -56,7 +57,7 @@ export function useScannedAuthUrlProcessor(options: UseScannedAuthUrlProcessorOp
                 }
                 case 'terminal_connect':
                     if (options.allowedUrlKind !== 'terminal') return await rejectAsInvalid();
-                    return await terminalConnect.processAuthUrl(url);
+                    return await terminalConnect.openApproval(link.terminal);
                 case 'account_connect': {
                     if (options.allowedUrlKind !== 'account') return await rejectAsInvalid();
                     const onShowQrInstead = options.onShowQrInstead;

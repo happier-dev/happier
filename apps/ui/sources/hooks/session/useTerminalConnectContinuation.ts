@@ -28,22 +28,11 @@ export function useTerminalConnectContinuation(options: Readonly<{
         allowLoopbackServerOverride,
         onSuccess: options.onSuccess,
     });
-    const { processParsedAuthUrl } = approval;
-    const approve = React.useCallback(async () => {
-        if (request) await processParsedAuthUrl(request);
-    }, [processParsedAuthUrl, request]);
+    const approve = React.useCallback(async () => { await approval.approve(); }, [approval.approve]);
     const reject = React.useCallback(() => {
         clearPendingTerminalConnect();
         options.onReject();
     }, [options.onReject]);
-    const compatibilityHandledRef = React.useRef<ParsedTerminalConnectUrl | null>(null);
-
-    React.useEffect(() => {
-        if (!request || !requiresUpdate || compatibilityHandledRef.current === request) return;
-        compatibilityHandledRef.current = request;
-        void processParsedAuthUrl(request);
-    }, [processParsedAuthUrl, request, requiresUpdate]);
-
     React.useEffect(() => {
         if (!request || linkState !== 'ready') return;
         let cancelled = false;

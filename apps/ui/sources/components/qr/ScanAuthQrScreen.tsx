@@ -73,14 +73,13 @@ export function ScanAuthQrScreen(props: ScanAuthQrScreenProps) {
         ? {
             allowedUrlKind: props.allowedUrlKind,
             homeQrEntryIntent: props.homeQrEntryIntent,
-            onSuccess: handleBack,
             // A legacy account link cannot be approved here; this device's own
             // QR is the recovery the signed-in scanner can actually offer.
             onShowQrInstead: showQrInstead,
         } as const
         : {
             allowedUrlKind: props.allowedUrlKind,
-            onSuccess: handleBack,
+            navigateToApproval: router.replace,
         } as const;
     const { processAuthUrl } = useScannedAuthUrlProcessor(processorOptions);
     const [view, setView] = React.useState<'scanner' | 'paste'>('scanner');

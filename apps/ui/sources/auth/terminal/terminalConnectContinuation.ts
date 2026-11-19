@@ -30,6 +30,7 @@ export type TerminalConnectEntryResult = 'opened' | 'expired' | 'update_required
 export async function openTerminalConnectApproval(request: ParsedTerminalConnectUrl, options: Readonly<{
     navigate: (href: ReturnType<typeof terminalConnectResumeHref> | '/scan/terminal') => void;
     refreshAuth: () => Promise<void>;
+    isAuthenticated: boolean;
 }>): Promise<TerminalConnectEntryResult> {
     const state = resolveTerminalConnectLinkState(request);
     if (state === 'expired') return state;
@@ -42,9 +43,23 @@ export async function openTerminalConnectApproval(request: ParsedTerminalConnect
         Modal.alert(t('welcome.serverUnavailableTitle'), t('welcome.serverUnavailableBody', { serverUrl: target?.pendingServerUrl ?? '' }));
         return 'unavailable';
     }
+    const signedInServerUrl = getActiveServerUrl();
+    if (options.isAuthenticated && shouldSwitchToServerUrl({ targetServerUrl: target.pendingServerUrl, activeServerUrl: signedInServerUrl })) {
+        if (!await confirmTerminalConnectHomeSwitch(target.pendingServerUrl, signedInServerUrl)) return 'declined';
+    }
     const serverUrl = await focusTerminalConnectTarget({ request, serverUrl: target.pendingServerUrl, refreshAuth: options.refreshAuth });
     if (serverUrl) options.navigate(terminalConnectResumeHref());
     return serverUrl ? 'opened' : 'declined';
+}
+
+export async function confirmTerminalConnectHomeSwitch(serverUrl: string, signedInServerUrl: string): Promise<boolean> {
+    const accepted = await Modal.confirm(
+        t('terminal.connectTerminal'),
+        t('terminal.switchServerToConnectTerminal', { serverUrl, signedInServerUrl }),
+        { confirmText: t('server.switchToServer') },
+    );
+    if (!accepted) clearPendingTerminalConnect();
+    return accepted;
 }
 
 /** Capture before discovery or navigation can unmount the input adapter. */

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
@@ -28,13 +29,14 @@ vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const replaceSpy = vi.hoisted(() => vi.fn());
+const pushSpy = vi.hoisted(() => vi.fn());
 const confirmSpy = vi.hoisted(() => vi.fn(async () => true));
 const routeBoundary = vi.hoisted(() => ({ params: {} as Record<string, string> }));
 const nativeBoundary = vi.hoisted(() => ({ ensureHomeTunnel: vi.fn<IrohNativeLifecycleModule['ensureHomeTunnel']>() }));
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ params: () => routeBoundary.params, router: { replace: replaceSpy } }).module;
+    return createExpoRouterMock({ params: () => routeBoundary.params, router: { replace: replaceSpy, push: pushSpy } }).module;
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -98,6 +100,7 @@ afterEach(async () => {
     await disposeIrohHomeTunnelRuntime();
     clearPendingTerminalConnect();
     replaceSpy.mockClear();
+    pushSpy.mockClear();
     confirmSpy.mockReset();
     confirmSpy.mockResolvedValue(true);
     routeBoundary.params = {};
@@ -184,6 +187,7 @@ it.each(['web-link', 'native-link', 'scanner-hook', 'same-address'])(
         ...terminalRequest(homeConnectionDescriptor.canonicalServerUrl, homeConnectionDescriptor.homeServerIdentityId),
         homeConnectionDescriptor,
     };
+    const scannerApprovalRoute = Platform.OS === 'web' ? '/terminal/connect' : '/terminal';
     let custodyAtHashClear: unknown;
     runtimeFetchSpy.mockImplementation(async (...args: unknown[]) => {
         const url = String(args[0]);
@@ -201,7 +205,12 @@ it.each(['web-link', 'native-link', 'scanner-hook', 'same-address'])(
     vi.stubGlobal('localStorage', createStorage());
     vi.stubGlobal('sessionStorage', createStorage());
     vi.stubGlobal('window', {
-        location: { href: `https://app.example.test${buildTerminalConnectWebHref(captured)}`, pathname: '/terminal/connect' },
+        location: {
+            href: entryPoint === 'scanner-hook'
+                ? `https://app.example.test${scannerApprovalRoute}`
+                : `https://app.example.test${buildTerminalConnectWebHref(captured)}`,
+            pathname: entryPoint === 'scanner-hook' ? scannerApprovalRoute : '/terminal/connect',
+        },
         history: { replaceState: vi.fn(() => {
             const storage = new MMKV({ id: scopedStorageId('pending-terminal-connect', readStorageScopeFromEnv()) });
             const raw = storage.getString('record:pre-auth:v1');
@@ -218,17 +227,21 @@ it.each(['web-link', 'native-link', 'scanner-hook', 'same-address'])(
     });
     const beforeService = profiles.resolveSelectedAccountServiceEndpoint();
     const href = buildTerminalConnectWebHref(captured);
-    routeBoundary.params = Object.fromEntries(new URLSearchParams(href.split('#')[1]));
-    const screen = entryPoint === 'scanner-hook'
-        ? await renderHook(() => useConnectTerminal(), { wrapper: signedOut })
-        : await renderScreen(<InjectedAuthProvider credentials={null}>
-            {entryPoint === 'native-link' ? <TerminalScreen /> : <TerminalConnectScreen />}
-        </InjectedAuthProvider>);
-    if ('getCurrent' in screen) {
+    if (entryPoint === 'scanner-hook') {
+        const scanner = await renderHook(() => useConnectTerminal(), { wrapper: signedOut });
         await act(async () => {
-            await screen.getCurrent().processAuthUrl(`https://app.example.test${href}`);
+            await scanner.getCurrent().connectWithUrl(`https://app.example.test${href}`);
         });
+        expect(pushSpy).toHaveBeenCalledWith(scannerApprovalRoute);
+        await scanner.unmount();
+    } else {
+        routeBoundary.params = Object.fromEntries(new URLSearchParams(href.split('#')[1]));
     }
+    const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+        {entryPoint === 'native-link' || (entryPoint === 'scanner-hook' && scannerApprovalRoute === '/terminal')
+            ? <TerminalScreen />
+            : <TerminalConnectScreen />}
+    </InjectedAuthProvider>);
     await vi.waitFor(() => expect(replaceSpy).toHaveBeenCalledWith(`/?server=${encodeURIComponent(homeConnectionDescriptor.canonicalServerUrl)}`));
     if (entryPoint === 'web-link' || entryPoint === 'same-address') expect(custodyAtHashClear).toMatchObject(captured);
 
@@ -277,7 +290,7 @@ it('retains an unavailable descriptor pairing without changing focus or redirect
     const hook = await renderHook(() => useConnectTerminal(), { wrapper: signedOut });
     let result = true;
     await act(async () => {
-        result = await hook.getCurrent().processAuthUrl(`https://app.example.test${buildTerminalConnectWebHref(captured)}`);
+        result = await hook.getCurrent().connectWithUrl(`https://app.example.test${buildTerminalConnectWebHref(captured)}`);
     });
     expect(result).toBe(false);
     expect(nativeBoundary.ensureHomeTunnel).toHaveBeenCalled();
@@ -351,7 +364,7 @@ it('keeps an authenticated Home focused when its user declines a descriptor pair
     confirmSpy.mockResolvedValueOnce(false);
     const hook = await renderHook(() => useConnectTerminal(), { wrapper: focusedAccount });
     await act(async () => {
-        await hook.getCurrent().processAuthUrl(`https://app.example.test${buildTerminalConnectWebHref({
+        await hook.getCurrent().connectWithUrl(`https://app.example.test${buildTerminalConnectWebHref({
             ...terminalRequest(descriptor.canonicalServerUrl, descriptor.homeServerIdentityId),
             homeConnectionDescriptor: descriptor,
         })}`);

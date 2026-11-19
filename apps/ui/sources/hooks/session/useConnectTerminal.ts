@@ -1,9 +1,10 @@
 import * as React from 'react';
+import { ACCOUNT_TERMINALS_APPROVE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useAuth } from '@/auth/context/AuthContext';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { approveTerminalPairing, resolveTerminalPairingStorageMode } from '@/auth/terminal/approveTerminalPairing';
-import { focusTerminalConnectTarget, prepareTerminalConnect, resolveTerminalConnectLinkState } from '@/auth/terminal/terminalConnectContinuation';
+import { confirmTerminalConnectHomeSwitch, focusTerminalConnectTarget, openTerminalConnectApproval, prepareTerminalConnect, resolveTerminalConnectLinkState } from '@/auth/terminal/terminalConnectContinuation';
 import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
 import { resolveTerminalApprovalTarget } from '@/auth/terminal/resolveTerminalApprovalTarget';
 import { Modal } from '@/modal';
@@ -18,13 +19,14 @@ import {
 } from '@/utils/path/terminalConnectUrl';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { decodeBase64 } from '@/encryption/base64';
-import { promptLegacyPairingUpdateRequired } from '@/auth/pairing/legacyPairingUpdateRequired';
 
 interface UseConnectTerminalOptions {
     onSuccess?: () => void;
     onError?: (error: unknown) => void;
     allowLoopbackServerOverride?: boolean;
     approvalRequest?: ParsedTerminalConnectUrl | null;
+    navigateToApproval?: Parameters<typeof openTerminalConnectApproval>[1]['navigate'];
+    onApprovalOpened?: () => void;
 }
 
 export type TerminalConnectApprovalDetails =
@@ -96,16 +98,15 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
         ? detailsRead.details
         : { kind: 'loading' };
 
-    const processParsedAuthUrl = React.useCallback(async (parsed: ParsedTerminalConnectUrl) => {
-        if (resolveTerminalConnectLinkState(parsed) === 'expired') {
+    const approve = React.useCallback(async () => {
+        const parsed = approvalRequest;
+        if (!parsed) return false;
+        const linkState = resolveTerminalConnectLinkState(parsed);
+        if (linkState === 'expired') {
             await Modal.alertAsync(t('modals.authRequestExpired'), t('modals.authRequestExpiredDescription'), [{ text: t('common.ok') }]);
             return false;
         }
-        if (parsed.compatibility?.admission === 'update_required') {
-            const action = await promptLegacyPairingUpdateRequired();
-            if (action === 'scan_new_qr') router.push('/scan/terminal');
-            return false;
-        }
+        if (linkState !== 'ready') return false;
         
         setIsLoading(true);
         // The connect work is in flight only until an outcome or question is shown: an alert or confirmation
@@ -139,18 +140,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                 // nothing pending when the switch is declined so nothing can bounce back.
                 if (auth.credentials) {
                     setIsLoading(false);
-                    const shouldSwitchHome = await Modal.confirm(
-                        t('terminal.connectTerminal'),
-                        t('terminal.switchServerToConnectTerminal', {
-                            serverUrl: target.endpointUrl,
-                            signedInServerUrl: currentServerUrl,
-                        }),
-                        { confirmText: t('server.switchToServer') },
-                    );
-                    if (!shouldSwitchHome) {
-                        clearPendingTerminalConnect();
-                        return false;
-                    }
+                    if (!await confirmTerminalConnectHomeSwitch(target.endpointUrl, currentServerUrl)) return false;
                     if (parsed.homeConnectionDescriptor) {
                         const focused = await focusTerminalConnectTarget({ request: parsed, serverUrl: pendingServerUrl, refreshAuth: auth.refreshFromActiveServer });
                         if (!focused) return false;
@@ -186,26 +176,43 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             if (!target.descriptor) {
                 throw new Error('Terminal pairing requires a verified Home connection descriptor');
             }
-            const transportResolution = await resolveHomeEnrollmentTransport(target.descriptor, target.transportOptions);
-            if (!transportResolution.ok) {
-                throw new Error(`Terminal pairing transport unavailable: ${transportResolution.reason}`);
-            }
-            let approvalResult: Awaited<ReturnType<typeof approveTerminalPairing>>;
-            try {
-                approvalResult = await approveTerminalPairing({
-                    target: transportResolution.transport,
-                    requesterPublicKey: publicKey,
-                    pairingContext: {
-                        secret: pairingSecret,
-                        createdAtMs: parsed.pairing.createdAtMs,
-                        expiresAtMs: parsed.pairing.expiresAtMs,
-                    },
-                    targetCredentials: activeCredentials,
-                    supportsTokenOnly: parsed.supportsTokenOnly === true,
-                });
-            } finally {
-                await transportResolution.transport.close();
-            }
+            const descriptor = target.descriptor;
+            const pairing = parsed.pairing;
+            const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+            let pairingError: unknown;
+            const executor = createActionExecutor({
+                accountTerminalsApproveAction: async (signal) => {
+                    const resolution = await resolveHomeEnrollmentTransport(descriptor, target.transportOptions);
+                    if (!resolution.ok) throw new Error(`Terminal pairing transport unavailable: ${resolution.reason}`);
+                    try {
+                        return await approveTerminalPairing({
+                            target: resolution.transport,
+                            requesterPublicKey: publicKey,
+                            pairingContext: {
+                                secret: pairingSecret,
+                                createdAtMs: pairing.createdAtMs,
+                                expiresAtMs: pairing.expiresAtMs,
+                            },
+                            targetCredentials: activeCredentials,
+                            supportsTokenOnly: parsed.supportsTokenOnly === true,
+                            ...(signal ? { signal } : {}),
+                        });
+                    } catch (error) {
+                        pairingError = error;
+                        // The Action boundary only reports the operation failure.
+                        throw new Error('Terminal approval failed');
+                    } finally {
+                        await resolution.transport.close().catch(() => {});
+                    }
+                },
+            });
+            const approved = await executor.execute(ACCOUNT_TERMINALS_APPROVE_ACTION_ID_V1, {}, {
+                surface: 'ui', authority: 'present_user', bypassApprovals: true,
+            });
+            if (!approved.ok) throw pairingError ?? new Error(approved.error);
+            const approvalResult = approved.result && typeof approved.result === 'object' && 'status' in approved.result
+                ? approved.result.status : undefined;
+            if (approvalResult === undefined) throw new Error('Terminal approval did not settle');
 
             // If we successfully completed a pending connect, clear it.
             clearPendingTerminalConnect();
@@ -241,7 +248,7 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                 return false;
             }
 
-            return true;
+            return false;
         } catch (e) {
             setIsLoading(false);
             await Modal.alertAsync(t('common.error'), t('modals.failedToConnectTerminal'), [{ text: t('common.ok') }]);
@@ -250,16 +257,29 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
         } finally {
             setIsLoading(false);
         }
-    }, [auth.credentials, auth.refreshFromActiveServer, options, router]);
+    }, [approvalRequest, auth.credentials, auth.refreshFromActiveServer, options, router]);
 
-    const processAuthUrl = React.useCallback(async (url: string) => {
-        const parsed = parseTerminalConnectUrl(url);
-        if (!parsed) {
-            await Modal.alertAsync(t('common.error'), t('modals.invalidAuthUrl'), [{ text: t('common.ok') }]);
+    const openApproval = React.useCallback(async (parsed: ParsedTerminalConnectUrl) => {
+        setIsLoading(true);
+        try {
+            const result = await openTerminalConnectApproval(parsed, {
+                navigate: options?.navigateToApproval ?? router.push,
+                refreshAuth: auth.refreshFromActiveServer,
+                isAuthenticated: auth.isAuthenticated,
+            });
+            if (result === 'expired') {
+                await Modal.alertAsync(t('modals.authRequestExpired'), t('modals.authRequestExpiredDescription'), [{ text: t('common.ok') }]);
+            }
+            if (result === 'opened') options?.onApprovalOpened?.();
+            return result === 'opened';
+        } catch (error) {
+            await Modal.alertAsync(t('common.error'), t('modals.failedToConnectTerminal'), [{ text: t('common.ok') }]);
+            options?.onError?.(error);
             return false;
+        } finally {
+            setIsLoading(false);
         }
-        return await processParsedAuthUrl(parsed);
-    }, [processParsedAuthUrl]);
+    }, [auth.isAuthenticated, auth.refreshFromActiveServer, options, router]);
 
     const connectTerminal = React.useCallback(async () => {
         const canUseScanner = canUseCurrentDeviceQrScanner();
@@ -271,15 +291,20 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
     }, [router]);
 
     const connectWithUrl = React.useCallback(async (url: string) => {
-        return await processAuthUrl(url);
-    }, [processAuthUrl]);
+        const parsed = parseTerminalConnectUrl(url);
+        if (!parsed) {
+            await Modal.alertAsync(t('common.error'), t('modals.invalidAuthUrl'), [{ text: t('common.ok') }]);
+            return false;
+        }
+        return await openApproval(parsed);
+    }, [openApproval]);
 
     return {
         connectTerminal,
         connectWithUrl,
         isLoading,
-        processAuthUrl,
-        processParsedAuthUrl,
+        openApproval,
+        approve,
         approvalDetails,
         retryApprovalDetails,
     };

@@ -23,7 +23,7 @@ export const ConnectComputerPanel = React.memo(function ConnectComputerPanel(pro
     close: () => void;
 }>) {
     const close = props.close;
-    const processorOptions = React.useMemo(() => ({ allowedUrlKind: 'terminal' as const, onSuccess: close }), [close]);
+    const processorOptions = React.useMemo(() => ({ allowedUrlKind: 'terminal' as const, onApprovalOpened: close }), [close]);
     const { processAuthUrl } = useScannedAuthUrlProcessor(processorOptions);
     const canScan = canUseCurrentDeviceQrScanner();
     const pasteLink = React.useCallback(async () => {
