@@ -534,7 +534,7 @@ export function artifactsRoutes(app: Fastify) {
         }
     }, async (request, reply) => {
         const result = await createArtifactHttpMutation(request.userId, request.body,
-            request.body.memoryDecisionSource === undefined ? undefined : readSessionAccessAuthenticationFromRequest(request),
+            readSessionAccessAuthenticationFromRequest(request),
             candidateMutationGuard(request, request.body.id));
         return reply.code(result.statusCode).send(result.body);
     });
