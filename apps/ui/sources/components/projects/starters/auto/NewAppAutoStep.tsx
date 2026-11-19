@@ -61,8 +61,11 @@ export type NewAppAutoView =
       source: string | null;
     }>
   | Readonly<{ kind: 'noAgent'; serverId: string | null; machines: readonly NewAppAutoMachine[] }>
-  /** The suggestion owner needs answers first: the canonical questions, asked in the step (journey-deploy F2). */
-  | Readonly<{ kind: 'questions'; questions: readonly InteractionTransientQuestionV1[] }>
+  /**
+   * The suggestion owner needs answers first: the canonical questions, asked in the step (journey-deploy F2).
+   * `skippable` when cards came with them: skipping shows those cards.
+   */
+  | Readonly<{ kind: 'questions'; questions: readonly InteractionTransientQuestionV1[]; skippable: boolean }>
   /** The agent answered, but nothing fit; `code` holds the check's typed reasons for each dropped part, for Details. */
   | Readonly<{ kind: 'nothing'; code: string | null }>
   /** The suggestion owner's typed failure code, kept for the Details disclosure, and why, in words. */

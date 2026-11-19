@@ -32,6 +32,9 @@ export function matchAccountPlan(plans: Plans, planLabel: string | null | undefi
   return plans.find((plan) => words(plan.id) === name || words(plan.title) === name) ?? null;
 }
 
+/** A plan as its first line reads: its name, then its price through the shared cost presenter ("Free $0.00 a month"). */
+export const declaredPlanLine = (plan: Plans[number]) => plan.price ? `${plan.title} ${formatDeclaredPlanPrice(plan.price)}` : plan.title;
+
 /** A fact's value: a priced fact through the shared cost presenter, any other as the plugin wrote it. */
 const factValue = (fact: Plans[number]['facts'][number]) => 'price' in fact ? formatDeclaredPlanPrice(fact.price) : fact.value;
 

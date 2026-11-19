@@ -736,6 +736,30 @@ it('a questions round asks in the step: the footer waits for an answer, then one
   }
 });
 
+it('a result with cards and a question asks the question first; Skip shows those cards with no new run (PLAN §4 steps 2 → 3)', async () => {
+  const questions = { kind: 'questions', questions: [{ id: 'purpose', type: 'text', prompt: 'What should visitors do?', required: true }] };
+  suggestionBoundary({ executionRunWait: async () => ({ ok: true, status: 'succeeded',
+    result: terminal({ recommendations: [recommendation], questions }) }) });
+  const { fixture, screen } = await openDescribe('auto-questions-first');
+  try {
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A bakery page'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('app-shell-question-purpose-text')).toBeTruthy());
+    expect(screen.findByTestId('newApp.auto.recommendations'), 'the question comes before the cards').toBeNull();
+    execute.mockClear();
+    await screen.pressByTestIdAsync('newApp.auto.skipQuestions');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.recommendations')).toBeTruthy());
+    expect(calls('execution.run.start'), 'skipping shows the cards already checked').toHaveLength(0);
+    expect(screen.findByTestId('newApp.auto.useSetup')?.props.disabled, 'the recommended card starts chosen').toBe(false);
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
 it('Adjust changes one fact through the validator and asks again with a note, from the same snapshot (journey-deploy autoAdjust)', async () => {
   suggestionBoundary({ deploymentSuggestionTargets: async () => ({ targets, stores: [{ id: 'db', engine: 'postgres' }] }),
     executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [recommendation] }) }) });

@@ -55,6 +55,11 @@ export type HappierSelectionTileOption<T extends string, I extends string = stri
    */
   status?: string;
   /**
+   * Card tiles: what this option's footer (`renderOptionFooter`) says, in words. The tile cannot read a rendered
+   * footer, so its facts join the tile's accessible name only through this ("Runs on Cloudflare Pages, Free $0.00 a month").
+   */
+  footerLabel?: string;
+  /**
    * A small rendering of what this option looks like (visual tiles or compact card rows). Pass the real component at
    * static props — not a drawn replica — so the preview cannot drift from the product.
    */
@@ -1006,7 +1011,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
               testID={tileTestID}
               accessibilityRole={selectionAccessibilityRole}
               // The badge is visible text that qualifies the choice ("Recommended"), so it is part of the name too.
-              accessibilityLabel={[option.title, option.badge ?? null, hasSubtitle ? option.subtitle : null, option.status ?? null].filter(Boolean).join(', ')}
+              accessibilityLabel={[option.title, option.badge ?? null, hasSubtitle ? option.subtitle : null, option.status ?? null, option.footerLabel ?? null].filter(Boolean).join(', ')}
               accessibilityState={props.selectionMode === 'multiple'
                 ? { checked: selected, disabled }
                 : { checked: selected, selected, disabled }}

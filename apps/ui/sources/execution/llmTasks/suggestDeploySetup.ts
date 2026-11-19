@@ -42,8 +42,10 @@ export type DeploySuggestionUnavailableMachine = Readonly<{
 }>;
 
 export type DeploySuggestionOutcome =
+    // `questions`, when the agent also asked: the dialog asks them before these cards (PLAN §4 steps 2 → 3).
     | Readonly<{ kind: 'recommendations'; catalog: DeploySuggestionCatalogV1;
-        recommendations: DeploySuggestionCheckResultV1['recommendations']; dropped: DeploySuggestionCheckResultV1['dropped'] }>
+        recommendations: DeploySuggestionCheckResultV1['recommendations']; dropped: DeploySuggestionCheckResultV1['dropped'];
+        questions?: ReturnType<typeof normalizeInteractionTransientQuestionsV1> }>
     // Canonical questions (author defaults filled once), the form the step presents.
     | Readonly<{ kind: 'questions'; catalog: DeploySuggestionCatalogV1; questions: ReturnType<typeof normalizeInteractionTransientQuestionsV1> }>
     | Readonly<{ kind: 'nothing'; catalog: DeploySuggestionCatalogV1; dropped: DeploySuggestionCheckResultV1['dropped'];
@@ -140,9 +142,10 @@ export async function suggestDeploySetup(params: Readonly<{
             if (!checked.ok) return { kind: 'failed', code: checked.errorCode, stage: 'answer' };
             const result = DeploySuggestionCheckResultV1Schema.safeParse(checked.result);
             if (!result.success) return { kind: 'failed', code: 'invalid_action_output', stage: 'answer' };
+            const questions = result.data.questions ? normalizeInteractionTransientQuestionsV1(result.data.questions) : null;
             if (result.data.recommendations.length) return { kind: 'recommendations', catalog,
-                recommendations: result.data.recommendations, dropped: result.data.dropped };
-            if (result.data.questions) return { kind: 'questions', catalog, questions: normalizeInteractionTransientQuestionsV1(result.data.questions) };
+                recommendations: result.data.recommendations, dropped: result.data.dropped, ...(questions ? { questions } : {}) };
+            if (questions) return { kind: 'questions', catalog, questions };
             return { kind: 'nothing', catalog, dropped: result.data.dropped, droppedQuestions: result.data.droppedQuestions ?? [] };
         }
         return { kind: 'noAgent', machines: unavailable };

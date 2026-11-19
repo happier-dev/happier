@@ -689,7 +689,12 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           loading: autoStop === 'stopping' }]),
         { title: t('common.close'), testID: 'newApp.auto.close', onPress: () => closeRef.current() },
       ]
-    : autoKind === 'noAgent' || autoKind === 'questions' ? [{ title: t('newApp.auto.chooseStarter'), testID: 'newApp.auto.chooseStarter', onPress: () => backRef.current() }]
+    : autoKind === 'noAgent' || autoKind === 'questions' ? [
+        // Questions that came with cards can be skipped to those cards (PLAN §4 steps 2 → 3).
+        ...(auto.view.kind === 'questions' && auto.view.skippable
+          ? [{ title: t('common.skip'), testID: 'newApp.auto.skipQuestions', onPress: auto.skipQuestions }] : []),
+        { title: t('newApp.auto.chooseStarter'), testID: 'newApp.auto.chooseStarter', onPress: () => backRef.current() },
+      ]
     : null;
   const primaryRef = React.useRef(primary);
   primaryRef.current = primary;

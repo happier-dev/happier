@@ -11,7 +11,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { FieldLayout } from '@/components/ui/lists/FieldRow';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { DeploymentTargetPlans } from '@/components/projects/deployments/DeploymentTargetPlans';
+import { DeploymentTargetPlans, declaredPlanLine } from '@/components/projects/deployments/DeploymentTargetPlans';
 import { useDeploymentPlatformTargets } from '@/components/projects/deployments/DeploymentPlatformTargetSheet';
 import type { DeploymentPlatformTarget } from '@/components/projects/deployments/platformTargetLink';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
@@ -166,6 +166,7 @@ export function DeploySuggestionCardTiles(
         id: card.id,
         title: card.title,
         ...(card.recommended ? { badge: t('newApp.auto.recommended') } : {}),
+        footerLabel: cardFactsLabel(card),
       })),
     [cards],
   );
@@ -195,6 +196,15 @@ const FACT_LABEL_KEY = {
   runsOn: 'newApp.auto.factRunsOn',
   data: 'newApp.auto.factData',
 } as const;
+
+/** The card's target and the plans its floor shows, in the words drawn there, for the card's accessible name (U11 QA). */
+function cardFactsLabel(card: NewAppAutoCard): string {
+  const target = card.facts.find((fact) => fact.key === 'runsOn');
+  return [
+    target ? `${t(FACT_LABEL_KEY.runsOn)} ${target.value}` : null,
+    ...(card.plans?.plans.map(declaredPlanLine) ?? []),
+  ].filter(Boolean).join(', ');
+}
 
 /**
  * The card's floor: its labelled facts on one label column, the identity before each value, then the platform's

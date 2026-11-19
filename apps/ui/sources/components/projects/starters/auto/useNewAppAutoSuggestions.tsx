@@ -46,6 +46,8 @@ type Phase =
       kind: 'settled';
       outcome: Exclude<DeploySuggestionOutcome, { kind: 'stopped' }>;
       runner: Runner | null;
+      /** The person skipped the questions that came with these cards. */
+      skippedQuestions?: boolean;
     }>;
 
 export type NewAppAutoChosen = Readonly<{
@@ -175,6 +177,10 @@ export function useNewAppAutoSuggestions(
   // Connecting changes catalog facts. Only this explicit refresh reloads a follow-up snapshot.
   const refreshSuggestions = React.useCallback(() => runSuggestion({ refreshCatalog: true }), [runSuggestion]);
 
+  // Questions that came with cards are asked first; skipping shows those cards, with no new run (PLAN §4 steps 2 → 3).
+  const skipQuestions = React.useCallback(() => setPhase((current) =>
+    current.kind === 'settled' ? { ...current, skippedQuestions: true } : current), []);
+
   const backToDescription = React.useCallback(
     () => setPhase({ kind: 'describe' }),
     [],
@@ -209,6 +215,8 @@ export function useNewAppAutoSuggestions(
           : phase.stop,
       };
     const outcome = phase.outcome;
+    if (outcome.kind === 'recommendations' && outcome.questions && !phase.skippedQuestions)
+      return { kind: 'questions', questions: outcome.questions.questions, skippable: true };
     if (outcome.kind === 'recommendations') {
       return {
         kind: 'recommendations',
@@ -239,7 +247,7 @@ export function useNewAppAutoSuggestions(
         ),
       };
     }
-    if (outcome.kind === 'questions') return { kind: 'questions', questions: outcome.questions.questions };
+    if (outcome.kind === 'questions') return { kind: 'questions', questions: outcome.questions.questions, skippable: false };
     if (outcome.kind === 'failed') return { kind: 'failed', code: outcome.code, reason: failedReason(outcome) };
     // Why the check dropped each part of the answer, by its typed reason, for Details.
     const reasons = [...new Set([...outcome.dropped, ...outcome.droppedQuestions].map((row) => row.reason))];
@@ -268,7 +276,8 @@ export function useNewAppAutoSuggestions(
     setPhase({ ...phase, outcome });
     return true;
   }, [chosen, chosenCardId, phase]);
-  const questions = settled?.kind === 'questions' ? settled.questions : null;
+  const questions = settled?.kind === 'questions' ? settled.questions
+    : view.kind === 'questions' && settled?.kind === 'recommendations' ? settled.questions ?? null : null;
   const runner = phase.kind === 'describe' ? null : phase.runner;
 
   return {
@@ -278,6 +287,7 @@ export function useNewAppAutoSuggestions(
     suggest,
     questions,
     answerQuestions,
+    skipQuestions,
     suggestAgain,
     refreshSuggestions,
     adjustChosen,

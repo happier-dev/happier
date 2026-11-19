@@ -49,6 +49,8 @@ export interface SelectionTile<T extends string> {
     badge?: string;
     /** Card tiles: a quiet fact about the option right now ("Showing now"), where a chosen card's check stands. */
     status?: string;
+    /** Card tiles: what the option's footer says, in words, for the tile's accessible name. */
+    footerLabel?: string;
     /**
      * A small rendering of what this option looks like (visual tiles or compact card rows). Pass the real component at
      * static props — not a drawn replica — so the preview cannot drift from the product.
