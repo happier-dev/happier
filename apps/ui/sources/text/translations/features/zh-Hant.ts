@@ -19082,6 +19082,10 @@ type ExampleCopy = Shared_workflowExamplesTranslations.ExampleCopy;
 type Copy = Shared_workflowExamplesTranslations.Copy;
 
 const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "zhHant"> = { zhHant: {
+        investigateFailingPrCheck: { title: "調查 PR 檢查失敗", description: "選擇 GitHub 來源，調查提取要求中失敗的檢查。" },
+        reviewOpenedPullRequest: { title: "審查新開啟的提取要求", description: "選擇 GitHub 來源，為新開啟的提取要求設定審查。" },
+        weeklyDependencyCheck: { title: "每週檢查相依套件", description: "選擇專案並啟用每週一次的唯讀相依套件檢查。" },
+        investigateNewSentryIssue: { title: "調查新的 Sentry 問題", description: "選擇 Sentry 來源，調查新出現的問題。" },
         sessionNotifyDescription: "每當此工作階段的代理需要你的輸入時傳送通知。",
         sessionDailySummaryDescription: "每天 09:00 在這裡產生摘要。",
         sessionTestDescription: "在每個完成、失敗或取消的回合後執行可編輯的測試命令。",

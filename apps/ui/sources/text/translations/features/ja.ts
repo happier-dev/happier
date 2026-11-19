@@ -19142,6 +19142,10 @@ type ExampleCopy = Shared_workflowExamplesTranslations.ExampleCopy;
 type Copy = Shared_workflowExamplesTranslations.Copy;
 
 const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "ja"> = { ja: {
+        investigateFailingPrCheck: { title: "PR チェックの失敗を調査", description: "GitHub ソースを選択し、プルリクエストで失敗したチェックを調査します。" },
+        reviewOpenedPullRequest: { title: "新しいプルリクエストをレビュー", description: "GitHub ソースを選択し、新しく作成されたプルリクエストのレビューを設定します。" },
+        weeklyDependencyCheck: { title: "依存関係を毎週チェック", description: "プロジェクトを選択し、読み取り専用の週次チェックを有効にします。" },
+        investigateNewSentryIssue: { title: "新しい Sentry の問題を調査", description: "Sentry ソースを選択し、新しく発生した問題を調査します。" },
         sessionNotifyDescription: "このセッションのエージェントがあなたの入力を必要とするたびに通知します。",
         sessionDailySummaryDescription: "毎日09:00にここで要約します。",
         sessionTestDescription: "ターンが完了・失敗・キャンセルされるたびに、編集可能なテストコマンドを実行します。",

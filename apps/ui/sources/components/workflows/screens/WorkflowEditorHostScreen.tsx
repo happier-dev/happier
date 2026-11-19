@@ -352,10 +352,11 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const privateDraftSeedUnavailable = [reviewedRunSeedState, definitionDraftSeedState, newSessionSeedState, triggerSeedState]
         .some(({ id, seed }) => id !== null && seed === null);
     const newCatalogSource = props.source.kind === 'new' ? props.source : null;
-    const catalogSeed = newCatalogSource !== null
+    const catalogExample = newCatalogSource !== null
         ? WORKFLOW_STARTER_EXAMPLES_V1.find((entry) => entry.key === newCatalogSource.exampleKey)
-            ?? getBuiltinWorkflowCatalogV1().find((entry) => entry.id === newCatalogSource.builtinId)
         : undefined;
+    const catalogSeed = catalogExample ?? (newCatalogSource !== null
+        ? getBuiltinWorkflowCatalogV1().find((entry) => entry.id === newCatalogSource.builtinId) : undefined);
     // The trigger still to point at this workflow once it is saved; cleared when that write lands.
     const pendingRetargetRef = React.useRef(triggerSeed?.retarget ?? null);
     const [retargetFailed, setRetargetFailed] = React.useState(false);
@@ -729,10 +730,12 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     // Folders read home-relative wherever this editor says where it runs (07 copy rules).
     const machineHomeDir = machines.find((candidate) => candidate.id === projectTarget?.machineId)?.metadata?.homeDir ?? null;
     // Trigger edits are part of the draft (04 §5.4): written after the definition on Save.
+    const catalogEventSeed = catalogExample?.eventSeed;
     const initialIncomplete = React.useMemo(() => {
         if (definitionDraftSeed?.incompleteTriggers !== undefined) return definitionDraftSeed.incompleteTriggers;
-        return createWorkflowTriggerIncompleteSeed(definitionDraftSeed ?? undefined);
-    }, [authoringSourceKey, definitionDraftSeed?.eventSeed, definitionDraftSeed?.nativeEvent, definitionDraftSeed?.incompleteTriggers]);
+        return createWorkflowTriggerIncompleteSeed(definitionDraftSeed
+            ?? (catalogEventSeed === undefined ? undefined : { eventSeed: catalogEventSeed }));
+    }, [authoringSourceKey, catalogEventSeed, definitionDraftSeed?.eventSeed, definitionDraftSeed?.nativeEvent, definitionDraftSeed?.incompleteTriggers]);
     const triggers = useWorkflowTriggerEditing({ definitionId: saved?.definitionId ?? null, sourceKey: authoringSourceKey, projectTarget,
         ...(definitionDraftSeed?.lifetimeSession === undefined ? {} : { lifetimeSession: definitionDraftSeed.lifetimeSession }),
         ...(definitionDraftSeed?.startContext?.session === undefined ? {} : { sessionIntake: definitionDraftSeed.startContext.session }),

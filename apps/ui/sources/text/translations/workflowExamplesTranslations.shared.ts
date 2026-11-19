@@ -11,6 +11,8 @@ export type Copy = Readonly<{
     /** Catalog-declared names for the starter mini-maps, not clipped prompts. */
     nodes: Readonly<Record<'ask' | 'review-correctness' | 'review-tests' | 'summarize' | 'analyze' | 'review' | 'fix' | 'check' | 'classify' | 'reply' | 'digest' | 'deploy', string>>;
     askOnce: ExampleCopy; reviewPullRequest: ExampleCopy; workThroughEachFile: ExampleCopy;
+    investigateFailingPrCheck: ExampleCopy; reviewOpenedPullRequest: ExampleCopy;
+    weeklyDependencyCheck: ExampleCopy; investigateNewSentryIssue: ExampleCopy;
     repairUntilItPasses: ExampleCopy; triageAnIssue: ExampleCopy; morningDigest: ExampleCopy; deployOnPush: ExampleCopy;
     notifyWhenAgentWaits: ExampleCopy; dailySummaryInSession: ExampleCopy; memoryUpkeepInSession: ExampleCopy;
     installDepsInWorktree: ExampleCopy; testAfterEveryTurn: ExampleCopy; noSessions: string;
@@ -24,6 +26,10 @@ export type Copy = Readonly<{
 
 
 export const workflowExamplesTranslationsEnglish: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "en"> = { en: {
+        investigateFailingPrCheck: { title: "Investigate failed PR checks", description: "Choose a GitHub source and investigate failed checks for a pull request." },
+        reviewOpenedPullRequest: { title: "Review a newly opened pull request", description: "Choose a GitHub source and set up a review for newly opened pull requests." },
+        weeklyDependencyCheck: { title: "Check dependencies weekly", description: "Choose a project and turn on the weekly schedule for a read-only dependency check." },
+        investigateNewSentryIssue: { title: "Investigate a new Sentry issue", description: "Choose a Sentry source and investigate newly opened issues." },
         sessionNotifyDescription: "A notification whenever this session’s agent needs your input.",
         sessionDailySummaryDescription: "A summary here every day at 09:00.",
         sessionTestDescription: "Run an editable test command after every completed, failed or cancelled turn.",

@@ -19082,6 +19082,10 @@ type ExampleCopy = Shared_workflowExamplesTranslations.ExampleCopy;
 type Copy = Shared_workflowExamplesTranslations.Copy;
 
 const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "zhHans"> = { zhHans: {
+        investigateFailingPrCheck: { title: "调查 PR 检查失败", description: "选择 GitHub 来源，调查拉取请求中失败的检查。" },
+        reviewOpenedPullRequest: { title: "审查新建的拉取请求", description: "选择 GitHub 来源，为新建的拉取请求设置审查。" },
+        weeklyDependencyCheck: { title: "每周检查依赖项", description: "选择项目并开启每周一次的只读依赖检查。" },
+        investigateNewSentryIssue: { title: "调查新的 Sentry 问题", description: "选择 Sentry 来源，调查新出现的问题。" },
         sessionNotifyDescription: "每当此会话的代理需要你的输入时发送通知。",
         sessionDailySummaryDescription: "每天 09:00 在这里生成摘要。",
         sessionTestDescription: "在每个完成、失败或取消的回合后运行可编辑的测试命令。",

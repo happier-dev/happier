@@ -4081,6 +4081,22 @@ describe('WorkflowEditorHostScreen composition', () => {
             await screen.unmount();
         });
 
+        it('opens a failed-check example with deferred Event setup and leaves the workflow unsaved', async () => {
+            getStorage().setState({ settingsScope: { serverId: 'server-a', accountId: 'account-a' } });
+            const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new',
+                exampleKey: 'investigate-failing-pr-check' }} />);
+            await vi.waitFor(() => {
+                const sentence = readBodyProps()?.triggersSentence;
+                expect(sentence).toMatchObject({ props: { incomplete: { state: { pending: [{
+                    when: { kind: 'pluginEvent', value: null,
+                        eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/pull-request-checks-failed-v1' } },
+                }] } } } });
+            });
+            expect(readBodyProps()?.draftStore.get().blocks).toHaveLength(1);
+            expect(definitionActions.create).not.toHaveBeenCalled();
+            await screen.unmount();
+        });
+
         it('preserves the weekly storage review template without injecting the contextual Agent', async () => {
             const scope = { serverId: 'server-a', accountId: 'account-a' };
             getStorage().setState({ settingsScope: scope });

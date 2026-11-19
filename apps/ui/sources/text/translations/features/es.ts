@@ -19144,6 +19144,10 @@ type ExampleCopy = Shared_workflowExamplesTranslations.ExampleCopy;
 type Copy = Shared_workflowExamplesTranslations.Copy;
 
 const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "es"> = { es: {
+        investigateFailingPrCheck: { title: "Investigar comprobaciones fallidas de PR", description: "Elige una fuente de GitHub para investigar las comprobaciones fallidas." },
+        reviewOpenedPullRequest: { title: "Revisar una solicitud de cambios nueva", description: "Elige una fuente de GitHub y configura la revisión de las solicitudes nuevas." },
+        weeklyDependencyCheck: { title: "Comprobar las dependencias cada semana", description: "Elige un proyecto y activa la comprobación semanal de solo lectura." },
+        investigateNewSentryIssue: { title: "Investigar una incidencia nueva de Sentry", description: "Elige una fuente de Sentry para investigar las incidencias nuevas." },
         sessionNotifyDescription: "Una notificación cada vez que el agente de esta sesión necesite tu respuesta.",
         sessionDailySummaryDescription: "Un resumen aquí cada día a las 09:00.",
         sessionTestDescription: "Ejecuta un comando de prueba editable después de cada turno completado, fallido o cancelado.",

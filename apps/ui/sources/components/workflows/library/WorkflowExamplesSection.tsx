@@ -80,14 +80,17 @@ export function WorkflowExamplesSection(props: Readonly<{
         else if (example.trigger !== undefined || example.sessionTarget !== undefined) {
             const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed({ name: tLoose(example.titleKey),
                 description: tLoose(example.descriptionKey), definition: example.definition,
-                trigger: example.trigger, sessionTarget: example.sessionTarget });
+                trigger: example.trigger, eventSeed: example.eventSeed, sessionTarget: example.sessionTarget });
             router.push({ pathname: '/workflows/new', params: { definitionDraftSeedId } } as never);
         } else router.push({ pathname: '/workflows/new', params: { example: example.key } } as never);
         props.onDidUse?.();
     };
     const session = props.session;
-    const examples = props.opensDraft === false
-        ? WORKFLOW_STARTER_EXAMPLES_V1.filter(example => !workflowStarterRequiresSession(example)) : WORKFLOW_STARTER_EXAMPLES_V1;
+    // Event recipes need their own When setup. The block-only and inline pickers leave the receiving triggers alone.
+    const opensEventDraft = props.opensDraft !== false && (props.onUse === undefined || session !== undefined);
+    const examples = opensEventDraft ? WORKFLOW_STARTER_EXAMPLES_V1
+        : WORKFLOW_STARTER_EXAMPLES_V1.filter(example => example.eventSeed === undefined
+            && (props.opensDraft !== false || !workflowStarterRequiresSession(example)));
     const choose = (example: WorkflowStarterExampleV1) => {
         const selection = materializeWorkflowStarterExample(example,
             session !== undefined ? { session, timezone: readDeviceTimeZone() } : { timezone: readDeviceTimeZone() });

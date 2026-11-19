@@ -87,9 +87,21 @@ describe('example tiles, as a browser lays them out', () => {
             definition: { defaults: { conversation: { kind: 'existing_session', ...session } } } });
         expect(stored?.seed.trigger).toBeUndefined();
         getTempData(seedId);
+        await act(async () => {
+            (host!.querySelector('[data-testid="workflow-examples:investigate-failing-pr-check:use"]') as HTMLElement).click();
+        });
+        const eventHref = push.mock.calls[1]?.[0];
+        if (!eventHref || typeof eventHref !== 'object' || !('params' in eventHref)) throw new Error('Expected an Event draft route');
+        const eventSeedId = eventHref.params?.definitionDraftSeedId;
+        if (typeof eventSeedId !== 'string') throw new Error('Expected an Event draft seed id');
+        const eventDraft = getTempData<typeof stored>(eventSeedId);
+        expect(eventDraft?.seed).toMatchObject({ sessionTarget: session, eventSeed: {
+            eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/pull-request-checks-failed-v1' },
+        } });
         await act(async () => root!.render(<WorkflowExamplesSection session={session} opensDraft={false} presentation="list" onUse={onUse} />));
         expect(Array.from(host.querySelectorAll('[data-testid$=":use"]')).map(button => button.getAttribute('data-testid'))).toEqual(
-            WORKFLOW_STARTER_EXAMPLES_V1.filter(example => !workflowStarterRequiresSession(example)).map(example => `workflow-examples:${example.key}:use`),
+            WORKFLOW_STARTER_EXAMPLES_V1.filter(example => example.eventSeed === undefined && !workflowStarterRequiresSession(example))
+                .map(example => `workflow-examples:${example.key}:use`),
         );
     });
     it('draws every example through the one Collection card, with no footer band and its Use control in the right slot', async () => {
