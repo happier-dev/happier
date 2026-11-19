@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DatabaseOperationInputV1Schema, DatabaseReadStatementInputV1Schema } from '@happier-dev/plugin-sdk/database';
+import { DatabaseOperationInputV1Schema, DatabaseReadStatementInputV1Schema, type DatabaseRowsContinuationV1 } from '@happier-dev/plugin-sdk/database';
 import { postgresqlReadOnlyRoleGuardSql } from '@happier-dev/deployment-protocol';
 import { openPostgresqlConnection } from './postgresql.js';
 
@@ -224,7 +224,7 @@ describe('PostgreSQL demand connection against the real engine', () => {
         ] })).ok).toBe(true);
         const input = { operation: 'rows.read', target, relation: { schema: 'public', name: 'sort_fixture' }, columns: ['a', 'b'], order: [{ column: 'n', direction: 'asc', nulls: 'first' }, { column: 'b', direction: 'desc' }], page: { rows: 2 } } as const;
         const ids: string[] = [];
-        let continuation: import('@happier-dev/database-protocol').DatabaseRowsContinuationV1 | undefined;
+        let continuation: DatabaseRowsContinuationV1 | undefined;
         do {
             const result = await connection.execute({ ...input, columns: [...input.columns], order: [...input.order], page: { rows: 2, ...(continuation ? { continuation } : {}) } });
             if (!result.ok || result.operation !== 'rows.read') throw new Error('Expected a typed page');

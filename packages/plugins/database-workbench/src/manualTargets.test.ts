@@ -8,7 +8,7 @@ import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import type { StorageScopeService } from '@happier-dev/plugin-sdk/storage';
-import type { DatabaseManualTargetV1 } from '@happier-dev/plugin-sdk/database';
+import type { DatabaseManualTargetV1, DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
 import { DatabaseTargetsListInputV1Schema } from '@happier-dev/plugin-sdk/database';
 import { DatabaseTargetsConnectInputV1Schema } from '@happier-dev/database-protocol';
 import { createManualDatabaseTargets, type DatabaseManualIdentity, type DatabaseManualScope } from './manualTargets.js';
@@ -60,7 +60,7 @@ async function fixture() {
     return { storage, sqlite, reads, secrets, acquisitions, secretValue };
 }
 
-function manual(target: import('@happier-dev/database-protocol').DatabaseTargetV1): DatabaseManualTargetV1 {
+function manual(target: DatabaseTargetV1): DatabaseManualTargetV1 {
     if (target.kind !== 'manual') throw new Error('Expected the selected manual association');
     return target;
 }
