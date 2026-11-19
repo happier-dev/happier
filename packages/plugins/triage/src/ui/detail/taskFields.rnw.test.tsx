@@ -295,7 +295,7 @@ it.each([false, true])('submits a create through the Account aggregate without a
         setSources = updateSources;
         return <TriageCreateTaskFields sources={sources} sourcesLoaded={readiness.loaded}
           sourcesUnavailableReason={readiness.unavailableReason}
-          draft={{ title: 'Fix reconnect handling' }}
+          draftId="ready-task-draft" draft={{ title: 'Fix reconnect handling' }}
           onApplied={async () => undefined} onClose={() => undefined} />;
       }),
       surfaceContext: createSurfaceContextFixture({ targetedContributions: targetedTaskSource(source.configuredInstance.instance.source, 'issue', 'create'),
@@ -305,7 +305,7 @@ it.each([false, true])('submits a create through the Account aggregate without a
       handlers: { executeAction: ({ action, input }) => {
         expect(action).toBe('tasks/create-v1');
         saved.push(TriageCreateTaskActionInputV1Schema.parse(input));
-        return { kind: 'refused', reason: 'unavailable' };
+        return { kind: 'refused', reason: 'plugin_action_current_intent_unavailable' };
       } },
     }));
   });
@@ -344,6 +344,11 @@ it.each([false, true])('submits a create through the Account aggregate without a
   expect(saved).toHaveLength(1);
   expect(saved[0]?.fields).toEqual({ title: 'Fix reconnect handling' });
   expect(saved[0]?.sourceInstanceId).toBe(source.configuredInstance.instance.sourceInstanceId);
+  expect(document.querySelector<HTMLInputElement>('[aria-label="Title"]')?.value).toBe('Fix reconnect handling');
+  expect((await fixture.getByRole('button', { name: 'Create task' })).state?.disabled).not.toBe(true);
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Details' })); });
+  expect(document.body.textContent).toContain('plugin_action_current_intent_unavailable');
+  expect(saved).toHaveLength(1);
 });
 
 /** The same admitted source, also declaring the optional `listCreationPlaces` role. */
