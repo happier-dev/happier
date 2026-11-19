@@ -569,6 +569,8 @@ describe('Artifacts browser recovery', () => {
         const { sync } = await import('@/sync/sync');
         try {
             await sync.fetchArtifactsList();
+            expect(getStorage().getState().artifactBrowserLoaded).toBe(true);
+            expect(getStorage().getState().artifacts[id]).toMatchObject({ bodyVersion: 1 });
             expect(getStorage().getState().artifacts[id]?.provenance).toBeUndefined();
             const screen = await renderScreen(<AppPaneProvider><ArtifactsBrowserScreen /></AppPaneProvider>);
             try {

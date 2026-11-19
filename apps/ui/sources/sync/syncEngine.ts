@@ -9741,7 +9741,7 @@ class Sync {
         this.artifactInventoryLoadTargets = [];
         const refreshes: Promise<void>[] = [];
         if (inventory || targets.length > 0 || loads.length > 0) refreshes.push(this.refreshDemandedArtifactInventories(
-            inventory ? { all: inventory } : { targets, loads }).catch(error => {
+            { all: inventory, targets, loads }).catch(error => {
             if (this.serverScopeGeneration === generation) {
                 if (inventory) this.selectArtifactRefresh(undefined, inventory);
                 this.selectArtifactInventoryRefresh(targets);
@@ -9760,18 +9760,19 @@ class Sync {
     /**
      * A `refresh` of everything re-reads every demanded census. Otherwise the run reads the demanded
      * acquisitions covering `targets` (admitted consumers) and `loads` (still-unknown surfaces), never
-     * one already being read, and a load (also the scope's first `load` of everything) only while unknown.
+     * one already being read. The scope's first `load` adds unknown selections without replacing explicit refreshes.
      */
-    private refreshDemandedArtifactInventories = async (request: Readonly<{ all: 'load' | 'refresh' }>
-        | Readonly<{ targets: readonly (ArtifactInventorySelection | undefined)[]; loads: readonly (ArtifactInventorySelection | undefined)[] }>): Promise<void> => {
+    private refreshDemandedArtifactInventories = async (request: Readonly<{
+        all: false | 'load' | 'refresh';
+        targets: readonly (ArtifactInventorySelection | undefined)[];
+        loads: readonly (ArtifactInventorySelection | undefined)[];
+    }>): Promise<void> => {
         const demanded = this.readArtifactInventorySelections();
         const covers = (wanted: readonly (ArtifactInventorySelection | undefined)[], selection: ArtifactInventorySelection | undefined) =>
             wanted.some(target => doesArtifactInventorySelectionCover(selection, target));
-        const selections = 'all' in request
-            ? request.all === 'refresh' ? demanded : demanded.filter(selection =>
-                !this.hasUnfinishedArtifactInventory(selection) && !this.isArtifactInventoryKnown(selection))
-            : demanded.filter(selection => !this.hasUnfinishedArtifactInventory(selection) && (covers(request.targets, selection)
-                || (covers(request.loads, selection) && !this.isArtifactInventoryKnown(selection))));
+        const selections = request.all === 'refresh' ? demanded : demanded.filter(selection =>
+            !this.hasUnfinishedArtifactInventory(selection) && (covers(request.targets, selection)
+                || ((request.all === 'load' || covers(request.loads, selection)) && !this.isArtifactInventoryKnown(selection))));
         if (selections.length === 0) return;
         // Browser covers ordinary kinds, not the Inbox's private families. Both acquisitions
         // stay in the existing queue, with independent cancellation for their real consumers.
