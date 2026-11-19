@@ -9,7 +9,7 @@ import { PrincipalRefV1Schema } from '../teams/principal.js';
 import { TeamGroupNameProjectionV1Schema } from '../teams/groupLabel.js';
 import { ContentPublicKeyFingerprintSchema } from './identity/contentPublicKeyFingerprint.js';
 import { MachineInstallationPublicIdentityV1Schema } from './identity/installationKeySchemas.js';
-import { SESSION_DATA_KEY_ENVELOPE_PAGE_MAX_ENTRIES_V1, SessionDataKeyEnvelopeBytesV1Schema, SessionDataKeyRecipientContentKeyV1Schema, SessionDataKeyEnvelopePageQueryV1Schema } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
+import { SESSION_DATA_KEY_ENVELOPE_PAGE_MAX_ENTRIES_V1, SessionDataKeyEnvelopeBytesV1Schema, SessionDataKeyRecipientContentKeyV1Schema, DataKeyEnvelopePageQueryV1Schema } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
 import { DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_INVOCATION_KINDS_V1 } from '../plugins/actions/daemonInvocationKindsV1.js';
 
 /** Machine access wire epoch V1: every authority/mutation object is closed. */
@@ -61,7 +61,7 @@ export const MachineAccessGrantRemoveInputV1Schema = lazyZodSchema(() => (<T ext
 export const MachineAccessLeaveInputV1Schema = MachineTargetV1Schema;
 export const MachineAccessPrepareKeysInputV1Schema = MachineTargetV1Schema;
 /** Same encoded-envelope page resource boundary; never a total Machine audience cap. */
-export const MachineRecipientKeyEnvelopePageQueryV1Schema = SessionDataKeyEnvelopePageQueryV1Schema;
+export const MachineRecipientKeyEnvelopePageQueryV1Schema = DataKeyEnvelopePageQueryV1Schema;
 export type MachineRecipientKeyEnvelopePageQueryV1 = z.infer<typeof MachineRecipientKeyEnvelopePageQueryV1Schema>;
 export type MachineAccessGrantsListInputV1 = z.infer<typeof MachineAccessGrantsListInputV1Schema>;
 export type MachineAccessGrantSetInputV1 = z.infer<typeof MachineAccessGrantSetInputV1Schema>;
@@ -152,7 +152,7 @@ export const MachineAccessRecipientCensusResponseV1Schema = lazyZodSchema(() => 
   machineId: z.string().check(z.minLength(1)), custodianAccountId: z.string().check(z.minLength(1)), encryptionMode: z.enum(['plain', 'e2ee']),
   machineOwnerEnvelopeFingerprint: z.nullable(MachineOwnerEnvelopeFingerprintV1Schema),
   callerDataEncryptionKey: z.nullable(SessionDataKeyEnvelopeBytesV1Schema),
-  nextCursor: z.nullable(SessionDataKeyEnvelopePageQueryV1Schema.shape.cursor._zod.def.innerType),
+  nextCursor: z.nullable(DataKeyEnvelopePageQueryV1Schema.shape.cursor._zod.def.innerType),
   content: z.strictObject({ metadata: z.string(), metadataVersion: z.number().check(z.int(), z.nonnegative()), daemonState: z.nullable(z.string()), daemonStateVersion: z.number().check(z.int(), z.nonnegative()) }),
   recipients: z.array(z.strictObject({ recipientAccountId: z.string().check(z.minLength(1)), contentKey: SessionDataKeyRecipientContentKeyV1Schema,
     contentPublicKeyFingerprint: z.nullable(ContentPublicKeyFingerprintSchema), encryptedDataKey: z.nullable(SessionDataKeyEnvelopeBytesV1Schema),

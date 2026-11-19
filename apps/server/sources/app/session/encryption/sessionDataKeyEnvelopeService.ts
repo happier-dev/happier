@@ -13,11 +13,15 @@ import {
     listCurrentSessionAudienceAccountsInTx,
     resolveSessionAccessForOperation,
     resolveStructuralSessionAccessForAccountsInTx,
+    resolveStructuralSessionAccessForSessionsInTx,
 } from "@/app/session/access/sessionAccess";
+import { readCollectiveSessionGrantIdsForAccountInTx } from "@/app/session/access/sessionAccessMembershipImpact";
 import { inTx, type Tx } from "@/storage/inTx";
+import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
 /**
  * The canonical per-Session recipient data-key envelope collection.
@@ -81,6 +85,38 @@ function projectEnvelopeState(stored: Uint8Array | null): SessionDataKeyEnvelope
     // become repair work; discarding them would erase the only evidence the
     // recipient's manager needs to prepare again.
     return parseEncryptedDataKeyEnvelopeV1(stored) === null ? "invalid" : "prepared";
+}
+
+/**
+ * Account key setup can make an existing Team or Group audience sealable.
+ * Run after the Account mutation commits so it never holds its key-admission
+ * locks while publishing to other Accounts. The daemon consumes the same
+ * content-free wake used for membership changes.
+ */
+export async function publishSessionRecipientReadinessWake(accountId: string): Promise<void> {
+    await inTx(async tx => {
+        const sessionIds = await readCollectiveSessionGrantIdsForAccountInTx(tx, accountId);
+        for (const ids of portableQueryChunks({ values: sessionIds, bindingsPerValue: 1, fixedBindings: 3 })) {
+            const candidates = await tx.session.findMany({
+                where: { id: { in: [...ids] }, accountId: { not: accountId }, encryptionMode: "e2ee",
+                    dataKeyEnvelopes: { some: {} } },
+                select: { id: true, accountId: true, dataKeyEnvelopes: {
+                    where: { recipientAccountId: accountId }, select: { encryptedDataKey: true },
+                } },
+            });
+            const owed = candidates.filter(row => projectEnvelopeState(row.dataKeyEnvelopes[0]?.encryptedDataKey ?? null) !== "prepared");
+            const access = await resolveStructuralSessionAccessForSessionsInTx(tx, {
+                sessionIds: owed.map(row => row.id), accountIds: [accountId],
+            });
+            for (const row of owed) {
+                const recipient = access.get(row.id)?.get(accountId);
+                if (recipient?.capabilities.readTranscript
+                    && recipient.sources.some(source => source.kind === "team" || source.kind === "group")) {
+                    await markAccountChanged(tx, { accountId: row.accountId, kind: "share", entityId: row.id });
+                }
+            }
+        }
+    });
 }
 
 type CollectionAuthorization =
@@ -219,7 +255,8 @@ export async function readSessionDataKeyEnvelopePage(input: Readonly<{
                 if (summary !== null) summary[bucket] += 1;
 
                 if (nextCursor !== null) continue;
-                if (input.query.state === "action_required" && bucket === "prepared") continue;
+                if (input.query.state !== "all" && bucket === "prepared") continue;
+                if (input.query.state === "owed" && bucket === "recipientKeyUnavailable") continue;
 
                 if (items.length < input.query.limit) {
                     items.push(item);

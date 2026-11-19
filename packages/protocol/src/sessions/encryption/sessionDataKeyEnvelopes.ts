@@ -133,15 +133,23 @@ const SessionDataKeyEnvelopeCursorV1Schema = lazyZodSchema(() => z.string().chec
 /**
  * `action_required` is the working page: exceptions only, so a healthy Team
  * never forces the manager to load every member. `all` is the same manager's
- * diagnostic view of the same Session-scoped audience.
+ * diagnostic view of the same resource-scoped audience.
  */
-export const SessionDataKeyEnvelopePageStateV1Schema = lazyZodSchema(() => z.enum(['action_required', 'all']));
+const DataKeyEnvelopePageStateV1Schema = lazyZodSchema(() => z.enum(['action_required', 'all']));
+export const SessionDataKeyEnvelopePageStateV1Schema = lazyZodSchema(() => z.union([
+  DataKeyEnvelopePageStateV1Schema, z.literal('owed'),
+]));
 export type SessionDataKeyEnvelopePageStateV1 = z.infer<typeof SessionDataKeyEnvelopePageStateV1Schema>;
 
-export const SessionDataKeyEnvelopePageQueryV1Schema = lazyZodSchema(() => z.strictObject({
-  state: z._default(SessionDataKeyEnvelopePageStateV1Schema, 'action_required'),
+export const DataKeyEnvelopePageQueryV1Schema = lazyZodSchema(() => z.strictObject({
+  state: z._default(DataKeyEnvelopePageStateV1Schema, 'action_required'),
   limit: z._default(z.coerce.number().check(z.int(), z.minimum(1), z.maximum(SESSION_DATA_KEY_ENVELOPE_PAGE_MAX_ENTRIES_V1)), SESSION_DATA_KEY_ENVELOPE_PAGE_MAX_ENTRIES_V1),
   cursor: z.optional(SessionDataKeyEnvelopeCursorV1Schema),
+}));
+/** The Session-only `owed` selector returns work that is actionable now. */
+export const SessionDataKeyEnvelopePageQueryV1Schema = lazyZodSchema(() => z.strictObject({
+  ...DataKeyEnvelopePageQueryV1Schema.shape,
+  state: z._default(SessionDataKeyEnvelopePageStateV1Schema, 'action_required'),
 }));
 export type SessionDataKeyEnvelopePageQueryV1 = Readonly<
   z.infer<typeof SessionDataKeyEnvelopePageQueryV1Schema>

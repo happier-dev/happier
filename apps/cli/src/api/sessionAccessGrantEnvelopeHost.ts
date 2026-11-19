@@ -126,6 +126,7 @@ export async function prepareSessionRecipientEnvelopes(params: Readonly<{
 }>): Promise<void> {
   await runSessionRecipientEnvelopePass({
     sessionId: params.sessionId,
+    state: 'owed',
     token: params.credentials.token,
     serverHttpBaseUrl: params.serverHttpBaseUrl,
     signal: params.signal,

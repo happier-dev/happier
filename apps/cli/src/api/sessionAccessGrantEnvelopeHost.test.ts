@@ -7,7 +7,7 @@ import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessio
 import { createSessionOwnerMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import { decodeBase64, decrypt, encodeBase64, encrypt, getRandomBytes } from './encryption';
-import { materializeSessionAccessGrantEnvelope } from './sessionAccessGrantEnvelopeHost';
+import { materializeSessionAccessGrantEnvelope, prepareSessionRecipientEnvelopes } from './sessionAccessGrantEnvelopeHost';
 
 const homeUrl = 'https://share-home.test';
 const sessionKey = new Uint8Array(32).fill(71);
@@ -122,5 +122,25 @@ describe('materializeSessionAccessGrantEnvelope Team share statement', () => {
   it('keeps the share working when the statement cannot be written', async () => {
     serveSession({ patchStatus: 403 });
     await expect(materializeTeamGrant()).resolves.toMatchObject({ input: teamGrant, retainedEnvelopeFallback: false });
+  });
+});
+
+describe('automatic Session recipient preparation', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('makes exactly one census request when nothing is owed', async () => {
+    const get = vi.spyOn(axios, 'get').mockResolvedValue({
+      status: 200,
+      data: { status: 'required', items: [], nextCursor: null, summary: null },
+    });
+    const patch = vi.spyOn(axios, 'patch').mockImplementation(async () => {
+      throw new Error('The empty census must not result in a write');
+    });
+    await prepareSessionRecipientEnvelopes({
+      credentials, sessionId: 'shared-session', serverHttpBaseUrl: homeUrl,
+      signal: new AbortController().signal, isScopeCurrent: () => true,
+    });
+    expect(get.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/v2/sessions/shared-session/data-key/envelopes']);
+    expect(patch).not.toHaveBeenCalled();
   });
 });

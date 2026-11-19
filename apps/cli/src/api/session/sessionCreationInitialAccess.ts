@@ -68,6 +68,7 @@ export async function prepareSessionInitialAccessDataKeyEnvelopes(params: Readon
 export async function runSessionRecipientEnvelopePass(params: Readonly<{
   sessionId: string;
   resolveSessionDataKey: () => Uint8Array | null | Promise<Uint8Array | null>;
+  state?: 'owed';
   token: string;
   serverHttpBaseUrl: string;
   signal?: AbortSignal;
@@ -90,7 +91,7 @@ export async function runSessionRecipientEnvelopePass(params: Readonly<{
   const result = await runSessionDataKeyPreparationPass<SessionDataKeyEnvelopeItemV1, PatchSessionDataKeyEnvelopesV1['entries'][number]>({
     fetchPage: async cursor => {
       const response = await axios.get<unknown>(url, { ...options,
-        params: { state: 'action_required', ...(cursor ? { cursor } : {}) } });
+        params: { state: params.state ?? 'action_required', ...(cursor ? { cursor } : {}) } });
       assertResponse(response.status, response.data);
       const page = SessionDataKeyEnvelopePageV1Schema.parse(response.data);
       return page.status === 'not_required' ? { items: [], nextCursor: null } : page;
@@ -116,6 +117,7 @@ export async function runSessionRecipientEnvelopePass(params: Readonly<{
       assertResponse(response.status, response.data);
       return PatchSessionDataKeyEnvelopesResultV1Schema.parse(response.data).appliedCount;
     },
+    settleOnEmptyFirstPage: params.state === 'owed',
     isScopeCurrent: () => !params.signal?.aborted && (params.isScopeCurrent?.() ?? true),
   });
   params.signal?.throwIfAborted();

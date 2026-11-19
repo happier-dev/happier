@@ -42,6 +42,24 @@ export async function readSessionAccessMembershipChangeSessionIdsInTx(
     return [...sessionIds];
 }
 
+/** Grant-index candidates for an Account's existing Team and Group relationships. */
+export async function readCollectiveSessionGrantIdsForAccountInTx(tx: Tx, accountId: string): Promise<string[]> {
+    const memberships = await tx.teamMembership.findMany({ where: { accountId }, select: { id: true, teamId: true } });
+    const changes: SessionAccessMembershipChange[] = memberships.map(member => ({ kind: "teamRole", teamId: member.teamId }));
+    const groupsByTeam = new Map<string, string[]>();
+    for (const ids of portableQueryChunks({ values: memberships.map(member => member.id), bindingsPerValue: 1 })) {
+        const groups = await tx.teamGroupMembership.findMany({ where: { teamMembershipId: { in: [...ids] } },
+            select: { teamId: true, teamGroupId: true } });
+        for (const { teamId, teamGroupId } of groups) {
+            const groupIds = groupsByTeam.get(teamId) ?? [];
+            groupIds.push(teamGroupId);
+            groupsByTeam.set(teamId, groupIds);
+        }
+    }
+    for (const [teamId, teamGroupIds] of groupsByTeam) changes.push({ kind: "teamGroupMembership", teamId, teamGroupIds });
+    return await readSessionAccessMembershipChangeSessionIdsInTx(tx, changes);
+}
+
 async function readAffectedSessionIdsInTx(tx: Tx, input: Readonly<{
     accountIds: readonly string[];
     changes: readonly SessionAccessMembershipChange[];

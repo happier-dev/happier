@@ -7406,8 +7406,12 @@ current authorized audience — including the Session's owner, whose envelope li
 same tuple. The audience is walked in bounded chunks through the same readiness and
 codec owners the rows use, so the summary cannot disagree with the rows a manager
 expands. `action_required` is the default working page and carries exceptions only;
-`all` is the same audience as a diagnostic view. Envelope state describes stored bytes
-alone — `prepared`, `missing`, or `invalid` — and unavailable recipient readiness
+`all` is the same audience as a diagnostic view. Automatic delivery uses `owed`, which
+returns only missing or invalid envelopes for ready recipients. An empty first
+page ends the automatic pass after one request. The manager and creation passes
+keep their final recheck. The `owed` selector requires a matching 0.3 development Home.
+Envelope state describes stored bytes alone — `prepared`, `missing`, or `invalid` —
+and unavailable recipient readiness
 outranks it, because an inert tuple left behind by an earlier preparation must not
 report a Plain or inconsistent Account as prepared.
 
@@ -7464,10 +7468,12 @@ Session owner. The owner's daemon consumes it from the Account change feed and r
 one Session pass, `runSessionRecipientEnvelopePass`, over the per-Session collection. The
 wake names no recipient: the collection's audience census alone decides who is owed, so
 the membership history horizon, removal and recipient readiness keep their owners. An
-offline daemon catches up from its cursor. Delivery is best effort and never holds that
-cursor: a refused or failed pass leaves the recipient `key_pending`, which a manager can
-still resolve from the access editor or member sheet. A member who has no content key
-yet stays pending the same way, because no change fires when their key is set up later.
+offline daemon catches up from its cursor. When an existing Team or Group recipient's
+Account publishes a ready binding, the Session envelope owner finds the collective
+grants that already reach that Account and publishes the same `share` wake for
+Sessions that owe it an envelope. This runs after the Account commit. Delivery is
+best effort and never holds the daemon cursor. A refused or failed pass leaves the
+recipient `key_pending`, which a manager can resolve from the access editor or member sheet.
 
 The daemon delivers only for a Session a key holder chose to share. Before a Team or Group
 share reaches the Home, or at creation for a collective E2EE Session, the key-holding device

@@ -1,6 +1,5 @@
 import type { Tx } from "@/storage/inTx";
-import { portableQueryChunks } from "@/storage/portableQueryChunks";
-import { readSessionAccessMembershipChangeSessionIdsInTx, type SessionAccessMembershipChange } from "./sessionAccessMembershipImpact";
+import { readCollectiveSessionGrantIdsForAccountInTx } from "./sessionAccessMembershipImpact";
 import type { AccountAdmissionIntent } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import {
     resolveStructuralSessionAccessForSessionsInTx,
@@ -40,24 +39,11 @@ export interface SessionAccessAccountStatusEffects {
  * candidate actually had access.
  */
 async function resolveAccountStatusAffectedSessionIdsInTx(tx: Tx, accountId: string): Promise<string[]> {
-    const [owned, shares, memberships] = await Promise.all([
+    const [owned, shares, collective] = await Promise.all([
         tx.session.findMany({ where: { accountId }, select: { id: true } }),
         tx.sessionGrant.findMany({ where: { principalKind: 'account', accountId: accountId }, select: { sessionId: true } }),
-        tx.teamMembership.findMany({ where: { accountId }, select: { id: true, teamId: true } }),
+        readCollectiveSessionGrantIdsForAccountInTx(tx, accountId),
     ]);
-    const changes: SessionAccessMembershipChange[] = memberships.map(member => ({ kind: "teamRole", teamId: member.teamId }));
-    for (const ids of portableQueryChunks({ values: memberships.map(member => member.id), bindingsPerValue: 1 })) {
-        const groups = await tx.teamGroupMembership.findMany({ where: { teamMembershipId: { in: [...ids] } },
-            select: { teamId: true, teamGroupId: true } });
-        const byTeam = new Map<string, string[]>();
-        for (const group of groups) {
-            const groupIds = byTeam.get(group.teamId) ?? [];
-            groupIds.push(group.teamGroupId);
-            byTeam.set(group.teamId, groupIds);
-        }
-        for (const [teamId, teamGroupIds] of byTeam) changes.push({ kind: "teamGroupMembership", teamId, teamGroupIds });
-    }
-    const collective = await readSessionAccessMembershipChangeSessionIdsInTx(tx, changes);
     return [...new Set([...owned.map(session => session.id), ...shares.map(share => share.sessionId), ...collective])].sort();
 }
 

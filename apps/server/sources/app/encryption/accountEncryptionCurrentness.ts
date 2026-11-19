@@ -7,6 +7,7 @@ import { buildUpdateAccountUpdate, eventRouter } from '@/app/events/eventRouter'
 import { afterTx, type Tx } from '@/storage/inTx';
 import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
 import { afterAccountChangePublication } from '@/app/changes/markAccountChanged';
+import { log } from '@/utils/logging/log';
 
 type AccountEncryptionCurrentnessRow = Readonly<{
     publicKey: string | null;
@@ -48,13 +49,19 @@ export async function publishAccountEncryptionCurrentnessAfterTx(tx: Tx, account
                 encryptionModeUpdatedAt: true, seq: true, settingsVersion: true,
             },
         });
+        const currentness = projectAccountEncryptionCurrentnessFromRow(account);
         const payload = buildUpdateAccountUpdate(
             accountId, {}, account.seq, randomKeyNaked(12),
-            projectAccountEncryptionCurrentnessFromRow(account),
+            currentness,
         );
         afterTx(publicationTx, () => {
             eventRouter.emitUpdate({ userId: accountId, payload, recipientFilter: { type: 'user-scoped-only' } });
             eventRouter.emitUpdate({ userId: accountId, payload, recipientFilter: { type: 'user-machine-scoped-only' } });
+            if (currentness?.recipientEnvelopeReadiness?.status === 'available') {
+                void import('@/app/session/encryption/sessionDataKeyEnvelopeService')
+                    .then(({ publishSessionRecipientReadinessWake }) => publishSessionRecipientReadinessWake(accountId))
+                    .catch(() => log({ module: 'session-recipient-envelopes', level: 'warn' }, 'Could not publish Session recipient readiness wake'));
+            }
         });
     });
 }

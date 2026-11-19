@@ -75,6 +75,8 @@ export type SessionDataKeyPreparationPassParams<TItem, TEntry> = Readonly<{
     prepareEntries: (items: readonly TItem[]) => Promise<SessionDataKeyPreparationSeal<TEntry>>;
     /** Commits one bounded page atomically and returns the server's applied count. */
     commitEntries: (entries: readonly TEntry[]) => Promise<number>;
+    /** Automatic delivery has another wake when an empty census gains work. */
+    settleOnEmptyFirstPage?: boolean;
     /** Captured Home/Account/session/encryption-generation authority, re-asserted at every boundary. */
     isScopeCurrent: () => boolean;
     onProgress?: (progress: SessionDataKeyPreparationProgress) => void;
@@ -150,6 +152,9 @@ export async function runSessionDataKeyPreparationPass<TItem, TEntry>(
         lastPage = page;
         const outcome = await processPage(page);
         if (outcome.kind === 'scope_changed') return scopeChanged();
+        if (params.settleOnEmptyFirstPage && cursor === null && page.items.length === 0 && page.nextCursor === null) {
+            return { status: 'complete', preparedCount: 0, skippedCount: 0 };
+        }
 
         if (page.nextCursor === null || servedCursors.has(page.nextCursor)) break;
         servedCursors.add(page.nextCursor);
@@ -160,10 +165,8 @@ export async function runSessionDataKeyPreparationPass<TItem, TEntry>(
     // and confirms that this pass's own committed work settled. It is processed at most once and
     // its own cursor starts no new traversal.
     //
-    // It runs even after an initially empty first page with no writes: work committed concurrently
-    // with that first read would otherwise be falsely reported complete. New concurrent work after
-    // this bounded recheck waits for the next explicit pass; locally failed items are skipped for
-    // this in-memory pass and exposed as retryable user work.
+    // An explicit pass also rechecks an initially empty page for work committed concurrently
+    // with that first read. Work after the bounded recheck waits for the next pass.
     if (!params.isScopeCurrent()) return scopeChanged();
     const recheck = await params.fetchPage(null);
     lastPage = recheck;

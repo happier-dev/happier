@@ -21,6 +21,8 @@ import { createPresentUserSessionAccessAuthentication } from "@/app/session/acce
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { sessionRoutes } from "@/app/api/routes/session/sessionRoutes";
 import { registerSessionDataKeyEnvelopeRoutes } from "@/app/api/routes/session/registerSessionDataKeyEnvelopeRoutes";
+import { admitAccountContentKey } from "@/app/encryption/accountContentKeyAdmission";
+import { inTx } from "@/storage/inTx";
 import {
     applySessionDataKeyEnvelopes,
     readSessionDataKeyEnvelopePage,
@@ -708,6 +710,57 @@ describe("Session data-key envelope collection (SQLite)", () => {
             authentication,
             query: { state: "action_required", limit: 24, cursor: "not-a-cursor" },
         })).toEqual({ ok: false, error: "invalid_cursor" });
+    });
+
+    it("publishes the owner share wake when a Team recipient finishes encryption setup", async () => {
+        const { owner, session } = await managedSession();
+        const binding = signedBinding();
+        const recipient = await db.account.create({ data: { publicKey: binding.publicKey, encryptionMode: "e2ee" } });
+        const team = await db.team.create({ data: { name: crypto.randomUUID() } });
+        await db.teamMembership.create({ data: {
+            teamId: team.id, accountId: recipient.id, role: "member", sessionAccessStartsAt: null,
+        } });
+        await db.sessionGrant.create({ data: {
+            principalKind: "team", sessionId: session.id, teamId: team.id, accessLevel: "view",
+            effectiveAt: new Date(),
+        } });
+        const ownerWake = () => db.accountChange.findFirst({
+            where: { accountId: owner.id, kind: "share", entityId: session.id },
+            select: { cursor: true },
+        });
+        await withAuthenticatedTestApp(registerSessionDataKeyEnvelopeRoutes, async app => {
+            const url = `/v2/sessions/${session.id}/data-key/envelopes`;
+            const headers = { "x-test-user-id": owner.id };
+            const readOwed = () => app.inject({ method: "GET", url: `${url}?state=owed`, headers });
+            const pending = await app.inject({ method: "GET", url, headers });
+            expect(pending.statusCode, pending.body).toBe(200);
+            expect(pending.json().items).toEqual([
+                expect.objectContaining({ recipientAccountId: recipient.id, contentKey: { status: "unavailable", reason: "encryption_setup_required" } }),
+            ]);
+            expect(await ownerWake()).toBeNull();
+
+            const admitBinding = () => inTx(tx => admitAccountContentKey(tx, {
+                accountId: recipient.id,
+                contentPublicKey: binding.contentPublicKey,
+                contentPublicKeySignature: binding.contentPublicKeySig,
+            }));
+            expect((await admitBinding()).status).toBe("initialized");
+            await expect.poll(ownerWake).not.toBeNull();
+            const wake = await ownerWake();
+
+            const owed = await readOwed();
+            expect(owed.statusCode, owed.body).toBe(200);
+            expect(owed.json().items).toEqual([
+                expect.objectContaining({ recipientAccountId: recipient.id, contentKey: expect.objectContaining({ status: "available" }) }),
+            ]);
+            const applied = await app.inject({ method: "PATCH", url, headers, payload: {
+                entries: [{ recipientAccountId: recipient.id, encryptedDataKey: encodeBase64(envelopeFor(binding.contentPublicKey)) }],
+            } });
+            expect(applied.statusCode, applied.body).toBe(200);
+            expect((await readOwed()).json()).toMatchObject({ items: [], nextCursor: null });
+            expect((await admitBinding()).status).toBe("unchanged");
+            expect(await ownerWake()).toEqual(wake);
+        });
     });
 
     it("prepares a Team-only recipient through mounted routes and rejects nested authority input", async () => {
