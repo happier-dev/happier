@@ -311,6 +311,28 @@ export function createConnectedAccountAttemptTransactionAdapters(
     let payload = input.payload;
     let record = input.record;
     let closed = false;
+    async function refreshConfigurationDraft() {
+      const current = await api.read({ attemptId: payload.snapshot.attemptId });
+      if (!current) return false;
+      if (current.revision === record.revision) return true;
+      const persisted = current.kind === 'oauth'
+        ? await readOAuthPayload({ attemptId: payload.snapshot.attemptId, record: current })
+        : null;
+      // A form updates only these fields. A callback or settlement advanced
+      // by another host still owns its new revision.
+      if (!persisted || !isDeepStrictEqual(current.scope, record.scope)
+        || !isDeepStrictEqual(persisted, {
+          ...payload,
+          snapshot: { ...payload.snapshot,
+            expectedConfigurationRevision: persisted.snapshot.expectedConfigurationRevision,
+            stagedAccountConfigurationContent: persisted.snapshot.stagedAccountConfigurationContent },
+        })) {
+        throw new ConnectedAccountAttemptTransactionApiError('connected_account_attempt_transaction_conflict');
+      }
+      payload = persisted;
+      record = current;
+      return true;
+    }
     return Object.freeze({
       get expiresAtMs() {
         return record.expiresAtMs;
@@ -334,16 +356,12 @@ export function createConnectedAccountAttemptTransactionAdapters(
         }
         if (payload.snapshot.phase === 'configurationRequired'
           && payload.snapshot.expectedConfigurationRevision !== snapshot.expectedConfigurationRevision) {
-          // The configuration form commits to this row while the OAuth handle waits.
-          const current = await api.read({ attemptId: snapshot.attemptId });
-          if (!current || current.kind !== 'oauth') {
+          if (!await refreshConfigurationDraft()) {
             throw new ConnectedAccountAttemptTransactionApiError('connected_account_attempt_transaction_not_found');
           }
-          const persisted = await readOAuthPayload({ attemptId: snapshot.attemptId, record: current });
-          if (!persisted) throw new ConnectedAccountAttemptTransactionApiError('connected_account_attempt_transaction_unreadable');
-          assertOAuthSnapshotAdvance(payload.snapshot, persisted.snapshot);
-          payload = persisted;
-          record = current;
+          if (payload.snapshot.expectedConfigurationRevision !== snapshot.expectedConfigurationRevision) {
+            throw new ConnectedAccountAttemptTransactionApiError('connected_account_attempt_transaction_conflict');
+          }
         }
         assertOAuthSnapshotAdvance(payload.snapshot, snapshot);
         const nextPayload = OAuthPayloadSchema.parse({
@@ -399,6 +417,10 @@ export function createConnectedAccountAttemptTransactionAdapters(
       },
       async close() {
         if (closed) return;
+        if (payload.snapshot.phase === 'configurationRequired' && !await refreshConfigurationDraft()) {
+          closed = true;
+          return;
+        }
         await api.delete({
           kind: 'oauth',
           attemptId: payload.snapshot.attemptId,

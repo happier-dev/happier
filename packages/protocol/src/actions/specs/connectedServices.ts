@@ -108,9 +108,11 @@ function createConnectedServiceConfigurationActionSpecs() {
     uiConfirmation: 'policy',
     uiConfirmationForInput: input => {
       const parsed = inputs['connectedServices.configuration.replace'].safeParse(input);
-      // A null revision is a guarded first write, never permission to overwrite
-      // an existing configuration. The configuration owner rejects a stale basis.
-      return !parsed.success || parsed.data.expectedRevision !== null;
+      if (!parsed.success) return true;
+      // Attempt settings are a draft for the active connection, even after the
+      // provider has staged defaults. Established configuration still requires review.
+      return !('target' in parsed.data && parsed.data.target.kind === 'attempt')
+        && parsed.data.expectedRevision !== null;
     },
   }, title: 'Replace connected-service configuration',
     executionPlacementForInput: input => isConnectedServiceConfigurationMachineRequiredV1('connectedServices.configuration.replace', input) ? 'machine' : 'account',

@@ -273,7 +273,7 @@ it.each([
     { provider: 'Codex', service: inventories.codex.service, defaultModeId: inventories.codex.modeId,
         modeIds: inventories.codex.modeIds, machineModeIds: ['native-import'], declarationLoads: 0, beginStatus: 'awaitingOAuth' },
     { provider: 'Vercel', service: inventories.vercel, defaultModeId: 'oauth', modeIds: ['oauth', 'token'], declarationLoads: 0,
-        beginStatus: 'starting', publicClient: 'fixture-vercel-client' },
+        beginStatus: 'awaitingOAuth', publicClient: 'fixture-vercel-client' },
 ])('demands $provider Account authentication through the service description wrapper', async testCase => {
     const { service, defaultModeId, modeIds, declarationLoads, publicClient } = testCase;
     const priorDeclarationLoads = coldDeclarationLoads;
@@ -281,7 +281,9 @@ it.each([
     const { replacePluginAccountAvailabilityProjection, readPluginAccountAvailability } = await import('@/sync/domains/plugins/availability/projection');
     const { createPluginUiCommonJsLoaderBackend } = await import('@/components/plugins/reactNative/commonJsLoaderBackend');
     const { describeConnectedAccountAuthenticationService, runConnectedAccountAuthenticationAction } = await import('./connectedAccountDaemon');
-    const { QualifiedConnectedAccountListResponseV4Schema } = await import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4');
+    const { QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema } =
+        await import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4');
+    let savedConnection: ReturnType<typeof QualifiedConnectedAccountCredentialMutationV4Schema.parse> | undefined;
     const accountId = 'public-auth-cold';
     const credentials = { token: createAccountTokenForTests(accountId) };
     const url = 'https://public-auth-cold.test';
@@ -306,6 +308,7 @@ it.each([
     let vendorRequests = 0;
     const transactions: Parameters<typeof answerAttemptTransaction>[2] = new Map();
     connection = await restoreServerAccountForTest({ serverUrl: url, accountId, credentials,
+        ...(publicClient ? { additionalRequestOrigins: ['https://api.vercel.com'] } : {}),
         configureSocket: socket => {
             configureConnectedServerSocketBoundary(socket);
             vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string) => {
@@ -315,7 +318,30 @@ it.each([
         },
         request: async (input, init) => {
             const request = new URL(String(input));
-            if (request.origin !== url) { vendorRequests += 1; return new Response('{}', { status: 503 }); }
+            if (request.origin !== url) {
+                vendorRequests += 1;
+                switch (request.pathname) {
+                    case '/login/oauth/token': return Response.json({
+                        token_type: 'Bearer', access_token: 'fixture-access', refresh_token: 'fixture-refresh',
+                        expires_in: 3600, scope: 'openid offline_access',
+                    });
+                    case '/login/oauth/userinfo': return Response.json({ sub: 'fixture-subject' });
+                    case '/v2/teams': return Response.json({
+                        teams: [{ id: 'team_fixture', name: 'Fixture' }], pagination: { next: null },
+                    });
+                    case '/v2/teams/team_fixture': return Response.json({ id: 'team_fixture', name: 'Fixture' });
+                    case '/v10/projects': return Response.json({
+                        projects: [{ id: 'prj_fixture', name: 'Fixture' }], pagination: { next: null },
+                    });
+                    default: return new Response('{}', { status: 503 });
+                }
+            }
+            if (publicClient && request.pathname === '/v4/connect/qualified/credential') {
+                if (init?.method !== 'POST') return Response.json({ error: 'connect_credential_not_found' }, { status: 404 });
+                savedConnection = QualifiedConnectedAccountCredentialMutationV4Schema.parse(await new Response(init.body).json());
+                return Response.json({ success: true, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+                    configurationRevision: 'vercel-configuration' });
+            }
             const transaction = await answerAttemptTransaction(request, init, transactions);
             if (transaction) return transaction;
             if (request.pathname.startsWith('/v1/machines')) {
@@ -404,10 +430,40 @@ it.each([
             expect(authorize.searchParams.get('redirect_uri')).toBe(`${url}/oauth/connected-account/callback`);
             expect(authorize.searchParams.get('code_challenge_method')).toBe('S256');
             expect(transactions.get(attemptId)?.scope.phase).toBe('awaitingOAuth');
+            const state = authorize.searchParams.get('state');
+            if (!state) throw new Error('Missing Vercel OAuth state');
+            const callback = await runConnectedAccountAuthenticationAction({ serverId, expectedAccountId: accountId,
+                command: { operation: 'completeOAuth', attemptId, completion: { state, code: 'fixture-code', callbackUrl: pending.callbackUrl } } });
+            expect(callback.status).toBe('configurationRequired');
+            expect(transactions.get(attemptId)?.scope.phase).toBe('configurationRequired');
+
+            const context = { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: accountId } as const;
+            const presentUserActionConfirmation = vi.fn(async () => true);
+            const executor = createDefaultActionExecutor({ presentUserActionConfirmation });
+            const target = { kind: 'attempt', attemptId } as const;
+            const configuration = await executor.execute('connectedServices.configuration.get', { target }, context);
+            const { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1: outputs } = await import('@happier-dev/protocol/connect/configurationActionsV1');
+            if (!configuration.ok) throw new Error(configuration.errorCode);
+            const view = outputs['connectedServices.configuration.get'].parse(configuration.result);
+            expect(view.configuration.values).toMatchObject({ teamId: 'team_fixture' });
+            const replacement = await executor.execute('connectedServices.configuration.replace', {
+                target, expectedRevision: view.configuration.revision, values: { teamId: 'team_fixture' }, secretValues: {},
+            }, context);
+            if (!replacement.ok) throw new Error(replacement.errorCode);
+            const { revision } = outputs['connectedServices.configuration.replace'].parse(replacement.result);
+            const connected = await runConnectedAccountAuthenticationAction({ serverId, expectedAccountId: accountId,
+                command: { operation: 'continueConnect', attemptId, expectedConfigurationRevision: revision } });
+            expect(connected.status).toBe('connected');
+            expect(transactions.has(attemptId)).toBe(false);
+            expect(savedConnection).toMatchObject({ ref: { service }, initialConfiguration: {
+                replacementContentEnvelope: { t: 'plain', v: { values: { teamId: 'team_fixture' } } },
+            } });
+            expect(presentUserActionConfirmation).not.toHaveBeenCalled();
+
         }
-        expect([...transactions.values()].map(value => value.scope.machineId)).toEqual([undefined]);
+        if (!publicClient) expect([...transactions.values()].map(value => value.scope.machineId)).toEqual([undefined]);
     }
-    expect(vendorRequests).toBe(0);
+    if (!publicClient) expect(vendorRequests).toBe(0);
     expect(machineReads).toBe(0);
     expect(machineRpcs).toBe(0);
 });

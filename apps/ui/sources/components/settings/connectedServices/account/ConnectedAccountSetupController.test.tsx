@@ -3012,7 +3012,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
         if (operation !== 'continueConnect') expect(authenticationCommands.some((command) => command.operation === 'continueConnect')).toBe(false);
     });
 
-    it.each([null, 'config-1'])('confirms configuration save only on an existing revision (%s)', async (revision) => {
+    it.each([null, 'config-1'])('continues an attempt draft directly at revision %s', async (revision) => {
         installDescription({ ...described, descriptor: { ...described.descriptor,
             authentication: { defaultModeId: 'oauth', modes: [configuredMode] } } });
         const reply = { ...configurationReply, configuration: { ...configurationReply.configuration, revision,
@@ -3027,33 +3027,19 @@ describe('ConnectedAccountSetupController real ownership', () => {
             : { status: 'configurationRequired', attemptId: 'attempt-1', target: configurationTarget, missingFieldIds: [] };
         installApprovalBoundary();
         await installNativeConfigurationAttemptBoundary();
-        if (revision !== null) platform.confirm.mockResolvedValue(false);
         const screen = await renderScreen(element());
         await pressReadyAction(screen);
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-configuration:endpoint')).not.toBeNull());
         await act(async () => screen.changeTextByTestId('connected-account-configuration:endpoint', 'https://new.example'));
         vi.mocked(Modal.show).mockClear();
-        const submission = screen.pressByTestIdAsync('connected-account-configuration:save');
-        if (revision === null) {
-            await submission;
-            await vi.waitFor(() => expect(controlCommands).toContainEqual({ operation: 'replaceConfiguration',
-                target: { kind: 'attempt', attemptId: 'attempt-1' }, expectedRevision: null,
-                values: { endpoint: 'https://new.example' }, secretValues: {} }));
-            expect(platform.confirm).not.toHaveBeenCalled();
-            expect(Modal.show).not.toHaveBeenCalled();
-            expect(authenticationCommands).toContainEqual({ operation: 'continueConnect', attemptId: 'attempt-1', expectedConfigurationRevision: 'config-2' });
-        } else {
-            await submission;
-            expect(Modal.show).toHaveBeenCalledOnce();
-            expect(vi.mocked(Modal.show).mock.calls[0]?.[0]).toMatchObject({
-                chrome: { testID: 'actions.confirmation-review.modal' },
-                props: { actionId: 'connectedServices.configuration.replace',
-                    actionArgs: { expectedRevision: revision } },
-            });
-            expect(controlCommands.some(command => command.operation === 'replaceConfiguration')).toBe(false);
-        }
+        await screen.pressByTestIdAsync('connected-account-configuration:save');
+        await vi.waitFor(() => expect(controlCommands).toContainEqual({ operation: 'replaceConfiguration',
+            target: { kind: 'attempt', attemptId: 'attempt-1' }, expectedRevision: revision,
+            values: { endpoint: 'https://new.example' }, secretValues: {} }));
+        expect(platform.confirm).not.toHaveBeenCalled();
+        expect(Modal.show).not.toHaveBeenCalled();
+        expect(authenticationCommands).toContainEqual({ operation: 'continueConnect', attemptId: 'attempt-1', expectedConfigurationRevision: 'config-2' });
         await screen.unmount();
-        await submission;
     });
 
     it('reads, saves and continues configuration with exact managed targets and no disclosed secret', async () => {

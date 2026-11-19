@@ -153,7 +153,17 @@ export async function answerAttemptTransaction(request: URL, init: RequestInit |
     }
     const key = decodeURIComponent(encodedAttemptId);
     const current = transactions.get(key);
-    if (method === 'DELETE') { transactions.delete(key); return Response.json({ status: 'deleted' }); }
+    if (method === 'DELETE') {
+        if (!current || current.kind !== kind) {
+            return Response.json({ error: 'connected_account_attempt_transaction_not_found' }, { status: 404 });
+        }
+        const { expectedRevision } = await new Response(init?.body).json() as { expectedRevision: number };
+        if (current.revision !== expectedRevision) {
+            return Response.json({ error: 'connected_account_attempt_transaction_conflict' }, { status: 409 });
+        }
+        transactions.delete(key);
+        return Response.json({ status: 'deleted' });
+    }
     const body = await new Response(init?.body).json() as Omit<ConnectedAccountAttemptTransactionRecord, 'kind' | 'revision' | 'expiresAtMs'>
         & { expiresAtMs?: number; expectedRevision?: number };
     if ((method === 'POST' && current) || (method === 'PATCH' && body.expectedRevision !== current?.revision)) {

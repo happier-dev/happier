@@ -310,25 +310,38 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     expect(await independent.replace({ target, expectedRevision: null, replacement })).toMatchObject({ status: 'conflict' });
   });
 
-  it('continues an existing OAuth handle after configuration replacement in another host', async () => {
-    const api = createTransactionApi();
-    const createHost = () => createQualifiedConnectedAccountAttemptTransactionAdapters({
-      credentials: tokenOnlyCredentials(), ...plainAccount, api, now: () => 5_000,
-    });
-    const first = createHost();
-    const snapshot = { ...oauthSnapshot(), phase: 'configurationRequired' as const,
-      stagedAccountConfigurationContent: { values: { tenant: 'old' }, secretRefs: {} } };
-    const handle = await first.oauth.create({ attemptId: snapshot.attemptId, service, snapshot,
-      callbackUrl: 'https://app.example/callback' });
-    const store = createConnectedAccountAttemptConfigurationStore({ createRevision: () => 'configuration-2', transactions: createHost() });
-    const target = { kind: 'attempt' as const, attemptId: snapshot.attemptId, service, modeId: snapshot.modeId };
-    const replacement = { values: { tenant: 'new' }, secretRefs: {} };
-    expect(await store.replace({ target, expectedRevision: 'configuration-1', replacement })).toMatchObject({ status: 'committed' });
-    await handle.acknowledge({ ...snapshot, expectedConfigurationRevision: 'configuration-2', stagedAccountConfigurationContent: replacement });
-    expect((await createHost().oauth.read(snapshot.attemptId))?.snapshot).toMatchObject({
-      expectedConfigurationRevision: 'configuration-2', stagedAccountConfigurationContent: replacement,
-    });
-  });
+  it.each(['continue', 'cancel', 'settlement already started'] as const)(
+    'can %s an OAuth draft after a configuration write from another host', async operation => {
+      const api = createTransactionApi();
+      const createHost = () => createQualifiedConnectedAccountAttemptTransactionAdapters({
+        credentials: tokenOnlyCredentials(), ...plainAccount, api, now: () => 5_000,
+      });
+      const first = createHost();
+      const snapshot = { ...oauthSnapshot(), phase: 'configurationRequired' as const,
+        stagedAccountConfigurationContent: { values: { tenant: 'old' }, secretRefs: {} } };
+      const handle = await first.oauth.create({ attemptId: snapshot.attemptId, service, snapshot,
+        callbackUrl: 'https://app.example/callback' });
+      const store = createConnectedAccountAttemptConfigurationStore({ createRevision: () => 'configuration-2', transactions: createHost() });
+      const target = { kind: 'attempt' as const, attemptId: snapshot.attemptId, service, modeId: snapshot.modeId };
+      const replacement = { values: { tenant: 'new' }, secretRefs: {} };
+      expect(await store.replace({ target, expectedRevision: 'configuration-1', replacement })).toMatchObject({ status: 'committed' });
+      const next = { ...snapshot, expectedConfigurationRevision: 'configuration-2', stagedAccountConfigurationContent: replacement };
+      if (operation === 'cancel') {
+        await handle.close();
+        expect(await createHost().oauth.read(snapshot.attemptId)).toBeNull();
+      } else if (operation === 'settlement already started') {
+        const other = await createHost().oauth.read(snapshot.attemptId);
+        await other!.acknowledge({ ...next, phase: 'outcomeUnknown' });
+        await expect(handle.close()).rejects.toMatchObject({ code: 'connected_account_attempt_transaction_conflict' });
+        expect((await createHost().oauth.read(snapshot.attemptId))?.snapshot.phase).toBe('outcomeUnknown');
+      } else {
+        await handle.acknowledge(next);
+        expect((await createHost().oauth.read(snapshot.attemptId))?.snapshot).toMatchObject({
+          expectedConfigurationRevision: 'configuration-2', stagedAccountConfigurationContent: replacement,
+        });
+      }
+    },
+  );
 
   it('persists and restores an Account-scoped attempt without a Machine', async () => {
     const api = createTransactionApi();
