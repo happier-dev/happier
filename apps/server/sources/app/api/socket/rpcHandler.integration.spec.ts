@@ -136,6 +136,48 @@ describe("rpcHandler", () => {
             admissions: [{ kind: 'session.write', sessionId: foreignSession.id }] });
     });
 
+    it("keeps Team authentication refusals on the selected SCM evidence Session", async () => {
+        const foreignSession = await db.session.create({ data: {
+            accountId: ownerId, tag: randomUUID(), metadata: '{}', encryptionMode: 'e2ee', archivedAt: new Date(),
+        } });
+        await db.account.update({ where: { id: accountId }, data: { encryptionMode: 'e2ee' } });
+        const evidence = { kind: 'home_method', methodId: 'key_challenge' } as const;
+        const team = await db.team.create({ data: { name: randomUUID(),
+            authenticationPolicy: { v: 1, mode: 'restricted', accepted: [evidence] },
+        } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId, role: 'member' } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: foreignSession.id,
+            teamId: team.id, accessLevel: 'view', effectiveAt: new Date(),
+        } });
+        const method = `${machineId}:${RPC_METHODS.SCM_WORK_EVIDENCE_READ}`;
+        const target = createTarget('scm-evidence-daemon', { ok: true });
+        const { io } = createIo({ [`rpc:${accountId}:${method}`]: [[target.socket]] });
+
+        const invoke = async (hasEvidence: boolean) => {
+            const caller = createAuthenticatedFakeSocket({ data: { authTokenAuthenticationEvidence: hasEvidence ? [evidence] : [] } });
+            rpcHandler(accountId, caller as unknown as Socket, { io });
+            const callback = vi.fn();
+            await getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL)({ method, params: 'opaque-encrypted-evidence-request',
+                authorization: { kind: 'scm.workEvidence', sessionIds: [sessionId, foreignSession.id] } }, callback);
+            expect(callback).toHaveBeenCalledWith({ ok: true, result: { ok: true } });
+            return target.emitWithAck.mock.lastCall?.[1].authorization;
+        };
+
+        harness.resetEnv({ HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1' });
+        const owned = { kind: 'session.write', sessionId };
+        // Even archived, this entitled recipient can read SCM evidence without a viewer key envelope.
+        expect(await invoke(true)).toEqual({ kind: 'scm.workEvidence.admitted', admissions: [
+            owned, { kind: 'session.write', sessionId: foreignSession.id },
+        ] });
+        expect(await invoke(false)).toEqual({ kind: 'scm.workEvidence.admitted', admissions: [
+            owned, { kind: 'refused', sessionId: foreignSession.id, errorCode: RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED },
+        ] });
+        harness.resetEnv({ HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '0' });
+        expect(await invoke(false)).toEqual({ kind: 'scm.workEvidence.admitted', admissions: [
+            owned, { kind: 'refused', sessionId: foreignSession.id, errorCode: RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE },
+        ] });
+    });
+
     it("requires the SCM evidence selector and refuses caller-forged batch admission proofs", async () => {
         const method = `${machineId}:${RPC_METHODS.SCM_WORK_EVIDENCE_READ}`;
         const target = createTarget('scm-evidence-daemon', { ok: true });
