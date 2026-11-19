@@ -3678,6 +3678,7 @@
 | `./sessions/work-state` | `SessionAgentActivityHeadlineV1Schema` | value | any |
 | `./sessions/work-state` | `SessionBackgroundTaskRecordV1` | type | any |
 | `./sessions/work-state` | `SessionBackgroundTaskRecordV1Schema` | value | any |
+| `./sessions/work-state` | `SessionTaskSnapshotEntry` | type | any |
 | `./sessions/work-state` | `SessionWorkStateGoalCapabilitiesV1` | type | any |
 | `./sessions/work-state` | `SessionWorkStateItemV1` | type | any |
 | `./sessions/work-state` | `SessionWorkStateStatusV1` | type | any |
@@ -3708,6 +3709,7 @@
 | `./sessions/work-state` | `buildSessionWorkflowActivityHeadline` | value | any |
 | `./sessions/work-state` | `buildWorkflowRunSystemRecordLocalId` | value | any |
 | `./sessions/work-state` | `bumpWorkflowRunRecordRevision` | value | any |
+| `./sessions/work-state` | `createSessionTaskSnapshotPublisher` | value | any |
 | `./sessions/work-state` | `createWorkflowActivityPublisher` | value | any |
 | `./sessions/work-state` | `fromWorkflowAgentStatus` | value | any |
 | `./sessions/work-state` | `fromWorkflowRunStatus` | value | any |
