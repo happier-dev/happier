@@ -118,7 +118,7 @@ describe('UsageFilterBar', () => {
     await screen.unmount();
   });
 
-  it('puts Tokens/Cost and the basis on their own row on every desktop view, so views share one bar shape (R138)', async () => {
+  it('keeps Tokens/Cost and the basis at the bar\'s end edge on every desktop view, so views share one bar shape (R138)', async () => {
     Object.assign(viewport, { width: 1280, height: 900 });
     vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 0 });
     for (const overrides of [{ metric: 'tokens' as const, onMetricChange: () => {} }, { metric: null, onMetricChange: null }]) {

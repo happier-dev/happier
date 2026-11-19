@@ -22,6 +22,10 @@ import type { CurrentUiContextCommandInvocation } from '@/components/appShell/cu
 
 const COST_BASIS_TITLE = { auto: 'usage.board.page.costBasisAuto', reported: 'usage.board.page.costBasisReported',
     estimated: 'usage.board.page.costBasisEstimated', api_equivalent: 'usage.board.page.factApiEquivalent' } as const;
+/** The chip's own word for the basis in force (lab uframe-Rp "API-eq."): the bar keeps one line; the chooser and the
+ *  chip's accessible name keep the whole title. */
+const COST_BASIS_SHORT = { auto: 'usage.board.page.costBasisShortAuto', reported: 'usage.board.page.costBasisShortReported',
+    estimated: 'usage.board.page.costBasisShortEstimated', api_equivalent: 'usage.board.page.costBasisShortApiEquivalent' } as const;
 
 /** The metric choice the account Usage page offers: what its widgets draw. */
 export function usageTokensCostMetricOptions(): readonly Readonly<{ id: 'tokens' | 'cost'; label: string }>[] {
@@ -55,8 +59,8 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
 ) {
   const shownMetric = props.metric ?? props.metricOptions[0]?.id ?? null;
   const phone = useDeviceType() === 'phone';
-  // Scopes fold into the one Filters chooser only on a phone; a desktop keeps one chip per scope and puts
-  // Tokens/Cost and the cost basis on their own right-aligned row on every view, so the bar keeps one shape (R138).
+  // Scopes fold into the one Filters chooser only on a phone; a desktop keeps one chip per scope. Tokens/Cost and the
+  // cost basis hold the bar's end edge on every view (lab d2views; phone lab p5 "Filters and Tokens/Cost on one line").
   const condensed = phone;
   const periodTabs = React.useMemo(
     () =>
@@ -145,6 +149,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
         : {
             id: 'costBasis',
             label: t('usage.costMode'),
+            valueLabel: t(COST_BASIS_SHORT[props.costBasis]),
             options: costBasisChoices.map((option) => ({
               id: option,
               label: t(COST_BASIS_TITLE[option]),
@@ -210,9 +215,9 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
   // Shown in Tokens and Cost alike (labs d2views, d2top, d2work): a Tokens page still shows basis-dependent
   // money, and a chip that came and went with the toggle reshaped the bar under the pointer (R135 call 2).
   const costChip = costFilter ? <SelectionListFilterChip filter={costFilter} currentUiContextCommandScope={costFilter.testID} /> : null;
-  // A phone's row wraps: Tokens/Cost stays on the first line and the basis follows it. On a wide screen the basis
-  // leads and Tokens/Cost holds the trailing edge. Keyed, so crossing the breakpoint moves the two instead of
-  // remounting them: an open basis chooser stays open (HUNT-UI-STATE C2).
+  // A phone puts Tokens/Cost right after Filters and the basis after it. On a wide screen the basis leads and
+  // Tokens/Cost holds the trailing edge. Keyed, so crossing the breakpoint moves the two instead of remounting them:
+  // an open basis chooser stays open (HUNT-UI-STATE C2).
   const metricSlot = metricToggle ? <React.Fragment key="metric">{metricToggle}</React.Fragment> : null;
   const costSlot = costChip ? <React.Fragment key="cost">{costChip}</React.Fragment> : null;
   const trailing = phone ? [metricSlot, costSlot] : [costSlot, metricSlot];
@@ -235,21 +240,20 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
   );
   // One tree on every width: the bar recomposes by style, so a chooser opened on one side of the phone breakpoint
   // is still open on the other.
+  // One row of controls (USAGE-ACCEPT 1118 #12): a phone puts the period on its own line and Filters with Tokens/Cost
+  // on the next (phone lab p5); a wide screen keeps period, scopes, basis and Tokens/Cost on one line (lab d2views)
+  // and wraps only the end group, right-aligned, when the window is too narrow. The basis chip holds its width while
+  // its read is outstanding (it shows the basis in force), so nothing moves when the read answers.
   return (
-    <View testID={props.testID} style={phone ? styles.phone : styles.stack}>
-      <View style={phone ? styles.phone : styles.bar}>
-        {period}
-        {!phone && props.scopeFilters.length > 0 ? <View style={styles.rule} /> : null}
-        {/* Phone: the Filters chip on its own line. */}
-        <View style={phone ? styles.phoneChips : styles.chips}>{chips}</View>
+    <View testID={props.testID} style={phone ? styles.phone : styles.bar}>
+      {period}
+      {!phone && props.scopeFilters.length > 0 ? <View style={styles.rule} /> : null}
+      <View style={phone ? styles.phoneControls : styles.controls}>
+        <View style={styles.chips}>{chips}</View>
+        {props.onMetricChange || costFilter ? <View testID={`${props.testID}.trailing`} style={phone ? styles.phoneTrailing : styles.trailing}>
+          {trailing}
+        </View> : null}
       </View>
-      {/* What the widgets show and in which money sit on their own row, end edge, on every view, so a view without
-          Tokens/Cost keeps the bar's shape and the page never moves on arrival (R138). The basis arrives when its read
-          answers: on a phone sharing the Filters line it wrapped late and pushed the page 38 px (sweep 1110 N4); on a
-          wide screen it grows leftward and never moves the toggle under the pointer (sweep 1110 #26). */}
-      {props.onMetricChange || costFilter ? <View testID={`${props.testID}.trailing`} style={phone ? styles.phoneTrailing : styles.trailing}>
-        {trailing}
-      </View> : null}
     </View>
   );
 }
@@ -327,8 +331,20 @@ function UsageScopeSections(props: Readonly<{
 }
 
 const styles = StyleSheet.create((theme) => ({
-  stack: { gap: theme.space.s8, paddingVertical: theme.space.s4 },
   bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: theme.space.s10,
+    rowGap: theme.space.s8,
+    paddingVertical: theme.space.s4,
+  },
+  // Takes the room beside the period; the end group wraps under the scopes, never the scopes under the period.
+  controls: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
@@ -349,14 +365,9 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s6,
   },
   segment: { flexShrink: 0 },
-  trailing: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: theme.space.s10 },
+  trailing: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: theme.space.s10, marginLeft: 'auto' },
   swatch: { width: 8, height: 8, borderRadius: 2 },
   phone: { gap: theme.space.s10 },
-  phoneChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: theme.space.s6,
-  },
-  phoneTrailing: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end', gap: theme.space.s6 },
+  phoneControls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s6 },
+  phoneTrailing: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: theme.space.s6, marginLeft: 'auto' },
 }));
