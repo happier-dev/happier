@@ -322,3 +322,19 @@ index 5120d94952..0e0e9b6ce1 100644
      private getPlatform;
      private getFilename;
      private getStableChunkSource;
+diff --git a/build/serializer/withExpoSerializers.js b/build/serializer/withExpoSerializers.js
+--- a/build/serializer/withExpoSerializers.js
++++ b/build/serializer/withExpoSerializers.js
+@@ -156,6 +156,12 @@
+                     map: getEnsuredMaps(),
+                 };
+             }
++            // Metro serves the bundle and source map on separate URLs.
++            if (parsed.pathname.endsWith('.bundle') &&
++                !options.serializerOptions?.output &&
++                options.inlineSourceMap !== true) {
++                return bundleCode;
++            }
+         }
+         if (isPossiblyDev) {
+             if (bundleMap == null) {
