@@ -49,7 +49,7 @@ export async function probeIrohHomeTunnelOrigin(
         return { ok: false, reason: 'identity-mismatch' };
     }
 
-    const readiness = await createEndpointReadinessProbe({ endpoint: url, token })();
+    const readiness = await createEndpointReadinessProbe({ endpoint: url, token, purpose: 'home_carrier_admission' })();
     if (readiness.status === 'auth_failed') {
         return { ok: false, reason: 'auth-failed' };
     }

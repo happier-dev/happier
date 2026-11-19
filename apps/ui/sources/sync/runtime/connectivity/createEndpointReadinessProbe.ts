@@ -1,6 +1,7 @@
 import type { ManagedConnectionState, ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 
 import { Platform } from 'react-native';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { sanitizeEndpointErrorMessage } from './sanitizeEndpointErrorMessage';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 import { acquireServerReachabilitySupervisor, subscribeServerReachabilityState } from './serverReachabilitySupervisorPool';
@@ -60,9 +61,14 @@ export function readEndpointReadinessResultFromState(state: ManagedConnectionSta
     return { status: 'server_unreachable', ...detail, ...(state.failure ? { failure: state.failure } : {}) };
 }
 
-export function readEndpointReadinessBlockedResult(endpoint: string): EndpointReadinessProbeResult | null {
+export function readEndpointReadinessBlockedResult(
+    endpoint: string,
+    purpose?: 'home_carrier_admission',
+): EndpointReadinessProbeResult | null {
     const backgroundRetryAfterMs = 60_000;
-    if (!isRuntimeActive()) {
+    // A desktop app window can acquire its Home before native reveals the window.
+    const canVerifyHiddenCarrier = purpose === 'home_carrier_admission' && isDesktopHost();
+    if (!canVerifyHiddenCarrier && !isRuntimeActive()) {
         return { status: 'retry_later', retryAfterMs: backgroundRetryAfterMs, errorMessage: 'Runtime is inactive' };
     }
     const normalized = normalizeAbsoluteHttpBaseUrl(endpoint);
@@ -82,6 +88,7 @@ export function createEndpointReadinessProbe(params: Readonly<{
     endpoint: string;
     token: string | null | (() => string | null) | (() => Promise<string | null>);
     signal?: AbortSignal;
+    purpose?: 'home_carrier_admission';
 }>): () => Promise<EndpointReadinessProbeResult> {
     const endpoint = normalizeAbsoluteHttpBaseUrl(params.endpoint);
     const resolveToken = async (): Promise<string | null> => {
@@ -96,7 +103,7 @@ export function createEndpointReadinessProbe(params: Readonly<{
     };
 
     return async () => {
-        const blocked = readEndpointReadinessBlockedResult(params.endpoint);
+        const blocked = readEndpointReadinessBlockedResult(params.endpoint, params.purpose);
         if (blocked) return blocked;
         // The guard above establishes an absolute HTTP endpoint.
         if (!endpoint) throw new Error('Invalid endpoint URL');

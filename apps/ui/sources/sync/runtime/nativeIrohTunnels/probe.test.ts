@@ -4,6 +4,8 @@ import { probeIrohHomeTunnelOrigin } from './probe';
 import type { IrohHomeTunnelRequest } from './types';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+
 const HOME_IDENTITY = 'srv_home_probe_a';
 
 function createRequest(overrides: Partial<IrohHomeTunnelRequest> = {}): IrohHomeTunnelRequest {
@@ -34,25 +36,31 @@ describe('Iroh Home tunnel origin probe', () => {
     afterEach(() => {
         resetRuntimeFetch();
         vi.restoreAllMocks();
+        vi.unstubAllGlobals();
     });
 
-    it('proves the Home identity publicly before the token reaches the lease origin', async () => {
+    it.each(['foreground', 'hidden desktop restore'])('proves the Home identity before the token reaches the lease origin during %s', async (context) => {
+        if (context === 'hidden desktop restore') {
+            vi.stubGlobal('document', { visibilityState: 'hidden' });
+            vi.stubGlobal('__TAURI_INTERNALS__', { invoke: vi.fn() });
+        }
+        const origin = context === 'hidden desktop restore' ? 'https://probe-home.example.test' : 'http://127.0.0.1:45701';
         const requests: Array<{ url: string; authorization: string | null }> = [];
         setRuntimeFetch(async (input, init) => {
             const url = String(input);
             const authorization = new Headers(init?.headers).get('Authorization');
             requests.push({ url, authorization });
-            if (url === 'http://127.0.0.1:45701/v1/auth/ping') return jsonResponse(200, { ok: true });
+            if (url === `${origin}/v1/auth/ping`) return jsonResponse(200, { ok: true });
             // The features proof must be carried by the lease's exact runtime origin.
-            if (url === 'http://127.0.0.1:45701/v1/features') return homeFeatures();
+            if (url === `${origin}/v1/features`) return homeFeatures();
             throw new Error(`unexpected probe request ${url}`);
         });
 
-        await expect(probeIrohHomeTunnelOrigin('http://127.0.0.1:45701', createRequest())).resolves.toEqual({ ok: true });
+        await expect(probeIrohHomeTunnelOrigin(origin, createRequest())).resolves.toEqual({ ok: true });
 
         expect(requests).toEqual([
-            { url: 'http://127.0.0.1:45701/v1/features', authorization: null },
-            { url: 'http://127.0.0.1:45701/v1/auth/ping', authorization: 'Bearer token-a' },
+            { url: `${origin}/v1/features`, authorization: null },
+            { url: `${origin}/v1/auth/ping`, authorization: 'Bearer token-a' },
         ]);
     });
 
