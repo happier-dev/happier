@@ -11,6 +11,7 @@ import { resolveConnectedAccountAccessMode } from '../model/resolveConnectedAcco
 import { AccountUsageResetsLine } from '../usage/AccountUsageFacts';
 import {
     ConnectedAccountIndexActions,
+    ConnectedAccountSignInAction,
     ConnectedAccountSignInRecovery,
     ConnectedAccountIndexRoles,
     ConnectedAccountIndexStatusLines,
@@ -128,6 +129,33 @@ function ConnectedAccountCompactCard(props: React.ComponentProps<typeof Connecte
     );
 }
 
+/**
+ * A phone's Needs-you account (R7, lab phone-system `p4-creds` `cr cwide`): one card across the row, the
+ * service mark, the account with why it needs you beneath it, and its Sign in at the trailing edge.
+ */
+export const ConnectedAccountNeedsYouCardView = React.memo(function ConnectedAccountNeedsYouCardView(props: ConnectedAccountIndexEntry & Readonly<{
+    signedOut: NonNullable<ConnectedAccountIndexEntry['signedOut']>;
+    legacyServiceMarkId: string | null;
+}>) {
+    return (
+        <WidgetFrame
+            testID={props.testID}
+            accessibilityLabel={props.title}
+            onOpen={props.onOpen}
+            frameStyle="card"
+            placement="home"
+            bodyHeight="content"
+            rows={0}
+            mark={<ConnectedServiceMark service={props.service} legacyServiceId={props.legacyServiceMarkId} pluginId={props.pluginId} size="column" />}
+            title={<ConnectedAccountIdentityText value={props.title} style={styles.title} numberOfLines={2} />}
+            source={<Text style={[styles.subtitle, styles.attention]} numberOfLines={2}>{props.signedOut.reason}</Text>}
+            sourcePlacement="below"
+            menu={<ConnectedAccountSignInAction testID={props.testID} signedOut={props.signedOut}
+                onOpen={props.onOpen} prominence={props.fixProminence} />}
+        />
+    );
+});
+
 const styles = StyleSheet.create((theme) => ({
     title: {
         ...Typography.variant('body', 'semiBold'),
@@ -136,6 +164,10 @@ const styles = StyleSheet.create((theme) => ({
     subtitle: {
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
+    },
+    // "Needs you" words take the warning text role, as the sign-in line on the account's other surfaces.
+    attention: {
+        color: theme.colors.state.warning.textForeground,
     },
     body: {
         gap: theme.space.s12,

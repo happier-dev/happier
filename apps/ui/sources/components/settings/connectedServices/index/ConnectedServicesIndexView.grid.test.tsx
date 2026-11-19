@@ -199,4 +199,30 @@ describe('ConnectedServicesIndexView grid', () => {
     expect(screen.getTextContent()).toContain('Codex');
     await screen.unmount();
   });
+
+  it('draws a phone\'s Needs-you account as one card across the row, its Sign in at the trailing edge (R7 p4-creds)', async () => {
+    const kinds = model(undefined, ['work', 'expired']);
+    const signedOut = { ...kinds, sheets: kinds.sheets.map((sheet) => ({ ...sheet, canAdd: true, accounts: sheet.accounts.map((account) =>
+      account.kind === 'qualified' && account.accountId === 'expired' ? { ...account, status: 'needs_reauth' } : account) })) };
+    const screen = await render(undefined, { model: signedOut as typeof kinds, presentation: 'grid', compact: true,
+      summary: { needsYouCount: 1, asOf: null } });
+    const { WidgetFrame } = await import('@/components/widgets/frame/WidgetFrame');
+    const { CardGrid } = await import('@/components/ui/cardGrid/CardGrid');
+    const testID = `connected-services-account:${CODEX.pluginId}/${CODEX.localId}:expired`;
+    // One card per item, alone on its row of the page's card grid (the lab's wide card); the kinds keep two per row.
+    const grids = screen.findAllByType(CardGrid);
+    const wide = grids.filter((grid) => grid.props.columns === 1);
+    expect(wide).toHaveLength(1);
+    expect(wide[0]!.findAll((node) => node.props?.testID === testID).length).toBeGreaterThan(0);
+    const card = screen.findAllByType(WidgetFrame).filter((frame) => frame.props.testID === testID);
+    expect(card).toHaveLength(1);
+    expect(card[0]!.props.frameStyle).toBe('card');
+    // Sign in ends the card's one line (its trailing control), not a second line under the reason.
+    const trailing = card[0]!.findAll((node) => node.props?.testID === `${testID}:sign-in-again`);
+    expect(trailing.length).toBeGreaterThan(0);
+    // The card says everything on its header line: no body under it, Sign in in the line's end slot.
+    expect(card[0]!.props.body).toBeUndefined();
+    expect(card[0]!.props.menu).toBeTruthy();
+    await screen.unmount();
+  });
 });

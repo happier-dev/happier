@@ -240,7 +240,7 @@ it('says the Environments could not be read, never also that there are none', as
 });
 
 
-it('says a Project with no Environments in one line with Add, never a chooser above it (phone-lists P1)', async () => {
+it('says a Project with no Environments as one state with Add, never a chooser above it (phone-lists P1)', async () => {
   await homes.reset();
   const serverId = await homes.addHome({ name: 'Readiness', serverUrl: 'https://readiness-empty.test',
     serverIdentityId: `srv_${'7'.repeat(32)}`, accountId: 'alice', currentAccount: true });
@@ -258,6 +258,12 @@ it('says a Project with no Environments in one line with Add, never a chooser ab
   const { t } = await import('@/text');
   await vi.waitFor(() => expect(screen.findAllByType(WidgetGlanceRow).map(row => [row.props.title, row.props.fact]))
     .toEqual([[t('projects.readiness.empty'), t('projects.readiness.emptyHint')]]), { timeout: 20000 });
+  // Both are sentences: in a narrow companion column they wrap, as the state lines beside them do, never cut short.
+  const { Text } = await import('@/components/ui/text/Text');
+  const sentences = [t('projects.readiness.empty'), t('projects.readiness.emptyHint')];
+  const textOf = (children: unknown) => [children].flat().filter(part => typeof part === 'string').join('');
+  expect(screen.findAllByType(Text).filter(text => sentences.includes(textOf(text.props.children)))
+    .map(text => text.props.numberOfLines)).toEqual([2, 2]);
   expect(screen.findAllByType(SelectionListFilterChip)).toHaveLength(0);
   expect(screen.findAllByType(SurfaceStateCard)).toHaveLength(0);
   expect(screen.findAllByTestId('readiness.add').length).toBeGreaterThan(0);

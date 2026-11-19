@@ -54,8 +54,12 @@ export type HappierWidgetGlanceRowProps = Readonly<{
   /** The row's mark, drawn by the host (a glyph, a brand mark, a spinner). It stands alone, never on a tile. */
   mark?: ReactElement | null;
   title: string;
-  /** `fact` draws the label as a quiet one-line statement (About); `row` is a thing with a name. */
-  variant?: 'row' | 'fact';
+  /**
+   * `row` is a thing with a name; `fact` draws the label as a quiet one-line statement (About);
+   * `state` says what is (or isn't) there, "No Environments in this Project": its title and fact are
+   * sentences that wrap to a second line, as the state lines beside it do, instead of losing their end.
+   */
+  variant?: 'row' | 'fact' | 'state';
   /** A short tag on the label's line ("Here", a state word such as "Waiting for you"). */
   tag?: string | null;
   /** A state word as the tag speaks only when it needs the person (`attention`) or failed (`danger`). */
@@ -92,6 +96,7 @@ export const HappierWidgetGlanceRow = memo(function HappierWidgetGlanceRow(
   const { Text, colors, space } = props;
   const variant = props.variant ?? 'row';
   const sentenceTag = props.tagSentence && props.tag ? props.tag : null;
+  const sentenceLines = variant === 'state' ? { lines: 2 } : {};
   const content = (
     <>
       {props.mark !== undefined ? (
@@ -102,7 +107,7 @@ export const HappierWidgetGlanceRow = memo(function HappierWidgetGlanceRow(
           <Text
             role={variant === 'fact' ? 'meta' : 'title'}
             {...(props.mono ? { mono: true } : {})}
-            {...(sentenceTag ? { lines: 2 } : {})}
+            {...(sentenceTag ? { lines: 2 } : sentenceLines)}
             color={variant === 'fact' ? colors.secondaryText : colors.text}
             style={shrinkingTextStyle}
           >
@@ -140,8 +145,8 @@ export const HappierWidgetGlanceRow = memo(function HappierWidgetGlanceRow(
                 : props.factTone === 'danger'
                   ? (colors.danger ?? colors.text)
                   : colors.secondaryText
-
             }
+            {...sentenceLines}
             style={null}
           >
             {props.fact}

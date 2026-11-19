@@ -59,7 +59,7 @@ export const WidgetGlanceRow = React.memo(function WidgetGlanceRow(
     /** The row's mark: a glyph, or an element (a brand mark, a spinner). It stands alone, never on a tile. */
     mark?: IconName | React.ReactElement | null;
     title: string;
-    variant?: 'row' | 'fact';
+    variant?: 'row' | 'fact' | 'state';
     tag?: string | null;
     tagSentence?: boolean;
     fact?: string | null;

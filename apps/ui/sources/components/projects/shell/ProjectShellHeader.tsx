@@ -70,7 +70,7 @@ export { projectPageGlyph, projectPageLabel } from '../navigation/projectPageDis
 /** The checkout the page is looking at: its machine and branch, and the exact choices behind the chip. */
 export type ProjectShellCheckout = Readonly<{
   machineName: string;
-  /** The name and the suffix telling same-named machines apart: the chip shortens only the name. */
+  /** The name and the suffix telling same-named machines apart: short of room, the chip drops the suffix first. */
   machineNameParts: Readonly<{ name: string; hint: string | null }>;
   machineIcon: IconName;
   /** The branch the checkout reported; null while it is unread (its machine stands in). */
@@ -403,7 +403,7 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
         branch,
       })
     : props.checkout.machineName;
-  // What stays whole beside the shortened name: the same-name suffix.
+  // The same-name suffix: it goes before the name is shortened (the chip must name its Machine).
   const machineHint = props.checkout.machineNameParts.hint;
   const machineTail = machineHint ? ` · ${machineHint}` : '';
   return (
@@ -462,32 +462,36 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
                 size={ICON_SIZE.xs}
                 color={theme.colors.text.secondary}
               />
-              <Text
-                numberOfLines={1}
-                style={[
-                  styles.chipText,
-                  // Without a branch the machine is the chip's whole name.
-                  {
-                    color: branch
-                      ? theme.colors.text.secondary
-                      : theme.colors.text.primary,
-                  },
-                ]}
-              >
-                {props.checkout.machineNameParts.name}
-              </Text>
-              {machineTail ? (
+              {/* Name and suffix share one clipped line that wraps: short of room the whole suffix
+                  moves to the hidden second line, and only then does the name itself ellipsize. */}
+              <View style={styles.chipMachine}>
                 <Text
                   numberOfLines={1}
                   style={[
                     styles.chipText,
-                    styles.chipHint,
-                    { color: branch ? theme.colors.text.secondary : theme.colors.text.primary },
+                    // Without a branch the machine is the chip's whole name.
+                    {
+                      color: branch
+                        ? theme.colors.text.secondary
+                        : theme.colors.text.primary,
+                    },
                   ]}
                 >
-                  {machineTail}
+                  {props.checkout.machineNameParts.name}
                 </Text>
-              ) : null}
+                {machineTail ? (
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.chipText,
+                      styles.chipHint,
+                      { color: branch ? theme.colors.text.secondary : theme.colors.text.primary },
+                    ]}
+                  >
+                    {machineTail}
+                  </Text>
+                ) : null}
+              </View>
             </>
           )}
           {!branch ? null : (
@@ -603,4 +607,14 @@ const styles = StyleSheet.create(() => ({
   },
   chipBranch: { ...Typography.default('semiBold') },
   chipHint: { flexShrink: 0 },
+  chipMachine: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    alignContent: 'flex-start',
+    height: HAPPIER_SEGMENTED_METRICS.plain.labelSlotPx,
+    overflow: 'hidden',
+    flexShrink: 1,
+    minWidth: 0,
+  },
 }));

@@ -83,7 +83,7 @@ export function ProjectReadinessWidgetBody(props: Readonly<{ target: ProjectSurf
   if (settled && collection.snapshot.status !== 'unavailable' && collection.snapshot.value?.coverage !== 'partial'
     && items.length === 0 && !collection.hasPreviousPage && !collection.hasNextPage) {
     return <View testID={props.testID}>
-      <WidgetGlanceRow testID={`${props.testID}.empty`} mark={deploymentEnvironmentGlyph()}
+      <WidgetGlanceRow testID={`${props.testID}.empty`} variant="state" mark={deploymentEnvironmentGlyph()}
         title={t('projects.readiness.empty')} fact={t('projects.readiness.emptyHint')}
         trailing={<SectionActionButton testID={`${props.testID}.add`} title={t('common.add')}
           onPress={() => openNewApp(null, null, { projectSourceId: projectId })} />} />

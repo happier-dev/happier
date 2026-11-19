@@ -670,7 +670,9 @@ optional quiet `fact` beneath (`factTone="attention"` when it needs the person),
 and one `trailing` element. With `tagSentence` the tag continues the name as one
 sentence (`5 files not committed · 3 included`) that wraps instead of shortening it. Give it `onPress` when the row leads somewhere; leave
 it out when the row carries its own control. `variant="fact"` draws a quiet
-one-line statement instead of a named thing. `DiffStat` draws lines added and
+one-line statement instead of a named thing. `variant="state"` says what is (or
+isn't) there, such as "No Environments in this Project": its title and fact wrap
+to a second line instead of losing their end. `DiffStat` draws lines added and
 removed (`+53 −5`) in the host's version-control inks and leaves out a side that
 is zero; pass `locale` to format the counts in the language your surface renders.
 Where only text fits (a `List.Item` `detail` or a metadata value),

@@ -123,6 +123,17 @@ describe('WidgetGlanceRow', () => {
     row.unmount();
   });
 
+  it('wraps a state row\'s title and fact instead of cutting them short, as the state lines beside it do', () => {
+    const row = mount(<WidgetGlanceRow testID="row" variant="state" title="No Environments in this Project"
+      fact="Add one to deploy and run checks here" />);
+    const texts = [...row.container.querySelectorAll('[data-testid="row"] [dir="auto"]')] as HTMLElement[];
+    for (const sentence of ['No Environments in this Project', 'Add one to deploy and run checks here']) {
+      const line = texts.find(text => text.textContent === sentence) as HTMLElement;
+      expect(getComputedStyle(line).whiteSpace).not.toBe('nowrap');
+    }
+    row.unmount();
+  });
+
   it('stays a static row without a press, and speaks only when the fact needs the person', () => {
     const row = mount(
       <WidgetGlanceRow

@@ -282,24 +282,37 @@ export const ConnectedAccountSignInRecovery = React.memo(function ConnectedAccou
     prominence?: 'primary' | 'secondary';
 }>) {
     const { theme } = useUnistyles();
-    const signIn = props.signedOut.onSignInAgain;
-    // The Connect sheet hangs from this button (popover on wide layouts).
-    const triggerRef = React.useRef<View>(null);
     return (
         <View pointerEvents="box-none" style={[styles.fix, props.compact ? styles.fixCompact : null]}>
             <View style={styles.statusLine}>
                 <Icon name="warning" size={14} color={theme.colors.state.warning.foreground} />
                 <Text style={[styles.statusText, styles.warning]}>{props.signedOut.reason}</Text>
             </View>
-            <View ref={triggerRef} collapsable={false}>
-                <RoundButton
-                    testID={`${props.testID}:${signIn ? 'sign-in-again' : 'recovery-details'}`}
-                    size="small"
-                    display={signIn && props.prominence !== 'secondary' ? 'default' : 'secondary'}
-                    title={t(signIn ? 'connectedServicesSettings.signInAgain' : 'common.details')}
-                    onPress={signIn ? () => signIn({ kind: 'view', ref: triggerRef }) : props.onOpen}
-                />
-            </View>
+            <ConnectedAccountSignInAction testID={props.testID} signedOut={props.signedOut}
+                onOpen={props.onOpen} prominence={props.prominence} />
+        </View>
+    );
+});
+
+/** The one next step for a signed-out account: Sign in again where it can, else its details. */
+export const ConnectedAccountSignInAction = React.memo(function ConnectedAccountSignInAction(props: Readonly<{
+    testID: string;
+    signedOut: NonNullable<ConnectedAccountIndexEntry['signedOut']>;
+    onOpen: () => void;
+    prominence?: 'primary' | 'secondary';
+}>) {
+    const signIn = props.signedOut.onSignInAgain;
+    // The Connect sheet hangs from this button (popover on wide layouts).
+    const triggerRef = React.useRef<View>(null);
+    return (
+        <View ref={triggerRef} collapsable={false}>
+            <RoundButton
+                testID={`${props.testID}:${signIn ? 'sign-in-again' : 'recovery-details'}`}
+                size="small"
+                display={signIn && props.prominence !== 'secondary' ? 'default' : 'secondary'}
+                title={t(signIn ? 'connectedServicesSettings.signInAgain' : 'common.details')}
+                onPress={signIn ? () => signIn({ kind: 'view', ref: triggerRef }) : props.onOpen}
+            />
         </View>
     );
 });

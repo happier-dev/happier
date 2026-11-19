@@ -32,7 +32,7 @@ import type {
     ConnectedServicesIndexSheet,
 } from '../model/buildConnectedServicesIndexModel';
 import { CONNECTED_SERVICES_SEARCH_THRESHOLD, connectedServicesAccountMatchesSearch, presentConnectedServicesIndexAccount, presentConnectedServicesIndexPool } from '../model/presentConnectedServicesIndexAccount';
-import { ConnectedAccountCardView } from './ConnectedAccountCard';
+import { ConnectedAccountCardView, ConnectedAccountNeedsYouCardView } from './ConnectedAccountCard';
 import { isConnectedAccountSignedOut, resolveConnectedAccountCredentialStatusLabel } from '../account/connectedAccountCredentialStatusLabel';
 import {
     ConnectedAccountIndexRowView,
@@ -305,9 +305,35 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
             />
         ));
 
+    // A phone's cards (R7 p4-creds): each account that needs you is one card across the row, Sign in at its end.
+    const renderNeedsYouCards = () => {
+        const settled = props.settled && needsYou.some(({ sheet, account }) =>
+            sheet.serviceKey === props.settled!.serviceKey && account.accountId === props.settled!.accountId) ? props.settled.node : null;
+        return (
+            <>
+                <CardGrid columns={1}>
+                    {needsYou.map(({ sheet, account }, index) => {
+                        const entry = entryFor(sheet, account);
+                        return entry.signedOut ? (
+                            <View key={`${sheet.serviceKey}:${account.accountId}`} style={styles.cardCell}>
+                                <ConnectedAccountNeedsYouCardView
+                                    {...entry}
+                                    signedOut={entry.signedOut}
+                                    // One primary per view: only the first fix in Needs you is filled.
+                                    fixProminence={index > 0 ? 'secondary' : entry.fixProminence}
+                                    legacyServiceMarkId={sheet.legacyServiceId}
+                                />
+                            </View>
+                        ) : null;
+                    })}
+                </CardGrid>
+                {settled ? <View style={styles.gridSettle}>{settled}</View> : null}
+            </>
+        );
+    };
     const needsYouGroup = needsYou.length > 0 ? (
         <ItemGroup testID="connected-services-index:needs-you" title={t('connectedServicesCollection.needsYouGroup')} surface="none">
-            {renderRows(needsYou, true)}
+            {kindCards ? renderNeedsYouCards() : renderRows(needsYou, true)}
         </ItemGroup>
     ) : null;
 
