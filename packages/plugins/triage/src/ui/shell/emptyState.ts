@@ -58,17 +58,12 @@ export type TriageListEmptyStateV1 = Readonly<{
     description: string;
     /** Invocation diagnostics preserved for the failure state's Details disclosure. */
     details?: string;
-    /**
-     * The ways out of a state the reader's own lens narrowed, in the order they are
-     * offered (the first is primary). The shell draws one control per step, so the
-     * sentence and its controls come from this one decision: `loadMore` while the
-     * walk has more to read, then what undoes the narrowing.
-     */
+    /** Ways to undo the narrowing. The Collection renders the window continuation. */
     next: readonly TriageListEmptyNextStepV1[];
 }>;
 
 /** One control an empty narrowed list offers; each calls the owner the page already has for it. */
-export type TriageListEmptyNextStepV1 = 'loadMore' | 'clearSearch' | 'clearFilters';
+export type TriageListEmptyNextStepV1 = 'clearSearch' | 'clearFilters';
 
 const NO_NEXT_STEPS: readonly TriageListEmptyNextStepV1[] = Object.freeze([]);
 const CLEAR_FILTERS_NEXT: readonly TriageListEmptyNextStepV1[] = Object.freeze(['clearFilters'] as const);
@@ -106,7 +101,7 @@ const NO_MATCH_YET: TriageListEmptyStateV1 = Object.freeze({
     kind: 'noMatchYet',
     title: 'No match yet',
     description: 'Nothing read so far matches these filters, and your sources have more to read.',
-    next: Object.freeze(['loadMore', 'clearFilters'] as const),
+    next: CLEAR_FILTERS_NEXT,
 });
 
 const NO_SEARCH_MATCH: TriageListEmptyStateV1 = Object.freeze({
@@ -120,7 +115,7 @@ const NO_SEARCH_MATCH_YET: TriageListEmptyStateV1 = Object.freeze({
     kind: 'noSearchMatchYet',
     title: 'No search match yet',
     description: 'Nothing read so far matches what you typed, and your sources have more to read.',
-    next: Object.freeze(['loadMore', 'clearSearch'] as const),
+    next: CLEAR_SEARCH_NEXT,
 });
 
 const NO_TASKS: TriageListEmptyStateV1 = Object.freeze({
@@ -135,7 +130,7 @@ const TASK_FIRST_RUN: TriageListEmptyStateV1 = Object.freeze({
 });
 const NO_TASKS_YET: TriageListEmptyStateV1 = Object.freeze({
     kind: 'noTasksYet', title: 'No tasks here', description: 'No tasks read so far are in this lens. More sources may still answer.',
-    next: Object.freeze(['loadMore'] as const),
+    next: NO_NEXT_STEPS,
 });
 
 /**

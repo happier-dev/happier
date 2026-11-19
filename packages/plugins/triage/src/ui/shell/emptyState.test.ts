@@ -64,12 +64,12 @@ describe('the empty PRs & Issues list', () => {
         expect(resolveTriageListEmptyState({ coverage: 'complete', failure: null, refreshing: false, narrowing }))
             .toMatchObject({ kind: 'noTasks' });
     });
-    it('keeps an empty Tasks lens distinct from all-clear and offers only real continuations', () => {
+    it('keeps an empty Tasks lens distinct from all-clear while the window is unfinished', () => {
         const narrowing = readTriageLensNarrowingV1({ filters: { ...TRIAGE_LIST_NO_FILTERS_V1, tasks: 'mine' }, query: '' });
         expect(resolveTriageListEmptyState({ coverage: 'complete', failure: null, refreshing: false, narrowing }))
             .toMatchObject({ kind: 'noTasks', next: [] });
         expect(resolveTriageListEmptyState({ coverage: 'partial', failure: null, refreshing: false, narrowing }))
-            .toMatchObject({ kind: 'noTasksYet', next: ['loadMore'] });
+            .toMatchObject({ kind: 'noTasksYet', next: [] });
     });
     it('claims every source answered only when a complete window really is empty', () => {
         expect(resolveTriageListEmptyState({
@@ -156,18 +156,14 @@ describe('the empty PRs & Issues list', () => {
     });
 
     it('offers each narrowed empty list the way out that matches what narrowed it', () => {
-        // A narrowed empty list never leaves the reader at a sentence: a search that
-        // matched nothing is cleared from the search box, a facet from the rail, and
-        // a window that has not finished reading can also be read further. The steps
-        // are decided here, beside the sentence they belong to, so the copy and the
-        // control cannot name different ways out.
+        // A search that matched nothing can be cleared, as can a selected facet.
         const next = (coverage: 'complete' | 'partial', narrowing: TriageLensNarrowingV1) =>
             resolveTriageListEmptyState({ coverage, failure: null, refreshing: false, narrowing }).next;
 
         expect(next('complete', SEARCH_NARROWED)).toEqual(['clearSearch']);
-        expect(next('partial', SEARCH_NARROWED)).toEqual(['loadMore', 'clearSearch']);
+        expect(next('partial', SEARCH_NARROWED)).toEqual(['clearSearch']);
         expect(next('complete', FACET_NARROWED)).toEqual(['clearFilters']);
-        expect(next('partial', FACET_NARROWED)).toEqual(['loadMore', 'clearFilters']);
+        expect(next('partial', FACET_NARROWED)).toEqual(['clearFilters']);
         // Nothing the reader narrowed, nothing to undo: the healthy, reading and bounded
         // states have their own header controls.
         expect(next('complete', NOT_NARROWED)).toEqual([]);
@@ -289,7 +285,7 @@ describe('readTriageListEmptyBelowPinsV1', () => {
         const answer = below(windowState({ coverage: 'complete', failure: BROKEN_SOURCE }), 0, 2, FACET_NARROWED);
         expect(answer?.kind).toBe('sourceFailure');
         expect(`${answer?.title} ${answer?.description}`).toContain('example-forge');
-        expect(answer?.next).not.toContain('loadMore');
+        expect(answer?.next).toEqual(['clearFilters']);
     });
 
     it('stays out of a list with rows, an unnarrowed list, and a list with no pins', () => {

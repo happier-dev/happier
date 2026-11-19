@@ -2425,27 +2425,11 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   // A first run with nothing listed (labs `merged-connect`, `tasks-firstrun`) is the page's whole answer: filters, an
   // order (the toolbar's and the table's named order) and List | Board could change nothing, so none is drawn.
   const nothingToArrange = (state.kind === 'configureSources' && rowCount === 0) || empty?.kind === 'taskFirstRun';
-  /**
-   * The empty narrowed list's ways out, drawn from the one decision (`empty.next`): the first is the
-   * primary control and the rest follow it quietly. Read-further is the entries continuation the
-   * Collection footer offers, and is left out when the walk has nothing left to read.
-   */
-  const entriesContinuation = collectionWindow.kind === 'partial'
-    ? collectionWindow.continuations.find((continuation) => continuation.key === 'entries')
-    : undefined;
-  // Each next step is one Button, typed by the Button contract itself: the first is the primary control and
-  // the rest follow quietly.
+  // The empty state owns clearing the lens. The Collection owns the window continuation.
   const emptyNextButtons: React.ReactElement[] = [];
   for (const step of emptyAnswer?.next ?? []) {
     const variant = emptyNextButtons.length === 0 ? 'secondary' : 'plain';
     switch (step) {
-      case 'loadMore':
-        if (entriesContinuation !== undefined) {
-          emptyNextButtons.push(
-            <Button key={step} title={entriesContinuation.label} busy={entriesContinuation.busy} variant={variant} onPress={entriesContinuation.load} />,
-          );
-        }
-        break;
       case 'clearSearch':
         emptyNextButtons.push(
           <Button key={step} titleKey="plugins.triage.surface.search.clear" title="Clear search" variant={variant} onPress={() => changeSearch('')} />,

@@ -157,7 +157,7 @@ type Harness = Readonly<{
  * always offers another, over a real Account Collection and the real scan
  * projection. Nothing between the press and either of those is stood in for.
  */
-function createEntriesHarness(): Harness {
+function createEntriesHarness(exhaustOnContinuation = false): Harness {
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
     const state = {
@@ -171,6 +171,9 @@ function createEntriesHarness(): Harness {
         const page = scanInput.page.kind === 'initial'
             ? 1
             : Number(scanInput.page.continuation?.token ?? '1');
+        if (exhaustOnContinuation && page > 1) {
+            return { kind: 'complete', observations: [], evidence: { kind: 'walkFinished' } };
+        }
         return {
             kind: 'page',
             observations: Array.from(
@@ -286,7 +289,7 @@ function createPinsHarness(pinCount: number): Harness {
 
 const mounted: PluginUiTestkit[] = [];
 
-async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
+async function mountShell(harness: Harness, subPath?: string): Promise<PluginUiTestkit> {
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
@@ -294,6 +297,7 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
             surface: renderShellSurface,
             surfaceContext: createSurfaceContextFixture(),
+            ...(subPath === undefined ? {} : { subPath }),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({
                 ephemeralSharedScope: harness.ephemeralSharedScope,
                 // The row menu presents inline, so a test opens it the way a reader does.
@@ -317,6 +321,21 @@ afterEach(async () => {
 });
 
 describe('the mounted window continuations', () => {
+    it('offers to read more for a zero-match lens and reports no matches only after exhaustion', async () => {
+        const harness = createEntriesHarness(true);
+        const scope = encodeURIComponent('example/repository');
+        const shell = await mountShell(harness, `fp,${SOURCE.pluginId},${SOURCE.localId},${scope}/q,unmatched`);
+
+        await expect(shell.getByText('No match yet')).resolves.toBeDefined();
+        await expect(shell.queryByText('Nothing matches these filters')).resolves.toBeUndefined();
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Load more' }));
+        });
+
+        await expect(shell.getByText('Nothing matches these filters')).resolves.toBeDefined();
+        await expect(shell.queryByRole('button', { name: 'Load more' })).resolves.toBeUndefined();
+    });
+
     it('reaches the entries after the transport bound, and keeps the ones already listed', async () => {
         const harness = createEntriesHarness();
         const shell = await mountShell(harness);
