@@ -3288,6 +3288,16 @@ transport through the Session target relay. Windows stdio retains its existing
 contract. These are development-source contracts, not
 certification of a loaded runner.
 
+In 0.3 development source, a placed managed-purpose Provider consumer uses the
+existing workspace holder channel's `loopback-listen` operation. Its OS-assigned
+listener binds only `127.0.0.1`; accepted sockets reuse numbered `O/I/C/X`
+streams. The host connects those bytes only to the canonical consumer endpoint
+selected at launch, and the admitted Session/target lifetime closes both sides.
+There is no guest Machine enrollment or additional Provider authority. An older
+holder refuses the unknown operation; the canonical native supplier rebuilds the
+holder from current Rust and target bootstrap replaces mismatched digests before
+launch. Source tests do not certify a loaded guest helper or successful Agent turn.
+
 In 0.3 development source, `codex_refresh_free_auth_unsupported` retains its
 closed `details.reason` through the plugin error boundary and the host failure
 publication into `Session.lastRuntimeIssue.failureCause.reason`. Runner file

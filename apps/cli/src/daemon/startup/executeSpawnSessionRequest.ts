@@ -1458,6 +1458,7 @@ export async function executeSpawnSessionRequest(
                 connectedServiceMaterializationIdentity,
                 providerBindingAttempt,
                 managedPurpose: daemonProviderLaunch.managedPurpose,
+                managedTarget: sessionTarget?.target,
                 providerAgentTargetKey,
                 providerDiagnosticRedactionLease,
                 launchResourceScope,

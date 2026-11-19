@@ -19,6 +19,7 @@
 #[cfg(windows)]
 mod conpty;
 mod frame;
+mod loopback;
 mod mcp_relay;
 mod outbox;
 mod platform;
@@ -322,7 +323,7 @@ fn listener_cleanup_and_exit() -> ! {
 /// Operations a workspace client may use: its own streams only. The Agent's stdio
 /// (`i`/`c`), its process (`signal`), its state (`status`/`meta`) and its output are
 /// never reachable from this socket.
-const WORKSPACE_OPS: [&str; 6] = ["spawn", "kill", "which", "pty", "resize", "watch"];
+const WORKSPACE_OPS: [&str; 7] = ["spawn", "kill", "which", "pty", "resize", "watch", "loopback-listen"];
 
 struct WorkspaceStdout;
 impl Write for WorkspaceStdout {
@@ -450,6 +451,10 @@ fn operation(
             json!({ "id": id, "ok": true })
         }
         Some("spawn") => match streams.spawn(&request, outbox) {
+            Ok(value) => json!({ "id": id, "ok": true, "value": value }),
+            Err(code) => json!({ "id": id, "ok": false, "code": code }),
+        },
+        Some("loopback-listen") => match loopback::listen(streams, outbox) {
             Ok(value) => json!({ "id": id, "ok": true, "value": value }),
             Err(code) => json!({ "id": id, "ok": false, "code": code }),
         },
@@ -639,6 +644,38 @@ mod stream_tests {
             }
         }
         (seen, exited)
+    }
+
+    #[test]
+    fn workspace_loopback_listener_carries_socket_bytes_and_ends_with_its_channel() {
+        let exit = Arc::new(Mutex::new(None));
+        let meta = Arc::new(Mutex::new(Value::Null));
+        let streams: Arc<streams::Streams> = Arc::default();
+        let outbox = Arc::new(Outbox::new());
+        let sink = Sink::default();
+        outbox.attach(Box::new(sink.clone()), |_| b"{}".to_vec()).unwrap();
+        let reply = workspace_operation(br#"{"id":"p","op":"loopback-listen"}"#, &exit, &meta, &streams, &outbox);
+        assert_eq!(reply["ok"], true, "{reply}");
+        let listener = reply["value"]["stream"].as_u64().unwrap() as u32;
+        let origin = reply["value"]["origin"].as_str().unwrap();
+        // Derived from the listener's actual address: binding 0.0.0.0 fails this assertion.
+        let address = origin.strip_prefix("http://127.0.0.1:").unwrap();
+        let address = format!("127.0.0.1:{address}");
+        let mut socket = std::net::TcpStream::connect(&address).unwrap();
+        socket.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+        let accepted = wait_for(&sink, listener, |bytes, _| bytes.ends_with('\n')).0;
+        let connection = serde_json::from_str::<Value>(&accepted).unwrap()["stream"].as_u64().unwrap() as u32;
+        socket.write_all(b"request\0bytes").unwrap();
+        assert_eq!(wait_for(&sink, connection, |bytes, _| bytes == "request\0bytes").0, "request\0bytes");
+        streams.write(&streams::tagged(connection, b"response\0bytes"));
+        let mut response = [0u8; 14];
+        socket.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"response\0bytes");
+        streams.close_stdin(&connection.to_be_bytes());
+        assert_eq!(socket.read(&mut [0]).unwrap(), 0);
+        streams.terminate_all();
+        assert!(wait_for(&sink, listener, |_, exited| exited).1);
+        assert!(std::net::TcpStream::connect(&address).is_err());
     }
 
     fn wait_for(sink: &Sink, stream: u32, done: impl Fn(&str, bool) -> bool) -> (String, bool) {

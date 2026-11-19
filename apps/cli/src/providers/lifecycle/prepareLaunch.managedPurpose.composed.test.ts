@@ -2,6 +2,9 @@ import { readProviderSettingsForCli } from '../settings/read';
 import { describe, expect, it } from 'vitest';
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { Duplex } from 'node:stream';
+import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createManagedRunLaunchFixture } from './managedRunLaunch.testkit';
 import { prepareProviderLaunch } from './prepareLaunch';
@@ -37,7 +40,10 @@ describe('Agent managed Connected Account purpose launch', () => {
       } finally { await resources.retire(); await fixture.cleanup(); }
     });
   });
-  it.each([false, true])('uses the source catalog through daemon launch and child materialization (guest=%s)', async guest => {
+  it.each([{ guest: false, placed: false }, { guest: true, placed: false }, { guest: false, placed: true }])(
+    'uses the source catalog through daemon launch and child materialization (guest=$guest, placed=$placed)', async ({ guest, placed }, context) => {
+    const holderPath = resolveSessionHolderExecutablePath();
+    if (placed && (process.platform === 'win32' || !holderPath)) return context.skip();
     await withConfiguredDaemonTestHome({ prefix: 'purpose-daemon-' }, async ({ homeDir }) => {
       const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
         physicalGateway: true, sourceEnvelopeTransport: 'cpx-v1', connectedAccountModels: [
@@ -46,6 +52,21 @@ describe('Agent managed Connected Account purpose launch', () => {
           managedProviderEndpoint: { provider, purpose: 'upstream', modelIdPrefix: 'native/' } }] });
       const resources = createProviderLaunchResourceScope();
       const redaction = createProviderRedactionLease({ values: [] });
+      const targetLifetime = new AbortController();
+      let targetBytes = Buffer.alloc(0);
+      // The native process/channel stands in for an admitted Machine provider;
+      // all Provider admission, materialization and forwarding remain real.
+      const managedTarget = placed ? { home: homeDir, holderPath: holderPath!, lifetime: targetLifetime.signal,
+        openChannel: (argv: readonly string[], signal: AbortSignal) => {
+          const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'] });
+          const channel = Duplex.from({ readable: child.stdout, writable: child.stdin });
+          child.stdout.on('data', (bytes: Buffer) => { targetBytes = Buffer.concat([targetBytes, bytes]); });
+          child.once('error', error => channel.destroy(error));
+          const stop = () => { child.kill(); };
+          signal.addEventListener('abort', stop, { once: true });
+          child.once('close', () => { signal.removeEventListener('abort', stop); channel.destroy(); });
+          return channel;
+        } } : undefined;
       const backendTarget = { kind: 'backend' as const, backendId: fixture.agentId };
       const selection = { v: 1 as const, updatedAt: 1, ref: {
         agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'example' } };
@@ -124,7 +145,7 @@ describe('Agent managed Connected Account purpose launch', () => {
           effectiveModelSelection: selection, terminal: undefined, resolvedAgentId: fixture.agentId,
           profileEnvironmentVariables: {}, daemonSpawnHooks: null, pluginRuntimeRegistry: fixture.lease.registry,
           processEnv: {}, connectedServiceAuth: null, connectedServiceMaterializationIdentity: null,
-          providerBindingAttempt: null, managedPurpose: prepared.managedPurpose,
+          providerBindingAttempt: null, managedPurpose: prepared.managedPurpose, managedTarget,
           providerAgentTargetKey: prepared.agentTargetKey, providerDiagnosticRedactionLease: redaction,
           launchResourceScope: resources });
         expect(child).toMatchObject({ ok: true });
@@ -142,11 +163,19 @@ describe('Agent managed Connected Account purpose launch', () => {
           body: JSON.stringify({ model: consumed!.providerBinding!.model.id, input: 'committed Session source' }) });
         expect(response.status).toBe(200);
         expect(await response.text()).toBe('ok');
+        if (placed) {
+          expect(targetBytes.includes(Buffer.from('committed Session source'))).toBe(true);
+          const unauthorized = await fetch(endpoint + '/responses', { method: 'POST', headers: {
+            authorization: 'Bearer synthetic-not-admitted', 'content-type': 'application/json' },
+            body: JSON.stringify({ model: 'example', input: 'must-not-reach-source' }) });
+          expect(unauthorized.status).toBe(403);
+          await unauthorized.text();
+        }
         expect((await readFile(join(homeDir, 'fixture', 'gateway-inputs'), 'utf8')).trim()).toBe('committed Session source');
         expect(guestObservations).toBe(0);
         await resources.retire();
         await expect(fetch(endpoint)).rejects.toThrow();
-      } finally { await resources.retire(); redaction.close(); await fixture.cleanup(); }
+      } finally { await resources.retire(); targetLifetime.abort(); redaction.close(); await fixture.cleanup(); }
     });
   });
   it('refuses a managed source selected for a mismatched Agent target', async () => {

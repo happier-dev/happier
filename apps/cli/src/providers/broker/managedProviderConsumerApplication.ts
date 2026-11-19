@@ -8,11 +8,18 @@ import { startProviderBrokerApplicationServer } from './providerBrokerApplicatio
 import type { ProviderBrokerRequestHandler } from './providerBrokerRequestHandler';
 import { sanitizeProviderBrokerRequestV1 } from './requestPolicyV1';
 
+/** Placement carries bytes to this admitted consumer; it never chooses another upstream. */
+export type ExposeManagedProviderConsumerEndpoint = (input: Readonly<{
+    endpointUrl: string;
+    signal: AbortSignal;
+}>) => Promise<Readonly<{ endpointUrl: string; cleanup(): Promise<void> }>>;
+
 /** Stable consumer delivery only; its request port retains source admission and upstream custody. */
 export async function startManagedProviderConsumerApplication(input: Readonly<{
     signal: AbortSignal;
     endpointUrl: string;
     credentialTransport: ProviderCredentialTransportV1 | null;
+    exposeEndpoint?: ExposeManagedProviderConsumerEndpoint;
     request(request: ManagedServiceRequest & Readonly<{ signal: AbortSignal }>): ReturnType<ProviderBrokerRequestHandler>;
 }>) {
     const transport = input.credentialTransport;
@@ -49,19 +56,24 @@ export async function startManagedProviderConsumerApplication(input: Readonly<{
             },
         },
     });
+    // This owner requested localConsumer above, so the server always supplies it.
+    const localEndpointUrl = server.localConsumerEndpointUrl!;
+    let exposure: Awaited<ReturnType<ExposeManagedProviderConsumerEndpoint>> | undefined;
     let cleanup: Promise<void> | null = null;
     const close = (): Promise<void> => {
         lifetime.abort();
         input.signal.removeEventListener('abort', onAbort);
-        cleanup ??= server.close();
+        cleanup ??= Promise.all([exposure?.cleanup(), server.close()]).then(() => undefined);
         return cleanup;
     };
     const onAbort = () => { void close().catch(() => undefined); };
-    input.signal.addEventListener('abort', onAbort, { once: true });
     try {
+        exposure = await input.exposeEndpoint?.({ endpointUrl: localEndpointUrl,
+            signal: AbortSignal.any([input.signal, lifetime.signal]) });
+        input.signal.addEventListener('abort', onAbort, { once: true });
         input.signal.throwIfAborted();
         return Object.freeze({
-            endpointUrl: `${server.localConsumerEndpointUrl}${new URL(input.endpointUrl).pathname}`,
+            endpointUrl: `${exposure?.endpointUrl ?? localEndpointUrl}${new URL(input.endpointUrl).pathname}`,
             credential,
             renderedCredential,
             isCurrent,

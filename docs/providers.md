@@ -2261,6 +2261,14 @@ catalog read or treat a loading catalog as a missing connection. A failed
 refresh still refuses the launch, and optional history maintenance does not
 hold readable catalog admission.
 
+In 0.3 development source, a managed-purpose Session placed in a daemonless
+target receives a target-local loopback endpoint before its Agent binding is
+materialized. The admitted target channel carries its socket bytes to that
+launch's canonical Provider consumer; the target never chooses a host address
+or upstream. The same consumer credential, source admission and Session lifetime
+apply. Selected Provider environment delivery remains owned by the target-launch
+materializer and its private stdin file publisher, rather than command arguments.
+
 The runner keeps its own loopback access endpoint across daemon replacement.
 Each new request re-admits the captured binding before obtaining fresh access;
 transport failure does not replay inference or substitute another source.

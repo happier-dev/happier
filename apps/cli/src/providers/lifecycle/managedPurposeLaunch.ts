@@ -16,7 +16,7 @@ import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protoco
 import { resolveManagedProviderPurposeBindingSnapshot } from '@/providers/managed/resolvePurposeBindingSnapshot';
 import { createManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 import { acquireBrokerSourceOperation } from '@/providers/broker/brokerSourceOperationAcquisition';
-import { startManagedProviderConsumerApplication } from '@/providers/broker/managedProviderConsumerApplication';
+import { startManagedProviderConsumerApplication, type ExposeManagedProviderConsumerEndpoint } from '@/providers/broker/managedProviderConsumerApplication';
 import { providerBrokerLocalCredentialRequirement } from '@/providers/broker/providerBrokerPrivateProtocol';
 import { composeProviderBindingMaterialization } from '@/providers/spawn/compose';
 import { resolveProviderCompatibilityConfirmation } from '@/providers/catalog/compatibility';
@@ -53,7 +53,7 @@ export type PreparedManagedPurposeLaunch = Readonly<{
   selection: ProviderBoundModelRef;
   model: AgentSessionProviderBinding['model'];
   connectedServices: ConnectedServiceBindingsV2;
-  materialize(scope: Extract<PluginExecutionScopeV1, { kind: 'session' | 'execution_run' }>): Promise<MaterializedManagedPurposeLaunch | Readonly<{ ok: false; error: ProviderErrorV1 }>>;
+  materialize(scope: Extract<PluginExecutionScopeV1, { kind: 'session' | 'execution_run' }>, exposeEndpoint?: ExposeManagedProviderConsumerEndpoint): Promise<MaterializedManagedPurposeLaunch | Readonly<{ ok: false; error: ProviderErrorV1 }>>;
 }>;
 
 /** Admits an Agent-declared source through the existing catalog, purpose and
@@ -130,7 +130,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
     providerConnectionId: readSessionModelSelectionProviderConnectionId(canonicalSelection), modelId: canonicalSelection.ref.modelId };
   return { ok: true, kind: 'managedPurpose', agentTargetKey, selection: selectedModelRef,
     model: row.descriptor, connectedServices,
-    materialize: async scope => {
+    materialize: async (scope, exposeEndpoint) => {
   const runtime = resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: provider.identity,
     managedRuntime: provider.definition.managedRuntime! });
   const family = runtime.connectedAccounts.find(family => family.purpose === candidate.declaration.managedProviderEndpoint!.purpose);
@@ -156,7 +156,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
     resources.register(source.projection.cleanup);
     const endpointUrl = source.projection.access.endpointUrl(group.application.endpointTemplateId);
     if (!endpointUrl) return refuse('provider_endpoint_unavailable');
-    const consumer = await startManagedProviderConsumerApplication({ signal, endpointUrl, credentialTransport: transport,
+    const consumer = await startManagedProviderConsumerApplication({ signal, endpointUrl, credentialTransport: transport, exposeEndpoint,
       request: async request => ({ ok: true, response: await source.projection.access.request(request) }) });
     resources.register(consumer.cleanup);
     const bindingKey = 'connected_account:' + JSON.stringify(candidate.binding.purpose);

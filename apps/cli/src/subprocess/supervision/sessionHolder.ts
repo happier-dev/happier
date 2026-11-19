@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 import { basename, dirname, join, posix } from 'node:path';
+import { createInterface } from 'node:readline';
 import { Readable, Writable, type Duplex } from 'node:stream';
 import { constants as osConstants } from 'node:os';
 import { clearTimeout, setTimeout } from 'node:timers';
@@ -655,14 +656,41 @@ export class SessionHolderChild extends ChildProcess {
                         : Object.assign(new Error(`Session holder could not start ${label}`), { code, syscall: 'spawn' }));
                     return;
                 }
-                process.streamId = value.stream;
-                this.streams.set(value.stream, process);
-                process.once('exit', () => this.streams.delete(value.stream as number));
-                process.emit('spawn');
-                for (const [kind, body] of this.unclaimedStreamFrames.get(value.stream) ?? []) process.deliver(kind, body);
-                this.unclaimedStreamFrames.delete(value.stream);
+                this.registerStream(value.stream, process);
             }, refuseStart);
         return process;
+    }
+
+    /** A target-local loopback listener; accepted sockets use the incumbent byte streams. */
+    async listenLoopback(accept: (connection: SessionHolderStreamProcess) => void): Promise<string> {
+        const reply = await this.request({ op: 'loopback-listen' });
+        const value = reply.value as { stream?: unknown; origin?: unknown } | undefined;
+        if (reply.ok !== true || typeof value?.stream !== 'number' || typeof value.origin !== 'string') {
+            throw new PluginError({ code: 'session_holder_unavailable', retryable: false,
+                message: 'The Session target cannot expose its Provider consumer' });
+        }
+        const listener = new SessionHolderStreamProcess(this);
+        const lines = createInterface({ input: listener.stdout });
+        lines.on('line', line => {
+            const accepted: unknown = JSON.parse(line);
+            if (typeof accepted !== 'object' || accepted === null || !('stream' in accepted)
+                || typeof accepted.stream !== 'number') return;
+            const connection = new SessionHolderStreamProcess(this);
+            accept(connection);
+            this.registerStream(accepted.stream, connection);
+        });
+        listener.once('exit', () => lines.close());
+        this.registerStream(value.stream, listener);
+        return value.origin;
+    }
+
+    private registerStream(id: number, stream: SessionHolderStreamProcess): void {
+        stream.streamId = id;
+        this.streams.set(id, stream);
+        stream.once('exit', () => this.streams.delete(id));
+        stream.emit('spawn');
+        for (const [kind, body] of this.unclaimedStreamFrames.get(id) ?? []) stream.deliver(kind, body);
+        this.unclaimedStreamFrames.delete(id);
     }
 
     /** @internal Stream stdin frames (`I` bytes, `C` end). */

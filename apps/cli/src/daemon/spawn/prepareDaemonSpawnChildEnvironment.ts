@@ -41,6 +41,8 @@ import {
     serializePersistedTakeoverAdmissionForEnv,
 } from './persistedTakeoverAdmission';
 import { SESSION_TARGET_PLACEMENT_ENV_KEY } from '@/subprocess/supervision/sessionTargetRelay';
+import type { ManagedSessionTarget } from '@/machines/managed/acquire';
+import { exposeManagedTargetProviderConsumer } from '@/machines/managed/providerConsumer';
 
 type ConnectedServiceAuth = Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>>;
 export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
@@ -62,6 +64,7 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
     connectedServiceMaterializationIdentity: ConnectedServiceMaterializationIdentityV1 | null;
     providerBindingAttempt: ProviderSpawnAuthorizationAttempt | null;
     managedPurpose?: PreparedManagedPurposeLaunch;
+    managedTarget?: Pick<ManagedSessionTarget, 'home' | 'holderPath' | 'openChannel' | 'lifetime'>;
     providerAgentTargetKey: string | null;
     providerDiagnosticRedactionLease: ProviderRedactionLease;
     launchResourceScope: ProviderLaunchResourceScope;
@@ -124,7 +127,9 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
                 materializeProviderBindingAfterHooks: async () => {
                     const sessionId = input.options.existingSessionId;
                     if (!sessionId) throw new Error('Managed purpose launch requires a committed Session');
-                    const materialized = await input.managedPurpose!.materialize({ kind: 'session', sessionId });
+                    const target = input.managedTarget;
+                    const materialized = await input.managedPurpose!.materialize({ kind: 'session', sessionId }, target
+                        ? endpoint => exposeManagedTargetProviderConsumer({ target, ...endpoint }) : undefined);
                     if (!materialized.ok) return { ok: false as const,
                         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
                         errorMessage: materialized.error.code, providerError: materialized.error };
