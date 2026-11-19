@@ -452,6 +452,8 @@ describe('managed creation presentation', () => {
     'admission_unavailable',
     'RPC_TRANSPORT_UNAVAILABLE',
     'RPC_CLIENT_NOT_AVAILABLE',
+    // The idle reconciler's own "couldn't read the guest's activity" refusal (managedIntentReconciler).
+    'activity_unknown',
   ])(
     'retires a failed pre-effect idle observation (%s) only after newer healthy guest presence',
     (errorCode) => {

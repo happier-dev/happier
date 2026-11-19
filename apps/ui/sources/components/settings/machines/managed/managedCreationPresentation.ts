@@ -281,7 +281,9 @@ export function currentManagedCreationOperation(machine: ManagedMachineReadSnaps
         && snapshot.progress?.kind === 'phase' && snapshot.progress.phase === 'managed.intent.waiting-idle') return null;
     const failedIdleObservation = snapshot.state === 'failed' && isManagedMachineRetentionWaitOperation(snapshot)
         && ['managed_controller_request_failed', 'ECONNABORTED', 'admission_unavailable',
-            'RPC_TRANSPORT_UNAVAILABLE', 'RPC_CLIENT_NOT_AVAILABLE'].includes(snapshot.error?.errorCode ?? '');
+            'RPC_TRANSPORT_UNAVAILABLE', 'RPC_CLIENT_NOT_AVAILABLE',
+            // The idle reconciler could not read the guest's activity, so nothing was stopped.
+            'activity_unknown'].includes(snapshot.error?.errorCode ?? '');
     // Confirmed removal supersedes an earlier failed request on this resource.
     // A superseded operation can fail after Delete observed absence. Compare
     // request admission, not settlement. A passive idle failure is obsolete
