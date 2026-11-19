@@ -86,6 +86,7 @@ import { registerAccountEncryptionRoutes } from '../account/registerAccountEncry
 import { createRequesterCurrentnessSocketHarness } from '../../../../../../cli/src/testkit/backends/requesterCurrentnessSocketHarness';
 import { captureStdout } from '../../../../../../cli/src/testkit/logger/captureOutput';
 import { artifactsRoutes } from '../artifacts/artifactsRoutes';
+import { registerAutomationActionIndexRoutes } from '../automations/registerAutomationActionIndexRoutes';
 import { openArtifactStoredContentBytes } from '@/app/artifacts/artifactStoredContent';
 import { ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { initEncrypt } from '@/modules/encrypt';
@@ -1997,7 +1998,12 @@ describe('composed CLI managed Action origination', () => {
         } finally { restoreHttp(); await sockets.close(); resetActiveAccountSettingsSnapshotForTests(); await instance.close(); }
     });
 
-    it('dispatches immediate Stop of an E2EE managed guest using its foreign Manage grant', async () => {
+    it.each([
+        { direction: 'Stop', intent: 'stop', previousIntent: 'start', previousPower: 'running', expectedRevision: 0 },
+        { direction: 'Start', intent: 'start', previousIntent: 'stop', previousPower: 'stopped', expectedRevision: 1 },
+    ] as const)('dispatches immediate $direction of an E2EE managed guest using its foreign Manage grant', async ({
+        intent, previousIntent, previousPower, expectedRevision,
+    }) => {
         const selected = await fixture(true, 'e2ee');
         const requester = await fixture(true, 'e2ee');
         const requesterToken = await auth.createToken(requester.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
@@ -2025,29 +2031,26 @@ describe('composed CLI managed Action origination', () => {
                 v: 1, requestId: selected.requestId, target, input: acquireInput }),
             input: { input: acquireInput, requestId: selected.requestId, continuationPresent: false } });
         await db.managedMachine.update({ where: { id: admitted.machine.id }, data: { allocation: 'bound',
+            desired: previousIntent, intentRevision: expectedRevision,
             enrolledMachineId: (await fixture(true, 'e2ee')).controller.machineId,
-            observation: { observedAt: Date.now(), availability: 'present', power: 'running', storage: 'retained',
+            observation: { observedAt: Date.now(), availability: 'present', power: previousPower, storage: 'retained',
                 billing: { location: 'local', stoppedBilling: 'not-billed' } },
             resource: { contributionRef: selected.input.selection.launch.provider, schemaVersion: 1, value: { id: 'retained-vm' } } } });
         const credentials = { token: selected.token, credentialProvenance: 'stored_session' as const,
             encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(17) } };
+        const storedSettings = { actionsSettingsV1: { v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } } };
         const serverHttpBaseUrl = 'http://managed-seam.test';
         const connection = { token: credentials.token, serverUrl: serverHttpBaseUrl, homeId,
             controller: selected.controller, externalActionMachineRequestPrivateKey: selected.keys.secretKey } as ManagedMachineAcquisitionDriverInput;
         const phases: Array<{ phase: string; elapsedMs: number; status?: number }> = [];
-        const operations = createHostActionOperationRuntime({ machineId: selected.controller.machineId,
-            custodyBinding: { serverId: homeId, installationId: selected.controller.installationId },
-            resolveAccountId: async () => selected.account.id });
         let artifactWrites = 0;
         const receiver = createCliActionExecutor({ token: credentials.token, credentials, sessionId: '', mode: 'e2ee', ctx: null,
             serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl, runtimeActionMachineId: selected.controller.machineId,
             externalActionMachineRequestPrivateKey: selected.keys.secretKey,
             externalActionMachineInstallationId: selected.controller.installationId,
-            runActionOperation: operations.runActionOperation,
-            accountServerActionDeps: createAccountServerActionDeps({ token: credentials.token, credentials, serverId: homeId,
-                serverIdentityId: homeId, serverHttpBaseUrl }),
             managedMachineAction: async ({ actionId, input, context }) => {
                 const client = createManagedMachineControllerClient(connection, { requestId: context.actionRequestId!, context }, actionId);
+                if (actionId === 'machines.managed.get') return await client.post('/v1/machines/managed/actions/get', input, ManagedMachineV1Schema);
                 const result = await client.post('/v1/machines/managed/controller/admit-control',
                     ManagedControlAdmissionInputV1Schema.parse({ action: actionId, input, requestId: context.actionRequestId }),
                     ManagedAdmissionOutputV1Schema);
@@ -2064,40 +2067,53 @@ describe('composed CLI managed Action origination', () => {
             verifyExecutionAuthorization: input => verifyExternalActionExecutionAuthorizationCurrent({ ...input,
                 privateKey: selected.keys.secretKey, installationId: selected.controller.installationId, serverHttpBaseUrl }),
             resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
-            prepareRequesterAccountContext: async () => { throw new Error('Stop must not open requester Account custody'); },
+            prepareRequesterAccountContext: async () => { throw new Error('Manage power must not open requester Account custody'); },
         });
         const appInstance = await app(async request => {
             const dispatch = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
             expect(dispatch.executionAuthorization?.binding).toMatchObject({ accountId: requester.account.id,
-                custodianAccountId: selected.account.id, authentication: { kind: 'terminal' } });
+                custodianAccountId: selected.account.id, authentication: { kind: 'terminal' },
+                managedAdmission: { actionId, input: { homeId, managedId: admitted.machine.id, when: 'now', intent, expectedRevision } } });
             expect(request.admittedMachineTarget).toMatchObject({ custodianAccountId: selected.account.id,
                 machineId: selected.controller.machineId,
                 installationId: selected.controller.installationId });
             if (!receive) throw new Error('Controller RPC handler was not registered');
-            return { ok: true, result: await receive(request.callParams, { authorization: request.authorization }) };
+            const socket = { id: 'controller-socket', data: { clientType: 'machine-scoped', userId: selected.account.id,
+                machineId: selected.controller.machineId,
+                [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: selected.controller.installationId },
+                timeout: () => ({ emitWithAck: async () => { throw new Error('Socket delivery is the substituted boundary'); } }),
+            };
+            const machineAdmission = request.machineAdmission ?? await request.createMachineAdmission?.({ target: socket });
+            const result = await receive(request.callParams, { authorization: request.authorization,
+                ...(machineAdmission ? { machineAdmission } : {}) });
+            return { ok: true, result };
         }, http => {
             registerAccountProfileRoute(http);
             registerAccountEncryptionRoutes(http);
+            registerAutomationActionIndexRoutes(http);
             artifactsRoutes(http);
             http.addHook('onRequest', async request => {
                 if (request.method === 'POST' && request.url === '/v1/artifacts') artifactWrites++;
             });
         }, phases);
         const restoreHttp = installAxiosFastifyAdapter({ app: appInstance, origin: serverHttpBaseUrl });
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(storedSettings),
+            rawSettings: storedSettings, settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
+            scopeKey: resolveAccountSettingsScopeKey(credentials) });
         try {
             const requestId = crypto.randomUUID();
-            const input = { homeId, managedId: admitted.machine.id, intent: 'stop', when: 'now', expectedRevision: 0 };
+            const input = { homeId, managedId: admitted.machine.id, intent, when: 'now', expectedRevision };
             const execution = await dispatchOriginalAccountAction({ actionId, requestId, target, input,
                 credentials: { token: requesterToken, credentialProvenance: 'stored_session', encryption: null },
                 serverHttpBaseUrl, serverId: homeId, serverIdentityId: homeId, authority: 'present_user',
                 invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' },
-                onRequesterSessionCredentialDisclosure: async () => { throw new Error('Stop must not disclose requester credentials'); },
+                onRequesterSessionCredentialDisclosure: async () => { throw new Error('Manage power must not disclose requester credentials'); },
             });
             expect(execution, JSON.stringify({ execution, phases })).toMatchObject({ ok: true });
             expect(await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } }))
-                .toMatchObject({ desired: 'stop', intentRevision: 1 });
+                .toMatchObject({ desired: intent, intentRevision: expectedRevision + 1 });
             expect(artifactWrites).toBe(0);
-        } finally { restoreHttp(); await appInstance.close(); }
+        } finally { restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await appInstance.close(); }
     });
 
     it.each(['cli', 'mcp'] as const)('preserves the admitted %s power root through Ask and approved controller admission', async surface => {
@@ -2176,6 +2192,7 @@ describe('composed CLI managed Action origination', () => {
         }, http => {
             registerAccountProfileRoute(http);
             registerAccountEncryptionRoutes(http);
+            registerAutomationActionIndexRoutes(http);
             http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings }, version: 2 }));
             artifactsRoutes(http);
         }, phases);
