@@ -1,6 +1,3 @@
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { WorkflowEventsListOutputV1Schema } from '@happier-dev/protocol/actions/specs/workflowEvents';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -13,12 +10,14 @@ import { startAutomationsEverywhereDeploymentFixture } from '../../src/testkit/a
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
 import { readWorkflowChildSession } from '../../src/testkit/workflowChildSession';
+import { createRunDirs } from '../../src/testkit/runDir';
 
 let setup: Awaited<ReturnType<typeof startAutomationsEverywhereDeploymentFixture>> | undefined;
 afterEach(async () => { await setup?.fixture.stop(); setup = undefined; }, 0);
 
 it('P01.F3 remote resource event reaches ordinary effects', async () => {
-  setup = await startAutomationsEverywhereDeploymentFixture(await mkdtemp(join(tmpdir(), 'automations-p01-f3-')));
+  const run = createRunDirs({ runLabel: 'automations-p01-f3' });
+  setup = await startAutomationsEverywhereDeploymentFixture(run.testDir('remote-resource'));
   const { fixture, actor, machine, deployInput, docker } = setup;
   const observer = await fixture.enrollDaemon({ ...actor, name: 'remote-event-observer' },
     { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
