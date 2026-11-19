@@ -170,6 +170,7 @@ const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(
     [props.scope.accountId, state.rows, teamName],
   );
   const retained = state.rows.length > 0;
+  const firstLoad = !state.hasLoaded && (state.status === 'loading' || state.status === 'initial');
   const stale =
     state.status === 'offline' && retained
       ? {
@@ -211,6 +212,7 @@ const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(
     <ProjectSourcesRail
       groups={groups}
       total={state.rows.length}
+      loading={firstLoad}
       query={query}
       onChangeQuery={changeQuery}
       selectedId={selectedId}
@@ -294,7 +296,7 @@ const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(
         detail={detail}
         detailActive={detailActive}
         idleDetail={
-          !state.hasLoaded && (state.status === 'loading' || state.status === 'initial') ? (
+          firstLoad ? (
             <ItemList>
               <SurfaceStateCard
                 kind="loading"

@@ -19534,7 +19534,7 @@ const it: WorkflowTriggersCopy = {
         databaseInfo: "Cosa parte da questo database e dai suoi backup.",
         healthCheckInfo: "Cosa parte quando questo controllo fallisce o si ripristina.",
         projectInfo: "Cosa parte da questo progetto e dalle sue sessioni.",
-        appInfo: "Cosa parte da questa app e dai suoi ambienti.",
+        appInfo: "Cosa parte da questa sorgente e dai suoi ambienti.",
         backupInfo: "Cosa parte quando un backup di questo ambiente viene eseguito o fallisce.",
         pluginInfo: "Cosa parte da qui e cosa gira prima e dopo le sue azioni in Happier.",
         serviceInfo: "Cosa parte da questo servizio e i workflow che girano sulla sua macchina.",

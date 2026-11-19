@@ -19548,7 +19548,7 @@ const ca: WorkflowTriggersCopy = {
         databaseInfo: "El que s’inicia des d’aquesta base de dades i les seves còpies de seguretat.",
         healthCheckInfo: "El que s’inicia quan aquesta comprovació falla o es recupera.",
         projectInfo: "El que s’inicia des d’aquest projecte i les seves sessions.",
-        appInfo: "El que s’inicia des d’aquesta app i els seus entorns.",
+        appInfo: "El que s’inicia des d’aquesta font i els seus entorns.",
         backupInfo: "El que s’inicia quan una còpia de seguretat d’aquest entorn s’executa o falla.",
         pluginInfo: "El que s’inicia des d’aquí i el que s’executa abans i després de les seves accions a Happier.",
         serviceInfo: "El que s’inicia des d’aquest servei i els fluxos que s’executen a la seva màquina.",

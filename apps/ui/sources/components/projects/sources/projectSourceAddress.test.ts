@@ -40,4 +40,17 @@ describe('Source address presentation', () => {
         expect(formatProjectSourceAddress(repository)).toBe('forge:8080/gitlab/group/repo');
         expect(describeProjectSourceRow({ repository, defaultRef: 'v0.3', subdir: 'apps/ios' })).toBe('group/repo · v0.3 · apps/ios');
     });
+    // The Team a Source is shared with is the row's last fact, so a narrow rail shortens it before the name or the
+    // repository; the title line keeps the whole name (L12 design review 11-19 F1). A named Team replaces the
+    // unnamed "Owned by the Team".
+    it('names the Team it is shared with after the repository facts', () => {
+        const repository = ProjectSourceRepositorySelectorV1Schema.parse({
+            provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+            repository: { nameWithOwner: 'happier-dev/happier' }, protocol: 'https',
+        });
+        expect(describeProjectSourceRow({ repository, defaultRef: 'v0.3' }, { team: 'Acme' }))
+            .toBe('happier-dev/happier · v0.3 · Shared with Acme');
+        expect(describeProjectSourceRow({ owner: { kind: 'team', teamId: 't' } }, { team: 'Acme' }))
+            .toBe('No address · Shared with Acme');
+    });
 });

@@ -19468,7 +19468,7 @@ const ja: WorkflowTriggersCopy = {
         databaseInfo: "このデータベースとそのバックアップから始まるもの。",
         healthCheckInfo: "このチェックが失敗または回復したときに始まるもの。",
         projectInfo: "このプロジェクトとそのセッションから始まるもの。",
-        appInfo: "このアプリとその環境から始まるもの。",
+        appInfo: "このソースとその環境から始まるもの。",
         backupInfo: "この環境のバックアップが実行または失敗したときに始まるもの。",
         pluginInfo: "ここから始まるものと、Happier でのアクションの前後に実行されるもの。",
         serviceInfo: "このサービスから始まるものと、そのマシンで実行されるワークフロー。",

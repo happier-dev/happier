@@ -8,10 +8,8 @@ export function formatMoment(atMs: number, nowMs: number): string {
   const when = new Date(atMs);
   const now = new Date(nowMs);
   const locale = getPreferredLanguage();
-  const time = formatWithCachedDateTimeFormatter(when, locale, {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  // The language's own short clock ("7:27 PM", "07:27"): a padded hour is a convention of some languages only.
+  const time = formatWithCachedDateTimeFormatter(when, locale, { timeStyle: 'short' });
   if (when.getFullYear() === now.getFullYear()
     && when.getMonth() === now.getMonth()
     && when.getDate() === now.getDate())

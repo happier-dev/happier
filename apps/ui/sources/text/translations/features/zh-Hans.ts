@@ -19408,7 +19408,7 @@ const zhHans: WorkflowTriggersCopy = {
         databaseInfo: "从此数据库及其备份启动的内容。",
         healthCheckInfo: "此检查失败或恢复时启动的内容。",
         projectInfo: "从此项目及其会话启动的内容。",
-        appInfo: "从此应用及其环境启动的内容。",
+        appInfo: "从此源及其环境启动的内容。",
         backupInfo: "此环境的备份运行或失败时启动的内容。",
         pluginInfo: "从这里启动的内容，以及在 Happier 中其操作前后运行的内容。",
         serviceInfo: "从此服务启动的内容，以及在其机器上运行的工作流。",

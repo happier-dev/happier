@@ -12,6 +12,7 @@ import {
   CollectionList,
   CollectionListGroupLabel,
   CollectionNavigationRow,
+  CollectionSkeletonRows,
 } from '@/components/ui/lists/collection/CollectionList';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { t } from '@/text';
@@ -25,6 +26,8 @@ export const ProjectSourcesRail = React.memo(function ProjectSourcesRail(
   props: Readonly<{
     groups: readonly ProjectSourceGroup[];
     total: number;
+    /** The catalog's first load: nothing is known yet, so the rail shows loading rows and no count. */
+    loading: boolean;
     query: string;
     onChangeQuery: (query: string) => void;
     selectedId: string | null;
@@ -50,7 +53,7 @@ export const ProjectSourcesRail = React.memo(function ProjectSourcesRail(
     <CollectionList
       testID="projects.sources.rail"
       title={t('projects.sources.title')}
-      count={props.total}
+      count={props.loading ? null : props.total}
       headerAction={
         <IconButton
           testID="projects.sources.rail.add"
@@ -84,6 +87,7 @@ export const ProjectSourcesRail = React.memo(function ProjectSourcesRail(
           mark={mark()}
         />
       ) : null}
+      {props.loading ? <CollectionSkeletonRows count={6} rowRole="catalogRow" /> : null}
       {props.groups.length === 0 && props.query.trim() ? (
         <Item
           testID="projects.sources.rail.noMatches"
@@ -110,9 +114,8 @@ export const ProjectSourcesRail = React.memo(function ProjectSourcesRail(
                 key={source.id}
                 testID={`projects.sources.row.${source.id}`}
                 title={source.name}
-                // The Team is the row's title qualifier: one line, never squeezing the source's name.
-                titleQualifier={team}
-                subtitle={describeProjectSourceRow(source)}
+                // The Team closes the second line, so the name keeps the title line whole (design review 11-19 F1).
+                subtitle={describeProjectSourceRow(source, { team })}
                 icon={mark()}
                 selected={props.selectedId === source.id}
                 onPress={() => props.onSelect(source.id)}

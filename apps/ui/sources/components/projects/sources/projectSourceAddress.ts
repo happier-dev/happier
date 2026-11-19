@@ -67,17 +67,21 @@ export function formatRepositoryIdentityAddress(
  * The row's title is already the name. A Source without a repository has no address to show (a ref or folder
  * means nothing without one), so the line says when it was added, the fact that tells same-named Sources apart,
  * and names a Team owner: "Added 3 Nov · Owned by the Team". An older server sends no creation time; the line
- * then says the Source has no address.
+ * then says the Source has no address. A row that knows the Team's name ends with it ("… · Shared with Acme").
  */
 export function describeProjectSourceRow(
   source: Pick<ProjectSourceV1, 'repository' | 'defaultRef' | 'subdir'> & Partial<Pick<ProjectSourceV1, 'owner' | 'createdAt'>>,
+  options?: Readonly<{ team?: string | null }>,
 ): string {
+  // The Team it is shared with comes last, so a narrow row shortens it before the facts that tell Sources apart;
+  // a named Team replaces the unnamed "Owned by the Team".
+  const team = options?.team ? t('projects.sources.sharedWithTeam', { team: options.team }) : null;
   if (!source.repository) {
     return [
       source.createdAt === undefined
         ? t('projects.sources.noAddress')
         : t('projects.sources.addedAt', { time: formatMoment(source.createdAt, Date.now()) }),
-      source.owner?.kind === 'team' ? t('projects.sources.ownedByTeam') : null,
+      team ?? (source.owner?.kind === 'team' ? t('projects.sources.ownedByTeam') : null),
     ]
       .filter(Boolean)
       .join(' · ');
@@ -86,6 +90,7 @@ export function describeProjectSourceRow(
     source.repository.repository.nameWithOwner,
     source.defaultRef,
     normalizeProjectSourceSubdirV1(source.subdir),
+    team,
   ]
     .filter(Boolean)
     .join(' · ');

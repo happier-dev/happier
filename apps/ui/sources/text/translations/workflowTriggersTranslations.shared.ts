@@ -116,7 +116,7 @@ export const en = {
         databaseInfo: "What starts from this database and its backups.",
         healthCheckInfo: "What starts when this check fails or recovers.",
         projectInfo: "What starts from this project and its sessions.",
-        appInfo: "What starts from this app and its environments.",
+        appInfo: "What starts from this source and its environments.",
         backupInfo: "What starts when a backup of this environment runs or fails.",
         pluginInfo: "What starts from this, and what runs before and after its Actions in Happier.",
         serviceInfo: "What starts from this service, and the workflows that run on its Machine.",

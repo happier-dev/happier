@@ -19028,7 +19028,7 @@ const de: WorkflowTriggersCopy = {
         databaseInfo: "Was von dieser Datenbank und ihren Backups aus startet.",
         healthCheckInfo: "Was startet, wenn diese Prüfung fehlschlägt oder sich erholt.",
         projectInfo: "Was von diesem Projekt und seinen Sitzungen aus startet.",
-        appInfo: "Was von dieser App und ihren Umgebungen aus startet.",
+        appInfo: "Was von dieser Quelle und ihren Umgebungen aus startet.",
         backupInfo: "Was startet, wenn ein Backup dieser Umgebung läuft oder fehlschlägt.",
         pluginInfo: "Was von hier aus startet und was in Happier vor und nach seinen Aktionen läuft.",
         serviceInfo: "Was von diesem Dienst aus startet und welche Workflows auf seiner Maschine laufen.",

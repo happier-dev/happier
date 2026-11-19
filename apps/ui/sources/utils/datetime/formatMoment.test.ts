@@ -35,9 +35,14 @@ describe('formatMoment', () => {
   it('keeps clock time for today and weekday plus time for a nearby future reset', () => {
     const today = new Date(2026, 9, 10, 18, 15).getTime();
     const soon = new Date(2026, 9, 12, 18, 15).getTime();
-    const clock = { hour: '2-digit', minute: '2-digit' } as const;
+    const clock = { timeStyle: 'short' } as const;
     expect(formatMoment(today, now)).toBe(date(today, clock));
     expect(formatMoment(soon, now)).toBe(`${date(soon, { weekday: 'short' })} ${date(soon, clock)}`);
+  });
+
+  it('says a morning clock time the way the language does, without a padded hour', () => {
+    const morning = new Date(2026, 9, 10, 7, 27).getTime();
+    expect(formatMoment(morning, now)).toMatch(/^7:27/);
   });
 
   it('uses the selected app language when the device formatter has another locale', async () => {
