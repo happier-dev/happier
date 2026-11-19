@@ -1512,7 +1512,7 @@ function ManagedConfiguratorNativeChoices(props: Readonly<{
     </>;
 }
 
-/** A required field with nothing entered: absent, empty text, or an empty list. */
+/** A required field is blank when its value is absent or empty text. The launch schema validates supplied values. */
 function isBlankInput(value: unknown): boolean {
-    return value === undefined || value === null || value === '' || Array.isArray(value) && value.length === 0;
+    return value === undefined || value === null || value === '';
 }

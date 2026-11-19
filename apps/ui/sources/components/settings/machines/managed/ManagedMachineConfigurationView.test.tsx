@@ -1704,6 +1704,8 @@ describe('mounted managed configurator', () => {
       noUnavailableChoice();
       await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
       expect(form.props.input).toMatchObject({ cpus: 2, store: info.limaHome, image: 'https://example.test/ubuntu.img', diskGiB: 100 });
+      // Lima requires mounts and accepts an empty list. Once the refusal clears, Advanced closes again.
+      expect(fieldOf('vmType')).toBeUndefined();
       // Refusing a launch that was already chosen: the field and Create say why, and the page draws no second,
       // generic "no longer available" choice for the launch it replaced.
       await act(async () => form.props.onPatch({ vmType: 'vz' }));
