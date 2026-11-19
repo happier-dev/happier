@@ -6,6 +6,7 @@ import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/ac
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { PENDING_INPUT_PROTOCOL_VERSION_V5 } from '@happier-dev/protocol/clientCompatibility/primitives';
 import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { projectSessionInputReferencesV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
 import { buildUploadedAttachment } from '@happier-dev/protocol/messages/structured/sessionAttachmentsInputV1';
@@ -14,8 +15,10 @@ import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { SessionAttachmentUploadInitRequestV1Schema } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentUploadInitRequestV1';
 import { StructuredImageInputV1Schema } from '@happier-dev/protocol/runtime/input/imageInputV1';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createSessionPendingHttpBoundary } from '@/dev/testkit/harness/sessionPendingHttpBoundary';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installSessionActionFixture, installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -97,6 +100,46 @@ afterEach(async () => {
 });
 
 describe('submitSessionDraft', () => {
+    it.each(['composer', 'action'] as const)('sends shared editor input to Account Pending through %s', async entry => {
+        const features = createRootLayoutFeaturesResponse({ capabilities: {
+            serverIdentity: { serverIdentityId: 'srv_capture_home' },
+        } });
+        features.capabilities.session.pendingInput = { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V5 };
+        homes.answer(serverId, '/v1/features', { body: features });
+        homes.answer(serverId, '/v1/features/authenticated', { body: features });
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        const session = installSessionActionFixture({ homes, storage, serverId, session: {
+            id: sessionId, active: true, pendingVersion: 2, metadata: null,
+            accessLevel: 'edit', canApprovePermissions: false,
+        } });
+        const pending = createSessionPendingHttpBoundary(sessionId);
+        homes.answer(serverId, `POST /v2/sessions/${sessionId}/pending`, { select: async (_body, request) => {
+            const response = pending.handle(request.url, request.init);
+            if (!response) throw new Error('Expected Account Pending enqueue');
+            return { status: response.status, body: await response.json() };
+        } });
+        const text = 'Review this shared Bot request';
+        const localId = 'shared-editor-input';
+        if (entry === 'composer') {
+            const { submitAppSessionComposerMessage } = await import('@/components/sessions/transcript/source/appSessionTranscriptActions');
+            const { createSyncBackedSubmitPort } = await import('@/sync/domains/session/input/syncBackedSubmitPort');
+            const result = await submitAppSessionComposerMessage(createSyncBackedSubmitPort(), {
+                session, sessionId, serverId, text, localId, configuredMode: 'agent_queue',
+                sessionInactiveResumePolicy: 'online_only', resumeCapabilityOptions: {},
+            });
+            expect(result, JSON.stringify(result)).toMatchObject({ type: 'success', persistence: 'pending', localId });
+        } else {
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const result = await createDefaultActionExecutor().execute('session.message.send', {
+                sessionId, message: text, localId, reply: 'none', requestedAction: { v: 1, kind: 'enqueue' },
+            }, { surface: 'ui', serverId });
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'accepted', localId } });
+        }
+        expect(pending.enqueued.get(localId)).toMatchObject({ content: { t: 'plain', v: { content: { text } } } });
+        expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(0);
+    });
+
     it.each(['composer', 'composer-direct', 'composer-held', 'composer-direct-held', 'composer-settings', 'composer-team-asleep', 'composer-team-predecessor', 'sync', 'sync-direct', 'voice', 'draft', 'public'] as const)('keeps %s Send on the Home Action delivery owner', async entry => {
         const direct = entry.includes('-direct');
         const held = entry.endsWith('-held');

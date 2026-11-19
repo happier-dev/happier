@@ -27,7 +27,9 @@ import { SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protoco
 import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import { ExecutionRunGetResponseSchema, ExecutionRunInputTurnV1Schema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { sanitizeSessionInputForgeEvidenceMetaV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, sanitizeSessionInputForgeEvidenceMetaV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionMessageRefV1Schema, type SessionMessageRefV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageRefV1';
 import type { SessionMessageReplyOutcomeV1, SessionMessageReplyProgressV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { resolveSessionReceiverDeliveryV1, type SessionReceiverDeliveryDecisionV1 } from '@happier-dev/protocol/sessions/follow/sessionReceiverDeliveryV1';
@@ -1647,7 +1649,14 @@ export async function sendSessionMessage(
   } catch {
     return { ok: false, code: 'admission_rejected', admissionResult: { status: 'rejected', code: 'session_input_invalid' } };
   }
-  const requiresMachineAdmission = requiresMachineAdmissionForSessionInput({
+  const usesSharedAccountPending = protectedAdmission?.request.v === 1 && protectedAdmission.request.caller?.kind === 'host'
+    && params.executionAuthority !== 'account_automation' && !params.callerInputAuthorization && !params.targetMachineId
+    && readSessionAccessProjectionRoleV1(sessionTarget.rawSession) === 'recipient'
+    && supportsAccountPendingForSessionInput({
+      request: protectedAdmission.request, wait: params.wait, recipient,
+      structuredInput: params.messageMeta?.[HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1],
+    });
+  const requiresMachineAdmission = !usesSharedAccountPending && requiresMachineAdmissionForSessionInput({
     request: protectedAdmission?.request ?? null,
     mode: sessionTarget.mode,
     ...(params.callerInputAuthorization ? { callerInputAuthorization: params.callerInputAuthorization } : {}),
@@ -1817,7 +1826,8 @@ export async function sendSessionMessage(
     intent: nextTurnNote || params.resumeInactiveSession === false ? 'next_turn' : 'wake',
     returnedAnswer: params.informationDelivery === 'returned_answer',
   }) : undefined;
-  const shouldResumeInactiveSession = executionRunRecipient === undefined
+  // Home owns activation for shared Account Pending input.
+  const shouldResumeInactiveSession = !usesSharedAccountPending && executionRunRecipient === undefined
     && sessionTarget.rawSession.active !== true
     && params.resumeInactiveSession !== false
     && (receiverDelivery === undefined || receiverDelivery.disposition === 'wake');
@@ -2001,7 +2011,7 @@ export async function sendSessionMessage(
         ...(params.signal ? { signal: params.signal } : {}),
       });
     } else {
-      const targetMachineId = resolveSessionInputTargetMachineId({ decryptedMetadata,
+      const targetMachineId = usesSharedAccountPending ? null : resolveSessionInputTargetMachineId({ decryptedMetadata,
         rawSession: sessionTarget.rawSession as Readonly<Record<string, unknown>>,
         ...(params.targetMachineId ? { targetMachineId: params.targetMachineId } : {}) });
       if (!targetMachineId && params.targetMachineId) return { ok: false, code: 'admission_rejected',

@@ -57,10 +57,11 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import { resolveCliActionCallerWorkflowTarget } from './resolveCliActionCallerSession';
 import { requiresMachineAdmissionForSessionInput, resolveSessionInputTargetMachineId, resolveProtectedSessionInputActionTarget } from '@/session/services/sessionInputAdmissionIdentity';
 export { resolveProtectedSessionInputActionTarget } from '@/session/services/sessionInputAdmissionIdentity';
-import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { buildTrustedHostSessionInputAdmissionV1, supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
-import { getActionSpec, hasDeclaredActionDaemonIngress, resolveActionExecutionPlacementForInput, PublicActionIdSchema, SignedRootActionIdSchema, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, hasDeclaredActionDaemonIngress, resolveActionExecutionPlacementForInput, PublicActionIdSchema, SignedRootActionIdSchema, projectSessionSpawnNewApiRequest, SessionSendMessageInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindCallerInput } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { createActionExecuteFailureError, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -2062,10 +2063,21 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         });
         if (!transport.ok) return { context,
           invocation: createOneShotPatInvocation(async () => actionResolutionFailure(transport)) };
+        const request = buildTrustedHostSessionInputAdmissionV1(context.surface, context.actionRequestAttributionV1).request;
+        if (actionId === 'session.message.send' && ordinary && !requireDaemonIngress
+          && !params.machineId && context.externalActionTarget?.kind !== 'machine'
+          && readSessionAccessProjectionRoleV1(transport.rawSession) === 'recipient') {
+          const send = SessionSendMessageInputSchema.safeParse(admittedInput);
+          if (send.success && 'message' in send.data && supportsAccountPendingForSessionInput({ ...send.data, request })) {
+            // A shared recipient's Account receipt is issued by Pending. Exit
+            // before the external client selects a signed Machine carrier.
+            return { context };
+          }
+        }
         // Session Actions enter their owning daemon. Protected message input
         // retains publisher custody; plain human sends retain HTTP Pending admission.
         requiresSessionDaemonAdmission = actionId !== 'session.message.send' || requiresMachineAdmissionForSessionInput({
-          request: buildTrustedHostSessionInputAdmissionV1(context.surface).request,
+          request,
           mode: transport.mode,
         });
         if (requiresSessionDaemonAdmission) {

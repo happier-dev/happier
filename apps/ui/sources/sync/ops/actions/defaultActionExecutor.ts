@@ -1,6 +1,6 @@
 import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { createActionConfirmationPresenter } from './actionConfirmationPresenter';
-import { requiresAuthenticatedMachineAdmissionForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createUiPluginCollectionSharingActionDeps } from './pluginCollectionSharingActionDeps';
 import { requireActionSuccess } from './actionResult';
 import { createPrivateLabelActionOpener, createPrivateLabelActionPreparer } from '@/sync/ops/privateLabels/privateLabelClient';
@@ -190,7 +190,7 @@ import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { AutonomousExchangeStatusV1Schema } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
 import { readSessionExchangeStatus } from '@/sync/api/session/sessionExchangeApi';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
-import { createSessionMessageDelivery, type SessionMessageDelivery, type SessionMessageComposerSubmission } from './sessionMessageDelivery';
+import { createSessionMessageDelivery, deliverSessionMessageToAccountPending, type SessionMessageDelivery, type SessionMessageComposerSubmission } from './sessionMessageDelivery';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/actionRequiredServerFeature';
@@ -391,10 +391,6 @@ import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { createExecutionRunHostApprovalReplay } from './executionRunHostApproval';
 import { createApprovalArtifactAccess } from './approvalReading';
 import { importBrowserProfileLoginsInContext } from './browserProfileLoginsImport';
-import {
-  sendSessionMessageWithServerScope,
-  projectServerScopedSessionSendMessageResult,
-} from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { createUiSessionSpawnNewDirectoryApprovalPreflight, dispatchSessionSpawnNewWithManagerPreparation } from './sessionSpawnNewAction';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -4244,29 +4240,16 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       // authoring path uses the same delivery owner, including legacy direct Send.
       const homeDelivery = isEmbedWindowContext() ? undefined : deliverSessionMessage;
       if (opts?.sessionSendMessage) return opts.sessionSendMessage(args, homeDelivery);
-      const authoredStructuredInput = args.authoredInput && 'message' in args.authoredInput ? args.authoredInput.structuredInput : undefined;
-      if (homeDelivery || opts?.sessionMessageComposerSubmission || args.reply === 'wait' || args.reply === 'return' || args.wait === true
-        || authoredStructuredInput?.reviewComments !== undefined || authoredStructuredInput?.sessionAttachments !== undefined
-        || args.inputAdmission !== undefined && requiresAuthenticatedMachineAdmissionForSessionInput(args.inputAdmission.request)
-        || args.modelSelection !== undefined || args.modelOverride !== undefined || args.providerConnectionId !== undefined || args.idempotencyKey !== undefined
-        || args.attachments !== undefined || args.source !== undefined) return deliverSessionMessage(args);
-      const { sessionId, message, serverId, recipient, requestedAction, displayText, messageMeta, permissionModeOverride, localId, signal } = args;
-      const hostAdmissionOrigin = args.inputAdmission
-        ? { kind: 'action' as const, admission: args.inputAdmission }
-        : args.callerSurface === 'voice' ? 'voice' as const : undefined;
-      const delivery = await withAccountLifetime(signal, lifetimeSignal => sendSessionMessageWithServerScope({
-        sessionId,
-        message,
-        messageLocalId: localId,
-        serverId,
-        recipient,
-        requestedAction,
-        displayText,
-        metaOverrides: permissionModeOverride ? { ...messageMeta, permissionMode: permissionModeOverride } : messageMeta,
-        ...(hostAdmissionOrigin ? { hostAdmissionOrigin } : {}),
-        signal: lifetimeSignal,
-      }));
-      return projectServerScopedSessionSendMessageResult(delivery);
+      if (homeDelivery || opts?.sessionMessageComposerSubmission
+        || args.modelSelection !== undefined || args.modelOverride !== undefined || args.providerConnectionId !== undefined
+        || !supportsAccountPendingForSessionInput({
+          ...args,
+          // Embedded input already has an exact scoped port for native recipients.
+          recipient: undefined,
+          structuredInput: args.authoredInput && 'message' in args.authoredInput ? args.authoredInput.structuredInput : undefined,
+          request: args.inputAdmission?.request,
+        })) return deliverSessionMessage(args);
+      return await withAccountLifetime(args.signal, signal => deliverSessionMessageToAccountPending({ ...args, signal }));
     },
 
     sessionAttentionSet: async ({ sessionId, request, serverId }) => accountContext

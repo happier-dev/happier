@@ -2,14 +2,34 @@ import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/pro
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { supportsSessionMessageInputJsonSchema } from '@happier-dev/protocol/actions/actionInputJsonSchemaValidation';
+import { withSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
+import { isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import type { readMachineControlTargetForSessionAuthority } from '@/sync/ops/sessionMachineTarget';
+import { projectServerScopedSessionSendMessageResult, sendSessionMessageWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { captureLazyActionAccountContext, withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
 import { createUiAccountAction } from './accountActionDeps';
 import { readSessionMessageInputSchema } from './sessionMessageInputSchema';
 
 export type SessionMessageDelivery = NonNullable<ActionExecutorDeps['sessionSendMessage']>;
+
+export async function deliverSessionMessageToAccountPending(
+  args: Parameters<SessionMessageDelivery>[0],
+) {
+  const { sessionId, message, serverId, recipient, requestedAction, displayText, messageMeta, permissionModeOverride, localId, signal } = args;
+  const hostAdmissionOrigin = args.inputAdmission
+    ? { kind: 'action' as const, admission: args.inputAdmission }
+    : args.callerSurface === 'voice' ? 'voice' as const : undefined;
+  const metaOverrides = permissionModeOverride ? { ...messageMeta, permissionMode: permissionModeOverride } : messageMeta;
+  return projectServerScopedSessionSendMessageResult(await sendSessionMessageWithServerScope({
+    sessionId, message, messageLocalId: localId, serverId, recipient, requestedAction, displayText,
+    metaOverrides: args.modelSelection ? withSessionMessageModelSelectionV1(metaOverrides, args.modelSelection) : metaOverrides,
+    hostAdmissionOrigin, signal,
+  }));
+}
+
 export type SessionMessageComposerSubmission = Readonly<{
     sourceComposerRef: import('@happier-dev/protocol/plugins/ui/composerRef').ComposerRefV1;
     isCurrent: () => boolean;
@@ -55,6 +75,18 @@ export function createSessionMessageDelivery(params: Readonly<{
       if (ownedAccount) assertExpectedActionAccount(account, args.context);
       account.assertCurrent();
       const { session, target } = await readAccountSessionControlTarget(account, sessionId, signal);
+      if (isSessionAccessRecipient(session.access, session.accessLevel)
+        && account.credentialAuthorityKind === 'account'
+        && (!args.actionCaller || args.actionCaller.kind === 'host')
+        && args.context.authority !== 'account_automation'
+        && args.context.externalActionTarget?.kind !== 'machine'
+        && !args.context.externalActionExecutionAuthorization && !args.context.actionRequestAttributionV1
+        && !args.sessionInputSource && !composerSubmission?.legacyAttachments
+        && 'message' in args.authoredInput
+        && supportsAccountPendingForSessionInput({ ...args.authoredInput, request: args.inputAdmission?.request })) {
+        return await withActionAccountRequestSignal(account, signal, pendingSignal =>
+          deliverSessionMessageToAccountPending({ ...args, serverId: account.serverId, signal: pendingSignal }));
+      }
       if (!target) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
       if (requiresReplyCustody) {
         const machines = await withActionAccountRequestSignal(account, signal, ownedSignal => readMachineRows({

@@ -786,6 +786,32 @@ export function requiresAuthenticatedMachineAdmissionForSessionInput(
   return parsed.v === 2 || requiresAuthenticatedMachineAdmissionForSessionInputV1(parsed);
 }
 
+/** Whether a direct human Send can use Account Pending on a shared Session. */
+export function supportsAccountPendingForSessionInput(input: Readonly<{
+  request?: SessionInputRequest | null;
+  reply?: 'none' | 'wait' | 'return';
+  wait?: boolean;
+  recipient?: unknown;
+  structuredInput?: unknown;
+  attachments?: unknown;
+  source?: unknown;
+  idempotencyKey?: string;
+  toolAnswerDelivery?: unknown;
+}>): boolean {
+  return (input.reply === undefined || input.reply === 'none')
+    && input.wait !== true
+    && input.recipient === undefined
+    && input.attachments === undefined
+    && input.source === undefined
+    && input.idempotencyKey === undefined
+    && input.toolAnswerDelivery === undefined
+    && (input.structuredInput === undefined || (isRecord(input.structuredInput)
+      && input.structuredInput.composerAttachments === undefined
+      && input.structuredInput.sessionAttachments === undefined
+      && input.structuredInput.reviewComments === undefined))
+    && (!input.request || (!input.request.replyIntent && !requiresAuthenticatedMachineAdmissionForSessionInput(input.request)));
+}
+
 /**
  * Validates the server-issued admission fact before a target can turn a
  * protected request into immutable authority. Account routes may admit human

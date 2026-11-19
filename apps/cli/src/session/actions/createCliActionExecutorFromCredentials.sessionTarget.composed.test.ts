@@ -1,21 +1,115 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
+import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { deriveAccountMachineKeyFromRecoverySecret, deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import { ExternalActionRequestEnvelopeSchema, ExternalActionResponseEnvelopeV1Schema, openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { configuration } from '@/configuration';
 import { writeDaemonState } from '@/persistence';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { reconcileExternalActionTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createCurrentSessionProjectionRecordFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
-import { encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
+import { decryptSessionPayload, encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 
 describe('original CLI Session Action delivery', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+    it.each(['editor', 'inactive editor', 'viewer', 'outsider', 'owner'] as const)(
+        'sends to a live shared encrypted Session with the correct admission route for %s', async role => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-cli-shared-send-' }, async () => {
+            const accountId = role === 'owner' ? 'alice' : 'bob';
+            const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 4,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const machineKey = new Uint8Array(32).fill(17);
+            const publicKey = nacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+            const credentials = { token, credentialProvenance: 'stored_session' as const,
+                encryption: { type: 'dataKey' as const, machineKey, publicKey } };
+            const sessionId = 'cmwiqxdcs00r2mcnz01awx7f5';
+            const sessionKey = new Uint8Array(32).fill(21);
+            const session = createSessionRecordFixture({ id: sessionId, active: role !== 'inactive editor', encryptionMode: 'e2ee',
+                metadataLayoutVersion: 1,
+                metadata: encryptSessionPayload({ ctx: { encryptionKey: sessionKey, encryptionVariant: 'dataKey' }, payload: { v: 1 } }),
+                dataEncryptionKey: Buffer.from(sealEncryptedDataKeyEnvelopeV1({ dataKey: sessionKey, recipientPublicKey: publicKey,
+                    randomBytes: length => new Uint8Array(length).fill(22) })).toString('base64'),
+                ...(role === 'owner' ? { share: null, machineId: 'alice-machine',
+                    ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({
+                        material: credentials.encryption, ownerMetadata: { v: 1 },
+                        randomBytes: length => new Uint8Array(length).fill(23),
+                    }) }
+                    : { share: { accessLevel: role === 'viewer' ? 'view' : 'edit', canApprovePermissions: false } }) });
+            const actionId = 'session.message.send';
+            const input = { sessionId, message: 'Shared Bot request', reply: 'none', localId: 'shared-input',
+                requestedAction: { v: 1, kind: 'enqueue' } };
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                if (url.endsWith(`/v2/sessions/${sessionId}`)) {
+                    if (role === 'outsider') return { status: 404, data: { error: 'session-not-found' } };
+                    return { status: 200, data: { session } };
+                }
+                if (role === 'outsider' && /\/v2\/sessions(?:\/archived)?\?/.test(url)) {
+                    return { status: 200, data: { sessions: [], nextCursor: null, hasNext: false } };
+                }
+                if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'e2ee', version: 1,
+                    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+                if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
+                throw new Error(`Unexpected Home read: ${url}`);
+            });
+            const delivered = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+                if (role === 'outsider' && url.endsWith('/lookup-by-tags')) {
+                    return { status: 200, data: { sessions: [] } };
+                }
+                if (role === 'owner') {
+                    expect(url).toBe(`https://home.test/v1/actions/${actionId}`);
+                    const envelope = ExternalActionRequestEnvelopeSchema.parse(body);
+                    if (envelope.v !== 2) throw new Error('Expected encrypted Machine delivery');
+                    const target = { kind: 'session' as const, sessionId };
+                    expect(envelope.target).toEqual(target);
+                    const binding = { serverIdentityId: 'srv_home', accountId,
+                        authentication: { kind: 'account' as const, tokenEpoch: 4 }, actionId, requestId: envelope.requestId, target };
+                    const material = { type: 'dataKey' as const, machineKey };
+                    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                        envelope, binding, material })?.input).toEqual(input);
+                    return { status: 200, data: prepareExternalActionResponseV2({ request: envelope, binding, material,
+                        executedMachineId: 'alice-machine', randomBytes: length => new Uint8Array(length).fill(6),
+                        execution: { ok: true, result: { status: 'accepted', localId: input.localId } } }).response };
+                }
+                expect(url).toBe(`https://home.test/v2/sessions/${sessionId}/pending`);
+                expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
+                if (role === 'viewer') throw Object.assign(new Error('Forbidden'), { response: { status: 403, data: { error: 'forbidden' } } });
+                expect(body).toMatchObject({ localId: input.localId, requestedAction: input.requestedAction });
+                expect(body).not.toHaveProperty('e2eeTag');
+                expect(body).not.toHaveProperty('targetMachineId');
+                const opened = decryptSessionPayload({ ctx: { encryptionKey: sessionKey, encryptionVariant: 'dataKey' },
+                    ciphertextBase64: body.ciphertext });
+                expect(opened).toMatchObject({ content: { text: input.message } });
+                expect(opened).not.toHaveProperty('meta.happierInputRequestV1.actionRequestAttributionV1');
+                return { status: 200, data: { didWrite: true, terminal: false } };
+            });
+            const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true, serverId: configuration.activeServerId,
+                serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({
+                    v: 1, approvalWaivedSurfaces: { [actionId]: ['cli'] },
+                }) } });
+            const result = await executor.execute(actionId, input, { surface: 'cli' });
+            if (role === 'outsider') {
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'session_not_found' });
+                expect(delivered.mock.calls.filter(([url]) => !url.endsWith('/lookup-by-tags'))).toEqual([]);
+                return;
+            }
+            if (role === 'viewer') {
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
+                    result: { status: 'rejected', code: 'session_input_unauthorized' } });
+                expect(delivered).toHaveBeenCalledOnce();
+                return;
+            }
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
+                result: { status: 'accepted', localId: input.localId } });
+            expect(delivered).toHaveBeenCalledOnce();
+        });
+    });
     it.each([
         ['session.status.get', false], ['session.activity.get', false],
         ['session.status.get', true], ['session.activity.get', true],

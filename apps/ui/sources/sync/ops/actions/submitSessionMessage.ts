@@ -19,7 +19,7 @@ function createHomeDeliverySubmitPort(port: SessionSubmitPort, args: Parameters<
         requestedAction: Parameters<SessionMessageDelivery>[0]['requestedAction'], localId?: string | null) => {
         if (!args.authoredInput || !('message' in args.authoredInput)) throw new HappyError('Invalid message input', false, { code: 'invalid_parameters' });
         const sent = requireSendSuccess(completeActionResult(await delivery({ ...args, sessionId, message: text,
-            displayText, messageMeta: args.messageMeta, requestedAction, localId: localId ?? args.localId,
+            displayText, messageMeta: { ...args.messageMeta, ...messageMeta }, requestedAction, localId: localId ?? args.localId,
             authoredInput: { ...args.authoredInput, sessionId, message: text,
                 messageMeta: { ...args.authoredInput.messageMeta, ...messageMeta }, requestedAction,
                 ...(localId ? { localId } : {}) },
