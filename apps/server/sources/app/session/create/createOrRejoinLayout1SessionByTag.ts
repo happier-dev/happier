@@ -220,10 +220,10 @@ async function insertAdmittedLayout1SessionInTx(
 
 /**
  * Only a fresh private row with Account-local admission is protected completely
- * by the existing owner-metadata fence. A Workflow birth Run belongs to that
- * same Account; its lifecycle writers take this fence before changing the Run.
- * Other referenced resources and composed admission use the prepared audience
- * path below rather than this private-birth shortcut.
+ * by the existing owner-metadata fence. Workflow birth retains a produced
+ * Session through the Run's publication audience. Referenced resources and
+ * composed admission use the prepared audience path below rather than this
+ * private-birth shortcut.
  */
 function hasOnlyAccountLocalCreationAdmission(
     prepared: PreparedLayout1SessionCreate,
@@ -239,8 +239,7 @@ function hasOnlyAccountLocalCreationAdmission(
         && authentication.sessionRuntimePrincipal === undefined
         && authentication.apiTokenGrant === undefined
         && authentication.callerInputConstraints === undefined
-        && ((prepared.originKind ?? "none") === "none" && prepared.originRunId === undefined
-            || prepared.originKind === "run_step" && prepared.originRunId !== undefined)
+        && (prepared.originKind ?? "none") === "none" && prepared.originRunId === undefined
         && prepared.originSessionId === undefined
         && prepared.manager === undefined;
 }

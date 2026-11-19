@@ -3,7 +3,7 @@ import { resolveDiscussionAudienceInTx } from "@/app/discussions/access";
 import { readManagedWakePublicationAccountIdsInTx } from "@/app/machines/managed/managedWake";
 import { readInitialSessionAccessAccountIdsInTx } from "@/app/session/access/sessionAccessGrantService";
 import { fenceSessionAccountCursorAudienceInTx, readSessionAccountCursorAudienceInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
-import { getSessionLifecycleAutomationPublicationAudienceInTx } from "@/app/workflows/workflowPublicationAudience";
+import { getSessionLifecycleAutomationPublicationAudienceInTx, getWorkflowPublicationAudienceInTx } from "@/app/workflows/workflowPublicationAudience";
 import { inReadSnapshot, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from "@/storage/prisma";
 import type { PreparedLayout1SessionCreate } from "./prepareLayout1SessionCreate";
@@ -11,7 +11,7 @@ import type { SessionCreationExecutionAuthorization } from "./apiTokenSessionCre
 
 export type SessionCreationPublicationInput = Pick<PreparedLayout1SessionCreate,
     "accountId" | "tag" | "initialAccess" | "primaryTeamId" | "manager"
-    | "discussionParticipant" | "originSessionId" | "initialTriggers" | "teamCredentialBindings"> & Readonly<{
+    | "discussionParticipant" | "originSessionId" | "originRunId" | "initialTriggers" | "teamCredentialBindings"> & Readonly<{
         sessionCreationAuthorization?: SessionCreationExecutionAuthorization;
     }>;
 
@@ -39,13 +39,21 @@ export async function readLayout1SessionCreatePublicationAudienceInTx(tx: Tx, in
     const lifecycle = incumbent && (!incumbent.active || incumbent.archivedAt !== null)
         ? await getSessionLifecycleAutomationPublicationAudienceInTx(tx, [incumbent.id])
         : { sessionIds: [], accountIds: [] };
+    // Retaining a Run's produced Session publishes to the Workflow's audience,
+    // including viewers of its attached definition, without granting Session access.
+    const workflow = input.originRunId
+        ? await getWorkflowPublicationAudienceInTx(tx, {
+            accountId: input.accountId, runWhere: { id: input.originRunId, accountId: input.accountId },
+        })
+        : { sessionIds: [], accountIds: [] };
     const seedSessionIds = [
         ...(incumbent ? [incumbent.id] : []),
         ...(input.manager ? [input.manager.sessionId] : []),
         ...(input.originSessionId ? [input.originSessionId] : []),
         ...lifecycle.sessionIds,
+        ...workflow.sessionIds,
     ];
-    const audience = await readSessionAccountCursorAudienceInTx(tx, seedSessionIds, [...accounts, ...lifecycle.accountIds]);
+    const audience = await readSessionAccountCursorAudienceInTx(tx, seedSessionIds, [...accounts, ...lifecycle.accountIds, ...workflow.accountIds]);
     return { seedSessionIds, sessionIds: audience.projectionSessionIds, accountIds: audience.accountIds, incumbentSessionId: incumbent?.id ?? null };
 }
 
