@@ -19,9 +19,10 @@ it('P01.F3 remote resource event reaches ordinary effects', async () => {
   const run = createRunDirs({ runLabel: 'automations-p01-f3' });
   setup = await startAutomationsEverywhereDeploymentFixture(run.testDir('remote-resource'),
     { observeAutomationWriteFailures: true });
-  const { fixture, actor, machine, deployInput, docker, projectSourceId } = setup;
+  const { fixture, actor, machine, deployInput, docker } = setup;
   const observer = await fixture.enrollDaemon({ ...actor, name: 'remote-event-observer' },
     { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
+  expect(observer.target.machineId).not.toBe(machine.target.machineId);
   const catalog = await actor.execute('workflow.events.list', observer.target);
   expect(catalog.ok, JSON.stringify(catalog)).toBe(true);
   if (!catalog.ok) throw new Error(catalog.errorCode);
@@ -88,6 +89,9 @@ it('P01.F3 remote resource event reaches ordinary effects', async () => {
   }
   if (!linked.ok) throw new Error(linked.errorCode);
   const trigger = WorkflowTriggerWriteResultV1Schema.parse(linked.result);
+  const savedTrigger = trigger.set.triggers.find(row => row.id === trigger.triggerId);
+  expect(savedTrigger?.kind).toBe('pluginEvent');
+  if (savedTrigger?.kind !== 'pluginEvent') throw new Error('Expected the saved deployment Event trigger');
   const runs = async () => {
     const response = await fetchJson<unknown>(`${fixture.server.baseUrl}/v3/automations/${encodeURIComponent(trigger.set.automationId)}/runs`, {
       headers: { Authorization: `Bearer ${actor.credentials.token}`,
@@ -145,8 +149,14 @@ it('P01.F3 remote resource event reaches ordinary effects', async () => {
     }));
     throw new Error(`F3 receipt/Run/child did not settle; deployAction=${JSON.stringify(deploymentOutcome)}; observedRuns=${JSON.stringify(runStates)}; receipts=${JSON.stringify(receipts)}; sourceStatuses=${JSON.stringify(sourceStatuses)}; invocations=${JSON.stringify(invocations)}`, { cause });
   }
-  expect((await runs())[0]!.cause).toMatchObject({ kind: 'trigger', triggerKind: 'pluginEvent',
-    triggerId: trigger.triggerId, evidence: { eventRef: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed } });
+  const retainedRuns = await runs();
+  expect(retainedRuns).toHaveLength(1);
+  // Public causes retain routing provenance; raw subject contexts belong to
+  // private occurrence evidence and are covered at the deployment Event owner.
+  expect(retainedRuns[0]!.cause).toMatchObject({ kind: 'trigger', triggerKind: 'pluginEvent',
+    triggerId: savedTrigger.id, triggerRevision: savedTrigger.revision,
+    evidence: { eventRef: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed,
+      sourceSelectorId: savedTrigger.sourceSelectorId } });
   const listed = await actor.execute('deployments.receipts.list', {
     serverId: fixture.serverId, environmentId: deployInput.environmentId,
   });
@@ -157,9 +167,4 @@ it('P01.F3 remote resource event reaches ordinary effects', async () => {
   if (!page.ok) throw new Error(page.error);
   const receipt = page.items.find(item => item.environmentId === deployInput.environmentId && item.state === 'failed');
   expect(receipt).toBeDefined();
-  expect((await runs())[0]!.cause).toMatchObject({ evidence: { subjectContexts: expect.arrayContaining([
-    { role: 'operand', subject: { kind: 'environment', serverId: fixture.serverId, environmentId: deployInput.environmentId } },
-    { role: 'context', subject: { kind: 'app', serverId: fixture.serverId, projectSourceId } },
-    { role: 'context', subject: { kind: 'machine', serverId: fixture.serverId, machineId: machine.target.machineId } },
-  ]) } });
 }, 0);
