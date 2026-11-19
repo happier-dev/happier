@@ -43,7 +43,9 @@ const APPROVED_CATALOG_VOCABULARY = [
   'Text', 'Heading', 'Label',
   'Icon', 'Image', 'StoredImage', 'BrandMark', 'QRCode',
   'Divider', 'Badge', 'Metadata', 'Link',
-  'Markdown', 'CodeBlock', 'ContentPreview', 'SceneArt',
+  'Markdown', 'CodeBlock', 'ContentPreview', 'SceneArt', 'CodeEditor',
+  'ShareConnectedPeoplePrompt', 'ShareGrantRow', 'ShareHelp', 'ShareLevelControl',
+  'SharePrincipalVisual', 'ShareRowAction', 'ShareSheet',
   'Spinner', 'Status', 'ReviewSeverity',
   'ApprovalPrompt', 'ApprovalFields', 'ApprovalPendingNotice', 'Timeline',
   'State', 'LoadingState', 'EmptyState', 'ErrorState',
@@ -152,6 +154,17 @@ const APPROVED_CATALOG_VOCABULARY = [
   'AvatarStack', 'CollectionConditionTokens', 'CollectionSpaceIcon', 'CollectionTitleButton',
   'EntityFlatReorderList', 'HorizontalScrollEdgeMask', 'ModalCardFooterActions', 'PageLoadingRows',
   'PlanChecklistCard', 'RegistryShelf', 'RegistryShelfAddControl', 'RegistrySourcesUnavailable',
+] as const;
+
+// These author-barrel values build or describe selection models without mounting UI.
+const APPROVED_PRESENTATION_SUPPORT_EXPORTS = [
+  'SELECTION_LIST_STATUS_VARIANTS',
+  'SHARE_ACCESS_LEVEL_ORDER',
+  'SHARE_DIRECTORY_KINDS',
+  'buildDirectorySelectionSection',
+  'buildShareSheetSelectionStep',
+  'orderShareAccessLevels',
+  'shareSheetStepId',
 ] as const;
 
 type DeclarativeDisposition = Readonly<{
@@ -1387,6 +1400,98 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'Editable Markdown is live author state, not a declarative document node.' },
   },
+  {
+    publicName: 'CodeEditor',
+    propTypeName: 'CodeEditorProps',
+    family: 'Code editor',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/content/CodeEditor.ts',
+    sharedSymbol: 'CodeEditorProps',
+    pluginOwner: { module: 'components/CodeEditor.tsx', symbol: 'CodeEditor' },
+    coreConsumers: [],
+    corePresentationMechanism: { module: 'presentationHost/context.ts', symbol: 'renderCodeEditor' },
+    hostComposition: {
+      adapter: { module: 'components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx', symbol: 'createPluginUiPrivatePresentationRenderers' },
+      physicalHost: { module: 'components/ui/code/editor/CodeEditor.tsx', symbol: 'CodeEditor', callbackSymbol: 'renderCodeEditor' },
+    },
+    positiveConsumer: {
+      kind: 'plugin-surface',
+      pathFromRepoRoot: 'packages/plugins/database-workbench/src/ui/surface/DatabaseConsole.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'The editor binds a live document and platform editor commands.' },
+  },
+  ...[
+    {
+      publicName: 'ShareConnectedPeoplePrompt',
+      module: 'components/ShareConnectedPeoplePrompt.tsx',
+      sharedModule: 'components/useShareSheetHost.ts',
+      sharedSymbol: 'useShareSheetHost',
+      coreConsumers: [],
+    },
+    {
+      publicName: 'ShareGrantRow',
+      module: 'components/ShareGrantRow.tsx',
+      sharedModule: 'presentation/sharing/ShareGrantRow.tsx',
+      sharedSymbol: 'HappierShareGrantRow',
+      coreConsumers: ['components/sharing/machines/machineShareAdapter.tsx'],
+    },
+    {
+      publicName: 'ShareHelp',
+      module: 'components/buildShareSheetSelectionStep.tsx',
+      sharedModule: 'presentation/sharing/ShareSheet.tsx',
+      sharedSymbol: 'HappierShareHelp',
+      coreConsumers: [],
+    },
+    {
+      publicName: 'ShareLevelControl',
+      module: 'components/ShareGrantRow.tsx',
+      sharedModule: 'presentation/sharing/ShareGrantRow.tsx',
+      sharedSymbol: 'HappierShareLevelControl',
+      coreConsumers: ['components/sharing/machines/machineShareAdapter.tsx'],
+    },
+    {
+      publicName: 'SharePrincipalVisual',
+      module: 'components/buildShareSheetSelectionStep.tsx',
+      sharedModule: 'components/useShareSheetHost.ts',
+      sharedSymbol: 'useShareSheetHost',
+      coreConsumers: ['components/sharing/machines/machineShareAdapter.tsx'],
+    },
+    {
+      publicName: 'ShareRowAction',
+      module: 'components/ShareGrantRow.tsx',
+      sharedModule: 'presentation/sharing/ShareGrantRow.tsx',
+      sharedSymbol: 'HappierShareRowAction',
+      coreConsumers: ['components/sharing/machines/machineShareAdapter.tsx'],
+    },
+    {
+      publicName: 'ShareSheet',
+      module: 'components/ShareSheet.tsx',
+      sharedModule: 'presentation/sharing/ShareSheet.tsx',
+      sharedSymbol: 'HappierShareSheet',
+      coreConsumers: ['components/sharing/secrets/SavedSecretShareSheet.tsx'],
+    },
+  ].map((entry): GraduatedFamily => ({
+    publicName: entry.publicName,
+    propTypeName: entry.publicName === 'ShareSheet' ? 'ShareSheetProps' : `ComponentProps<typeof ${entry.publicName}>`,
+    family: 'Sharing',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: entry.sharedModule,
+    sharedSymbol: entry.sharedSymbol,
+    pluginOwner: { module: entry.module, symbol: entry.publicName },
+    coreConsumers: entry.coreConsumers,
+    ...(entry.coreConsumers.length === 0 ? {} : {
+      coreAdapter: { module: entry.module, symbol: entry.publicName },
+    }),
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Mounted sharing controls consume the caller’s live grant and directory state.' },
+  })),
   ...(['Popover', 'Menu', 'Dropdown', 'ContextMenu'] as const).map((publicName) => ({
     publicName,
     propTypeName: publicName === 'Popover' ? 'PopoverProps' : 'MenuProps',
@@ -3582,6 +3687,15 @@ function sourceDeclaresExportedType(
       ? [...statement.declarationList.declarations] : [])
       .find(declaration => ts.isIdentifier(declaration.name) && declaration.name.text === component);
     const target = alias?.initializer;
+    // Recognize the exact typed component inside the public React.memo adapter.
+    if (target && ts.isCallExpression(target) && ts.isPropertyAccessExpression(target.expression)
+      && ts.isIdentifier(target.expression.expression) && target.expression.expression.text === 'React'
+      && target.expression.name.text === 'memo') {
+      const memoized = target.arguments[0];
+      return memoized !== undefined && ts.isFunctionExpression(memoized)
+        && memoized.name?.text === component && memoized.parameters.length === 1
+        && memoized.parameters[0]?.type !== undefined;
+    }
     if (!target || !ts.isIdentifier(target)) return false;
     const imported = file.statements.some(statement => {
       if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)
@@ -3871,12 +3985,10 @@ function collectPackageSources(directory: string): string[] {
 }
 
 /**
- * The barrel is the author-visible component boundary. Deriving this small
- * inventory from it prevents a real component being exported without a row in
- * the one presentation catalog above; public hooks are environment/resource
- * API, not component families.
+ * Compare the author barrel's runtime presentation exports with the component
+ * catalog and the explicit vocabulary for supporting values.
  */
-function publicComponentPaths(): readonly string[] {
+function publicPresentationExportPaths(): readonly string[] {
   const componentIndex = read(join(packageSourceRoot, 'components/index.public.ts'));
   const barrel = ts.createSourceFile('index.public.ts', componentIndex, ts.ScriptTarget.Latest, true);
   const exports = barrel.statements.flatMap((statement) => {
@@ -4180,6 +4292,14 @@ describe('graduated shared presentation families (§8.2)', () => {
       'DiffViewer',
       'ChangedFilesReview',
       'MarkdownEditor',
+      'CodeEditor',
+      'ShareConnectedPeoplePrompt',
+      'ShareGrantRow',
+      'ShareHelp',
+      'ShareLevelControl',
+      'SharePrincipalVisual',
+      'ShareRowAction',
+      'ShareSheet',
       'HostedAnchoredMenu',
       'Checkbox',
       'WidgetSurface',
@@ -4368,14 +4488,15 @@ describe('graduated shared presentation families (§8.2)', () => {
     expect(source).not.toContain('renderPopover');
   });
 
-  it('catalogs every public component and compound member from the author barrel', () => {
+  it('classifies every public presentation export from the author barrel', () => {
     const catalogedComponents = new Set(
       GRADUATED_FAMILIES
         .filter((entry) => entry.publiclyExported)
         .map((entry) => entry.publicName),
     );
 
-    expect([...catalogedComponents].sort()).toEqual([...publicComponentPaths()].sort());
+    expect([...catalogedComponents, ...APPROVED_PRESENTATION_SUPPORT_EXPORTS].sort())
+      .toEqual([...publicPresentationExportPaths()].sort());
   });
 
   it('matches the approved §6 vocabulary rather than deriving expected families from the barrel', () => {
