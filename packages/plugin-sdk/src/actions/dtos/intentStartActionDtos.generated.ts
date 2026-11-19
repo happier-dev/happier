@@ -1588,6 +1588,8 @@ export type IntentStartActionInputById = {
         reviewerResults: unknown[];
     };
     readonly "review.new_round": {
+        reviewId: string;
+    } | {
         runId: string;
         sessionId: string;
         fresh?: boolean | undefined;
@@ -6347,6 +6349,84 @@ export type IntentStartActionResultById = {
             };
             surface: 'agent' | 'api' | 'cli' | 'mcp' | 'plugin' | 'rpc' | 'ui' | 'voice';
             authority: 'account_automation' | 'present_user';
+        };
+    } | {
+        reviewRound: {
+            reviewId: string;
+            roundOrdinal: number;
+        };
+        comparisonId?: string | undefined;
+        comparison?: undefined | {
+            id: string;
+            source: ScmComparisonSource;
+            repository: {
+                rootPath: string;
+            };
+            endpoints: {
+                before?: string | undefined;
+                after?: string | undefined;
+            };
+            inventory: {
+                state: 'complete' | 'incomplete' | 'unavailable';
+                files: {
+                    path: string;
+                    changeKind: string;
+                    binary: boolean | null;
+                    generated: boolean;
+                    lockfile: boolean;
+                    evidence: {
+                        state: 'available';
+                        unifiedDiff: string;
+                    } | {
+                        state: 'deferred';
+                        reason: string;
+                        unifiedDiff?: undefined;
+                    } | {
+                        state: 'unavailable';
+                        reason: string;
+                        unifiedDiff?: string | undefined;
+                    };
+                    occurrences: {
+                        id: string;
+                        alias: string;
+                        path: string;
+                        before: {
+                            startLine: number;
+                            lineCount: number;
+                        };
+                        after: {
+                            startLine: number;
+                            lineCount: number;
+                        };
+                        position: number;
+                        previousPath?: string | undefined;
+                        beforeBlobId?: string | undefined;
+                        afterBlobId?: string | undefined;
+                        layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                        evidence?: undefined | {
+                            state: 'available';
+                        } | {
+                            state: 'unavailable';
+                            reason: string;
+                        };
+                    }[];
+                    previousPath?: string | undefined;
+                    beforeBlobId?: string | undefined;
+                    afterBlobId?: string | undefined;
+                    linesAdded?: number | undefined;
+                    linesRemoved?: number | undefined;
+                }[];
+                reasons: string[];
+            };
+            commitTarget?: undefined | {
+                headOid: null | string;
+                ref: null | string;
+            };
+            pullRequest?: undefined | {
+                baseOid: string;
+            };
+            freshness?: 'current' | 'stale' | 'unknown' | undefined;
+            attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
         };
     } | {
         run: {
