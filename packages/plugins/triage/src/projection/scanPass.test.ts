@@ -1,6 +1,7 @@
 import { MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1, TriageConfiguredSourceInstanceV1Schema, type TriageListSortV1, type TriageScanResultV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { createBoundedInvocation } from '@happier-dev/triage-sources/runtime';
 
 import {
     testkitLocator,
@@ -803,38 +804,56 @@ describe('one materialization pass', () => {
         expect(pass.stopped).toEqual([]);
     });
 
-    it('retains admitted pages when caller cancellation stops an unanswered continuation', async () => {
-        const controller = new AbortController();
-        let continuationStarted!: () => void;
-        const started = new Promise<void>((resolve) => { continuationStarted = resolve; });
-        let calls = 0;
-        const pending = runTriageScanPass({
-            lanes: [answeringLane({
-                sourceInstanceId: INSTANCE_ID, declaredKindIds: ['pull-request'],
-                scan: async (_input, options) => {
-                    calls += 1;
-                    if (calls === 1) return {
-                        kind: 'page', evidence: { kind: 'partial', reason: 'pageLimit' },
-                        observations: [presentObservation('pull-request', 'retained')],
-                        continuation: { v: 1, token: 'next' },
-                    };
-                    return new Promise<TriageScanResultV1>((_resolve, reject) => {
-                        options?.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
-                        continuationStarted();
-                    });
-                },
-            })],
-            signal: controller.signal,
-            pageLimit: 1, observationBudget: 4, nowMs: () => 1_000,
-        });
-        await started;
-        controller.abort();
-        const pass = await pending;
-        expect(calls).toBe(2);
-        expect(pass.observations.map((observation) => observation.entryRef.entryId)).toEqual(['retained']);
-        expect(pass.lanes[0]?.exhausted).toBe(false);
-        expect(pass.stopped).toEqual([]);
-    });
+    it.each(['caller cancellation', 'caller deadline'] as const)(
+        'retains admitted pages when %s stops an unanswered continuation', async interruption => {
+            vi.useFakeTimers();
+            const caller = new AbortController();
+            const timeoutMs = 25;
+            const invocation = createBoundedInvocation({ callerSignal: caller.signal,
+                ...(interruption === 'caller deadline' ? { timeoutMs } : {}),
+            });
+            const continuationStarted = Promise.withResolvers<void>();
+            const requests: string[] = [];
+            const pending = runTriageScanPass({
+                lanes: [answeringLane({
+                    sourceInstanceId: INSTANCE_ID, declaredKindIds: ['pull-request'],
+                    scan: async (input, options) => {
+                        if (input.page.kind === 'initial') {
+                            requests.push('initial');
+                            return {
+                                kind: 'page', evidence: { kind: 'partial', reason: 'pageLimit' },
+                                observations: [presentObservation('pull-request', 'retained')],
+                                continuation: { v: 1, token: 'opaque-next-page' },
+                            };
+                        }
+                        requests.push(input.page.continuation.token);
+                        return new Promise<TriageScanResultV1>((_resolve, reject) => {
+                            options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+                            continuationStarted.resolve();
+                        });
+                    },
+                })],
+                signal: invocation.signal,
+                pageLimit: 1, observationBudget: 4, nowMs: () => 1_000,
+            });
+            try {
+                await continuationStarted.promise;
+                if (interruption === 'caller deadline') {
+                    await vi.advanceTimersByTimeAsync(timeoutMs);
+                    expect(invocation.signal.reason).toMatchObject({ name: 'TimeoutError' });
+                } else caller.abort();
+                const pass = await pending;
+                expect(requests).toEqual(['initial', 'opaque-next-page']);
+                expect(pass.observations.map(observation => observation.entryRef.entryId)).toEqual(['retained']);
+                expect(pass.lanes[0]?.exhausted).toBe(false);
+                expect(pass.stopped).toEqual([]);
+            } finally {
+                caller.abort();
+                invocation.dispose();
+                vi.useRealTimers();
+            }
+        },
+    );
 
     it('ends the rotation rather than the lane when the observation budget runs out', async () => {
         const pass = await runTriageScanPass({
