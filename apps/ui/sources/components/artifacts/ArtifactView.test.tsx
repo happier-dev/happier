@@ -887,60 +887,6 @@ describe('Artifact composed view reads', () => {
             expect(await loadPendingOutboxForSession('run-native', scope)).toEqual([]);
         } finally { await screen.unmount(); }
     });
-    it('reads native Review questions only for presented findings from their retained Machine and Home', async () => {
-        const reviewId = 'native-review-questions';
-        const run = ExecutionRunPublicStateSchema.parse({ runId: 'question-run', callId: 'question-call', sidechainId: 'sidechain',
-            intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, display: { title: 'Retained reviewer' },
-            permissionMode: 'default', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
-            status: 'succeeded', startedAtMs: 1, finishedAtMs: 2 });
-        const record: DecryptedArtifact = { id: reviewId, title: 'Questions', isDecrypted: true,
-            header: { kind: 'review.v1', v: 1, reviewId, title: 'Questions' },
-            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2,
-                reviewerIds: ['opaque-participant'], runs: [{ kind: 'execution', runId: run.runId, machineId: 'question-machine' }] }] }),
-            ownerAccountId: 'owner', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
-        let http: Awaited<ReturnType<typeof createScmRunActionHttpBoundary>> | undefined;
-        const reads: unknown[] = [];
-        const { served } = await setup('document', undefined, false, request => {
-            if (request.path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {
-                execution: { runs: { enabled: true } }, encryption: { plaintextStorage: { enabled: true }, accountOptOut: { enabled: true } } },
-                capabilities: { serverIdentity: { serverIdentityId: 'question-home' } } }));
-            if (http && (request.path.startsWith('/v1/actions/') || request.path.startsWith('/v1/machines')))
-                return http.handle(request.url, { method: request.method, headers: request.headers,
-                    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }).then(response => {
-                    if (!response) throw new Error(`Unserved question boundary: ${request.path}`);
-                    return response;
-                });
-            if (request.path === '/v1/reviews/comments') return Response.json({ items: [], cursor: null });
-        });
-        await setServerProfileIdentityForUrl(served.homes.owner!.serverUrl, 'question-home');
-        http = await createScmRunActionHttpBoundary({ serverUrl: served.homes.owner!.serverUrl, serverIdentityId: 'question-home',
-            accountId: 'owner', machineId: 'question-machine', actionIds: ['execution.run.get'], execute(_actionId, input) {
-                reads.push(input);
-                return { run, structuredMeta: { kind: 'review_narration.v1', payload: {} }, reviewFindings: {
-                    runRef: { runId: run.runId, callId: run.callId, backendId: 'claude', backendTarget: run.backendTarget, retentionPolicy: 'resumable' },
-                    summary: 'A question remains', overviewMarkdown: 'A question remains', findings: [], assumptions: [], generatedAtMs: 2,
-                    questions: [{ id: 'retained-question', text: 'Which Account owns this data?', status: 'open', findingIds: [] }],
-                } };
-            } });
-        const scope = captureActiveServerAccountScopeLifetime()!.scope;
-        const page = (active: boolean) => <PluginSurfaceFocusEligibilityProvider active={active} presentationActive={active}>
-            <ArtifactView artifactId={reviewId} artifact={{ ...record, sourceServerId: scope.serverId }} presentation="page" />
-        </PluginSurfaceFocusEligibilityProvider>;
-        const screen = await renderScreen(page(false));
-        try {
-            await flushHookEffects();
-            expect(reads).toEqual([]);
-            await act(async () => { screen.update(page(true)); });
-            await waitForHomeGovernance(() => expect(screen.findByTestId('review-question:retained-question')).not.toBeNull());
-            expect(screen.getTextContent()).toContain('Which Account owns this data?');
-            expect(reads).toEqual([{ sessionId: null, runId: 'question-run', includeStructured: true, includeLatestToolResult: false }]);
-            expect(screen.findByTestId('review-question-answer:retained-question')).toBeNull();
-            expect(screen.findByTestId('review-findings-follow-up-unavailable')).not.toBeNull();
-            await screen.pressByTestIdAsync('review-detail:tab:activity');
-            await flushHookEffects();
-            expect(reads).toHaveLength(1);
-        } finally { await screen.unmount(); }
-    });
     it.each([false, true])('reads native Review questions only for presented findings from their retained Machine and Home (Session: %s)', async withSession => {
         const reviewId = 'native-review-questions';
         const run = ExecutionRunPublicStateSchema.parse({ runId: 'question-run', callId: 'question-call', sidechainId: 'sidechain',
