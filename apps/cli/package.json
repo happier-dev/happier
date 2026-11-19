@@ -1,6 +1,6 @@
 {
   "name": "@happier-dev/cli",
-  "version": "0.2.10",
+  "version": "0.3.0",
   "description": "Mobile and Web client for Claude Code and Codex",
   "bin": {
     "happier": "./bin/happier.mjs",

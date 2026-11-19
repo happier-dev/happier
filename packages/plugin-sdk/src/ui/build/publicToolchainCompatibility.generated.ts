@@ -5,7 +5,7 @@ export const PUBLIC_TOOLCHAIN_COMPATIBILITY_V1: PublicToolchainCompatibilityV1 =
 {
   "schemaVersion": 1,
   "host": {
-    "buildIdentity": "@happier-dev/cli@0.2.10"
+    "buildIdentity": "@happier-dev/cli@0.3.0"
   },
   "pluginSdk": {
     "version": "0.0.0"

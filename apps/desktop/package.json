@@ -2,7 +2,7 @@
   "name": "@happier-dev/desktop",
   "description": "Electron desktop target for Happier — evaluated in parallel with the Tauri target.",
   "private": true,
-  "version": "0.2.10",
+  "version": "0.3.0",
   "main": "dist/main/index.js",
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",

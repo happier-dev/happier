@@ -2,7 +2,7 @@
   "name": "@happier-dev/website",
   "description": "Marketing site for Happier — the control room for your AI coding agents, on every device.",
   "private": true,
-  "version": "0.2.10",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
