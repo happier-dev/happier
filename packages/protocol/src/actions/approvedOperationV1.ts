@@ -4,6 +4,8 @@ import { StrictJsonValueSchema, sameStrictJsonValue } from '../json/strictJsonVa
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
 import { defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { WorkflowAuthoredResultReferenceSchema } from '../workflows/workflowReferenceV1.js';
+import { WorkflowActionFieldBindingV1Schema } from '../workflows/workflowLeafV1.js';
+import { listWorkflowActionFieldReferencesV1 } from '../workflows/workflowActionTextV1.js';
 import { DeploymentDeployIntentInputV1Schema, DeploymentDeploySemanticInputV1Schema,
   type DeploymentDeployIntentInputV1, type DeploymentDeploySemanticInputV1 } from '../deployments/deploymentDeployIntentV1.js';
 
@@ -25,9 +27,13 @@ export const WorkflowApprovedOperationStepV1Schema = lazyZodSchema(() => z.stric
   binding: z.optional(z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('deployment_sha') }),
     z.strictObject({ kind: z.literal('producer_result'), references: z.record(z.string().check(z.minLength(1)), WorkflowAuthoredResultReferenceSchema) }),
+    z.strictObject({ kind: z.literal('trigger_event'), references: z.record(z.string().check(z.minLength(1)),
+      WorkflowActionFieldBindingV1Schema.check(z.refine(binding => binding.kind !== 'text'
+        && listWorkflowActionFieldReferencesV1(binding).some(reference => reference.kind === 'trigger_event')
+        && listWorkflowActionFieldReferencesV1(binding).every(reference => reference.kind === 'literal' || reference.kind === 'trigger_event')))) }),
   ])),
 }).check(z.refine(step => step.binding === undefined
-  || (step.binding.kind === 'producer_result'
+  || (step.binding.kind !== 'deployment_sha'
     ? Object.keys(step.binding.references).length > 0
       && Object.keys(step.binding.references).every(field => !Object.hasOwn(step.input, field))
     : step.actionId === 'deployments.deploy' && isDeploymentShaApprovalInput(step.input)),
@@ -52,7 +58,7 @@ export function matchesApprovedOperationStepV1(
   if (step.actionId !== actionId) return false;
   if (!step.binding) return sameStrictJsonValue(step.input, input);
   // Only the private Run owner can replace these references with persisted facts.
-  if (step.binding.kind === 'producer_result') return false;
+  if (step.binding.kind !== 'deployment_sha') return false;
   if (actionId !== 'deployments.deploy' || !isDeploymentShaApprovalInput(step.input)) return false;
   const candidate = DeploymentDeployIntentInputV1Schema.safeParse(input);
   if (!candidate.success || !sameStrictJsonValue(candidate.data, input)

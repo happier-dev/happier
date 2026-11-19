@@ -412,7 +412,7 @@ function boundValue(reference: WorkflowActionValueReferenceV1, context: Workflow
  * Execution and read projections bind authored Action operands through the same value owner.
  * Text with values inside resolves at run time, where the frozen contract decides its encoding.
  */
-function bindWorkflowActionFieldV1(binding: WorkflowActionFieldBindingV1,
+export function bindWorkflowActionFieldV1(binding: WorkflowActionFieldBindingV1,
   context: WorkflowBindingContext, blockId: string, purpose: 'run' | 'definition', item?: WorkflowBoundItem) {
   if (binding.kind === 'text') return { kind: 'unresolved' } satisfies Unresolved;
   if (binding.kind === 'object') return Object.fromEntries(Object.entries(binding.fields)

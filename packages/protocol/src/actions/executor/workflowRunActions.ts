@@ -24,7 +24,7 @@ import { walkWorkflowBlocks } from '../../workflows/workflowDefinitionEditV1.js'
 import { WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, type WorkflowAuthoredInputV1, type WorkflowProgressEnvelopeV1, type WorkflowUsageV1, type WorkflowInvocationRecoveryAvailabilityV1, type WorkflowRunInvocationIndexV1, type WorkflowRunSummaryV1, classifyWorkflowHoldV1, isWorkflowDraftPublicationLifecycleV1, applyWorkflowInvocationFactV1 } from '../../workflows/workflowProgressV1.js';
 import { WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema, WorkflowRunListRequestV1Schema, WorkflowRunListResultV1Schema, WorkflowRunAcceptedContextV1Schema, type WorkflowRunPrivateMetadataV1, type WorkflowRunAcceptedContextV1 } from '../../workflows/actionsV1.js';
 import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1,
-  hasUnresolvedWorkflowValueV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
+  hasUnresolvedWorkflowValueV1, bindWorkflowActionFieldV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import type { WorkflowAuthoredResultReference } from '../../workflows/workflowReferenceV1.js';
 import { workflowStoredContentReadErrorCodeV1, openWorkflowAcceptedSnapshotListingStoredEnvelopeV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, openWorkflowRunDisplaySummaryStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowRunAcceptedEnvelopesV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { validateWorkflowDefinition, matchesWorkflowAcceptedDefinitionV1 } from '../../workflows/workflowValidationV1.js';
@@ -571,6 +571,11 @@ export type WorkflowAccountRunActionDeps = Readonly<{
 function hasDurableWorkflowApprovalInput(step: WorkflowApprovedOperationV1['steps'][number],
   materializedLeaves: Readonly<WorkflowAcceptedSnapshotV1['materializedLeaves']> = [],
   admittedStep: WorkflowApprovedOperationV1['steps'][number] = step): boolean {
+  // Structured Event operands retain literals as well as references. They
+  // belong to the same confidential-value scan as the fixed operands.
+  const boundInput = step.binding?.kind === 'trigger_event'
+    ? Object.fromEntries(Object.entries(step.binding.references).map(([field, binding]) =>
+      [field, bindWorkflowActionFieldV1(binding, { inputs: {} }, field, 'definition')])) : undefined;
   const actionId = ActionIdSchema.safeParse(step.actionId);
   if (!actionId.success || actionId.data === 'action.invoke') {
     const envelope = actionId.success ? getActionSpec('action.invoke').inputSchema.safeParse(step.input) : null;
@@ -581,7 +586,7 @@ function hasDurableWorkflowApprovalInput(step: WorkflowApprovedOperationV1['step
       ? getActionSpec('action.invoke').inputSchema.safeParse(admittedStep.input) : null;
     if (admittedEnvelope && !admittedEnvelope.success) return false;
     const admittedInput = admittedEnvelope?.success ? admittedEnvelope.data.input ?? null : admittedStep.input;
-    const references = admittedStep.binding?.kind === 'producer_result' ? admittedStep.binding.references : undefined;
+    const references = admittedStep.binding && admittedStep.binding.kind !== 'deployment_sha' ? admittedStep.binding.references : undefined;
     const leaves = materializedLeaves.filter(leaf => {
       if (leaf.kind !== 'action' || leaf.actionId !== formatQualifiedPluginActionId(target)
         || leaf.actionInput === undefined) return false;
@@ -601,7 +606,7 @@ function hasDurableWorkflowApprovalInput(step: WorkflowApprovedOperationV1['step
       const schema = PluginJsonSchemaV2Schema.safeParse(contract.inputSchema);
       if (!schema.success || !step.binding
         && !validateExecutionRunProfileResult(input, { kind: 'json', schema: schema.data }).ok) return false;
-      const projection = projectTargetActionApprovalInput(input, contract.secretInputPaths);
+      const projection = projectTargetActionApprovalInput(boundInput ? { ...readRecord(input), ...boundInput } : input, contract.secretInputPaths);
       return projection !== null && projection.confidentialPaths.length === 0;
     });
   }
@@ -609,15 +614,15 @@ function hasDurableWorkflowApprovalInput(step: WorkflowApprovedOperationV1['step
   if (spec.approvalInputCustody === 'live_only') return false;
   // Deferred operands cannot satisfy the concrete Action schema yet. The Run
   // owner resolves them before ordinary preparation validates the full input.
-  if (step.binding?.kind === 'deployment_sha') {
-    // The canonical binding schema validates fixed operands before the Run
-    // supplies its admitted SHA and originating request key.
-    if (!WorkflowApprovedOperationStepV1Schema.safeParse(step).success) return false;
+  if (step.binding?.kind === 'deployment_sha' || step.binding?.kind === 'trigger_event') {
+    // The canonical binding schema retains fixed operands while the Run
+    // supplies its admitted deployment or Event values.
+    if (!WorkflowApprovedOperationStepV1Schema.safeParse(step).success || hasUnresolvedWorkflowValueV1(step.input)) return false;
   } else if (step.binding?.kind !== 'producer_result') {
     const parsed = spec.inputSchema.safeParse(step.input);
     if (!parsed.success || !sameStrictJsonValue(parsed.data, step.input)) return false;
   }
-  const projection = projectTargetActionApprovalInput(step.input,
+  const projection = projectTargetActionApprovalInput(boundInput ? { ...step.input, ...boundInput } : step.input,
     (spec.inputHints?.fields ?? []).filter(field => field.widget === 'secret').map(field => field.path));
   return projection !== null && projection.confidentialPaths.length === 0;
 }

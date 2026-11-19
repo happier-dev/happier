@@ -105,7 +105,7 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
           execute: (_input, issuedContext) => execute(issuedContext),
         }) };
       };
-      if (actionId && operation.steps.some(step => step.actionId === actionId && step.binding?.kind === 'producer_result')) {
+      if (actionId && operation.steps.some(step => step.actionId === actionId && step.binding && step.binding.kind !== 'deployment_sha')) {
         // Reuse the interpreter's ancestry, slot and value-reference owners.
         // Only exact selected rows are opened; repeated operands share one read
         // during this admission, with no retained cache or Run inventory scan.
@@ -134,9 +134,10 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
           invocation: current, readInvocation, keyOfInvocation: row => row.index.id });
         if (structure?.leaf.kind !== 'action' || structure.leaf.actionId !== actionId) return null;
         const actionLeaf = structure.leaf;
-        const occurrence = savedTrigger ? readDeploymentBackupOccurrenceV1(structure.definition, actionLeaf) : null;
-        if (savedTrigger && !occurrence) return null;
-        if (occurrence && !sameStrictJsonValue(operation.steps, projectWorkflowTriggerConsentSteps({
+        const producerResult = operation.steps.some(step => step.actionId === actionId && step.binding?.kind === 'producer_result');
+        const occurrence = savedTrigger && producerResult ? readDeploymentBackupOccurrenceV1(structure.definition, actionLeaf) : null;
+        if (savedTrigger && producerResult && !occurrence) return null;
+        if (savedTrigger && !sameStrictJsonValue(operation.steps, projectWorkflowTriggerConsentSteps({
           definition: accepted.definition, children: accepted.frozenChildren, materializedLeaves: accepted.materializedLeaves,
           deployment: operation.steps.some(step => step.binding?.kind === 'deployment_sha'),
         }))) return null;
@@ -186,22 +187,23 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
             || target.data.serverId !== anchor.input.serverId || target.data.environmentId !== anchor.input.environmentId) return null;
         }
         for (const step of operation.steps) {
-          if (step.actionId !== actionId || step.binding?.kind !== 'producer_result') continue;
+          if (step.actionId !== actionId || !step.binding || step.binding.kind === 'deployment_sha') continue;
           if (!Object.entries(step.binding.references).every(([field, reference]) =>
             sameStrictJsonValue(actionLeaf.input[field], reference))) continue;
-          const operands: [string, JsonValue][] = [];
-          for (const [field, reference] of Object.entries(step.binding.references)) {
-            const value = await resolveWorkflowValueReference(reference, { inputs: structure.inputs,
-              resolveResult: async reference => {
-                const row = await producer.resolve(reference);
-                if (row?.index.lifecycle !== 'completed' || row.progress.result === undefined)
-                  throw new WorkflowInputResolutionError('missing_reference');
-                return row.progress.result;
-              },
-              resolveWorkspace: async () => { throw new WorkflowInputResolutionError('invalid_reference_scope'); },
-            });
-            operands.push([field, value]);
-          }
+          const runtime = { inputs: structure.inputs, triggerEventValues: accepted.triggerEventValues,
+            resolveResult: async reference => {
+              const row = await producer.resolve(reference);
+              if (row?.index.lifecycle !== 'completed' || row.progress.result === undefined)
+                throw new WorkflowInputResolutionError('missing_reference');
+              return row.progress.result;
+            },
+            resolveWorkspace: async () => { throw new WorkflowInputResolutionError('invalid_reference_scope'); },
+          } satisfies Parameters<typeof resolveWorkflowValueReference>[1];
+          const operands = step.binding.kind === 'trigger_event'
+            ? await Promise.all(Object.entries(step.binding.references).map(async ([field, reference]) =>
+              [field, await resolveWorkflowActionFieldBinding(reference, runtime)] as const))
+            : await Promise.all(Object.entries(step.binding.references).map(async ([field, reference]) =>
+              [field, await resolveWorkflowValueReference(reference, runtime)] as const));
           const resolved = Object.fromEntries([...Object.entries(step.input), ...operands]);
           if (sameStrictJsonValue(resolved, actual.data)) {
             // Preparation already validated these concrete effects. Only this

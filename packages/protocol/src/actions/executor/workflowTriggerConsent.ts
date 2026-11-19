@@ -12,6 +12,7 @@ import type { z } from '../../zodRuntimePolicy.js';
 import { readDeploymentBackupOccurrenceV1 } from '../../workflows/builtins/backupExamples.js';
 import { walkWorkflowBlocks } from '../../workflows/workflowDefinitionEditV1.js';
 import { DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
+import { listWorkflowActionFieldReferencesV1 } from '../../workflows/workflowActionTextV1.js';
 
 type WorkflowTriggerConsentDefinition = Readonly<{
   definition: WorkflowDefinitionV1;
@@ -161,6 +162,16 @@ ReadonlyArray<Readonly<{ ref: Readonly<{ sourceKey: string; blockId: string }>; 
     const authored = source?.blocks.get(leaf.blockId);
     const occurrence = source && authored?.kind === 'action' ? readDeploymentBackupOccurrenceV1(source.definition, authored) : null;
     const ref = { sourceKey: leaf.sourceKey, blockId: leaf.blockId };
+    if (authored?.kind === 'action') {
+      const references = Object.fromEntries(Object.entries(authored.input).filter(([, binding]) =>
+        listWorkflowActionFieldReferencesV1(binding).some(reference => reference.kind === 'trigger_event')));
+      if (Object.keys(references).length > 0) {
+        const step = WorkflowApprovedOperationStepV1Schema.safeParse({ actionId: leaf.actionId,
+          input: Object.fromEntries(Object.entries(leaf.actionInput).filter(([field]) => !Object.hasOwn(references, field))),
+          binding: { kind: 'trigger_event', references } });
+        if (step.success) return [{ ref, step: step.data }];
+      }
+    }
     if (occurrence) return [{ ref, step: { actionId: leaf.actionId,
       input: Object.fromEntries(Object.entries(leaf.actionInput).filter(([field]) => !Object.hasOwn(occurrence.references, field))),
       binding: { kind: 'producer_result' as const, references: occurrence.references } } }];

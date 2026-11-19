@@ -10247,7 +10247,12 @@ accepted Run. The receiver reopens that selected enabled trigger before using
 the existing exact Action/input comparison. A changed command or Action,
 withdrawn consent, or stricter current Ask policy follows ordinary approval.
 Choosing `ask` or disabling the trigger removes its saved consent. This writes
-no Action preference and introduces no grant table. Deployment triggers use that
+no Action preference and introduces no grant table. Action-event checks can retain
+structured `trigger_event` bindings for JSON stdin and declared environment values.
+The saved operation pins the field structure, literal values and command operands;
+the private Run reader resolves the variable fields from that accepted Run's Event
+payload and matches the concrete invocation. Event values never become command
+text or executable arguments. Deployment triggers use that
 same `actionApproval` choice and record a `deployment_sha` binding: only the
 commit SHA and invocation request key vary; the authored Home, Environment,
 target link, source selectors, source method and busy behavior remain exact.

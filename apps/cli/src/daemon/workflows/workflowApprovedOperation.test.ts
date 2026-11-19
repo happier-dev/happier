@@ -37,6 +37,9 @@ import type { PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/librar
 import { createActionExecutorBoundaryFixture } from '../../../../../packages/tests/src/testkit/actionExecutorBoundary';
 import { createScheduledMachineUpdatesRolloutWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/machineUpdatesV1';
 import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
+import { materializeWorkflowTriggerActionDefinition, projectWorkflowTriggerConsentSteps } from '@happier-dev/protocol/actions/executor/workflowTriggerConsent';
+import { sealWorkflowTriggerEventValuesV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 const runId = '52bd37c4-99c6-41cf-90a5-3a1be2b1e031';
 const invocationId = 'exact-child';
@@ -71,7 +74,7 @@ function approvedContext(): ActionExecutorContext {
       inputDigest: computeActionInputApprovalDigestV1(parent.actionId, parent.input), decidingAccountId: accountId } };
 }
 
-async function fixture(withApproval = true, encrypted = false, initial = snapshot()) {
+async function fixture(withApproval = true, encrypted = false, initial = snapshot(), withRoot = false) {
   const approved = withApproval
     ? await prepareWorkflowApprovedOperationSnapshot({ snapshot: initial, parent, steps, context: approvedContext() }) : initial;
   const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
@@ -97,8 +100,13 @@ async function fixture(withApproval = true, encrypted = false, initial = snapsho
   const content = (execution?: { kind: 'action'; actionId: string; actionRequestId: string; localInputId: string; input: Readonly<Record<string, JsonValue>> }) =>
     serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ ...mode, binding,
       progress: { ...progress, ...(execution ? { execution } : {}) } }));
+  if (withRoot) await storage.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope: '{}', rootInvocation: {
+    id: 'root', contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ ...mode,
+      binding: { ...binding, recordId: 'root', sequence: '0', parentRecordId: null },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: 'root', invocationPath: { blockId: '$root', scope: [] },
+        attempt: '0', logicalInvocationRecordId: 'root' } })) } });
   await storage.execute({ operation: 'invocations.admit', runId, parentAttempt: 0,
-    expectedRevision: 0, checkpointEnvelope: '{}', invocations: [{ id: invocationId, sequence: '1', parentRecordId: 'root',
+    expectedRevision: withRoot ? 1 : 0, checkpointEnvelope: '{}', invocations: [{ id: invocationId, sequence: '1', parentRecordId: 'root',
       memberOrdinal: '0', contentEnvelope: content() }] });
   const context: ActionExecutorContext = { actionRequestId, executionRunWorkflowRunId: runId, runtimeAccountId: accountId,
     actionCaller: { kind: 'workflowRun', runId, authorization: approved.authorization } };
@@ -857,6 +865,101 @@ describe('Workflow approved operation private custody', () => {
     expect(triggerReads.every(id => id === automationId)).toBe(true);
     row = { ...row, enabled: false };
     expect(await reader({ runId, actionId, input: input, context: h.context, phase: 'dispatch' })).toBeNull();
+  });
+
+  it.each(['deploy-request-a', 'deploy-request-b'])('spends saved structured Action-event consent only on the exact accepted shell invocation (%s)', async requestId => {
+    const actionId = 'machines.command.run';
+    const event = { kind: 'action', phase: 'before' } as const;
+    const literal = '$(touch injected); "quoted" & literal\nnext line';
+    const definition = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [], blocks: [{
+      kind: 'action', id: 'apply', actionId, input: {
+        command: { kind: 'literal', value: 'cat; exit 7' },
+        stdin: { kind: 'object', fields: { actionId: { kind: 'trigger_event', event, path: ['actionId'] },
+          requestId: { kind: 'trigger_event', event, path: ['requestId'] },
+          literal: { kind: 'literal', value: literal } } },
+        env: { kind: 'object', fields: { HAPPIER_PHASE: { kind: 'trigger_event', event, path: ['phase'] } } },
+      },
+    }] });
+    const materialized = await materializeWorkflowTriggerActionDefinition({ definition, inputs: {},
+      project: { machineId: 'host', directory: '/repo' }, resolveWorkflow: async () => { throw new Error('No child Workflow'); } });
+    if (!materialized.materialized.ok) throw new Error(materialized.materialized.error.code);
+    const consentSteps = projectWorkflowTriggerConsentSteps({ definition, children: {},
+      materializedLeaves: materialized.materialized.materializedLeaves, deployment: false });
+    const trigger = { kind: 'action', enabled: true, phase: 'before', mode: 'wait', onFailure: 'refuse',
+      actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1] } as const;
+    const operation = await prepareWorkflowApprovedOperation({ parent: { actionId: 'workflow.trigger.add', input: {
+      target: { kind: 'inline', definition: StrictJsonValueSchema.parse(definition) },
+      project: { machineId: 'host', directory: '/repo' }, trigger: StrictJsonValueSchema.parse(trigger), actionApproval: 'automatic',
+    } }, steps: consentSteps, context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: accountId, serverId: 'home', actionRequestId: 'save-event-check' },
+      nativeAccount: { accountId, serverId: 'home', isCurrent: async () => true } });
+    const evidence = { actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1, requestId, phase: 'before' } as const;
+    const initial = WorkflowAcceptedSnapshotV1Schema.parse({ ...snapshot(), definition, authoredDefinition: definition,
+      materializedLeaves: materialized.materialized.materializedLeaves,
+      triggerEventValues: sealWorkflowTriggerEventValuesV1([definition], { event, payload: evidence }), approvedOperation: operation });
+    const h = await fixture(false, false, initial, true);
+    const triggerId = 'event-shell-check';
+    const automationId = 'event-shell-automation';
+    const { enabled: _enabled, ...triggerDefinition } = trigger;
+    const row = AutomationDefinitionDetailSchema.parse({ id: automationId, name: 'Shell check', description: null,
+      enabled: true, targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+      assignments: [{ machineId: 'host', enabled: true, priority: 0, updatedAt: 1 }],
+      triggers: [{ ...trigger, id: triggerId, revision: 0, createdAt: 1, updatedAt: 1,
+        triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+          binding: { v: 1, automationId, triggerId: AutomationTriggerIdSchema.parse(triggerId), triggerRevision: 0, triggerKind: 'action' },
+          definition: StrictJsonValueSchema.parse(triggerDefinition) })) }],
+      executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
+        workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition: definition,
+        actionApprovals: [{ triggerId, operation }],
+      } } },
+    });
+    const unavailable = async (): Promise<never> => { throw new Error('Unexpected Automation mutation or inventory'); };
+    const triggers = createAccountWorkflowTriggerActions({ automations: { get: async () => row,
+      list: unavailable, listDetails: unavailable, create: unavailable, reconcile: unavailable, delete: unavailable },
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      resolveWorkflow: unavailable, randomBytes: size => new Uint8Array(size), newId: () => 'unused' });
+    const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerKind: 'action', triggerId, triggerRevision: 0,
+      occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: { v: 1, kind: 'action', occurredAt: 1,
+        subjects: [], ...evidence } }), occurredAt: 1, evidence });
+    let accepted = initial;
+    const reader = createWorkflowApprovedOperationReader({ storage: { execute: async (request, options) => {
+      const result = await h.storage.execute(request, options);
+      return request.operation === 'get' && result && typeof result === 'object' && 'run' in result ? { ...result,
+        acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+          ...h.mode, binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: accepted })),
+        run: { ...WorkflowRunSummaryV1Schema.parse(result.run), origin: { kind: 'automation', automationId, cause } },
+      } : result;
+    } }, resolveEncryption: async () => h.encryption,
+      readSavedTriggerConsent: request => triggers.readSavedConsent(request, request.context) });
+    const input = { command: 'cat; exit 7', stdin: { actionId: evidence.actionId, requestId, literal }, env: { HAPPIER_PHASE: 'before' } };
+    for (const phase of ['prepare', 'dispatch'] as const) {
+      if (phase === 'dispatch') await h.admit(input);
+      expect((await reader({ runId, actionId, input, context: h.context, phase }))?.steps).toEqual([{ actionId, input }]);
+      for (const changed of [{ ...input, command: 'delete files' }, { ...input, stdin: { ...input.stdin, literal: 'changed' } },
+        { ...input, env: { HAPPIER_PHASE: 'after' } }]) {
+        expect(await reader({ runId, actionId, input: changed, context: h.context, phase })).toBeNull();
+      }
+      expect(await reader({ runId, actionId, input, context: { ...h.context, actionRequestId: `${runId}/foreign/0` }, phase })).toBeNull();
+      expect(await reader({ runId: 'foreign-run', actionId, input, context: h.context, phase })).toBeNull();
+    }
+    let effects = 0;
+    const executor = createActionExecutor({
+      readApprovedOperation: request => request.runId ? reader({ ...request, runId: request.runId }) : Promise.resolve(null),
+      machineCommandRun: async (actual, context) => {
+        expect(actual).toEqual(input);
+        expect(context.authority).toBe('account_automation');
+        effects++;
+        return { ok: false, errorCode: 'command_failed', error: 'Command failed',
+          details: { exitCode: 7, stdout: '', stderr: 'check failed' } };
+      },
+    });
+    expect(await executor.execute(actionId, input, { ...h.context, serverId: 'home', surface: 'agent', authority: 'account_automation' }))
+      .toMatchObject({ ok: false, errorCode: 'command_failed' });
+    expect(effects).toBe(1);
+    const changedDefinition = WorkflowDefinitionV1Schema.parse({ ...definition, blocks: [{ kind: 'action', id: 'apply', actionId,
+      input: { command: { kind: 'literal', value: 'cat; exit 7' }, stdin: { kind: 'trigger_event', event, path: ['requestId'] } } }] });
+    accepted = { ...initial, definition: changedDefinition };
+    expect(await reader({ runId, actionId, input, context: h.context, phase: 'dispatch' })).toBeNull();
   });
 
   it('keeps transient input and undiscovered contributed input out of durable parent approval', async () => {

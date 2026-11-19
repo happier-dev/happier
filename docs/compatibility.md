@@ -388,6 +388,9 @@ canonical safe Run-evidence schema across the trigger's selected Action ids;
 the payload retains the actual invoked Action id. Admitted Action causes supply
 only those safe scalar values to the existing private snapshot materializer.
 Raw operands, output and exception text have no declared Event path.
+The private approved-operation binding union also accepts `trigger_event` field
+bindings containing only literal and Event references. Existing fixed-input,
+producer-result and deployment-SHA records remain readable.
 Matching Protocol, Home, CLI and editor consumers reload
 together under the unpublished 0.3 direct cut; older strict development readers
 reject these new fields. No epoch, migration, gate or compatibility adapter is
