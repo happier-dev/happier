@@ -14,9 +14,11 @@ import { createDeferred, flushHookEffects, renderScreen, waitForTestEvent } from
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { answerVoiceModelCatalogRpcRequest } from '@/dev/testkit/harness/voiceModelCatalogRpcBoundary';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineRowFixture, createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui';
+import type { CapabilityDetectResult } from '@happier-dev/protocol/capabilities';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -376,6 +378,76 @@ describe('useDaemonVoiceModelCatalogState', () => {
         expect(listingRequests()).toHaveLength(1);
         expect(requests.filter(request => request.method.endsWith('.status'))).toHaveLength(1);
         expect(mutations()).toHaveLength(0);
+    });
+
+    it('checks the selected Codex runtime when Conversations readiness is invoked with cold Agent inventory', async () => {
+        const { readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
+        const current = storage.getState().settings;
+        const defaults = readLocalConversationVoiceSettings(current.voice);
+        const voice = writeLocalConversationVoiceSettings({ ...current.voice, providerId: 'local_conversation' }, {
+            ...defaults, conversationMode: 'agent',
+            agent: { ...defaults.agent, agentSource: 'agent', agentId: 'codex', agentTargetKey: 'backend:codex',
+                chatModelSource: 'custom', chatModelId: 'selected-model', chatModelSelection: {
+                    agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'selected-model',
+                } },
+        });
+        storage.setState({ settings: settingsParse({ ...current,
+            ...normalizeVoiceSettingsLocalDelta({ voice }, current) }) });
+        const inventory = createReadyMachineAgentInventoryFixture([
+            { agentId: 'codex', title: 'Codex' }, { agentId: 'claude', title: 'Claude' },
+        ]);
+        const codex = inventory.capabilities.results['cli.codex'];
+        if (!codex?.ok || !codex.data || typeof codex.data !== 'object') throw new Error('Missing Codex fixture');
+        const signedOut = { ...codex, data: { ...codex.data, isLoggedIn: false,
+            signIn: { status: 'signedOut', loginSupport: 'status_only' },
+            authStatus: { state: 'logged_out', checkedAt: 1 } } };
+        let codexResult: CapabilityDetectResult = codex;
+        const reply = respond;
+        respond = (request, context) => {
+            switch (request.method) {
+                case `machine-a:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`:
+                    return { protocolVersion: 1, projection: inventory.projection };
+                case `machine-a:${RPC_METHODS.CAPABILITIES_DETECT}`:
+                    return { ...inventory.capabilities, results: {
+                        'cli.claude': inventory.capabilities.results['cli.claude'],
+                        'cli.codex': codexResult,
+                    } };
+                case `machine-a:${RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST}`:
+                    return { ok: true, jobs: [] };
+                default:
+                    return reply(request, context);
+            }
+        };
+        const inspect = () => createDefaultActionExecutor().execute('settings.invoke', {
+            anchor: 'voiceConversations.readiness',
+        }, { surface: 'ui', authority: 'present_user', serverId: storage.getState().settingsScope!.serverId,
+            presentUserConfirmation: { actionId: 'settings.invoke' } });
+        const think = (result: Awaited<ReturnType<typeof inspect>>, status: string, code: string) =>
+            expect(result).toMatchObject({ ok: true, result: { status: 'completed', value: { roles: {
+                think: { status, code },
+            } } } });
+        const ready = await inspect();
+        think(ready, 'ready', 'ready');
+        expect(ready).toMatchObject({ result: { value: { roles: { think: {
+            selectedAgent: { title: 'Codex', needsSignIn: false },
+        } } } } });
+        expect(requests.filter(request => request.method.endsWith(`:${RPC_METHODS.CAPABILITIES_DETECT}`))).toMatchObject([
+            { method: `machine-a:${RPC_METHODS.CAPABILITIES_DETECT}`, params: { requests: [{ id: 'cli.codex' }] } },
+        ]);
+
+        codexResult = signedOut;
+        think(await inspect(), 'needs_setup', 'agent_signed_out');
+        codexResult = { ...signedOut, data: { ...signedOut.data, installed: false, version: null } };
+        think(await inspect(), 'needs_setup', 'runtime_missing');
+        codexResult = { ok: false, checkedAt: 1, error: { code: 'detect-failed', message: 'Detect failed' } };
+        think(await inspect(), 'unavailable', 'runtime_unavailable');
+        codexResult = codex;
+        think(await inspect(), 'ready', 'ready');
+
+        setMachine('machine-offline');
+        const probes = requests.filter(request => request.method.endsWith(`:${RPC_METHODS.CAPABILITIES_DETECT}`)).length;
+        think(await inspect(), 'unavailable', 'execution_machine_incompatible');
+        expect(requests.filter(request => request.method.endsWith(`:${RPC_METHODS.CAPABILITIES_DETECT}`))).toHaveLength(probes);
     });
 
     it('refuses an installed batch-only pack as the streaming conversation default through the existing Action', async () => {

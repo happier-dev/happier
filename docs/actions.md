@@ -7895,7 +7895,11 @@ currentness, pagination and delete-wins retirement.
 The 0.3 development `settings.invoke` operations `voiceConversations.readiness`
 and `voiceDictation.readiness` return the page/setup's semantic readiness and
 recovery, alongside their inspection facts. Conversations include Hear, Think
-and Speak; Dictation includes its recognition readiness. Device speech and
+and Speak. For Local Voice in Agent mode, the answering client refreshes the
+selected Agent through Machine Agent inventory before reporting Think readiness.
+The result distinguishes installation, sign-in, and Machine reachability from a
+check that could not establish runtime readiness. Dictation includes its
+recognition readiness. Device speech and
 machine-free contributed services do not acquire an execution-Machine
 requirement. Only selected machine-backed contributions are probed; inspection
 never opens a microphone or grants credential access. Account retirement or a

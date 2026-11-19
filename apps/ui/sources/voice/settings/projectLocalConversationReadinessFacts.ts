@@ -88,7 +88,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   executionMachineSelectionKind?: VoiceExecutionMachineSelection['kind'];
   voiceAgentAvailability: FeatureAvailabilityArm;
   /** Selected Agent's observed inventory readiness; never a speech runtime fact. */
-  voiceAgentRuntime?: VoiceReadinessFact;
+  voiceAgentRuntime?: VoiceReadinessFact | 'unavailable';
   selectedAgent?: VoiceRoleReadiness['selectedAgent'];
   rawCredentialAuthorizationByContribution?: Readonly<Record<string, Readonly<{
     contribution: Readonly<{ pluginId: string; localId: string }>;
@@ -201,11 +201,13 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
       settings: thinkSettings,
       serverFeature,
       executionMachine: projectVoiceExecutionMachineReadiness(input.executionMachineSelectionKind, input.executionMachineId),
-      runtime: agentRuntime,
+      runtime: agentRuntime === 'unavailable' ? 'unknown' : agentRuntime,
     },
   });
   const thinkReadiness: VoiceRoleReadiness = {
     ...agentReadiness,
+    ...(agentReadiness.code === 'runtime_unknown' && agentRuntime === 'unavailable'
+      ? { code: 'runtime_unavailable', recoveryAction: 'retry' as const } : {}),
     ...(needsAgent && input.selectedAgent ? { selectedAgent: input.selectedAgent } : {}),
     ...(needsAgent && agentReadiness.code.startsWith('runtime_') && agentReadiness.code !== 'runtime_unknown'
       && input.selectedAgent ? {
