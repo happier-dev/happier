@@ -3362,6 +3362,12 @@ exists, model discovery uses the declared `probeModels` preflight callback and
 its host-scoped JSON-RPC client, with the already-prepared account environment,
 working directory, cancellation and process cleanup.
 
+In 0.3 development, declared JSON-RPC probes close stdin and await process exit
+within the supervisor's existing grace period. The process owner reports
+incomplete termination, including observed survivors. A completed model catalog
+remains available to the picker and execution admission, with a separate local
+cleanup diagnostic. Failed model reads follow the existing refresh failure path.
+
 Current development source retains content-free failure diagnostics at the
 existing owners. External Session follow identity admission returns a private
 typed sub-reason and logs one local file record, including closed provider

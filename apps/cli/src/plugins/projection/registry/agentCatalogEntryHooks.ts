@@ -46,7 +46,7 @@ import type {
     ConnectedServiceStateSharingDescriptor,
 } from '@/agent/catalog/types';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
-import { createStablePluginExecService, type ResolvedPluginExecutable } from '@/plugins/runtime/invocation/services/exec';
+import { createStablePluginExecService, disposePluginProtocolClientGracefullyForHost, type ResolvedPluginExecutable } from '@/plugins/runtime/invocation/services/exec';
 import { projectPluginSystemToolContributions } from '@/plugins/runtime/exec/system/tools/definitions';
 import {
     createAgentCliSystemToolService,
@@ -1212,7 +1212,22 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                         maxFrameBytes: PREFLIGHT_JSON_RPC_MAX_FRAME_BYTES,
                         requestTimeoutMs: probeParams.timeoutMs,
                     }, { signal });
-                    const releaseCleanup = await probeParams.cleanupScope?.retain(() => handle.dispose());
+                    let disposal: Promise<void> | undefined;
+                    const dispose = () => disposal ??= disposePluginProtocolClientGracefullyForHost(handle, async () => {
+                        await handle.process.closeStdin();
+                        await handle.wait();
+                    }).catch((error: unknown) => {
+                        if (probeParams.probeKind !== 'models') throw error;
+                        // Keep the catalog read and native process settlement independently observable.
+                        const failure = isPluginError(error) ? error.data : undefined;
+                        logger.warnLocalFile('[agent-preflight] JSON-RPC cleanup failed', {
+                            agentId: params.agentId,
+                            phase: 'process_cleanup',
+                            code: failure?.code ?? 'action_failed',
+                            retryable: failure?.retryable ?? false,
+                        });
+                    });
+                    const releaseCleanup = await probeParams.cleanupScope?.retain(dispose);
                     try {
                         const client = Object.freeze({
                             onNotification: handle.client.onNotification.bind(handle.client),
@@ -1232,7 +1247,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                         assertCurrent();
                         return result;
                     } finally {
-                        try { await handle.dispose(); } finally { releaseCleanup?.(); }
+                        try { await dispose(); } finally { releaseCleanup?.(); }
                     }
                 }, probeParams.cleanupScope, probeParams.commandArgsSuffix);
             };

@@ -2163,8 +2163,8 @@ export function createStablePluginExecService(params: Readonly<{
             dispose,
         });
         INTERNAL_PROTOCOL_GRACEFUL_DISPOSERS.set(handle, async beforeTerminate => {
-            await supervised.dispose('caller', { beforeTerminate });
-            protocol.dispose();
+            try { await supervised.dispose('caller', { beforeTerminate }); }
+            finally { protocol.dispose(); }
         });
         return handle;
     }
