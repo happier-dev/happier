@@ -58,7 +58,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
             selectedTags: [],
             sessionTags: {},
             searchableTextBySessionKey: {},
-            memoryExcludedSessionKeys: new Set(['server-a:blocked']),
+            transcriptExcludedSessionKeys: new Set(['server-a:blocked']),
         });
         expect(result.flatMap((item) => item.type === 'session' ? [item.session.id] : [])).toEqual(['allowed']);
     });
@@ -68,7 +68,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
         ['continue -"umbrella pigs"', ['separated', 'clear']],
         ['-"umbrella pigs"', ['separated', 'clear', 'other']],
         ['-umbrella', ['clear', 'other']],
-    ])('excludes terms and phrases in %s, including memory matches', (searchQuery, expected) => {
+    ])('excludes terms and phrases in %s, including saved transcript matches', (searchQuery, expected) => {
         const result = filterSessionListItemsForHeaderControls([
             sessionItem('phrase', { name: 'Continue with umbrella pigs', path: '/repo' }),
             sessionItem('separated', { name: 'Continue with umbrella dancing pigs', path: '/repo' }),
@@ -80,7 +80,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
             selectedTags: [],
             sessionTags: {},
             searchableTextBySessionKey: { 'server-a:loaded': 'umbrella pigs' },
-            memoryMatchedSessionKeys: new Set(['server-a:phrase', 'server-a:loaded']),
+            transcriptMatchedSessionKeys: new Set(['server-a:phrase', 'server-a:loaded']),
         });
         expect(result.flatMap((item) => item.type === 'session' ? [item.session.id] : [])).toEqual(expected);
     });
@@ -166,7 +166,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
         ]);
     });
 
-    it('keeps a memory-matched session when local searchable text does not match', () => {
+    it('keeps a saved-transcript match when local searchable text does not match', () => {
         const result = filterSessionListItemsForHeaderControls([
             activeHeader,
             sessionItem('alpha', {
@@ -186,7 +186,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
             selectedTags: [],
             sessionTags: {},
             searchableTextBySessionKey: {},
-            memoryMatchedSessionKeys: new Set(['server-a:beta']),
+            transcriptMatchedSessionKeys: new Set(['server-a:beta']),
         });
 
         expect(result.map((item) => item.type === 'session' ? item.session.id : item.title)).toEqual([
@@ -195,7 +195,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
         ]);
     });
 
-    it('keeps non-query filters conjunctive for memory-matched sessions', () => {
+    it('keeps non-query filters conjunctive for saved-transcript matches', () => {
         const result = filterSessionListItemsForHeaderControls([
             activeHeader,
             sessionItem('alpha', {
@@ -218,7 +218,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
                 'server-a:beta': ['later'],
             },
             searchableTextBySessionKey: {},
-            memoryMatchedSessionKeys: new Set(['server-a:beta']),
+            transcriptMatchedSessionKeys: new Set(['server-a:beta']),
         });
 
         expect(result.map((item) => item.type === 'session' ? item.session.id : item.title)).toEqual([

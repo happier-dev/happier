@@ -5608,6 +5608,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         conflict: { title: '草稿衝突', description: '此欄位已在其他裝置上變更。', mine: '此裝置', synced: '已同步', useSynced: '使用同步版本', keepDevice: '保留裝置版本', copyMine: '複製我的版本', copied: '已複製', copyFailed: '無法複製', field: { text: '文字', mentions: '提及', attachments: '附件', recipient: '收件者', agentContinuation: '代理延續', executionRunDelivery: '執行傳送' } },
     },
     sessionsList: {
+        searchIncomplete: '無法搜尋部分已儲存的訊息。',
         serverHeader: ({ server }: { server: string }) => `伺服器：${server}`,
         storagePersistedTab: 'Happier',
         storageDirectTab: '直接',

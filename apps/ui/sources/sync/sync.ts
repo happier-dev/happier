@@ -4458,16 +4458,33 @@ class Sync {
         }
     }
 
-    public fetchMoreSessions = async (): Promise<void> => {
+    public fetchMoreSessions = async (options?: Readonly<{ awaitSessionListHydration?: boolean }>): Promise<void> => {
         if (!this.credentials || !this.sessionListHasMore || !this.sessionListNextCursor) return;
         if (this.fetchMoreSessionsInFlight) return this.fetchMoreSessionsInFlight;
-        const promise = this.fetchSessions({ mode: 'append' }).finally(() => {
+        const promise = this.fetchSessions({ mode: 'append', awaitSessionListHydration: options?.awaitSessionListHydration }).finally(() => {
             if (this.fetchMoreSessionsInFlight === promise) {
                 this.fetchMoreSessionsInFlight = null;
             }
         });
         this.fetchMoreSessionsInFlight = promise;
         return promise;
+    }
+
+    /** Search demands the remaining session shells, without opening or reading their transcripts. */
+    public fetchSessionListSearchHistory = async (signal: AbortSignal): Promise<void> => {
+        const generation = this.serverScopeGeneration;
+        await this.fetchSessionsInFlight?.promise;
+        while (!signal.aborted && this.serverScopeGeneration === generation
+            && this.credentials && this.sessionListHasMore && this.sessionListNextCursor) {
+            const cursor = this.sessionListNextCursor;
+            // Share the canonical scroll paginator; an already-issued page can also serve scrolling.
+            // Cancellation stops further pages without aborting that shared read.
+            await this.fetchMoreSessions({ awaitSessionListHydration: true });
+            if (!signal.aborted && this.serverScopeGeneration === generation
+                && this.sessionListHasMore && this.sessionListNextCursor === cursor) {
+                throw new Error('Session list search pagination did not advance');
+            }
+        }
     }
 
     private fetchArchivedSessionsPage = async (options?: FetchArchivedSessionsOptions): Promise<void> => {

@@ -50,12 +50,21 @@ minus-prefixed exclusions in development builds:
 - `-"umbrella pigs"` applies the exclusion without requiring a positive search term.
 
 Matching ignores letter case. An unfinished closing quote groups the remaining
-text while you type. Exclusions apply to the content available to each search:
-metadata and loaded text in the app, and indexed content on the machine. Light
+text while you type. In development builds, session-list search checks metadata,
+loaded text and saved transcript messages, including sessions you have never
+opened. It does not require a memory index or a running daemon. Results arrive
+as saved messages are searched; exclusions are checked throughout each transcript.
+Search loads older sessions on the active server. For other displayed servers,
+it searches sessions already in the list; switch to that server to include its
+older history.
+If some saved messages cannot be read, the list offers a retry. Direct sessions
+retain metadata and loaded-text search because their transcripts belong to the
+agent's machine rather than the server.
+
+Local memory search checks indexed content on the selected machine. Light
 indexing searches generated summaries and their keywords; deep indexing searches
-transcript chunks. Unloaded or unindexed content cannot establish an exclusion.
-The app and daemon both need this syntax support for memory results; an older
-daemon leaves local session-list filtering available but cannot augment these queries.
+transcript chunks. Unindexed content cannot establish an exclusion there. The
+app and daemon both need syntax support for advanced local memory queries.
 
 ## Important model: machine-local, not account-global
 

@@ -107,7 +107,7 @@ describe('SessionListHeaderControls', () => {
         expect(screen.findByTestId('session-list-search-clear')?.props.accessibilityRole).toBe('button');
     });
 
-    it('keeps the clear button hidden while a search trailing accessory is active', async () => {
+    it('keeps the clear button available while a search trailing accessory is active', async () => {
         const { SessionListHeaderControls } = await import('./SessionListHeaderControls');
         const screen = await renderScreen(
             <SessionListHeaderControls
@@ -124,7 +124,33 @@ describe('SessionListHeaderControls', () => {
         );
 
         expect(screen.findByTestId('session-list-search-trailing-accessory-content')).toBeTruthy();
-        expect(screen.findByTestId('session-list-search-clear')).toBeNull();
+        expect(screen.findByTestId('session-list-search-clear')).toBeTruthy();
+    });
+
+    it('offers retry when transcript search failed', async () => {
+        const { SessionListHeaderControls } = await import('./SessionListHeaderControls');
+        const onRetrySearch = vi.fn();
+        const screen = await renderScreen(
+            <SessionListHeaderControls
+                allKnownTags={[]}
+                selectedTags={[]}
+                searchQuery="needle"
+                searchOpen={true}
+                onSelectedTagsChange={vi.fn()}
+                onSearchOpenChange={vi.fn()}
+                onSearchQueryChange={vi.fn()}
+                searchFailed={true}
+                onRetrySearch={onRetrySearch}
+                viewMenu={null}
+            />,
+        );
+
+        await act(async () => {
+            invokeTestInstanceHandler(screen.findByTestId('session-list-search-retry'), 'onPress');
+        });
+
+        expect(onRetrySearch).toHaveBeenCalledOnce();
+        expect(screen.findByTestId('session-list-search-clear')).toBeTruthy();
     });
 
     it('keeps a fixed search trailing accessory slot when the accessory content changes', async () => {

@@ -5520,6 +5520,7 @@ export const ru: TranslationStructure = {
     conflict: { title: 'Конфликт черновика', description: 'Это поле изменено на другом устройстве.', mine: 'На этом устройстве', synced: 'Синхронизировано', useSynced: 'Использовать синхронизированное', keepDevice: 'Оставить с устройства', copyMine: 'Скопировать моё', copied: 'Скопировано', copyFailed: 'Не удалось скопировать', field: { text: 'Текст', mentions: 'Упоминания', attachments: 'Вложения', recipient: 'Получатель', agentContinuation: 'Продолжение агента', executionRunDelivery: 'Доставка запуска' } },
   },
   sessionsList: {
+        searchIncomplete: 'Не удалось выполнить поиск в некоторых сохранённых сообщениях.',
     serverHeader: ({ server }: { server: string }) => `Сервер: ${server}`,
     storagePersistedTab: "Happier",
     storageDirectTab: "Прямые",

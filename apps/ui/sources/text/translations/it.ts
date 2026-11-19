@@ -6930,6 +6930,7 @@ export const it: TranslationStructure = {
     conflict: { title: 'Conflitto della bozza', description: 'Questo campo è cambiato su un altro dispositivo.', mine: 'Su questo dispositivo', synced: 'Sincronizzato', useSynced: 'Usa sincronizzato', keepDevice: 'Mantieni dispositivo', copyMine: 'Copia il mio', copied: 'Copiato', copyFailed: 'Impossibile copiare', field: { text: 'Testo', mentions: 'Menzioni', attachments: 'Allegati', recipient: 'Destinatario', agentContinuation: 'Continuazione agente', executionRunDelivery: 'Consegna esecuzione' } },
   },
   sessionsList: {
+        searchIncomplete: 'Non è stato possibile cercare in alcuni messaggi salvati.',
     serverHeader: ({ server }: { server: string }) => `Server: ${server}`,
     storagePersistedTab: "Happier",
     storageDirectTab: "Dirette",

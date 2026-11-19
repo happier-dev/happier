@@ -8,9 +8,9 @@ export type SessionListHeaderFilterInput = Readonly<{
     searchQuery: string;
     selectedTags: ReadonlyArray<string>;
     searchableTextBySessionKey: Readonly<Record<string, string>>;
-    memoryMatchedSessionKeys?: ReadonlySet<string>;
+    transcriptMatchedSessionKeys?: ReadonlySet<string>;
     controlsAnchorKey?: string | null;
-    memoryExcludedSessionKeys?: ReadonlySet<string>;
+    transcriptExcludedSessionKeys?: ReadonlySet<string>;
 }>;
 
 export type SessionListHeaderFilterState = SessionListHeaderFilterInput & Readonly<{
@@ -41,13 +41,14 @@ function appendSearchText(parts: string[], value: string | null | undefined): vo
     if (trimmed.length > 0) parts.push(trimmed);
 }
 
-function buildSessionSearchText(
+export function buildSessionSearchText(
     item: Extract<SessionListViewItem, { type: 'session' }>,
     sessionKey: string | null,
     searchableTextBySessionKey: Readonly<Record<string, string>>,
 ): string {
     const metadata = item.session.metadata;
     const parts: string[] = [];
+    appendSearchText(parts, item.session.id);
     appendSearchText(parts, metadata?.name);
     appendSearchText(parts, metadata?.summaryText);
     appendSearchText(parts, metadata?.path);
@@ -62,15 +63,15 @@ function sessionMatchesSearch(
     sessionKey: string | null,
     query: ParsedSearchQuery,
     searchableTextBySessionKey: Readonly<Record<string, string>>,
-    memoryMatchedSessionKeys: ReadonlySet<string> | null | undefined,
+    transcriptMatchedSessionKeys: ReadonlySet<string> | null | undefined,
 ): boolean {
     if (query.excludedTerms.length === 0) {
-        if (query.terms.length === 0 || (sessionKey && memoryMatchedSessionKeys?.has(sessionKey))) return true;
+        if (query.terms.length === 0 || (sessionKey && transcriptMatchedSessionKeys?.has(sessionKey))) return true;
     }
     const haystack = buildSessionSearchText(item, sessionKey, searchableTextBySessionKey);
     if (query.excludedTerms.some((term) => haystack.includes(term))) return false;
     if (query.terms.length === 0) return true;
-    if (sessionKey && memoryMatchedSessionKeys?.has(sessionKey)) return true;
+    if (sessionKey && transcriptMatchedSessionKeys?.has(sessionKey)) return true;
     if (!haystack) return false;
     return query.terms.every((token) => haystack.includes(token));
 }
@@ -133,9 +134,9 @@ export function filterSessionListItemsForHeaderControls(
 
         const key = buildSessionKey(item);
         if (
-            (key && input.memoryExcludedSessionKeys?.has(key))
+            (key && input.transcriptExcludedSessionKeys?.has(key))
             || !sessionMatchesSelectedTags(key, selectedTags, input.sessionTags)
-            || !sessionMatchesSearch(item, key, query, input.searchableTextBySessionKey, input.memoryMatchedSessionKeys)
+            || !sessionMatchesSearch(item, key, query, input.searchableTextBySessionKey, input.transcriptMatchedSessionKeys)
         ) {
             continue;
         }
