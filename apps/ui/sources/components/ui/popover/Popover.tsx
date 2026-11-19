@@ -56,7 +56,7 @@ import { BaseModal } from '@/modal/components/BaseModal';
 import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
 import { ModalBackButton } from '@/modal/components/card/ModalBackButton';
 import { AnchoredPhonePushHost, createPhoneSheetPushStack, PhoneSheetPushBody, PhoneSheetPushContext, usePhoneSheetPush, type PhoneSheetPushStack } from './phoneSheetPush';
-import { FloatingOverlaySheetContext } from '@/components/ui/overlays/FloatingOverlay';
+import { FloatingOverlayPhonePanelContext, FloatingOverlaySheetContext } from '@/components/ui/overlays/FloatingOverlay';
 import { GlassOpenedLayer } from '@/components/ui/glass/GlassSurface';
 import { GlassLivePictureBackdropContext } from '@/components/ui/glass/livePictureBackdrop';
 import { useSessionCockpitPageBottomClearance } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
@@ -2315,9 +2315,11 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         const renderProps = { ...computed, maxWidth: contentMaxWidth, requestClose, ...(phone ? { pushesSubmenus: true } : {}) };
         const body = renderBody({ renderProps, isolation: shouldPortalWeb ? 'portal' : 'none' });
         return <GlassOpenedLayer>
-            {phone ? <AnchoredPhonePushHost renderProps={renderProps}>{body}</AnchoredPhonePushHost> : body}
+            <FloatingOverlayPhonePanelContext.Provider value={spansPhone}>
+                {phone ? <AnchoredPhonePushHost renderProps={renderProps}>{body}</AnchoredPhonePushHost> : body}
+            </FloatingOverlayPhonePanelContext.Provider>
         </GlassOpenedLayer>;
-    }, [renderBody, computed, contentMaxWidth, phone, requestClose, shouldPortalWeb]);
+    }, [renderBody, computed, contentMaxWidth, phone, spansPhone, requestClose, shouldPortalWeb]);
     const content = (
         <EscapeLayerProvider layer={escapeLayer}>
             <PopoverBackdrop

@@ -25,8 +25,6 @@ export type AgentInputSelectionPopoverProps = Readonly<{
     /** A pushed view's name: the title beside its Back (default) or `none` when the content draws its own. */
     sheetHeader?: 'band' | 'none';
     sheetSubtitle?: string;
-    /** `sheet`: on a phone this picker is the shared bottom sheet instead of the anchored panel (see `Popover`). */
-    phonePresentation?: 'sheet';
     accessibilityLabel?: string;
     children: (args: Readonly<{
         maxHeight: number;
@@ -96,7 +94,7 @@ function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) 
             horizontalBoundaryRef={popoverLayout.horizontalBoundaryRef}
             // Every composer picker is a phone panel: it spans the screen above its chip, and a + menu row's
             // picker pushes inside the menu, where there is no room beside it.
-            phonePresentation={props.phonePresentation ?? 'panel'}
+            phonePresentation="panel"
             sheetHeader={props.sheetHeader}
             sheetSubtitle={props.sheetSubtitle}
             accessibilityLabel={props.accessibilityLabel ?? submenu?.title}

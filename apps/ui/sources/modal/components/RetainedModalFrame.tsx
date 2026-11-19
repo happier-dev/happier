@@ -13,7 +13,7 @@ import { PluginSurfaceFocusEligibilityTransfer, useCapturedPluginSurfaceFocusEli
 import { PaneRegionProvider, usePaneRegion } from '@/components/appShell/panes/paneRegionContext';
 import { ScreenBackdropBoundary } from '@/components/navigation/safeArea/HorizontalSafeArea';
 import { SurfacePlanesTransfer, useContainingSurfacePlanes } from '@/components/ui/glass/GlassSurface';
-import { FloatingOverlaySheetContext } from '@/components/ui/overlays/FloatingOverlay';
+import { FloatingOverlayPhonePanelContext, FloatingOverlaySheetContext } from '@/components/ui/overlays/FloatingOverlay';
 import { PhoneSheetPushContext } from '@/components/ui/popover/phoneSheetPush';
 import { PhonePushedViewContext } from '@/components/ui/popover/phonePushedView';
 import { retainDeep, retainShallow } from '@/sync/domains/state/structuralSharing';
@@ -39,6 +39,8 @@ type ShellFacts = Readonly<{
     planes: ReturnType<typeof useContainingSurfacePlanes>;
     /** A floating sheet's body (a phone popover sheet), its push stack and the pushed view it stands in. */
     onFloatingSheet: boolean;
+    /** A phone panel's body (`Popover` `phonePresentation="panel"`): its surface wears the sheet's coat. */
+    onPhonePanel: boolean;
     pushStack: React.ContextType<typeof PhoneSheetPushContext>;
     pushedView: React.ContextType<typeof PhonePushedViewContext>;
 }>;
@@ -115,12 +117,14 @@ export function useRetainedPlacement<TArgs>(
                                         <SurfaceFreshnessOnSheetProvider onSheet={placement.onSheet}>
                                             <SurfacePlanesTransfer planes={placement.planes}>
                                                 <FloatingOverlaySheetContext.Provider value={placement.onFloatingSheet}>
+                                                <FloatingOverlayPhonePanelContext.Provider value={placement.onPhonePanel}>
                                                     <PhoneSheetPushContext.Provider value={placement.pushStack}>
                                                         <PhonePushedViewContext.Provider value={placement.pushedView}>
                                                             {/* A presented body never owns the backdrop of the screen that renders it. */}
                                                             <ScreenBackdropBoundary>{render(placement.args)}</ScreenBackdropBoundary>
                                                         </PhonePushedViewContext.Provider>
                                                     </PhoneSheetPushContext.Provider>
+                                                </FloatingOverlayPhonePanelContext.Provider>
                                                 </FloatingOverlaySheetContext.Provider>
                                             </SurfacePlanesTransfer>
                                         </SurfaceFreshnessOnSheetProvider>
@@ -184,6 +188,7 @@ function RetainedPlacementSlot<TArgs>(props: Readonly<{
     const region = usePaneRegion();
     const planes = useContainingSurfacePlanes();
     const onFloatingSheet = React.useContext(FloatingOverlaySheetContext);
+    const onPhonePanel = React.useContext(FloatingOverlayPhonePanelContext);
     const pushStack = React.useContext(PhoneSheetPushContext);
     const pushedView = React.useContext(PhonePushedViewContext);
     const { host, owner, publish, retire, args } = props;
@@ -209,9 +214,9 @@ function RetainedPlacementSlot<TArgs>(props: Readonly<{
     React.useLayoutEffect(() => {
         if (owner.current !== token) return;
         publish({ args, viewport, inside, modalId, escape, portal, dismiss, scroll, contained, onSheet, focus, region,
-            planes, onFloatingSheet, pushStack, pushedView });
+            planes, onFloatingSheet, onPhonePanel, pushStack, pushedView });
     }, [owner, token, publish, args, viewport, inside, modalId, escape, portal, dismiss, scroll, contained, onSheet, focus, region,
-        planes, onFloatingSheet, pushStack, pushedView]);
+        planes, onFloatingSheet, onPhonePanel, pushStack, pushedView]);
     return <div ref={slot} style={{ display: 'contents' }} />;
 }
 

@@ -52,6 +52,10 @@ const SCROLL_VIEWPORT_FRAME_STYLE: ViewStyle = { position: 'relative', flexShrin
 // without nesting a second floating card inside the shared modal surface.
 export const FloatingOverlaySheetContext = React.createContext(false);
 
+// A phone panel (`Popover` `phonePresentation="panel"`) spans the screen like the sheet it replaced (owner R2,
+// 2026-11-09): it wears the sheet's panel coat, so the page under it never reads through its rows.
+export const FloatingOverlayPhonePanelContext = React.createContext(false);
+
 function extractSurfaceStyle(chromeStyle: ThemeSurfaceChromeStyle) {
     return {
         borderColor: chromeStyle.borderColor,
@@ -194,6 +198,7 @@ interface FloatingOverlayProps {
 
 export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const insideSheet = React.useContext(FloatingOverlaySheetContext);
+    const phonePanel = React.useContext(FloatingOverlayPhonePanelContext);
     const pushedView = React.useContext(PhonePushedViewContext);
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -382,11 +387,14 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         ]}>
             {arrowNode}
             <GlassSurface themeSurface={props.themeSurface} surfaceGroup="floating" noCoat={insideSheet} finishRole={insideSheet ? null : undefined}
+                floatingRole={phonePanel && !insideSheet ? 'panel' : undefined}
                 style={insideSheet ? { maxHeight, flexShrink: 1, minHeight: 0 } : [
                     surfaceChrome === 'theme' ? styles.themedSurfaceClip : styles.modalClipSurface,
                     { maxHeight },
                 ]}>
-                <FloatingOverlaySheetContext.Provider value={false}>{surfaceContent}</FloatingOverlaySheetContext.Provider>
+                <FloatingOverlaySheetContext.Provider value={false}>
+                    <FloatingOverlayPhonePanelContext.Provider value={false}>{surfaceContent}</FloatingOverlayPhonePanelContext.Provider>
+                </FloatingOverlaySheetContext.Provider>
                 {insideSheet ? null : <SurfaceRim role="floating" radius={OVERLAY_BORDER_RADIUS} border="modal" />}
             </GlassSurface>
         </Animated.View>

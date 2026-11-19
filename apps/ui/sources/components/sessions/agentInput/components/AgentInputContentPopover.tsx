@@ -50,8 +50,6 @@ export type AgentInputContentPopoverConfig = Readonly<{
     boundaryRef?: React.RefObject<any> | null;
     maxHeightCap?: number;
     maxWidthCap?: number;
-    /** `sheet`: a phone shows this picker as the bottom sheet (the Machine picker, L12 review D1); default: the anchored panel. */
-    phonePresentation?: 'sheet';
     scrollEnabled?: boolean;
     keyboardShouldPersistTaps?: boolean | 'always' | 'never' | 'handled';
     edgeFades?: FloatingOverlayEdgeFades;
@@ -76,7 +74,6 @@ export type AgentInputContentPopoverProps = Readonly<{
     onRequestClose: () => void;
     maxHeightCap?: number;
     maxWidthCap?: number;
-    phonePresentation?: AgentInputContentPopoverConfig['phonePresentation'];
     testID?: string;
     scrollEnabled?: boolean;
     keyboardShouldPersistTaps?: boolean | 'always' | 'never' | 'handled';
@@ -133,7 +130,6 @@ export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
             sheetHeader={props.header ? 'band' : 'none'}
             accessibilityLabel={props.header?.title}
             sheetSubtitle={props.header?.description}
-            {...(props.phonePresentation === undefined ? {} : { phonePresentation: props.phonePresentation })}
             onRequestClose={props.onRequestClose}
         >
             {({ maxHeight, presentation, pushesSubmenus }) => {

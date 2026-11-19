@@ -38,7 +38,6 @@ type SharedContentPopoverLike = Readonly<{
     boundaryRef?: AgentInputContentPopoverConfig['boundaryRef'];
     maxHeightCap?: AgentInputContentPopoverConfig['maxHeightCap'];
     maxWidthCap?: AgentInputContentPopoverConfig['maxWidthCap'];
-    phonePresentation?: AgentInputContentPopoverConfig['phonePresentation'];
     scrollEnabled?: AgentInputContentPopoverConfig['scrollEnabled'];
     keyboardShouldPersistTaps?: AgentInputContentPopoverConfig['keyboardShouldPersistTaps'];
     edgeFades?: AgentInputContentPopoverConfig['edgeFades'];
@@ -58,7 +57,6 @@ type AgentInputContentPopoverEntry = Readonly<{
     onRequestClose: () => void;
     maxHeightCap?: AgentInputContentPopoverConfig['maxHeightCap'];
     maxWidthCap?: AgentInputContentPopoverConfig['maxWidthCap'];
-    phonePresentation?: AgentInputContentPopoverConfig['phonePresentation'];
     scrollEnabled?: AgentInputContentPopoverConfig['scrollEnabled'];
     keyboardShouldPersistTaps?: AgentInputContentPopoverConfig['keyboardShouldPersistTaps'];
     edgeFades?: AgentInputContentPopoverConfig['edgeFades'];
@@ -97,7 +95,6 @@ function renderContentPopover(entry: AgentInputContentPopoverEntry, place: Place
             onRequestClose={entry.onRequestClose}
             maxHeightCap={entry.maxHeightCap}
             maxWidthCap={entry.maxWidthCap}
-            phonePresentation={entry.phonePresentation}
             scrollEnabled={entry.scrollEnabled}
             keyboardShouldPersistTaps={entry.keyboardShouldPersistTaps}
             edgeFades={entry.edgeFades}
@@ -114,7 +111,6 @@ function resolveSharedContentPopoverOptions(
     | 'boundaryRef'
     | 'maxHeightCap'
     | 'maxWidthCap'
-    | 'phonePresentation'
     | 'scrollEnabled'
     | 'keyboardShouldPersistTaps'
     | 'edgeFades'
@@ -125,7 +121,6 @@ function resolveSharedContentPopoverOptions(
         boundaryRef: popover.boundaryRef as React.RefObject<View | null> | null | undefined,
         maxHeightCap: popover.maxHeightCap,
         maxWidthCap: popover.maxWidthCap,
-        phonePresentation: popover.phonePresentation,
         scrollEnabled: popover.scrollEnabled,
         keyboardShouldPersistTaps: popover.keyboardShouldPersistTaps,
         edgeFades: popover.edgeFades,

@@ -139,30 +139,14 @@ describe('composer chip popovers on a phone (owner R2/R5, 2026-11-09)', () => {
     expect(screen.findByTestId('machine-list')).toBeTruthy();
   });
 
-  it('presents a picker that asks for the phone sheet as the bottom sheet, with its one body inside (L12 review D1)', async () => {
-    function MachineSheetChip() {
-      const chipRef = React.useRef<React.ElementRef<typeof View>>(null);
-      const [open, setOpen] = React.useState(false);
-      return (
-        <OverlayPortalProvider>
-          <View ref={chipRef} collapsable={false}>
-            <RoundButton testID="machine-chip" title="Machine" onPress={() => setOpen(true)} />
-          </View>
-          <AgentInputContentPopover
-            open={open}
-            anchorRef={chipRef}
-            phonePresentation="sheet"
-            content={<Text testID="machine-list">Machines</Text>}
-            onRequestClose={() => setOpen(false)}
-          />
-          <OverlayPortalHost />
-        </OverlayPortalProvider>
-      );
-    }
-    const screen = await renderScreen(<MachineSheetChip />);
+  it('paints a phone panel in the sheet look (the panel coat), so the page under it never reads through (L12 review D1, R2)', async () => {
+    const { GlassSurface } = await import('@/components/ui/glass/GlassSurface');
+    const screen = await renderScreen(<ComposerChips />);
     await screen.pressByTestIdAsync('machine-chip');
-    expect(sheets(screen)).toHaveLength(1);
-    // One mounted body: a single host element carries the content (composite wrappers repeat the test id).
-    expect(screen.findAll((node) => typeof node.type === 'string' && node.props.testID === 'machine-list')).toHaveLength(1);
+    expect(sheets(screen)).toHaveLength(0);
+    const surfaces = screen.findAllByType(GlassSurface)
+      .filter((node) => node.props.surfaceGroup === 'floating');
+    expect(surfaces.length).toBeGreaterThan(0);
+    expect(surfaces.every((node) => node.props.floatingRole === 'panel')).toBe(true);
   });
 });
