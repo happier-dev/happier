@@ -21,6 +21,10 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 import { Modal } from '@/modal';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { serverAccountScopedTeamResourceKey } from '@/sync/domains/teams/teamAddress';
 import { randomUUID } from '@/platform/randomUUID';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
@@ -32,6 +36,7 @@ import {
     revokeAllTeamCredentialExternalApiKeys,
     revokeTeamCredentialExternalApiKey,
 } from '@/sync/ops/teams/teamCredentialOperations';
+import { teamCredentialExternalApiKeyObservations } from '@/sync/store/teams/teamsSnapshots';
 import { t, type TranslationKey } from '@/text';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
@@ -50,6 +55,7 @@ import { TeamCredentialAudiencePicker } from './TeamCredentialAudiencePicker';
 import { teamCredentialExternalApiKeyLabelBinding } from '@/sync/ops/teams/teamCredentialLabels';
 
 const KEY_LABEL_MAX_LENGTH = 120;
+const NO_KEYS: readonly TeamCredentialExternalApiKeySummaryV1[] = Object.freeze([]);
 const EXPIRY_PRESETS: readonly ApiTokenExpiryPreset[] = ['30d', '90d', '1y', 'none'];
 const EXPIRY_LABELS = {
     '30d': 'settingsApiTokens.create.expiryOptions.30d',
@@ -105,8 +111,8 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
         filter: 'all',
         enabled: availability.available && view.canManage,
     });
-    const [keys, setKeys] = React.useState<readonly TeamCredentialExternalApiKeySummaryV1[]>([]);
-    const [resolved, setResolved] = React.useState(false);
+    const [, keysChanged] = React.useReducer((revision: number) => revision + 1, 0);
+    const [resolvedKey, setResolvedKey] = React.useState<string | null>(null);
     const [listError, setListError] = React.useState(false);
     const [listing, setListing] = React.useState(false);
     const [busy, setBusy] = React.useState(false);
@@ -128,12 +134,27 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
     const router = useRouter();
     const replaceRoute = router.replace;
     // This route can be reused while its qualified Home/resource parameters
-    // change. Keep the identity current during render so an older Home's
-    // response cannot paint keys (or a one-time bearer) into the new target.
-    const targetKey = `${context.scope.serverId}:${context.scope.accountId}:${context.address.teamId}:${resourceId}`;
+    // change. The accepted route owns the key summaries and the separate one-time reveal.
+    const targetKey = serverAccountScopedTeamResourceKey(context.scope, context.address, 'credential-external-api-keys', resourceId);
     const targetPath = teamCredentialExternalApiPath(context.address, resourceId);
     const currentTargetKey = React.useRef(targetKey);
     const actionLifetime = React.useRef<AbortController | null>(null);
+    const acceptedTarget = React.useRef({ key: targetKey, path: targetPath });
+    const mayList = availability.available && canReadKeys;
+    const { binding, resolution } = useServerCredentialAccountScopeBinding(mayList ? context.scope.serverId : null);
+    const currentBinding = binding?.isCurrent() && areServerAccountScopesEqual(binding.scope, context.scope) ? binding : null;
+    const requestKey = JSON.stringify([targetKey, currentBinding?.revision, currentBinding?.credentialKey]);
+    const retainedKeys = mayList && acceptedTarget.current.key === targetKey && (currentBinding !== null || resolution.kind === 'resolving')
+        ? teamCredentialExternalApiKeyObservations.get(targetKey)
+        : undefined;
+    const keys = retainedKeys ?? NO_KEYS;
+    const resolved = currentBinding !== null && resolvedKey === requestKey;
+    const setKeys = React.useCallback((update: React.SetStateAction<readonly TeamCredentialExternalApiKeySummaryV1[]>) => {
+        if (!currentBinding?.isCurrent() || acceptedTarget.current.key !== targetKey) return;
+        const keys = typeof update === 'function' ? update(teamCredentialExternalApiKeyObservations.get(targetKey) ?? NO_KEYS) : update;
+        teamCredentialExternalApiKeyObservations.apply(targetKey, currentBinding, keys);
+        keysChanged();
+    }, [currentBinding, targetKey]);
     const keyLabelRequests = React.useMemo(() => keys.map((key) => ({
         key: key.keyId,
         binding: teamCredentialExternalApiKeyLabelBinding(key.keyId),
@@ -150,10 +171,6 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
         actionLifetime.current = controller;
         return () => controller.abort();
     }, [targetKey]);
-    const acceptedTarget = React.useRef({
-        key: targetKey,
-        path: targetPath,
-    });
     const listingTargetKey = React.useRef<string | null>(null);
     // The accepted target whose key list has already been requested by the
     // screen itself. Accepting a target and the view becoming manageable both
@@ -234,8 +251,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
             if (!active) return;
             acceptedTarget.current = nextTarget;
             currentTargetKey.current = nextTarget.key;
-            setKeys([]);
-            setResolved(false);
+            setResolvedKey(null);
             setListError(false);
             setListing(false);
             listingTargetKey.current = null;
@@ -250,7 +266,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
             setSecretCopied(false);
             copyFeedback.clearCopiedFeedback();
             setNotice(null);
-            initialListTargetKey.current = nextTarget.key;
+            initialListTargetKey.current = null;
             reloadAcceptedTarget.current();
         })).then((continued) => {
             if (active && !continued) replaceRoute(previousPath);
@@ -265,31 +281,37 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
         // A same-mounted route replacement is not authoritative until the
         // one-time-reveal guard accepts it. Do not read the next resource early;
         // the acceptance continuation below starts its one canonical reload.
-        if (acceptedTarget.current.key !== requestedTargetKey) return;
-        if (listingTargetKey.current === requestedTargetKey) return;
-        listingTargetKey.current = requestedTargetKey;
+        if (!currentBinding?.isCurrent() || acceptedTarget.current.key !== requestedTargetKey) return;
+        if (listingTargetKey.current === requestKey) return;
+        listingTargetKey.current = requestKey;
+        initialListTargetKey.current = requestKey;
         const signal = actionLifetime.current?.signal;
         setListing(true);
         try {
             const outcome = await listTeamCredentialExternalApiKeys({ scope: context.scope, resourceId,
                 signal });
-            if (currentTargetKey.current !== requestedTargetKey) return;
-            setResolved(true);
+            if (signal?.aborted || !currentBinding.isCurrent() || currentTargetKey.current !== requestedTargetKey) return;
+            setResolvedKey(requestKey);
             if (outcome.kind === 'succeeded') {
                 setKeys(outcome.value.keys);
                 setListError(false);
                 setNotice(null);
             } else {
+                if (isAuthoritativeScopedSnapshotRefusalKind(outcome.failure.kind)) {
+                    teamCredentialExternalApiKeyObservations.apply(targetKey, currentBinding, null);
+                }
                 setListError(true);
                 setNotice(t('teams.credentials.externalApi.keysLoadFailed'));
             }
         } catch (error) {
             if (!signal?.aborted) throw error;
         } finally {
-            if (listingTargetKey.current === requestedTargetKey) listingTargetKey.current = null;
-            if (currentTargetKey.current === requestedTargetKey) setListing(false);
+            if (listingTargetKey.current === requestKey) {
+                listingTargetKey.current = null;
+                setListing(false);
+            }
         }
-    }, [context.scope, resourceId, targetKey]);
+    }, [context.scope, currentBinding, requestKey, resourceId, setKeys, targetKey]);
     reloadAcceptedTarget.current = () => void reload();
     const applyMutationFailure = React.useCallback((failure: Parameters<typeof credentialFailureMessage>[0]) => {
         setNotice(credentialFailureMessage(failure));
@@ -298,10 +320,9 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
 
     React.useEffect(() => {
         if (!availability.available || !canReadKeys) return;
-        if (acceptedTarget.current.key !== targetKey || initialListTargetKey.current === targetKey) return;
-        initialListTargetKey.current = targetKey;
+        if (acceptedTarget.current.key !== targetKey || initialListTargetKey.current === requestKey) return;
         void reload();
-    }, [availability.available, canReadKeys, reload, targetKey]);
+    }, [availability.available, canReadKeys, reload, requestKey, targetKey]);
 
     const clearReveal = React.useCallback(() => {
         if (!reveal) return;
@@ -381,7 +402,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
     const memberNames = new Map(roster.rows.map((member) => [member.id, formatAccountDisplayName(member.account)]));
 
     async function authorizeKey(key: TeamCredentialExternalApiKeySummaryV1) {
-        if (operationBusy || !key.canAuthorize) return;
+        if (operationBusy || !keyListTrusted || !key.canAuthorize) return;
         const requestedTargetKey = targetKey;
         const applyAuthorizedKey = (value: Readonly<{ key: TeamCredentialExternalApiKeySummaryV1 }>) => {
             if (currentTargetKey.current !== requestedTargetKey) return;
@@ -412,7 +433,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
     }
 
     async function revokeKey(key: TeamCredentialExternalApiKeySummaryV1) {
-        if (operationBusy) return;
+        if (operationBusy || !keyListTrusted) return;
         const signal = actionLifetime.current?.signal;
         if (!signal || signal.aborted) return;
         const requestedTargetKey = targetKey;
@@ -715,8 +736,8 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
                     ? t('teams.credentials.externalApi.keysEmptyBody')
                     : undefined}
             >
-                {!resolved ? <Item testID="team-credential-external-loading" title={t('common.loading')} loading showChevron={false} /> : null}
-                {keyListTrusted && keys.length === 0 ? (
+                {!resolved && retainedKeys === undefined ? <Item testID="team-credential-external-loading" title={t('common.loading')} loading showChevron={false} /> : null}
+                {retainedKeys !== undefined && keys.length === 0 ? (
                     <Item
                         testID="team-credential-external-empty"
                         title={t('teams.credentials.externalApi.keysEmpty')}
@@ -753,7 +774,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
                         key={`replace:${key.keyId}`}
                         testID={`team-credential-external-replace:${key.keyId}`}
                         title={t('secrets.actions.replace')}
-                        disabled={operationBusy}
+                        disabled={operationBusy || !keyListTrusted}
                         onPress={() => {
                             setReplacing(key);
                             setLabel(openedKeyLabels[key.keyId] ?? '');
@@ -767,7 +788,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
                         testID={`team-credential-external-revoke:${key.keyId}`}
                         title={t('common.remove')}
                         destructive
-                        disabled={operationBusy}
+                        disabled={operationBusy || !keyListTrusted}
                         onPress={() => void revokeKey(key)}
                         showChevron={false}
                     />,
@@ -803,9 +824,9 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
                         display="destructive"
                         title={t('teams.credentials.externalApi.revokeAll')}
                         loading={operationBusy}
-                        disabled={operationBusy}
+                        disabled={operationBusy || !keyListTrusted}
                         onPress={async () => {
-                            if (operationBusy) return;
+                            if (operationBusy || !keyListTrusted) return;
                             const signal = actionLifetime.current?.signal;
                             if (!signal || signal.aborted) return;
                             const requestedTargetKey = targetKey;

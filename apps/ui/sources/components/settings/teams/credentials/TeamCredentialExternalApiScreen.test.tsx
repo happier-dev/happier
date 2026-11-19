@@ -198,6 +198,28 @@ beforeEach(async () => {
 afterEach(() => standardCleanup());
 
 describe('TeamCredentialExternalApiScreen', () => {
+    it('keeps previously observed key summaries on return until the Home withdraws access', async () => {
+        const serverId = await addManagedHome([key(CREATED_KEY_ID, 'resource-1', 'My CLI')]);
+        const row = `team-credential-external-key:${CREATED_KEY_ID}`;
+        const page = () => <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />;
+        const initial = await renderScreen(page());
+        await waitForHomeGovernance(() => expect(initial.findByTestId(row)).not.toBeNull());
+        await initial.unmount();
+
+        const fresh = createDeferred<void>();
+        harness.answer(serverId, EXTERNAL_KEYS_LIST_PATH, {
+            status: 403, body: { error: 'forbidden' }, respondAfter: fresh.promise,
+        });
+        const returned = await renderScreen(page());
+        await waitForHomeGovernance(() => expect(harness.requestsFor(EXTERNAL_KEYS_LIST_PATH)).toHaveLength(2));
+        expect(returned.findByTestId(row)).not.toBeNull();
+        expect(returned.findByTestId('team-credential-external-loading')).toBeNull();
+        expect(returned.findAllByTestId(`team-credential-external-revoke:${CREATED_KEY_ID}`)[0]?.props.disabled).toBe(true);
+        await act(async () => fresh.resolve());
+        await waitForHomeGovernance(() => expect(returned.findByTestId(row)).toBeNull());
+        await returned.unmount();
+    });
+
     it('lets an entitled assignee authorize their pending key without exposing manager controls or revealing its bearer again', async () => {
         const pendingKey = { ...key(CREATED_KEY_ID, 'resource-1', 'My CLI'), authenticationStatus: 'authentication_required' as const, canAuthorize: true };
         const serverId = await addManagedHome([pendingKey]);
