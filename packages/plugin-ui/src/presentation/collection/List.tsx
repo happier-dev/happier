@@ -1340,7 +1340,11 @@ export function HappierListItem({
         : isInteractive ? undefined : accessibilityPositionInSet}
       aria-setsize={suppressListItemRole && isGridRow && treeRow !== null ? treeRow.setSize
         : isInteractive ? undefined : accessibilitySetSize}
-      {...(!isInteractive && accessibilityLabel ? { 'aria-label': accessibilityLabel, accessibilityLabel } : {})}
+      {...(!isInteractive && accessibilityLabel ? {
+        ...(parentOwnsMembership && !suppressListItemRole ? { role: 'group' as const } : {}),
+        'aria-label': accessibilityLabel,
+        accessibilityLabel,
+      } : {})}
       {...(!isInteractive && accessibilityHint ? { accessibilityHint } : {})}
       {...(!isInteractive && rowDescriptionId ? { 'aria-describedby': rowDescriptionId } : {})}
       {...(!isInteractive && (disabled === true || busy === true)

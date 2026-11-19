@@ -840,7 +840,7 @@ describe('the mounted Composer entry picker', () => {
         expect(names.indexOf('Attach Replace the duplicated normalizer'))
             .toBeLessThan(names.indexOf('View details Replace the duplicated normalizer'));
         // And the row is still a named group rather than a run-together label.
-        await expect(picker.getByRole('listitem', { name: 'Replace the duplicated normalizer' }))
+        await expect(picker.getByRole('group', { name: 'Replace the duplicated normalizer' }))
             .resolves.toBeDefined();
     });
 
@@ -853,9 +853,9 @@ describe('the mounted Composer entry picker', () => {
         // descendants, and the reader hears the title, the scope and the status
         // run together with no separator — the same announcement the shell list
         // already had to fix once.
-        await expect(picker.getByRole('listitem', { name: 'Replace the duplicated normalizer' }))
+        await expect(picker.getByRole('group', { name: 'Replace the duplicated normalizer' }))
             .resolves.toBeDefined();
-        await expect(picker.queryByRole('listitem', {
+        await expect(picker.queryByRole('group', {
             name: 'Replace the duplicated normalizerexample/repository',
         })).resolves.toBeUndefined();
     });
