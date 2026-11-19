@@ -578,6 +578,64 @@ describe('Project Sources controller through Source Actions', () => {
         expect(controller.getSnapshot().status).toBe('refused');
     });
 
+    it.each(['save', 'updateSource', 'remove'] as const)('retains readable Source state after denied %s and permits a corrected retry', async (operation) => {
+        let refusal: 'domain' | 'action' | null = 'domain';
+        let current: ProjectSourceV1 = source();
+        const audience = [{ principal: { kind: 'team' as const, teamId: 'team-a' }, level: 'view' as const }];
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            ...createProjectSourceActionDeps({ ...scope, credentialAuthorityKind: 'account', assertCurrent() {},
+                workflowArtifacts: { read: async () => null }, request: async (path, init) => {
+                    if (init?.method === 'PATCH' || init?.method === 'DELETE') {
+                        if (refusal === 'domain') return answer({ ok: false, error: 'source_access_denied' }, 403);
+                        if (refusal === 'action') return answer({ error: 'Forbidden' }, 403);
+                        if (init.method === 'DELETE') return answer({ ok: true, sourceId: current.id, revision: current.revision });
+                        const { patch } = ProjectSourcesUpdateInputV1Schema.parse(JSON.parse(String(init.body)));
+                        current = { ...current, revision: current.revision + 1,
+                            ...(patch.name !== undefined ? { name: patch.name } : {}),
+                            ...(patch.audience !== undefined ? { audience: patch.audience } : {}) };
+                        return answer({ ok: true, source: current });
+                    }
+                    return path.includes('/sources?')
+                        ? answer({ ok: true, sources: [current], coverage: { complete: true, nextCursor: null } })
+                        : answer({ ok: true, source: current });
+                } }),
+        }));
+        const dispatch: Parameters<typeof createProjectSourcesCatalog>[1] = (id, input, context) =>
+            executor.execute(id, input, { ...context, authority: 'present_user', bypassApprovals: true });
+        const catalog = createProjectSourcesCatalog({ scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) }, dispatch);
+        const controller = createProjectSourcesController(scope, dispatch, undefined, catalog.read);
+        const stop = controller.subscribe(() => {});
+        const mutate = () => operation === 'updateSource' ? controller.updateSource({ audience }) : controller[operation]();
+        try {
+            await controller.load();
+            await controller.select(current.id);
+            controller.edit({ name: 'Local edit' });
+            const before = controller.getSnapshot();
+            for (const denied of ['domain', 'action'] as const) {
+                refusal = denied;
+                await mutate();
+                const after = controller.getSnapshot();
+                expect(after).toMatchObject({ detailStatus: 'ready', status: 'ready', canManage: true, mutation: 'idle',
+                    issue: denied === 'domain' ? 'source_access_denied' : 'action_forbidden', conflict: null });
+                expect(after.current).toBe(before.current);
+                expect(after.draft).toBe(before.draft);
+                expect(after.rows).toBe(before.rows);
+                expect(catalog.read('', undefined).getSnapshot().rows).toBe(before.rows);
+            }
+            refusal = null;
+            await mutate();
+            expect(controller.getSnapshot().issue).toBeNull();
+            if (operation === 'remove') {
+                expect(controller.getSnapshot().current).toBeNull();
+                expect(catalog.read('', undefined).getSnapshot().rows).toEqual([]);
+            } else {
+                expect(controller.getSnapshot().current).toMatchObject({ revision: 2,
+                    ...(operation === 'save' ? { name: 'Local edit' } : { audience }) });
+                expect(catalog.read('', undefined).getSnapshot().rows[0]?.revision).toBe(2);
+            }
+        } finally { stop(); controller.dispose(); catalog.dispose(); }
+    });
+
     it('drops catalog and selected private metadata on an authenticated catalog refusal', async () => {
         let refused = false;
         const controller = harness(async (_path, init) => refused ? answer({ error: 'Forbidden' }, 403)

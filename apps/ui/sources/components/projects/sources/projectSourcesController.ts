@@ -152,9 +152,10 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
     function errorCode(error: unknown) {
         return error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'source_save_failed';
     }
-    function unavailable(code: string) {
-        return code === 'source_unavailable' || code === 'source_access_denied'
-            || code === 'action_home_signed_out' || code === 'action_forbidden';
+    function unavailable(code: string, detailRead = true) {
+        // A denied mutation does not withdraw an already authorized read.
+        return code === 'source_unavailable' || code === 'action_home_signed_out'
+            || detailRead && (code === 'source_access_denied' || code === 'action_forbidden');
     }
     function reconcileRows(incoming: readonly ProjectSourceListItemV1[], append = false) {
         const previous = new Map(state.rows.map((row) => [row.id, row]));
@@ -191,7 +192,7 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
         publish({ addressResolution: { kind: 'idle' }, addressSaveDisabledReason: null });
     }
     function domainFailure(result: Readonly<{ error: string; current?: ProjectSourceV1 }>, sourceId?: string, detailRead = false) {
-        if (sourceId && unavailable(result.error)) {
+        if (sourceId && unavailable(result.error, detailRead)) {
             forgetUnavailable(sourceId, result.error);
         } else {
             if (sourceId && result.current) conflicts.set(sourceId, result.current);
@@ -232,7 +233,7 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
             if (!uncertainDraft) createIntent = null;
             createRetryConfirmed = false;
         }
-        if (sourceId && unavailable(code)) forgetUnavailable(sourceId, code);
+        if (sourceId && unavailable(code, false)) forgetUnavailable(sourceId, code);
         publish({ mutation: 'idle', uncertainCreate: uncertainDraft !== null,
             ...(state.selectedId === sourceId ? { issue: code,
                 ...(code === 'home_unreachable' || code === 'source_save_failed' ? { detailStatus: 'offline' as const } : {}) } : {}) });
